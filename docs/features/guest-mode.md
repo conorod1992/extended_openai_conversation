@@ -56,6 +56,17 @@ Automations and scripts can use:
 Both actions target a config entry and conversation agent and require an
 administrator. Datetimes without an offset use the Home Assistant timezone.
 
+The trusted `guest_mode_update` action replaces the entire interval:
+
+- Omit `active_from` to start now.
+- Omit `active_until` for no expiry, even when `indefinite` is `false` (the default).
+- Set `indefinite: true` to ignore a supplied end time.
+- Supply `active_until` with `indefinite: false` for a finite interval.
+
+Replacing a finite interval without supplying an end removes its existing expiry.
+Start-only automation calls remain supported. The management UI separately
+requires an end when its finite-interval option is selected.
+
 The model-facing restriction operation is deliberately one-way. It can enable
 Guest Mode, move a start earlier, extend an end later, or make the interval
 indefinite. It cannot disable, cancel, delay, or shorten Guest Mode.

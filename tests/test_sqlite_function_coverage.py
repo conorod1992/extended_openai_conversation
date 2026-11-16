@@ -264,9 +264,10 @@ def test_sqlite_function_exposure_helpers_and_raise() -> None:
         function.raise_error("custom failure")
 
 
-def test_default_url_is_read_only(tmp_path: Path) -> None:
+def test_default_url_is_read_only(tmp_path: Path, monkeypatch) -> None:
     function = sqlite_module.SqliteFunction()
     hass = SimpleNamespace(config=SimpleNamespace(config_dir=str(tmp_path)))
+    monkeypatch.setattr(sqlite_module.recorder, "get_instance", lambda _: SimpleNamespace(db_url=f"sqlite:///{tmp_path.as_posix()}/home-assistant_v2.db"))
 
     uri = function.get_default_db_url(hass)
     params = parse.parse_qs(parse.urlsplit(uri).query)

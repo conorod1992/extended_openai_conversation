@@ -7,6 +7,21 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+SERVICE_TARGET_KEYS = ("entity_id", "area_id", "device_id", "floor_id", "label_id")
+
+
+def prepare_service_target(value: Any) -> Any:
+    """Normalize selector strings without dropping malformed non-string values."""
+    if value is None:
+        return None
+    items = value if isinstance(value, list) else [value]
+    return [
+        part.strip() if isinstance(part, str) else part
+        for item in items
+        for part in (item.split(",") if isinstance(item, str) else [item])
+        if not isinstance(part, str) or part.strip()
+    ]
+
 
 def prepare_service_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
     """Resolve native service aliases and target representation before dispatch."""
@@ -19,9 +34,12 @@ def prepare_service_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
     data = dict(result.get("service_data", result.get("data", {})))
     entity_id = data.get("entity_id", result.get("entity_id"))
     if isinstance(entity_id, str):
-        entity_id = [item.strip() for item in entity_id.split(",") if item.strip()]
+        entity_id = prepare_service_target(entity_id)
     if entity_id is not None:
         data["entity_id"] = entity_id
+    # Indirect selectors and entity-ID lists retain their handler-visible shape.
+    # Presence can ignore empty selectors, but resolution and replay identity
+    # must reflect the payload actually dispatched to arbitrary HA handlers.
     result.pop("data", None)
     result.pop("entity_id", None)
     result["service_data"] = data

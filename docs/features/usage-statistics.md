@@ -21,7 +21,7 @@ Each conversation-agent device has four disabled-by-default diagnostic entities:
 - **Lifetime usage** keeps the existing lifetime-token unique ID and cumulative counters.
 - **Usage today** uses Home Assistant's local calendar day. Provider requests are assigned to the local date on which that request completes; run-level metrics use the local date on which the run completes.
 - **Usage this month** is derived from daily aggregates.
-- **Last response usage** contains the latest run's bounded token, request, model, duration, and success details.
+- **Last response usage** contains the latest retained completed run's bounded token, request, model, duration, and success details. It has no value when run-detail retention is disabled, after that detail expires, or after a successful **Clear details**. A failed clear preserves the retained detail. Lifetime, Today, and This month aggregate sensors remain intact.
 
 No sensor is created per day, model, request, or transcript session. Updates are listener-driven and do not poll. The selectable management-panel history period does not change the Today or This month sensor periods.
 

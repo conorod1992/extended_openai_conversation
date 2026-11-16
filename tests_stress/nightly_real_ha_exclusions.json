@@ -72,6 +72,7 @@
     "tests_real_ha/test_native_registry_state_disagreement.py",
     "tests_real_ha/test_native_service_schema_rejection.py",
     "tests_real_ha/test_native_target_disappearance.py",
+    "tests_real_ha/test_native_target_presence.py",
     "tests_real_ha/test_native_unavailable_target.py",
     "tests_real_ha/test_native_yaml_management_acceptance.py",
     "tests_real_ha/test_nested_same_conversation_lock.py",
@@ -456,6 +457,12 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_native_target_disappearance runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
+    },
+    "tests_real_ha/test_native_target_presence.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "The harmless native target-presence handler and indirect-target controls run in genuine HA acceptance alongside the existing native target tests."
     },
     "tests_real_ha/test_native_unavailable_target.py": {
       "workflow": "real-ha.yml",

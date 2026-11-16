@@ -1,0 +1,412 @@
+"""Native target guards must agree with real HA dispatch and entity effects."""
+
+import logging
+
+import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.extended_openai_conversation_responses.functions.native import (
+    NativeFunction,
+)
+from custom_components.extended_openai_conversation_responses.ha_actions import (
+    async_call_ha_action,
+)
+from homeassistant.components.light import ColorMode, LightEntity
+from homeassistant.const import EVENT_CALL_SERVICE
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import (
+    area_registry,
+    device_registry,
+    entity_registry,
+    floor_registry,
+    label_registry,
+)
+from homeassistant.helpers.entity_component import EntityComponent
+
+
+@pytest.mark.parametrize(
+    "key", ["entity_id", "area_id", "device_id", "floor_id", "label_id"]
+)
+async def test_real_handler_target_presence_and_indirect_positive_controls(hass, key):
+    calls = []
+
+    async def probe(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("native_probe", "record", probe)
+    native = NativeFunction()
+    arguments = {"domain": "native_probe", "service": "record"}
+    for empty in ([], "", " , ", ["", " , "]):
+        with pytest.raises(HomeAssistantError):
+            await native.execute_service_single(
+                hass, {}, {**arguments, "service_data": {key: empty}}, None, []
+            )
+    assert calls == []
+
+    # Trusted HA actions intentionally retain targetless handler support.
+    await async_call_ha_action(hass, "native_probe", "record", blocking=True)
+    assert len(calls) == 1
+
+    floor = floor_registry.async_get(hass).async_create("Probe floor")
+    label = label_registry.async_get(hass).async_create("Probe label")
+    area = area_registry.async_get(hass).async_create("Probe area")
+    area_registry.async_get(hass).async_update(area.id, floor_id=floor.floor_id)
+    entry = MockConfigEntry(domain="extended_openai_conversation_responses")
+    entry.add_to_hass(hass)
+    device = device_registry.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={("native_probe", "device")}
+    )
+    device_registry.async_get(hass).async_update_device(device.id, area_id=area.id)
+    entity = entity_registry.async_get(hass).async_get_or_create(
+        "sensor", "native_probe", "target", device_id=device.id
+    )
+    entity_registry.async_get(hass).async_update_entity(
+        entity.entity_id, labels={label.label_id}
+    )
+    hass.states.async_set(entity.entity_id, "ready")
+    targets = {
+        "entity_id": entity.entity_id,
+        "area_id": area.id,
+        "device_id": device.id,
+        "floor_id": floor.floor_id,
+        "label_id": label.label_id,
+    }
+    data = {name: [] for name in targets}
+    data[key] = targets[key]
+    result = await native.execute_service_single(
+        hass,
+        {},
+        {**arguments, "service_data": data},
+        None,
+        [{"entity_id": entity.entity_id}],
+    )
+    assert result["success"]
+    assert len(calls) == 2
+    assert calls[-1][key] == ([targets[key]] if key == "entity_id" else targets[key])
+
+
+class _TargetLight(LightEntity):
+    _attr_should_poll = False
+    _attr_is_on = False
+    _attr_color_mode = ColorMode.ONOFF
+    _attr_supported_color_modes = frozenset({ColorMode.ONOFF})
+
+    def __init__(self, name):
+        self._attr_name = f"Native target {name}"
+        self._attr_unique_id = f"native-target-{name}"
+        self.turn_on_calls = 0
+
+    async def async_turn_on(self, **kwargs):
+        self.turn_on_calls += 1
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+
+@pytest.fixture
+async def entity_target_home(hass):
+    """Two registered lights use HA's actual entity-service target extraction."""
+    component = EntityComponent(logging.getLogger(__name__), "light", hass)
+    lights = [_TargetLight(name) for name in ("Kitchen", "Hall")]
+    await component.async_add_entities(lights)
+    component.async_register_entity_service("turn_on", {}, "async_turn_on")
+    entry = MockConfigEntry(domain="native_target_probe")
+    entry.add_to_hass(hass)
+    targets = {key: [] for key in ("area_id", "device_id", "floor_id", "label_id")}
+    for index, light in enumerate(lights):
+        floor = floor_registry.async_get(hass).async_create(f"Native floor {index}")
+        area = area_registry.async_get(hass).async_create(
+            f"Native area {index}", floor_id=floor.floor_id
+        )
+        label = label_registry.async_get(hass).async_create(f"Native label {index}")
+        device = device_registry.async_get(hass).async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={("native_target_probe", str(index))},
+        )
+        device_registry.async_get(hass).async_update_device(device.id, area_id=area.id)
+        entity_registry.async_get(hass).async_update_entity(
+            light.entity_id, device_id=device.id, labels={label.label_id}
+        )
+        for key, value in {
+            "area_id": area.id,
+            "device_id": device.id,
+            "floor_id": floor.floor_id,
+            "label_id": label.label_id,
+        }.items():
+            targets[key].append(value)
+    await hass.async_block_till_done()
+    assert [hass.states.get(light.entity_id).state for light in lights] == [
+        "off",
+        "off",
+    ]
+    return lights, targets
+
+
+@pytest.mark.parametrize("key", ["area_id", "device_id", "floor_id", "label_id"])
+@pytest.mark.parametrize(
+    "shape", ["padded_scalar", "padded_list", "comma_scalar", "comma_list"]
+)
+@pytest.mark.parametrize("batch", [False, True])
+async def test_indirect_normalization_cannot_invent_an_entity_service_target(
+    hass, entity_target_home, key, shape, batch
+):
+    lights, targets = entity_target_home
+    first, second = targets[key]
+    selector = {
+        "padded_scalar": f" {first} ",
+        "padded_list": [f" {first} "],
+        "comma_scalar": f"{first},{second}",
+        "comma_list": [f"{first},{second}"],
+    }[shape]
+    arguments = {
+        "domain": "light",
+        "service": "turn_on",
+        "service_data": {key: selector},
+    }
+    dispatched = []
+
+    def record(event):
+        if (
+            event.data.get("domain") == "light"
+            and event.data.get("service") == "turn_on"
+        ):
+            dispatched.append(event.data)
+
+    unsubscribe = hass.bus.async_listen(EVENT_CALL_SERVICE, record)
+    native = NativeFunction()
+    try:
+        with pytest.raises(HomeAssistantError, match="list of exact IDs"):
+            if batch:
+                await native.execute_service(
+                    hass,
+                    {},
+                    {"list": [arguments]},
+                    None,
+                    [{"entity_id": light.entity_id} for light in lights],
+                )
+            else:
+                await native.execute_service_single(
+                    hass,
+                    {},
+                    arguments,
+                    None,
+                    [{"entity_id": light.entity_id} for light in lights],
+                )
+        await hass.async_block_till_done()
+        assert dispatched == []
+        assert [light.turn_on_calls for light in lights] == [0, 0]
+        assert [hass.states.get(light.entity_id).state for light in lights] == [
+            "off",
+            "off",
+        ]
+    finally:
+        unsubscribe()
+
+
+@pytest.mark.parametrize("key", ["area_id", "device_id", "floor_id", "label_id"])
+@pytest.mark.parametrize("multiple", [False, True])
+@pytest.mark.parametrize("empty", [[], None, "", " , "])
+async def test_canonical_entity_service_targets_act_with_empty_alternatives(
+    hass, entity_target_home, key, multiple, empty
+):
+    lights, targets = entity_target_home
+    data = {
+        name: empty
+        for name in ("entity_id", "area_id", "device_id", "floor_id", "label_id")
+    }
+    data[key] = targets[key] if multiple else targets[key][0]
+    result = await NativeFunction().execute_service_single(
+        hass,
+        {},
+        {"domain": "light", "service": "turn_on", "service_data": data},
+        None,
+        [{"entity_id": light.entity_id} for light in lights],
+    )
+    assert result["success"]
+    assert [light.turn_on_calls for light in lights] == ([1, 1] if multiple else [1, 0])
+    assert [hass.states.get(light.entity_id).state for light in lights] == (
+        ["on", "on"] if multiple else ["on", "off"]
+    )
+
+
+@pytest.mark.parametrize("key", ["area_id", "device_id", "floor_id", "label_id"])
+@pytest.mark.parametrize("shape", ["comma", "padded", "padded_other", "mixed_list"])
+@pytest.mark.parametrize("entrypoint", ["native", "action", "script", "rule"])
+async def test_explicit_entity_cannot_mask_malformed_indirect_target(
+    hass, entity_target_home, key, shape, entrypoint
+):
+    from custom_components.extended_openai_conversation_responses.functions.script import (
+        _AuthorizedScriptServices,
+    )
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        GuestCapabilityPolicy,
+    )
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        DEFAULT_MATCHING,
+        RequestRuleRuntime,
+        RequestRules,
+        async_evaluate_rule,
+    )
+    from tests.test_service_target_authorization import RuleStore
+
+    lights, targets = entity_target_home
+    first, second = targets[key]
+    malformed = {
+        "comma": f"{first},{second}",
+        "padded": f" {first} ",
+        "padded_other": f" {second} ",
+        "mixed_list": [first, f"{second},missing"],
+    }[shape]
+    data = {"entity_id": [lights[0].entity_id], key: malformed}
+    if entrypoint == "rule":
+        rule = {
+            "id": "lights",
+            "name": "Lights",
+            "enabled": True,
+            "phrases": ["lights"],
+            "match_type": "equals",
+            "action_type": "local_action",
+            "action": {
+                "actions": [{"action": "light.turn_on", "target": data}],
+                "success_response": "Done",
+                "failure_response": "Failed",
+                "continue_to_ai": False,
+            },
+            "matching_behavior": "defaults",
+            "matching": dict(DEFAULT_MATCHING),
+            "order": 0,
+        }
+        rules = RequestRules(RuleStore(rule))
+        await rules.async_initialize()
+        result = await async_evaluate_rule(
+            hass,
+            rules,
+            RequestRuleRuntime(),
+            "lights",
+            "session",
+            live_guest_policy=GuestCapabilityPolicy.unrestricted,
+        )
+        assert not result.successful
+    else:
+        with pytest.raises(HomeAssistantError, match="list of exact IDs"):
+            if entrypoint == "native":
+                await NativeFunction().execute_service_single(
+                    hass,
+                    {},
+                    {"domain": "light", "service": "turn_on", "service_data": data},
+                    None,
+                    [{"entity_id": light.entity_id} for light in lights],
+                )
+            elif entrypoint == "script":
+                await _AuthorizedScriptServices(hass, None, []).async_call(
+                    "light", "turn_on", service_data=data, blocking=True
+                )
+            else:
+                await async_call_ha_action(
+                    hass, "light", "turn_on", data=data, blocking=True
+                )
+    await hass.async_block_till_done()
+    assert [light.turn_on_calls for light in lights] == [0, 0]
+    assert [hass.states.get(light.entity_id).state for light in lights] == [
+        "off",
+        "off",
+    ]
+
+
+@pytest.mark.parametrize("key", ["area_id", "device_id", "floor_id", "label_id"])
+@pytest.mark.parametrize("empty", ["", " \t", " , ", ["", " , "]])
+@pytest.mark.parametrize("entrypoint", ["native", "action", "script", "rule"])
+async def test_empty_indirect_alternative_keeps_real_explicit_entity_effect(
+    hass, entity_target_home, key, empty, entrypoint
+):
+    from custom_components.extended_openai_conversation_responses.functions.script import (
+        _AuthorizedScriptServices,
+    )
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        GuestCapabilityPolicy,
+    )
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        DEFAULT_MATCHING,
+        RequestRuleRuntime,
+        RequestRules,
+        async_evaluate_rule,
+    )
+    from tests.test_service_target_authorization import RuleStore
+
+    lights, _targets = entity_target_home
+    data = {"entity_id": [lights[0].entity_id], key: empty}
+    if entrypoint == "rule":
+        rule = {
+            "id": "lights",
+            "name": "Lights",
+            "enabled": True,
+            "phrases": ["lights"],
+            "match_type": "equals",
+            "action_type": "local_action",
+            "action": {
+                "actions": [{"action": "light.turn_on", "target": data}],
+                "success_response": "Done",
+                "failure_response": "Failed",
+                "continue_to_ai": False,
+            },
+            "matching_behavior": "defaults",
+            "matching": dict(DEFAULT_MATCHING),
+            "order": 0,
+        }
+        rules = RequestRules(RuleStore(rule))
+        await rules.async_initialize()
+        result = await async_evaluate_rule(
+            hass,
+            rules,
+            RequestRuleRuntime(),
+            "lights",
+            "session",
+            live_guest_policy=GuestCapabilityPolicy.unrestricted,
+        )
+        assert result.successful
+    elif entrypoint == "native":
+        result = await NativeFunction().execute_service_single(
+            hass,
+            {},
+            {"domain": "light", "service": "turn_on", "service_data": data},
+            None,
+            [{"entity_id": light.entity_id} for light in lights],
+        )
+        assert result["success"]
+    elif entrypoint == "script":
+        await _AuthorizedScriptServices(hass, None, []).async_call(
+            "light", "turn_on", service_data=data, blocking=True
+        )
+    else:
+        await async_call_ha_action(hass, "light", "turn_on", data=data, blocking=True)
+    await hass.async_block_till_done()
+    assert [light.turn_on_calls for light in lights] == [1, 0]
+    assert [hass.states.get(light.entity_id).state for light in lights] == ["on", "off"]
+
+
+@pytest.mark.parametrize("key", ["area_id", "device_id", "floor_id", "label_id"])
+@pytest.mark.parametrize("multiple", [False, True])
+async def test_custom_handler_receives_exact_indirect_shape(
+    hass, entity_target_home, key, multiple
+):
+    lights, targets = entity_target_home
+    value = (
+        [targets[key][1], targets[key][0], targets[key][1]]
+        if multiple
+        else targets[key][0]
+    )
+    calls = []
+
+    async def record(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("exact_target_probe", "record", record)
+    data = {key: value, "payload": {key: "unrelated, value"}}
+    result = await NativeFunction().execute_service_single(
+        hass,
+        {},
+        {"domain": "exact_target_probe", "service": "record", "data": data},
+        None,
+        [{"entity_id": light.entity_id} for light in lights],
+    )
+    assert result["success"]
+    assert calls == [data]

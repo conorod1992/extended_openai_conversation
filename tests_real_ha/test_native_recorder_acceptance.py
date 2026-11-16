@@ -34,6 +34,26 @@ from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 _EXPOSED = [{"entity_id": "sensor.recorder_acceptance"}]
 
 
+@pytest.mark.parametrize("location", ["default", "custom", "uri"])
+async def test_sqlite_function_follows_running_recorder(hass, tmp_path, location):
+    import sqlite3
+
+    from custom_components.extended_openai_conversation_responses.functions.sqlite import SqliteFunction
+
+    config = {}
+    if location != "default":
+        # A stale legacy file is valid SQLite, but is not the running Recorder.
+        with sqlite3.connect(hass.config.path("home-assistant_v2.db")) as conn:
+            conn.execute("CREATE TABLE stale_marker (value TEXT)")
+        path = tmp_path / "configured-recorder.db"
+        config["db_url"] = f"sqlite:///{path.as_uri()}?uri=true" if location == "uri" else f"sqlite:///{path.as_posix()}"
+    assert await async_setup_component(hass, "recorder", {"recorder": config})
+    await hass.async_start()
+    await recorder.get_instance(hass).async_block_till_done()
+    result = await SqliteFunction().execute(hass, {"query": "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('states', 'stale_marker') ORDER BY name"}, {}, None, [])
+    assert result == [{"name": "states"}]
+
+
 async def test_energy_filters_real_assist_read_and_guest_boundaries(
     hass: HomeAssistant, caplog
 ):

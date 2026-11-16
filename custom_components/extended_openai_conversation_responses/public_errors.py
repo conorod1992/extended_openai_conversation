@@ -25,6 +25,17 @@ class SanitizedBackendError(HomeAssistantError):
         )
 
 
+class InvalidIndirectTarget(HomeAssistantError):
+    """Source-free feedback that remains useful through backend sanitization."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "area_id, device_id, floor_id and label_id must be a string or list "
+            "of strings containing exact, nonblank IDs without surrounding "
+            "whitespace or commas; multiple IDs require a list of exact IDs"
+        )
+
+
 class SanitizedUnexpectedBackendError(RuntimeError):
     """Keep unexpected failures propagating without exposing dependency prose."""
 
@@ -55,6 +66,7 @@ def sanitize_backend_error(error: BaseException) -> BaseException:
             SanitizedBackendError,
             SanitizedUnexpectedBackendError,
             SanitizedRequestError,
+            InvalidIndirectTarget,
         ),
     ):
         return public

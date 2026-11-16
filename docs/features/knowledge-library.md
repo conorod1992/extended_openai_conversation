@@ -72,6 +72,13 @@ When the feature is On and the selected agent has at least one **available** sou
 
 The tools work in both Responses and Chat Completions modes and use the existing maximum-function-call protection. No source catalogue or full source content is added to normal prompts. If the last available source is disabled or deleted, the tools and Knowledge Library prompt instructions disappear on the next request.
 
+For `knowledge_search`, omitting the optional `source_ids` filter or supplying an
+empty list searches all sources permitted for that request. Nonempty filters use
+exact returned IDs; unknown, blank, disabled, or forbidden IDs never broaden the
+search. Guest Mode source restrictions still apply, including a policy permitting
+no sources. The underlying library API separately treats `source_ids=[]` as no
+sources.
+
 ## Local storage and limits
 
 Sources are saved privately under Home Assistant's versioned `.storage` system using atomic asynchronous writes. Each conversation-agent subentry has an isolated store. Nothing is sent to an external search or embedding service; only excerpts retrieved during an active model request are sent to the configured model provider.

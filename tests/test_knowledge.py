@@ -181,7 +181,8 @@ async def test_malformed_stored_record_preserves_sibling_reads_and_blocks_lossy_
 
     with pytest.raises(ValueError, match="needs repair"):
         await library.async_create(
-            "Bathroom storage", "Bathroom supplies",
+            "Bathroom storage",
+            "Bathroom supplies",
             "Spare towels are in the airing cupboard.",
         )
     assert storage.data == original_payload
@@ -565,6 +566,86 @@ async def test_tool_search_rejects_invented_source_ids_without_fallback() -> Non
             "ignored_source_ids": [invented_id],
             "fell_back_to_all_sources": False,
         }
+
+
+async def test_empty_model_source_filter_is_optional_but_library_empty_is_deny_all():
+    library = await _library()
+    source = await library.async_create("Dishwasher", "", "Dishwasher model details")
+    entity = _entity(True, 1)
+    entity._knowledge = library
+    results = [
+        await entity._async_execute_knowledge_tool("search", arguments)
+        for arguments in (
+            {"query": "dishwasher"},
+            {"query": "dishwasher", "source_ids": None},
+            {"query": "dishwasher", "source_ids": []},
+        )
+    ]
+    assert results[0] == results[1] == results[2]
+    assert results[0]["results"][0]["source_id"] == source.source_id
+    assert "source_filter" not in results[0]
+    assert await library.async_search("dishwasher", []) == []
+
+
+@pytest.mark.parametrize("policy_kind", ["unrestricted", "one", "none"])
+@pytest.mark.parametrize(
+    "requested_kind", ["empty", "valid", "mixed", "invalid", "blank", "disabled"]
+)
+async def test_optional_source_filter_keeps_access_policy_and_paging(
+    policy_kind, requested_kind
+):
+    library = await _library()
+    allowed = await library.async_create("Dishwasher", "", "Dishwasher model one")
+    other = await library.async_create("Dishwasher two", "", "Dishwasher model two")
+    disabled = await library.async_create(
+        "Disabled dishwasher", "", "Dishwasher model three", enabled=False
+    )
+    policy = {
+        "unrestricted": None,
+        "one": frozenset({allowed.source_id}),
+        "none": frozenset(),
+    }[policy_kind]
+    requested = {
+        "empty": [],
+        "valid": [allowed.source_id],
+        "mixed": [allowed.source_id, other.source_id, "missing"],
+        "invalid": ["missing"],
+        "blank": [" "],
+        "disabled": [disabled.source_id],
+    }[requested_kind]
+    entity = _entity(True, 3)
+    entity._knowledge = library
+    entity._effective_guest_policy = lambda: SimpleNamespace(
+        knowledge_access=True, knowledge_source_ids=policy
+    )
+    page = await entity._async_execute_knowledge_tool(
+        "search", {"query": "dishwasher", "source_ids": requested, "limit": 1}
+    )
+    ids = {item["source_id"] for item in page["results"]}
+    assert disabled.source_id not in ids
+    if policy_kind == "none" or requested_kind in {"invalid", "blank", "disabled"}:
+        assert ids == set()
+    else:
+        assert ids
+        if policy_kind == "one" or requested_kind == "valid":
+            assert ids == {allowed.source_id}
+        else:
+            assert page["has_more"]
+            next_page = await entity._async_execute_knowledge_tool(
+                "search",
+                {
+                    "query": "dishwasher",
+                    "source_ids": requested,
+                    "limit": 1,
+                    "offset": 1,
+                },
+            )
+            assert ids | {item["source_id"] for item in next_page["results"]} == {
+                allowed.source_id,
+                other.source_id,
+            }
+    if "source_filter" in page:
+        assert page["source_filter"]["fell_back_to_all_sources"] is False
 
 
 def test_prompt_instructions_only_when_enabled_and_populated(hass) -> None:
@@ -1078,7 +1159,14 @@ def test_field_cleaners_reject_non_strings_and_normalize_whitespace() -> None:
 
 
 def test_token_and_normalization_helpers_preserve_short_and_compound_terms() -> None:
-    assert knowledge._tokens("A I drill-drill O'Neil x") == {"a", "i", "drill-drill", "drill", "o'neil", "x"}
+    assert knowledge._tokens("A I drill-drill O'Neil x") == {
+        "a",
+        "i",
+        "drill-drill",
+        "drill",
+        "o'neil",
+        "x",
+    }
     assert knowledge._normalize("  Drill---PRESS!!  O'Neil  ") == "drill---press o'neil"
 
 
@@ -1108,21 +1196,33 @@ def test_split_chunks_uses_line_boundary_when_paragraph_is_unavailable() -> None
 @pytest.mark.parametrize("form", ["NFC", "NFD"])
 async def test_knowledge_canonical_unicode_scores_edits_and_reconstruction(form):
     import unicodedata
+
     storage = FakeStorage()
     library = await _library(storage)
     original = unicodedata.normalize(form, "The café serves crème brûlée.")
-    source = await library.async_create(unicodedata.normalize(form, "Café menu"), "Desserts", original)
+    source = await library.async_create(
+        unicodedata.normalize(form, "Café menu"), "Desserts", original
+    )
     await library.async_create("Other café", "", "The café serves lunch")
     queries = ["café crème brûlée", unicodedata.normalize("NFD", "café crème brûlée")]
     first, second = [await library.async_search(query) for query in queries]
-    assert [(item.source_id, item.score) for item in first] == [(item.source_id, item.score) for item in second]
+    assert [(item.source_id, item.score) for item in first] == [
+        (item.source_id, item.score) for item in second
+    ]
     assert first[0].source_id == source.source_id
     assert (await library.async_get(source.source_id)).content == original
     fresh = await _library(storage)
-    assert [(item.source_id,item.score) for item in await fresh.async_search(queries[1])] == [(item.source_id,item.score) for item in first]
+    assert [
+        (item.source_id, item.score) for item in await fresh.async_search(queries[1])
+    ] == [(item.source_id, item.score) for item in first]
     assert await fresh.async_search("creme brulee") == []
-    await fresh.async_update(source.source_id, content=unicodedata.normalize(form, "Pâtisserie menu"))
-    assert [item.source_id for item in await fresh.async_search(unicodedata.normalize("NFD", "pâtisserie"))] == [source.source_id]
+    await fresh.async_update(
+        source.source_id, content=unicodedata.normalize(form, "Pâtisserie menu")
+    )
+    assert [
+        item.source_id
+        for item in await fresh.async_search(unicodedata.normalize("NFD", "pâtisserie"))
+    ] == [source.source_id]
 
 
 def test_phrase_normalization_equates_straight_and_curly_apostrophes():
@@ -1144,7 +1244,8 @@ async def test_search_secondary_word_forms_and_filler_filter() -> None:
     assert (await library.async_search("password"))[0].source_id == plural.source_id
     assert (await library.async_search("scheduled"))[0].source_id == schedule.source_id
     assert unrelated.source_id not in {
-        result.source_id for result in await library.async_search("how to reset the password")
+        result.source_id
+        for result in await library.async_search("how to reset the password")
     }
     assert unrelated.source_id in {
         result.source_id for result in await library.async_search("the")

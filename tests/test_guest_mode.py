@@ -96,6 +96,18 @@ async def test_trusted_interval_states_and_disable(hass) -> None:
     assert (await manager.async_disable_trusted())["state"] == "inactive"
 
 
+@pytest.mark.parametrize("start", [None, "2026-08-22T12:00:00+00:00"])
+@pytest.mark.parametrize("end,indefinite", [(None, False), (None, True), ("2026-08-24T12:00:00+00:00", False), ("2026-08-24T12:00:00+00:00", True)])
+async def test_trusted_update_replaces_interval_with_documented_omission_semantics(hass, start, end, indefinite):
+    manager = _manager(hass)
+    now = _time("2026-08-21T12:00:00")
+    await manager.async_update_trusted(active_until="2026-08-23T12:00:00+00:00", now=now)
+    result = await manager.async_update_trusted(active_from=start, active_until=end, indefinite=indefinite, now=now)
+    assert result["active_from"] == (start or now.isoformat())
+    assert result["active_until"] == (None if indefinite else end)
+    assert result["indefinite"] is (indefinite or end is None)
+
+
 async def test_llm_restriction_is_monotonic(hass) -> None:
     manager = _manager(hass)
     now = _time("2026-08-21T12:00:00")

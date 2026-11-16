@@ -6,19 +6,20 @@ import base64
 from datetime import datetime
 import logging
 import math
-import os
 from pathlib import Path
 import sqlite3
 import time
 from typing import Any
 from urllib import parse
 
+from sqlalchemy.dialects.sqlite import dialect as sqlite_dialect
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 import voluptuous as vol
 
-from homeassistant.components import recorder
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv, llm
+from homeassistant.helpers import config_validation as cv, llm, recorder
 from homeassistant.helpers.template import Template
 
 from ..execution_outcomes import owns_read_only_execution_receipts
@@ -88,8 +89,15 @@ def _read_only_authorizer(
 
 def _read_only_sqlite_uri(db_url: str) -> str:
     """Normalize a SQLite path or file URI and force mode=ro."""
+    if not isinstance(db_url, str) or not db_url.strip():
+        raise HomeAssistantError("SQLite db_url must be a nonempty path or file: URI")
     if db_url == ":memory:":
         raise HomeAssistantError("SQLite in-memory databases are not supported")
+
+    # SQLAlchemy/remote URLs are not filesystem overrides. Allow Windows drive
+    # paths as well as ordinary relative/absolute paths, without echoing a URL.
+    if "://" in db_url and not db_url.startswith("file:"):
+        raise HomeAssistantError("SQLite db_url must be a filesystem path or file: URI")
 
     if db_url.startswith("file:"):
         uri = db_url
@@ -99,10 +107,46 @@ def _read_only_sqlite_uri(db_url: str) -> str:
     scheme, netloc, path, query_string, fragment = parse.urlsplit(uri)
     if scheme != "file":
         raise HomeAssistantError("SQLite db_url must be a filesystem path or file: URI")
+    if "@" in netloc:
+        raise HomeAssistantError("SQLite file: URI must not contain credentials")
     query_params = parse.parse_qs(query_string, keep_blank_values=True)
+    if (
+        not path
+        or parse.unquote(path) == ":memory:"
+        or "memory" in query_params.get("mode", [])
+    ):
+        raise HomeAssistantError(
+            "SQLite in-memory or unnamed databases are not supported"
+        )
     query_params["mode"] = ["ro"]
     new_query_string = parse.urlencode(query_params, doseq=True)
     return parse.urlunsplit((scheme, netloc, path, new_query_string, fragment))
+
+
+def _recorder_sqlite_uri(db_url: str) -> str:
+    """Use SQLAlchemy's SQLite filename semantics without creating an engine."""
+    try:
+        url = make_url(db_url)
+        if url.drivername not in {"sqlite", "sqlite+pysqlite"}:
+            raise HomeAssistantError(
+                "SQLite default requires a SQLite Recorder; configure an explicit db_url path or file: URI"
+            )
+        if not url.database or url.database == ":memory:":
+            raise HomeAssistantError(
+                "SQLite Recorder must use a named on-disk database"
+            )
+        args, options = sqlite_dialect().create_connect_args(url)
+    except ArgumentError, TypeError, ValueError:
+        # SQLAlchemy parse errors can contain the original credential-bearing URL.
+        raise HomeAssistantError(
+            "SQLite Recorder database URL is unsupported"
+        ) from None
+    filename = args[0]
+    # Without uri=true, even a name starting with 'file:' is a literal filename.
+    # Convert that path to an escaped file URI before the common read-only guard.
+    return _read_only_sqlite_uri(
+        filename if options.get("uri") else Path(filename).resolve().as_uri()
+    )
 
 
 def _unique_column_names(names: list[str]) -> list[str]:
@@ -324,8 +368,15 @@ class SqliteFunction(Function):
         raise HomeAssistantError(msg)
 
     def get_default_db_url(self, hass: HomeAssistant) -> str:
-        db_file_path = os.path.join(hass.config.config_dir, recorder.DEFAULT_DB_FILE)
-        return _read_only_sqlite_uri(db_file_path)
+        try:
+            instance = recorder.get_instance(hass)
+        except KeyError, RuntimeError:
+            raise HomeAssistantError(
+                "SQLite default requires an available Recorder; configure an explicit db_url path or file: URI"
+            ) from None
+        if not isinstance(instance.db_url, str):
+            raise HomeAssistantError("SQLite Recorder database URL is unavailable")
+        return _recorder_sqlite_uri(instance.db_url)
 
     def set_url_read_only(self, url: str) -> str:
         return _read_only_sqlite_uri(url)
@@ -340,8 +391,10 @@ class SqliteFunction(Function):
         exposed_entities: list[dict[str, Any]],
     ) -> dict[str, Any] | list[dict[str, Any]]:
         # This implementation enforces read-only I/O and has no effect to receipt.
-        db_url = self.set_url_read_only(
-            function_config.get("db_url", self.get_default_db_url(hass))
+        db_url = (
+            self.set_url_read_only(function_config["db_url"])
+            if "db_url" in function_config
+            else self.get_default_db_url(hass)
         )
         query = function_config.get("query", "{{query}}")
 
