@@ -51,7 +51,7 @@ def test_validation_resolves_the_raw_prepared_selector(
     monkeypatch.setattr(
         ha_actions.target_helpers, "async_extract_referenced_entity_ids", extract
     )
-    with pytest.raises(HomeAssistantError, match="does not resolve"):
+    with pytest.raises(HomeAssistantError, match="list of exact IDs"):
         NativeFunction().validate_service_targets(
             hass, {key: selector}, [{"entity_id": "light.kitchen"}]
         )

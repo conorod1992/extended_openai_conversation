@@ -34,6 +34,7 @@ from ..ha_actions import (
     async_call_ha_action,
 )
 from ..ha_permissions import entity_access_error, get_active_ha_context
+from ..indirect_targets import validate_indirect_targets
 from ..intercom import async_get_intercom
 from ..native_read_scope import current_native_read_entities
 from ..operational_errors import log_handled_failure
@@ -435,6 +436,7 @@ class NativeFunction(Function):
         service: str | None = None,
     ) -> None:
         """Resolve indirect HA targets and enforce the exposed-entity boundary."""
+        validate_indirect_targets(service_data)
         selection = {}
         for key in SERVICE_TARGET_KEYS:
             value = service_data.get(key)
@@ -491,6 +493,7 @@ class NativeFunction(Function):
         domain = service_argument["domain"]
         service = service_argument["service"]
         service_data = dict(service_argument["service_data"])
+        validate_indirect_targets(service_data)
         if not any(
             prepare_service_target(service_data.get(key)) for key in SERVICE_TARGET_KEYS
         ):

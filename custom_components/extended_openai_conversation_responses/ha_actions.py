@@ -27,6 +27,7 @@ from homeassistant.helpers import (
 
 from .ha_permissions import async_require_control_permission, get_active_ha_context
 from .ha_service_compat import prepare_service_dispatch
+from .indirect_targets import validate_indirect_targets
 from .schema_errors import SCHEMA_ERRORS as _SERVICE_SCHEMA_ERRORS
 
 ActionTargetRevalidator = Callable[[HomeAssistant, set[str]], None]
@@ -501,6 +502,7 @@ def _service_identity(hass: HomeAssistant, domain: str, service: str) -> Any:
 def _target_selection(
     data: Mapping[str, Any] | None, target: Mapping[str, Any] | None
 ) -> dict[str, Any]:
+    validate_indirect_targets(data, target)
     selection: dict[str, Any] = {}
     merged = {**(data or {}), **(target or {})}
     for key in _TARGET_KEYS:
