@@ -1146,7 +1146,7 @@ def test_complete_speech_keeps_cleaning_after_long_unclosed_link() -> None:
         "Read [example.com](https://example.com) and continue.",
         "2**3; literal operators are preserved.",
         "*outer **inner** outer*",
-        "Use \`code **not bold**\` and **real bold**.",
+        r"Use \`code **not bold**\` and **real bold**.",
         r"A \*literal\* and **bold**.",
         "Hello **_[example.com](https://example.com)_** world.",
     ],

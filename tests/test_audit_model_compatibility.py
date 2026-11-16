@@ -30,7 +30,7 @@ from tests.test_openai_sdk_wire import (
 
 
 @pytest.mark.parametrize("updates", [{"knowledge_enabled": True}, {"functions": []}])
-def test_unrelated_save_preserves_omitted_effort(updates):
+async def test_unrelated_save_preserves_omitted_effort(hass, updates):
     options = {"chat_model": "gpt-5.4", "functions": []}
     rule = {"action_type": "model_routing", "action": {"model": "o3"}}
     validate_rule_model_request(rule, options, {})
