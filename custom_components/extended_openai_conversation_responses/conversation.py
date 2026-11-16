@@ -2695,6 +2695,10 @@ class ExtendedOpenAIAgentEntity(
                 or isinstance(limit, bool)
             ):
                 raise ValueError("query, source_ids, or limit has an invalid type")
+            # At the model-tool boundary an empty optional selection means no
+            # requested filter. Library/policy empty sets still mean deny-all.
+            if source_ids == []:
+                source_ids = None
             allowed_ids, ignored_ids = self._knowledge.resolve_source_filter(source_ids)
             policy_ids = self._effective_guest_policy().knowledge_source_ids
             if policy_ids is not None:

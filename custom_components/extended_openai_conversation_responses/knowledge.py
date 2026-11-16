@@ -1018,7 +1018,7 @@ def knowledge_tools() -> list[dict[str, Any]]:
                         "source_ids": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Exact IDs returned by Knowledge tools.",
+                            "description": "Optional exact IDs returned by Knowledge tools. Omit or use an empty list to search all permitted sources.",
                         },
                         "limit": {
                             "type": "integer",
