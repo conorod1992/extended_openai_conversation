@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import Any
 
+from .chat_tool_calls import ChatToolCallResolver, ChatToolDelta
 from .provider_errors import ProviderStreamError
 
 MAX_OUTPUT_CHARACTERS = 16 * 1024 * 1024
@@ -92,6 +93,7 @@ class ProviderOutputBudget:
         self.buffered_events = 0
         self._unindexed = 0
         self._active_unindexed: Hashable | None = None
+        self._chat_tools = ChatToolCallResolver(MAX_OUTPUT_ITEMS)
 
     def event(self) -> None:
         self.events += 1
@@ -117,21 +119,26 @@ class ProviderOutputBudget:
         if self.total > MAX_OUTPUT_CHARACTERS:
             _exceeded()
 
-    def chat_delta(self, delta: Any) -> None:
+    def chat_delta(self, delta: Any) -> list[ChatToolDelta]:
         for value in (getattr(delta, "content", None), getattr(delta, "refusal", None)):
             if value:
                 self._account(
                     ("chat", "answer"),
                     content=_text_weight(value),
                 )
-        for call in getattr(delta, "tool_calls", None) or ():
-            key = ("chat", call.index)
-            function = call.function
+        raw_calls = getattr(delta, "tool_calls", None) or []
+        # Bound temporary normalization work too, including zero-text fragments
+        # that consume neither the character nor logical-item allowance.
+        if len(raw_calls) > MAX_OUTPUT_NODES:
+            _exceeded()
+        calls = self._chat_tools.resolve(raw_calls)
+        for call in calls:
             self._account(
-                key,
-                content=len(call.id or "") + len(getattr(function, "name", None) or ""),
-                arguments=len(getattr(function, "arguments", None) or ""),
+                ("chat", call.key),
+                content=call.identity_characters,
+                arguments=len(call.arguments),
             )
+        return calls
 
     def _text(
         self, key: Hashable, part: Hashable, size: int, *, complete: bool = False

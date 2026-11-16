@@ -2073,7 +2073,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         request_usage = request_usage or RequestTokenMeasurements()
         recovery_state = current_tool_recovery_state()
         budget = ProviderOutputBudget()
-        current_tool_calls: dict[int, dict[str, Any]] = {}
+        current_tool_calls: dict[tuple[int, int], dict[str, Any]] = {}
         first_chunk = True
         refusal_seen = False
         terminal_finish_seen = False
@@ -2152,7 +2152,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     error_type="invalid_event_sequence",
                 )
             try:
-                budget.chat_delta(delta)
+                resolved_tool_calls = budget.chat_delta(delta)
             except ProviderStreamError:
                 await async_recover_trailing_usage(result, request_usage)
                 raise
@@ -2190,9 +2190,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     error_type="unsupported_function_call",
                 )
 
-            if delta.tool_calls:
-                for tool_call_delta in delta.tool_calls:
-                    idx = tool_call_delta.index
+            if resolved_tool_calls:
+                for tool_call_delta in resolved_tool_calls:
+                    idx = tool_call_delta.key
                     if idx not in current_tool_calls:
                         current_tool_calls[idx] = {
                             "id": "",
@@ -2206,16 +2206,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             tool_call_delta.id,
                         )
 
-                    if tool_call_delta.function:
-                        if tool_call_delta.function.name:
-                            current_tool_calls[idx]["name"] = _merge_stream_identity(
-                                current_tool_calls[idx]["name"],
-                                tool_call_delta.function.name,
-                            )
-                        if tool_call_delta.function.arguments:
-                            current_tool_calls[idx]["arguments"] += (
-                                tool_call_delta.function.arguments
-                            )
+                    if tool_call_delta.name:
+                        current_tool_calls[idx]["name"] = _merge_stream_identity(
+                            current_tool_calls[idx]["name"],
+                            tool_call_delta.name,
+                        )
+                    if tool_call_delta.arguments:
+                        current_tool_calls[idx]["arguments"] += (
+                            tool_call_delta.arguments
+                        )
 
             if current_tool_calls and finish_reason in {
                 "tool_calls",
