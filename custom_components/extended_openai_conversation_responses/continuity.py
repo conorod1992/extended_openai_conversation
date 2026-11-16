@@ -21,6 +21,7 @@ from .const import (
     CONVERSATION_CONTINUITY_DEVICE,
     CONVERSATION_CONTINUITY_HA_DEFAULT,
     CONVERSATION_CONTINUITY_USER,
+    DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
 )
 from .conversation_id_ownership import (
     conversation_id_is_owned,
@@ -255,6 +256,7 @@ class ConversationMemoryBundle:
     references: list[tuple[str, str]]
     selected_at: Any
     last_active: Any
+    timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES
 
 
 class ConversationContinuity:
@@ -671,13 +673,13 @@ class ConversationContinuity:
     ) -> list[tuple[str, str]] | None:
         """Load and touch a bundle without changing its selected references."""
         now = dt_util.utcnow()
-        cutoff = now - timedelta(minutes=timeout_minutes)
         async with self._lock:
-            self._prune_memory_bundles_locked(cutoff)
+            self._prune_memory_bundles_locked(now)
             bundle = self._memory_bundles.get(session_key)
             if bundle is None:
                 return None
             bundle.last_active = now
+            bundle.timeout_minutes = timeout_minutes
             return bundle.references.copy()
 
     async def async_set_memory_bundle(
@@ -685,15 +687,15 @@ class ConversationContinuity:
     ) -> list[tuple[str, str]]:
         """Store the first selection; concurrent later callers reuse it."""
         now = dt_util.utcnow()
-        cutoff = now - timedelta(minutes=timeout_minutes)
         async with self._lock:
-            self._prune_memory_bundles_locked(cutoff)
+            self._prune_memory_bundles_locked(now)
             existing = self._memory_bundles.get(session_key)
             if existing is not None:
                 existing.last_active = now
+                existing.timeout_minutes = timeout_minutes
                 return existing.references.copy()
             self._memory_bundles[session_key] = ConversationMemoryBundle(
-                references.copy(), now, now
+                references.copy(), now, now, timeout_minutes
             )
             return references.copy()
 
@@ -739,8 +741,9 @@ class ConversationContinuity:
             if not session.in_flight and session.last_active < cutoff:
                 self._remove_session_locked(key)
 
-    def _prune_memory_bundles_locked(self, cutoff: Any) -> None:
+    def _prune_memory_bundles_locked(self, now: Any) -> None:
         for key, bundle in list(self._memory_bundles.items()):
+            cutoff = now - timedelta(minutes=bundle.timeout_minutes)
             if bundle.last_active < cutoff:
                 del self._memory_bundles[key]
 
