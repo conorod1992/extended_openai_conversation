@@ -446,7 +446,12 @@ class UsageManager:
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
             self.totals.conversation_count += 1
-            await self._async_save_aggregates()
+            try:
+                await self._async_save_aggregates()
+            finally:
+                # Preserve this API's save errors and in-memory accounting;
+                # observers must see the changed counter even if saving fails.
+                self._notify()
 
     @asynccontextmanager
     async def async_run(

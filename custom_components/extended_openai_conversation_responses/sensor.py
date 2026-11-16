@@ -154,6 +154,7 @@ class UsageSensor(SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
     _attr_native_unit_of_measurement = "tokens"
+    _attr_should_poll = False
     # Backup restore can legitimately decrease this counter. A decrease is a
     # correction, not a new meter cycle whose entire value should be added.
     _attr_state_class: SensorStateClass | None = SensorStateClass.TOTAL
@@ -301,6 +302,8 @@ class LastResponseUsageSensor(UsageSensor):
 
     _attr_translation_key = "last_response_usage"
     _attr_state_class = None
+    # Run detail expires with time even without another accounting event.
+    _attr_should_poll = True
 
     def __init__(self, subentry: ConfigSubentry, usage: UsageManager) -> None:
         super().__init__(subentry, usage)

@@ -23,7 +23,15 @@ Each conversation-agent device has four disabled-by-default diagnostic entities:
 - **Usage this month** is derived from daily aggregates.
 - **Last response usage** contains the latest retained completed run's bounded token, request, model, duration, and success details. It has no value when run-detail retention is disabled, after that detail expires, or after a successful **Clear details**. A failed clear preserves the retained detail. Lifetime, Today, and This month aggregate sensors remain intact.
 
-No sensor is created per day, model, request, or transcript session. Updates are listener-driven and do not poll. The selectable management-panel history period does not change the Today or This month sensor periods.
+No sensor is created per day, model, request, or transcript session. Lifetime,
+Today, and This month update through accounting/restore listeners without polling.
+Today and This month also refresh at Home Assistant's local midnight, including
+across daylight-saving changes. Last response usage receives accounting updates
+and retains Home Assistant polling so an idle run that passes its retention limit
+loses its value even without further usage. It then has no token value or run
+attributes (Home Assistant displays an unknown state). This expiry may take up
+to the normal sensor polling interval. The selectable management-panel history
+period does not change the Today or This month sensor periods.
 
 Lifetime usage uses Home Assistant's `total` state class without `last_reset`.
 Restoring an older backup can reduce the lifetime counter; HA records that as a
