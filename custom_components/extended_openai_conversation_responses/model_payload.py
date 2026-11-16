@@ -30,6 +30,9 @@ Use knowledge_search, knowledge_list, and knowledge_get for deliberately maintai
 local reference information. For household layouts, inventories, procedures,
 equipment, appliance, network, or smart-home details, search rather than guess.
 Search the available knowledge sections with short, discriminative keywords or phrases.
+Each search result's start_character is a zero-based character cursor into the stored
+source at the selected chunk's start. Pass it directly to knowledge_get; it need not
+be the excerpt's first character or the query-match location.
 source_ids must be exact IDs returned by a Knowledge tool. Never invent an ID or
 substitute a title/category. If a search misses, retry once with broader/fewer
 keywords, such as a descriptive word such as "household" when appropriate. If the

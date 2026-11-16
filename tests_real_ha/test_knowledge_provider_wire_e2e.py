@@ -260,6 +260,7 @@ async def test_chat_knowledge_search_get_and_answer_cross_real_provider_wire(
     search_result = _chat_tool_result(wire.requests[1]["body"], _SEARCH_CALL_ID)
     assert len(search_result["results"]) == 1
     assert search_result["results"][0]["source_id"] == relevant.source_id
+    assert search_result["results"][0]["start_character"] == 0
     assert _RELEVANT_MARKER in search_result["results"][0]["excerpt"]
     assert _IRRELEVANT_MARKER not in json.dumps(search_result, ensure_ascii=False)
 
@@ -313,5 +314,6 @@ async def test_responses_knowledge_search_executes_through_real_sdk_wire(
     search_result = _responses_tool_result(wire.requests[1]["body"], _SEARCH_CALL_ID)
     assert len(search_result["results"]) == 1
     assert search_result["results"][0]["source_id"] == relevant.source_id
+    assert search_result["results"][0]["start_character"] == 0
     assert _RELEVANT_MARKER in search_result["results"][0]["excerpt"]
     assert _IRRELEVANT_MARKER not in json.dumps(search_result, ensure_ascii=False)

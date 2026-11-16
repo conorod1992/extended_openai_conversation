@@ -66,7 +66,7 @@ Safety glasses and ear defenders are in the PPE drawer.
 
 When the feature is On and the selected agent has at least one **available** source, the integration automatically supplies three built-in tools. They do not belong in custom-functions YAML.
 
-- `knowledge_search` searches titles, descriptions, and indexed content chunks of available sources. It returns bounded excerpts and source IDs, never whole large documents. Short subject keywords generally work better than full natural-language questions.
+- `knowledge_search` searches titles, descriptions, and indexed content chunks of available sources. It returns bounded excerpts, source IDs, and `start_character`, never whole large documents. The cursor is a zero-based character offset into the stored source at the selected chunk's start, directly usable with `knowledge_get`. Displayed chunk whitespace is trimmed, so this is not necessarily the excerpt's first character or the query-match location. Short subject keywords generally work better than full natural-language questions.
 - `knowledge_list` returns a bounded, pageable catalogue of available source IDs, titles, descriptions, character counts, and update times. Its optional query filters titles and descriptions, preserving identifiers such as `C++` and `C#`. Longer queries support partial-text matching; single-character queries match whole tokens. It never returns source content. The model can use it when a search fails or it does not know the terminology used by the library.
 - `knowledge_get` reads one available source by exact ID. It returns at most 20,000 characters and includes pagination fields so the model can request another section.
 

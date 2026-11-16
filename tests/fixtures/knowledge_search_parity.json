@@ -76,7 +76,8 @@
           "description": "Heating guide",
           "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
           "score": 14.561,
-          "updated_at": "2026-01-01T00:00:00+00:00"
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "garage",
@@ -84,7 +85,8 @@
           "description": "The door is in the garage",
           "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
           "score": 5.4878,
-          "updated_at": "2026-01-02T00:00:00+00:00"
+          "updated_at": "2026-01-02T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -102,7 +104,8 @@
           "description": "The door is in the garage",
           "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
           "score": 5.4878,
-          "updated_at": "2026-01-02T00:00:00+00:00"
+          "updated_at": "2026-01-02T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -124,7 +127,8 @@
           "description": "Heating guide",
           "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
           "score": 14.561,
-          "updated_at": "2026-01-01T00:00:00+00:00"
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "garage",
@@ -132,7 +136,8 @@
           "description": "The door is in the garage",
           "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
           "score": 5.4878,
-          "updated_at": "2026-01-02T00:00:00+00:00"
+          "updated_at": "2026-01-02T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -153,7 +158,8 @@
           "description": "Heating guide",
           "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
           "score": 9.8409,
-          "updated_at": "2026-01-01T00:00:00+00:00"
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "garage",
@@ -161,7 +167,8 @@
           "description": "The door is in the garage",
           "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
           "score": 1.4091,
-          "updated_at": "2026-01-02T00:00:00+00:00"
+          "updated_at": "2026-01-02T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -179,7 +186,8 @@
           "description": "The door is in the garage",
           "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
           "score": 1.4091,
-          "updated_at": "2026-01-02T00:00:00+00:00"
+          "updated_at": "2026-01-02T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -201,7 +209,8 @@
           "description": "Heating guide",
           "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
           "score": 9.8409,
-          "updated_at": "2026-01-01T00:00:00+00:00"
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "garage",
@@ -209,7 +218,8 @@
           "description": "The door is in the garage",
           "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
           "score": 1.4091,
-          "updated_at": "2026-01-02T00:00:00+00:00"
+          "updated_at": "2026-01-02T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -230,7 +240,8 @@
           "description": "The door is in the garage",
           "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
           "score": 30.0,
-          "updated_at": "2026-01-02T00:00:00+00:00"
+          "updated_at": "2026-01-02T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "off",
@@ -238,7 +249,8 @@
           "description": "Control guide",
           "excerpt": "Do not turn on the heating. Keep it switched off.",
           "score": 5.0,
-          "updated_at": "2026-01-07T00:00:00+00:00"
+          "updated_at": "2026-01-07T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "morph",
@@ -246,7 +258,8 @@
           "description": "Colour and color reference",
           "excerpt": "Schedule the lights. Scheduling timers controls the colours.",
           "score": 5.0,
-          "updated_at": "2026-01-05T00:00:00+00:00"
+          "updated_at": "2026-01-05T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "tools",
@@ -254,7 +267,8 @@
           "description": "Masonry wall tools",
           "excerpt": "Use the concrete wall drill; C++ and C# are different identifiers.",
           "score": 5.0,
-          "updated_at": "2026-01-03T00:00:00+00:00"
+          "updated_at": "2026-01-03T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "boiler",
@@ -262,7 +276,8 @@
           "description": "Heating guide",
           "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
           "score": 5.0,
-          "updated_at": "2026-01-01T00:00:00+00:00"
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -280,7 +295,8 @@
           "description": "Control guide",
           "excerpt": "Do not turn on the heating. Keep it switched off.",
           "score": 5.0,
-          "updated_at": "2026-01-07T00:00:00+00:00"
+          "updated_at": "2026-01-07T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "morph",
@@ -288,7 +304,8 @@
           "description": "Colour and color reference",
           "excerpt": "Schedule the lights. Scheduling timers controls the colours.",
           "score": 5.0,
-          "updated_at": "2026-01-05T00:00:00+00:00"
+          "updated_at": "2026-01-05T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "tools",
@@ -296,7 +313,8 @@
           "description": "Masonry wall tools",
           "excerpt": "Use the concrete wall drill; C++ and C# are different identifiers.",
           "score": 5.0,
-          "updated_at": "2026-01-03T00:00:00+00:00"
+          "updated_at": "2026-01-03T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -318,7 +336,8 @@
           "description": "The door is in the garage",
           "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
           "score": 30.0,
-          "updated_at": "2026-01-02T00:00:00+00:00"
+          "updated_at": "2026-01-02T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "boiler",
@@ -326,7 +345,8 @@
           "description": "Heating guide",
           "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
           "score": 5.0,
-          "updated_at": "2026-01-01T00:00:00+00:00"
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -347,7 +367,8 @@
           "description": "Control guide",
           "excerpt": "Do not turn on the heating. Keep it switched off.",
           "score": 5.95,
-          "updated_at": "2026-01-07T00:00:00+00:00"
+          "updated_at": "2026-01-07T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "boiler",
@@ -355,7 +376,8 @@
           "description": "Heating guide",
           "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
           "score": 1.2,
-          "updated_at": "2026-01-01T00:00:00+00:00"
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "garage",
@@ -363,7 +385,8 @@
           "description": "The door is in the garage",
           "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
           "score": 0.3,
-          "updated_at": "2026-01-02T00:00:00+00:00"
+          "updated_at": "2026-01-02T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -381,7 +404,8 @@
           "description": "Heating guide",
           "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
           "score": 1.2,
-          "updated_at": "2026-01-01T00:00:00+00:00"
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "garage",
@@ -389,7 +413,8 @@
           "description": "The door is in the garage",
           "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
           "score": 0.3,
-          "updated_at": "2026-01-02T00:00:00+00:00"
+          "updated_at": "2026-01-02T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -411,7 +436,8 @@
           "description": "Heating guide",
           "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
           "score": 1.2,
-          "updated_at": "2026-01-01T00:00:00+00:00"
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "start_character": 0
         },
         {
           "source_id": "garage",
@@ -419,7 +445,8 @@
           "description": "The door is in the garage",
           "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
           "score": 0.3,
-          "updated_at": "2026-01-02T00:00:00+00:00"
+          "updated_at": "2026-01-02T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -474,7 +501,8 @@
           "description": "Masonry wall tools",
           "excerpt": "Use the concrete wall drill; C++ and C# are different identifiers.",
           "score": 21.0,
-          "updated_at": "2026-01-03T00:00:00+00:00"
+          "updated_at": "2026-01-03T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -517,7 +545,8 @@
           "description": "Masonry wall tools",
           "excerpt": "Use the concrete wall drill; C++ and C# are different identifiers.",
           "score": 13.0,
-          "updated_at": "2026-01-03T00:00:00+00:00"
+          "updated_at": "2026-01-03T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -560,7 +589,8 @@
           "description": "O’Brien household guide",
           "excerpt": "Café water temperature 水温 should be warm.",
           "score": 21.0,
-          "updated_at": "2026-01-04T00:00:00+00:00"
+          "updated_at": "2026-01-04T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -603,7 +633,8 @@
           "description": "O’Brien household guide",
           "excerpt": "Café water temperature 水温 should be warm.",
           "score": 21.0,
-          "updated_at": "2026-01-04T00:00:00+00:00"
+          "updated_at": "2026-01-04T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -646,7 +677,8 @@
           "description": "Colour and color reference",
           "excerpt": "Schedule the lights. Scheduling timers controls the colours.",
           "score": 6.8,
-          "updated_at": "2026-01-05T00:00:00+00:00"
+          "updated_at": "2026-01-05T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },
@@ -689,7 +721,8 @@
           "description": "Colour and color reference",
           "excerpt": "Schedule the lights. Scheduling timers controls the colours.",
           "score": 6.0,
-          "updated_at": "2026-01-05T00:00:00+00:00"
+          "updated_at": "2026-01-05T00:00:00+00:00",
+          "start_character": 0
         }
       ]
     },

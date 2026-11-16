@@ -130,6 +130,7 @@ class SearchResult:
     excerpt: str
     score: float
     updated_at: str
+    start_character: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -673,6 +674,7 @@ class KnowledgeLibrary:
                     excerpt=chunk.text[:MAX_EXCERPT_CHARACTERS],
                     score=round(score, 4),
                     updated_at=source.updated_at,
+                    start_character=chunk.start,
                 )
             )
         return results
@@ -1005,7 +1007,13 @@ def knowledge_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "knowledge_search",
-                "description": "Search the local Knowledge Library.",
+                "description": (
+                    "Search the local Knowledge Library. Each result includes "
+                    "start_character, a zero-based character cursor into the stored "
+                    "source at the selected chunk's start, directly usable with "
+                    "knowledge_get. It need not locate the excerpt's first character "
+                    "or the query match."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1076,6 +1084,11 @@ def knowledge_tools() -> list[dict[str, Any]]:
                             "type": "integer",
                             "minimum": 0,
                             "default": 0,
+                            "description": (
+                                "Zero-based character cursor into the stored source. "
+                                "Use a search result's start_character or a page's "
+                                "next_start_character."
+                            ),
                         },
                         "max_characters": {
                             "type": "integer",
