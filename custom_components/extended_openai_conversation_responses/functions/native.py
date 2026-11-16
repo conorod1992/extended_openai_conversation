@@ -17,13 +17,7 @@ import yaml
 
 from homeassistant.components import automation, energy, recorder
 from homeassistant.config import AUTOMATION_CONFIG_PATH
-from homeassistant.const import (
-    ATTR_AREA_ID,
-    ATTR_DEVICE_ID,
-    ATTR_FLOOR_ID,
-    ATTR_LABEL_ID,
-    SERVICE_RELOAD,
-)
+from homeassistant.const import SERVICE_RELOAD
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import llm, target as target_helpers
@@ -31,6 +25,7 @@ import homeassistant.util.dt as dt_util
 
 from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
 from ..exceptions import CallServiceError, NativeNotFound
+from ..execution_arguments import SERVICE_TARGET_KEYS, prepare_service_target
 from ..execution_outcomes import owns_execution_receipts
 from ..function_execution import backend_failure
 from ..ha_actions import (
@@ -55,12 +50,6 @@ from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
 
-_INDIRECT_TARGET_KEYS = (
-    ATTR_DEVICE_ID,
-    ATTR_AREA_ID,
-    ATTR_FLOOR_ID,
-    ATTR_LABEL_ID,
-)
 _AUTOMATION_WRITE_LOCK_KEY = f"{DOMAIN}.automation_write_lock"
 _UNCONDITIONAL_WRITE = object()
 _MAX_STATISTIC_IDS = 100
@@ -446,15 +435,17 @@ class NativeFunction(Function):
         service: str | None = None,
     ) -> None:
         """Resolve indirect HA targets and enforce the exposed-entity boundary."""
-        selection = {
-            key: value if isinstance(value, list) else [value]
-            for key in _INDIRECT_TARGET_KEYS
-            if (value := service_data.get(key)) is not None
-        }
-        if service_data.get("entity_id"):
-            selection["entity_id"] = service_data["entity_id"]
+        selection = {}
+        for key in SERVICE_TARGET_KEYS:
+            values = prepare_service_target(service_data.get(key))
+            if values is not None and any(not isinstance(item, str) for item in values):
+                raise HomeAssistantError(f"{key} must be a string or list of strings")
+            if values:
+                selection[key] = values
         if not selection:
-            return
+            raise HomeAssistantError(
+                "Native service execution requires a nonempty target"
+            )
 
         referenced = target_helpers.async_extract_referenced_entity_ids(
             hass, target_helpers.TargetSelection(selection)
@@ -496,25 +487,13 @@ class NativeFunction(Function):
         domain = service_argument["domain"]
         service = service_argument["service"]
         service_data = dict(service_argument["service_data"])
-        entity_id = service_data.get("entity_id")
-        area_id = service_data.get("area_id")
-        device_id = service_data.get("device_id")
-        floor_id = service_data.get("floor_id")
-        label_id = service_data.get("label_id")
-
-        if (
-            entity_id is None
-            and area_id is None
-            and device_id is None
-            and floor_id is None
-            and label_id is None
-        ):
+        if not any(service_data.get(key) for key in SERVICE_TARGET_KEYS):
             raise CallServiceError(domain, service, service_data)
         if not hass.services.has_service(domain, service):
             raise ServiceNotFound(domain, service)
 
-        # Explicit entity IDs use the existing policy check. Resolve only indirect
-        # area/device/floor/label targets so those selectors cannot bypass it.
+        # All native selectors must resolve to exposed, participating entities.
+        # Keep this presence restriction out of trusted targetless HA actions.
         self.validate_service_targets(
             hass, service_data, exposed_entities, domain=domain, service=service
         )
