@@ -447,7 +447,7 @@
     },
     "guest_mode_update": {
       "name": "Update Guest Mode",
-      "description": "Set or replace the Guest Mode interval for a conversation agent. This trusted administrator action may shorten or move the interval.",
+      "description": "Replace the Guest Mode interval. Omitting the start means now; omitting the end means no expiry and removes any existing expiry. This trusted administrator action may shorten or move the interval.",
       "fields": {
         "config_entry": {
           "name": "Provider connection"
@@ -456,13 +456,16 @@
           "name": "Conversation agent"
         },
         "active_from": {
-          "name": "Start time"
+          "name": "Start time",
+          "description": "ISO 8601 start time. Omit to start now."
         },
         "active_until": {
-          "name": "End time"
+          "name": "End time",
+          "description": "ISO 8601 end time. Omit for no expiry, even when indefinite is false. Ignored when indefinite is true."
         },
         "indefinite": {
-          "name": "Indefinite"
+          "name": "Indefinite",
+          "description": "When true, overrides any supplied end. When false, supply an end for a finite interval."
         }
       }
     },

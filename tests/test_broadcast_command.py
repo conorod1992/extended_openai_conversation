@@ -27,6 +27,8 @@ from custom_components.extended_openai_conversation_responses.intercom import (
         ("Broadcast, dinner is ready", "dinner is ready"),
         ("Broadcast:dinner is ready", "dinner is ready"),
         ("Broadcast! that dinner is ready", "that dinner is ready"),
+        ("Broadcast that was brilliant", "that was brilliant"),
+        ("Broadcast everywhere is closed", "everywhere is closed"),
         ("Broadcast; dinner is ready in 10 minutes", "dinner is ready in 10 minutes"),
         (
             "Broadcast dinner is ready in ten minutes!",
