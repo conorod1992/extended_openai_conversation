@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from openai import AuthenticationError
 import pytest
+import voluptuous as vol
 
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.const import CONF_API_KEY, CONF_NAME
@@ -44,6 +45,79 @@ from custom_components.extended_openai_conversation_responses.const import (
 CONFIG_FLOW_MODULE = (
     "custom_components.extended_openai_conversation_responses.config_flow"
 )
+
+
+def _suggested_values(schema):
+    return {
+        str(key): key.description["suggested_value"]
+        for key in schema.schema
+        if key.description and "suggested_value" in key.description
+    }
+
+
+@pytest.mark.parametrize("provider,step,submitted,corrected", [
+    ("azure", "azure_credentials",
+     {CONF_API_KEY: "bad", CONF_BASE_URL: "https://azure.example/", CONF_API_VERSION: "2026-01-01"},
+     {CONF_API_KEY: "fixed", CONF_BASE_URL: "https://azure.example/", CONF_API_VERSION: "2026-01-01"}),
+    ("openai", "openai_credentials",
+     {CONF_API_KEY: "bad", "advanced_provider_settings": False},
+     {CONF_API_KEY: "fixed", "advanced_provider_settings": False}),
+    ("openai", "openai_advanced",
+     {CONF_API_KEY: "bad", CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_SKIP_AUTHENTICATION: True},
+     {CONF_API_KEY: "fixed", CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_SKIP_AUTHENTICATION: False}),
+    ("openai", "openai_advanced",
+     {CONF_API_KEY: "bad", CONF_BASE_URL: DEFAULT_CONF_BASE_URL, CONF_ORGANIZATION: "org", CONF_SKIP_AUTHENTICATION: False},
+     {CONF_API_KEY: "fixed", CONF_BASE_URL: DEFAULT_CONF_BASE_URL, CONF_ORGANIZATION: "", CONF_SKIP_AUTHENTICATION: True}),
+    ("openai", "openai_advanced",
+     {CONF_API_KEY: "bad", CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_SKIP_AUTHENTICATION: True},
+     {CONF_API_KEY: "fixed", CONF_SKIP_AUTHENTICATION: False}),
+    ("openai", "openai_advanced",
+     {CONF_API_KEY: "bad", CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_SKIP_AUTHENTICATION: True},
+     {CONF_SKIP_AUTHENTICATION: False}),
+])
+async def test_provider_retry_suggests_original_display_values_without_persisting_failures(
+    hass: HomeAssistant, provider, step, submitted, corrected,
+):
+    from custom_components.extended_openai_conversation_responses import config_flow
+
+    schemas = [config_flow.STEP_OPENAI_CREDENTIALS_SCHEMA, config_flow.STEP_OPENAI_ADVANCED_SCHEMA, config_flow.STEP_AZURE_CREDENTIALS_SCHEMA]
+    assert all(_suggested_values(schema) == {} for schema in schemas)
+    authenticate = AsyncMock(side_effect=[_authentication_error(), object()])
+    with patch(f"{CONFIG_FLOW_MODULE}.get_authenticated_client", authenticate):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        flow_id = result["flow_id"]
+        result = await hass.config_entries.flow.async_configure(flow_id, {CONF_NAME: "Retry", CONF_API_PROVIDER: provider})
+        if step == "openai_advanced":
+            result = await hass.config_entries.flow.async_configure(flow_id, {CONF_API_KEY: "initial", "advanced_provider_settings": True})
+        placeholders = result.get("description_placeholders")
+        result = await hass.config_entries.flow.async_configure(flow_id, dict(submitted))
+        assert result["step_id"] == step
+        assert result["errors"] == {"base": "invalid_auth"}
+        # The credentials form consumes its advanced switch before validation;
+        # False remains its declared default. All provider fields are suggested.
+        expected = {key: value for key, value in submitted.items() if key != "advanced_provider_settings"}
+        assert _suggested_values(result["data_schema"]) == expected
+        assert result.get("description_placeholders") == placeholders
+        assert all(_suggested_values(schema) == {} for schema in schemas)
+
+        independent = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        independent = await hass.config_entries.flow.async_configure(independent["flow_id"], {CONF_NAME: "Independent", CONF_API_PROVIDER: provider})
+        assert _suggested_values(independent["data_schema"]) == {}
+
+        result = await hass.config_entries.flow.async_configure(flow_id, dict(corrected))
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_API_KEY] == corrected.get(CONF_API_KEY, "initial")
+    for key in (CONF_API_VERSION, CONF_ORGANIZATION, CONF_SKIP_AUTHENTICATION):
+        if key in corrected:
+            assert result["data"][key] == corrected[key]
+        elif key == CONF_ORGANIZATION:
+            assert key not in result["data"]
+    if corrected.get(CONF_BASE_URL, DEFAULT_CONF_BASE_URL) == DEFAULT_CONF_BASE_URL:
+        assert CONF_BASE_URL not in result["data"]
+        assert authenticate.await_args.kwargs["base_url"] is None
+    else:
+        assert result["data"][CONF_BASE_URL] == corrected[CONF_BASE_URL]
+    assert config_flow.STEP_USER_DATA_SCHEMA.extra == vol.ALLOW_EXTRA
 
 
 def _subentry(subentry_type: str, title: str, data: dict | None = None) -> dict:

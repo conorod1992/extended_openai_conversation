@@ -249,6 +249,7 @@ async def test_openai_credentials_error_retry_preserves_help_placeholders() -> N
         hass=MagicMock(),
         _setup_data={CONF_NAME: "Assistant", CONF_API_PROVIDER: "openai"},
         async_show_form=MagicMock(side_effect=_sync_result),
+        add_suggested_values_to_schema=lambda schema, values: ExtendedOpenAIConversationConfigFlow.add_suggested_values_to_schema(flow, schema, values),
     )
     first = await ExtendedOpenAIConversationConfigFlow.async_step_openai_credentials(
         flow

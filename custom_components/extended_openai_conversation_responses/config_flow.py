@@ -459,6 +459,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         data_schema: vol.Schema,
     ) -> ConfigFlowResult:
         """Validate provider settings and create the parent plus default agents."""
+        display_values = dict(data)
         errors: dict[str, str] = {}
         try:
             await validate_input(self.hass, data)
@@ -494,9 +495,16 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                 ],
             )
 
+        # The helper rebuilds the schema. Keep the legacy user form's ALLOW_EXTRA
+        # policy intact, and never persist failed advanced values in _setup_data.
+        retry_schema = schema_for_ha(data_schema)
+        if step_id in {"openai_credentials", "openai_advanced", "azure_credentials"}:
+            retry_schema = self.add_suggested_values_to_schema(
+                retry_schema, display_values
+            )
         return self.async_show_form(
             step_id=step_id,
-            data_schema=schema_for_ha(data_schema),
+            data_schema=retry_schema,
             errors=errors,
             description_placeholders=(
                 dict(_OPENAI_CREDENTIAL_DESCRIPTION_PLACEHOLDERS)
