@@ -33,11 +33,13 @@ def prepare_service_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
             result[key] = name.lower()
     data = dict(result.get("service_data", result.get("data", {})))
     entity_id = data.get("entity_id", result.get("entity_id"))
+    if isinstance(entity_id, str):
+        entity_id = prepare_service_target(entity_id)
     if entity_id is not None:
         data["entity_id"] = entity_id
-    for key in SERVICE_TARGET_KEYS:
-        if key in data:
-            data[key] = prepare_service_target(data[key])
+    # Indirect selectors and entity-ID lists retain their handler-visible shape.
+    # Presence/authorization can normalize a selection, but replay identity must
+    # reflect the payload actually dispatched to arbitrary HA handlers.
     result.pop("data", None)
     result.pop("entity_id", None)
     result["service_data"] = data

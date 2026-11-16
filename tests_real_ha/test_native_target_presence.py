@@ -77,3 +77,4 @@ async def test_real_handler_target_presence_and_indirect_positive_controls(hass,
     )
     assert result["success"]
     assert len(calls) == 2
+    assert calls[-1][key] == ([targets[key]] if key == "entity_id" else targets[key])

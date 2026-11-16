@@ -103,11 +103,27 @@ def test_preparation_preserves_precedence_and_matches_replay():
     assert arguments == original
     assert prepared["service_data"] == {
         "entity_id": [],
-        "area_id": ["kitchen", "hall"],
-        "label_id": ["day", "evening"],
+        "area_id": " kitchen, hall ",
+        "label_id": ["day, evening", " "],
     }
     config = {"type": "native", "name": "execute_service_single"}
     assert execution_identity(config, arguments) == execution_identity(config, prepared)
+    # Arbitrary handlers distinguish indirect scalars/lists and raw list items.
+    # Do not collapse these observable differences in failed-continuation replay.
+    for key in SERVICE_TARGET_KEYS:
+        scalar = {
+            "domain": "test",
+            "service": "probe",
+            "service_data": {key: "kitchen"},
+        }
+        sequence = {
+            "domain": "test",
+            "service": "probe",
+            "service_data": {key: ["kitchen"]},
+        }
+        assert (
+            execution_identity(config, scalar) == execution_identity(config, sequence)
+        ) is (key == "entity_id")
     assert execution_identity(
         config, {"domain": "light", "service": "turn_on", "entity_id": "light.kitchen"}
     ) == execution_identity(

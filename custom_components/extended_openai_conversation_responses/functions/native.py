@@ -487,7 +487,9 @@ class NativeFunction(Function):
         domain = service_argument["domain"]
         service = service_argument["service"]
         service_data = dict(service_argument["service_data"])
-        if not any(service_data.get(key) for key in SERVICE_TARGET_KEYS):
+        if not any(
+            prepare_service_target(service_data.get(key)) for key in SERVICE_TARGET_KEYS
+        ):
             raise CallServiceError(domain, service, service_data)
         if not hass.services.has_service(domain, service):
             raise ServiceNotFound(domain, service)
