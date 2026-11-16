@@ -3286,7 +3286,15 @@
     "tests/test_openai_sdk_error_matrix.py::test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks[RemoteProtocolError-responses]",
     "tests/test_openai_sdk_error_matrix.py::test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks[RemoteProtocolError-chat_completions]",
     "tests/test_openai_sdk_error_matrix.py::test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks[ReadTimeout-responses]",
-    "tests/test_openai_sdk_error_matrix.py::test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks[ReadTimeout-chat_completions]"
+    "tests/test_openai_sdk_error_matrix.py::test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks[ReadTimeout-chat_completions]",
+    "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_speech_regressions_preserve_provider_history[escaped-punctuation-code]",
+    "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_speech_regressions_preserve_provider_history[setext-equals]",
+    "tests_real_ha/test_config_flow.py::test_provider_retry_suggests_original_display_values_without_persisting_failures[azure-azure_credentials-submitted0-corrected0]",
+    "tests_real_ha/test_config_flow.py::test_provider_retry_suggests_original_display_values_without_persisting_failures[openai-openai_advanced-submitted2-corrected2]",
+    "tests_real_ha/test_config_flow.py::test_provider_retry_suggests_original_display_values_without_persisting_failures[openai-openai_advanced-submitted3-corrected3]",
+    "tests_real_ha/test_config_flow.py::test_provider_retry_suggests_original_display_values_without_persisting_failures[openai-openai_advanced-submitted4-corrected4]",
+    "tests_real_ha/test_config_flow.py::test_provider_retry_suggests_original_display_values_without_persisting_failures[openai-openai_advanced-submitted5-corrected5]",
+    "tests_real_ha/test_config_flow.py::test_provider_retry_suggests_original_display_values_without_persisting_failures[openai-openai_credentials-submitted1-corrected1]"
   ],
   "browser": {
     "browser": [
