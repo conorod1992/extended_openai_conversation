@@ -104,11 +104,23 @@ def dispatch(workflow: str, inputs: dict[str, str]) -> dict:
     api("POST", f"actions/workflows/{workflow}/dispatches", payload)
     run = wait_for_run(workflow, dispatched_at)
     print(f"Dispatched {workflow}: {run['html_url']}", flush=True)
-    return {"workflow": workflow, "run_id": run["id"], "url": run["html_url"]}
+    return {
+        "workflow": workflow,
+        "run_id": run["id"],
+        "run_attempt": run["run_attempt"],
+        "url": run["html_url"],
+    }
 
 
 def run_status(item: dict) -> tuple[dict, dict]:
     run = api("GET", f"actions/runs/{item['run_id']}")
+    if (
+        run.get("head_sha") != TARGET_SHA
+        or run.get("head_branch") != REF_NAME
+        or run.get("event") != "workflow_dispatch"
+        or run.get("run_attempt") != item.get("run_attempt", 1)
+    ):
+        raise RuntimeError("Child source, branch, event or attempt differs from dispatch")
     return item, run
 
 
@@ -414,6 +426,8 @@ def main() -> int:
     lines = [
         "## Full validation",
         "",
+        f"Overall result: **{'FAILED' if failures else 'PASSED'}**",
+        "",
         f"Mode: **{MODE}**",
         f"Commit: `{TARGET_SHA}`",
         f"Home Assistant dev source: `{ha_dev_sha}`",
@@ -449,7 +463,7 @@ def main() -> int:
                 "prerequisites did not all succeed",
             )
             lines.append(f"| `{workflow}` | not dispatched | {error} |")
-    lines.extend(["", f"Temporary ref `{REF_NAME}` is removed by the cleanup job."])
+    lines.extend(["", f"Validation cohort: `{REF_NAME}`."])
     SUMMARY_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     # Persist the exact cohort even after its temporary branch is cleaned up.
     Path("full-validation-cohort.json").write_text(
@@ -478,6 +492,10 @@ def main() -> int:
         + "\n",
         encoding="utf-8",
     )
+    # Keep interrupted/unobservable cohorts available for diagnosis. Every
+    # ordinary terminal result, including failure, can release its isolated ref.
+    if all(run.get("status", "completed") == "completed" for _, run in results):
+        api("DELETE", f"git/refs/heads/{REF_NAME}")
     return 1 if failures else 0
 
 

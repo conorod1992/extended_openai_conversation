@@ -51,7 +51,10 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
             "duration_seconds": round(
                 monotonic() - getattr(item, "_enhanced_started", monotonic()), 3
             ),
-            "failure": str(failure.longrepr).splitlines()[-1] if failure else None,
+            # Keep the test location and assertion, not just the final line of
+            # a potentially enormous provider-payload diff. write_json still
+            # applies the normal redaction and 2,000-character bound.
+            "failure": "\n".join(str(failure.longrepr).splitlines()[:20]) if failure else None,
             "health": getattr(item, "_enhanced_health", None),
             "operations": getattr(item, "_enhanced_trace", []),
         },

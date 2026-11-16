@@ -190,6 +190,17 @@ async def test_malformed_embedding_wire_falls_back_and_recovers(
     ]
     assert agent._memory._hybrid_status["status"] == "lexical_fallback"
     assert not agent._memory._embedding_cache
+    # Malformed/transient providers enter a bounded retry cooldown. Prove that
+    # another lookup cannot hit the wire early, then cross that clock boundary
+    # deterministically before checking healthy semantic retrieval.
+    assert await agent._async_search_memories([_USER_ID], "Locate the credential", 1) == []
+    assert len(wire.requests) == failure_count
+    from custom_components.extended_openai_conversation_responses import (
+        memory as memory_module,
+    )
+
+    retry_at = agent._memory._hybrid_retry_at
+    monkeypatch.setattr(memory_module, "monotonic", lambda: retry_at)
     recovered = await agent._async_search_memories(
         [_USER_ID], "Locate the credential", 1
     )

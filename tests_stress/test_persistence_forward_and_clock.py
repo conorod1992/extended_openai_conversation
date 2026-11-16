@@ -35,8 +35,8 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.util import dt as dt_util
 from tests.test_usage_accounting_recovery import FakeStorage
 from tests_stress.conftest import record
-from tests_stress.test_temporary_memory_scale import MemoryStore
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
+from tests_stress.test_temporary_memory_scale import MemoryStore
 
 
 async def test_usage_buckets_survive_dst_folds_and_backward_clock_jump(
@@ -257,13 +257,18 @@ async def test_temporary_memory_forward_backward_jump_is_irreversible(
 
 @pytest.mark.parametrize("day", ["2026-03-29", "2026-10-25"])
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.usefixtures("real_store_io")
 async def test_populated_local_calendar_journey_preserves_visible_expiry_and_recovery(
-    hass, monkeypatch, freezer, real_store_io, stress_trace, day, api_mode
+    hass, monkeypatch, freezer, stress_trace, day, api_mode
 ):
     """One native runtime crosses DST, expiry, pruning and reload with visible effects."""
-    import json
     from collections import Counter
+    import json
     from pathlib import Path
+
+    from freezegun.api import real_monotonic
+
+    from custom_components.extended_openai_conversation_responses import delayed_tools
     from custom_components.extended_openai_conversation_responses.const import (
         DEFAULT_CONF_FUNCTION_TOOLS,
     )
@@ -280,20 +285,26 @@ async def test_populated_local_calendar_journey_preserves_visible_expiry_and_rec
     from homeassistant.core import Context
     from tests_real_ha.test_cross_feature_acceptance import _agent
     from tests_real_ha.test_delayed_tool_due_reauthorization import (
-        _schedule_delayed_call,
         _ENTITY_ID,
+        _schedule_delayed_call,
     )
     from tests_real_ha.test_provider_wire_e2e import (
-        _install_wire,
         _chat_sse_text,
+        _install_wire,
         _responses_sse_text,
         _speech,
     )
     from tests_real_ha.test_quiet_hours_scheduling import (
-        _install_satellite_entities,
         _install_control_services,
+        _install_satellite_entities,
     )
 
+    # Move wall time across DST while real asyncio deadlines keep progressing.
+    # A frozen loop clock prevents both the scheduler's recheck and wait_for's
+    # failure deadline from waking. Retain the actual worker and its due checks,
+    # with a short polling interval for this controlled-clock journey.
+    monkeypatch.setattr(hass.loop, "time", real_monotonic)
+    monkeypatch.setattr(delayed_tools, "_CLOCK_RECHECK_SECONDS", 0.01)
     base = datetime.fromisoformat(day).replace(tzinfo=UTC) + timedelta(minutes=15)
     freezer.move_to(base)
     await hass.config.async_set_time_zone("Europe/Dublin")
@@ -339,7 +350,9 @@ async def test_populated_local_calendar_journey_preserves_visible_expiry_and_rec
 
     hass.services.async_register("light", "turn_off", turn_off)
     delayed = await async_setup_delayed_tools(hass)
-    call_id = await _schedule_delayed_call(agent, delayed, user, "calendar-delayed")
+    # The effect is due when Guest Mode expires, rather than thirty seconds
+    # after setup (which is refused/expired before the one-hour clock jump).
+    call_id = await _schedule_delayed_call(agent, delayed, user, "calendar-delayed", delay_seconds=3600)
     scheduled_worker = delayed._tasks[call_id]
     assert not effects and hass.states.get(_ENTITY_ID).state == "on"
     expires = base + timedelta(hours=1)
@@ -467,6 +480,8 @@ async def test_populated_local_calendar_journey_preserves_visible_expiry_and_rec
         )
     finally:
         release_service.set()
+        if not scheduled_worker.done():
+            scheduled_worker.cancel()
         await asyncio.gather(scheduled_worker, return_exceptions=True)
         await quiet.async_shutdown()
         assert await hass.config_entries.async_unload(agent.entry.entry_id)

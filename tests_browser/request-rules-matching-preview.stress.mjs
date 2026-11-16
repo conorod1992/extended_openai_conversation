@@ -207,10 +207,12 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
 
     await panel.locator("#wording-add").click();
     invalidRow = panel.locator(".wording-group").last();
-    await invalidRow.locator(".wording-canonical").fill("activate");
-    await invalidRow.locator(".wording-alternatives").fill("switch on");
+    // Repeated canonical groups can extend the same equivalence class. Reuse
+    // an alternative under a different canonical phrase to create ambiguity.
+    await invalidRow.locator(".wording-canonical").fill("deactivate");
+    await invalidRow.locator(".wording-alternatives").fill("power on");
     await panel.locator("#save-page").click();
-    await expect(panel.locator("#toast")).toContainText("duplicate phrase");
+    await expect(panel.locator("#toast")).toContainText("ambiguous duplicate or normalized phrase");
     await expect(panel.locator(".save-bar")).toBeVisible();
     await invalidRow.locator(".wording-remove").click();
     // Removing the rejected row restores the already-saved draft: no Save

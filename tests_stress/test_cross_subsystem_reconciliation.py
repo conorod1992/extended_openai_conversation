@@ -44,6 +44,8 @@ async def test_management_runtime_and_durable_state_reconcile(
             "knowledge_enabled": True,
             "memory_mode": "manual",
             "memory_auto_retrieve_limit": 0,
+            "current_datetime_enabled": False,
+            "exposed_entities_enabled": False,
         },
     )
     await _setup_entry(hass, entry)

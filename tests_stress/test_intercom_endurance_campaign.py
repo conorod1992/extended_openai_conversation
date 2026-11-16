@@ -28,9 +28,14 @@ async def test_intercom_mixed_queue_survives_reload_failure_and_expiry(
     monkeypatch.setattr(intercom, "IDLE_STABILITY_SECONDS", 0)
     # The production expiry callback is invoked explicitly at the selected
     # boundary; no wall-clock TTL wait or lingering HA timer is needed.
-    monkeypatch.setattr(intercom, "async_call_later", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(intercom, "async_call_later", lambda *_args, **_kwargs: lambda: None)
     entry = _make_entry("Intercom endurance", include_ai_task=False)
     await _setup_entry(hass, entry)
+    # This campaign exercises an agent reload while shared global work remains
+    # owned. The last-entry shutdown contract deliberately expires that work
+    # and is covered by test_global_runtime_suspension instead.
+    keeper = _make_entry("Intercom global owner", include_ai_task=False)
+    await _setup_entry(hass, keeper)
     manager = await async_get_intercom(hass)
     await manager.async_set_enabled(True)
 

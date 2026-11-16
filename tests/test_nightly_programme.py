@@ -53,6 +53,46 @@ def test_programme_rejects_nonimmutable_expected_dev_source():
     assert programme_errors(SHA, "2026.9.4", [], {}, expected_ha_dev_sha="dev")
 
 
+@pytest.mark.parametrize("lane", ["2.21.0", "2.45.0", "3.10.0", "3.26.0"])
+@pytest.mark.parametrize("fault", [None, "ha", "sdk", "lane"])
+def test_sdk_programme_uses_each_reviewed_ha_snapshot(lane, fault):
+    from ci.enhanced_evidence import SCHEMA
+    from ci.release_certification import SUPPORTED_SDK_HA_VERSIONS
+
+    stable = "2026.11.1"
+    version = SUPPORTED_SDK_HA_VERSIONS[lane]
+    item = envelope() | {"schema": SCHEMA, "workflow_kind": "sdk", "lane": lane}
+    item["environment"]["packages"].update(
+        homeassistant=stable if version == "stable" else version, openai=lane
+    )
+    if fault == "ha":
+        item["environment"]["packages"]["homeassistant"] = "2026.6.0"
+    elif fault == "sdk":
+        item["environment"]["packages"]["openai"] = "3.27.0"
+    elif fault == "lane":
+        item["lane"] = "unreviewed"
+    item["environment_fingerprint"] = environment_fingerprint(item["environment"])
+    workflow = "openai-sdk-compatibility.yml"
+    evidence = {workflow: {
+        "run": {"head_sha": SHA, "status": "completed", "conclusion": "success"},
+        "envelopes": [item],
+    }}
+    assert bool(programme_errors(SHA, stable, [workflow], evidence)) is bool(fault)
+
+
+def test_reviewed_sdk_ha_snapshots_match_the_workflow_matrix():
+    from pathlib import Path
+
+    import yaml
+
+    from ci.release_certification import SUPPORTED_SDK_HA_VERSIONS, SUPPORTED_SDK_LANES
+
+    workflow = yaml.safe_load(Path(".github/workflows/openai-sdk-compatibility.yml").read_text(encoding="utf-8"))
+    matrix = next(job["strategy"]["matrix"]["include"] for job in workflow["jobs"].values() if "include" in job.get("strategy", {}).get("matrix", {}))
+    assert set(SUPPORTED_SDK_HA_VERSIONS) == set(SUPPORTED_SDK_LANES)
+    assert {row["sdk"]: row["ha"] for row in matrix if row["sdk"] in SUPPORTED_SDK_LANES} == SUPPORTED_SDK_HA_VERSIONS
+
+
 @pytest.mark.parametrize("field,value", [("homeassistant", "2026.9.3"), ("pytest-homeassistant-custom-component", "unexpected")])
 def test_version_guard_checks_execution_ledger_as_well_as_job_summary(field, value):
     summary = envelope()
@@ -114,7 +154,7 @@ def test_enhanced_nightly_requires_real_mariadb_and_postgresql_recorder():
 @pytest.mark.parametrize("arches", [["amd64"], ["amd64", "arm64"]])
 def test_collector_reads_current_official_artifacts_and_architecture_policy(monkeypatch, arches):
     from ci import nightly_programme
-    from tests.test_release_certification import FakeActions, SOURCE
+    from tests.test_release_certification import SOURCE, FakeActions
 
     actions = FakeActions()
     workflow = "official-ha-container.yml"
@@ -132,7 +172,7 @@ def test_collector_reads_current_official_artifacts_and_architecture_policy(monk
 @pytest.mark.parametrize("fault", ["missing", "expired", "empty", "skipped", "candidate"])
 def test_official_collector_rejects_invalid_evidence(monkeypatch, fault):
     from ci import nightly_programme
-    from tests.test_release_certification import FakeActions, SOURCE
+    from tests.test_release_certification import SOURCE, FakeActions
 
     actions = FakeActions()
     workflow = "official-ha-container.yml"
@@ -159,7 +199,7 @@ def test_official_collector_rejects_invalid_evidence(monkeypatch, fault):
 
 def test_full_validation_cohort_ignores_newer_daily_evidence(monkeypatch):
     from ci import nightly_programme
-    from tests.test_release_certification import FakeActions, SOURCE
+    from tests.test_release_certification import SOURCE, FakeActions
 
     actions = FakeActions()
     workflow = "official-ha-container.yml"

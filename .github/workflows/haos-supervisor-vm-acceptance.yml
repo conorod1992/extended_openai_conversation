@@ -43,26 +43,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          RELEASE_JSON="${RUNNER_TEMP}/haos-release.json"
-          curl -fsSL             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/vnd.github+json"             "https://api.github.com/repos/home-assistant/operating-system/releases/latest"             > "$RELEASE_JSON"
-
-          python3 - "$RELEASE_JSON" <<'PY' > "${RUNNER_TEMP}/haos-asset.txt"
-          import json
-          import sys
-
-          release = json.load(open(sys.argv[1], encoding="utf-8"))
-          matches = [
-              asset
-              for asset in release.get("assets", [])
-              if asset.get("name", "").startswith("haos_ova-")
-              and asset.get("name", "").endswith(".qcow2.xz")
-          ]
-          if len(matches) != 1:
-              raise SystemExit(f"Expected one HAOS OVA qcow2.xz asset, got {len(matches)}")
-          print(release["tag_name"])
-          print(matches[0]["browser_download_url"])
-          print(matches[0]["name"])
-          PY
+          # The latest release can target only a subset of boards. Resolve the
+          # newest stable release that actually ships this VM architecture.
+          python3 ci/resolve_haos_image.py > "${RUNNER_TEMP}/haos-asset.txt"
 
           mapfile -t HAOS_ASSET < "${RUNNER_TEMP}/haos-asset.txt"
           echo "version=${HAOS_ASSET[0]}" >> "$GITHUB_OUTPUT"

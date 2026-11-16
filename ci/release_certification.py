@@ -7,6 +7,7 @@ from io import BytesIO
 import json
 import os
 import sys
+import time
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -72,6 +73,13 @@ SCHEDULED_CERTIFICATION_WORKFLOWS = {
 }
 UPGRADE_EPOCHS = ("latest", "6.8.3", "6.8.2", "6.7.0", "6.5.0", "6.3.1", "6.2.0")
 SUPPORTED_SDK_LANES = ("2.21.0", "2.45.0", "3.10.0", "3.26.0")
+# Historical SDKs intentionally run against compatible historical HA snapshots.
+SUPPORTED_SDK_HA_VERSIONS = {
+    "2.21.0": "2026.7.0",
+    "2.45.0": "2026.8.0",
+    "3.10.0": "2026.10.0",
+    "3.26.0": "stable",
+}
 ADVISORY_SDK_LANE = "latest-3x-early-warning"
 HEAVY_CAMPAIGNS = (
     "runtime",
@@ -234,6 +242,24 @@ class _NoArtifactRedirect(HTTPRedirectHandler):
         return None
 
 
+def _open_evidence(request, opener=None):
+    """Retry transient GET failures while keeping unavailable evidence a failure."""
+    open_request = opener or urlopen
+    for attempt in range(5):
+        try:
+            return open_request(request, timeout=30)
+        except HTTPError as error:
+            if error.code not in {429, 500, 502, 503, 504} or attempt == 4:
+                raise
+            delay = min(30, 5 * 2**attempt)
+            retry_after = error.headers.get("Retry-After", "") if error.headers else ""
+            if retry_after.isdecimal():
+                delay = min(60, max(delay, int(retry_after)))
+            print(f"Retrying evidence download after HTTP {error.code} ({attempt + 2}/5)", file=sys.stderr, flush=True)
+            error.close()
+            time.sleep(delay)
+
+
 class GitHubActions:
     """Small, read-only GitHub Actions REST client."""
 
@@ -253,7 +279,7 @@ class GitHubActions:
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
-        with urlopen(request, timeout=30) as response:
+        with _open_evidence(request) as response:
             return json.load(response)
 
     def workflow_runs(self, filename: str, source_sha: str) -> tuple[int, list[dict]]:
@@ -299,7 +325,7 @@ class GitHubActions:
         )
         opener = build_opener(_NoArtifactRedirect())
         try:
-            response = opener.open(request, timeout=30)
+            response = _open_evidence(request, opener.open)
         except HTTPError as error:
             if error.code != 302:
                 raise
@@ -313,9 +339,7 @@ class GitHubActions:
                 or parsed.password
             ):
                 raise RuntimeError("Invalid artifact download redirect") from None
-            response = urlopen(
-                Request(location), timeout=30
-            )  # No authorization header.
+            response = _open_evidence(Request(location))  # No authorization header.
         with response:
             archive = response.read(32 * 1024 * 1024 + 1)
         if len(archive) > 32 * 1024 * 1024:

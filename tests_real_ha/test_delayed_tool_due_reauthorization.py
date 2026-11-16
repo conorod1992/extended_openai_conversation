@@ -82,6 +82,8 @@ async def _schedule_delayed_call(
     manager: DelayedToolManager,
     user: MockUser,
     call_id: str,
+    *,
+    delay_seconds: int = 30,
 ) -> str:
     """Schedule through the integration's effective configured-tool seam."""
     raw_tools = agent.subentry.data.get(CONF_FUNCTION_TOOLS)
@@ -93,12 +95,12 @@ async def _schedule_delayed_call(
     function_tool = next(
         tool for tool in configured if tool["spec"]["name"] == _TOOL_NAME
     )
-    before = set(manager._records)  # noqa: SLF001 - assert durable scheduler state
+    before = set(manager._records)
     tool_input = llm.ToolInput(
         id=call_id,
         tool_name=_TOOL_NAME,
         tool_args={
-            "delay": {"seconds": 30},
+            "delay": {"seconds": delay_seconds},
             "list": [
                 {
                     "domain": "light",
@@ -114,7 +116,7 @@ async def _schedule_delayed_call(
         device_id=_DEVICE_ID,
     )
 
-    result = await agent._execute_function_tool(  # noqa: SLF001
+    result = await agent._execute_function_tool(
         function_tool,
         tool_input,
         llm_context,
@@ -122,10 +124,10 @@ async def _schedule_delayed_call(
     )
 
     assert tool_result_data(result) == {"result": "Scheduled"}
-    created = set(manager._records) - before  # noqa: SLF001
+    created = set(manager._records) - before
     assert len(created) == 1
     delayed_call_id = created.pop()
-    record = manager._records[delayed_call_id]  # noqa: SLF001
+    record = manager._records[delayed_call_id]
     assert record.tool_name == _TOOL_NAME
     assert record.user_id == user.id
     assert record.device_id == _DEVICE_ID
@@ -137,7 +139,7 @@ async def _execute_now(
     hass: HomeAssistant, manager: DelayedToolManager, call_id: str, freezer
 ) -> None:
     """Advance to the actual due time; retain production time and lease checks."""
-    task = manager._tasks.get(call_id)  # noqa: SLF001
+    task = manager._tasks.get(call_id)
     if task is not None and not task.done():
         # Give the production waiter one event-loop turn so cancellation is handled
         # inside _async_wait_and_execute(). Cancelling a task before its coroutine has
@@ -147,18 +149,18 @@ async def _execute_now(
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
-    assert call_id not in manager._tasks  # noqa: SLF001
+    assert call_id not in manager._tasks
 
-    record = manager._records[call_id]  # noqa: SLF001
+    record = manager._records[call_id]
     due_at = dt_util.parse_datetime(record.due_at)
     assert due_at is not None
     freezer.move_to(due_at)
     gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
     async with gate.shared():
-        retry = await manager._async_execute_due(call_id)  # noqa: SLF001
+        retry = await manager._async_execute_due(call_id)
 
     assert retry is False
-    assert call_id not in manager._records  # noqa: SLF001
+    assert call_id not in manager._records
 
 
 async def test_delayed_native_tool_reauthorizes_live_user_when_due(
@@ -244,4 +246,4 @@ async def test_delayed_native_tool_reauthorizes_live_user_when_due(
     assert len(calls) == 1
     assert calls[0].data["entity_id"] == [_ENTITY_ID]
     assert calls[0].context.user_id == user.id
-    assert manager._records == {}  # noqa: SLF001
+    assert manager._records == {}

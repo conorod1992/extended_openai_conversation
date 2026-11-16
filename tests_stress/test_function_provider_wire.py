@@ -685,6 +685,8 @@ async def test_public_budget_loading_multicall_and_completed_replay(
     hass, monkeypatch, stress_trace, safe_batch
 ):
     """Loader exemption and request-local limits compose with completed-call refusal."""
+    from pytest_homeassistant_custom_component.common import MockUser
+
     from custom_components.extended_openai_conversation_responses.const import (
         CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     )
@@ -692,7 +694,6 @@ async def test_public_budget_loading_multicall_and_completed_replay(
         is_tool_result_content,
     )
     from tests_stress.test_function_provider_wire_remaining import _multicall_reply
-    from pytest_homeassistant_custom_component.common import MockUser
 
     owner = MockUser(id="budget-owner", name="Budget owner", is_owner=True).add_to_hass(
         hass
@@ -754,6 +755,16 @@ async def test_public_budget_loading_multicall_and_completed_replay(
     await _setup_entry(hass, entry)
     agent = conversation.async_get_agent(hass, entry.entry_id)
 
+    executions = []
+    execute = agent._execute_function_tool
+
+    async def observed_execute(function_tool, tool_input, *args):
+        if tool_input.tool_name.startswith("budget_"):
+            executions.append(tool_input.tool_name)
+        return await execute(function_tool, tool_input, *args)
+
+    monkeypatch.setattr(agent, "_execute_function_tool", observed_execute)
+
     async def say(cid=None):
         return await conversation.async_converse(
             hass=hass,
@@ -774,13 +785,20 @@ async def test_public_budget_loading_multicall_and_completed_replay(
                 API_MODE_CHAT_COMPLETIONS,
                 [("batch-a", "budget_a", {}), ("batch-b", "budget_b", {})],
             ),
+            _chat_sse_text("Function call limit reached"),
         ],
     )
     ledger = []
     failed = await say()
-    assert failed.response.error_code is not None
-    assert "Function call limit" in str(failed.response.as_dict())
-    assert len(wire.requests) == 3
+    # Budget refusals are returned as tool results so the model can finish the
+    # response. They still prohibit every over-budget physical execution.
+    assert _speech(failed) == "Function call limit reached"
+    refusal = next(message for message in wire.requests[-1]["body"]["messages"] if message.get("tool_call_id") == "batch-b")
+    assert json.loads(refusal["content"])["result"] == {
+        "status": "not_executed", "reason": "not executed: request Function Tool limit reached",
+    }
+    assert executions == ["budget_warm", "budget_a"]
+    assert len(wire.requests) == 4
     ledger.append({"requests": len(wire.requests), "effects": len(effects)})
     assert effects == (["warm"] if safe_batch else ["warm", "a"])
     assert results == ["load", "warm", "batch-a", "batch-b"]
@@ -808,6 +826,7 @@ async def test_public_budget_loading_multicall_and_completed_replay(
     assert replayed.response.error_code is not None
     assert "completed tool call" in str(replayed.response.as_dict())
     assert effects == before
+    assert executions == ["budget_warm", "budget_a", "budget_warm"]
     assert len(wire.requests) == 1
     ledger.append({"requests": len(wire.requests), "effects": len(effects)})
     wire = _install_wire(
@@ -825,11 +844,12 @@ async def test_public_budget_loading_multicall_and_completed_replay(
         ],
     )
     assert _speech(await say()) == "Fresh budget healthy"
-    assert effects == (before if safe_batch else before + ["a", "b"])
+    assert effects == (before if safe_batch else [*before, "a", "b"])
+    assert executions == ["budget_warm", "budget_a", "budget_warm", "budget_a", "budget_b"]
     assert len(wire.requests) == 3
     ledger.append({"requests": len(wire.requests), "effects": len(effects)})
-    assert ledger == [{"requests": requests, "effects": completed} for requests, completed in zip([3, 3, 1, 3], [1, 2, 2, 2] if safe_batch else [2, 3, 3, 5], strict=True)]
-    assert sum(row["requests"] for row in ledger) == 10
+    assert ledger == [{"requests": requests, "effects": completed} for requests, completed in zip([4, 3, 1, 3], [1, 2, 2, 2] if safe_batch else [2, 3, 3, 5], strict=True)]
+    assert sum(row["requests"] for row in ledger) == 11
     record(
         stress_trace,
         "summary",
@@ -848,16 +868,17 @@ async def test_api_transition_continues_completed_tool_history_without_replay(
     hass, monkeypatch, stress_trace, initial
 ):
     """A live API transition retains protocol-valid completed tool history."""
+    from pytest_homeassistant_custom_component.common import MockUser
+
     from custom_components.extended_openai_conversation_responses.const import (
         CONF_CONVERSATION_CONTINUITY,
         CONVERSATION_CONTINUITY_USER,
     )
-    from pytest_homeassistant_custom_component.common import MockUser
-    from tests_stress.test_function_provider_wire_remaining import _provider_replies
-    from tests_real_ha.test_provider_wire_e2e import _responses_sse_text
     from custom_components.extended_openai_conversation_responses.live_subentry_updates import (
         update_live_subentry,
     )
+    from tests_real_ha.test_provider_wire_e2e import _responses_sse_text
+    from tests_stress.test_function_provider_wire_remaining import _provider_replies
 
     owner = MockUser(id="api-switch-owner", is_owner=True).add_to_hass(hass)
     effects = []
@@ -899,7 +920,7 @@ async def test_api_transition_continues_completed_tool_history_without_replay(
             agent_id=entry.entry_id,
         )
 
-    wire = _install_wire(
+    _install_wire(
         monkeypatch,
         agent,
         _provider_replies(

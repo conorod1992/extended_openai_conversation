@@ -105,9 +105,7 @@ def test_haos_vm_workflow_boots_official_qcow2_with_supervisor_appliance_boundar
 ):
     text = WORKFLOW.read_text(encoding="utf-8")
 
-    assert "home-assistant/operating-system/releases/latest" in text
-    assert 'startswith("haos_ova-")' in text
-    assert ".qcow2.xz" in text
+    assert "python3 ci/resolve_haos_image.py" in text
     assert "qemu-system-x86_64" in text
     assert "OVMF_CODE" in text
     assert "config.img" in text

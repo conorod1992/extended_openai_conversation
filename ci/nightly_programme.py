@@ -15,13 +15,13 @@ from ci.release_certification import (
     MUTATION_CAMPAIGNS,
     REQUIRED_WORKFLOWS,
     SPECIALIST_CERTIFICATION_WORKFLOWS,
+    SUPPORTED_SDK_HA_VERSIONS,
     SUPPORTED_SDK_LANES,
     UPGRADE_EPOCHS,
     GitHubActions,
     matrix_envelope_errors,
     official_container_errors,
 )
-
 from ci.specialist_evidence import collect_specialist, specialist_errors
 
 WORKFLOWS = REQUIRED_WORKFLOWS
@@ -67,7 +67,16 @@ def programme_errors(candidate_sha, stable_version, required, evidence, *, full_
             if envelope.get("status") != "success":
                 errors.append(f"{workflow}: unsuccessful evidence envelope")
             errors += [f"{workflow}: {error}" for error in check_candidate(envelope, candidate_sha, execution=bool(envelope.get("execution_runs")))]
-            if envelope.get("ha_point") not in {"oldest", "dev"}:
+            if workflow == "openai-sdk-compatibility.yml":
+                lane = envelope.get("lane")
+                intended_ha = SUPPORTED_SDK_HA_VERSIONS.get(lane)
+                if intended_ha is None:
+                    errors.append(f"{workflow}: unreviewed SDK lane {lane}")
+                else:
+                    errors += matrix_envelope_errors(envelope, candidate_sha, "sdk", lane)
+                    version = stable_version if intended_ha == "stable" else intended_ha
+                    errors += [f"{workflow}: {error}" for error in check_ha_environment(envelope, version=version)]
+            elif envelope.get("ha_point") not in {"oldest", "dev"}:
                 errors += [f"{workflow}: {error}" for error in check_ha_environment(envelope, version=stable_version)]
             elif envelope.get("ha_point") == "dev":
                 source = envelope.get("environment", {}).get("homeassistant_source_commit")
@@ -187,6 +196,9 @@ def main():
     except (RuntimeError, OSError, ValueError, KeyError) as error:
         evidence, errors = {}, [str(error)]
     args.output.write_text(json.dumps({"candidate_sha": args.candidate, "ha_version": args.ha_version, "ha_dev_sha": args.ha_dev_sha, "passed": not errors, "errors": errors, "workflows": evidence}, indent=2) + "\n", encoding="utf-8")
+    print("Programme certification: " + ("FAILED" if errors else "PASSED"), flush=True)
+    for error in errors:
+        print(f"- {error}", flush=True)
     return int(bool(errors))
 
 
