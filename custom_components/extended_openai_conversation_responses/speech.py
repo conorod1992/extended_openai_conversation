@@ -849,6 +849,26 @@ class StreamingSpeechSanitizer:
                 if end == len(text) and not final:
                     break
                 count = end - index
+                # Inspect the original source before link removal/formatting can
+                # manufacture a line-start fence. Only a bounded genuine block
+                # opener may lose its info string; inline backticks stay literal.
+                if (
+                    not self._link_code
+                    and count >= 3
+                    and not self._original_prefix_complete
+                    and len(self._original_line_prefix) <= 3
+                    and not self._original_line_prefix.strip(" ")
+                ):
+                    newline = text.find("\n", end, index + self.max_buffer_chars + 1)
+                    info_end = newline if newline >= 0 else len(text)
+                    if "`" not in text[end:info_end]:
+                        if newline >= 0:
+                            self._link_code = count
+                            self._emit(output, text[index:end])
+                            index = newline
+                            continue
+                        if not final and len(text) - index <= self.max_buffer_chars:
+                            break
                 if not self._link_code:
                     self._link_code = count
                 elif count == self._link_code:
