@@ -168,8 +168,54 @@
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."
+        },
+    "broadcast": {
+      "name": "Diffuser un message vocal",
+      "description": "Envoyer une annonce TTS aux satellites Assist sélectionnés sans interrompre les sessions vocales en cours. La diffusion doit d’abord être activée dans Extended OpenAI.",
+      "fields": {
+        "message": {
+          "name": "Message",
+          "description": "Texte de l’annonce."
+        },
+        "whole_home": {
+          "name": "Toute la maison",
+          "description": "Envoyer à tous les satellites Assist capables de diffuser des annonces, sauf celui d’origine."
+        },
+        "entity_id": {
+          "name": "Satellites Assist",
+          "description": "Une ou plusieurs entités de satellite Assist."
+        },
+        "device_id": {
+          "name": "Appareils",
+          "description": "Appareils dont les satellites Assist doivent recevoir l’annonce."
+        },
+        "area_id": {
+          "name": "Zones",
+          "description": "Zones dont les satellites Assist doivent recevoir l’annonce."
+        },
+        "floor_id": {
+          "name": "Étages",
+          "description": "Étages dont les satellites Assist doivent recevoir l’annonce."
+        },
+        "label_id": {
+          "name": "Étiquettes",
+          "description": "Étiquettes dont les satellites Assist doivent recevoir l’annonce."
+        },
+        "ttl_seconds": {
+          "name": "Expiration de la file",
+          "description": "Délai maximal en secondes avant la livraison à un satellite occupé."
         }
+      }
     },
+    "enable_quiet_hours": {
+      "name": "Activer le programme des heures calmes",
+      "description": "Activer le programme enregistré des heures calmes. Si une période est prévue maintenant, elle commence immédiatement."
+    },
+    "disable_quiet_hours": {
+      "name": "Désactiver le programme des heures calmes",
+      "description": "Désactiver le programme enregistré des heures calmes. Les réglages des haut-parleurs et du mot d’activation modifiés par les heures calmes sont restaurés s’ils n’ont pas été modifiés depuis."
+    }
+  },
     "options": {
         "step": {
             "init": {

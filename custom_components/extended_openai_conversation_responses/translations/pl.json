@@ -168,8 +168,54 @@
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."
+        },
+    "broadcast": {
+      "name": "Nadaj wiadomość głosową",
+      "description": "Wyślij komunikat TTS do wybranych satelitów Assist bez przerywania trwających sesji głosowych. Nadawanie trzeba najpierw włączyć w Extended OpenAI.",
+      "fields": {
+        "message": {
+          "name": "Wiadomość",
+          "description": "Tekst komunikatu."
+        },
+        "whole_home": {
+          "name": "Cały dom",
+          "description": "Wyślij do wszystkich satelitów Assist obsługujących komunikaty, z wyjątkiem satelity źródłowego."
+        },
+        "entity_id": {
+          "name": "Satelity Assist",
+          "description": "Co najmniej jedna encja satelity Assist."
+        },
+        "device_id": {
+          "name": "Urządzenia",
+          "description": "Urządzenia, których satelity Assist mają otrzymać komunikat."
+        },
+        "area_id": {
+          "name": "Obszary",
+          "description": "Obszary, których satelity Assist mają otrzymać komunikat."
+        },
+        "floor_id": {
+          "name": "Piętra",
+          "description": "Piętra, których satelity Assist mają otrzymać komunikat."
+        },
+        "label_id": {
+          "name": "Etykiety",
+          "description": "Etykiety, których satelity Assist mają otrzymać komunikat."
+        },
+        "ttl_seconds": {
+          "name": "Wygaśnięcie kolejki",
+          "description": "Maksymalny czas oczekiwania na dostarczenie do zajętego satelity, w sekundach."
         }
+      }
     },
+    "enable_quiet_hours": {
+      "name": "Włącz harmonogram godzin ciszy",
+      "description": "Włącz zapisany harmonogram godzin ciszy. Jeśli godziny ciszy są zaplanowane na teraz, rozpoczną się natychmiast."
+    },
+    "disable_quiet_hours": {
+      "name": "Wyłącz harmonogram godzin ciszy",
+      "description": "Wyłącz zapisany harmonogram godzin ciszy. Ustawienia głośników i słowa wybudzającego zmienione przez godziny ciszy zostaną przywrócone, jeśli od tego czasu nie były zmieniane."
+    }
+  },
     "options": {
         "step": {
             "init": {

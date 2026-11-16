@@ -168,8 +168,54 @@
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."
+        },
+    "broadcast": {
+      "name": "음성 메시지 방송",
+      "description": "진행 중인 음성 세션을 중단하지 않고 선택한 Assist 위성에 TTS 안내를 보냅니다. 먼저 Extended OpenAI에서 방송을 활성화해야 합니다.",
+      "fields": {
+        "message": {
+          "name": "메시지",
+          "description": "안내할 텍스트입니다."
+        },
+        "whole_home": {
+          "name": "집 전체",
+          "description": "안내를 지원하는 모든 Assist 위성에 발신 위성을 제외하고 보냅니다."
+        },
+        "entity_id": {
+          "name": "Assist 위성",
+          "description": "하나 이상의 Assist 위성 엔터티입니다."
+        },
+        "device_id": {
+          "name": "기기",
+          "description": "안내를 받을 Assist 위성이 있는 기기입니다."
+        },
+        "area_id": {
+          "name": "구역",
+          "description": "안내를 받을 Assist 위성이 있는 구역입니다."
+        },
+        "floor_id": {
+          "name": "층",
+          "description": "안내를 받을 Assist 위성이 있는 층입니다."
+        },
+        "label_id": {
+          "name": "레이블",
+          "description": "안내를 받을 Assist 위성에 지정된 레이블입니다."
+        },
+        "ttl_seconds": {
+          "name": "대기열 만료 시간",
+          "description": "사용 중인 위성에 전달하기 위해 기다리는 최대 시간(초)입니다."
         }
+      }
     },
+    "enable_quiet_hours": {
+      "name": "방해 금지 시간 일정 활성화",
+      "description": "저장된 방해 금지 시간 일정을 켭니다. 현재가 예정된 방해 금지 시간이면 즉시 시작합니다."
+    },
+    "disable_quiet_hours": {
+      "name": "방해 금지 시간 일정 비활성화",
+      "description": "저장된 방해 금지 시간 일정을 끕니다. 방해 금지 시간에 의해 변경된 스피커 및 호출어 설정은 이후에 다시 변경되지 않은 경우 복원됩니다."
+    }
+  },
     "options": {
         "step": {
             "init": {
