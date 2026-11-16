@@ -21,10 +21,9 @@ MARKER = """    // MARK: - Helpers
 HELPERS = r'''
     private func openExtendedOpenAIAndEditAgent() {
         let settings = webElement(labelContaining: "settings")
-        tapWebElement(
-            labelContaining: "sidebar toggle",
+        tapEOAIElement(
+            webElement(labelContaining: "sidebar toggle"),
             until: settings,
-            timeout: Timeout.frontend,
             "frontend sidebar"
         )
 
@@ -39,14 +38,7 @@ HELPERS = r'''
             sidebarScrolls += 1
         }
         XCTAssertTrue(extendedOpenAI.isHittable, "Extended OpenAI sidebar entry stayed off-screen")
-        extendedOpenAI.tap()
-
         let webView = app.webViews.firstMatch
-        let heading = webView.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS[c] %@", "Extended OpenAI"))
-            .firstMatch
-        wait(for: heading, timeout: Timeout.frontend, "Extended OpenAI management panel")
-
         // Mobile navigation is a native select named Page. A loose "assistant"
         // match instead opens the separate Editing assistant select on Overview.
         // WebKit exposes an HTML select as Button or Other across iOS builds.
@@ -55,17 +47,17 @@ HELPERS = r'''
         let pageSelector = webView.descendants(matching: .any)
             .matching(NSPredicate(format: "label == %@ AND value == %@", "Page", "Overview"))
             .firstMatch
-        wait(for: pageSelector, timeout: Timeout.frontend, "EOAI Page selector")
-        pageSelector.tap()
+        // A late native permission sheet can swallow the sidebar tap. The
+        // sidebar label is not proof that the management panel actually opened.
+        tapEOAIElement(extendedOpenAI, until: pageSelector, "Extended OpenAI management panel")
         let assistantPage = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label == %@", "Assistant"))
             .firstMatch
-        wait(for: assistantPage, timeout: Timeout.frontend, "EOAI Assistant page option")
-        assistantPage.tap()
+        tapEOAIElement(pageSelector, until: assistantPage, "EOAI Assistant page option")
         let selectedAssistantPage = webView.descendants(matching: .any)
             .matching(NSPredicate(format: "label == %@ AND value == %@", "Page", "Assistant"))
             .firstMatch
-        wait(for: selectedAssistantPage, timeout: Timeout.frontend, "selected EOAI Assistant page")
+        tapEOAIElement(assistantPage, until: selectedAssistantPage, "selected EOAI Assistant page")
         let basics = webElement(labelContaining: "basics")
         if basics.waitForExistence(timeout: Timeout.optional) && basics.isHittable {
             basics.tap()
@@ -128,11 +120,28 @@ HELPERS = r'''
         wait(for: savedField, timeout: Timeout.frontend, "saved EOAI Agent name")
     }
 
-    private func dismissLateNotificationAlert() {
+    private func tapEOAIElement(_ element: XCUIElement, until target: XCUIElement, _ description: String) {
+        let deadline = Date().addingTimeInterval(Timeout.frontend)
+        repeat {
+            dismissLateNotificationPrompts()
+            if target.exists && target.isHittable { return }
+            if element.exists && element.isHittable { element.tap() }
+            if isHittable(target, within: Timeout.optional) { return }
+        } while Date() < deadline
+        XCTFail("The \(description) did not open after handling notification prompts")
+    }
+
+    @discardableResult
+    private func dismissLateNotificationPrompts(waitForAlert: TimeInterval = 0) -> Bool {
+        let request = app.buttons[.notificationPermissionRequestPrimary]
+        if request.exists {
+            grantNotificationPermission()
+            return true
+        }
         let alert = springboard.alerts
             .matching(NSPredicate(format: "label CONTAINS[c] %@", "Would Like to Send You Notifications"))
             .firstMatch
-        guard alert.waitForExistence(timeout: Timeout.optional) else { return }
+        guard alert.waitForExistence(timeout: waitForAlert) else { return false }
         let allow = alert.buttons["Allow"]
         wait(for: allow, timeout: Timeout.screen, "notification permission Allow button")
         allow.tap()
@@ -140,6 +149,11 @@ HELPERS = r'''
             alert.waitForNonExistence(timeout: Timeout.screen),
             "Notification permission alert stayed on screen"
         )
+        return true
+    }
+
+    private func dismissLateNotificationAlert() {
+        guard dismissLateNotificationPrompts(waitForAlert: Timeout.optional) else { return }
         // The permission sheet may have consumed the original field tap.
         app.webViews.firstMatch.textFields
             .matching(NSPredicate(format: "label == %@", "Agent name"))

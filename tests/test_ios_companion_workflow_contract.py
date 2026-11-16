@@ -119,6 +119,13 @@ def test_ios_e2e_patcher_extends_the_upstream_onboarding_test():
     )
     assert 'NSPredicate(format: "label == %@", "Assistant")' in patcher
     assert 'tapWebElement(labelContaining: "assistant"' not in patcher
+    assert 'tapEOAIElement(extendedOpenAI, until: pageSelector' in patcher
+    assert 'tapEOAIElement(pageSelector, until: assistantPage' in patcher
+    assert 'tapEOAIElement(assistantPage, until: selectedAssistantPage' in patcher
+    assert 'let request = app.buttons[.notificationPermissionRequestPrimary]' in patcher
+    assert 'if request.exists {\n            grantNotificationPermission()' in patcher
+    assert 'dismissLateNotificationPrompts(waitForAlert: Timeout.optional)' in patcher
+    assert 'let heading = webView.descendants' not in patcher
 
 
 def test_ios_companion_caches_expensive_build_state_across_retries():
