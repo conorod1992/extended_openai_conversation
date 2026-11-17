@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -98,87 +99,96 @@ def programme_errors(candidate_sha, stable_version, required, evidence, *, full_
 
 
 def collect(actions, candidate_sha, *, validation_ref=None):
-    evidence = {}
-    for workflow in WORKFLOWS:
-        workflow_id, runs = actions.workflow_runs(workflow, candidate_sha)
-        candidates = [run for run in runs if run.get("workflow_id") == workflow_id and run.get("head_sha") == candidate_sha and run.get("status") == "completed" and run.get("conclusion") == "success" and run.get("event") in {"push", "schedule", "workflow_dispatch"} and (not validation_ref or run.get("head_branch") == validation_ref)]
-        if not candidates:
-            continue
-        run = candidates[0]
-        artifacts = actions.run_artifacts(run["id"])
-        envelopes = []
-        isolated = []
-        official = {}
-        specialist = None
-        if workflow == "mutation.yml":
-            jobs = actions.run_jobs(run["id"])
-            successful = {
-                job.get("name")
-                for job in jobs
-                if job.get("conclusion") == "success"
-            }
-            required = {
-                f"Mutation campaign ({campaign})"
-                for campaign in MUTATION_CAMPAIGNS
-            }
-            if not required <= successful:
-                raise RuntimeError("Nightly mutation campaign inventory is incomplete")
-        if workflow == "enhanced-stress.yml":
-            indexes = [artifact for artifact in artifacts if artifact["name"].startswith("certification-index-")]
-            if len(indexes) != 1:
-                raise RuntimeError("Exactly one Enhanced index is required")
-            index = actions.artifact_json(indexes[0], "certification-final.json")
-            if index.get("passed") is not True or index.get("candidate_sha") != candidate_sha or index.get("selected") != "all" or index.get("execution_errors") or index.get("identity_errors"):
-                raise RuntimeError("Enhanced programme evidence was rejected")
-            envelopes = index["jobs"]
-            required_campaigns = {*HEAVY_CAMPAIGNS, "browser", "browser-firefox", "browser-webkit", "lifecycle-matrix"}
-            if not required_campaigns <= {item.get("campaign") for item in envelopes}:
-                raise RuntimeError("Enhanced programme inventory is incomplete")
-        elif workflow in {"upgrade-acceptance.yml", "openai-sdk-compatibility.yml"}:
-            kind = "upgrade" if workflow == "upgrade-acceptance.yml" else "sdk"
-            for lane in UPGRADE_EPOCHS if kind == "upgrade" else SUPPORTED_SDK_LANES:
-                selected = [artifact for artifact in artifacts if artifact["name"] == f"{kind}-evidence-{lane}"]
-                if len(selected) != 1:
-                    raise RuntimeError(f"Missing {kind} evidence for {lane}")
-                envelope = actions.artifact_json(selected[0], "workflow-evidence.json")
-                errors = matrix_envelope_errors(envelope, candidate_sha, kind, lane)
-                if errors:
-                    raise RuntimeError("; ".join(errors))
-                envelopes.append(envelope)
-        elif workflow == "ha-browser-compatibility.yml":
-            for point in ("oldest", "stable", "dev"):
-                selected = [artifact for artifact in artifacts if artifact["name"] == f"ha-native-browser-{point}-chromium"]
-                if len(selected) != 1:
-                    raise RuntimeError(f"Missing native browser evidence for {point}")
-                envelopes.append(actions.artifact_json(selected[0], "certification.json"))
-        if workflow == "deployment-architecture.yml":
-            for architecture in ("x86_64-native", "arm64-native"):
-                selected = [artifact for artifact in artifacts if artifact["name"] == f"isolated-deployment-{architecture}"]
-                if len(selected) != 1:
-                    raise RuntimeError(f"Missing isolated runtime evidence for {architecture}")
-                isolated.append(actions.artifact_json(selected[0], "certification.json"))
-        if workflow in SPECIALIST_CERTIFICATION_WORKFLOWS:
-            specialist = collect_specialist(actions, artifacts, actions.run_jobs(run["id"]), workflow, candidate_sha, run)
-        if workflow == "official-ha-container.yml":
-            jobs = actions.run_jobs(run["id"])
-            for arch in ("amd64", "arm64"):
-                selected = [artifact for artifact in artifacts if artifact["name"] == f"official-ha-container-{arch}-evidence"]
-                if arch == "arm64" and not selected:
-                    continue
-                if len(selected) != 1 or selected[0].get("expired") or selected[0].get("size_in_bytes", 1) <= 0:
-                    raise RuntimeError(f"Missing official HA Container evidence for {arch}")
-                if not any(job.get("name") == f"Official HA Container runtime ({arch})" and job.get("conclusion") == "success" for job in jobs):
-                    raise RuntimeError(f"Official HA Container {arch} job did not succeed")
-                official[arch] = actions.artifact_json(selected[0], "certification.json")
-        evidence[workflow] = {
-            "run": run,
-            "envelopes": envelopes,
-            "isolated": isolated,
-            "official": official,
-            "specialist": specialist,
-        }
-    return evidence
+    """Read independent workflows concurrently; retain every evidence check."""
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        pending = [
+            pool.submit(_collect_workflow, actions, candidate_sha, workflow, validation_ref)
+            for workflow in WORKFLOWS
+        ]
+        # Ordered results keep the certificate deterministic; any read or
+        # validation error still rejects the complete programme.
+        rows = [result.result() for result in pending]
+    return dict(row for row in rows if row is not None)
 
+
+def _collect_workflow(actions, candidate_sha, workflow, validation_ref):
+    workflow_id, runs = actions.workflow_runs(workflow, candidate_sha)
+    candidates = [run for run in runs if run.get("workflow_id") == workflow_id and run.get("head_sha") == candidate_sha and run.get("status") == "completed" and run.get("conclusion") == "success" and run.get("event") in {"push", "schedule", "workflow_dispatch"} and (not validation_ref or run.get("head_branch") == validation_ref)]
+    if not candidates:
+        return None
+    run = candidates[0]
+    artifacts = actions.run_artifacts(run["id"])
+    envelopes = []
+    isolated = []
+    official = {}
+    specialist = None
+    if workflow == "mutation.yml":
+        jobs = actions.run_jobs(run["id"])
+        successful = {
+            job.get("name")
+            for job in jobs
+            if job.get("conclusion") == "success"
+        }
+        required = {
+            f"Mutation campaign ({campaign})"
+            for campaign in MUTATION_CAMPAIGNS
+        }
+        if not required <= successful:
+            raise RuntimeError("Nightly mutation campaign inventory is incomplete")
+    if workflow == "enhanced-stress.yml":
+        indexes = [artifact for artifact in artifacts if artifact["name"].startswith("certification-index-")]
+        if len(indexes) != 1:
+            raise RuntimeError("Exactly one Enhanced index is required")
+        index = actions.artifact_json(indexes[0], "certification-final.json")
+        if index.get("passed") is not True or index.get("candidate_sha") != candidate_sha or index.get("selected") != "all" or index.get("execution_errors") or index.get("identity_errors"):
+            raise RuntimeError("Enhanced programme evidence was rejected")
+        envelopes = index["jobs"]
+        required_campaigns = {*HEAVY_CAMPAIGNS, "browser", "browser-firefox", "browser-webkit", "lifecycle-matrix"}
+        if not required_campaigns <= {item.get("campaign") for item in envelopes}:
+            raise RuntimeError("Enhanced programme inventory is incomplete")
+    elif workflow in {"upgrade-acceptance.yml", "openai-sdk-compatibility.yml"}:
+        kind = "upgrade" if workflow == "upgrade-acceptance.yml" else "sdk"
+        for lane in UPGRADE_EPOCHS if kind == "upgrade" else SUPPORTED_SDK_LANES:
+            selected = [artifact for artifact in artifacts if artifact["name"] == f"{kind}-evidence-{lane}"]
+            if len(selected) != 1:
+                raise RuntimeError(f"Missing {kind} evidence for {lane}")
+            envelope = actions.artifact_json(selected[0], "workflow-evidence.json")
+            errors = matrix_envelope_errors(envelope, candidate_sha, kind, lane)
+            if errors:
+                raise RuntimeError("; ".join(errors))
+            envelopes.append(envelope)
+    elif workflow == "ha-browser-compatibility.yml":
+        for point in ("oldest", "stable", "dev"):
+            selected = [artifact for artifact in artifacts if artifact["name"] == f"ha-native-browser-{point}-chromium"]
+            if len(selected) != 1:
+                raise RuntimeError(f"Missing native browser evidence for {point}")
+            envelopes.append(actions.artifact_json(selected[0], "certification.json"))
+    if workflow == "deployment-architecture.yml":
+        for architecture in ("x86_64-native", "arm64-native"):
+            selected = [artifact for artifact in artifacts if artifact["name"] == f"isolated-deployment-{architecture}"]
+            if len(selected) != 1:
+                raise RuntimeError(f"Missing isolated runtime evidence for {architecture}")
+            isolated.append(actions.artifact_json(selected[0], "certification.json"))
+    if workflow in SPECIALIST_CERTIFICATION_WORKFLOWS:
+        specialist = collect_specialist(actions, artifacts, actions.run_jobs(run["id"]), workflow, candidate_sha, run)
+    if workflow == "official-ha-container.yml":
+        jobs = actions.run_jobs(run["id"])
+        for arch in ("amd64", "arm64"):
+            selected = [artifact for artifact in artifacts if artifact["name"] == f"official-ha-container-{arch}-evidence"]
+            if arch == "arm64" and not selected:
+                continue
+            if len(selected) != 1 or selected[0].get("expired") or selected[0].get("size_in_bytes", 1) <= 0:
+                raise RuntimeError(f"Missing official HA Container evidence for {arch}")
+            if not any(job.get("name") == f"Official HA Container runtime ({arch})" and job.get("conclusion") == "success" for job in jobs):
+                raise RuntimeError(f"Official HA Container {arch} job did not succeed")
+            official[arch] = actions.artifact_json(selected[0], "certification.json")
+    return workflow, {
+        "run": run,
+        "envelopes": envelopes,
+        "isolated": isolated,
+        "official": official,
+        "specialist": specialist,
+    }
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

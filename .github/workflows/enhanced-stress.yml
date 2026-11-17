@@ -47,6 +47,7 @@ jobs:
       campaigns: ${{ steps.seed.outputs.campaigns }}
       python_matrix: ${{ steps.seed.outputs.python_matrix }}
       persistence_matrix: ${{ steps.seed.outputs.persistence_matrix }}
+      lifetime_matrix: ${{ steps.seed.outputs.lifetime_matrix }}
       ha_version: ${{ steps.ha.outputs.version }}
       ha_test_plugin_version: ${{ steps.ha.outputs.plugin_version }}
       published_release_tag: ${{ steps.release.outputs.tag }}
@@ -120,8 +121,8 @@ jobs:
 
   persistence_runtime:
     name: Prepare isolated published-release runtime
-    needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'persistence'
+    needs: [prepare, lifetime-start]
+    if: always() && !cancelled() && needs.prepare.result == 'success' && (github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'persistence')
     runs-on: ubuntu-latest
     outputs:
       cache_key: ${{ steps.identity.outputs.cache_key }}
@@ -202,25 +203,25 @@ jobs:
           test "$("$HISTORICAL_PYTHON" -c 'from importlib.metadata import version; print(version("homeassistant"))')" = "$HISTORICAL_HA_VERSION"
           echo "Historical runtime ready; current candidate runtime remains separate." >> "$GITHUB_STEP_SUMMARY"
 
-  python-campaigns:
+  lifetime-campaigns:
     name: ${{ matrix.campaign }} / ${{ matrix.intensity }}${{ matrix.partition && format(' / {0}', matrix.partition) || '' }}
     needs: prepare
-    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.python_matrix != '[]' && (github.event_name == 'schedule' || (inputs.campaign != 'browser' && inputs.campaign != 'browser-engines'))
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.lifetime_matrix != '[]' && (github.event_name == 'schedule' || (inputs.campaign != 'browser' && inputs.campaign != 'browser-engines'))
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.prepare.outputs.python_matrix) }}
-    container:
+        include: ${{ fromJSON(needs.prepare.outputs.lifetime_matrix) }}
+    container: &campaign-container
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    defaults:
+    defaults: &campaign-defaults
       run:
         shell: bash
-    env:
+    env: &campaign-env
       PYTHONPATH: ${{ github.workspace }}
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
       STRESS_INTENSITY: ${{ matrix.intensity }}
@@ -235,7 +236,7 @@ jobs:
       STRESS_ARTIFACT_DIR: stress-artifacts
       ENHANCED_EXECUTION_EVIDENCE: "1"
       PYTEST_PLUGINS: ci.pytest_execution
-    steps:
+    steps: &campaign-steps
       - name: Checkout immutable run candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -319,6 +320,41 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+
+  # Only the two/four lifetime processes and this observer can allocate
+  # runners initially. Remaining jobs wait for starts, not 30-minute results.
+  lifetime-start:
+    name: Wait for lifetime jobs to start
+    needs: prepare
+    if: always() && !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.lifetime_matrix != '[]' && (github.event_name == 'schedule' || (inputs.campaign != 'browser' && inputs.campaign != 'browser-engines'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    continue-on-error: true
+    steps:
+      - name: Checkout exact run source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+      - name: Give lifetime jobs the first available runners
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIFETIME_MATRIX: ${{ needs.prepare.outputs.lifetime_matrix }}
+        run: python ci/lifetime_scheduling.py
+
+  python-campaigns:
+    name: ${{ matrix.campaign }} / ${{ matrix.intensity }}${{ matrix.partition && format(' / {0}', matrix.partition) || '' }}
+    needs: [prepare, lifetime-start]
+    if: always() && !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.python_matrix != '[]' && (github.event_name == 'schedule' || (inputs.campaign != 'browser' && inputs.campaign != 'browser-engines'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.python_matrix) }}
+    container: *campaign-container
+    defaults: *campaign-defaults
+    env: *campaign-env
+    steps: *campaign-steps
 
   persistence-campaign:
     name: ${{ matrix.campaign }} / ${{ matrix.intensity }}${{ matrix.partition && format(' / {0}', matrix.partition) || '' }}
@@ -510,8 +546,8 @@ jobs:
 
   external-recorder:
     name: External Recorder / MariaDB + PostgreSQL
-    needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'functions'
+    needs: [prepare, lifetime-start]
+    if: always() && !cancelled() && needs.prepare.result == 'success' && (github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'functions')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -576,8 +612,8 @@ jobs:
 
   browser:
     name: browser / ${{ matrix.intensity }}${{ inputs.campaign != 'diagnostics' && format(' / {0}', matrix.partition) || '' }}
-    needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'browser' || inputs.campaign == 'diagnostics'
+    needs: [prepare, lifetime-start]
+    if: always() && !cancelled() && needs.prepare.result == 'success' && (github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'browser' || inputs.campaign == 'diagnostics')
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
@@ -724,8 +760,8 @@ jobs:
 
   browser-engines:
     name: browser-${{ matrix.engine }} / ${{ matrix.intensity }}
-    needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'browser' || inputs.campaign == 'browser-engines'
+    needs: [prepare, lifetime-start]
+    if: always() && !cancelled() && needs.prepare.result == 'success' && (github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'browser' || inputs.campaign == 'browser-engines')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     container:
@@ -840,8 +876,8 @@ jobs:
 
   ha-lifecycle-matrix:
     name: HA ${{ matrix.ha-version }} / shared lifecycle contract
-    needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'lifecycle'
+    needs: [prepare, lifetime-start]
+    if: always() && !cancelled() && needs.prepare.result == 'success' && (github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'lifecycle')
     runs-on: ubuntu-latest
     timeout-minutes: 180
     container:
@@ -930,8 +966,8 @@ jobs:
     outputs:
       ha_core_sha: ${{ steps.python.outputs.sha }}
     name: HA dev / shared lifecycle contract
-    needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'lifecycle'
+    needs: [prepare, lifetime-start]
+    if: always() && !cancelled() && needs.prepare.result == 'success' && (github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'lifecycle')
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
@@ -1041,7 +1077,7 @@ jobs:
 
   certify:
     name: Consolidated nightly certification
-    needs: [prepare, python-campaigns, persistence-campaign, external-recorder, browser, browser-engines, ha-lifecycle-matrix, ha-lifecycle-dev]
+    needs: [prepare, lifetime-campaigns, python-campaigns, persistence-campaign, external-recorder, browser, browser-engines, ha-lifecycle-matrix, ha-lifecycle-dev]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     steps:

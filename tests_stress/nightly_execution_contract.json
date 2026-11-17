@@ -4248,8 +4248,8 @@
     },
     "long-lifetime": {
       "process_soak_windows": 9,
-      "lifetime_elapsed_seconds": 1800,
-      "lifetime_idle_seconds": 1500,
+      "lifetime_elapsed_seconds": 1200,
+      "lifetime_idle_seconds": 1000,
       "lifetime_retention_callbacks": 20,
       "lifetime_expired_transfer_reclaims": 1,
       "lifetime_reloads": 4,

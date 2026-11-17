@@ -407,7 +407,7 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     assert 'docker pull "${IMAGE_NAME}:ha-dev"' in dev_image_verify
 
     persistence_job = jobs["persistence_runtime"]
-    assert persistence_job["needs"] == "prepare"
+    assert persistence_job["needs"] == ["prepare", "lifetime-start"]
     assert "HISTORICAL_RELEASE_SHA" in persistence_job["env"]
     assert all(
         "${{ runner." not in str(value) for value in persistence_job["env"].values()
@@ -419,7 +419,7 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     historical_runtime = Path("ci/prepare_historical_runtime.sh").read_text()
     assert 'python -m venv "$HISTORICAL_RUNTIME_DIR"' in historical_runtime
     assert "homeassistant==$HISTORICAL_HA_VERSION" in historical_runtime
-    assert jobs["python-campaigns"]["needs"] == "prepare"
+    assert jobs["python-campaigns"]["needs"] == ["prepare", "lifetime-start"]
     persistence_campaign = jobs["persistence-campaign"]
     assert persistence_campaign["needs"] == ["prepare", "persistence_runtime"]
     assert "always()" in persistence_campaign["if"]

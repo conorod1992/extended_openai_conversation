@@ -238,17 +238,20 @@ jobs:
         run: bundle exec fastlane eoai_build
 
       - name: Package compiled iOS test products
-        if: steps.ios-native.outputs.hit != 'true'
+        if: steps.ios-native.outputs.hit != 'true' || env.IOS_WARM_ONLY == 'true' || github.event_name == 'schedule'
         run: python ci/ios_companion_build.py package "$IOS_DIR"
 
+      # Downloads do not renew artifact expiry. Weekly runs and explicit warming
+      # republish verified products even on a hit, without reusing test results.
       - name: Publish reusable compiled iOS test artifact
-        if: steps.ios-native.outputs.hit != 'true'
+        id: ios-native-publish
+        if: steps.ios-native.outputs.hit != 'true' || env.IOS_WARM_ONLY == 'true' || github.event_name == 'schedule'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ios-native-${{ env.IOS_BUILD_CACHE_ID }}
           path: ${{ env.IOS_DIR }}/native-products.tar
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
           overwrite: true
 
       - name: Save iOS DerivedData cache
@@ -392,7 +395,7 @@ jobs:
 
       # Housekeeping must never prevent the real journey or evidence upload.
       - name: Retain two reusable native build variants
-        if: always() && steps.ios-native-build.outcome == 'success'
+        if: always() && steps.ios-native-publish.outcome == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}

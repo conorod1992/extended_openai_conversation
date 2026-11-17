@@ -10,6 +10,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
 )
 from custom_components.extended_openai_conversation_responses import transfer
+from tests_real_ha.device_info_compat import device_info_field
 from tests_real_ha.test_cross_feature_acceptance import _agent, _provider
 from tests_real_ha.test_request_rules_script_semantics import _local
 from tests_real_ha.test_service_registry_acceptance import _response_service_call
@@ -1110,9 +1111,9 @@ async def test_repair_save_applies_real_runtime_updates_without_conversation(
         stored = await current._usage._detail_storage.async_load()
         assert stored["requests"] == stored["runs"] == []
     if change == "title":
-        assert current.device_info["name"] == changes["title"]
+        assert device_info_field(current.device_info, "name") == changes["title"]
         device = dr.async_get(hass).async_get_device_by_identifier(
-            next(iter(current.device_info["identifiers"])), current.entry.entry_id
+            next(iter(device_info_field(current.device_info, "identifiers"))), current.entry.entry_id
         )
         assert device is not None and device.name == changes["title"]
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: E402, F401

@@ -3,14 +3,20 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import json
 import re
+import ssl
 import sys
 from time import sleep
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+# Load the trust store once. This context is shared read-only by the bounded
+# metadata workers; certificate and hostname verification remain enabled.
+_TLS_CONTEXT = ssl.create_default_context()
 
 # Release-day bridge: the upstream daily generator has not published fixtures
 # for a Core release yet. Regenerate only the reviewed immutable source pairs;
@@ -68,6 +74,13 @@ GENERATED_FIXTURES = {
         generator_sha="d8a0dc698c8946b44e455d904000db563cfbf1ba",
         official_package=True,
     ),
+    "2026.11.2": GeneratedFixture(
+        "2026.11.2",
+        "0.13.370+eoai.ha2026.11.2.official.cff5d56b8",
+        "ff5d56b825a0fb66b03d01bc297d49e206cdaba3",
+        generator_sha="ff5d56b825a0fb66b03d01bc297d49e206cdaba3",
+        official_package=True,
+    ),
     "2026.10.4": GeneratedFixture(
         "2026.10.4",
         "0.13.370+eoai.ha2026.10.4.gaacf4b5e.c357cae5c",
@@ -87,13 +100,14 @@ def _get_json(url: str) -> dict[str, Any]:
     attempt = 0
     while True:
         try:
-            with urlopen(request, timeout=20) as response:
+            with urlopen(request, timeout=20, context=_TLS_CONTEXT) as response:
                 return json.load(response)
-        except (TimeoutError, URLError) as error:
-            # urllib wraps TLS handshake timeouts in URLError. Retry this
+        except (TimeoutError, ConnectionResetError, ssl.SSLEOFError, URLError) as error:
+            # urllib wraps TLS handshake timeouts/resets/EOFs in URLError. Retry this
             # read-only fetch, retaining HTTP/metadata errors and a hard limit.
+            cause = error.reason if isinstance(error, URLError) else error
             if attempt >= 2 or not isinstance(
-                getattr(error, "reason", error), TimeoutError
+                cause, (TimeoutError, ConnectionResetError, ssl.SSLEOFError)
             ):
                 raise
             attempt += 1
@@ -118,16 +132,30 @@ def resolve_ha_test_plugin(
             continue
         candidates.append((numeric, version))
 
-    for _, version in sorted(candidates, reverse=True):
-        metadata = get_release(
-            f"https://pypi.org/pypi/pytest-homeassistant-custom-component/{version}/json"
-        )["info"]
-        for requirement in metadata.get("requires_dist") or []:
-            match = re.match(
-                r"^\s*homeassistant\s*==\s*([^;\s]+)", requirement, re.IGNORECASE
-            )
-            if match and match.group(1) == ha_version:
-                return version
+    # Bound speculative reads to one small batch. Consume results in descending
+    # version order, retaining newest-exact selection and fail-closed metadata
+    # errors for every release that the serial search would have inspected.
+    ranked = sorted(candidates, reverse=True)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for offset in range(0, len(ranked), 8):
+            batch = ranked[offset : offset + 8]
+            pending = [
+                pool.submit(
+                    get_release,
+                    f"https://pypi.org/pypi/pytest-homeassistant-custom-component/{version}/json",
+                )
+                for _, version in batch
+            ]
+            for (_, version), result in zip(batch, pending, strict=True):
+                metadata = result.result()["info"]
+                for requirement in metadata.get("requires_dist") or []:
+                    match = re.match(
+                        r"^\s*homeassistant\s*==\s*([^;\s]+)",
+                        requirement,
+                        re.IGNORECASE,
+                    )
+                    if match and match.group(1) == ha_version:
+                        return version
 
     if fixture := GENERATED_FIXTURES.get(ha_version):
         return fixture.plugin_version
