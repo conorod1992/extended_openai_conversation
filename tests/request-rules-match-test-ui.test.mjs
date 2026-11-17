@@ -45,7 +45,7 @@ assert.match(localMatch, /Matched: Kitchen &lt;night&gt;/);
 assert.match(localMatch, /Sentence pattern/);
 assert.match(localMatch, /Normal match/);
 assert.match(localMatch, /room → kitchen/);
-assert.match(localMatch, /Would run 2 local actions/);
+assert.match(localMatch, /Configured: 2 local actions/);
 assert.match(localMatch, /command would be consumed locally/);
 
 const continued = formatRequestRuleMatchResult(panel, {
@@ -103,3 +103,46 @@ const source = await readFile(
 );
 assert.match(source, /panel\._call\("request_rules", "test_match", \{text\}\)/);
 assert.doesNotMatch(source, /"process"/);
+
+const conditional = formatRequestRuleMatchResult(panel, {
+  matched:true, conditional:true,
+  rule:{name:"Second <possible>",match_type:"equals",action_type:"model_routing"},
+  matched_rules:[
+    {rule:{name:"First"},status:"conditional",ai_input:null},
+    {rule:{name:"Second <possible>"},status:"conditional",ai_input:{conditional:true,mode:"capture",capture:"question",provider_input:"what <next>"}},
+  ],
+  would_do:{type:"model_routing",conditional:true,consumed:null,provider_input:"conditional",model:"gpt-5"},
+});
+assert.match(conditional, /Conditional match: Second &lt;possible&gt;/);
+assert.match(conditional, /First — conditional/);
+assert.match(conditional, /Possible AI input: Captured value: question → what &lt;next&gt;/);
+assert.match(conditional, /any AI handoff is conditional/);
+assert.doesNotMatch(conditional, /Would send|Matched: Second|would send to AI, stopped/);
+
+const uncertainLocal = formatRequestRuleMatchResult(panel, {
+  matched:true,conditional:true,
+  rule:{name:"Local",match_type:"equals",action_type:"local_action"},
+  would_do:{conditional:true,action_count:1,consumed:null,provider_input:"conditional",functions:[{name:"battery",result_alias:"charge"}]},
+});
+assert.match(uncertainLocal, /including battery → charge/);
+assert.match(uncertainLocal, /Conditional: actions may stop or fail/);
+assert.doesNotMatch(uncertainLocal, /input would continue to the AI/);
+
+const terminal = formatRequestRuleMatchResult(panel, {
+  matched:true,rule:{name:"First",match_type:"equals",action_type:"local_action"},
+  matched_rules:[{rule:{name:"First"},status:"stopped",ai_input:null}],
+  would_do:{type:"local_action",action_count:1,terminal:true,consumed:true,provider_input:"none"},
+});
+assert.match(terminal, /Matched: First/);
+assert.match(terminal, /First — stopped/);
+assert.match(terminal, /command would be consumed locally/);
+assert.doesNotMatch(terminal, /AI input|Second|continue to the AI/);
+
+for (const type of ["local_action", "model_routing"]) {
+  const continuing = formatRequestRuleMatchResult(panel, {
+    matched:true,rule:{name:"First",match_type:"equals",action_type:type},
+    would_do:{type,continue_matching:true,action_count:1,consumed:true,provider_input:"none"},
+  });
+  assert.match(continuing, /checking (?:would continue to )?later rules/);
+  assert.doesNotMatch(continuing, /command would be consumed locally|input would continue to the AI/);
+}

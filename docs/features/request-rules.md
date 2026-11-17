@@ -217,13 +217,17 @@ In **All rules**, drag a card or use **Move up**, **Move down**, **Move to top**
 
 Open a rule's advanced settings to enable **Continue matching after this rule**. After a local sequence succeeds, later matching rules can run in priority order. A later rule with this option off stops normally. A routing command can also apply its model or reasoning choice and let later rules run. If later routing rules change the same setting, the later matching choice wins.
 
-**Continue to AI** always ends rule checking. The provider is called once, after successful local actions where applicable. A failed local action or Function Tool, Guest Mode denial, or condition evaluation error stops the chain safely. Function results remain within their own rule. Match Preview shows the rules that would match and where checking would stop, without running actions or calling the provider.
+**Continue to AI** always ends rule checking. The provider is called once, after successful local actions where applicable. A failed local action or Function Tool, Guest Mode denial, or condition evaluation error stops the chain safely. A successful Script Stop or a final non-null conversation response also consumes the request locally, even when Continue matching or Continue to AI is selected. Function results remain within their own rule.
+
+Match Preview uses the real matcher and current Only when conditions without running actions, action templates, Function Tools or the provider. It recognizes an enabled, unconditional top-level Stop and a final literal conversation response (including empty text) as terminal. Disabled actions are skipped, and an explicit null response clears an earlier response. A Stop message is literal HA text; a templated action-enabled flag is not evaluated by preview.
+
+Preview deliberately does not interpret nested branches, loops, parallel actions, service outcomes or action templates. When their outcome could stop the chain or change the response, later matches and possible AI input are marked **conditional**, rather than predicting a guaranteed winner or handoff. Later literal responses can establish termination again, but opaque actions after a response make it uncertain. The selected conditional match is a possible final rule, not a promise it will run. Only when conditions are checked against the current state; preceding actions might change that state during a real request. Use the confirmed Live Test or Assist to observe execution.
 
 ### AI input
 
 For any rule with **Continue to AI** on, **Original request** sends the user's full request, as existing rules do. **Captured value** sends only the chosen named value from a Sentence Pattern trigger. For example, `deep think {question}` can send `why is the sky blue?` from `deep think why is the sky blue?`.
 
-The selected capture must be present on every trigger variant and every possible match of those variants. If editing a trigger removes it, the editor keeps the selection visible and requires you to fix the trigger or switch back to **Original request**. Match Preview shows the exact user text that would be sent to the provider. It does not run local actions or call the provider.
+The selected capture must be present on every trigger variant and every possible match of those variants. If editing a trigger removes it, the editor keeps the selection visible and requires you to fix the trigger or switch back to **Original request**. Match Preview shows the exact selected AI input, marked conditional when the handoff depends on action outcomes. It does not run local actions or call the provider.
 
 ### Rule Sharing
 
