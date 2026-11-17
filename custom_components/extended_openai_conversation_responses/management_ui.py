@@ -33,6 +33,7 @@ from .agent_config import (
     AgentConfigError,
     agent_config_defaults,
     agent_config_options,
+    agent_config_sampling_repair_snapshot,
     agent_config_snapshot,
     function_tool_enabled,
     function_tool_yaml,
@@ -1596,7 +1597,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 default_snapshot=defaults,
                 provider=provider,
             )
-        except AgentConfigError:
+        except AgentConfigError as err:
             # Retain the normal cached fast path for valid tools. A malformed
             # Function Tool snapshot can still be served through quarantine,
             # including on cold reads before the catalogue is available.
@@ -1604,13 +1605,22 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             validation_started = perf_counter()
             state, state_cache_hit = repair_state_for_projection(projection)
             if state is None:
-                raise
-            return repair_response(
-                strict_skipped=False,
-                attempt_ms=snapshot_attempt_ms,
-                validation_ms=_elapsed_ms(validation_started),
-                state_cache_hit=state_cache_hit,
-            )
+                if err.field not in {"temperature", "top_p"}:
+                    raise
+                # This is display-only: keep the authoritative booleans visible
+                # and leave the validated projection cache empty. All writers
+                # and request construction retain their strict numeric checks.
+                config = agent_config_sampling_repair_snapshot(
+                    dict(projection.data), provider=provider
+                )
+                snapshot_cache_hit = False
+            else:
+                return repair_response(
+                    strict_skipped=False,
+                    attempt_ms=snapshot_attempt_ms,
+                    validation_ms=_elapsed_ms(validation_started),
+                    state_cache_hit=state_cache_hit,
+                )
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()

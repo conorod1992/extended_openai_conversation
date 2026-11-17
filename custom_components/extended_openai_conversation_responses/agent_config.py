@@ -1503,6 +1503,24 @@ def model_capabilities(model: str, *, provider: str | None = None) -> dict[str, 
     return capabilities
 
 
+def agent_config_sampling_repair_snapshot(
+    data: dict[str, Any], *, provider: str | None = None
+) -> dict[str, Any]:
+    """Display legacy sampling booleans without certifying them for a save/run.
+
+    Validate every other setting using a private numeric stand-in, then restore
+    the exact damaged values for the editor. Never cache this as validated data.
+    """
+    damaged = {
+        key: data[key]
+        for key in (CONF_TEMPERATURE, CONF_TOP_P)
+        if isinstance(data.get(key), bool)
+    }
+    defaults = agent_config_defaults()
+    source = {**data, **{key: defaults[key] for key in damaged}}
+    return {**agent_config_snapshot(source, provider=provider), **damaged}
+
+
 def _configured_tools_yaml(data: Mapping[str, Any]) -> str | None:
     """Return a deterministic cache key preserving legacy empty/default semantics."""
     configured = data.get(CONF_FUNCTION_TOOLS)

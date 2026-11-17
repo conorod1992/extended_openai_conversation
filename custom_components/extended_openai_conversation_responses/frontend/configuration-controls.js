@@ -32,7 +32,10 @@ export function configurationControlValue(control) {
     } catch (_) { return undefined; }
   }
   if (control.dataset?.type === "boolean" || control.type === "checkbox") return Boolean(control.checked);
-  if (control.dataset?.type === "number") return Number(control.value);
+  // Recovery text inputs can display a saved boolean. Keep it invalid rather
+  // than converting it to 0/1/NaN when an untouched form is read.
+  if (control.dataset?.type === "number") return control.value === "true" ? true
+    : control.value === "false" ? false : Number(control.value);
   if (key === "skills") return skillNamesFromText(control.value);
   if (key?.startsWith("guest_readable_") || key?.startsWith("guest_controllable_")) {
     return String(control.value).split(",").map((item) => item.trim()).filter(Boolean);

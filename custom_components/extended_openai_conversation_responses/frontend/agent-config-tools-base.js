@@ -16,12 +16,11 @@ function ensureRouteStyle(panel) {
 
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys, setAttribute, setText} from "./keyed-collection.js";
 import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
-import {same} from "./unsaved-state.js";
+import {same, clone} from "./unsaved-state.js";
 import { haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools-list.js";
 import { bindHelp, helpButton, helpPopover } from "./agent-config-help.js";
 import {getToolYamlEditor, captureToolEditorOwner, captureToolEditorOperation, acknowledgeToolEditor} from "./tool-yaml-editor-adapter.js";
 
-const clone = (value) => JSON.parse(JSON.stringify(value));
 export const functionGroupIdFromName = (name) => String(name || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").replace(/^[^a-z]+/, "").slice(0, 64);
 export const isFunctionGroupEnabled = (group = {}) => group?.enabled !== false;
 export const isFunctionToolEnabled = (tool) => tool?.enabled !== false;

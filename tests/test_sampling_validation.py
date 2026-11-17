@@ -119,3 +119,26 @@ def test_numeric_type_contract_excludes_boolean_subclasses(expected, value):
 @pytest.mark.parametrize("value", [True, False])
 def test_explicit_boolean_type_contract_is_preserved(expected, value):
     agent_config._require_type({"flag": value}, ("flag",), expected)
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_sampling_recovery_projection_is_display_only(value):
+    raw = {
+        "functions": "[]",
+        "chat_model": "gpt-4.1",
+        "temperature": value,
+        "top_p": not value,
+    }
+    original = deepcopy(raw)
+    display = agent_config.agent_config_sampling_repair_snapshot(raw)
+    assert display["temperature"] is value
+    assert display["top_p"] is not value
+    assert raw == original
+    with pytest.raises(agent_config.AgentConfigError, match=r"top_p:.*int or float"):
+        agent_config.normalize_agent_config(display)
+    with pytest.raises(
+        agent_config.AgentConfigError, match=r"temperature:.*int or float"
+    ):
+        build_provider_request_snapshot(display, {})
+    with pytest.raises(agent_config.AgentConfigError, match="max_tokens"):
+        agent_config.agent_config_sampling_repair_snapshot({**raw, "max_tokens": 0})

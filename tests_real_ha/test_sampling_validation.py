@@ -12,6 +12,7 @@ from custom_components.extended_openai_conversation_responses.management_ui impo
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context
+from homeassistant.exceptions import HomeAssistantError
 from tests_real_ha.test_cross_feature_acceptance import _agent
 from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
@@ -107,3 +108,72 @@ async def test_sampling_numeric_or_null_values_reach_expected_wire_payload(
             expected = float(value) if isinstance(value, str) else value
             assert wire.requests[0]["body"][parameter] == expected
             assert type(wire.requests[0]["body"][parameter]) is type(expected)
+
+
+@pytest.mark.parametrize("value", [True, False])
+@pytest.mark.parametrize("quarantined", [False, True])
+async def test_persisted_sampling_editor_recovery_is_lossless_and_strict(
+    hass, monkeypatch, value, quarantined
+):
+    options = {
+        "temperature": value,
+        "top_p": not value,
+        "future_extension": {"keep": [None, False, " raw "]},
+        "prompt": "Keep this exact prompt.",
+    }
+    if quarantined:
+        options["functions"] = [
+            {
+                "spec": {
+                    "name": "unavailable_tool",
+                    "description": "Preserve",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                "function": {"type": "not_installed"},
+            }
+        ]
+    agent = await _agent(hass, chat_model="gpt-4.1", **options)
+    owner = await hass.auth.async_create_user(
+        "Repair owner", group_ids=["system-admin"]
+    )
+    base = {
+        "section": "configuration",
+        "entry_id": agent.entry.entry_id,
+        "subentry_id": agent.subentry.subentry_id,
+    }
+
+    async def command(action, **extra):
+        return await async_management_command(
+            hass, owner.id, True, {**base, "action": action, **extra}
+        )
+
+    original = deepcopy(dict(agent.subentry.data))
+    first = await command("get")
+    second = await command("get")
+    assert first["revision"] == second["revision"]
+    assert first["config"]["temperature"] is value
+    assert first["config"]["top_p"] is not value
+    assert bool(first.get("function_repair")) is quarantined
+    assert dict(agent.subentry.data) == original
+    invalid = await command("validate", config={"prompt": "An unrelated edit"})
+    assert invalid["valid"] is False
+    with pytest.raises(AgentConfigError, match=r"top_p:.*int or float"):
+        await command(
+            "update", config={"temperature": 0.25}, revision=first["revision"]
+        )
+    assert dict(agent.subentry.data) == original
+    wire = _install_wire(monkeypatch, agent, [])
+    failed = await _converse(hass, agent)
+    assert failed.response.error_code is not None
+    assert not wire.requests
+    corrected = {"temperature": 0.0, "top_p": "0.75"}
+    await command("update", config=corrected, revision=first["revision"])
+    await hass.async_block_till_done()
+    current = agent.entry.subentries[agent.subentry.subentry_id]
+    assert dict(current.data) == {**original, "temperature": 0.0, "top_p": 0.75}
+    with pytest.raises(HomeAssistantError, match=r"another tab|latest saved settings"):
+        await command("update", config={"temperature": 0.5}, revision=first["revision"])
+    repaired = await command("get")
+    assert repaired["config"]["temperature"] == 0.0
+    assert repaired["config"]["top_p"] == 0.75
+    assert bool(repaired.get("function_repair")) is quarantined
