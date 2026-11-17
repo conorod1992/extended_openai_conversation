@@ -237,6 +237,8 @@ def _guest_manager(store: ToggleStorage) -> GuestModeManager:
     manager._schedule = None
     manager._persistence_unavailable = False
     manager._listeners = set()
+    manager._cancel_transition = None
+    manager._transition_token = None
     manager._mutation_lock = asyncio.Lock()
     manager._initialized = False
     manager._initialization_lock = asyncio.Lock()
