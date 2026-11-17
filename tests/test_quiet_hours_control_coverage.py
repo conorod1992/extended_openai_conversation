@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tests.test_quiet_hours_restoration_regressions import _active
-from tests.test_quiet_hours_runtime import _stateful_public_manager
+from tests.test_quiet_hours_runtime import (
+    _install_registered_controls,
+    _stateful_public_manager,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +61,10 @@ async def test_prepare_control_records_observation_without_claim_when_no_action(
 
 
 @pytest.mark.asyncio
-async def test_prepare_control_persists_pending_then_prepared_ownership(hass) -> None:
+async def test_prepare_control_persists_pending_then_prepared_ownership(
+    hass, monkeypatch
+) -> None:
+    _install_registered_controls(monkeypatch, "media_player.bedroom")
     manager = _stateful_public_manager(hass)
     manager._active = {
         "period_started_at": "2026-10-05T22:00:00+00:00",

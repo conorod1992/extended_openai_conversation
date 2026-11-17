@@ -326,11 +326,10 @@ async def test_restore_rollback_retains_original_cause(monkeypatch, caplog) -> N
 async def test_quiet_hours_apply_and_restore_failures_retain_context(
     hass, monkeypatch, caplog, kind
 ) -> None:
+    from tests.test_quiet_hours_runtime import _install_registered_controls
+
     caplog.set_level(logging.DEBUG)
-    monkeypatch.setattr(
-        quiet_hours_runtime.er, "async_get",
-        lambda _hass: SimpleNamespace(async_get=lambda _entity_id: None),
-    )
+    _install_registered_controls(monkeypatch, "media_player.room", "switch.wake")
     manager = quiet_hours_runtime.QuietHoursManager(hass)
     manager._async_save_locked = AsyncMock()
     manager._async_set_volume = AsyncMock(side_effect=RuntimeError(SECRET))

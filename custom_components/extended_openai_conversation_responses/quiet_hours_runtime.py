@@ -1890,6 +1890,18 @@ class QuietHoursManager:
                 return None
         else:
             identity = self._entity_registry_identity(entity_id)
+            if needs_action and identity is None:
+                # A new effect needs the same durable identity that startup
+                # requires before restoring it. Do not observe a skipped effect:
+                # registering this retained selection must leave it retryable.
+                logging.getLogger(__name__).warning(
+                    "Quiet Hours skipped %s control %s: no durable entity registry "
+                    "identity; the device is unchanged and its selection is retained "
+                    "for retry when registered",
+                    kind,
+                    entity_id,
+                )
+                return None
             intent = {
                 "kind": kind,
                 "satellite_entity_id": satellite_entity_id,
