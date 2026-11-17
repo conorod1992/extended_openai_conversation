@@ -211,6 +211,15 @@ def test_compiled_artifact_reuse_does_not_reuse_acceptance_evidence():
         if step.get("name") == "Publish reusable compiled iOS test artifact"
     )
     assert publish["with"]["path"].endswith("/native-products.tar")
+    assert publish["with"]["retention-days"] == 30
+    package = next(step for step in steps if step.get("name") == "Package compiled iOS test products")
+    assert package["if"] == publish["if"]
+    assert package["if"] == (
+        "steps.ios-native.outputs.hit != 'true' || env.IOS_WARM_ONLY == 'true' || github.event_name == 'schedule'"
+    )
+    assert steps.index(package) < steps.index(publish)
+    prune = next(step for step in steps if step.get("name") == "Retain two reusable native build variants")
+    assert prune["if"] == "always() && steps.ios-native-publish.outcome == 'success'"
     journey = next(
         step
         for step in steps

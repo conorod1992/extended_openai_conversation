@@ -229,7 +229,7 @@ def package(ios: Path, identity: dict) -> None:
 
 
 def prune_artifacts(repository: str, keep: int = 2) -> None:
-    """Retain two reproducible native builds, never acceptance evidence."""
+    """Retain the newest copy of two native identities, never acceptance evidence."""
     candidates = []
     for page in range(1, 11):
         artifacts = gh_json(
@@ -244,11 +244,19 @@ def prune_artifacts(repository: str, keep: int = 2) -> None:
         if len(artifacts) < 100:
             break
     candidates.sort(key=lambda artifact: artifact["created_at"], reverse=True)
-    for artifact in candidates[keep:]:
+    retained = set()
+    for artifact in candidates:
         run = gh_json(
             f"repos/{repository}/actions/runs/{artifact['workflow_run']['id']}"
         )
-        if run["path"] != WORKFLOW or run["head_repository"]["full_name"] != repository:
+        if (
+            run["path"] != WORKFLOW
+            or run["head_repository"]["full_name"] != repository
+            or run["event"] not in {"push", "schedule", "workflow_dispatch"}
+        ):
+            continue
+        if artifact["name"] not in retained and len(retained) < keep:
+            retained.add(artifact["name"])
             continue
         subprocess.run(
             [

@@ -28,11 +28,12 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: false
       - name: Lint GitHub Actions workflows
         run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          # This release understands the YAML aliases sharing campaign steps.
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           # Keep workflow checks independent of optional host-installed linters.
           # GitHub supports queue:max; this actionlint release predates it.
           # Ignore only that known parser gap, retaining all other lint checks.

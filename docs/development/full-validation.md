@@ -32,6 +32,35 @@ The parent uploads the completed `full-validation-cohort` proof used by release
 certification. Temporary refs are removed after completed cohorts; interrupted
 runs retain them for diagnosis. Quick runs never authorize a release.
 
+Full mode dispatches iOS and Enhanced first, then gives both heavy lifetime
+partitions up to ten minutes to start before dispatching the shorter workflows.
+Enhanced likewise uses a separate lifetime matrix and a start observer before
+releasing its remaining jobs. The observer waits for starts, not successful
+completion; the 20-minute reload and uninterrupted processes run concurrently
+with the rest of validation. Quick, daily, and browser-only selections retain
+their existing inventories and do not wait for unselected lifetime work.
+
+This head start is a scheduling hint only. An unavailable status API or bounded
+wait expiry releases all remaining tests. Reads use the recorded attempt and
+candidate SHA. Completed failures also release the fan-out, while the existing
+job-result, execution-inventory, environment, duration, and final certification
+checks continue to reject missing or failed lifetime coverage. The legacy
+asynchronous dispatcher leaves this scheduling hint to Enhanced itself.
+
+Both lifetime variants retain nine resource windows, at least 41 workload rounds,
+and the original reload, cancellation, recovery, maintenance and health checks.
+They require 20 elapsed minutes and at least 1,000 idle seconds. An abandoned
+transfer crosses its unchanged 15-minute production TTL naturally; expiry is
+checked in the penultimate window, before a fresh transfer and the final healthy
+window. Longer endurance observation belongs to the separate pre-release tester.
+
+Fixture metadata is read in batches of eight while newest-compatible selection
+and metadata-error handling remain ordered. Programme certification collects up
+to four independent workflows concurrently and retains all evidence checks.
+The coordinator polls final programme certification every five seconds, retaining
+30-second polling for test workflows and after status-read errors. This avoids
+extra API traffic while long test workflows, including cold native builds, run.
+
 `full-validation-collect.yml` remains available to recover older asynchronous
 cohorts. It identifies the parent by its workflow path, since a generated run
 title is not the workflow name. Recovery publishes the **Full validation

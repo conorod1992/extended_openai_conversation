@@ -89,12 +89,17 @@ def main() -> None:
     plan["persistence_matrix"] = [
         row for row in plan["python_matrix"] if row["campaign"] == "persistence"
     ]
+    plan["lifetime_matrix"] = [
+        row for row in plan["python_matrix"] if row["campaign"] == "long-lifetime"
+    ]
     plan["python_matrix"] = [
-        row for row in plan["python_matrix"] if row["campaign"] != "persistence"
+        row
+        for row in plan["python_matrix"]
+        if row["campaign"] not in {"persistence", "long-lifetime"}
     ]
     # Offer the measured critical path first; actual starts still depend on
     # runner availability. Keep the original order of all other matrix rows.
-    priority = {"long-lifetime": 0, "large-installation": 1}
+    priority = {"large-installation": 0}
     plan["python_matrix"].sort(key=lambda row: priority.get(row["campaign"], 2))
     for key, value in plan.items():
         print(key + "=" + json.dumps(value, separators=(",", ":")))

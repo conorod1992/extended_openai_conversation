@@ -50,6 +50,15 @@ the app, XCTest runner and `.xctestrun`). Tar preserves executable permissions
 and framework symlinks. Intermediate build state, simulator state, test results
 and certification evidence are excluded.
 
+Compiled artifacts are retained for 30 days. Weekly scheduled runs and explicit
+`warm_only=true` runs repackage and republish verified products even after an
+exact artifact hit: downloading an artifact does not renew its expiry. Ordinary
+candidate runs publish only on a miss. Housekeeping runs after successful
+publication and retains the newest copy of each of the two most recent trusted
+native identities, so a refreshed copy does not displace the other variant.
+Warm-only runs still issue no acceptance evidence; ordinary and scheduled
+acceptance runs still execute the full journey against fresh candidate storage.
+
 Later runs discover exact-name artifacts from this repository's iOS workflow,
 including artifacts produced on sibling validation branches. PR-triggered and
 foreign-repository builds are excluded. An artifact may come from a run whose UI
@@ -58,8 +67,8 @@ The consumer validates its identity and runs the entire UI journey again using
 `test-without-building`. Missing/expired artifacts or lookup-service failures
 fall back to a source build; invalid downloaded artifacts fail the run.
 
-Artifacts expire after seven days. Following a successful native publication,
-retention keeps only the two newest native variants; evidence and diagnostic
+Artifacts expire after 30 days. Following a successful native publication,
+retention keeps the newest copy of two distinct native identities; evidence and diagnostic
 artifacts are never pruned by this maintenance. Any native input change creates
 a new identity and causes a cold build. The step summary and timing artifact
 report completed step durations, reuse and cache hits. Fresh certification evidence records the candidate SHA, native identity

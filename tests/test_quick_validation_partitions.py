@@ -189,32 +189,47 @@ def test_python_matrices_are_disjoint_and_preserve_all_campaigns(campaign):
         for key, value in (line.split("=", 1) for line in result.stdout.splitlines())
     }
     main, persistence = plan["python_matrix"], plan["persistence_matrix"]
-    if campaign == "all":
-        assert [row["campaign"] for row in main[:4]] == ["long-lifetime"] * 4
-        assert [row["campaign"] for row in main[4:6]] == ["large-installation"] * 2
-    else:
-        assert [row["campaign"] for row in main[:2]] == ["large-installation"] * 2
-    assert Counter(json.dumps(row, sort_keys=True) for row in main + persistence) == Counter(
+    lifetime = plan["lifetime_matrix"]
+    assert [row["campaign"] for row in main[:2]] == ["large-installation"] * 2
+    assert len(lifetime) == (4 if campaign == "all" else 0)
+    assert Counter(json.dumps(row, sort_keys=True) for row in main + persistence + lifetime) == Counter(
         json.dumps(row, sort_keys=True) for row in python_matrix(plan, scheduled=False)
     )
-    assert all(row["campaign"] != "persistence" for row in main)
+    assert all(row["campaign"] not in {"persistence", "long-lifetime"} for row in main)
     assert {(row["campaign"], row["intensity"]) for row in persistence} == {
         ("persistence", "normal"),
         ("persistence", "heavy"),
     }
-    assert {(row["campaign"], row["intensity"]) for row in main + persistence} == {
+    assert {(row["campaign"], row["intensity"]) for row in main + persistence + lifetime} == {
         (name, intensity)
         for name in plan["campaigns"]
         for intensity in plan["intensities"]
     }
 
 
-def test_python_steps_remain_consistent_and_only_persistence_waits():
+def test_python_steps_remain_consistent_after_lifetime_scheduling():
     jobs = yaml.safe_load(
         (ROOT / ".github/workflows/enhanced-stress.yml").read_text(encoding="utf-8")
     )["jobs"]
     main, persistence = jobs["python-campaigns"], jobs["persistence-campaign"]
-    assert main["needs"] == "prepare"
+    lifetime = jobs["lifetime-campaigns"]
+    assert lifetime["needs"] == "prepare"
+    assert lifetime["steps"] == main["steps"]
+    assert lifetime["env"] == main["env"]
+    assert lifetime["container"] == main["container"]
+    assert lifetime["name"] == main["name"]
+    assert lifetime["strategy"]["matrix"]["include"] == "${{ fromJSON(needs.prepare.outputs.lifetime_matrix) }}"
+    assert "lifetime-campaigns" in jobs["certify"]["needs"]
+    for name in ("python-campaigns", "persistence_runtime", "external-recorder", "browser", "browser-engines", "ha-lifecycle-matrix", "ha-lifecycle-dev"):
+        assert jobs[name]["needs"] == ["prepare", "lifetime-start"]
+        assert "always()" in jobs[name]["if"]
+        assert "!cancelled()" in jobs[name]["if"]
+        assert "needs.prepare.result == 'success'" in jobs[name]["if"]
+    observer = jobs["lifetime-start"]
+    assert observer["needs"] == "prepare"  # Never wait for soak completion.
+    assert "outputs.lifetime_matrix != '[]'" in observer["if"]
+    assert observer["continue-on-error"] is True
+    assert main["needs"] == ["prepare", "lifetime-start"]
     assert persistence["needs"] == ["prepare", "persistence_runtime"]
     persisted_steps = {step["name"]: step for step in persistence["steps"]}
     assert all(step == persisted_steps[step["name"]] for step in main["steps"])

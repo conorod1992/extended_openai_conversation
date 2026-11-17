@@ -32,6 +32,7 @@ from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
+from tests_real_ha.device_info_compat import device_info_field
 from tests_real_ha.test_cross_feature_acceptance import _agent, _rule
 from tests_real_ha.test_provider_wire_e2e import _install_wire
 from tests_real_ha.test_service_registry_acceptance import (
@@ -160,7 +161,7 @@ async def test_setup_writers_agree_on_live_and_reload_boundaries(
     for key, value in changes.items():
         assert current.subentry.data[key] == value
     if reloads:
-        assert current.device_info["model"] == changes["chat_model"]
+        assert device_info_field(current.device_info, "model") == changes["chat_model"]
 
 
 @pytest.mark.parametrize("route", ["assist", "process"])

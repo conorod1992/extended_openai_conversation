@@ -50,7 +50,11 @@ def test_retention_deletes_only_old_reproducible_native_products(monkeypatch):
     def api(endpoint):
         if "artifacts?" in endpoint:
             return {"artifacts": artifacts}
-        return {"path": native.WORKFLOW, "head_repository": {"full_name": "owner/repo"}}
+        return {
+            "path": native.WORKFLOW,
+            "event": "workflow_dispatch",
+            "head_repository": {"full_name": "owner/repo"},
+        }
 
     monkeypatch.setattr(native, "gh_json", api)
     delete = Mock()
@@ -101,3 +105,46 @@ def test_report_uses_completed_steps_and_preserves_failure_results(
     assert [row["seconds"] for row in rows] == [130, 60]
     assert rows[1]["conclusion"] == "failure"
     assert "| Journey | 60 | failure |" in (tmp_path / "summary").read_text()
+
+
+def test_refresh_keeps_two_distinct_trusted_identities_and_removes_older_copies(
+    monkeypatch,
+):
+    artifacts = [
+        {
+            "id": index,
+            "name": "ios-native-" + identity * 64,
+            "created_at": f"2026-11-{index:02d}",
+            "expired": index == 6,
+            "workflow_run": {"id": index},
+        }
+        for index, identity in (
+            (1, "c"),
+            (2, "b"),
+            (3, "a"),
+            (4, "a"),
+            (5, "d"),
+            (6, "e"),
+            (7, "f"),
+        )
+    ]
+    artifacts.append({"id": 99, "name": "ios-companion-app-evidence", "expired": False})
+
+    def api(endpoint):
+        if "artifacts?" in endpoint:
+            return {"artifacts": artifacts}
+        run_id = int(endpoint.rsplit("/", 1)[1])
+        return {
+            "path": "unrelated.yml" if run_id == 5 else native.WORKFLOW,
+            "event": "pull_request" if run_id == 7 else "schedule",
+            "head_repository": {"full_name": "owner/repo"},
+        }
+
+    monkeypatch.setattr(native, "gh_json", api)
+    delete = Mock()
+    monkeypatch.setattr(native.subprocess, "run", delete)
+    native.prune_artifacts("owner/repo")
+    assert [call.args[0][-1] for call in delete.call_args_list] == [
+        "repos/owner/repo/actions/artifacts/3",
+        "repos/owner/repo/actions/artifacts/1",
+    ]

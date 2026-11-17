@@ -198,6 +198,7 @@ def test_official_fixture_bridge_preserves_source_and_single_plugin(
     tmp_path, drift, ha_version
 ):
     import tomllib
+
     from ci.install_ha_test_plugin import prepare_official_fixture_bridge
 
     fixture = GENERATED_FIXTURES[ha_version]
@@ -220,9 +221,9 @@ def test_official_fixture_bridge_preserves_source_and_single_plugin(
     )
     (core / "homeassistant").mkdir()
     const = core / "homeassistant/const.py"
+    patch_version = ha_version.rsplit(".", 1)[-1]
     const.write_text(
-        'MAJOR_VERSION: Final = 2026\nMINOR_VERSION: Final = 11\n'
-        f'PATCH_VERSION: Final = "{ha_version.rsplit(".", 1)[1]}"\n',
+        f'MAJOR_VERSION: Final = 2026\nMINOR_VERSION: Final = 11\nPATCH_VERSION: Final = "{patch_version}"\n',
         encoding="utf-8",
     )
     if drift == "metadata":

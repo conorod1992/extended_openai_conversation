@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 try:
     from ci.ha_dev_snapshot import resolve_ha_dev_sha
+    from ci.lifetime_scheduling import lifetime_job_names, wait_for_lifetime_start
     from ci.validation_inventory import (
         CERTIFICATION_WORKFLOW,
         HA_DEV_WORKFLOWS,
@@ -24,6 +25,7 @@ try:
     )
 except ImportError:
     from ha_dev_snapshot import resolve_ha_dev_sha
+    from lifetime_scheduling import lifetime_job_names, wait_for_lifetime_start
     from validation_inventory import (
         CERTIFICATION_WORKFLOW,
         HA_DEV_WORKFLOWS,
@@ -168,7 +170,15 @@ def wait_for_workflows(launched: list[dict]) -> list[tuple[dict, dict]]:
             for run_id in completed:
                 pending.pop(run_id, None)
             if pending:
-                time.sleep(30)
+                # Certification is short; test workflows can run for hours.
+                # Keep their original cadence and the status-error backoff.
+                time.sleep(
+                    5
+                    if len(pending) == 1
+                    and next(iter(pending.values()))["workflow"] == CERTIFICATION_WORKFLOW
+                    and not any(status_errors.get(run_id) for run_id in pending)
+                    else 30
+                )
     return results
 
 
@@ -370,6 +380,29 @@ def main() -> int:
             print(
                 f"Could not dispatch {workflow}: {error}", file=sys.stderr, flush=True
             )
+        else:
+            if (
+                workflow == "enhanced-stress.yml"
+                and MODE == "full"
+                and not asynchronous
+            ):
+                item = launched[-1]
+                wait_for_lifetime_start(
+                    lambda endpoint: api("GET", endpoint),
+                    item["run_id"],
+                    item["run_attempt"],
+                    TARGET_SHA,
+                    lifetime_job_names(
+                        [
+                            {
+                                "campaign": "long-lifetime",
+                                "intensity": "heavy",
+                                "partition": part,
+                            }
+                            for part in ("reload", "uninterrupted")
+                        ]
+                    ),
+                )
     if asynchronous:
         Path("full-validation-cohort.json").write_text(
             json.dumps(
