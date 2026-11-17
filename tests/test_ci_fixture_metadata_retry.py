@@ -1,4 +1,4 @@
-"""Fixture metadata tolerates bounded TLS timeouts without changing selection."""
+"""Fixture metadata tolerates bounded transport failures without changing selection."""
 
 from io import BytesIO
 import json
@@ -13,10 +13,11 @@ from ci import resolve_ha_test_plugin as resolver
 
 @pytest.mark.parametrize("wrapped", [False, True])
 @pytest.mark.parametrize("failures", [0, 1, 2])
+@pytest.mark.parametrize("error_type", [TimeoutError, ConnectionResetError])
 def test_metadata_recovers_from_bounded_transport_timeouts(
-    monkeypatch, wrapped, failures
+    monkeypatch, wrapped, failures, error_type
 ):
-    error = TimeoutError("TLS handshake timed out")
+    error = error_type("Transient TLS transport failure")
     if wrapped:
         error = URLError(error)
     metadata = {"info": {"requires_dist": ["homeassistant==2026.11.0"]}}
@@ -31,14 +32,19 @@ def test_metadata_recovers_from_bounded_transport_timeouts(
         (attempt,) for attempt in range(1, failures + 1)
     ]
     assert all(call.kwargs == {"timeout": 20} for call in opening.call_args_list)
+    assert all(
+        call.args[0].full_url == "https://pypi.org/test/json"
+        for call in opening.call_args_list
+    )
     assert response.closed
 
 
 @pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize("error_type", [TimeoutError, ConnectionResetError])
 def test_metadata_timeout_exhaustion_propagates_the_original_failure(
-    monkeypatch, wrapped
+    monkeypatch, wrapped, error_type
 ):
-    error = TimeoutError("TLS handshake timed out")
+    error = error_type("Transient TLS transport failure")
     if wrapped:
         error = URLError(error)
     opening, sleeping = Mock(side_effect=error), Mock()
