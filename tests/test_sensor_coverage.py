@@ -319,7 +319,7 @@ async def test_period_sensor_tracks_midnight_and_rollover_writes_state(
     monkeypatch.setattr(sensor_module, "async_track_time_change", track_time_change)
     usage = FakeUsage()
     sensor = UsageTodaySensor(_subentry(), usage)
-    hass = SimpleNamespace()
+    hass = SimpleNamespace(bus=SimpleNamespace(async_listen=Mock(return_value=Mock())))
     sensor.hass = hass
     write_state = Mock()
     monkeypatch.setattr(sensor, "async_write_ha_state", write_state)

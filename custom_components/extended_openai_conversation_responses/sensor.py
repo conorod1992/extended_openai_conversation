@@ -9,8 +9,8 @@ import logging
 from homeassistant.components import sensor as sensor_component
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigSubentry
-from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EVENT_CORE_CONFIG_UPDATE, EntityCategory
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -220,6 +220,7 @@ class _PeriodUsageSensor(UsageSensor):
 
     def __init__(self, subentry: ConfigSubentry, usage: UsageManager) -> None:
         super().__init__(subentry, usage)
+        self._cancel_period_rollover: Callable[[], None] | None = None
 
     def _summary(self) -> dict:
         raise NotImplementedError
@@ -245,15 +246,33 @@ class _PeriodUsageSensor(UsageSensor):
     async def async_added_to_hass(self) -> None:
         """Refresh event-driven period state when the local date rolls over."""
         await super().async_added_to_hass()
+        self._reschedule_period_rollover()
+        self.async_on_remove(self._remove_period_rollover)
         self.async_on_remove(
-            async_track_time_change(
-                self.hass,
-                self._handle_period_rollover,
-                hour=0,
-                minute=0,
-                second=0,
+            self.hass.bus.async_listen(
+                EVENT_CORE_CONFIG_UPDATE, self._handle_core_config_update
             )
         )
+
+    @callback
+    def _remove_period_rollover(self) -> None:
+        cancel, self._cancel_period_rollover = self._cancel_period_rollover, None
+        if cancel is not None:
+            cancel()
+
+    @callback
+    def _reschedule_period_rollover(self) -> None:
+        self._remove_period_rollover()
+        self._cancel_period_rollover = async_track_time_change(
+            self.hass, self._handle_period_rollover, hour=0, minute=0, second=0
+        )
+
+    @callback
+    def _handle_core_config_update(self, event: Event) -> None:
+        """Rebase the current period and next midnight when HA changes timezone."""
+        if "time_zone" in event.data:
+            self._reschedule_period_rollover()
+            self.async_write_ha_state()
 
     @callback
     def _handle_period_rollover(self, _now: datetime) -> None:

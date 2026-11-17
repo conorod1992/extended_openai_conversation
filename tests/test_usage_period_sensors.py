@@ -6,7 +6,9 @@ from unittest.mock import Mock, call
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import sensor as sensor_module
+from custom_components.extended_openai_conversation_responses import (
+    sensor as sensor_module,
+)
 from custom_components.extended_openai_conversation_responses.sensor import (
     UsageMonthSensor,
     UsageTodaySensor,
@@ -69,9 +71,7 @@ async def test_period_usage_sensor_refreshes_at_local_midnight(
     tracked: dict[str, object] = {}
     remove_midnight_listener = Mock()
 
-    def track_time_change(
-        tracked_hass, action, *, hour=None, minute=None, second=None
-    ):
+    def track_time_change(tracked_hass, action, *, hour=None, minute=None, second=None):
         tracked.update(
             {
                 "hass": tracked_hass,
@@ -91,8 +91,15 @@ async def test_period_usage_sensor_refreshes_at_local_midnight(
     assert (tracked["hour"], tracked["minute"], tracked["second"]) == (0, 0, 0)
     assert on_remove.call_args_list == [
         call(entity._remove_usage_listener),
-        call(remove_midnight_listener),
+        call(entity._remove_period_rollover),
+        call(hass.bus.async_listen.return_value),
     ]
+    assert hass.bus.async_listen.call_args.args == (
+        sensor_module.EVENT_CORE_CONFIG_UPDATE,
+        entity._handle_core_config_update,
+    )
+    entity._remove_period_rollover()
+    remove_midnight_listener.assert_called_once_with()
     assert entity._usage_listener_remove is usage.remove_listener
 
     action = tracked["action"]

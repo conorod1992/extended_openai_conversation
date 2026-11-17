@@ -550,3 +550,40 @@ async def test_guest_sensor_recovers_boundary_timer_after_uncertain_save(
     assert hass.states.get(entity_id).state == "inactive"
     assert manager._cancel_transition is None
     assert await hass.config_entries.async_unload(agent.entry.entry_id)
+
+
+async def test_period_sensors_refresh_and_rearm_after_timezone_change(hass, freezer, monkeypatch):
+    from unittest.mock import Mock
+    await hass.config.async_set_time_zone("UTC")
+    freezer.move_to("2026-11-01T00:30:00+00:00")
+    agent = await _sensor_agent(hass, memory_mode="off")
+    entities = await _enabled_usage_entities(hass, agent)
+    usage = entities["usage"]._usage
+    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=42))
+    await hass.async_block_till_done()
+    for key in ("usage_today", "usage_month"):
+        assert hass.states.get(entities[key].entity_id).state == "42"
+    await hass.config.async_update(time_zone="America/Los_Angeles")
+    await hass.async_block_till_done()
+    # The current local date/month changed, without new usage or a poll.
+    for key in ("usage_today", "usage_month"):
+        assert entities[key].native_value == 0
+        assert hass.states.get(entities[key].entity_id).state == "0"
+    assert hass.states.get(entities["usage"].entity_id).state == "42"
+    # November midnight in LA occurs before the obsolete UTC midnight timer.
+    boundary = dt_util.parse_datetime("2026-11-01T07:00:01+00:00")
+    freezer.move_to(boundary)
+    async_fire_time_changed(hass, boundary)
+    await hass.async_block_till_done()
+    for key in ("usage_today", "usage_month"):
+        assert hass.states.get(entities[key].entity_id).state == "42"
+    assert await hass.config_entries.async_unload(agent.entry.entry_id)
+    observers = []
+    for key in ("usage_today", "usage_month"):
+        assert entities[key]._cancel_period_rollover is None
+        observer = Mock()
+        monkeypatch.setattr(entities[key], "async_write_ha_state", observer)
+        observers.append(observer)
+    await hass.config.async_update(time_zone="UTC")
+    await hass.async_block_till_done()
+    assert all(not observer.called for observer in observers)

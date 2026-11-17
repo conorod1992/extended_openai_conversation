@@ -3338,7 +3338,8 @@
     "tests_real_ha/test_sampling_validation.py::test_persisted_sampling_editor_recovery_is_lossless_and_strict[False-False]",
     "tests_real_ha/test_sampling_validation.py::test_persisted_sampling_editor_recovery_is_lossless_and_strict[False-True]",
     "tests_real_ha/test_sampling_validation.py::test_persisted_sampling_editor_recovery_is_lossless_and_strict[True-False]",
-    "tests_real_ha/test_sampling_validation.py::test_persisted_sampling_editor_recovery_is_lossless_and_strict[True-True]"
+    "tests_real_ha/test_sampling_validation.py::test_persisted_sampling_editor_recovery_is_lossless_and_strict[True-True]",
+    "tests_real_ha/test_usage_period_statistics.py::test_period_sensors_refresh_and_rearm_after_timezone_change"
   ],
   "browser": {
     "browser": [

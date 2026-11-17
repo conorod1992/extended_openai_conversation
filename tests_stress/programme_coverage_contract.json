@@ -242,5 +242,5 @@
     "quiet_service_acknowledgement_recoveries": 2,
     "provider_endpoint_wire_cases": 4
   },
-  "pytest_union_sha256": "c3b08126bcd8c4af4bbbbf67b29201c3e6f03b1f35caca2c9e93f7757c287c45"
+  "pytest_union_sha256": "e15f7963f03057494732b82a6090080868835f6fc59702ff7b6b6531c96cfb9c"
 }

@@ -26,7 +26,9 @@ Each conversation-agent device has four disabled-by-default diagnostic entities:
 No sensor is created per day, model, request, or transcript session. Lifetime,
 Today, and This month update through accounting/restore listeners without polling.
 Today and This month also refresh at Home Assistant's local midnight, including
-across daylight-saving changes. Last response usage receives accounting updates
+across daylight-saving changes. Timezone changes refresh the period sensors and
+their next midnight callback.
+Last response usage receives accounting updates
 and retains Home Assistant polling so an idle run that passes its retention limit
 loses its value even without further usage. It then has no token value or run
 attributes (Home Assistant displays an unknown state). This expiry may take up
