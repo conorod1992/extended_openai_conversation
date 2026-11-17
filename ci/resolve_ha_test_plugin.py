@@ -68,6 +68,13 @@ GENERATED_FIXTURES = {
         generator_sha="d8a0dc698c8946b44e455d904000db563cfbf1ba",
         official_package=True,
     ),
+    "2026.11.2": GeneratedFixture(
+        "2026.11.2",
+        "0.13.370+eoai.ha2026.11.2.official.cff5d56b8",
+        "ff5d56b825a0fb66b03d01bc297d49e206cdaba3",
+        generator_sha="ff5d56b825a0fb66b03d01bc297d49e206cdaba3",
+        official_package=True,
+    ),
     "2026.10.4": GeneratedFixture(
         "2026.10.4",
         "0.13.370+eoai.ha2026.10.4.gaacf4b5e.c357cae5c",
