@@ -13,11 +13,13 @@ from ci import resolve_ha_test_plugin as resolver
 
 @pytest.mark.parametrize("wrapped", [False, True])
 @pytest.mark.parametrize("failures", [0, 1, 2])
-@pytest.mark.parametrize("error_type", [TimeoutError, ConnectionResetError])
+@pytest.mark.parametrize("error_type", [TimeoutError, ConnectionResetError, ssl.SSLEOFError])
 def test_metadata_recovers_from_bounded_transport_timeouts(
     monkeypatch, wrapped, failures, error_type
 ):
     error = error_type("Transient TLS transport failure")
+    if isinstance(error, ssl.SSLEOFError):
+        error.reason = "UNEXPECTED_EOF_WHILE_READING"
     if wrapped:
         error = URLError(error)
     metadata = {"info": {"requires_dist": ["homeassistant==2026.11.0"]}}
@@ -45,11 +47,13 @@ def test_metadata_recovers_from_bounded_transport_timeouts(
 
 
 @pytest.mark.parametrize("wrapped", [False, True])
-@pytest.mark.parametrize("error_type", [TimeoutError, ConnectionResetError])
+@pytest.mark.parametrize("error_type", [TimeoutError, ConnectionResetError, ssl.SSLEOFError])
 def test_metadata_timeout_exhaustion_propagates_the_original_failure(
     monkeypatch, wrapped, error_type
 ):
     error = error_type("Transient TLS transport failure")
+    if isinstance(error, ssl.SSLEOFError):
+        error.reason = "UNEXPECTED_EOF_WHILE_READING"
     if wrapped:
         error = URLError(error)
     opening, sleeping = Mock(side_effect=error), Mock()

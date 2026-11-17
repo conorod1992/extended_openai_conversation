@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
+          VERSION="$(python -c 'from ci.resolve_ha_test_plugin import _get_json; print(_get_json("https://pypi.org/pypi/homeassistant/json")["info"]["version"])')"
           PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
           pip install -r requirements_test.txt
           python ci/install_ha_test_plugin.py "$VERSION" "$PLUGIN_VERSION"

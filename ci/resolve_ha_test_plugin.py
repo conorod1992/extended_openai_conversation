@@ -102,11 +102,12 @@ def _get_json(url: str) -> dict[str, Any]:
         try:
             with urlopen(request, timeout=20, context=_TLS_CONTEXT) as response:
                 return json.load(response)
-        except (TimeoutError, ConnectionResetError, URLError) as error:
-            # urllib wraps TLS handshake timeouts/resets in URLError. Retry this
+        except (TimeoutError, ConnectionResetError, ssl.SSLEOFError, URLError) as error:
+            # urllib wraps TLS handshake timeouts/resets/EOFs in URLError. Retry this
             # read-only fetch, retaining HTTP/metadata errors and a hard limit.
+            cause = error.reason if isinstance(error, URLError) else error
             if attempt >= 2 or not isinstance(
-                getattr(error, "reason", error), (TimeoutError, ConnectionResetError)
+                cause, (TimeoutError, ConnectionResetError, ssl.SSLEOFError)
             ):
                 raise
             attempt += 1
