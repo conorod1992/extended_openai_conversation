@@ -20,7 +20,7 @@ const runs = Array.from({length: 7}, (_, nth) => ({
 }));
 const tableContent = renderUsagePage(tablePanel, {runs: {runs}})
   .split("<tbody data-eoc-usage-runs>")[1].split("</tbody>")[0];
-for (const run of runs) assert.ok(tableContent.includes(`data-usage-run-id="${run.run_id}"`));
+for (const run of runs) assert.ok(tableContent.includes(`data-usage-recent-run-id="${run.run_id}"`));
 assert.match(renderUsagePage(tablePanel), /Browse retained requests/);
 
 const today = "2026-09-07";

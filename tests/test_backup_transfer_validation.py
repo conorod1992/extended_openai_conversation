@@ -395,6 +395,15 @@ def test_large_archive_streams_utf8_and_preserves_numeric_values(tmp_path):
     assert peak < 3 * len(payload)
 
 
+def test_archive_parser_error_does_not_expose_private_payload(tmp_path):
+    path = tmp_path / "invalid.zip"
+    _write_raw_manifest_archive(path, b'{"config": private-test-marker}')
+    with pytest.raises(backup.BackupError, match="payload is not valid JSON") as err:
+        backup_transfer._load_archive_document(str(path))
+    assert err.value.__cause__ is None
+    assert "private-test-marker" not in str(err.value)
+
+
 def test_resolve_agent_rejects_missing_wrong_domain_and_wrong_subentry_type():
     entries = {}
     hass = SimpleNamespace(

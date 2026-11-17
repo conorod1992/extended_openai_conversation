@@ -548,12 +548,14 @@ test("Usage request details bind once after repeated explicit binding", async ({
     const usage = getRouteFeature("usage-maintenance/usage");
     usage.bindUsageDiagnostics(panel); usage.bindUsageDiagnostics(panel);
   }, frontend);
+  await expect(panel.locator('[data-usage-run-id="run-one"]')).toHaveCount(1);
+  await expect(panel.locator('[data-usage-recent-run-id="run-one"]')).toHaveCount(1);
   await panel.locator(".usage-run-details").click();
   await expect(panel.locator("#usage-request-dialog")).toHaveJSProperty("open",true);
   expect(await page.evaluate(() => window.lazyUsageCalls.filter((call)=>call.section === "usage" && call.action === "requests").length)).toBe(1);
   await page.keyboard.press("Escape");
   await expect(panel.locator("#usage-request-dialog")).toHaveJSProperty("open",false);
-  await panel.locator('[data-usage-run-id="run-two"]').click();
+  await panel.locator('[data-usage-recent-run-id="run-two"]').click();
   await expect(panel.locator("#usage-request-dialog")).toHaveJSProperty("open",true);
   await page.keyboard.press("Escape");
   await expect(panel.locator("#usage-request-dialog")).toHaveJSProperty("open",false);

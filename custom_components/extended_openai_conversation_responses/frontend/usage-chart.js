@@ -364,7 +364,7 @@ function usageRecentRows(panel, result) {
     const tokens = tokenBreakdown(run.total_tokens, run.cached_input_tokens);
     const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
     const details = run.request_count > 0 && run.run_id
-      ? `<button type="button" class="secondary" data-usage-run-id="${panel._e(run.run_id)}" aria-label="Provider requests for run at ${panel._e(completed.display)}">Requests</button>`
+      ? `<button type="button" class="secondary" data-usage-recent-run-id="${panel._e(run.run_id)}" aria-label="Provider requests for run at ${panel._e(completed.display)}">Requests</button>`
       : "";
     return `<tr><td><time datetime="${panel._e(completed.datetime)}" title="${panel._e(completed.datetime)}">${panel._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${panel._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${panel._e(run.successful ? "Success" : run.error_type || "Failed")}</td><td>${details}</td></tr>`;
   }).join("");
@@ -492,8 +492,8 @@ export function bindUsageDiagnostics(panel) {
       }
     }
   };
-  root.querySelectorAll("[data-usage-run-id]").forEach((button) => {
-    button.onclick = () => loadRequests(button.dataset.usageRunId);
+  root.querySelectorAll("[data-usage-run-id], [data-usage-recent-run-id]").forEach((button) => {
+    button.onclick = () => loadRequests(button.dataset.usageRunId ?? button.dataset.usageRecentRunId);
   });
   const browse = root.querySelector("[data-usage-all-requests]");
   if (browse) browse.onclick = () => loadRequests(null);

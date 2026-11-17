@@ -736,7 +736,7 @@ def _load_archive_payload(
     archive: zipfile.ZipFile, expected_bytes: int, expected_hash: str
 ) -> Any:
     """Build the decoded tree without retaining the full raw or decoded JSON."""
-    invalid: Exception | None = None
+    invalid = False
     builder = ObjectBuilder()
     try:
         with archive.open(PAYLOAD_NAME) as member:
@@ -748,8 +748,8 @@ def _load_archive_payload(
                     builder.event(
                         event, float(value) if isinstance(value, Decimal) else value
                     )
-            except (JSONError, UnicodeError, ValueError, OverflowError) as err:
-                invalid = err
+            except JSONError, UnicodeError, ValueError, OverflowError:
+                invalid = True
                 # Finish checking the wire even if a malformed token stopped parsing.
                 while reader.read(64 * 1024):
                     pass
@@ -761,10 +761,9 @@ def _load_archive_payload(
         raise backup.BackupError("The backup archive payload is incomplete")
     if reader.digest.hexdigest() != expected_hash:
         raise backup.BackupError("The backup archive payload checksum does not match")
-    if invalid is not None:
-        raise backup.BackupError(
-            "The backup archive payload is not valid JSON"
-        ) from invalid
+    if invalid:
+        # Parser diagnostics can include the private source text.
+        raise backup.BackupError("The backup archive payload is not valid JSON")
     return builder.value
 
 
