@@ -214,7 +214,43 @@ def test_workflow_wait_does_not_finish_on_an_in_progress_run(monkeypatch, tmp_pa
     monkeypatch.setattr(driver.time, "sleep", sleep)
     assert driver.wait_for_workflows([item]) == [(item, final)]
     assert statuses.call_count == 2
-    sleep.assert_called_once_with(30)
+    sleep.assert_called_once_with(5)
+
+
+@pytest.mark.parametrize("children,delay", [(2, 5), (3, 30)])
+def test_workflow_polling_only_accelerates_the_final_children(
+    monkeypatch, tmp_path, children, delay
+):
+    driver = _driver(monkeypatch, tmp_path)
+    items = [{"workflow": f"ci-{n}.yml", "run_id": n, "url": "test"} for n in range(children)]
+    calls = dict.fromkeys(range(children), 0)
+
+    def status(item):
+        calls[item["run_id"]] += 1
+        return item, {
+            "status": "in_progress" if calls[item["run_id"]] == 1 else "completed",
+            "conclusion": "success",
+        }
+
+    sleeping = Mock()
+    monkeypatch.setattr(driver, "run_status", status)
+    monkeypatch.setattr(driver.time, "sleep", sleeping)
+    assert len(driver.wait_for_workflows(items)) == children
+    sleeping.assert_called_once_with(delay)
+
+
+def test_accelerated_polling_preserves_status_error_backoff(monkeypatch, tmp_path):
+    driver = _driver(monkeypatch, tmp_path)
+    item = {"workflow": "ci.yml", "run_id": 42, "url": "test"}
+    final = {"status": "completed", "conclusion": "success"}
+    monkeypatch.setattr(
+        driver, "run_status",
+        Mock(side_effect=[RuntimeError("temporary API failure"), (item, final)]),
+    )
+    sleeping = Mock()
+    monkeypatch.setattr(driver.time, "sleep", sleeping)
+    assert driver.wait_for_workflows([item]) == [(item, final)]
+    sleeping.assert_called_once_with(30)
 
 
 def test_full_validation_includes_specialists_and_accounts_for_all_workflows():

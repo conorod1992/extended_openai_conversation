@@ -745,6 +745,7 @@ async def _booted_soak(config_dir, seed, scale):
                 )
                 abandoned_id = abandoned["session_id"]
                 abandoned_path = Path(transfers._imports(hass)[abandoned_id].path)
+                abandoned_started = monotonic()
                 assert abandoned_path.exists()
             for window in range(9 if long_lifetime else 5):
                 assist, management = [], []
@@ -807,9 +808,15 @@ async def _booted_soak(config_dir, seed, scale):
                 feature_counts["archive"] += 1
                 await archive.async_prune(30)
                 feature_counts["maintenance"] += 1
-                duration = 10 if window == 0 else 225 if long_lifetime else 15 * scale
+                # Nine windows retain the original five traffic rounds per
+                # exercised window, with shorter idle gaps in the 20-minute soak.
+                duration = 10 if window == 0 else 150 if long_lifetime else 15 * scale
                 began = monotonic()
-                while monotonic() - began < duration:
+                rounds = 0
+                minimum_rounds = 1 if window == 0 else 5
+                while monotonic() - began < duration or (
+                    long_lifetime and rounds < minimum_rounds
+                ):
                     results = await asyncio.gather(
                         *(
                             turn("Window conversation", f"soak-{index}")
@@ -821,8 +828,9 @@ async def _booted_soak(config_dir, seed, scale):
                         assist.append(latency)
                     management.append(await management_step(number))
                     number += 1
+                    rounds += 1
                     pause = (
-                        min(45, max(0, duration - (monotonic() - began)))
+                        min(30, max(0, duration - (monotonic() - began)))
                         if long_lifetime
                         else 0.15
                     )
@@ -852,11 +860,14 @@ async def _booted_soak(config_dir, seed, scale):
                     release_held.set()
                     recovered, _ = await turn("Recover after cancellation")
                     assert _speech(recovered) == "Process remains responsive."
-                if long_lifetime and window == 5:
+                if long_lifetime and window == 7:
                     # Production TTL elapses naturally during idle. The scheduled
                     # expiry callback (or an intervening reload) reclaims the
                     # private file without waiting for the next supported start.
-                    assert monotonic() - lifetime_started >= 900
+                    assert (
+                        monotonic() - abandoned_started
+                        >= transfers.TRANSFER_TTL_SECONDS
+                    )
                     assert abandoned_id not in transfers._imports(hass)
                     assert not abandoned_path.exists()
                     fresh = await transfers._start_import(
@@ -899,6 +910,7 @@ async def _booted_soak(config_dir, seed, scale):
                             "seed": seed,
                             "windows": windows,
                             "provider_requests": provider_requests,
+                            "workload_rounds": number,
                             "config_entry_reloads": config_entry_reloads,
                             "uninterrupted_runtime": uninterrupted,
                             "elapsed_seconds": monotonic() - lifetime_started,
@@ -920,8 +932,9 @@ async def _booted_soak(config_dir, seed, scale):
             final, _ = await turn("Final lifetime health request")
             assert _speech(final) == "Process remains responsive."
             if long_lifetime:
-                assert monotonic() - lifetime_started >= 1800
-                assert idle_seconds >= 1500
+                assert monotonic() - lifetime_started >= 1200
+                assert idle_seconds >= 1000
+                assert number >= 41
                 assert retention_callbacks >= 20
                 assert config_entry_reloads == (0 if uninterrupted else 4)
                 assert expired_transfer_reclaims == 1

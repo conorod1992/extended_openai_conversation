@@ -170,7 +170,14 @@ def wait_for_workflows(launched: list[dict]) -> list[tuple[dict, dict]]:
             for run_id in completed:
                 pending.pop(run_id, None)
             if pending:
-                time.sleep(30)
+                # Only the final one or two children need low-latency polling.
+                # Keep the original backoff after any status-read error.
+                time.sleep(
+                    5
+                    if len(pending) <= 2
+                    and not any(status_errors.get(run_id) for run_id in pending)
+                    else 30
+                )
     return results
 
 

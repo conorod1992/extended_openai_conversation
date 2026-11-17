@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import json
 import re
@@ -125,16 +126,30 @@ def resolve_ha_test_plugin(
             continue
         candidates.append((numeric, version))
 
-    for _, version in sorted(candidates, reverse=True):
-        metadata = get_release(
-            f"https://pypi.org/pypi/pytest-homeassistant-custom-component/{version}/json"
-        )["info"]
-        for requirement in metadata.get("requires_dist") or []:
-            match = re.match(
-                r"^\s*homeassistant\s*==\s*([^;\s]+)", requirement, re.IGNORECASE
-            )
-            if match and match.group(1) == ha_version:
-                return version
+    # Bound speculative reads to one small batch. Consume results in descending
+    # version order, retaining newest-exact selection and fail-closed metadata
+    # errors for every release that the serial search would have inspected.
+    ranked = sorted(candidates, reverse=True)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for offset in range(0, len(ranked), 8):
+            batch = ranked[offset : offset + 8]
+            pending = [
+                pool.submit(
+                    get_release,
+                    f"https://pypi.org/pypi/pytest-homeassistant-custom-component/{version}/json",
+                )
+                for _, version in batch
+            ]
+            for (_, version), result in zip(batch, pending, strict=True):
+                metadata = result.result()["info"]
+                for requirement in metadata.get("requires_dist") or []:
+                    match = re.match(
+                        r"^\s*homeassistant\s*==\s*([^;\s]+)",
+                        requirement,
+                        re.IGNORECASE,
+                    )
+                    if match and match.group(1) == ha_version:
+                        return version
 
     if fixture := GENERATED_FIXTURES.get(ha_version):
         return fixture.plugin_version

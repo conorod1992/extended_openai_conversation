@@ -158,18 +158,22 @@ The existing frontend diagnostics workflow's optional `diagnostic_picker` input
 includes all four populated-picker theme/viewport scans and retains fail-closed
 review, so it reports these findings instead of certifying them.
 
-The manual-only `long-lifetime` campaign extends the existing booted resource
-soak to at least 30 elapsed minutes, with at least 25 minutes of measured idle,
+The `long-lifetime` campaign extends the existing booted resource
+soak to at least 20 elapsed minutes, with at least 1,000 seconds of measured idle,
 periodic Assist/Memory traffic, nine resource windows, four actual entry reloads,
-an expired default-900-second upload reclaimed by the next transfer operation,
+at least 41 workload rounds, an expired default-900-second upload reclaimed
+before starting another transfer,
 and a final healthy Assist request. The actual archive retention callback runs
 on a documented 60-second harness interval rather than its production daily
 interval; this proves callback lifetime/cleanup, not a full day's elapsed
 retention. At least 20 callbacks must actually fire. Resource growth and latency
 use the existing warmed plateau/trend bounds. Select `long-lifetime` with normal
-intensity in Enhanced's manual dispatch. It is excluded from `all`, the nightly
-schedule, PR and release gating; a separate weekly scheduler would add workflow
-complexity without improving the elapsed-time assertion. It uses the same exact
+intensity in Enhanced's manual dispatch. Full Validation includes both reload
+and uninterrupted variants at heavy intensity; the weekly schedule includes
+both at normal intensity. Daily and ordinary PR selections omit them. The
+unchanged 15-minute TTL is checked in window seven, leaving another full window
+after cleanup. Longer endurance runs belong to the separate pre-release tester.
+It uses the same exact
 candidate, operation minimums and execution certificate as other campaigns.
 
 
