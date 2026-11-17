@@ -309,12 +309,18 @@ def test_streaming_preserves_word_boundaries_and_normal_brackets() -> None:
 
 
 def test_streaming_malformed_markdown_degrades_with_bounded_memory() -> None:
-    malformed = "[label](https://example.com/" + "x" * (
-        DEFAULT_STREAMING_BUFFER_LIMIT + 10
-    )
     sanitizer = StreamingSpeechSanitizer()
+    malformed = "[unfinished " + "x" * (DEFAULT_STREAMING_BUFFER_LIMIT + 10)
     emitted = sanitizer.feed(malformed)
     assert emitted == malformed
+    assert sanitizer.buffered_chars == 0
+    assert sanitizer.finish() == ""
+
+    sanitizer = StreamingSpeechSanitizer()
+    unfinished_url = (
+        "[label](https://example.com/" + "x" * DEFAULT_STREAMING_BUFFER_LIMIT
+    )
+    assert sanitizer.feed(unfinished_url) == "label"
     assert sanitizer.buffered_chars == 0
     assert sanitizer.finish() == ""
     assert _stream(["Keep [unfinished](https://example.com"], urls=False) == (

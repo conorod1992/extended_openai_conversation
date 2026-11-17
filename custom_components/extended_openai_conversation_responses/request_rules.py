@@ -3300,10 +3300,18 @@ def validate_rule_model_request(
         # Effort-dependent features still receive full validation at execution.
         from .helpers import get_api_mode
         from .model_capabilities import ModelCapabilityError, model_capability_snapshot
-        from .request import conversation_tools_required, request_model_capabilities
+        from .request import (
+            capability_model_identity,
+            conversation_tools_required,
+            request_model_capabilities,
+        )
 
         selected_model = str(candidate.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
         capabilities = request_model_capabilities(candidate, entry_data)
+        if (model or underlying_model) and not capabilities["reasoning"]["efforts"]:
+            raise HomeAssistantError(
+                f"Model {capability_model_identity(candidate, entry_data)} does not support reasoning effort"
+            )
         with model_capability_snapshot(selected_model, capabilities):
             try:
                 get_api_mode(

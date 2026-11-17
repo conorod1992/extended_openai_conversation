@@ -381,14 +381,18 @@ function refreshEditor(panel) {
   help.hidden=!invalid;
   help.textContent=!handoff ? "Enable Continue to AI or choose Original request." : q("#rule-match").value!=="sentence_pattern" ? "Captured value requires Sentence Pattern matching." : common.length ? "The selected captured value is not available in every trigger. Choose a common value or Original request." : "No captured values are available for every trigger. Use Sentence Pattern matching and make each trigger capture the same value, such as {question}.";
   const efforts = [...q("#rule-reasoning").options].map(option => option.value).filter(Boolean);
-  syncRequestRuleRoutingControls(root, efforts, null, common);
+  const routedModel = q("#rule-model")?.value.trim();
+  const azureModel = q("#rule-azure-model")?.value.trim();
+  const fixedRoute = Boolean(routedModel || azureModel)
+    && ![routedModel, azureModel].some(value => /\{[^{}]+\}/.test(value || ""));
+  syncRequestRuleRoutingControls(root, efforts, null, common, !fixedRoute || efforts.some(value => !value.startsWith("{")));
   const state=editorState(panel), latest=beginOperation(panel,"rule-model-lookup");
   if(local)return;
-  const model=requestRuleCapabilityModel(panel,q("#rule-model")?.value.trim(),q("#rule-azure-model")?.value.trim());
+  const model=requestRuleCapabilityModel(panel,routedModel,azureModel);
   if(!model || /\{[^{}]+\}/.test(model))return;
   const ownsEditor=captureRuleEditorOwner(panel), current=()=>latest() && ownsEditor() && state.dialog.open;
   void ensureModelCatalog().then((module)=>current() ? module.lookupModelData(panel,model,"lookup",current) : null).then((data)=>{
-    if(current()) syncRequestRuleRoutingControls(root,data.reasoning_effort_options,null,common);
+    if(current() && data) syncRequestRuleRoutingControls(root,data.reasoning_effort_options,null,common,!fixedRoute || Boolean(data.reasoning_effort_options?.length));
   }).catch((err)=>{if(current())panel._toast(`Unable to load model choices: ${err.message || String(err)}`,true);});
 }
 

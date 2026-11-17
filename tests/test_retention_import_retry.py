@@ -67,7 +67,7 @@ async def test_same_policy_retry_reaches_deletion(
 
     monkeypatch.setattr(manager._detail_storage, "async_save", save)
     payload = (
-        {"document": json.dumps(document), "mode": "current", "confirm": True}
+        {"document": json.dumps(document), "mode": "current", "confirm": True, "confirm_retention": True}
         if action == "import"
         else {"config": {field: 0}}
     )

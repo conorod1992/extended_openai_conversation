@@ -12,7 +12,7 @@ The built-in cleanup can remove content that is useful on screen but awkward whe
 - formatting markers
 - bare URLs
 
-It works with Responses, Chat Completions and compatible providers. It also keeps track of text across streamed chunks, so a Markdown link or URL split across several pieces can still be removed before it is spoken.
+It works with Responses, Chat Completions and compatible providers. Cleanup follows links across streamed chunks. When a recognized URL exceeds the streaming buffer, cleanup keeps skipping the URL even if its closing delimiter never arrives.
 
 Link labels such as `Sources`, `References`, and `1` remain spoken. Only empty labels and labels that are themselves URLs or addresses are suppressed; cleanup does not guess whether a label is a citation.
 

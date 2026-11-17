@@ -87,6 +87,39 @@ def test_standalone_routing_rejects_request_scope_even_for_reset() -> None:
                 validate_rule(rule)
 
 
+@pytest.mark.parametrize("model", ["gpt-4o", "gpt-5.6", "{model}", None])
+def test_captured_reasoning_requires_effort_support_for_fixed_routes(model) -> None:
+    pattern = "reason {effort=low|high}"
+    if model == "{model}":
+        pattern += " using {model}"
+    rule = validate_rule(
+        _rule(
+            "captured-effort",
+            pattern,
+            match_type="sentence_pattern",
+            action={
+                "model": model,
+                "reasoning_effort": "{effort}",
+                "scope": "request",
+                "reset": False,
+                "continue_to_ai": True,
+                "success_response": "Updated",
+            },
+        )
+    )
+    options = {CONF_CHAT_MODEL: "gpt-4o", "api_mode": "auto"}
+    if model == "gpt-4o":
+        with pytest.raises(
+            HomeAssistantError, match="gpt-4o does not support reasoning effort"
+        ):
+            validate_rule_model_request(rule, options, {})
+    else:
+        # An effort-only command can inherit a reasoning model from an
+        # earlier conversation route. Its selected model is not yet known.
+        validate_rule_model_request(rule, options, {})
+
+
+
 async def test_continued_routing_uses_later_override_in_global_order(hass) -> None:
     first = _rule("first", "route", order=0, action={
         "model": "gpt-5.6", "reasoning_effort": None, "scope": "request",

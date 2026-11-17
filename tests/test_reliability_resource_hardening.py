@@ -126,6 +126,7 @@ async def test_usage_getter_returns_one_manager_during_concurrent_first_use(
     hass, monkeypatch
 ) -> None:
     """The first two callers cannot initialize separate UsageManager instances."""
+    hass.config_entries.async_get_entry.return_value = None
     calls = 0
 
     async def slow_load(_store: Store) -> None:

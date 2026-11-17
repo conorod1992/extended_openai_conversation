@@ -759,13 +759,26 @@ async def _async_persist_config_entries(
     prepared: backup.PreparedRestore,
 ) -> None:
     """Force and verify Core config persistence before discarding recovery state."""
+    await async_persist_config_entries(
+        hass,
+        lambda persisted: _persisted_subentry_matches(
+            persisted, entry_id, subentry_id, prepared
+        ),
+        "Restored agent configuration could not be durably verified",
+    )
+
+
+async def async_persist_config_entries(
+    hass: HomeAssistant,
+    matches: Callable[[Any], bool],
+    error_message: str,
+) -> None:
+    """Flush Core's config store and verify its on-disk contents."""
     manager = hass.config_entries
     store = getattr(manager, "_store", None)
     data_to_save = getattr(manager, "_data_to_save", None)
     if store is None or not callable(data_to_save):
-        raise backup.BackupError(
-            "Restored agent configuration could not be durably verified"
-        )
+        raise backup.BackupError(error_message)
     try:
         await store.async_save(data_to_save())
         # Use a fresh Store instance so a concurrent delayed Core update cannot make
@@ -778,13 +791,9 @@ async def _async_persist_config_entries(
         )
         persisted = await verifier.async_load()
     except Exception as err:
-        raise backup.BackupError(
-            "Restored agent configuration could not be durably verified"
-        ) from err
-    if not _persisted_subentry_matches(persisted, entry_id, subentry_id, prepared):
-        raise backup.BackupError(
-            "Restored agent configuration could not be durably verified"
-        )
+        raise backup.BackupError(error_message) from err
+    if not matches(persisted):
+        raise backup.BackupError(error_message)
 
 
 async def _update_configuration(

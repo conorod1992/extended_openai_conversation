@@ -58,7 +58,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # entry/CSS limits and a measured total-JS ceiling with under 100 bytes headroom.
 # Rejecting incomplete numeric input and offering reasoning captures add 343
 # minified JS bytes (892,243 -> 892,586). Keep a 14-byte margin.
-CEILINGS = {"javascript": 892_600, "css": 65_000, "management_entry": 120_000}
+# Restore retention notices, reasoning guards and Usage drill-down add 2,085
+# bytes (892,586 -> 894,671). Allow 29 bytes of headroom for the combined change.
+CEILINGS = {"javascript": 894_700, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

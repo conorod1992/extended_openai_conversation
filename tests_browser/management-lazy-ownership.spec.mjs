@@ -540,7 +540,10 @@ test("Usage request details bind once after repeated explicit binding", async ({
     const original = hass.callWS.bind(hass);
     window.lazyUsageCalls = [];
     hass.callWS = async (message) => { window.lazyUsageCalls.push(message); return original(message); };
-    panel._result = {...panel._result,runs:{runs:[{run_id:"run-one",successful:false,error_type:"Example",request_count:1}]}};
+    panel._result = {...panel._result,runs:{runs:[
+      {run_id:"run-one",successful:false,error_type:"Example",request_count:1},
+      {run_id:"run-two",successful:true,request_count:1},
+    ]}};
     panel._render(); panel._render();
     const usage = getRouteFeature("usage-maintenance/usage");
     usage.bindUsageDiagnostics(panel); usage.bindUsageDiagnostics(panel);
@@ -550,6 +553,15 @@ test("Usage request details bind once after repeated explicit binding", async ({
   expect(await page.evaluate(() => window.lazyUsageCalls.filter((call)=>call.section === "usage" && call.action === "requests").length)).toBe(1);
   await page.keyboard.press("Escape");
   await expect(panel.locator("#usage-request-dialog")).toHaveJSProperty("open",false);
+  await panel.locator('[data-usage-run-id="run-two"]').click();
+  await expect(panel.locator("#usage-request-dialog")).toHaveJSProperty("open",true);
+  await page.keyboard.press("Escape");
+  await expect(panel.locator("#usage-request-dialog")).toHaveJSProperty("open",false);
+  await panel.getByRole("button", {name:"Browse retained requests"}).click();
+  await expect(panel.locator("#usage-request-dialog")).toHaveJSProperty("open",true);
+  expect(await page.evaluate(() => window.lazyUsageCalls
+    .filter(call => call.section === "usage" && call.action === "requests")
+    .map(call => call.all_requests ? "all" : call.run_id))).toEqual(["run-one","run-two","all"]);
   await expectHarnessClean(page, errors);
 });
 

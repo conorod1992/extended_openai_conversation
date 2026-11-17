@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import os
 import stat
+import tracemalloc
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 import zipfile
@@ -294,14 +296,14 @@ def test_archive_loader_rejects_short_actual_payload_after_valid_metadata(
             json.dumps(manifest, separators=(",", ":")),
         )
 
-    real_read = backup_transfer._read_archive_member_bounded
+    real_open = zipfile.ZipFile.open
 
-    def short_payload(archive, name, limit, overflow_message, corruption_message):
+    def short_payload(archive, name, *args, **kwargs):
         if name == backup_transfer.PAYLOAD_NAME:
-            return payload[:-1]
-        return real_read(archive, name, limit, overflow_message, corruption_message)
+            return io.BytesIO(payload[:-1])
+        return real_open(archive, name, *args, **kwargs)
 
-    monkeypatch.setattr(backup_transfer, "_read_archive_member_bounded", short_payload)
+    monkeypatch.setattr(zipfile.ZipFile, "open", short_payload)
 
     with pytest.raises(backup.BackupError, match="payload is incomplete"):
         backup_transfer._load_archive_document(str(path))
@@ -369,6 +371,28 @@ def _write_raw_manifest_archive(
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(backup_transfer.PAYLOAD_NAME, payload)
         archive.writestr(backup_transfer.MANIFEST_NAME, manifest_bytes)
+
+
+def test_large_archive_streams_utf8_and_preserves_numeric_values(tmp_path):
+    document = {
+        "agent": {"title": "Knowledge 📚"},
+        "knowledge": ["x" * 80000] * 64,
+        "int": 2**88 + 73,
+        "fraction": 0.125,
+    }
+    payload = json.dumps(document, ensure_ascii=False).encode("utf-8")
+    path = tmp_path / "knowledge.zip"
+    _write_raw_manifest_archive(path, payload)
+    tracemalloc.start()
+    try:
+        loaded = backup_transfer._load_archive_document(str(path))
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert loaded == document
+    assert type(loaded["int"]) is int
+    assert type(loaded["fraction"]) is float
+    assert peak < 3 * len(payload)
 
 
 def test_resolve_agent_rejects_missing_wrong_domain_and_wrong_subentry_type():

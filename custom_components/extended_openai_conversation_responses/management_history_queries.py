@@ -175,18 +175,20 @@ def usage_runs_page(
 
 def usage_requests_page(
     manager: Any,
-    run_id: str,
+    run_id: str | None,
     *,
     limit: int = MANAGEMENT_USAGE_PAGE_MAX,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Page one run's requests without first copying every matching request."""
+    """Page one run chronologically, or all retained requests newest first."""
     safe_limit = max(1, min(int(limit), MANAGEMENT_USAGE_PAGE_MAX))
     safe_offset = max(0, int(offset))
     matching = (
         request
-        for request in manager.requests
-        if request.run_id == run_id
+        for request in (
+            manager.requests if run_id is not None else reversed(manager.requests)
+        )
+        if (run_id is None or request.run_id == run_id)
         and manager.detail_is_current(request.timestamp, request=True)
     )
     page, has_more = page_from_iterable(matching, offset=safe_offset, limit=safe_limit)

@@ -470,6 +470,30 @@ def test_usage_requests_page_filters_and_bounds_request_details() -> None:
     assert result["has_more"] is False
 
 
+def test_all_usage_requests_include_detached_and_expired_parent_runs() -> None:
+    manager = SimpleNamespace(
+        runs=[],
+        requests=[
+            _edge_request("expired", "old", {}),
+            _edge_request("former-run", "missing-run", {}),
+            _edge_request("detached", None, {}),
+        ],
+    )
+    expired = manager.requests[0].timestamp
+    manager.requests[0] = replace(
+        manager.requests[0], timestamp="2000-01-01T00:00:00+00:00"
+    )
+    assert expired != manager.requests[0].timestamp
+    manager.request_retention_days = 30
+    manager.detail_is_current = UsageManager.detail_is_current.__get__(manager)
+    first = usage_requests_page(manager, None, limit=1)
+    second = usage_requests_page(manager, None, limit=1, offset=first["next_offset"])
+    assert [request["request_id"] for request in first["requests"]] == ["detached"]
+    assert [request["request_id"] for request in second["requests"]] == ["former-run"]
+    assert second["has_more"] is False
+
+
+
 def test_usage_breakdowns_filter_dates_and_salvage_malformed_dimensions() -> None:
     """Breakdown aggregation skips out-of-window/corrupt data and accounts for overflow."""
     overflowing = {

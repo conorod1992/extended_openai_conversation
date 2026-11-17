@@ -2,8 +2,9 @@
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
-from openai.types.responses import ResponseFunctionWebSearch
+from openai.types.responses import ResponseFunctionWebSearch, ResponseTextDoneEvent
 import pytest
 
 from custom_components.extended_openai_conversation_responses import assistant_response
@@ -18,6 +19,9 @@ from custom_components.extended_openai_conversation_responses.completion_events 
 from custom_components.extended_openai_conversation_responses.entity import (
     _convert_content_to_responses_param,
 )
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    make_tool_result_content,
+)
 from custom_components.extended_openai_conversation_responses.non_streaming import (
     completed_responses_events,
 )
@@ -26,7 +30,14 @@ from custom_components.extended_openai_conversation_responses.speech import (
     process_speech_text,
 )
 from homeassistant.components import conversation
-from tests.test_responses_history_coherence import entity, events, message, reasoning
+from tests.test_responses_api import FakeStream
+from tests.test_responses_history_coherence import (
+    call,
+    entity,
+    events,
+    message,
+    reasoning,
+)
 
 
 @pytest.mark.parametrize("mapping", [False, True])
@@ -159,6 +170,91 @@ async def test_listener_answer_and_native_replay_are_independent(
     await output_witness(hass, cleanup=cleanup, phase=phase, completed=completed)
 
 
+@pytest.mark.parametrize("finalization_only", ["done", "item", "item_without_added"])
+async def test_finalized_response_text_reaches_chat_and_speech(hass, finalization_only):
+    progress = message("progress", "Internal commentary")
+    answer = message("answer", "The kitchen light is on.").model_copy(
+        update={"phase": "final_answer"}
+    )
+    output = []
+    for event in events([progress, answer]).events:
+        if event.type == "response.output_text.delta":
+            if finalization_only == "done":
+                output.append(
+                    ResponseTextDoneEvent(
+                        type="response.output_text.done",
+                        text=event.delta,
+                        item_id=event.item_id,
+                        content_index=event.content_index,
+                        output_index=event.output_index,
+                        sequence_number=event.sequence_number,
+                        logprobs=[],
+                    )
+                )
+                if event.item_id == "progress":
+                    # A provider can include both delta and done for the same part.
+                    output.insert(-1, event)
+            continue
+        if (
+            finalization_only == "item_without_added"
+            and event.type == "response.output_item.added"
+        ):
+            continue
+        output.append(event)
+    obj, _ = entity(hass, [FakeStream(output)])
+    log = conversation.ChatLog(hass, "buffered-responses")
+    log.async_add_user_content(conversation.UserContent(content="Light status?"))
+    heard = []
+    log.delta_listener = lambda _log, delta: heard.append(delta.get("content", ""))
+
+    await obj._async_handle_chat_log(log, [], [])
+
+    assert "".join(heard) == answer.content[0].text
+    assert final_assistant_text(log.content) == answer.content[0].text
+    assert log.content[-1].native == answer
+    assert sum(item.content == "Internal commentary" for item in log.content) == 1
+
+
+async def test_responses_speech_separates_answer_text_across_tool_rounds(hass):
+    preamble = message("intro", "I will check").model_copy(update={"phase": None})
+    answer = message("answer", "The kitchen light is on.").model_copy(
+        update={"phase": "final_answer"}
+    )
+    obj, client = entity(
+        hass, [events([preamble, call("read_status", "status")]), events([answer])]
+    )
+    obj._execute_function_tool = AsyncMock(
+        return_value=make_tool_result_content(
+            agent_id=obj.entity_id,
+            tool_call_id="status",
+            tool_name="read_status",
+            tool_result={"state": "on"},
+        )
+    )
+    tool = {
+        "spec": {
+            "name": "read_status",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "template", "value_template": "on"},
+    }
+    log = conversation.ChatLog(hass, "tool-round-speech")
+    log.async_add_user_content(conversation.UserContent(content="Light status?"))
+    heard = []
+    def listener(_log, delta):
+        heard.append(delta.get("content", ""))
+
+    log.delta_listener = listener
+
+    await obj._async_handle_chat_log(log, [tool], [])
+
+    assert "".join(heard) == "I will check\n\nThe kitchen light is on."
+    assert final_assistant_text(log.content) == "The kitchen light is on."
+    assert log.delta_listener is listener
+    assert client.responses.create.await_count == 2
+    obj._execute_function_tool.assert_awaited_once()
+
+
 async def test_classifier_sensitivity_detects_spoken_commentary(hass, monkeypatch):
     original = assistant_response.classify_provider_output
 
@@ -280,12 +376,18 @@ async def test_role_boundary_flushes_previous_answer_without_spoken_progress(has
 
 @pytest.mark.parametrize("cleanup", [False, True])
 @pytest.mark.parametrize("completed", [False, True])
-async def test_visible_response_items_are_separated_only_in_listener(hass, cleanup, completed):
+async def test_visible_response_items_are_separated_only_in_listener(
+    hass, cleanup, completed
+):
     output = [
-        message("first", "The setting is Eco").model_copy(update={"phase": "final_answer"}),
+        message("first", "The setting is Eco").model_copy(
+            update={"phase": "final_answer"}
+        ),
         message("progress", "Hidden progress"),
         message("empty", "").model_copy(update={"phase": "final_answer"}),
-        message("last", "Change it in Settings").model_copy(update={"phase": "final_answer"}),
+        message("last", "Change it in Settings").model_copy(
+            update={"phase": "final_answer"}
+        ),
     ]
     response = (
         SimpleNamespace(output=output, status="completed", usage=None)
@@ -310,8 +412,14 @@ async def test_visible_response_items_are_separated_only_in_listener(hass, clean
     expected = "The setting is Eco\n\nChange it in Settings"
     assert "".join(delta.get("content", "") for delta in heard) == expected
     assert final_assistant_text(log.content) == expected
-    assert [item.content for item in log.content if isinstance(item, conversation.AssistantContent) and item.content] == [
-        "The setting is Eco", "Hidden progress", "Change it in Settings",
+    assert [
+        item.content
+        for item in log.content
+        if isinstance(item, conversation.AssistantContent) and item.content
+    ] == [
+        "The setting is Eco",
+        "Hidden progress",
+        "Change it in Settings",
     ]
 
 

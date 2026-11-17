@@ -52,7 +52,7 @@ Provider restoration requires an explicit shared-connection choice because other
 ## What happens when you restore
 
 1. Select the destination conversation agent and choose **Choose file** under **Import / Restore**. The panel accepts Extended OpenAI JSON exports and ZIP backups.
-2. Review the validated summary and select **Sections to replace**. Only sections present in the file are offered; unselected destination sections remain unchanged.
+2. Review the validated summary and select **Sections to replace**. Only sections present in the file are offered. If restoring Configuration shortens Usage retention while Usage is unselected, the preview identifies the details that will expire and asks you to confirm the deletion. Aggregate Usage totals are kept when Usage is unselected.
 3. If the backup contains personal data for users missing from this installation, map each source user to a destination Home Assistant user.
 4. Choose whether to **Also restore the provider connection**, if the file contains one. This affects all agents sharing that connection.
 5. Choose **Restore selected sections** and confirm the replacement.
@@ -65,7 +65,7 @@ Restore is designed to avoid leaving only half of the backup applied. If saving 
 
 Delayed Function Tools are paused behind the same restore operation, so a due action is not deliberately run while the agent's configuration or restrictions are only partly restored.
 
-The shared provider connection is updated separately after the agent restore. A connection-update failure does not undo an already committed agent restore; read the outcome message and import/preview again before retrying that connection update.
+The shared provider connection is updated separately after the agent restore. Extended OpenAI verifies the connection on disk before reporting it as restored. If verification fails, check the shared connection before retrying. The completed agent restore stays committed.
 
 ## Interrupted restore or uncertain result
 

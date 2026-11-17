@@ -26,8 +26,9 @@ from custom_components.extended_openai_conversation_responses.private_backup imp
     encode_field,
 )
 from custom_components.extended_openai_conversation_responses.provider_credentials import (
-    restore_private_provider_connection,
+    async_restore_private_provider_connection,
 )
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_backup import _document
 
@@ -216,27 +217,45 @@ def test_private_memory_snapshot_and_wire_document_have_distinct_provenance(hass
         backup.inspect_backup(json.loads(json.dumps(raw)), "fresh-target")
 
 
-def test_connection_restore_requires_scope_confirmation_and_unchanged_target():
+async def test_connection_restore_requires_scope_confirmation_and_unchanged_target(
+    monkeypatch,
+):
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+
     hass = MagicMock()
-    entry = SimpleNamespace(entry_id="entry", data={"api_key": "current"})
+    entry = SimpleNamespace(
+        entry_id="entry",
+        data={"api_key": "current"},
+        state=ConfigEntryState.LOADED,
+        disabled_by=None,
+    )
     incoming = {"api_key": "fabricated-exact-provider-value"}
+    persist = AsyncMock()
+    monkeypatch.setattr(restore_recovery, "async_persist_config_entries", persist)
     with pytest.raises(HomeAssistantError, match="Confirm"):
-        restore_private_provider_connection(
+        await async_restore_private_provider_connection(
             hass, entry, incoming, entry.data, confirmed=False
         )
     with pytest.raises(HomeAssistantError, match="changed"):
-        restore_private_provider_connection(hass, entry, incoming, {}, confirmed=True)
+        await async_restore_private_provider_connection(
+            hass, entry, incoming, {}, confirmed=True
+        )
     hass.config_entries.async_update_entry.assert_not_called()
-    restore_private_provider_connection(
+    await async_restore_private_provider_connection(
         hass, entry, incoming, entry.data, confirmed=True
     )
     hass.config_entries.async_update_entry.assert_called_once_with(entry, data=incoming)
+    persist.assert_awaited_once()
 
 
 async def test_private_restore_commits_exact_configuration_without_local_secret(
     monkeypatch, hass
 ):
-    from custom_components.extended_openai_conversation_responses import restore_recovery
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
     from tests.test_selective_restore_concurrency import RestoreHarness
 
     tx = RestoreHarness(monkeypatch)
@@ -263,9 +282,11 @@ async def test_private_restore_commits_exact_configuration_without_local_secret(
     assert recovered.config == incoming
 
 
-@pytest.mark.parametrize("azure", [False, True])
+@pytest.mark.parametrize(
+    "azure, durable", [(False, True), (True, True), (False, False)]
+)
 async def test_private_provider_restore_precedes_reload_and_preserves_exact_data(
-    monkeypatch, hass, azure
+    monkeypatch, hass, azure, durable
 ):
     from custom_components.extended_openai_conversation_responses import (
         restore_recovery,
@@ -274,6 +295,8 @@ async def test_private_provider_restore_precedes_reload_and_preserves_exact_data
 
     tx = RestoreHarness(monkeypatch)
     tx.entry.data = {"api_key": "old-provider"}
+    tx.entry.state = ConfigEntryState.LOADED
+    tx.entry.disabled_by = None
     expected = deepcopy(tx.entry.data)
     document = private_document()
     if azure:
@@ -289,6 +312,36 @@ async def test_private_provider_restore_precedes_reload_and_preserves_exact_data
         assert tx.journal.data is None  # Agent commit is durable first.
         entry.data = deepcopy(data)
         events.append("provider")
+        return True
+
+    async def save(_payload):
+        events.append("persist")
+
+    tx.hass.config_entries._store = SimpleNamespace(
+        async_save=save, version=1, minor_version=1, key="core.config_entries"
+    )
+    tx.hass.config_entries._data_to_save = lambda: {
+        "entries": [
+            {"entry_id": tx.entry.entry_id, "data": dict(tx.entry.data)},
+        ]
+    }
+    readback = AsyncMock(
+        side_effect=tx.hass.config_entries._data_to_save if durable else None,
+        return_value={"entries": [{"entry_id": tx.entry.entry_id, "data": expected}]},
+    )
+    monkeypatch.setattr(
+        restore_recovery,
+        "Store",
+        type(
+            "VerifiedStore",
+            (),
+            {
+                "__class_getitem__": classmethod(lambda cls, _: cls),
+                "__init__": lambda self, *args, **kwargs: None,
+                "async_load": readback,
+            },
+        ),
+    )
 
     async def reload(*_):
         if tx.gate.owns_exclusive():
@@ -308,9 +361,49 @@ async def test_private_provider_restore_precedes_reload_and_preserves_exact_data
         provider_connection=document["provider_connection"],
         expected_provider_data=expected,
     )
-    assert result["provider_connection_restored"] is True
-    assert events == ["provider", "reload"]
+    assert result["provider_connection_restored"] is durable
+    if not durable:
+        assert "could not be verified on disk" in result["provider_connection_message"]
+    assert events == ["provider", "persist", "reload"]
+    readback.assert_awaited_once()
+    tx.hass.config_entries.async_schedule_reload.assert_not_called()
     assert tx.subentry.data == document["agent"]["config"]
+
+
+async def test_selective_configuration_restore_requires_confirmation_to_prune_usage(
+    monkeypatch,
+):
+    from tests.test_selective_restore_concurrency import RestoreHarness
+
+    tx = RestoreHarness(monkeypatch)
+    document = private_document()
+    field = "usage_request_retention_days"
+    tx.subentry.data[field] = 30
+    document["agent"]["config"][field] = 0
+    artifact = transfer.inspect_transfer(
+        backup.finalize_backup_snapshot(document)["document"],
+        tx.subentry.subentry_id,
+    )
+    options = {"sections": [transfer.SECTION_CONFIGURATION]}
+    _, preview = await transfer.async_materialize_restore(
+        tx.hass, tx.entry, tx.subentry, artifact, **options
+    )
+    assert preview["selected_sections"] == [transfer.SECTION_CONFIGURATION]
+    assert preview["shortened_usage_retention"] == {field: 0}
+
+    with pytest.raises(backup.BackupError, match="Confirm applying shorter Usage"):
+        await transfer.async_restore_transfer(
+            tx.hass, tx.entry, tx.subentry, artifact, **options
+        )
+    assert tx.subentry.data[field] == 30
+    assert tx.writes == []
+    await transfer.async_restore_transfer(
+        tx.hass, tx.entry, tx.subentry, artifact, confirm_retention=True, **options
+    )
+    assert tx.subentry.data[field] == 0
+    assert tx.writes == [
+        ("usage_totals", "usage_daily", "usage_requests", "usage_runs")
+    ]
 
 
 @pytest.mark.parametrize(

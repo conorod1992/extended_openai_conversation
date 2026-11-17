@@ -1106,6 +1106,19 @@ def agent_retention_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def shortened_usage_retention(
+    current: Mapping[str, Any], target: Mapping[str, Any]
+) -> dict[str, int]:
+    """Return destination detail windows that can delete existing records."""
+    previous = agent_retention_snapshot(current)
+    result = {}
+    for key, days in agent_retention_snapshot(target).items():
+        old = previous[key]
+        if type(days) is int and (type(old) is not int or days < old):
+            result[key] = days
+    return result
+
+
 def normalize_agent_config(
     data: dict[str, Any],
     *,

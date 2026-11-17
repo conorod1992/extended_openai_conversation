@@ -188,6 +188,7 @@ def test_live_action_targets_reject_changed_context_and_removed_entities(
 async def test_usage_fallback_is_explained_and_shared(
     hass, monkeypatch, caplog
 ) -> None:
+    hass.config_entries.async_get_entry.return_value = None
     caplog.set_level(logging.DEBUG)
     monkeypatch.setattr(
         usage,
@@ -708,6 +709,7 @@ async def test_downloadable_diagnostics_allowlist(hass) -> None:
         },
         subentries={"assistant": subentry},
     )
+    hass.config_entries.async_get_entry.return_value = entry
     result = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
     assert result["provider_category"] == "compatible"
     assert result["model_catalogue"]["schema_version"] == CURRENT_SCHEMA_VERSION

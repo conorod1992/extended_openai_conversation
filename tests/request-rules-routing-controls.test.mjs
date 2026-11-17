@@ -78,6 +78,14 @@ for (const controls of [actualEditorControls, syncRequestRuleRoutingControls]) {
   reasoning.value = "{effort}";
   controls(root, ["high", "{style}"], null, ["effort"]);
   assert.deepEqual(reasoning.options.map(option => option.value), ["", "high", "{effort}"]);
+  reasoning.value = "";
+  controls(root, [], null, ["effort"], false);
+  assert.deepEqual(reasoning.options.map(option => option.value), [""]);
+  controls(root, [], "{effort}", ["effort"], false);
+  assert.equal(reasoning.options[1].disabled, true);
+  assert.match(reasoning.options[1].textContent, /unsupported by model/);
+  controls(root, ["low", "high"], null, ["effort"], true);
+  assert.equal(reasoning.options.find(option => option.value === "{effort}").disabled, false);
   assert.equal(reasoning.value, "{effort}");
   elements.set("#rule-reasoning", null);
 }

@@ -1,3 +1,4 @@
+import {usageRetentionDeletionNotice} from "./retention-settings-ui.js";
 import {captureAuthentication} from "./authentication-presentation.js";
 import {copyTextToClipboard} from "./clipboard.js";
 import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions, applyConfigurationImport, refreshUncertainConfigurationImport} from "./assistant-configuration-actions.js";
@@ -383,7 +384,9 @@ export function bindConfiguration(panel) {
       panel._importDocument = document;
       panel._importMode = mode;
       panel._importRevision = revision;
-      importSummary.textContent = `${result.title} / ${result.summary.model} / ${result.summary.tools} tools / ${result.summary.function_groups} function groups / ${result.summary.speech_rules} speech rules`;
+      panel._importShortenedRetention = result.shortened_usage_retention || null;
+      const retentionNotice = usageRetentionDeletionNotice(panel._importShortenedRetention);
+      importSummary.textContent = `${result.title} / ${result.summary.model} / ${result.summary.tools} tools / ${result.summary.function_groups} function groups / ${result.summary.speech_rules} speech rules${retentionNotice ? `. ${retentionNotice}` : ""}`;
       importApply.disabled = false;
     } catch (err) {
       if (!current()) return;

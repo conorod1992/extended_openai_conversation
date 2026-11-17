@@ -181,7 +181,7 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
 @pytest.mark.parametrize("interrupted", [False, True])
 async def test_cross_provider_private_restore_and_committed_replay(hass, monkeypatch, interrupted):
     from custom_components.extended_openai_conversation_responses import restore_recovery, transfer
-    from custom_components.extended_openai_conversation_responses.provider_credentials import restore_private_provider_connection
+    from custom_components.extended_openai_conversation_responses.provider_credentials import async_restore_private_provider_connection
     from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry as setup
     old_connection = {"api_provider": "azure", "base_url": "https://example.openai.azure.com", "api_version": "2025-04-01-preview", "api_key": "test-azure", "skip_authentication": True}
     new_connection = {"api_provider": "openai", "api_key": "test-openai", "skip_authentication": True}
@@ -213,7 +213,7 @@ async def test_cross_provider_private_restore_and_committed_replay(hass, monkeyp
         assert await restore_recovery.async_recover_pending_restore(hass, entry, subentry)
         # Parent credentials remain a separately confirmed operation, even after replay.
         assert dict(entry.data) == expected
-        restore_private_provider_connection(hass, entry, new_connection, expected, confirmed=True)
+        await async_restore_private_provider_connection(hass, entry, new_connection, expected, confirmed=True)
     else:
         result = await transfer.async_restore_transfer(hass, entry, subentry, artifact, sections=[transfer.SECTION_CONFIGURATION], provider_connection=new_connection, expected_provider_data=expected)
         assert result["provider_connection_restored"]

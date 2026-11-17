@@ -288,7 +288,7 @@ async def test_invalid_timeout_before_claim_resets_guest_policy(monkeypatch) -> 
     prior = object()
     token = owner._ACTIVE_GUEST_POLICY.set(prior)
     try:
-        with pytest.raises(ValueError):
+        with pytest.raises(owner.AgentConfigError, match="conversation_timeout_minutes"):
             await owner.ExtendedOpenAIAgentEntity._async_process_with_continuity(
                 agent, request
             )

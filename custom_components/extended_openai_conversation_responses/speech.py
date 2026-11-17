@@ -6,6 +6,7 @@ from array import array
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import partial
 import logging
 import re
@@ -246,6 +247,15 @@ class _InlineScope:
                 return
 
 
+@dataclass
+class _LongDestination:
+    close: str
+    markdown: bool
+    outer_parenthesis: bool
+    depth: int = 0
+    escaped: bool = False
+
+
 class StreamingSpeechSanitizer:
     """Incrementally remove Markdown links, bare URLs, and speech formatting.
 
@@ -281,6 +291,8 @@ class StreamingSpeechSanitizer:
         self._format_code = 0
         self._long_url_tail: str | None = None
         self._long_url_brackets = (0, 0)
+        self._long_url_closer = ""
+        self._long_destination: _LongDestination | None = None
         self._strong_open = False
         self._line_start = True
         self._previous_line_list = False
@@ -739,6 +751,12 @@ class StreamingSpeechSanitizer:
             self._needs_separator = False
         # Let the ordinary suppression/formatting path handle trailing prose.
         index = boundary
+        if (
+            self._long_url_closer
+            and tail[:trailing].endswith(self._long_url_closer)
+            and not self._is_escaped(tail, trailing - len(self._long_url_closer))
+        ):
+            index = trailing
         while index < len(tail):
             skip = self._resolve_suppression_boundary(output, tail, index, final=True)
             if skip:
@@ -748,6 +766,97 @@ class StreamingSpeechSanitizer:
                 index += 1
         self._long_url_tail = None
         self._long_url_brackets = (0, 0)
+        self._long_url_closer = ""
+
+    @staticmethod
+    def _is_url_start(text: str, index: int) -> bool:
+        prefix = text[index : index + 8].casefold()
+        return prefix.startswith(("http://", "https://")) or bool(
+            prefix.startswith("www.") and _WWW_ADDRESS.match(text, index)
+        )
+
+    def _start_long_destination(
+        self, output: list[str], text: str, index: int, *, markdown: bool
+    ) -> int | None:
+        """Commit to suppressing a recognized URL, keeping only delimiter state."""
+        outer = markdown and text[index] == "("
+        start = index + int(outer)
+        image = markdown and text[start] == "!"
+        start += int(image)
+        label_end = self._markdown_label_end(text, start) if markdown else -1
+        position = label_end + 2 if markdown else start + 1
+        angle = text[position : position + 1] == "<" if markdown else text[start] == "<"
+        url_start = position + int(markdown and angle)
+        if (markdown and label_end < 0) or not self._is_url_start(text, url_start):
+            return None
+        if (
+            not markdown
+            or image
+            or not self._emit_link_label(
+                output, text[start + 1 : label_end], text[url_start:]
+            )
+        ):
+            self._suppress(output, url_start)
+        self._long_destination = _LongDestination(
+            ">" if angle else ")", markdown, outer
+        )
+        return url_start
+
+    def _drain_long_destination(
+        self, text: str, index: int, final: bool
+    ) -> tuple[int, bool]:
+        """Skip an overlong destination and let the regular title scanner finish it."""
+        destination = self._long_destination
+        assert destination is not None
+        while destination.close in {">", ")"} and index < len(text):
+            char = text[index]
+            if destination.escaped:
+                destination.escaped = False
+            elif destination.markdown and char == "\\":
+                destination.escaped = True
+            elif char == "(" and destination.close == ")":
+                destination.depth += 1
+            elif char == destination.close and destination.depth:
+                destination.depth -= 1
+            elif char == destination.close:
+                index += 1
+                destination.close = (
+                    "title" if destination.markdown and char == ">" else ""
+                )
+                break
+            elif char in "<>\r\n" or (
+                char.isspace()
+                and (not destination.markdown or destination.close == ")")
+            ):
+                destination.close = (
+                    "title" if destination.markdown and not destination.depth else ""
+                )
+                if not destination.close:
+                    self._long_destination = None
+                    return index, False
+                break
+            index += 1
+        if destination.close == "title":
+            prefix = "x"
+            status, end = self._scan_markdown_destination(
+                prefix + text[index:], 0, final
+            )
+            if status == "incomplete" and len(text) - index <= self.max_buffer_chars:
+                return index, True
+            if status != "complete":
+                self._long_destination = None
+                return index, False
+            index += end - len(prefix)
+            destination.close = ""
+        if destination.close:
+            return index, True
+        if destination.outer_parenthesis:
+            if index == len(text) and not final:
+                return index, True
+            if text[index : index + 1] == ")":
+                index += 1
+        self._long_destination = None
+        return index, False
 
     def _track_original_lines(self, text: str) -> None:
         """Retain bounded original prefixes independently of formatting output."""
@@ -906,6 +1015,11 @@ class StreamingSpeechSanitizer:
             while end < len(text) and not text[end].isspace() and text[end] not in "<>":
                 end += 1
             if end == len(text) and not final:
+                if len(text) - index > self.max_buffer_chars and self._is_url_start(
+                    text, start
+                ):
+                    self._long_url_closer = closer
+                    return "long", start
                 return "incomplete", index
             end = self._bare_url_end(text, start, end)
             if (
@@ -1009,6 +1123,11 @@ class StreamingSpeechSanitizer:
             self._track_original_lines(text[tracked:index])
             tracked = max(tracked, index)
             char = text[index]
+            if self._long_destination is not None:
+                index, waiting = self._drain_long_destination(text, index, final)
+                if waiting:
+                    break
+                continue
             if self._long_url_tail is not None:
                 end = index
                 while (
@@ -1170,6 +1289,11 @@ class StreamingSpeechSanitizer:
                 and not (text[index - 1] if index else self._link_previous).isalnum()
             ):
                 status, end = self._wrapped_bare_url(text, index, final)
+                if status == "long":
+                    self._hold_preceding_whitespace(output)
+                    self._consume_long_url(text[end:])
+                    index = len(text)
+                    break
                 if status == "incomplete":
                     held_whitespace = self._hold_preceding_whitespace(output)
                     break
@@ -1186,6 +1310,13 @@ class StreamingSpeechSanitizer:
                         text, link_start, final, self._completed_links
                     )
                     if status == "incomplete":
+                        if len(text) - index > self.max_buffer_chars:
+                            start = self._start_long_destination(
+                                output, text, index, markdown=True
+                            )
+                            if start is not None:
+                                index = start
+                                continue
                         held_whitespace = self._hold_preceding_whitespace(output)
                         break
                     if status == "complete":
@@ -1254,6 +1385,13 @@ class StreamingSpeechSanitizer:
                             depth -= 1
                         end += 1
                     if end == len(text) and not final:
+                        if len(text) - index > self.max_buffer_chars:
+                            start = self._start_long_destination(
+                                output, text, index, markdown=False
+                            )
+                            if start is not None:
+                                index = start
+                                continue
                         held_whitespace = self._hold_preceding_whitespace(output)
                         break
                     if (
@@ -1286,6 +1424,17 @@ class StreamingSpeechSanitizer:
                     text, markdown_start, final, self._completed_links
                 )
                 if status == "incomplete":
+                    if len(text) - index > self.max_buffer_chars:
+                        start = self._start_long_destination(
+                            output, text, index, markdown=True
+                        )
+                        if start is not None:
+                            index = start
+                            continue
+                        if self.urls and self._is_url_start(text, markdown_start + 1):
+                            self._emit(output, text[index : markdown_start + 1])
+                            index = markdown_start + 1
+                            continue
                     held_whitespace = self._hold_preceding_whitespace(output)
                     break
                 if status == "complete":
@@ -1385,6 +1534,13 @@ class StreamingSpeechSanitizer:
                 self._link_backslashes + trailing
                 if trailing == len(consumed)
                 else trailing
+            )
+        # An otherwise bounded candidate must not overflow solely because
+        # preceding whitespace was held with it.
+        if not final and held_whitespace:
+            whitespace_budget = self.max_buffer_chars - (len(text) - index)
+            held_whitespace = (
+                held_whitespace[-whitespace_budget:] if whitespace_budget > 0 else ""
             )
         self._buffer = held_whitespace + text[index:]
         # Whitespace held by the link stage has already been observed in the
