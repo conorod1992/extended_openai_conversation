@@ -300,6 +300,7 @@ async def test_config_flow_success_errors_reauth_and_type_registration() -> None
         async_create_entry=MagicMock(side_effect=_sync_result),
         async_abort=MagicMock(side_effect=_sync_result),
         async_update_reload_and_abort=MagicMock(side_effect=_sync_result),
+        add_suggested_values_to_schema=lambda schema, values: ExtendedOpenAIConversationConfigFlow.add_suggested_values_to_schema(flow, schema, values),
     )
 
     async def finish(data, step_id, data_schema):

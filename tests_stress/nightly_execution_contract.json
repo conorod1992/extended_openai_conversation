@@ -3302,7 +3302,13 @@
     "tests_real_ha/test_usage_period_statistics.py::test_guest_sensor_recovers_boundary_timer_after_uncertain_save",
     "tests_real_ha/test_usage_period_statistics.py::test_last_response_poll_hides_expired_detail_without_new_usage",
     "tests_real_ha/test_usage_period_statistics.py::test_usage_counter_and_restored_aggregates_publish_without_polling",
-    "tests_real_ha/test_usage_period_statistics.py::test_usage_sensors_rebind_from_volatile_to_durable_without_polling"
+    "tests_real_ha/test_usage_period_statistics.py::test_usage_sensors_rebind_from_volatile_to_durable_without_polling",
+    "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[azure]",
+    "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[clear-optional]",
+    "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[custom-openai]",
+    "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[default-openai]",
+    "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[inferred-azure]",
+    "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[omit-optional]"
   ],
   "browser": {
     "browser": [

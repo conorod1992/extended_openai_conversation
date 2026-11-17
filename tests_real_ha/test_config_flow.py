@@ -120,6 +120,67 @@ async def test_provider_retry_suggests_original_display_values_without_persistin
     assert config_flow.STEP_USER_DATA_SCHEMA.extra == vol.ALLOW_EXTRA
 
 
+@pytest.mark.parametrize("submitted,corrected", [
+    ({CONF_BASE_URL: DEFAULT_CONF_BASE_URL}, {CONF_BASE_URL: DEFAULT_CONF_BASE_URL}),
+    ({CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_SKIP_AUTHENTICATION: True},
+     {CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "new-org", CONF_SKIP_AUTHENTICATION: False}),
+    ({CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_API_VERSION: "old", CONF_SKIP_AUTHENTICATION: True},
+     {CONF_BASE_URL: DEFAULT_CONF_BASE_URL, CONF_ORGANIZATION: "", CONF_SKIP_AUTHENTICATION: False}),
+    ({CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_API_VERSION: "old", CONF_SKIP_AUTHENTICATION: True}, {}),
+    ({CONF_API_PROVIDER: "azure", CONF_BASE_URL: "https://unit.openai.azure.com/", CONF_API_VERSION: "2026-01-01"},
+     {CONF_API_PROVIDER: "azure", CONF_BASE_URL: "https://unit.openai.azure.com/", CONF_API_VERSION: "2026-02-01"}),
+    ({CONF_BASE_URL: "https://unit.openai.azure.com/", CONF_API_VERSION: "2026-01-01"},
+     {CONF_BASE_URL: "https://unit.openai.azure.com/", CONF_API_VERSION: "2026-02-01"}),
+], ids=["default-openai", "custom-openai", "clear-optional", "omit-optional", "azure", "inferred-azure"])
+async def test_legacy_retry_renders_full_credentials_and_corrects_submission(
+    hass: HomeAssistant, submitted, corrected,
+):
+    from custom_components.extended_openai_conversation_responses import config_flow
+
+    schemas = (config_flow.STEP_USER_DATA_SCHEMA, config_flow.LEGACY_STEP_USER_DATA_SCHEMA)
+    assert all(_suggested_values(schema) == {} for schema in schemas)
+    submitted = {CONF_NAME: "Legacy retry", CONF_API_KEY: "bad", **submitted}
+    corrected = {CONF_NAME: "Corrected", CONF_API_KEY: "fixed", **corrected}
+    authenticate = AsyncMock(side_effect=[_authentication_error(), object()])
+    with patch(f"{CONFIG_FLOW_MODULE}.get_authenticated_client", authenticate):
+        first = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        flow_id = first["flow_id"]
+        assert {str(key) for key in first["data_schema"].schema} == {CONF_NAME, CONF_API_PROVIDER}
+        retry = await hass.config_entries.flow.async_configure(flow_id, dict(submitted))
+        assert retry["type"] is FlowResultType.FORM
+        assert retry["step_id"] == "user"
+        assert retry["errors"] == {"base": "invalid_auth"}
+        assert {str(key) for key in retry["data_schema"].schema} == {str(key) for key in schemas[1].schema}
+        assert _suggested_values(retry["data_schema"]) == schemas[1](dict(submitted))
+        assert retry["data_schema"].extra == vol.ALLOW_EXTRA
+        assert retry["data_schema"]({**corrected, "legacy_extra": True})["legacy_extra"] is True
+        with pytest.raises(vol.Invalid):
+            schemas[1]({**corrected, "legacy_extra": True})
+        assert all(_suggested_values(schema) == {} for schema in schemas)
+        independent = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+        assert {str(key) for key in independent["data_schema"].schema} == {CONF_NAME, CONF_API_PROVIDER}
+        assert _suggested_values(independent["data_schema"]) == {}
+        result = await hass.config_entries.flow.async_configure(flow_id, dict(corrected))
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_API_KEY] == "fixed"
+    assert result["data"][CONF_NAME] == "Corrected"
+    assert authenticate.await_count == 2
+    for key in (CONF_ORGANIZATION, CONF_API_VERSION):
+        if key in corrected:
+            assert result["data"][key] == corrected[key]
+        else:
+            assert key not in result["data"]
+    assert result["data"][CONF_SKIP_AUTHENTICATION] == corrected.get(CONF_SKIP_AUTHENTICATION, False)
+    if corrected.get(CONF_BASE_URL, DEFAULT_CONF_BASE_URL) == DEFAULT_CONF_BASE_URL:
+        assert CONF_BASE_URL not in result["data"]
+        assert authenticate.await_args.kwargs["base_url"] is None
+    else:
+        assert result["data"][CONF_BASE_URL] == corrected[CONF_BASE_URL]
+        assert authenticate.await_args.kwargs["base_url"] == corrected[CONF_BASE_URL]
+    expected_provider = "azure" if ".openai.azure.com" in corrected.get(CONF_BASE_URL, "") else "openai"
+    assert authenticate.await_args.kwargs["api_provider"] == expected_provider
+
+
 def _subentry(subentry_type: str, title: str, data: dict | None = None) -> dict:
     """Return storage-shaped subentry data for MockConfigEntry."""
     return {

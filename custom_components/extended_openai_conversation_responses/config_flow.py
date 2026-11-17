@@ -376,7 +376,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             legacy_data = dict(LEGACY_STEP_USER_DATA_SCHEMA(dict(user_input)))
             return (
                 await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
-                    self, legacy_data, "user", STEP_USER_DATA_SCHEMA
+                    self, legacy_data, "user", LEGACY_STEP_USER_DATA_SCHEMA
                 )
             )
 
@@ -495,13 +495,14 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                 ],
             )
 
-        # The helper rebuilds the schema. Keep the legacy user form's ALLOW_EXTRA
-        # policy intact, and never persist failed advanced values in _setup_data.
-        retry_schema = schema_for_ha(data_schema)
-        if step_id in {"openai_credentials", "openai_advanced", "azure_credentials"}:
-            retry_schema = self.add_suggested_values_to_schema(
-                retry_schema, display_values
-            )
+        # Rebuild only the displayed retry form; failed values never become
+        # setup data. Legacy retries expose the submitted credential fields,
+        # preserving the original user step's extra-field policy.
+        retry_schema = self.add_suggested_values_to_schema(
+            schema_for_ha(data_schema), display_values
+        )
+        if step_id == "user":
+            retry_schema = retry_schema.extend({}, extra=STEP_USER_DATA_SCHEMA.extra)
         return self.async_show_form(
             step_id=step_id,
             data_schema=retry_schema,
