@@ -188,3 +188,57 @@ def test_long_answers_preserve_literal_spacing_and_bounded_progressive_state():
     )
     assert result.strip() == expected
     assert sanitizer.max_buffered_chars < 32
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (r"*hello \!world*", "hello !world"),
+        (r"_hello \!world_", "hello !world"),
+        (r"*prefix **hello \!world** tail \?end*", "prefix hello !world tail ?end"),
+        (r"**outer _hello \!world_ tail**", "outer hello !world tail"),
+        (r"*one \!two _three \?four_*", "one !two three ?four"),
+        (r"*hello `\!world` \!literal*", r"hello \!world !literal"),
+        (r"*hello \\\!world*", r"hello \!world"),
+    ],
+)
+async def test_nested_formatting_copies_literal_provenance(source, expected):
+    assert process_speech_text(source, _config()) == expected
+    for split in range(len(source) + 1):
+        sanitizer = StreamingSpeechSanitizer()
+        assert (
+            sanitizer.feed(source[:split])
+            + sanitizer.feed(source[split:])
+            + sanitizer.finish()
+            == expected
+        )
+        assert sanitizer.max_buffered_chars <= len(source)
+    sanitizer = StreamingSpeechSanitizer()
+    assert (
+        "".join(sanitizer.feed(char) for char in source) + sanitizer.finish()
+        == expected
+    )
+    config = _config(
+        speech_regex_replacements=[
+            {"pattern": r"(!)(world)", "replacement": r"\2 \1"},
+            {"pattern": "world", "replacement": "image"},
+        ]
+    )
+    # A copied punctuation group retains its origin after nested formatting.
+    replaced = (
+        r"hello \image! !literal"
+        if "`" in source
+        else expected.replace("!world", "image !")
+    )
+    assert process_speech_text(source, config) == replaced
+    assert (
+        await regex_execution.async_process_speech_text(_ExecutorHass(), source, config)
+        == replaced
+    )
+
+
+def test_nested_provenance_offsets_on_indexed_long_input():
+    prefix = "é word " * 1000
+    source = prefix + r"*hello \!world* then \?tail"
+    assert process_speech_text(source, _config()) == prefix + "hello !world then ?tail"
+    assert process_speech_text("*hello !world*", _config()) == "hello!world"

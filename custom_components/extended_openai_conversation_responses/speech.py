@@ -1832,6 +1832,8 @@ class StreamingSpeechSanitizer:
                         nested._complete_mode = self._complete_mode
                         body = nested._format(body, final=True)
                         self._strong_open = nested._strong_open
+                    if getattr(body, "literal_punctuation", ()):
+                        literal_parts.add(len(output))
                     output.append(body)
                     index = end + 1
                     continue
@@ -1962,11 +1964,14 @@ class StreamingSpeechSanitizer:
             self._format_buffer = ""
         result = "".join(output)
         if literal_parts:
-            positions = []
+            positions: list[int] = []
             offset = 0
             for part_index, part in enumerate(output):
                 if part_index in literal_parts:
-                    positions.append(offset)
+                    positions.extend(
+                        offset + position
+                        for position in getattr(part, "literal_punctuation", (0,))
+                    )
                 offset += len(part)
             return _SpeechText(result, tuple(positions))
         return result

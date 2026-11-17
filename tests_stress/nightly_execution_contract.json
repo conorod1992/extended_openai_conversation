@@ -3309,7 +3309,7 @@
     "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[default-openai]",
     "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[inferred-azure]",
     "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[omit-optional]",
-    "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_custom_replacements_preserve_literal_spacing_and_history",
+    "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_custom_replacements_preserve_literal_spacing_and_history[strong]",
     "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_speech_regressions_preserve_provider_history[literal-spacing]",
     "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_speech_regressions_preserve_provider_history[punctuation-attachment]",
     "tests_real_ha/test_sampling_validation.py::test_persisted_boolean_sampling_fails_before_transport[chat_completions-False-temperature]",
@@ -3331,7 +3331,10 @@
     "tests_real_ha/test_sampling_validation.py::test_sampling_numeric_or_null_values_reach_expected_wire_payload[0.25-chat_completions]",
     "tests_real_ha/test_sampling_validation.py::test_sampling_numeric_or_null_values_reach_expected_wire_payload[0.25-responses]",
     "tests_real_ha/test_sampling_validation.py::test_sampling_numeric_or_null_values_reach_expected_wire_payload[None-chat_completions]",
-    "tests_real_ha/test_sampling_validation.py::test_sampling_numeric_or_null_values_reach_expected_wire_payload[None-responses]"
+    "tests_real_ha/test_sampling_validation.py::test_sampling_numeric_or_null_values_reach_expected_wire_payload[None-responses]",
+    "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_custom_replacements_preserve_literal_spacing_and_history[single]",
+    "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_speech_regressions_preserve_provider_history[nested-emphasis-spacing]",
+    "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_speech_regressions_preserve_provider_history[single-emphasis-spacing]"
   ],
   "browser": {
     "browser": [

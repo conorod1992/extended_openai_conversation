@@ -43,8 +43,10 @@ _SPOKEN_RESPONSE = "Hello see and docs done."
     (r"\*literal\* `\*code\*`", r"*literal* \*code\*", None),
     ("Heading\n===", "Heading", None),
     (r"off now. \!photo", "off now. !photo", None),
+    (r"*hello \!world*", "hello !world", None),
+    (r"**outer _hello \!world_ tail**", "outer hello !world tail", None),
     ("Off now . Next !", "Off now. Next!", "Off now . Next !"),
-], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined", "escaped-punctuation-code", "setext-equals", "literal-spacing", "punctuation-attachment"])
+], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined", "escaped-punctuation-code", "setext-equals", "literal-spacing", "single-emphasis-spacing", "nested-emphasis-spacing", "punctuation-attachment"])
 async def test_assist_speech_regressions_preserve_provider_history(
     hass, hass_ws_client, monkeypatch, raw, expected, progressive_expected
 ):
@@ -69,12 +71,13 @@ async def test_assist_speech_regressions_preserve_provider_history(
     )
 
 
+@pytest.mark.parametrize("formatted", [r"**off** now. \!photo TOKEN", r"*off now. \!photo* TOKEN"], ids=["strong", "single"])
 async def test_assist_custom_replacements_preserve_literal_spacing_and_history(
-    hass, hass_ws_client, monkeypatch,
+    hass, hass_ws_client, monkeypatch, formatted,
 ):
     from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
 
-    raw = r"**off** now. \!photo TOKEN"
+    raw = formatted
     agent = await _speech_agent(hass, **{CONF_SPEECH_REGEX_REPLACEMENTS: [
         {"pattern": "photo", "replacement": "image"},
         {"pattern": "TOKEN", "replacement": " !"},
