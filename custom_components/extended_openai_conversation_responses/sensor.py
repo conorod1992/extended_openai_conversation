@@ -19,19 +19,11 @@ from homeassistant.util import dt as dt_util
 
 from . import ExtendedOpenAIConfigEntry
 from .agent_maintenance import get_agent_maintenance_gate
-from .const import (
-    CONF_CHAT_MODEL,
-    CONF_USAGE_REQUEST_RETENTION_DAYS,
-    CONF_USAGE_RUN_RETENTION_DAYS,
-    DEFAULT_CHAT_MODEL,
-    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-    DEFAULT_USAGE_RUN_RETENTION_DAYS,
-    DOMAIN,
-)
+from .const import CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL, DOMAIN
 from .guest_mode import GuestModeManager, async_get_guest_mode
 from .local_time import resolve_wall_time
 from .persistence_hardening import StorageRepairRequired
-from .usage import UsageManager, async_get_usage
+from .usage import UsageManager, async_get_usage, usage_retention_policy
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,17 +62,9 @@ async def async_setup_entry(
                 subentry.subentry_id,
             )
             continue
-        usage.request_retention_days = int(
-            subentry.data.get(
-                CONF_USAGE_REQUEST_RETENTION_DAYS,
-                DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-            )
-        )
-        usage.run_retention_days = int(
-            subentry.data.get(
-                CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
-            )
-        )
+        retention = usage_retention_policy(subentry.data)
+        usage.request_retention_days = retention["request_retention_days"]
+        usage.run_retention_days = retention["run_retention_days"]
         async_add_entities(
             [
                 UsageSensor(subentry, usage),

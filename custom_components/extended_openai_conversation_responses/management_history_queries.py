@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime
 from heapq import heappush, heapreplace
 from typing import Any
 
@@ -292,13 +293,13 @@ def _archive_list_sync(
     sessions: dict[str, Any], scope_id: str, offset: int, limit: int
 ) -> dict[str, Any]:
     keep = offset + limit
-    heap: list[tuple[str, str, Any]] = []
+    heap: list[tuple[datetime, str, Any]] = []
     total = 0
     for session in sessions.values():
         if session.scope_id != scope_id or session.retention_state != "retained":
             continue
         total += 1
-        candidate = (session.last_message_at, session.session_id, session)
+        candidate = (_parse_time(session.last_message_at), session.session_id, session)
         if len(heap) < keep:
             heappush(heap, candidate)
         elif candidate[:2] > heap[0][:2]:
@@ -342,7 +343,7 @@ def _archive_search_sync(
     normalized_query = _normalize(query)
     start, end = _local_date_bounds(start_date, end_date, time_zone)
     keep = offset + limit
-    heap: list[tuple[float, str, str, str, Any, Any, int]] = []
+    heap: list[tuple[float, datetime, str, str, Any, Any, int]] = []
     total = 0
     for session in sessions.values():
         if session.scope_id != scope_id or session.retention_state != "retained":
@@ -368,7 +369,7 @@ def _archive_search_sync(
             total += 1
             candidate = (
                 score,
-                turn.timestamp,
+                timestamp,
                 session.session_id,
                 turn.turn_id,
                 session,
@@ -386,15 +387,12 @@ def _archive_search_sync(
             "session_id": session.session_id,
             "turn_id": turn.turn_id,
             "turn_index": turn_index,
-            "date": _parse_time(turn.timestamp)
-            .astimezone(time_zone)
-            .date()
-            .isoformat(),
+            "date": timestamp.astimezone(time_zone).date().isoformat(),
             "timestamp": turn.timestamp,
             "title": session.title,
             "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
         }
-        for _, _, _, _, session, turn, turn_index in page
+        for _, timestamp, _, _, session, turn, turn_index in page
     ]
     return {
         "results": records,

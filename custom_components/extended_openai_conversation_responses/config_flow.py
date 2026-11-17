@@ -552,9 +552,23 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                 if dict(self._reauth_entry.data) != original_data:
                     errors["base"] = "config_changed"
                 else:
-                    return self.async_update_reload_and_abort(
-                        self._reauth_entry, data=updated
+                    from .provider_credentials import (
+                        request_provider_reload_after_update,
                     )
+
+                    entry = self._reauth_entry
+                    state_before = entry.state
+                    changed = self.hass.config_entries.async_update_entry(
+                        entry, data=updated
+                    )
+                    request_provider_reload_after_update(
+                        self.hass,
+                        entry,
+                        state_before,
+                        changed=changed,
+                        retry_unchanged=True,
+                    )
+                    return self.async_abort(reason="reauth_successful")
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=schema_for_ha(vol.Schema({vol.Required(CONF_API_KEY): str})),

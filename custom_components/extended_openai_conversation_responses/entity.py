@@ -32,7 +32,11 @@ from homeassistant.helpers import device_registry as dr, llm
 from homeassistant.helpers.entity import Entity
 from homeassistant.util import slugify
 
-from .assistant_response import classify_provider_output, provider_output_presentation
+from .assistant_response import (
+    classify_provider_output,
+    provider_output_presentation,
+    separate_assistant_messages,
+)
 from .const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
@@ -1341,6 +1345,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
                     with (
                         bind_tool_recovery_state(recovery_state),
+                        separate_assistant_messages(
+                            chat_log, enabled=api_mode == API_MODE_RESPONSES
+                        ),
                         async_streaming_speech_cleanup(
                             chat_log, options, completed=not streaming
                         ) as speech_presentation,
@@ -1663,9 +1670,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             preserve_native=api_mode == API_MODE_RESPONSES,
                         )
                     if chat_log.delta_listener:
-                        with async_streaming_speech_cleanup(
-                            chat_log, options, completed=True
-                        ) as speech_presentation:
+                        with (
+                            separate_assistant_messages(
+                                chat_log, enabled=api_mode == API_MODE_RESPONSES
+                            ),
+                            async_streaming_speech_cleanup(
+                                chat_log, options, completed=True
+                            ) as speech_presentation,
+                        ):
                             for finalizer_content in chat_log.content:
                                 if (
                                     id(finalizer_content) not in existing_content_ids

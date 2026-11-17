@@ -21,6 +21,7 @@ from tests.test_restore_recovery import _identity, _states
 
 async def _prepare(hass, monkeypatch, phase, damaged):
     entry, subentry = _identity()
+    hass.config_entries.async_get_entry.return_value = entry
     target, rollback = _states()
     target.knowledge = [
         replace(target.knowledge[0], content="Target recovery evidence")

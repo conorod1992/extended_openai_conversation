@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -1441,15 +1441,21 @@ def _saved_retention(
     """Resolve authoritative policy before any caller loads durable detail."""
     entry = hass.config_entries.async_get_entry(entry_id)
     subentry = entry.subentries.get(subentry_id) if entry is not None else None
-    options = subentry.data if subentry is not None else {}
+    return usage_retention_policy(subentry.data if subentry is not None else {})
+
+
+def usage_retention_policy(options: Mapping[str, Any]) -> dict[str, int]:
+    """Read retention consistently for durable, volatile and platform consumers."""
+    from .agent_config import normalized_agent_integer
+
     return {
-        "request_retention_days": int(
-            options.get(
-                CONF_USAGE_REQUEST_RETENTION_DAYS, DEFAULT_USAGE_REQUEST_RETENTION_DAYS
-            )
+        "request_retention_days": normalized_agent_integer(
+            options,
+            CONF_USAGE_REQUEST_RETENTION_DAYS,
+            DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
         ),
-        "run_retention_days": int(
-            options.get(CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS)
+        "run_retention_days": normalized_agent_integer(
+            options, CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
         ),
     }
 

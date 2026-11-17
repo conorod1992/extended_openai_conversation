@@ -457,3 +457,26 @@ for (const bundled of [false, true]) {
     await expectHarnessClean(page, errors);
   });
 }
+
+
+for (const bundled of [false, true]) test(`Routing rules can select a reasoning capture (${bundled})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+  const panel = panelFor(page);
+  await panel.locator("#rule-add").click();
+  await panel.locator("#rule-name").fill("Captured model and reasoning");
+  await panel.locator("#rule-match").selectOption("sentence_pattern");
+  await panel.locator("#rule-action-type").selectOption("model_routing");
+  await panel.locator("#rule-model").fill("{model}");
+  await panel.locator("#rule-phrases").fill("route {model} with {effort}");
+  await panel.locator("#rule-reasoning").selectOption("{effort}");
+  await panel.locator("#rule-continue-to-ai").check();
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
+  const saved = await page.evaluate(() => browserHarness.calls.findLast(
+    call => call.section === "request_rules" && call.action === "create"
+  ).rule);
+  expect(saved.action.model).toBe("{model}");
+  expect(saved.action.reasoning_effort).toBe("{effort}");
+  await expectHarnessClean(page, errors);
+});

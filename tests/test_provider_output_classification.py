@@ -10,6 +10,7 @@ from custom_components.extended_openai_conversation_responses import assistant_r
 from custom_components.extended_openai_conversation_responses.assistant_response import (
     classify_provider_output,
     final_assistant_text,
+    separate_assistant_messages,
 )
 from custom_components.extended_openai_conversation_responses.completion_events import (
     completion_event_scope,
@@ -230,7 +231,10 @@ async def test_conditional_fallback_does_not_speak_retained_commentary(hass):
     final = message("final", "Fallback answer").model_copy(
         update={"phase": "final_answer"}
     )
-    output = [message("progress", "Progress only"), final]
+    suffix = message("suffix", "More detail.").model_copy(
+        update={"phase": "final_answer"}
+    )
+    output = [message("progress", "Progress only"), final, suffix]
     obj, client = entity(hass, [events([first]), events(output)])
     log = conversation.ChatLog(hass, "conditional-classification")
     log.async_add_user_content(conversation.UserContent(content="Question"))
@@ -242,13 +246,14 @@ async def test_conditional_fallback_does_not_speak_retained_commentary(hass):
             is None
         )
     assert client.responses.create.await_count == 2
-    assert "".join(delta.get("content", "") for delta in heard) == "Fallback answer"
-    assert final_assistant_text(log.content) == "Fallback answer"
+    expected = "Fallback answer\n\nMore detail."
+    assert "".join(delta.get("content", "") for delta in heard) == expected
+    assert final_assistant_text(log.content) == expected
     assert [
         item["id"]
         for item in _convert_content_to_responses_param(log.content)
         if "id" in item
-    ] == ["draft", "progress", "final"]
+    ] == ["draft", "progress", "final", "suffix"]
 
 
 async def test_role_boundary_flushes_previous_answer_without_spoken_progress(hass):
@@ -262,9 +267,64 @@ async def test_role_boundary_flushes_previous_answer_without_spoken_progress(has
     log = conversation.ChatLog(hass, "flush-classification")
     heard = []
     log.delta_listener = lambda _log, delta: heard.append(delta)
-    with async_streaming_speech_cleanup(log, speech_options(True)):
+    with (
+        separate_assistant_messages(log, enabled=True),
+        async_streaming_speech_cleanup(log, speech_options(True)),
+    ):
         async for _ in log.async_add_delta_content_stream(
             obj.entity_id, obj._transform_responses_stream(log, events(output))
         ):
             pass
-    assert "".join(delta.get("content", "") for delta in heard) == "Answer *Last."
+    assert "".join(delta.get("content", "") for delta in heard) == "Answer *\n\nLast."
+
+
+@pytest.mark.parametrize("cleanup", [False, True])
+@pytest.mark.parametrize("completed", [False, True])
+async def test_visible_response_items_are_separated_only_in_listener(hass, cleanup, completed):
+    output = [
+        message("first", "The setting is Eco").model_copy(update={"phase": "final_answer"}),
+        message("progress", "Hidden progress"),
+        message("empty", "").model_copy(update={"phase": "final_answer"}),
+        message("last", "Change it in Settings").model_copy(update={"phase": "final_answer"}),
+    ]
+    response = (
+        SimpleNamespace(output=output, status="completed", usage=None)
+        if completed
+        else events(output)
+    )
+    obj, client = entity(hass, [response])
+    obj.subentry.data.update(speech_options(cleanup))
+    if completed:
+        obj.subentry.data["chat_model"] = "o3-pro"
+    log = conversation.ChatLog(hass, "message-separators")
+    log.async_add_user_content(conversation.UserContent(content="Question"))
+    heard = []
+
+    def listener(_log, delta):
+        heard.append(delta)
+
+    log.delta_listener = listener
+    await obj._async_handle_chat_log(log, [], [])
+    assert client.responses.create.await_args.kwargs["stream"] is not completed
+    assert log.delta_listener is listener
+    expected = "The setting is Eco\n\nChange it in Settings"
+    assert "".join(delta.get("content", "") for delta in heard) == expected
+    assert final_assistant_text(log.content) == expected
+    assert [item.content for item in log.content if isinstance(item, conversation.AssistantContent) and item.content] == [
+        "The setting is Eco", "Hidden progress", "Change it in Settings",
+    ]
+
+
+def test_response_separator_precedes_leading_whitespace_delta():
+    heard = []
+
+    def listener(_log, delta):
+        heard.append(delta.get("content", ""))
+
+    log = SimpleNamespace(delta_listener=listener)
+    with separate_assistant_messages(log, enabled=True):
+        log.delta_listener(log, {"role": "assistant", "content": "First."})
+        log.delta_listener(log, {"role": "assistant"})
+        log.delta_listener(log, {"content": " "})
+        log.delta_listener(log, {"content": "Spaced."})
+    assert "".join(heard) == "First.\n\n Spaced."

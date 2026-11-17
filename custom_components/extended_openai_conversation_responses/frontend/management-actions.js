@@ -128,6 +128,12 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
+  const badNumber = [...(panel.shadowRoot?.querySelectorAll?.('[data-type="number"]') || [])]
+    .find(control => control.validity?.badInput);
+  if (badNumber) {
+    badNumber.reportValidity();
+    return;
+  }
   const mappingError = voiceMappingDraftError(panel);
   if (mappingError) {
     showErrors(panel, {voice_device_mappings:mappingError});

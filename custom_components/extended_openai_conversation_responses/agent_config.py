@@ -955,15 +955,23 @@ def normalize_agent_numeric_values(candidate: dict[str, Any]) -> None:
     _coerce_legacy_numbers(candidate)
 
 
-def normalized_function_call_budget(data: Mapping[str, Any]) -> int:
-    """Read a historical budget without validating unrelated damaged fields."""
-    key = CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION
-    scalar = {key: data.get(key, DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION)}
+def normalized_agent_integer(data: Mapping[str, Any], key: str, default: int) -> int:
+    """Read one historical integer without validating unrelated settings."""
+    scalar = {key: data.get(key, default)}
     normalize_agent_numeric_values(scalar)
     _require_type(scalar, (key,), int)
-    if scalar[key] < 0:
-        raise AgentConfigError(key, "must be at least 0")
     return cast(int, scalar[key])
+
+
+def normalized_function_call_budget(data: Mapping[str, Any]) -> int:
+    """Read and validate the historical Function Tool budget."""
+    key = CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION
+    budget = normalized_agent_integer(
+        data, key, DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION
+    )
+    if budget < 0:
+        raise AgentConfigError(key, "must be at least 0")
+    return budget
 
 
 def _configuration_reasoning_context(

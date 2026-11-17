@@ -151,3 +151,35 @@ def test_container_fences_disabled_and_bounded_fallback():
     for char in source:
         z.feed(char)
         assert z.buffered_chars <= 128
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "> ```python\n> print('hello')\n\n**More info** https://example.com",
+            "print('hello')\nMore info",
+        ),
+        (
+            "- Example:\n    ```text\n    valid **code**\n\n    https://inside.example\n**More info** https://example.com",
+            "Example:\n valid **code**\n https://inside.example\nMore info",
+        ),
+        (
+            "> - ```text\n>   **code**\n> **More info** https://example.com",
+            "**code**\nMore info",
+        ),
+        (
+            "> > ```text\n> > 2 >> 1\n> **More info** https://example.com",
+            "2 >> 1\nMore info",
+        ),
+    ],
+)
+def test_container_exit_implicitly_closes_fence_at_every_split(source, expected):
+    all_splits(source, expected)
+
+
+def test_large_completed_message_reindexes_after_implicit_fence_close():
+    source = "> ```text\n> " + ("x" * 4_200) + "\n**After** https://example.com"
+    expected = ("x" * 4_200) + "\nAfter"
+    assert clean(Sanitizer().process_complete(source)) == expected
+    assert streamed(source, 113) == expected

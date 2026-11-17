@@ -158,7 +158,7 @@ def request_provider_reload_after_update(
     state_before: ConfigEntryState,
     *,
     changed: bool,
-    validation_performed: bool,
+    retry_unchanged: bool,
 ) -> bool:
     """Share post-save recovery without duplicating the loaded update listener."""
     if entry.disabled_by is not None:
@@ -166,7 +166,7 @@ def request_provider_reload_after_update(
     if state_before is ConfigEntryState.LOADED:
         if changed:
             return True  # The normal update listener owns this reload.
-        if not validation_performed:
+        if not retry_unchanged:
             return False
     elif not state_before.recoverable:
         return False
@@ -238,7 +238,7 @@ async def async_replace_api_key(
         entry,
         state_before,
         changed=changed,
-        validation_performed=not skip_authentication,
+        retry_unchanged=not skip_authentication,
     )
 
     return {

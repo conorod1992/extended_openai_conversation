@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from threading import Event
 from zoneinfo import ZoneInfo
@@ -802,3 +803,37 @@ def test_local_run_summary_counts_selected_period_beyond_latest_thirty(monkeypat
         assert wider["local_run_summary"]["retention_days"] == 30
         manager.run_retention_days = 0
         assert usage_daily_page(manager, start_date="0000-01-01", end_date="9999-12-31")["local_run_summary"]["count"] == 0
+
+
+async def test_restored_archive_lists_and_searches_by_instant():
+    archive = ConversationArchive(_Storage(), "agent")
+    await archive.async_initialize()
+    instances = [
+        _edge_session(1, turn_count=1),
+        _edge_session(2, turn_count=1),
+        _edge_session(3, turn_count=1),
+    ]
+    stamps = ["2026-01-01T12:00:00+02:00", "2026-01-01T11:00:00Z", "2026-01-01T10:30:00"]
+    sessions = [
+        replace(session, started_at=stamp, last_message_at=stamp)
+        for session, stamp in zip(instances, stamps, strict=True)
+    ]
+    turns = [
+        replace(_edge_turn(session.session_id, index, "garden"), timestamp=stamp)
+        for index, (session, stamp) in enumerate(zip(sessions, stamps, strict=True))
+    ]
+    validated_sessions, validated_turns = archive.validate_backup_data(
+        {"sessions": [asdict(session) for session in sessions], "turns": [asdict(turn) for turn in turns]},
+        "agent",
+    )
+    await archive.async_replace_backup(validated_sessions, validated_turns)
+
+    for offset, expected in enumerate(["session-2", "session-3", "session-1"]):
+        management_list = await archive_list_page(archive, "user:alice", offset=offset, limit=1)
+        model_list = await archive.async_list_sessions("user:alice", offset=offset, limit=1)
+        management_search = await archive_search_page(archive, "user:alice", "garden", offset=offset, limit=1)
+        model_search = await archive.async_search("user:alice", "garden", offset=offset, limit=1)
+        assert management_list["sessions"][0]["session_id"] == expected
+        assert model_list["sessions"][0]["session_id"] == expected
+        assert management_search["results"][0]["session_id"] == expected
+        assert model_search["results"][0]["session_id"] == expected

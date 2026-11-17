@@ -41,6 +41,7 @@ from .agent_config import (
     model_capabilities,
     normalize_agent_config,
     normalize_persisted_agent_config,
+    normalized_agent_integer,
     parse_configured_function_tools,
     preserve_agent_model_setting_omissions,
     project_agent_config_transfer,
@@ -2646,11 +2647,10 @@ async def async_conversations_command(request: _ManagementRequest) -> dict[str, 
         _require_admin(is_admin)
         return {
             "active": await continuity.async_list(
-                int(
-                    subentry.data.get(
-                        CONF_CONVERSATION_TIMEOUT_MINUTES,
-                        DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
-                    )
+                normalized_agent_integer(
+                    subentry.data,
+                    CONF_CONVERSATION_TIMEOUT_MINUTES,
+                    DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
                 )
             )
         }

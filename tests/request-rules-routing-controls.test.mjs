@@ -72,5 +72,12 @@ for (const controls of [actualEditorControls, syncRequestRuleRoutingControls]) {
   reasoning.value = "{effort}";
   controls(root, ["low", "high"]);
   assert.equal(reasoning.value, "{effort}");
+  reasoning.value = "";
+  controls(root, [], null, ["effort", "style"]);
+  assert.deepEqual(reasoning.options.map(option => option.value), ["", "{effort}", "{style}"]);
+  reasoning.value = "{effort}";
+  controls(root, ["high", "{style}"], null, ["effort"]);
+  assert.deepEqual(reasoning.options.map(option => option.value), ["", "high", "{effort}"]);
+  assert.equal(reasoning.value, "{effort}");
   elements.set("#rule-reasoning", null);
 }

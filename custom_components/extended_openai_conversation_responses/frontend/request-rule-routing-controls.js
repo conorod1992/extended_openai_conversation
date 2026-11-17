@@ -1,6 +1,7 @@
 const unforcedScopes = new WeakMap();
+const captureReference = /^\{[A-Za-z_][A-Za-z0-9_]{0,63}\}$/;
 
-export function syncRequestRuleRoutingControls(root, efforts = null, selectedEffort = null) {
+export function syncRequestRuleRoutingControls(root, efforts = null, selectedEffort = null, captureNames = []) {
   const actionType = root?.querySelector?.("#rule-action-type");
   const scope = root?.querySelector?.("#rule-scope");
   const continueToAi = root?.querySelector?.("#rule-continue-to-ai");
@@ -22,7 +23,7 @@ export function syncRequestRuleRoutingControls(root, efforts = null, selectedEff
   scope.disabled = consumed;
   if (reasoning && Array.isArray(efforts)) {
     const desired = selectedEffort ?? reasoning.value;
-    setReasoningOptions(root, efforts, desired);
+    setReasoningOptions(root, efforts, desired, captureNames);
   }
   if (help) help.textContent = consumed
     ? "This command is acknowledged locally. It must change or reset the rest of the conversation."
@@ -31,16 +32,18 @@ export function syncRequestRuleRoutingControls(root, efforts = null, selectedEff
       : "Later matching rules can run. Request-only scope applies to any AI handoff in this request.";
 }
 
-export function setReasoningOptions(root, efforts, selected = "") {
+export function setReasoningOptions(root, efforts, selected = "", captureNames = []) {
   const reasoning = root?.querySelector("#rule-reasoning");
   if (!reasoning) return;
-  const captured = /^\{[A-Za-z_][A-Za-z0-9_]{0,63}\}$/.test(selected);
-  const values = Array.isArray(efforts) ? efforts : [];
-  const allowed = [...new Set([...values, ...(captured ? [selected] : [])])];
+  const fixed = Array.isArray(efforts) ? efforts.filter(value => !captureReference.test(value)) : [];
+  const captures = captureNames.map(name => `{${name}}`);
+  const savedCapture = captureReference.test(selected) ? [selected] : [];
+  const allowed = [...new Set([...fixed, ...captures, ...savedCapture])];
   reasoning.replaceChildren(...["", ...allowed].map((value) => {
     const option = reasoning.ownerDocument.createElement("option");
     option.value = value;
-    option.textContent = value ? value.charAt(0).toUpperCase() + value.slice(1) : "Keep current";
+    option.textContent = captureReference.test(value) ? `Capture ${value}`
+      : value ? value.charAt(0).toUpperCase() + value.slice(1) : "Keep current";
     return option;
   }));
   reasoning.value = selected && allowed.includes(selected) ? selected : "";

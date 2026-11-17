@@ -500,6 +500,7 @@ async def test_runtime_usage_aggregate_stores_use_atomic_writes(
     hass: HomeAssistant,
 ) -> None:
     """The authoritative aggregate snapshot and legacy mirror are crash-safe."""
+    hass.config_entries.async_get_entry.return_value = None
     manager = await async_get_usage(hass, "entry-a", "agent-a")
 
     totals_store = cast(Any, manager._storage)

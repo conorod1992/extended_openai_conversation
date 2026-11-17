@@ -22,8 +22,6 @@ from .const import (
     CONF_MEMORY_EMBEDDING_MODEL,
     CONF_MEMORY_RETRIEVAL_MODE,
     CONF_TEMPORARY_MEMORY,
-    CONF_USAGE_REQUEST_RETENTION_DAYS,
-    CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -32,13 +30,12 @@ from .const import (
     DEFAULT_MEMORY_EMBEDDING_MODEL,
     DEFAULT_MEMORY_RETRIEVAL_MODE,
     DEFAULT_TEMPORARY_MEMORY,
-    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-    DEFAULT_USAGE_RUN_RETENTION_DAYS,
     MEMORY_RETRIEVAL_HYBRID,
     TEMPORARY_MEMORY_OFF,
 )
 from .memory import memory_enabled
 from .speech import has_custom_speech_replacements
+from .usage import usage_retention_policy
 
 _LOGGER = logging.getLogger(__name__)
 _RUNTIME_CONFIG_DATA = "_extended_openai_runtime_config_data"
@@ -215,15 +212,9 @@ def _refresh_non_manager_state(entity: Any, options: Any) -> None:
     entity._attr_supports_streaming = not has_custom_speech_replacements(options)
     usage = getattr(entity, "_usage", None)
     if usage is not None:
-        usage.request_retention_days = int(
-            options.get(
-                CONF_USAGE_REQUEST_RETENTION_DAYS,
-                DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-            )
-        )
-        usage.run_retention_days = int(
-            options.get(CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS)
-        )
+        retention = usage_retention_policy(options)
+        usage.request_retention_days = retention["request_retention_days"]
+        usage.run_retention_days = retention["run_retention_days"]
 
 
 async def async_reconcile_runtime_configuration(

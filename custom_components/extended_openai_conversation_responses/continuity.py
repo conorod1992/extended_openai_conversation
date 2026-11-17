@@ -14,7 +14,7 @@ from uuid import uuid4
 from homeassistant.components import conversation
 from homeassistant.components.conversation.chat_log import current_chat_log
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.chat_session import current_session
+from homeassistant.helpers.chat_session import ChatSession, current_session
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -33,8 +33,6 @@ from .conversation_ids import (
     create_conversation_id,
 )
 from .scope import ResolvedDataScope
-
-_MAX_IGNORED_CONVERSATION_IDS = 64
 
 
 @dataclass(slots=True)
@@ -267,7 +265,7 @@ class ConversationContinuity:
         self._sessions: dict[str, ActiveConversation] = {}
         self._memory_bundles: dict[str, ConversationMemoryBundle] = {}
         self._pending_ends: set[str] = set()
-        self._ignored_conversation_ids: dict[str, None] = {}
+        self._retired_chat_sessions: dict[str, ChatSession] = {}
         self._ha_default_locks: dict[str, asyncio.Lock] = {}
         self._ha_default_lock_users: dict[str, int] = {}
         self._ha_default_claims: dict[str, tuple[str, asyncio.Lock]] = {}
@@ -310,7 +308,6 @@ class ConversationContinuity:
         self._sessions.update(retained)
         self._memory_bundles.clear()
         self._pending_ends.clear()
-        self._ignored_conversation_ids.clear()
 
     @staticmethod
     def identity_key(
@@ -388,8 +385,7 @@ class ConversationContinuity:
         """Resolve one request using a small lock and no network I/O."""
         if incoming_conversation_id is not None:
             async with self._lock:
-                if incoming_conversation_id in self._ignored_conversation_ids:
-                    self._ignored_conversation_ids.pop(incoming_conversation_id, None)
+                if incoming_conversation_id in self._retired_chat_sessions:
                     incoming_conversation_id = None
         if namespace is None and self._is_guest_conversation_id(
             incoming_conversation_id
@@ -651,17 +647,19 @@ class ConversationContinuity:
             self._remove_session_locked(key)
             return True
 
-    async def async_ignore_next_incoming_conversation_id(
-        self, conversation_id: str
-    ) -> None:
-        """Make one future HA-default resolution ignore a completed ChatLog ID."""
+    async def async_retire_chat_session(self, session: ChatSession) -> None:
+        """Keep a reset native session out of model context until Core expires it."""
+        conversation_id = session.conversation_id
         async with self._lock:
-            self._ignored_conversation_ids.pop(conversation_id, None)
-            self._ignored_conversation_ids[conversation_id] = None
-            while len(self._ignored_conversation_ids) > _MAX_IGNORED_CONVERSATION_IDS:
-                self._ignored_conversation_ids.pop(
-                    next(iter(self._ignored_conversation_ids))
-                )
+            if self._retired_chat_sessions.get(conversation_id) is session:
+                return
+            self._retired_chat_sessions[conversation_id] = session
+
+            def release() -> None:
+                if self._retired_chat_sessions.get(conversation_id) is session:
+                    self._retired_chat_sessions.pop(conversation_id)
+
+            session.async_on_cleanup(release)
 
     async def async_clear_memory_bundle(self, session_key: str) -> bool:
         """Forget cached memory references without deleting any stored memories."""

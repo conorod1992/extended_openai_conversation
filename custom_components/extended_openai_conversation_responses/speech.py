@@ -833,6 +833,39 @@ class StreamingSpeechSanitizer:
                 return None
         return index - start
 
+    def _block_container_prefix(self, text: str, index: int, final: bool) -> int | None:
+        """Return quote width, -1 for a departed container, or None for a split prefix."""
+        quote_width = 0
+        if self._block_quote_prefix:
+            quoted = self._quoted_code_prefix(text, index, final)
+            if quoted is None:
+                return None
+            if not quoted:
+                return -1
+            quote_width = quoted
+        indent = self._block_list_indent
+        if indent is not None:
+            cursor = index + quote_width
+            columns = 0
+            while cursor < len(text) and columns < indent and text[cursor] in " \t":
+                columns += 1 if text[cursor] == " " else 4 - columns % 4
+                cursor += 1
+            if columns < indent:
+                remainder = text[cursor : cursor + 1]
+                if not remainder and not final:
+                    return None
+                # Blank lines can remain inside a list item without indentation.
+                if remainder and remainder not in "\r\n":
+                    return -1
+        return quote_width
+
+    def _end_block_fence(self) -> None:
+        self._inline_scope.block_boundary(False)
+        self._link_block = False
+        self._link_code = 0
+        self._block_quote_prefix = ""
+        self._block_list_indent = None
+
     def _block_fence_can_close(self) -> bool:
         prefix = self._original_line_prefix
         if self._original_prefix_complete:
@@ -991,16 +1024,22 @@ class StreamingSpeechSanitizer:
                 self._finish_long_url(output, end)
                 continue
             if (
-                self._link_code
-                and self._block_quote_prefix
+                self._link_block
+                and (self._block_quote_prefix or self._block_list_indent is not None)
                 and not self._original_line_prefix
             ):
-                # Remove exactly the opener's outer quote prefix. A following
-                # > or >> belongs to the code, not to generic Markdown cleanup.
-                prefix_length = self._quoted_code_prefix(text, index, final)
+                prefix_length = self._block_container_prefix(text, index, final)
                 if prefix_length is None:
                     break
-                if prefix_length:
+                if prefix_length < 0:
+                    # An implicit closer has no source characters. Notify the
+                    # formatter without consuming the first line of prose.
+                    fences[len(output)] = False
+                    output.append("")
+                    self._end_block_fence()
+                    self._original_list_indent = None
+                elif prefix_length:
+                    # Remove the outer quote prefix only. A following > is code.
                     index += prefix_length
                     continue
             if (
@@ -1033,11 +1072,7 @@ class StreamingSpeechSanitizer:
                             if newline >= 0 or final:
                                 self._emit(output, text[index:end])
                                 fences[len(output) - 1] = False
-                                self._inline_scope.block_boundary(False)
-                                self._link_block = False
-                                self._link_code = 0
-                                self._block_quote_prefix = ""
-                                self._block_list_indent = None
+                                self._end_block_fence()
                                 index = tail_end
                                 continue
                     self._emit(output, text[index:end])
@@ -1668,8 +1703,9 @@ class StreamingSpeechSanitizer:
                 if block_code:
                     last_by_boundary[index] = last
                     last = {}
-                index += width
-                continue
+                if width:
+                    index += width
+                    continue
             if block_code:
                 index += 1
                 continue
@@ -1750,7 +1786,8 @@ class StreamingSpeechSanitizer:
                 width, self._format_block = self._format_fences[index]
                 format_end = next(fences, buffer_end)
                 index += width
-                self._line_start = False
+                if width:
+                    self._line_start = False
                 continue
             if self._format_block:
                 output.append(char)

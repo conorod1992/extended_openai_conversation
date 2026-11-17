@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any, Literal
 
 from homeassistant.components import conversation
@@ -72,6 +72,36 @@ async def provider_output_presentation(
         yield select
     finally:
         if listener is not None and chat_log.delta_listener is present:
+            chat_log.delta_listener = listener
+
+
+@contextmanager
+def separate_assistant_messages(chat_log: Any, *, enabled: bool) -> Iterator[None]:
+    """Separate spoken answer messages after progress filtering and cleanup."""
+    listener = getattr(chat_log, "delta_listener", None)
+    if not enabled or listener is None:
+        yield
+        return
+    spoke_text = False
+    starts_message = False
+
+    def present(log: Any, delta: dict[str, Any]) -> None:
+        nonlocal spoke_text, starts_message
+        if delta.get("role") == "assistant":
+            starts_message = True
+        content = delta.get("content")
+        if isinstance(content, str) and content:
+            if starts_message and spoke_text:
+                delta = {**delta, "content": "\n\n" + content}
+            spoke_text = True
+            starts_message = False
+        listener(log, delta)
+
+    chat_log.delta_listener = present
+    try:
+        yield
+    finally:
+        if chat_log.delta_listener is present:
             chat_log.delta_listener = listener
 
 

@@ -259,8 +259,11 @@ async def test_user_reset_does_not_erase_newer_in_flight_claim() -> None:
     assert fresh.resumed is False
 
 
-async def test_ha_default_reset_ignores_returned_conversation_id_once() -> None:
+async def test_ha_default_reset_retires_returned_conversation_id() -> None:
+    from homeassistant.helpers.chat_session import ChatSession
+
     hass = cast(Any, SimpleNamespace(data={}))
+    session = ChatSession("incoming")
     continuity = ConversationContinuity("agent")
     await async_reset_conversation_context(
         hass,
@@ -270,6 +273,7 @@ async def test_ha_default_reset_ignores_returned_conversation_id_once() -> None:
         continuity_key=None,
         state_session_id="conversation:incoming",
         memory_session_id="conversation:incoming",
+        chat_session=session,
     )
 
     fresh = await continuity.async_resolve(
@@ -288,7 +292,7 @@ async def test_ha_default_reset_ignores_returned_conversation_id_once() -> None:
         "incoming",
         30,
     )
-    assert later.conversation_id == "incoming"
+    assert later.conversation_id is None
 
 
 def test_lifecycle_tool_is_builtin_and_reserved() -> None:
@@ -335,7 +339,7 @@ async def test_reset_without_conversation_id_skips_ignore(
     """Only a non-empty HA conversation id should be ignored after reset."""
     continuity = Mock()
     continuity.async_request_end = AsyncMock()
-    continuity.async_ignore_next_incoming_conversation_id = AsyncMock()
+    continuity.async_retire_chat_session = AsyncMock()
     continuity.async_clear_memory_bundle = AsyncMock()
 
     request_rules = Mock()
@@ -360,6 +364,6 @@ async def test_reset_without_conversation_id_skips_ignore(
     )
 
     continuity.async_request_end.assert_not_awaited()
-    continuity.async_ignore_next_incoming_conversation_id.assert_not_awaited()
+    continuity.async_retire_chat_session.assert_not_awaited()
     continuity.async_clear_memory_bundle.assert_awaited_once_with("memory-1")
     request_rules.reset.assert_called_once_with(state_session_id)

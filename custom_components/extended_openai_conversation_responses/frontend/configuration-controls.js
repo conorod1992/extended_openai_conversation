@@ -34,6 +34,7 @@ export function configurationControlValue(control) {
   }
   if (control.dataset?.type === "boolean" || control.type === "checkbox") return Boolean(control.checked);
   if (control.dataset?.type === "number") {
+    if (control.validity?.badInput) return value;
     if (value === "true" || value === "false") return value === "true";
     const number = Number(value);
     // Keep malformed recovery text for validation. JSON converts NaN and

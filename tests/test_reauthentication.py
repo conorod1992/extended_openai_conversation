@@ -16,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_BASE_URL,
     CONF_SKIP_AUTHENTICATION,
 )
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
@@ -62,7 +63,17 @@ async def test_setup_transient_connection_failure_remains_not_ready(monkeypatch)
         await async_setup_entry(MagicMock(), entry)
 
 
-async def test_reauthentication_preserves_azure_and_skip_auth_settings() -> None:
+@pytest.mark.parametrize(
+    ("state", "changed", "expect_schedule"),
+    [
+        (ConfigEntryState.LOADED, True, False),
+        (ConfigEntryState.LOADED, False, True),
+        (ConfigEntryState.SETUP_ERROR, True, True),
+    ],
+)
+async def test_reauthentication_preserves_provider_and_selects_reload_owner(
+    state, changed, expect_schedule
+) -> None:
     entry = SimpleNamespace(
         data={
             CONF_API_KEY: "expired",
@@ -71,14 +82,18 @@ async def test_reauthentication_preserves_azure_and_skip_auth_settings() -> None
             CONF_API_VERSION: "2025-01-01-preview",
             CONF_SKIP_AUTHENTICATION: False,
             "organization": "org",
-        }
+        },
+        state=state,
+        entry_id="entry",
+        disabled_by=None,
     )
     flow = SimpleNamespace(
         _reauth_entry=entry,
         hass=MagicMock(),
-        async_update_reload_and_abort=MagicMock(return_value={"type": "abort"}),
+        async_abort=MagicMock(return_value={"type": "abort"}),
         async_show_form=MagicMock(),
     )
+    flow.hass.config_entries.async_update_entry.return_value = changed
     with patch(
         "custom_components.extended_openai_conversation_responses.config_flow.validate_input",
         AsyncMock(),
@@ -93,4 +108,7 @@ async def test_reauthentication_preserves_azure_and_skip_auth_settings() -> None
     assert updated[CONF_BASE_URL] == "https://example.openai.azure.com"
     assert updated[CONF_API_VERSION] == "2025-01-01-preview"
     assert updated[CONF_SKIP_AUTHENTICATION] is False
+    flow.hass.config_entries.async_update_entry.assert_called_once_with(entry, data=updated)
+    assert flow.hass.config_entries.async_schedule_reload.call_count == int(expect_schedule)
+    flow.async_abort.assert_called_once_with(reason="reauth_successful")
     assert result == {"type": "abort"}

@@ -463,7 +463,7 @@ class PersistentMemory:
                     elif (
                         valid_from is not None
                         and duplicate.valid_from is not None
-                        and duplicate.valid_from != valid_from
+                        and not _same_validity_instant(duplicate.valid_from, valid_from)
                     ):
                         conflict = "valid_from"
                     elif (
@@ -598,8 +598,10 @@ class PersistentMemory:
                         or candidate.subject == cleaned_subject
                     )
                     and (
-                        cleaned_valid_from is _UNSET
-                        or candidate.valid_from == cleaned_valid_from
+                        isinstance(cleaned_valid_from, _UnsetType)
+                        or _same_validity_instant(
+                            candidate.valid_from, cleaned_valid_from
+                        )
                     )
                     and (cleaned_key is _UNSET or candidate.key == cleaned_key)
                 )
@@ -814,7 +816,8 @@ class PersistentMemory:
                 and (category_filter is None or memory.category == category_filter)
             ]
             memories.sort(
-                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                reverse=True,
             )
             return memories[offset : offset + limit]
 
@@ -839,7 +842,8 @@ class PersistentMemory:
                 and (category_filter is None or memory.category == category_filter)
             ]
             memories.sort(
-                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                reverse=True,
             )
             end = offset + limit
             return memories[offset:end], len(memories) > end
@@ -883,7 +887,8 @@ class PersistentMemory:
                 ).casefold()
             ]
             memories.sort(
-                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                reverse=True,
             )
             total = len(memories)
             return memories[offset : offset + limit], total
@@ -1299,7 +1304,7 @@ class PersistentMemory:
         if (
             valid_from is not None
             and candidate.valid_from is not None
-            and valid_from != candidate.valid_from
+            and not _same_validity_instant(valid_from, candidate.valid_from)
         ):
             return None
         return candidate
@@ -1333,7 +1338,7 @@ class PersistentMemory:
             and not (
                 valid_from is not None
                 and memory.valid_from is not None
-                and valid_from != memory.valid_from
+                and not _same_validity_instant(valid_from, memory.valid_from)
             )
         ]
         return sorted(matches, key=lambda memory: memory.memory_id)
@@ -2577,7 +2582,7 @@ def _clean_key(value: str | None) -> str | None:
 
 
 @lru_cache(maxsize=20_000)
-def _updated_at_instant(value: str) -> datetime:
+def _memory_timestamp_instant(value: str) -> datetime:
     """Sort validated timestamps by instant; legacy naive values mean UTC.
 
     Keep stored strings intact and reuse parsing across management pages. Python's
@@ -2588,6 +2593,14 @@ def _updated_at_instant(value: str) -> datetime:
     # Aware datetime comparisons already compare instants. Converting to UTC
     # would overflow for valid offset timestamps at the year 1/9999 boundaries.
     return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+
+
+def _same_validity_instant(first: str | None, second: str | None) -> bool:
+    return first == second or (
+        first is not None
+        and second is not None
+        and _memory_timestamp_instant(first) == _memory_timestamp_instant(second)
+    )
 
 
 def _clean_timestamp(value: str | None, field: str) -> str | None:
