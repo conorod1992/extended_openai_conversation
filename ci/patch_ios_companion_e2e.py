@@ -50,7 +50,11 @@ HELPERS = r'''
         // A late native permission sheet can swallow the sidebar tap. The
         // sidebar label is not proof that the management panel actually opened.
         tapEOAIElement(extendedOpenAI, until: pageSelector, "Extended OpenAI management panel")
-        let assistantPage = app.descendants(matching: .any)
+        // The Overview document also contains an off-screen Other/StaticText
+        // named Assistant. Query only the native select-menu button: evaluating
+        // hittability on that unrelated heading can itself raise an XCTest error
+        // before tapEOAIElement gets a chance to open the Page selector.
+        let assistantPage = app.buttons
             .matching(NSPredicate(format: "label == %@", "Assistant"))
             .firstMatch
         tapEOAIElement(pageSelector, until: assistantPage, "EOAI Assistant page option")
