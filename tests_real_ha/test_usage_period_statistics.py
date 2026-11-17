@@ -52,6 +52,10 @@ async def test_cumulative_restore_corrects_recorder_sum_without_new_meter_cycle(
         nonlocal slot
         window = start + timedelta(minutes=5 * slot)
         slot += 1
+        # Finish Recorder startup and persist this window's states before moving
+        # its clock. Otherwise CompileMissingStatisticsTask can seal an empty
+        # window before the queued sensor state events have been recorded.
+        await async_wait_recording_done(hass)
         freezer.move_to(window + timedelta(minutes=5, seconds=1))
         await async_wait_recording_done(hass)
         do_adhoc_statistics(hass, start=window)
@@ -152,6 +156,9 @@ async def test_period_rollover_keeps_recorder_sum_and_allows_corrections(
     usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
 
     async def compile_window(window, expected_state, expected_sum):
+        # Drain startup/state work at its original time before the five-minute
+        # jump lets Recorder's automatic backfill compile this same window.
+        await async_wait_recording_done(hass)
         freezer.move_to(window + timedelta(minutes=5, seconds=1))
         await async_wait_recording_done(hass)
         do_adhoc_statistics(hass, start=window)
