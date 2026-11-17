@@ -26,6 +26,12 @@ outside recognized code. The punctuation stays literal: `\*word\*` is spoken as
 unpaired backslash remain. Streaming waits for the character after a trailing
 backslash before deciding how to speak it.
 
+Completed cleanup attaches ordinary punctuation to preceding prose, such as
+`Hello , world` becoming `Hello, world`. Spaces before escaped punctuation stay:
+`off now. \!photo` becomes `off now. !photo`. Custom replacements still run before
+final whitespace cleanup. Copied text and regex backreferences retain this
+literal spacing; newly written replacement punctuation uses normal attachment.
+
 Short, contiguous `=` Setext underlines after plain top-level heading text are
 removed. Standalone equals runs, spaced `= = =`, operators, escapes, and code stay
 literal. Recognition is deliberately bounded to 32 characters per underline and

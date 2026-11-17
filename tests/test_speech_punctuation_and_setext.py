@@ -15,10 +15,12 @@ from tests.test_speech_scope_regressions import all_splits, streamed
 
 @pytest.mark.parametrize("mark", punctuation)
 def test_each_ascii_punctuation_escape_is_literal_at_every_split(mark):
-    all_splits(
-        "Before \\" + mark + " after",
-        _final_whitespace_cleanup("Before " + mark + " after"),
-    )
+    source = "Before \\" + mark + " after"
+    expected = "Before " + mark + " after"
+    assert process_speech_text(source, _config()) == expected
+    for split in range(len(source) + 1):
+        sanitizer = StreamingSpeechSanitizer()
+        assert sanitizer.feed(source[:split]) + sanitizer.feed(source[split:]) + sanitizer.finish() == expected
 
 
 @pytest.mark.parametrize("slashes", range(1, 8))

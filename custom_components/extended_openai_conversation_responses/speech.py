@@ -30,6 +30,18 @@ _SPACE_BEFORE_PUNCTUATION = re.compile(r"\s+([,.;:!?])")
 _WHITESPACE = re.compile(r"[ \t\f\v]+")
 _BLANK_LINES = re.compile(r"\n\s*\n+")
 
+
+class _SpeechText(str):
+    """Completed speech carrying only literal punctuation positions, never tokens."""
+
+    literal_punctuation: tuple[int, ...]
+
+    def __new__(cls, text: str, positions: tuple[int, ...] = ()) -> _SpeechText:
+        instance = super().__new__(cls, text)
+        instance.literal_punctuation = positions
+        return instance
+
+
 _URL_PREFIXES = ("http://", "https://", "www.")
 _URL_TRAILING_PUNCTUATION = frozenset(".,;:!?")
 _WWW_ADDRESS = re.compile(
@@ -1585,6 +1597,7 @@ class StreamingSpeechSanitizer:
         output: list[str] = []
         index = 0
         unresolved_emphasis = False
+        literal_parts: set[int] = set()
 
         while index < len(self._format_buffer):
             char = self._format_buffer[index]
@@ -1595,6 +1608,8 @@ class StreamingSpeechSanitizer:
                 if following and following in punctuation:
                     # Consume the original pair atomically. Its literal output
                     # must never be interpreted as a new Markdown delimiter.
+                    if self._complete_mode and following in ",.;:!?":
+                        literal_parts.add(len(output))
                     output.append(following)
                     index += 2
                     self._line_start = False
@@ -1945,7 +1960,16 @@ class StreamingSpeechSanitizer:
         elif final and self._format_buffer:
             output.append(self._format_buffer.replace("`", ""))
             self._format_buffer = ""
-        return "".join(output)
+        result = "".join(output)
+        if literal_parts:
+            positions = []
+            offset = 0
+            for part_index, part in enumerate(output):
+                if part_index in literal_parts:
+                    positions.append(offset)
+                offset += len(part)
+            return _SpeechText(result, tuple(positions))
+        return result
 
     @staticmethod
     def _setext_equals_line(text: str, final: bool, start: int) -> tuple[str, int]:
@@ -2262,9 +2286,13 @@ def _built_in_cleanup(text: str, *, markdown: bool, urls: bool) -> str:
 def _final_whitespace_cleanup(text: str) -> str:
     # Parentheses can be literal speech content (including a code-span call()).
     # Link suppression already removes the enclosing citation parentheses.
+    literal_punctuation = frozenset(getattr(text, "literal_punctuation", ()))
+
     def punctuation_spacing(match: re.Match[str]) -> str:
         position = match.end() - 1
         punctuation = match.group(1)
+        if position in literal_punctuation:
+            return match.group()
         # A leading dot belongs to the following filename/identifier. Emoticons
         # similarly belong to the following token rather than the preceding word.
         if punctuation == "." and re.match(r"\w", text[position + 1 : position + 2]):

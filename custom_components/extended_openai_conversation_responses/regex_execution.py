@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
 from functools import partial
+from itertools import pairwise
 import json
 import logging
 import re
@@ -27,7 +28,7 @@ from .const import (
     MAX_SPEECH_REGEX_REPLACEMENT_LENGTH,
     MAX_SPEECH_REGEX_RULES,
 )
-from .speech import _built_in_cleanup, _final_whitespace_cleanup
+from .speech import _built_in_cleanup, _final_whitespace_cleanup, _SpeechText
 
 _LOGGER = logging.getLogger(__name__)
 _CONFIGURED_REGEX_TIMEOUT_SECONDS = 1.0
@@ -45,6 +46,7 @@ MIN_SPEECH_REPLACEMENT_OUTPUT_ALLOWANCE = 4_096
 # receives data over stdin. A catastrophic Python ``re`` match can therefore hold
 # only the child's GIL, and the parent can terminate the child at the deadline.
 _REGEX_WORKER = r"""
+from bisect import bisect_left
 import json
 import re
 import sys
@@ -53,7 +55,7 @@ class OutputLimitError(Exception):
     pass
 
 
-def bounded_sub(pattern, replacement, text, max_chars):
+def bounded_sub(pattern, replacement, text, max_chars, literal_punctuation):
     compiled = re.compile(pattern)
     # Validate backreferences even when the pattern finds no matches.
     compiled.sub(replacement, "", count=-1)
@@ -67,6 +69,16 @@ def bounded_sub(pattern, replacement, text, max_chars):
     pieces = []
     size = 0
     end = 0
+    copied_punctuation = []
+
+    def copy_punctuation(start, end, output_start):
+        copied_punctuation.extend(
+            position + output_start - start
+            for position in literal_punctuation[
+                bisect_left(literal_punctuation, start):bisect_left(literal_punctuation, end)
+            ]
+        )
+
     for match in compiled.finditer(text):
         gap = match.start() - end
         size += gap
@@ -74,6 +86,7 @@ def bounded_sub(pattern, replacement, text, max_chars):
             raise OutputLimitError
         if gap:
             pieces.append(text[end:match.start()])
+            copy_punctuation(end, match.start(), size - gap)
         for part in template:
             expanded = (match.group(part) or "") if isinstance(part, int) else part
             size += len(expanded)
@@ -81,12 +94,15 @@ def bounded_sub(pattern, replacement, text, max_chars):
                 raise OutputLimitError
             if expanded:
                 pieces.append(expanded)
+                if isinstance(part, int):
+                    copy_punctuation(match.start(part), match.end(part), size - len(expanded))
         end = match.end()
+    copy_punctuation(end, len(text), size)
     size += len(text) - end
     if max_chars > 0 and size > max_chars:
         raise OutputLimitError
     pieces.append(text[end:])
-    return "".join(pieces)
+    return "".join(pieces), copied_punctuation
 
 
 payload = json.load(sys.stdin)
@@ -115,13 +131,15 @@ elif op == "match_keys":
 elif op == "sub_many":
     original = payload.get("text", "")
     text = original
+    original_punctuation = payload.get("literal_punctuation", [])
+    literal_punctuation = original_punctuation
     invalid = []
     overflow = False
     max_output_chars = int(payload.get("max_output_chars", 0))
     for item in payload.get("items", []):
         try:
-            candidate = bounded_sub(
-                item["pattern"], item["replacement"], text, max_output_chars
+            candidate, candidate_punctuation = bounded_sub(
+                item["pattern"], item["replacement"], text, max_output_chars, literal_punctuation
             )
         except OutputLimitError:
             overflow = True
@@ -135,11 +153,17 @@ elif op == "sub_many":
             overflow = True
             break
         text = candidate
+        literal_punctuation = candidate_punctuation
     output = {
         "text": original if overflow or (invalid and not payload.get("continue_invalid")) else text,
         "invalid": invalid,
         "overflow": overflow,
     }
+    if "literal_punctuation" in payload:
+        output["literal_punctuation"] = (
+            original_punctuation if overflow or (invalid and not payload.get("continue_invalid"))
+            else literal_punctuation
+        )
 else:
     raise SystemExit("unsupported regex worker operation")
 json.dump(output, sys.stdout)
@@ -348,6 +372,7 @@ async def _async_apply_speech_replacements(text: str, rules: object) -> str:
             {
                 "op": "sub_many",
                 "text": text,
+                "literal_punctuation": getattr(text, "literal_punctuation", ()),
                 "items": items,
                 "max_output_chars": _speech_output_limit(len(text)),
             }
@@ -395,7 +420,30 @@ async def _async_apply_speech_replacements(text: str, rules: object) -> str:
             "Speech regex worker exceeded the output limit; preserving spoken text"
         )
         return text
-    return value
+    return _speech_replacement_text(text, value, result)
+
+
+def _speech_replacement_text(original: str, value: str, result: dict[str, Any]) -> str:
+    """Retain escape provenance only for copied text, including backreferences."""
+    if not isinstance(original, _SpeechText) or not original.literal_punctuation:
+        return value
+    positions = result.get("literal_punctuation")
+    if (
+        isinstance(positions, list)
+        and len(positions) <= len(value)
+        and all(
+            type(position) is int
+            and 0 <= position < len(value)
+            and value[position] in ",.;:!?"
+            for position in positions
+        )
+        and all(left < right for left, right in pairwise(positions))
+    ):
+        return _SpeechText(value, tuple(positions))
+    _LOGGER.warning(
+        "Speech regex worker lost literal punctuation; preserving spoken text"
+    )
+    return original
 
 
 async def async_process_speech_text(
@@ -449,6 +497,7 @@ def apply_speech_replacements(text: str, rules: object) -> str:
             {
                 "op": "sub_many",
                 "text": text,
+                "literal_punctuation": getattr(text, "literal_punctuation", ()),
                 "items": items,
                 "max_output_chars": _speech_output_limit(len(text)),
                 "continue_invalid": True,
@@ -462,4 +511,4 @@ def apply_speech_replacements(text: str, rules: object) -> str:
     value = result.get("text")
     if not isinstance(value, str) or len(value) > _speech_output_limit(len(text)):
         return text
-    return value
+    return _speech_replacement_text(text, value, result)

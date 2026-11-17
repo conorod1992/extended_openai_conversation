@@ -3308,7 +3308,10 @@
     "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[custom-openai]",
     "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[default-openai]",
     "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[inferred-azure]",
-    "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[omit-optional]"
+    "tests_real_ha/test_config_flow.py::test_legacy_retry_renders_full_credentials_and_corrects_submission[omit-optional]",
+    "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_custom_replacements_preserve_literal_spacing_and_history",
+    "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_speech_regressions_preserve_provider_history[literal-spacing]",
+    "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_speech_regressions_preserve_provider_history[punctuation-attachment]"
   ],
   "browser": {
     "browser": [

@@ -39,10 +39,12 @@ _SPOKEN_RESPONSE = "Hello see and docs done."
     ("> 5.\n", "5.", None),
     ("The switch is ***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***.", "The switch is off now.", None),
     (r"\![a photograph](https://example.com/image.png)", "!a photograph", None),
-    ("Result\n5.\nDone\n***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***. " + r"\![photo](https://example.com/image.png)" + "\n2) [Check documentation](https://example.com)\n3) https://example.com.\n4) https://a.com **[b.com](https://b.com)**\n5) **https://a.com https://b.com**\nBefore **https://a.com https://b.com** after.", "Result\n5.\nDone\noff now.!photo\n2. Check documentation\nBefore after.", "Result\n5.\nDone\noff now. !photo\n2. Check documentation\nBefore after."),
+    ("Result\n5.\nDone\n***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***. " + r"\![photo](https://example.com/image.png)" + "\n2) [Check documentation](https://example.com)\n3) https://example.com.\n4) https://a.com **[b.com](https://b.com)**\n5) **https://a.com https://b.com**\nBefore **https://a.com https://b.com** after.", "Result\n5.\nDone\noff now. !photo\n2. Check documentation\nBefore after.", "Result\n5.\nDone\noff now. !photo\n2. Check documentation\nBefore after."),
     (r"\*literal\* `\*code\*`", r"*literal* \*code\*", None),
     ("Heading\n===", "Heading", None),
-], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined", "escaped-punctuation-code", "setext-equals"])
+    (r"off now. \!photo", "off now. !photo", None),
+    ("Off now . Next !", "Off now. Next!", "Off now . Next !"),
+], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined", "escaped-punctuation-code", "setext-equals", "literal-spacing", "punctuation-attachment"])
 async def test_assist_speech_regressions_preserve_provider_history(
     hass, hass_ws_client, monkeypatch, raw, expected, progressive_expected
 ):
@@ -53,12 +55,39 @@ async def test_assist_speech_regressions_preserve_provider_history(
     _install_wire(monkeypatch, agent, [_chat_sse_deltas(list(raw))])
     events = await _run_assist(await hass_ws_client(hass), pipeline_id=agent.entity_id,
                                conversation_id="speech-regressions")
-    # Punctuation spacing is a completed-response stage. The literal ! retains
-    # its authored preceding space in the progressive stream, as before.
+    # Ordinary punctuation attachment remains a completed-response stage;
+    # escaped punctuation retains its authored separation in both paths.
     assert _progressive_text(events).strip() == (
         expected if progressive_expected is None else progressive_expected
     )
     assert _final_speech(events) == expected
+    assert any(
+        item.content == raw
+        for log in hass.data[DATA_CHAT_LOGS].values()
+        for item in log.content
+        if isinstance(item, conversation.AssistantContent)
+    )
+
+
+async def test_assist_custom_replacements_preserve_literal_spacing_and_history(
+    hass, hass_ws_client, monkeypatch,
+):
+    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
+
+    raw = r"**off** now. \!photo TOKEN"
+    agent = await _speech_agent(hass, **{CONF_SPEECH_REGEX_REPLACEMENTS: [
+        {"pattern": "photo", "replacement": "image"},
+        {"pattern": "TOKEN", "replacement": " !"},
+    ]})
+    assert await async_setup_component(hass, "assist_pipeline", {})
+    _install_wire(monkeypatch, agent, [_chat_sse_deltas(list(raw))])
+    events = await _run_assist(await hass_ws_client(hass), pipeline_id=agent.entity_id,
+                               conversation_id="literal-spacing-replacements")
+    assert _final_speech(events) == "off now. !image!"
+    # HA still exposes raw visual deltas when this agent disables progressive
+    # TTS for custom replacements. The final speech above uses the cleaned text.
+    assert agent.supports_streaming is False
+    assert _progressive_text(events) == raw
     assert any(
         item.content == raw
         for log in hass.data[DATA_CHAT_LOGS].values()
@@ -151,7 +180,7 @@ async def _speech_agent(hass: HomeAssistant, **options) -> Any:
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
     assert agent.entity_id.startswith("conversation.")
-    assert agent._attr_supports_streaming is True  # noqa: SLF001
+    assert agent._attr_supports_streaming == (not options.get(CONF_SPEECH_REGEX_REPLACEMENTS))  # noqa: SLF001
     return agent
 
 

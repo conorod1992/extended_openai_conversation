@@ -64,4 +64,10 @@ def test_all_speech_fixes_together():
         "[a.com](https://a.com) [b.com](https://b.com) ***now***. "
         r"\![a photograph](https://example.com/image.png)"
     )
-    all_splits(source, "Result\n5.\nDone\nThe switch is off now.!a photograph")
+    expected = "Result\n5.\nDone\nThe switch is off now. !a photograph"
+    assert process_speech_text(source, _config()) == expected
+    # Real progressive output already preserves this literal separation; do not
+    # run another completed cleanup on concatenated, provenance-free deltas.
+    for split in range(len(source) + 1):
+        sanitizer = StreamingSpeechSanitizer()
+        assert sanitizer.feed(source[:split]) + sanitizer.feed(source[split:]) + sanitizer.finish() == expected
