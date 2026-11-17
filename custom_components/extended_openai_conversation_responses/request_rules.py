@@ -3272,7 +3272,11 @@ def validate_routed_request_options(
 
 
 def validate_rule_model_request(
-    rule: Mapping[str, Any], options: Mapping[str, Any], entry_data: Mapping[str, Any]
+    rule: Mapping[str, Any],
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+    *,
+    check_captured_effort_support: bool = True,
 ) -> None:
     """Reject statically invalid routes at every Request Rule write boundary."""
     if rule.get("action_type") != "model_routing":
@@ -3308,7 +3312,12 @@ def validate_rule_model_request(
 
         selected_model = str(candidate.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
         capabilities = request_model_capabilities(candidate, entry_data)
-        if (model or underlying_model) and not capabilities["reasoning"]["efforts"]:
+        if (
+            check_captured_effort_support
+            and rule.get("enabled", True)
+            and (model or underlying_model)
+            and not capabilities["reasoning"]["efforts"]
+        ):
             raise HomeAssistantError(
                 f"Model {capability_model_identity(candidate, entry_data)} does not support reasoning effort"
             )
@@ -3344,7 +3353,11 @@ def validate_saved_model_routes(
     for rule in rules:
         if rule.get("enabled", True):
             try:
-                validate_rule_model_request(rule, options, entry_data)
+                # Legacy rules can have this invalid capture saved already. A
+                # restore or unrelated settings edit must leave them repairable.
+                validate_rule_model_request(
+                    rule, options, entry_data, check_captured_effort_support=False
+                )
             except HomeAssistantError as err:
                 label = rule.get("name", rule.get("id", "unnamed"))
                 raise HomeAssistantError(f"Request Rule `{label}`: {err}") from err

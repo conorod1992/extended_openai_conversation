@@ -23,6 +23,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     async_evaluate_rule,
     validate_rule,
     validate_rule_model_request,
+    validate_saved_model_routes,
 )
 from homeassistant.exceptions import HomeAssistantError
 
@@ -113,6 +114,8 @@ def test_captured_reasoning_requires_effort_support_for_fixed_routes(model) -> N
             HomeAssistantError, match="gpt-4o does not support reasoning effort"
         ):
             validate_rule_model_request(rule, options, {})
+        validate_rule_model_request({**rule, "enabled": False}, options, {})
+        validate_saved_model_routes([rule], options, {})
     else:
         # An effort-only command can inherit a reasoning model from an
         # earlier conversation route. Its selected model is not yet known.
