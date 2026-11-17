@@ -128,10 +128,10 @@ for (const bundled of [false, true]) {
     await expect(panel.locator("#rule-pattern-matching-help")).toBeVisible();
     await expect(panel.locator("#rule-matching-controls")).toBeHidden();
     await panel.locator("#rule-action-type").selectOption("model_routing");
-    await expect(panel.locator("#rule-routing-match-help")).toContainText("complete command");
+    await expect(panel.locator("#rule-routing-scope-help")).toContainText("acknowledged locally");
     await panel.locator("#rule-match").selectOption("contains");
     await expect(panel.locator("#rule-pattern-matching-help")).toBeHidden();
-    await expect(panel.locator("#rule-routing-match-help")).toContainText("broader match");
+    await expect(panel.locator("#rule-routing-scope-help")).toContainText("sends the original request");
     for (const id of ["rule-continue-to-ai","rule-reset","rule-continue-matching"]) {
       await expect(panel.locator(`#${id}`)).toHaveAttribute("role", "switch");
       await expect(panel.locator(`#${id}`)).toHaveAccessibleName(/\S+/);

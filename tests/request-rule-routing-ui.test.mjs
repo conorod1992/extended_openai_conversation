@@ -42,8 +42,7 @@ syncRequestRuleRoutingControls(root, ["low", "medium", "high", "xhigh", "max"]);
 assert.equal(scope.value, "conversation");
 assert.equal(scope.disabled, true);
 assert.equal(scope.querySelector('option[value="request"]').disabled, true);
-assert.match(help.textContent, /complete routing command/i);
-assert.match(help.textContent, /not sent to the AI provider/i);
+assert.match(help.textContent, /acknowledged locally/i);
 assert.deepEqual(reasoning.options.map((option) => option.value), ["", "low", "medium", "high", "xhigh", "max"]);
 assert.equal(reasoning.querySelector('option[value="xhigh"]').disabled, false);
 assert.equal(reasoning.querySelector('option[value="max"]').disabled, false);
@@ -54,7 +53,7 @@ scope.value = "request";
 syncRequestRuleRoutingControls(root, ["low", "medium", "high", "xhigh", "max"]);
 assert.equal(scope.disabled, false);
 assert.equal(scope.querySelector('option[value="request"]').disabled, false);
-assert.match(help.textContent, /original request to the AI unchanged/i);
+assert.match(help.textContent, /original request to the AI/i);
 
 model.value = "gpt-5.6";
 reasoning.value = "max";
@@ -68,6 +67,5 @@ syncRequestRuleRoutingControls(root, ["low", "medium", "high", "xhigh", "max"]);
 assert.equal(reasoning.querySelector('option[value="max"]').disabled, false);
 
 const dialog = requestRulesDialog({});
-assert.match(dialog, /rule-routing-match-help/);
 assert.match(dialog, /role="switch"/);
 assert.match(dialog, /rule-routing-scope-help/);

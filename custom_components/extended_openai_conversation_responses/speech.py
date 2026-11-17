@@ -314,7 +314,7 @@ class StreamingSpeechSanitizer:
         self._suppressed_opener: str | None = None
         self._completed_links: tuple[array, array, dict[int, int]] | None = None
         self._complete_mode = False
-        self._completed_last_markers: dict[str, int] | None = None
+        self._completed_last_markers: dict[int, dict[str, int]] | None = None
         self._completed_singles: dict[str, array] | None = None
         self._completed_nested_singles: dict[str, array] | None = None
 
@@ -892,17 +892,17 @@ class StreamingSpeechSanitizer:
 
     @classmethod
     def _has_closer(
-        cls, text: str, start: int, marker: str, preceding_backslashes: int = 0
+        cls, text: str, start: int, limit: int, marker: str, preceding_backslashes: int
     ) -> bool:
         """Find an unescaped matching delimiter outside inline code."""
         cursor = start
         code = 0
-        while cursor < len(text):
+        while cursor < limit:
             if text[cursor] == "`" and (
                 code or not cls._is_escaped(text, cursor, preceding_backslashes)
             ):
                 end = cursor
-                while end < len(text) and text[end] == "`":
+                while end < limit and text[end] == "`":
                     end += 1
                 width = end - cursor
                 if not code:
@@ -913,7 +913,7 @@ class StreamingSpeechSanitizer:
                 continue
             if (
                 not code
-                and text.startswith(marker, cursor)
+                and text.startswith(marker, cursor, limit)
                 and not cls._is_escaped(text, cursor, preceding_backslashes)
             ):
                 return True
@@ -1648,12 +1648,14 @@ class StreamingSpeechSanitizer:
     @classmethod
     def _index_complete_format(
         cls, text: str, fences: Mapping[int, tuple[int, bool]] | None = None
-    ) -> tuple[dict[str, int], dict[str, array], dict[str, array]]:
+    ) -> tuple[dict[int, dict[str, int]], dict[str, array], dict[str, array]]:
         """Pre-index eligible delimiters once for complete-message lookahead.
 
-        Unmatched openers must not rescan the same long tail repeatedly. The
-        compact arrays use one 32-bit position per possible single closer.
+        Index paired closers per prose segment so unmatched openers stay
+        outside fenced code without repeatedly scanning a long tail. The
+        arrays use one 32-bit position per possible single closer.
         """
+        last_by_boundary: dict[int, dict[str, int]] = {}
         last: dict[str, int] = {}
         single = {"*": array("I"), "_": array("I")}
         nested_single = {"*": array("I"), "_": array("I")}
@@ -1663,6 +1665,9 @@ class StreamingSpeechSanitizer:
         while index < len(text):
             if fences and index in fences:
                 width, block_code = fences[index]
+                if block_code:
+                    last_by_boundary[index] = last
+                    last = {}
                 index += width
                 continue
             if block_code:
@@ -1706,13 +1711,14 @@ class StreamingSpeechSanitizer:
                             # permits the first star of a nested *** closer.
                             nested_single[char].append(index)
             index += 1
-        return last, single, nested_single
+        last_by_boundary[len(text)] = last
+        return last_by_boundary, single, nested_single
 
-    def _has_buffer_closer(self, start: int, marker: str) -> bool:
+    def _has_buffer_closer(self, start: int, limit: int, marker: str) -> bool:
         if self._completed_last_markers is not None:
-            return self._completed_last_markers.get(marker, -1) >= start
+            return self._completed_last_markers[limit].get(marker, -1) >= start
         return self._has_closer(
-            self._format_buffer, start, marker, self._format_backslashes
+            self._format_buffer, start, limit, marker, self._format_backslashes
         )
 
     def _format(self, text: str, *, final: bool) -> str:
@@ -1733,11 +1739,16 @@ class StreamingSpeechSanitizer:
         index = 0
         unresolved_emphasis = False
         literal_parts: set[int] = set()
+        buffer_end = len(self._format_buffer)
+        # Fence offsets arrive in source order from the link-removal stage.
+        fences = iter(self._format_fences)
+        format_end = next(fences, buffer_end)
 
-        while index < len(self._format_buffer):
+        while index < buffer_end:
             char = self._format_buffer[index]
-            if index in self._format_fences:
+            if index == format_end:
                 width, self._format_block = self._format_fences[index]
+                format_end = next(fences, buffer_end)
                 index += width
                 self._line_start = False
                 continue
@@ -1870,8 +1881,10 @@ class StreamingSpeechSanitizer:
                 can_close = self._triple_open[char] or (
                     char == "*" and self._strong_open
                 )
-                if not can_close and not self._has_buffer_closer(index + 3, char * 3):
-                    if not final:
+                if not can_close and not self._has_buffer_closer(
+                    index + 3, format_end, char * 3
+                ):
+                    if not final and format_end == buffer_end:
                         unresolved_emphasis = True
                         break
                     output.append(char * 3)
@@ -1910,9 +1923,12 @@ class StreamingSpeechSanitizer:
                         else self._completed_singles[char]
                     )
                     first = bisect_right(candidates, index)
-                    tokens = (
-                        (candidates[pos], 0) for pos in range(first, len(candidates))
+                    last = (
+                        bisect_left(candidates, format_end, lo=first)
+                        if format_end < buffer_end
+                        else len(candidates)
                     )
+                    tokens = ((candidates[pos], 0) for pos in range(first, last))
                 else:
                     tokens = (
                         (
@@ -1920,7 +1936,7 @@ class StreamingSpeechSanitizer:
                             len(token[0]) if token[0].startswith("`") else 0,
                         )
                         for token in _EMPHASIS_TOKENS[char].finditer(
-                            self._format_buffer, index + 1
+                            self._format_buffer, index + 1, format_end
                         )
                     )
                 for candidate, code_marker in tokens:
@@ -1964,7 +1980,7 @@ class StreamingSpeechSanitizer:
                         break
                     end = -1
                 if end < 0 or (end == len(self._format_buffer) - 1 and not final):
-                    if not final:
+                    if not final and format_end == buffer_end:
                         unresolved_emphasis = True
                         break
                 else:
@@ -2023,9 +2039,9 @@ class StreamingSpeechSanitizer:
                     pair == "**"
                     and not self._strong_open
                     and (previous.isalnum() or previous in (")", "]"))
-                    and self._format_buffer.find("**", index + 2) < 0
+                    and self._format_buffer.find("**", index + 2, format_end) < 0
                 ):
-                    if not final:
+                    if not final and format_end == buffer_end:
                         unresolved_emphasis = True
                         break
                     output.append(pair)
@@ -2057,9 +2073,9 @@ class StreamingSpeechSanitizer:
                         self._strong_open if pair == "**" else self._paired_open[pair]
                     )
                     if not already_open and not self._has_buffer_closer(
-                        index + 2, pair
+                        index + 2, format_end, pair
                     ):
-                        if not final:
+                        if not final and format_end == buffer_end:
                             unresolved_emphasis = True
                             break
                         output.append(pair)

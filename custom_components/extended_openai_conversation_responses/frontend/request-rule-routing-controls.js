@@ -1,28 +1,34 @@
+const unforcedScopes = new WeakMap();
+
 export function syncRequestRuleRoutingControls(root, efforts = null, selectedEffort = null) {
   const actionType = root?.querySelector?.("#rule-action-type");
-  const matchType = root?.querySelector?.("#rule-match");
   const scope = root?.querySelector?.("#rule-scope");
   const continueToAi = root?.querySelector?.("#rule-continue-to-ai");
   const continueMatching = root?.querySelector?.("#rule-continue-matching");
   const reasoning = root?.querySelector?.("#rule-reasoning");
   const help = root?.querySelector?.("#rule-routing-scope-help");
-  if (!actionType || !matchType || !scope) return;
+  if (!actionType || !scope) return;
   const consumed = actionType.value === "model_routing"
     && !(continueToAi?.checked ?? false)
     && !(continueMatching?.checked ?? false);
   const requestOption = scope.querySelector('option[value="request"]');
   if (requestOption) requestOption.disabled = consumed;
-  if (consumed) scope.value = "conversation";
+  if (consumed) {
+    if (!scope.disabled) unforcedScopes.set(scope, scope.value);
+    scope.value = "conversation";
+  } else if (scope.disabled) {
+    scope.value = unforcedScopes.get(scope);
+  }
   scope.disabled = consumed;
   if (reasoning && Array.isArray(efforts)) {
     const desired = selectedEffort ?? reasoning.value;
     setReasoningOptions(root, efforts, desired);
   }
   if (help) help.textContent = consumed
-    ? "This is a complete routing command. It is acknowledged locally and is not sent to the AI provider, so it must change or reset the rest of this conversation."
+    ? "This command is acknowledged locally. It must change or reset the rest of the conversation."
     : continueToAi?.checked
-      ? `This sends the ${root.querySelector("#rule-ai-input-mode")?.value === "capture" ? "selected captured value to the AI" : "original request to the AI unchanged"} after applying the route. This request only affects that provider call; Rest of this conversation also changes later requests.`
-      : "Later matching rules can run after this route. This request only affects a later AI handoff in this request; Rest of this conversation also changes later requests.";
+      ? `This sends the ${root.querySelector("#rule-ai-input-mode")?.value === "capture" ? "captured value" : "original request"} to the AI after applying the route.`
+      : "Later matching rules can run. Request-only scope applies to any AI handoff in this request.";
 }
 
 export function setReasoningOptions(root, efforts, selected = "") {

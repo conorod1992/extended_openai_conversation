@@ -49,6 +49,27 @@ def test_removed_url_cannot_create_a_block_fence():
     all_splits("https://example.com ```yaml\nbody\n```", "yaml\nbody")
 
 
+def test_unmatched_emphasis_cannot_consume_a_fenced_block():
+    code = "x = 1 * 7\n`literal` and **literal**\n"
+    after = "After with *emphasis* and ***strong emphasis***."
+    after_clean = "After with emphasis and strong emphasis."
+    long_code = "x" * 4_200 + "\n" + code
+    for marker in ("*", "**", "***"):
+        before = f"{marker}literal intro\n"
+        all_splits(
+            before + "```text\n" + code + "```\n" + after,
+            before + code + after_clean,
+            max_buffer_chars=64,
+        )
+
+        # Exercise the complete-message delimiter index and real streaming limit.
+        source = before + "```text\n" + long_code + "```\n" + after
+        expected = before + long_code + after_clean
+        assert clean(Sanitizer().process_complete(source)) == expected
+        for width in (1, 127, len(source)):
+            assert streamed(source, width) == expected
+
+
 def test_oversized_or_unfinished_opener_has_bounded_literal_fallback():
     source = "```" + "x" * 200 + "\nhttps://example.com C:\\config\\file\n```"
     expected = clean(Sanitizer(max_buffer_chars=64).process_complete(source))

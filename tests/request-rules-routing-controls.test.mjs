@@ -26,13 +26,14 @@ syncRequestRuleRoutingControls(root);
 assert.equal(scope.disabled, true);
 assert.equal(scope.value, "conversation");
 assert.equal(requestOption.disabled, true);
-assert.match(help.textContent, /not sent to the AI provider/);
+assert.match(help.textContent, /acknowledged locally/);
 
 continueToAi.checked = true;
 syncRequestRuleRoutingControls(root);
 assert.equal(scope.disabled, false);
 assert.equal(requestOption.disabled, false);
-assert.match(help.textContent, /original request to the AI unchanged/);
+assert.match(help.textContent, /original request to the AI/);
+assert.equal(scope.value, "request");
 
 scope.value = "request";
 syncRequestRuleRoutingControls(root);
