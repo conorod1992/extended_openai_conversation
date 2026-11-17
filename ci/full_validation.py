@@ -170,11 +170,12 @@ def wait_for_workflows(launched: list[dict]) -> list[tuple[dict, dict]]:
             for run_id in completed:
                 pending.pop(run_id, None)
             if pending:
-                # Only the final one or two children need low-latency polling.
-                # Keep the original backoff after any status-read error.
+                # Certification is short; test workflows can run for hours.
+                # Keep their original cadence and the status-error backoff.
                 time.sleep(
                     5
-                    if len(pending) <= 2
+                    if len(pending) == 1
+                    and next(iter(pending.values()))["workflow"] == CERTIFICATION_WORKFLOW
                     and not any(status_errors.get(run_id) for run_id in pending)
                     else 30
                 )

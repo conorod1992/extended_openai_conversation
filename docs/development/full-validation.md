@@ -57,8 +57,9 @@ window. Longer endurance observation belongs to the separate pre-release tester.
 Fixture metadata is read in batches of eight while newest-compatible selection
 and metadata-error handling remain ordered. Programme certification collects up
 to four independent workflows concurrently and retains all evidence checks.
-The coordinator polls its final one or two children every five seconds, retaining
-30-second polling for larger cohorts and after status-read errors.
+The coordinator polls final programme certification every five seconds, retaining
+30-second polling for test workflows and after status-read errors. This avoids
+extra API traffic while long test workflows, including cold native builds, run.
 
 `full-validation-collect.yml` remains available to recover older asynchronous
 cohorts. It identifies the parent by its workflow path, since a generated run
