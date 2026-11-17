@@ -63,6 +63,28 @@ async def test_archive_round_trip_uses_normal_backup_validation(hass) -> None:
     assert prepared.summary()["usage_requests"] == 1
 
 
+async def test_archive_round_trip_accepts_knowledge_above_former_limit(
+    hass, tmp_path
+) -> None:
+    document = _document()
+    original_source = document["knowledge"]["sources"][0]
+    content = "文" * 100_000
+    document["knowledge"]["sources"] = [
+        {**original_source, "source_id": f"large-{index}", "content": content}
+        for index in range(448)
+    ]
+    result = await asyncio.to_thread(
+        backup_transfer._build_archive_file, document, str(tmp_path)
+    )
+    assert result["uncompressed_size"] > 128 * 1024 * 1024
+
+    prepared = await backup_transfer._async_load_prepared_restore(
+        hass, result["path"], "archive", "agent-new"
+    )
+    assert prepared.summary()["knowledge_sources"] == 448
+    assert prepared.knowledge[-1].content == content
+
+
 def test_archive_build_uses_final_writer_position(monkeypatch) -> None:
     def unexpected_getsize(_path) -> int:
         raise AssertionError("archive creation must not restat its completed output")

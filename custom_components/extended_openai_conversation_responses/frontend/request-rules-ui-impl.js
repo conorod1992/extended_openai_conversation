@@ -341,19 +341,23 @@ function captureRuleEditorOwner(panel) {
   return ()=>ownsIntent() && configurationSubmissionIsCurrent(panel,owner);
 }
 
+function defaultRoutingHandoff(matchType) {
+  return !["equals", "sentence_pattern"].includes(matchType);
+}
+
 function refreshEditor(panel) {
   const root=panel.shadowRoot, q=(selector)=>root.querySelector(selector);
   const local=q("#rule-action-type").value==="local_action";
   const grammar=q("#rule-match").value==="sentence_pattern";
   const slots=capturedSlotNames(q("#rule-phrases").value);
   q("#rule-local-config").hidden=!local;
-  q("#rule-routing-match-help").textContent=["equals", "sentence_pattern"].includes(q("#rule-match").value)
-    ? "This match is a complete command by default. Enable Continue to AI to send the selected AI input after applying the route."
-    : "This broader match continues to the provider by default; turn off Continue to AI to acknowledge it locally.";
+  const continueToAi=q("#rule-continue-to-ai").checked;
+  q("#rule-routing-match-help").textContent=continueToAi
+    ? "This rule sends the selected AI input to the provider after applying the route."
+    : "This rule acknowledges the command locally after applying the route.";
   syncResultAliasMode(root);
   q("#rule-routing-config").hidden=local;
   q("#rule-local-responses").hidden=!local || q("#rule-local-continue-to-ai").checked;
-  const continueToAi=q("#rule-continue-to-ai")?.checked ?? true;
   q("#rule-routing-response").hidden=local||continueToAi;
   q("#rule-routing-ai-response").hidden=local ? !q("#rule-local-continue-to-ai").checked : !continueToAi;
   q("#sentence-pattern-help").hidden=!grammar;
@@ -420,8 +424,14 @@ export function bindRequestRuleEditor(panel) {
   }, true);
   state.actionSelector.addEventListener("value-changed",()=>queueMicrotask(()=>renderResultAliases(panel,state.actionSelector)));
   q("#rule-action-type")?.addEventListener("change",()=>refreshEditor(panel));
-  q("#rule-match")?.addEventListener("change",()=>refreshEditor(panel));
-  q("#rule-continue-to-ai")?.addEventListener("change",()=>refreshEditor(panel));
+  q("#rule-match")?.addEventListener("change",()=>{
+    if (!state.routingHandoffEdited) q("#rule-continue-to-ai").checked=defaultRoutingHandoff(q("#rule-match").value);
+    refreshEditor(panel);
+  });
+  q("#rule-continue-to-ai")?.addEventListener("change",()=>{
+    state.routingHandoffEdited=true;
+    refreshEditor(panel);
+  });
   q("#rule-local-continue-to-ai")?.addEventListener("change",()=>refreshEditor(panel));
   q("#rule-model")?.addEventListener("input",()=>refreshEditor(panel));
   q("#rule-azure-model")?.addEventListener("input",()=>refreshEditor(panel));
@@ -561,7 +571,8 @@ export function openRequestRuleEditor(panel,id=null) {
   setReasoningOptions(root, [...new Set([...initialEfforts, ...(savedEffort ? [savedEffort] : [])])], savedEffort);
   q("#rule-scope").value=rule?.action?.scope||"request";
   q("#rule-reset").checked=rule?.action?.reset||false;
-  q("#rule-continue-to-ai").checked=rule?.action_type==="model_routing"?(rule?.action?.continue_to_ai??!["equals","sentence_pattern"].includes(rule?.match_type)):true;
+  state.routingHandoffEdited=rule?.action_type==="model_routing" && typeof rule.action?.continue_to_ai==="boolean";
+  q("#rule-continue-to-ai").checked=state.routingHandoffEdited ? rule.action.continue_to_ai : defaultRoutingHandoff(q("#rule-match").value);
   q("#rule-routing-success").value=rule?.action?.success_response||"Updated";
   q("#rule-matching-behavior").value=rule?.matching_behavior||"defaults";
   q("#rule-word-forms").checked=rule?.matching?.word_forms??true;

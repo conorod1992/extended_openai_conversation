@@ -30,7 +30,15 @@ from tests.test_speech_scope_regressions import all_splits, streamed
         ("```yam`l\nbody\n```", "yam`l\nbody"),
         ("```yaml", "yaml"),
         ("```yaml\n`inline` and \\literal\n```", "`inline` and \\literal"),
-        ("```yaml\n```not-an-opener\nbody\n```", "not-an-opener\nbody"),
+        ("```yaml\n```not-a-closer\nbody\n```", "```not-a-closer\nbody"),
+        (
+            "Instructions:\n```python\ndelimiter = '```'\nurl = 'https://example.com/docs'\n````\n**Done**. https://example.com",
+            "Instructions:\ndelimiter = '```'\nurl = 'https://example.com/docs'\nDone.",
+        ),
+        (
+            "> ```text\n> ``\n> ``` still code https://example.com\n> ```` \t\n**After** https://example.com",
+            "``\n``` still code https://example.com\nAfter",
+        ),
     ],
 )
 def test_fence_info_and_literal_controls_at_every_split(source, expected):

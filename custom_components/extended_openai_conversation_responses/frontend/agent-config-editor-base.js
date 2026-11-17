@@ -49,7 +49,8 @@ export const labelRow = (panel, label, key, helpKey = null, strong = false, valu
   return `<span class="setting-label-row"><label for="config-${key}">${strong ? `<strong>${text}</strong>` : text}</label>${helpKey ? helpButton(panel, helpKey) : ""}${settingBadgesMarkup(panel, key, value, disabled)}</span>`;
 };
 export const field = (panel, key, label, value, type = "text", description = "", disabled = false, helpKey = null, forceVisible = false) => {
-  const damaged = type === "number" && typeof value === "boolean";
+  const savedBoolean = typeof value === "boolean";
+  const damaged = type === "number" && (savedBoolean || typeof value === "string");
   if (key === "memory_auto_retrieve_limit") {
     label = "Automatically include memories";
     description = "Limit memories selected once per conversation. Enter 0 for on-demand retrieval.";
@@ -58,7 +59,8 @@ export const field = (panel, key, label, value, type = "text", description = "",
   if (presentation.visible === false && !forceVisible) return "";
   if (presentation.visible === false) presentation = {};
   disabled = !damaged && (forceVisible || (presentation.disabled ?? disabled));
-  let result = `<div class="setting ${presentation.disabled || forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<input id="config-${key}" data-config="${key}" data-type="${type}" type="${type === "number" && !damaged ? "number" : "text"}" value="${panel._e(value)}" ${presentation.max ? `max="${presentation.max}"` : ""} ${presentation.models ? 'list="extended-openai-model-catalog"' : ""} ${disabled ? "disabled" : ""}>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}">${damaged ? "Saved boolean; enter a number." : ""}</span>${modelFieldNotes(panel, presentation)}</div>`;
+  const error = damaged ? (savedBoolean ? "Saved boolean; enter a number." : "Enter a number.") : "";
+  let result = `<div class="setting ${presentation.disabled || forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<input id="config-${key}" data-config="${key}" data-type="${type}" type="${type === "number" && !damaged ? "number" : "text"}" value="${panel._e(value)}" ${presentation.max ? `max="${presentation.max}"` : ""} ${presentation.models ? 'list="extended-openai-model-catalog"' : ""} ${disabled ? "disabled" : ""}>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}">${error}</span>${modelFieldNotes(panel, presentation)}</div>`;
   if (key === "memory_auto_retrieve_limit") {
     const config = panel._draft || panel._result?.config || {};
     const choices = panel._result?.options?.memory_retrieval_mode || [];

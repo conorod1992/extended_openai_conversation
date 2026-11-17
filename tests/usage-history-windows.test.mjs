@@ -152,4 +152,5 @@ assert.equal((Date.parse(sevenDayEnd) - Date.parse(sevenDayStart)) / 86_400_000,
 const sensorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/sensor.py", import.meta.url), "utf8");
 assert.match(sensorSource, /return self\._usage\.today_summary\(\)/);
 assert.match(sensorSource, /return self\._usage\.month_summary\(\)/);
-assert.match(sensorSource, /async_track_time_change\([\s\S]*hour=0,[\s\S]*minute=0,[\s\S]*second=0/);
+assert.match(sensorSource, /resolve_wall_time\(tomorrow, time\.min, zone\)/);
+assert.match(sensorSource, /async_track_point_in_utc_time\(\s*self\.hass, self\._handle_period_rollover, boundary/);

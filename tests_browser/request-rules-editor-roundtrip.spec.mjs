@@ -3,6 +3,40 @@ import {acceptSharingReview, expectHarnessClean, fixtureUrl, trackPageErrors} fr
 
 const panelFor = (page) => page.locator("extended-openai-management-panel");
 
+for (const bundled of [false, true]) test(`New routing rules reflect and save the AI continuation choice (${bundled})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+  const panel = panelFor(page);
+  await panel.locator("#rule-add").click();
+  await panel.locator("#rule-name").fill("Exact local route");
+  await panel.locator("#rule-phrases").fill("change model");
+  await panel.locator("#rule-action-type").selectOption("model_routing");
+  await panel.locator("#rule-model").fill("gpt-5-mini");
+  const handoff = panel.locator("#rule-continue-to-ai");
+  const help = panel.locator("#rule-routing-match-help");
+  await expect(handoff).not.toBeChecked();
+  await expect(panel.locator("#rule-scope")).toHaveValue("conversation");
+  await expect(help).toContainText("acknowledges the command locally");
+  await panel.locator("#rule-match").selectOption("starts_with");
+  await expect(handoff).toBeChecked();
+  await expect(help).toContainText("sends the selected AI input");
+  await panel.locator("#rule-match").selectOption("equals");
+  await expect(handoff).not.toBeChecked();
+  await handoff.check();
+  await panel.locator("#rule-match").selectOption("sentence_pattern");
+  await expect(handoff).toBeChecked();
+  await panel.locator("#rule-match").selectOption("equals");
+  await handoff.uncheck();
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
+  const saved = await page.evaluate(() => browserHarness.calls.findLast(
+    call => call.section === "request_rules" && call.action === "create"
+  ).rule);
+  expect(saved.match_type).toBe("equals");
+  expect(saved.action.continue_to_ai).toBe(false);
+  await expectHarnessClean(page, errors);
+});
+
 for (const bundled of [false, true]) test(`Legacy fuzzy rule editor saves only deterministic settings (${bundled})`, async ({page}) => {
   await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
   const panel = panelFor(page);

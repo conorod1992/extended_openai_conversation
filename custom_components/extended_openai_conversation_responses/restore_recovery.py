@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 import logging
 import os
@@ -19,6 +19,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import backup
+from .agent_config import agent_retention_snapshot
 from .agent_maintenance import (
     _async_run_exclusive_operation,
     get_agent_maintenance_gate,
@@ -26,8 +27,6 @@ from .agent_maintenance import (
 from .const import (
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
-    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-    DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DOMAIN,
     SUBSYSTEM_STATUS_KEY,
 )
@@ -48,6 +47,17 @@ RESTORE_JOURNAL_VERSION = 1
 _PHASE_APPLYING = "applying"
 _PHASE_COMMITTED = "committed"
 _PHASES = {_PHASE_APPLYING, _PHASE_COMMITTED}
+_DATA_SECTIONS = frozenset(
+    {
+        "memories",
+        "temporary_memories",
+        "knowledge",
+        "archive",
+        "usage",
+        "guest_mode",
+        "request_rules",
+    }
+)
 
 
 class _JournalVerificationUnavailable(Exception):
@@ -146,7 +156,7 @@ def _prepared_document(
     prepared: backup.PreparedRestore, entry_id: str, subentry_id: str
 ) -> dict[str, Any]:
     """Serialize validated restore state for the private local journal."""
-    return {
+    document: dict[str, Any] = {
         "format": backup.BACKUP_FORMAT,
         "version": backup.BACKUP_VERSION,
         "created_at": prepared.created_at,
@@ -155,39 +165,45 @@ def _prepared_document(
             "title": prepared.title,
             "source_entry_id": entry_id,
             "source_subentry_id": subentry_id,
-            # The journal is private local recovery state, so it must retain the
-            # exact effective configuration needed for deterministic rollback.
+            # Retain the exact configuration needed to verify recovery.
             "config": deepcopy(prepared.config),
         },
-        "memories": {"memories": [asdict(item) for item in prepared.memories]},
-        "temporary_memories": {
+    }
+    if prepared.restores("memories"):
+        document["memories"] = {
+            "memories": [asdict(item) for item in prepared.memories]
+        }
+    if prepared.restores("temporary_memories"):
+        document["temporary_memories"] = {
             "records": [asdict(item) for item in prepared.temporary_memories]
-        },
-        "knowledge": {"sources": [asdict(item) for item in prepared.knowledge]},
-        "archive": {
+        }
+    if prepared.restores("knowledge"):
+        document["knowledge"] = {
+            "sources": [asdict(item) for item in prepared.knowledge]
+        }
+    if prepared.restores("archive"):
+        archive: dict[str, Any] = {
             "sessions": [asdict(item) for item in prepared.archive_sessions],
             "turns": [asdict(item) for item in prepared.archive_turns],
-            **(
-                {"active": deepcopy(prepared.archive_active)}
-                if prepared.archive_active is not None
-                else {}
-            ),
-        },
-        "usage": {
+        }
+        if prepared.archive_active is not None:
+            archive["active"] = deepcopy(prepared.archive_active)
+        document["archive"] = archive
+    if prepared.restores("usage"):
+        document["usage"] = {
             "totals": asdict(prepared.usage_totals),
             "daily": deepcopy(prepared.usage_daily),
             "requests": [asdict(item) for item in prepared.usage_requests],
             "runs": [asdict(item) for item in prepared.usage_runs],
-        },
-        "guest_mode": {
-            "schedule": (
-                asdict(prepared.guest_mode_schedule)
-                if prepared.guest_mode_schedule is not None
-                else None
-            )
-        },
-        "request_rules": deepcopy(prepared.request_rules),
-    }
+        }
+    if prepared.restores("guest_mode"):
+        schedule = prepared.guest_mode_schedule
+        document["guest_mode"] = {
+            "schedule": asdict(schedule) if schedule is not None else None
+        }
+    if prepared.restores("request_rules"):
+        document["request_rules"] = deepcopy(prepared.request_rules)
+    return document
 
 
 def _new_journal(
@@ -208,6 +224,11 @@ def _new_journal(
         "created_at": dt_util.utcnow().isoformat(),
         "target": _prepared_document(target, entry_id, subentry_id),
         "rollback": _prepared_document(rollback, entry_id, subentry_id),
+        **(
+            {"data_sections": sorted(target.journaled_sections)}
+            if target.journaled_sections is not None
+            else {}
+        ),
         **(
             {
                 "configuration_providers": {
@@ -246,6 +267,29 @@ def _journal_providers(
     return dict(contexts)
 
 
+def _journal_backup_document(value: Any, sections: frozenset[str] | None) -> Any:
+    """Fill only explicitly absent stores for the existing backup validator."""
+    if sections is None:
+        return value
+    if not isinstance(value, dict) or set(value) & _DATA_SECTIONS != sections:
+        raise backup.BackupError("Pending restore sections do not match the snapshot")
+    return {
+        "memories": {"memories": []},
+        "temporary_memories": {"records": []},
+        "knowledge": {"sources": []},
+        "archive": {"sessions": [], "turns": []},
+        "usage": {
+            "totals": asdict(backup.UsageTotals()),
+            "daily": {},
+            "requests": [],
+            "runs": [],
+        },
+        "guest_mode": {"schedule": None},
+        "request_rules": {"defaults": {}, "rules": []},
+        **value,
+    }
+
+
 async def _async_load_journal(
     value: Any, entry_id: str, subentry_id: str, *, provider: str | None = None
 ) -> tuple[dict[str, Any], backup.PreparedRestore, backup.PreparedRestore]:
@@ -262,7 +306,7 @@ async def _async_load_journal(
     if (
         not isinstance(value, Mapping)
         or not required <= set(value)
-        or set(value) - required - {"configuration_providers"}
+        or set(value) - required - {"configuration_providers", "data_sections"}
     ):
         raise backup.BackupError("Pending restore transaction is corrupted")
     transaction_id = value["transaction_id"]
@@ -279,11 +323,24 @@ async def _async_load_journal(
     ):
         raise backup.BackupError("Pending restore transaction is corrupted")
     journal = dict(value)
+    sections = None
+    if "data_sections" in journal:
+        raw_sections = journal["data_sections"]
+        if (
+            not isinstance(raw_sections, list)
+            or any(
+                not isinstance(section, str) or section not in _DATA_SECTIONS
+                for section in raw_sections
+            )
+            or len(raw_sections) != len(set(raw_sections))
+        ):
+            raise backup.BackupError("Pending restore sections are corrupted")
+        sections = frozenset(raw_sections)
     providers = _journal_providers(journal, provider)
     try:
         try:
             rollback = await backup.async_inspect_backup(
-                value["rollback"],
+                _journal_backup_document(value["rollback"], sections),
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
@@ -295,7 +352,7 @@ async def _async_load_journal(
             if phase != _PHASE_COMMITTED or "safety limit" not in str(err):
                 raise
             rollback = await backup.async_inspect_backup(
-                value["target"],
+                _journal_backup_document(value["target"], sections),
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
@@ -303,7 +360,7 @@ async def _async_load_journal(
             )
         try:
             target = await backup.async_inspect_backup(
-                value["target"],
+                _journal_backup_document(value["target"], sections),
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
@@ -317,6 +374,8 @@ async def _async_load_journal(
             target = rollback
     except HomeAssistantError as err:
         raise backup.BackupError("Pending restore transaction is corrupted") from err
+    if sections is not None:
+        target.journaled_sections = rollback.journaled_sections = sections
     return journal, target, rollback
 
 
@@ -359,38 +418,41 @@ async def _apply_prepared(
     managers: backup.AgentDataParticipants, prepared: backup.PreparedRestore
 ) -> None:
     """Apply validated durable categories in a deterministic, idempotent order."""
-    managers.usage.request_retention_days = int(
-        prepared.config.get(
-            CONF_USAGE_REQUEST_RETENTION_DAYS,
-            DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+    if prepared.restores("usage"):
+        retention = agent_retention_snapshot(prepared.config)
+        managers.usage.request_retention_days = int(
+            retention[CONF_USAGE_REQUEST_RETENTION_DAYS]
         )
-    )
-    managers.usage.run_retention_days = int(
-        prepared.config.get(
-            CONF_USAGE_RUN_RETENTION_DAYS,
-            DEFAULT_USAGE_RUN_RETENTION_DAYS,
+        managers.usage.run_retention_days = int(
+            retention[CONF_USAGE_RUN_RETENTION_DAYS]
         )
-    )
 
-    await managers.memory.async_replace_backup(prepared.memories)
-    await managers.temporary.async_replace_backup(prepared.temporary_memories)
-    await managers.knowledge.async_replace_backup(prepared.knowledge)
-    archive_kwargs = (
-        {"active": prepared.archive_active}
-        if prepared.archive_active is not None
-        else {}
-    )
-    await managers.archive.async_replace_backup(
-        prepared.archive_sessions, prepared.archive_turns, **archive_kwargs
-    )
-    await managers.usage.async_replace_backup(
-        prepared.usage_totals,
-        prepared.usage_daily,
-        prepared.usage_requests,
-        prepared.usage_runs,
-    )
-    await managers.guest_mode.async_replace_backup(prepared.guest_mode_schedule)
-    await managers.request_rules.async_replace_backup(prepared.request_rules)
+    if prepared.restores("memories"):
+        await managers.memory.async_replace_backup(prepared.memories)
+    if prepared.restores("temporary_memories"):
+        await managers.temporary.async_replace_backup(prepared.temporary_memories)
+    if prepared.restores("knowledge"):
+        await managers.knowledge.async_replace_backup(prepared.knowledge)
+    if prepared.restores("archive"):
+        archive_kwargs = (
+            {"active": prepared.archive_active}
+            if prepared.archive_active is not None
+            else {}
+        )
+        await managers.archive.async_replace_backup(
+            prepared.archive_sessions, prepared.archive_turns, **archive_kwargs
+        )
+    if prepared.restores("usage"):
+        await managers.usage.async_replace_backup(
+            prepared.usage_totals,
+            prepared.usage_daily,
+            prepared.usage_requests,
+            prepared.usage_runs,
+        )
+    if prepared.restores("guest_mode"):
+        await managers.guest_mode.async_replace_backup(prepared.guest_mode_schedule)
+    if prepared.restores("request_rules"):
+        await managers.request_rules.async_replace_backup(prepared.request_rules)
 
 
 async def _recovery_managers(
@@ -448,6 +510,8 @@ async def _recovery_managers(
         try:
             await async_get_memory(hass, entry_id, subentry_id)
         except StorageRepairRequired:
+            if not selected.restores("memories"):
+                raise
 
             def memory_payload() -> dict[str, Any]:
                 payload = {
@@ -464,14 +528,16 @@ async def _recovery_managers(
                 await asyncio.to_thread(memory_payload)
             )
             repaired = True
-        for getter, storage_factory, field, records in (
+        for section, getter, storage_factory, field, records in (
             (
+                "temporary_memories",
                 async_get_temporary_memory,
                 _temporary_memory_store,
                 "records",
                 selected.temporary_memories,
             ),
             (
+                "knowledge",
                 async_get_knowledge,
                 HomeAssistantKnowledgeStorage,
                 "sources",
@@ -481,6 +547,8 @@ async def _recovery_managers(
             try:
                 await getter(hass, entry_id, subentry_id)
             except ValueError:
+                if not selected.restores(section):
+                    raise
 
                 def serialize(
                     field: str = field, records: list[Any] = records
@@ -493,6 +561,8 @@ async def _recovery_managers(
         try:
             await async_get_archive(hass, entry_id, subentry_id)
         except ValueError:
+            if not selected.restores("archive"):
+                raise
             await HomeAssistantArchiveStorage(
                 hass, entry_id, subentry_id
             ).async_stage_journal_recovery(
@@ -501,20 +571,23 @@ async def _recovery_managers(
                 selected.archive_active,
             )
             repaired = True
-        for recovery_getter, stage in (
+        for section, recovery_getter, stage in (
             (
+                "guest_mode",
                 async_get_guest_mode,
                 lambda: async_stage_guest_mode_journal_recovery(
                     hass, entry_id, subentry_id, selected.guest_mode_schedule
                 ),
             ),
             (
+                "request_rules",
                 async_get_request_rules,
                 lambda: async_stage_request_rules_journal_recovery(
                     hass, entry_id, subentry_id, selected.request_rules
                 ),
             ),
             (
+                "usage",
                 recovery_usage,
                 lambda: async_stage_usage_journal_recovery(
                     hass,
@@ -530,6 +603,8 @@ async def _recovery_managers(
             try:
                 await recovery_getter(hass, entry_id, subentry_id)
             except StorageRepairRequired:
+                if not selected.restores(section):
+                    raise
                 await stage()
                 repaired = True
         if not repaired:
@@ -867,6 +942,8 @@ async def _async_restore_backup_recoverably(
             prepared, _preview = await async_materialize_restore(
                 hass, entry, subentry, value, current_snapshot=rollback
             )
+        if prepared.journaled_sections is not None:
+            rollback = replace(rollback, journaled_sections=prepared.journaled_sections)
         from .request import validate_runtime_readiness
 
         try:
@@ -894,7 +971,9 @@ async def _async_restore_backup_recoverably(
         for section in ("target", "rollback"):
             try:
                 await backup.async_inspect_backup(
-                    journal[section],
+                    _journal_backup_document(
+                        journal[section], prepared.journaled_sections
+                    ),
                     subentry_id,
                     max_bytes=backup.MAX_BACKUP_BYTES,
                     private_journal=True,

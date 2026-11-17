@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, call
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -50,10 +51,17 @@ class FakeUsage:
 
 
 @pytest.mark.parametrize("sensor_cls", [UsageTodaySensor, UsageMonthSensor])
+@pytest.mark.parametrize(
+    ("zone_name", "previous", "boundary", "following"),
+    [
+        ("UTC", datetime(2026, 9, 30, 23, 59, tzinfo=UTC), datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 2, tzinfo=UTC)),
+        ("America/Santiago", datetime(2026, 9, 6, 3, 59, tzinfo=UTC), datetime(2026, 9, 6, 4, tzinfo=UTC), datetime(2026, 9, 7, 3, tzinfo=UTC)),
+    ],
+)
 async def test_period_usage_sensor_refreshes_at_local_midnight(
-    hass, monkeypatch, sensor_cls
+    hass, monkeypatch, sensor_cls, zone_name, previous, boundary, following
 ) -> None:
-    """Period sensors publish a fresh state at midnight without a usage event."""
+    """Publish at the local date boundary, including a skipped midnight."""
     usage = FakeUsage()
     subentry = SimpleNamespace(
         subentry_id="agent-1",
@@ -70,39 +78,44 @@ async def test_period_usage_sensor_refreshes_at_local_midnight(
 
     tracked: dict[str, object] = {}
     remove_midnight_listener = Mock()
+    zone = ZoneInfo(zone_name)
+    clock = Mock(return_value=previous.astimezone(zone))
+    monkeypatch.setattr(sensor_module.dt_util, "now", clock)
 
-    def track_time_change(tracked_hass, action, *, hour=None, minute=None, second=None):
+    def track_point(tracked_hass, action, point):
         tracked.update(
             {
                 "hass": tracked_hass,
                 "action": action,
-                "hour": hour,
-                "minute": minute,
-                "second": second,
+                "point": point,
             }
         )
         return remove_midnight_listener
 
-    monkeypatch.setattr(sensor_module, "async_track_time_change", track_time_change)
+    monkeypatch.setattr(sensor_module, "async_track_point_in_utc_time", track_point)
 
-    await entity.async_added_to_hass()
+    with monkeypatch.context() as zone_patch:
+        zone_patch.setattr(sensor_module.dt_util, "DEFAULT_TIME_ZONE", zone)
+        await entity.async_added_to_hass()
 
-    assert tracked["hass"] is hass
-    assert (tracked["hour"], tracked["minute"], tracked["second"]) == (0, 0, 0)
-    assert on_remove.call_args_list == [
-        call(entity._remove_usage_listener),
-        call(entity._remove_period_rollover),
-        call(hass.bus.async_listen.return_value),
-    ]
-    assert hass.bus.async_listen.call_args.args == (
-        sensor_module.EVENT_CORE_CONFIG_UPDATE,
-        entity._handle_core_config_update,
-    )
-    entity._remove_period_rollover()
-    remove_midnight_listener.assert_called_once_with()
-    assert entity._usage_listener_remove is usage.remove_listener
+        assert tracked["hass"] is hass
+        assert tracked["point"] == boundary
+        assert on_remove.call_args_list == [
+            call(entity._remove_usage_listener),
+            call(entity._remove_period_rollover),
+            call(hass.bus.async_listen.return_value),
+        ]
+        assert hass.bus.async_listen.call_args.args == (
+            sensor_module.EVENT_CORE_CONFIG_UPDATE,
+            entity._handle_core_config_update,
+        )
+        assert entity._usage_listener_remove is usage.remove_listener
 
-    action = tracked["action"]
-    assert callable(action)
-    action(datetime(2026, 10, 1, tzinfo=UTC))
-    write_state.assert_called_once_with()
+        action = tracked["action"]
+        assert callable(action)
+        clock.return_value = boundary.astimezone(zone)
+        action(boundary)
+        write_state.assert_called_once_with()
+        assert tracked["point"] == following
+        entity._remove_period_rollover()
+        remove_midnight_listener.assert_called_once_with()

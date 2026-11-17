@@ -28,6 +28,15 @@ def all_splits(source, expected, **options):
         ), (source, split)
 
 
+@pytest.mark.parametrize("prefix", ["https://example.com", "www.example.com"])
+@pytest.mark.parametrize("suffix,expected", [(" after.", "See after."), (".", "See.")])
+def test_overlong_bare_urls_remain_suppressed_after_buffer_limit(prefix, suffix, expected):
+    source = f"See {prefix}/signed?signature={'a' * 4200}{suffix}"
+    assert clean(Sanitizer().process_complete(source)) == expected
+    for width in (29, 128, 1024, 4096, 8192):
+        assert streamed(source, width) == expected
+
+
 @pytest.mark.parametrize(
     "source,expected",
     [

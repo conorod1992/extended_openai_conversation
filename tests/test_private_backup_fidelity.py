@@ -236,6 +236,7 @@ def test_connection_restore_requires_scope_confirmation_and_unchanged_target():
 async def test_private_restore_commits_exact_configuration_without_local_secret(
     monkeypatch, hass
 ):
+    from custom_components.extended_openai_conversation_responses import restore_recovery
     from tests.test_selective_restore_concurrency import RestoreHarness
 
     tx = RestoreHarness(monkeypatch)
@@ -256,8 +257,8 @@ async def test_private_restore_commits_exact_configuration_without_local_secret(
     # Recovery after the durable commit must retain the same source and
     # credentials, rather than reinterpret them through a legacy projection.
     committed = json.loads(json.dumps(tx.journal.saved[-1]))
-    recovered = backup.inspect_backup(
-        committed["target"], "fresh-target", private_journal=True
+    _, recovered, _ = await restore_recovery._async_load_journal(
+        committed, tx.entry.entry_id, tx.subentry.subentry_id
     )
     assert recovered.config == incoming
 

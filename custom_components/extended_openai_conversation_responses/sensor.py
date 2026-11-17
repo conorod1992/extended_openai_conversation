@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime, time, timedelta
 import logging
 
 from homeassistant.components import sensor as sensor_component
@@ -14,7 +14,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.util import dt as dt_util
 
 from . import ExtendedOpenAIConfigEntry
@@ -29,6 +29,7 @@ from .const import (
     DOMAIN,
 )
 from .guest_mode import GuestModeManager, async_get_guest_mode
+from .local_time import resolve_wall_time
 from .persistence_hardening import StorageRepairRequired
 from .usage import UsageManager, async_get_usage
 
@@ -263,8 +264,11 @@ class _PeriodUsageSensor(UsageSensor):
     @callback
     def _reschedule_period_rollover(self) -> None:
         self._remove_period_rollover()
-        self._cancel_period_rollover = async_track_time_change(
-            self.hass, self._handle_period_rollover, hour=0, minute=0, second=0
+        zone = dt_util.DEFAULT_TIME_ZONE
+        tomorrow = dt_util.now().date() + timedelta(days=1)
+        boundary = resolve_wall_time(tomorrow, time.min, zone).astimezone(UTC)
+        self._cancel_period_rollover = async_track_point_in_utc_time(
+            self.hass, self._handle_period_rollover, boundary
         )
 
     @callback
@@ -277,6 +281,8 @@ class _PeriodUsageSensor(UsageSensor):
     @callback
     def _handle_period_rollover(self, _now: datetime) -> None:
         """Publish the new local day/month even when there is no new usage."""
+        self._cancel_period_rollover = None
+        self._reschedule_period_rollover()
         self.async_write_ha_state()
 
 

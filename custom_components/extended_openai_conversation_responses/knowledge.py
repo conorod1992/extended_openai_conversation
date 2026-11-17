@@ -48,9 +48,9 @@ MAX_EXCERPT_CHARACTERS = 2_000
 
 KNOWLEDGE_TOOL_NAMES = {"knowledge_search", "knowledge_list", "knowledge_get"}
 
-_TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
 _LINE_END_PATTERN = re.compile(r"[ \t]+$", re.MULTILINE)
+_PHRASE_TOKEN_PATTERN = re.compile(r"[\w'-]+[+#]*")
 
 # English question scaffolding has little retrieval value in a mixed query.
 # Keep negation, control words (on/off), identifiers and all CJK tokens salient.
@@ -1241,11 +1241,8 @@ def _tokens(value: str) -> set[str]:
 
 
 def _normalize(value: str) -> str:
-    return " ".join(
-        _TOKEN_PATTERN.findall(
-            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
-        )
-    )
+    normalized = unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+    return " ".join(_PHRASE_TOKEN_PATTERN.findall(normalized))
 
 
 def _normalize_catalog(value: str) -> str:

@@ -108,6 +108,21 @@ async def test_completed_responses_defaults_missing_output_and_status() -> None:
     assert events[0].response is response
 
 
+@pytest.mark.parametrize(
+    ("error", "terminal"),
+    [(None, "response.completed"), ({"message": "Failed"}, "response.failed")],
+)
+async def test_completed_responses_with_sdk_default_status(error, terminal) -> None:
+    from openai.types.responses import Response
+
+    # The SDK materializes omitted optional wire fields as None.
+    response = Response.model_construct(status=None, error=error, output=[])
+    events = await _collect(completed_responses_events(response))
+
+    assert [event.type for event in events] == [terminal]
+    assert events[-1].response is response
+
+
 @pytest.mark.asyncio
 async def test_completed_chat_chunks_preserve_content_refusal_tools_finish_and_usage() -> None:
     first_function = SimpleNamespace(name="first", arguments='{"value":1}')

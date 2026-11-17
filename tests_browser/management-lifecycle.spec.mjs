@@ -45,6 +45,13 @@ test(`saved sampling booleans remain visible until explicitly repaired (${suppor
   expect(await page.evaluate(() => window.samplingSubmissions[0].config)).toEqual({temperature:0.25});
   for (const [index, value] of ["typo", ""].entries()) {
     await topP.fill(value);
+    if (index === 0) {
+      await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
+      await panel.evaluate(host => host._navigate("assistant", "model-responses"));
+      await expect(topP).toHaveAttribute("type", "text");
+      await expect(topP).toBeEnabled();
+      await expect(topP).toHaveValue(value);
+    }
     await panel.locator("#save-config").click();
     await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(index + 2);
     expect(await page.evaluate((i) => window.samplingSubmissions[i].config, index + 1)).toEqual({temperature:0.25, top_p:value});

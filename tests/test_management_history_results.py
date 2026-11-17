@@ -519,6 +519,29 @@ async def test_archive_page_validation_rejects_blank_search_and_extreme_offset()
         )
 
 
+async def test_archive_list_and_search_report_the_last_browsable_page(monkeypatch) -> None:
+    monkeypatch.setattr(management_history_queries, "MAX_MANAGEMENT_HISTORY_OFFSET", 2)
+    archive = ConversationArchive(_Storage(), "agent")
+    await archive.async_initialize()
+    for index in range(5):
+        session = _edge_session(index, turn_count=1)
+        archive._sessions[session.session_id] = session
+        archive._turns[session.session_id].append(
+            _edge_turn(session.session_id, index, "Kitchen project")
+        )
+
+    assert (await archive_list_page(archive, "user:alice", limit=2))["next_offset"] == 2
+    for final_page in (
+        await archive_list_page(archive, "user:alice", offset=2, limit=2),
+        await archive_search_page(archive, "user:alice", "kitchen", offset=2, limit=2),
+    ):
+        assert final_page["total"] == 5
+        assert final_page["returned"] == 2
+        assert final_page["next_offset"] is None
+        assert final_page["has_more"] is False
+        assert final_page["browse_limit_reached"] is True
+
+
 @pytest.mark.asyncio
 async def test_archive_list_filters_scope_and_retention_without_displacing_newest() -> None:
     """Bounded ranking ignores inaccessible sessions and does not admit older tail rows."""

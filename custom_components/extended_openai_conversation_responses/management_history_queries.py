@@ -270,6 +270,24 @@ def _validate_archive_page(offset: int, limit: int, maximum: int) -> tuple[int, 
     return safe_offset, max(1, min(int(limit), maximum))
 
 
+def _archive_page_metadata(
+    offset: int, limit: int, returned: int, total: int
+) -> dict[str, Any]:
+    next_offset = offset + returned
+    more_results = total > next_offset
+    at_limit = more_results and next_offset > MAX_MANAGEMENT_HISTORY_OFFSET
+    metadata = page_metadata(
+        offset=offset,
+        limit=limit,
+        returned=returned,
+        has_more=more_results and not at_limit,
+        total=total,
+    )
+    if at_limit:
+        metadata["browse_limit_reached"] = True
+    return metadata
+
+
 def _archive_list_sync(
     sessions: dict[str, Any], scope_id: str, offset: int, limit: int
 ) -> dict[str, Any]:
@@ -290,13 +308,7 @@ def _archive_list_sync(
     records = [asdict(item[2]) for item in page]
     return {
         "sessions": records,
-        **page_metadata(
-            offset=offset,
-            limit=limit,
-            returned=len(records),
-            has_more=total > offset + len(records),
-            total=total,
-        ),
+        **_archive_page_metadata(offset, limit, len(records), total),
     }
 
 
@@ -386,13 +398,7 @@ def _archive_search_sync(
     ]
     return {
         "results": records,
-        **page_metadata(
-            offset=offset,
-            limit=limit,
-            returned=len(records),
-            has_more=total > offset + len(records),
-            total=total,
-        ),
+        **_archive_page_metadata(offset, limit, len(records), total),
     }
 
 

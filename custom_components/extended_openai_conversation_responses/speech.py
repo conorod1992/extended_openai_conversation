@@ -118,6 +118,7 @@ class _InlineScope:
         self.previous = ""
         self.backslashes = 0
         self.code = 0
+        self.block_code = False
         self.opened: list[str] = []
         self.overflow = False
         self.run = ""
@@ -174,6 +175,9 @@ class _InlineScope:
             self._push(marker)
 
     def feed(self, text: str) -> None:
+        if self.block_code:
+            self.previous = text[-1:] or self.previous
+            return
         for char in text:
             if self.run and char != self.run:
                 self._finish_run(char)
@@ -203,6 +207,11 @@ class _InlineScope:
                         self._push(_URL_QUOTE_MAP[char])
             self.backslashes = self.backslashes + 1 if char == "\\" else 0
             self.previous = char
+
+    def block_boundary(self, opening: bool) -> None:
+        self.run, self.width = "", 0
+        self.code = self.backslashes = 0
+        self.block_code = opening
 
     def url_suffix(self, text: str) -> int:
         self._finish_run("h")
@@ -265,7 +274,13 @@ class StreamingSpeechSanitizer:
         self._format_previous = ""
         self._format_depth = 0
         self._link_code = 0
+        self._link_block = False
+        self._block_list_indent: int | None = None
+        self._format_fences: dict[int, tuple[int, bool]] = {}
+        self._format_block = False
         self._format_code = 0
+        self._long_url_tail: str | None = None
+        self._long_url_brackets = (0, 0)
         self._strong_open = False
         self._line_start = True
         self._previous_line_list = False
@@ -306,7 +321,11 @@ class StreamingSpeechSanitizer:
     @property
     def buffered_chars(self) -> int:
         """Return the current unresolved character count."""
-        return len(self._buffer) + len(self._format_buffer)
+        return (
+            len(self._buffer)
+            + len(self._format_buffer)
+            + len(self._long_url_tail or "")
+        )
 
     def feed(self, delta: str) -> str:
         """Consume one arbitrary provider delta and return speech-safe text."""
@@ -671,32 +690,64 @@ class StreamingSpeechSanitizer:
         return bool(count % 2)
 
     @staticmethod
-    def _bare_url_end(text: str, start: int, end: int) -> int:
+    def _bare_url_end(
+        text: str, start: int, end: int, brackets: tuple[int, int] | None = None
+    ) -> int:
         """Leave sentence punctuation and excess closing brackets outside a URL.
 
         Count delimiters once so trimming a long URL remains linear. Balanced
         parentheses in a URL path (such as Wikipedia titles) stay part of it.
         """
-        opens = {"(": 0, "[": 0}
-        closes = {")": 0, "]": 0}
-        for char in text[start:end]:
-            if char in opens:
-                opens[char] += 1
-            elif char in closes:
-                closes[char] += 1
+        if brackets is None:
+            candidate = text[start:end]
+            brackets = (
+                candidate.count(")") - candidate.count("("),
+                candidate.count("]") - candidate.count("["),
+            )
+        parens, squares = brackets
         while end > start:
             char = text[end - 1]
             if char in _URL_TRAILING_PUNCTUATION:
                 end -= 1
-            elif char == ")" and closes[")"] > opens["("]:
-                closes[")"] -= 1
+            elif char == ")" and parens > 0:
+                parens -= 1
                 end -= 1
-            elif char == "]" and closes["]"] > opens["["]:
-                closes["]"] -= 1
+            elif char == "]" and squares > 0:
+                squares -= 1
                 end -= 1
             else:
                 break
         return end
+
+    def _consume_long_url(self, candidate: str) -> None:
+        """Keep only the suffix and delimiter counts of an overlong bare URL."""
+        parens, squares = self._long_url_brackets
+        self._long_url_brackets = (
+            parens + candidate.count(")") - candidate.count("("),
+            squares + candidate.count("]") - candidate.count("["),
+        )
+        self._long_url_tail = (
+            (self._long_url_tail or "") + candidate[-_FORMAT_PREFIX_LIMIT:]
+        )[-_FORMAT_PREFIX_LIMIT:]
+
+    def _finish_long_url(self, output: list[str], end: int) -> None:
+        tail = self._long_url_tail or ""
+        trailing = self._bare_url_end(tail, 0, len(tail), self._long_url_brackets)
+        boundary = self._bare_url_wrapper_end(tail, 0, trailing)
+        self._suppress(output, end)
+        if boundary < trailing and self._suppressed_closer is None:
+            self._needs_separator = False
+        # Let the ordinary suppression/formatting path handle trailing prose.
+        index = boundary
+        while index < len(tail):
+            skip = self._resolve_suppression_boundary(output, tail, index, final=True)
+            if skip:
+                index += skip
+            else:
+                self._emit(output, tail[index])
+                index += 1
+        self._long_url_tail = None
+        self._long_url_brackets = (0, 0)
 
     def _track_original_lines(self, text: str) -> None:
         """Retain bounded original prefixes independently of formatting output."""
@@ -758,7 +809,8 @@ class StreamingSpeechSanitizer:
             return False, "", None
         spaces = len(body)
         allowed = spaces <= 3 or (indent is not None and indent <= spaces <= indent + 3)
-        return allowed, quote_prefix, indent
+        in_list = consumed or (indent is not None and spaces >= indent)
+        return allowed, quote_prefix, indent if in_list else None
 
     def _quoted_code_prefix(self, text: str, index: int, final: bool) -> int | None:
         """Match only the opener's quote depth, retaining any code > operators.
@@ -780,6 +832,20 @@ class StreamingSpeechSanitizer:
             if index == len(text) and not final:
                 return None
         return index - start
+
+    def _block_fence_can_close(self) -> bool:
+        prefix = self._original_line_prefix
+        if self._original_prefix_complete:
+            return False
+        quote = _QUOTE_PREFIX.match(prefix)
+        quote_prefix = quote.group() if quote else ""
+        body = prefix[len(quote_prefix) :]
+        indent = self._block_list_indent or 0
+        return (
+            quote_prefix.count(">") == self._block_quote_prefix.count(">")
+            and not body.strip(" ")
+            and indent <= len(body) <= indent + 3
+        )
 
     def _wrapped_bare_url(self, text: str, index: int, final: bool) -> tuple[str, int]:
         """Remove wrappers only with an adjacent URL and a matching terminal pair."""
@@ -900,6 +966,7 @@ class StreamingSpeechSanitizer:
     def _drain_links(self, *, final: bool) -> str:
         text = self._buffer
         output: list[str] = []
+        fences: dict[int, bool] = {}
         index = 0
         held_whitespace = ""
         trailing_whitespace_start = len(text.rstrip())
@@ -909,6 +976,20 @@ class StreamingSpeechSanitizer:
             self._track_original_lines(text[tracked:index])
             tracked = max(tracked, index)
             char = text[index]
+            if self._long_url_tail is not None:
+                end = index
+                while (
+                    end < len(text)
+                    and not text[end].isspace()
+                    and text[end] not in "<>"
+                ):
+                    end += 1
+                self._consume_long_url(text[index:end])
+                index = end
+                if end == len(text):
+                    break
+                self._finish_long_url(output, end)
+                continue
             if (
                 self._link_code
                 and self._block_quote_prefix
@@ -936,6 +1017,32 @@ class StreamingSpeechSanitizer:
                 if end == len(text) and not final:
                     break
                 count = end - index
+                if self._link_block:
+                    if count >= self._link_code and self._block_fence_can_close():
+                        newline = text.find(
+                            "\n", end, index + self.max_buffer_chars + 1
+                        )
+                        tail_end = newline if newline >= 0 else len(text)
+                        if not text[end:tail_end].strip(" \t\r"):
+                            if (
+                                newline < 0
+                                and not final
+                                and tail_end - index <= self.max_buffer_chars
+                            ):
+                                break
+                            if newline >= 0 or final:
+                                self._emit(output, text[index:end])
+                                fences[len(output) - 1] = False
+                                self._inline_scope.block_boundary(False)
+                                self._link_block = False
+                                self._link_code = 0
+                                self._block_quote_prefix = ""
+                                self._block_list_indent = None
+                                index = tail_end
+                                continue
+                    self._emit(output, text[index:end])
+                    index = end
+                    continue
                 # Inspect the original source before link removal/formatting can
                 # manufacture a line-start fence. Only a bounded genuine block
                 # opener may lose its info string; inline backticks stay literal.
@@ -946,9 +1053,13 @@ class StreamingSpeechSanitizer:
                     if "`" not in text[end:info_end]:
                         if newline >= 0:
                             self._link_code = count
+                            self._link_block = True
                             self._block_quote_prefix = quote_prefix
+                            self._block_list_indent = list_indent
                             self._original_list_indent = list_indent
                             self._emit(output, text[index:end])
+                            fences[len(output) - 1] = True
+                            self._inline_scope.block_boundary(True)
                             index = newline
                             continue
                         if not final and len(text) - index <= self.max_buffer_chars:
@@ -1186,6 +1297,13 @@ class StreamingSpeechSanitizer:
                     ):
                         end += 1
                     if end == len(text) and not final:
+                        if end - index > self.max_buffer_chars and (
+                            matching_prefix != "www." or _WWW_ADDRESS.match(text, index)
+                        ):
+                            self._hold_preceding_whitespace(output)
+                            self._consume_long_url(text[index:end])
+                            index = end
+                            break
                         held_whitespace = self._hold_preceding_whitespace(output)
                         break
                     if matching_prefix == "www." and not _WWW_ADDRESS.match(
@@ -1259,12 +1377,21 @@ class StreamingSpeechSanitizer:
             self._emit(output, self._buffer)
             self._buffer = ""
 
+        if final and self._long_url_tail is not None:
+            self._finish_long_url(output, index)
+
         if final and self._pending_list_prefix:
             prefix = self._pending_list_prefix
             self._pending_list_prefix = ""
             if not self._pending_list_link:
                 self._emit(output, prefix)
             self._pending_list_link = False
+        if fences:
+            offset = len(self._format_buffer)
+            for part_index, part in enumerate(output):
+                if part_index in fences:
+                    self._format_fences[offset] = len(part), fences[part_index]
+                offset += len(part)
         return "".join(output)
 
     @staticmethod
@@ -1520,7 +1647,7 @@ class StreamingSpeechSanitizer:
 
     @classmethod
     def _index_complete_format(
-        cls, text: str
+        cls, text: str, fences: Mapping[int, tuple[int, bool]] | None = None
     ) -> tuple[dict[str, int], dict[str, array], dict[str, array]]:
         """Pre-index eligible delimiters once for complete-message lookahead.
 
@@ -1531,8 +1658,16 @@ class StreamingSpeechSanitizer:
         single = {"*": array("I"), "_": array("I")}
         nested_single = {"*": array("I"), "_": array("I")}
         code_width = 0
+        block_code = False
         index = 0
         while index < len(text):
+            if fences and index in fences:
+                width, block_code = fences[index]
+                index += width
+                continue
+            if block_code:
+                index += 1
+                continue
             char = text[index]
             if char == "`" and (code_width or not cls._is_escaped(text, index)):
                 end = index + 1
@@ -1593,7 +1728,7 @@ class StreamingSpeechSanitizer:
                 self._completed_last_markers,
                 self._completed_singles,
                 self._completed_nested_singles,
-            ) = self._index_complete_format(self._format_buffer)
+            ) = self._index_complete_format(self._format_buffer, self._format_fences)
         output: list[str] = []
         index = 0
         unresolved_emphasis = False
@@ -1601,6 +1736,16 @@ class StreamingSpeechSanitizer:
 
         while index < len(self._format_buffer):
             char = self._format_buffer[index]
+            if index in self._format_fences:
+                width, self._format_block = self._format_fences[index]
+                index += width
+                self._line_start = False
+                continue
+            if self._format_block:
+                output.append(char)
+                self._line_start = char == "\n"
+                index += 1
+                continue
             if char == "\\" and not self._format_code:
                 following = self._format_buffer[index + 1 : index + 2]
                 if not following and not final:
@@ -1941,6 +2086,12 @@ class StreamingSpeechSanitizer:
                 else trailing
             )
         self._format_buffer = self._format_buffer[index:]
+        if self._format_fences:
+            self._format_fences = {
+                position - index: marker
+                for position, marker in self._format_fences.items()
+                if position >= index
+            }
         buffer_limit = (
             self.max_buffer_chars if unresolved_emphasis else _FORMAT_PREFIX_LIMIT
         )
@@ -1948,6 +2099,7 @@ class StreamingSpeechSanitizer:
             overflow = self._format_buffer
             trailing = len(overflow) - len(overflow.rstrip("\\"))
             self._format_buffer = "\\" if trailing % 2 else ""
+            self._format_fences.clear()
             if self._format_buffer:
                 overflow = overflow[:-1]
             output.append(overflow)

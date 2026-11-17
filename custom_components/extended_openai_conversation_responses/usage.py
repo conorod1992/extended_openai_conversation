@@ -921,7 +921,7 @@ class UsageManager:
             raise StorageRepairRequired("Usage")
 
     async def async_backup_data(self) -> dict[str, Any]:
-        """Return all persisted usage categories without in-flight run state."""
+        """Return accounting and unexpired details without in-flight run state."""
         if isinstance(self._storage, _VolatileUsageStorage):
             raise RuntimeError(
                 "Usage storage is unavailable; volatile accounting cannot provide a complete backup"
@@ -930,9 +930,8 @@ class UsageManager:
             if not self._initialized:
                 raise RuntimeError("usage statistics have not been initialized")
             self._require_writable()
-            # Completed records are immutable after publication. Capture their
-            # membership under the manager lock; serialize only local references.
-            requests, runs = list(self.requests), list(self.runs)
+            # Export must enforce the same cutoff between scheduled prunes.
+            requests, runs, _ = await asyncio.to_thread(self._pruned_detail_state)
             totals, daily = self.as_dict(), deepcopy(self.daily)
             details = await asyncio.to_thread(_serialize_usage_details, requests, runs)
             return {"totals": totals, "daily": daily, **details}

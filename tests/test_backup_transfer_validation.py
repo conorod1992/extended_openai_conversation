@@ -198,7 +198,7 @@ def test_legacy_json_rejects_oversized_file(tmp_path, monkeypatch) -> None:
     path.write_bytes(b"{}")
     monkeypatch.setattr(backup_transfer, "MAX_BACKUP_UNCOMPRESSED_BYTES", 1)
 
-    with pytest.raises(backup.BackupError, match="128 MB safety limit"):
+    with pytest.raises(backup.BackupError, match="uncompressed safety limit"):
         backup_transfer._load_legacy_json_document(str(path))
 
 

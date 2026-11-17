@@ -2652,8 +2652,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     exposed_entities,
                 )
             if delayed:
-                # Retain the scheduler's existing textual result contract.
-                result = str(result)
+                from .ha_tool_result_compat import ExecutionFailure
+
+                # Preserve producer-owned failure markers for the scheduler.
+                if not isinstance(result, ExecutionFailure) and not (
+                    isinstance(result, list)
+                    and any(isinstance(item, ExecutionFailure) for item in result)
+                ):
+                    result = str(result)
         except HomeAssistantError as err:
             from .exceptions import EffectReplayBlocked
 

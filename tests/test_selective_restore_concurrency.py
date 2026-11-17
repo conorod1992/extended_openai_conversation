@@ -174,6 +174,45 @@ async def test_selective_restore_drains_reader_before_preserving_destination(
     assert tx.journal.data is None
 
 
+async def test_usage_only_restore_journals_and_recovers_without_large_knowledge(
+    transaction, monkeypatch
+):
+    tx = transaction
+    monkeypatch.setattr(backup, "MAX_BACKUP_BYTES", 16 * 1024)
+    tx.state.knowledge = [
+        replace(tx.state.knowledge[0], content="知識" * 6000),
+    ]
+    before_knowledge = list(tx.state.knowledge)
+    template = tx.state
+    imported = transfer.PreparedTransfer(
+        source_kind="custom_backup",
+        mode="custom",
+        title="Imported",
+        available_sections=frozenset({transfer.SECTION_USAGE}),
+        created_at=None,
+        integration_version=None,
+        usage_totals=replace(template.usage_totals, conversation_count=25),
+        usage_daily=template.usage_daily,
+        usage_requests=template.usage_requests,
+        usage_runs=template.usage_runs,
+    )
+    result = await transfer.async_restore_transfer(tx.hass, tx.entry, tx.subentry, imported)
+    committed = tx.journal.saved[-1]
+    assert result["status"] == "restored"
+    assert committed["data_sections"] == ["usage"]
+    assert "knowledge" not in committed["target"]
+    assert "knowledge" not in committed["rollback"]
+    assert tx.state.knowledge == before_knowledge
+    assert tx.state.usage_totals.conversation_count == 25
+
+    # Replaying the last committed file after interruption only reapplies Usage.
+    tx.journal.data = committed
+    monkeypatch.setattr(restore_recovery, "_recovery_managers", AsyncMock(return_value=tx.managers))
+    assert await restore_recovery.async_recover_pending_restore(tx.hass, tx.entry, tx.subentry)
+    assert tx.state.knowledge == before_knowledge
+    assert tx.writes == [("usage_totals", "usage_daily", "usage_requests", "usage_runs")] * 2
+
+
 @pytest.mark.parametrize("stage", ["snapshot", "apply", "persist"])
 async def test_cancellation_waits_for_selective_transaction_to_commit(
     transaction, stage

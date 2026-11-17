@@ -76,6 +76,18 @@ async def _library(storage=None) -> KnowledgeLibrary:
     return library
 
 
+async def test_phrase_ranking_preserves_programming_identifiers() -> None:
+    library = await _library()
+    await library.async_create("C# setup", "", "Follow the device instructions.")
+    matching = await library.async_create(
+        "C++ device setup", "", "Follow the device instructions."
+    )
+
+    results = await library.async_search("C++ setup")
+
+    assert results[0].source_id == matching.source_id
+
+
 async def test_empty_initialization_and_crud_persistence() -> None:
     storage = FakeStorage()
     library = await _library(storage)

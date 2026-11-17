@@ -19,7 +19,11 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from . import backup
-from .agent_config import configured_function_tools_from_data, validate_agent_title
+from .agent_config import (
+    agent_retention_snapshot,
+    configured_function_tools_from_data,
+    validate_agent_title,
+)
 from .bounded_json import (
     JSONBudgetExceeded,
     bounded_json_dumps,
@@ -1153,7 +1157,7 @@ def _decode_transfer_input(value: Any) -> Mapping[str, Any]:
             check_utf8_budget(value, backup.MAX_BACKUP_BYTES)
         except JSONBudgetExceeded as err:
             raise backup.BackupError(
-                "The transfer exceeds the 128 MB safety limit"
+                "The transfer exceeds the uncompressed safety limit"
             ) from err
         try:
             value = json.loads(value)
@@ -1622,6 +1626,25 @@ async def async_materialize_restore(
     target.preserve_retained_continuity = (
         selected == {SECTION_KNOWLEDGE} and provider_connection is None
     )
+    data_sections = {
+        key
+        for key, transfer_section in (
+            ("memories", SECTION_PERSISTENT_MEMORY),
+            ("temporary_memories", SECTION_TEMPORARY_MEMORY),
+            ("knowledge", SECTION_KNOWLEDGE),
+            ("archive", SECTION_CONVERSATION_ARCHIVE),
+            ("usage", SECTION_USAGE),
+            ("guest_mode", SECTION_GUEST_MODE),
+            ("request_rules", SECTION_REQUEST_RULES),
+        )
+        if transfer_section in selected
+    }
+    # Applying different retention settings can prune stored Usage details.
+    if SECTION_CONFIGURATION in selected and agent_retention_snapshot(
+        target.config
+    ) != agent_retention_snapshot(current.config):
+        data_sections.add("usage")
+    target.journaled_sections = frozenset(data_sections)
     return target, preview
 
 

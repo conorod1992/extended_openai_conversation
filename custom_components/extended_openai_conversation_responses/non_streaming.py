@@ -47,7 +47,11 @@ async def completed_responses_events(
         yield SimpleNamespace(
             type="response.output_item.done", item=item, output_index=output_index
         )
-    status = getattr(response, "status", "completed")
+    status = getattr(response, "status", None)
+    if getattr(response, "error", None) is not None:
+        status = "failed"
+    elif status is None:
+        status = "completed"
     event_type = {
         "completed": "response.completed",
         "incomplete": "response.incomplete",
