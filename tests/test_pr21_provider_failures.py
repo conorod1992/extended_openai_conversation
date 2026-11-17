@@ -77,6 +77,7 @@ async def test_config_and_reauth_use_same_provider_classification() -> None:
         async_show_form=MagicMock(side_effect=lambda **kwargs: kwargs),
         async_create_entry=MagicMock(),
         async_update_reload_and_abort=MagicMock(),
+        add_suggested_values_to_schema=lambda schema, values: ExtendedOpenAIConversationConfigFlow.add_suggested_values_to_schema(flow, schema, values),
     )
     with patch(
         "custom_components.extended_openai_conversation_responses.config_flow.validate_input",

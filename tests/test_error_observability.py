@@ -477,7 +477,13 @@ async def test_config_flow_unexpected_validation_never_logs_candidate(
     flow = config_flow.ExtendedOpenAIConversationConfigFlow()
     flow.hass = hass
     flow.async_show_form = Mock(return_value={})
-    await flow._async_finish_initial_setup({"api_key": SECRET}, "user", None)
+    await flow._async_finish_initial_setup(
+        {"api_key": SECRET}, "user", config_flow.LEGACY_STEP_USER_DATA_SCHEMA
+    )
+    shown = flow.async_show_form.call_args.kwargs
+    assert shown["errors"] == {"base": "unknown"}
+    key = next(key for key in shown["data_schema"].schema if str(key) == "api_key")
+    assert key.description["suggested_value"] == SECRET
     assert "stage=setup" in caplog.text and "RuntimeError" in caplog.text
     assert SECRET not in caplog.text
 
