@@ -118,6 +118,8 @@ def test_ios_e2e_patcher_extends_the_upstream_onboarding_test():
         in patcher
     )
     assert 'NSPredicate(format: "label == %@", "Assistant")' in patcher
+    assert 'let assistantPage = app.buttons' in patcher
+    assert 'let assistantPage = app.descendants(matching: .any)' not in patcher
     assert 'tapWebElement(labelContaining: "assistant"' not in patcher
     assert 'tapEOAIElement(extendedOpenAI, until: pageSelector' in patcher
     assert 'tapEOAIElement(pageSelector, until: assistantPage' in patcher
