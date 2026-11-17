@@ -31,7 +31,12 @@ def test_metadata_recovers_from_bounded_transport_timeouts(
     assert [call.args for call in sleeping.call_args_list] == [
         (attempt,) for attempt in range(1, failures + 1)
     ]
-    assert all(call.kwargs == {"timeout": 20} for call in opening.call_args_list)
+    assert all(
+        call.kwargs == {"timeout": 20, "context": resolver._TLS_CONTEXT}
+        for call in opening.call_args_list
+    )
+    assert resolver._TLS_CONTEXT.verify_mode == ssl.CERT_REQUIRED
+    assert resolver._TLS_CONTEXT.check_hostname is True
     assert all(
         call.args[0].full_url == "https://pypi.org/test/json"
         for call in opening.call_args_list

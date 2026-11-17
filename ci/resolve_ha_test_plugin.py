@@ -7,11 +7,16 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import json
 import re
+import ssl
 import sys
 from time import sleep
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+# Load the trust store once. This context is shared read-only by the bounded
+# metadata workers; certificate and hostname verification remain enabled.
+_TLS_CONTEXT = ssl.create_default_context()
 
 # Release-day bridge: the upstream daily generator has not published fixtures
 # for a Core release yet. Regenerate only the reviewed immutable source pairs;
@@ -95,7 +100,7 @@ def _get_json(url: str) -> dict[str, Any]:
     attempt = 0
     while True:
         try:
-            with urlopen(request, timeout=20) as response:
+            with urlopen(request, timeout=20, context=_TLS_CONTEXT) as response:
                 return json.load(response)
         except (TimeoutError, ConnectionResetError, URLError) as error:
             # urllib wraps TLS handshake timeouts/resets in URLError. Retry this
