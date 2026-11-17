@@ -186,11 +186,21 @@ def test_release_day_bridge_does_not_guess_future_releases():
 
 
 @pytest.mark.parametrize("drift", [None, "metadata", "constants"])
-def test_official_fixture_bridge_preserves_source_and_single_plugin(tmp_path, drift):
+@pytest.mark.parametrize(
+    "ha_version",
+    [
+        version
+        for version, fixture in GENERATED_FIXTURES.items()
+        if fixture.official_package
+    ],
+)
+def test_official_fixture_bridge_preserves_source_and_single_plugin(
+    tmp_path, drift, ha_version
+):
     import tomllib
     from ci.install_ha_test_plugin import prepare_official_fixture_bridge
 
-    fixture = GENERATED_FIXTURES["2026.11.0"]
+    fixture = GENERATED_FIXTURES[ha_version]
     core = tmp_path / "core"
     source = core / "packages/pytest-homeassistant"
     package = source / "pytest_homeassistant"
@@ -211,7 +221,8 @@ def test_official_fixture_bridge_preserves_source_and_single_plugin(tmp_path, dr
     (core / "homeassistant").mkdir()
     const = core / "homeassistant/const.py"
     const.write_text(
-        'MAJOR_VERSION: Final = 2026\nMINOR_VERSION: Final = 11\nPATCH_VERSION: Final = "0"\n',
+        'MAJOR_VERSION: Final = 2026\nMINOR_VERSION: Final = 11\n'
+        f'PATCH_VERSION: Final = "{ha_version.rsplit(".", 1)[1]}"\n',
         encoding="utf-8",
     )
     if drift == "metadata":
@@ -235,7 +246,7 @@ def test_official_fixture_bridge_preserves_source_and_single_plugin(tmp_path, dr
         )
         assert projected["project"]["name"] == "pytest-homeassistant-custom-component"
         assert projected["project"]["version"] == fixture.plugin_version
-        assert projected["project"]["dependencies"] == ["homeassistant==2026.11.0"]
+        assert projected["project"]["dependencies"] == [f"homeassistant=={ha_version}"]
         assert projected["project"]["entry-points"]["pytest11"] == {
             "pytest_homeassistant_custom_component": "pytest_homeassistant_custom_component.bootstrap"
         }
