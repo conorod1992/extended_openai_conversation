@@ -32,6 +32,21 @@ The parent uploads the completed `full-validation-cohort` proof used by release
 certification. Temporary refs are removed after completed cohorts; interrupted
 runs retain them for diagnosis. Quick runs never authorize a release.
 
+Full mode dispatches iOS and Enhanced first, then gives both heavy lifetime
+partitions up to ten minutes to start before dispatching the shorter workflows.
+Enhanced likewise uses a separate lifetime matrix and a start observer before
+releasing its remaining jobs. The observer waits for starts, not successful
+completion; the 30-minute reload and uninterrupted processes run concurrently
+with the rest of validation. Quick, daily, and browser-only selections retain
+their existing inventories and do not wait for unselected lifetime work.
+
+This head start is a scheduling hint only. An unavailable status API or bounded
+wait expiry releases all remaining tests. Reads use the recorded attempt and
+candidate SHA. Completed failures also release the fan-out, while the existing
+job-result, execution-inventory, environment, duration, and final certification
+checks continue to reject missing or failed lifetime coverage. The legacy
+asynchronous dispatcher leaves this scheduling hint to Enhanced itself.
+
 `full-validation-collect.yml` remains available to recover older asynchronous
 cohorts. It identifies the parent by its workflow path, since a generated run
 title is not the workflow name. Recovery publishes the **Full validation

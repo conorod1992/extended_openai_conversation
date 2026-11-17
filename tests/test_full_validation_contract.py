@@ -61,22 +61,26 @@ def _driver(monkeypatch, tmp_path):
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
     monkeypatch.setattr(driver, "resolve_ha_dev_sha", Mock(return_value=DEV_SHA))
+    monkeypatch.setattr(driver, "wait_for_lifetime_start", Mock(return_value=True))
     return driver
 
 
 @pytest.mark.parametrize("mode", ["full", "quick"])
 @pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("priority_ready", [False, True])
 def test_validation_mode_dispatches_expected_inventory(
-    monkeypatch, tmp_path, mode, failed
+    monkeypatch, tmp_path, mode, failed, priority_ready
 ):
     monkeypatch.setenv("FULL_VALIDATION_MODE", mode)
     driver = _driver(monkeypatch, tmp_path)
+    driver.wait_for_lifetime_start.return_value = priority_ready
     original = deepcopy(driver.TEST_WORKFLOWS)
     monkeypatch.setattr(driver, "api", Mock())
     dispatch = Mock(
         side_effect=lambda workflow, inputs: {
             "workflow": workflow,
             "run_id": dispatch.call_count,
+            "run_attempt": 1,
             "url": "https://example.test/run",
         }
     )
@@ -114,6 +118,14 @@ def test_validation_mode_dispatches_expected_inventory(
     elif not failed:
         expected.add(driver.CERTIFICATION_WORKFLOW)
     assert set(calls) == expected
+    assert driver.wait_for_lifetime_start.call_count == int(mode == "full")
+    if mode == "full":
+        priority = driver.wait_for_lifetime_start.call_args
+        assert priority.args[1:4] == (2, 1, driver.TARGET_SHA)
+        assert priority.args[4] == {
+            "long-lifetime / heavy / reload",
+            "long-lifetime / heavy / uninterrupted",
+        }
     for name, inputs in original:
         if name not in expected:
             continue
@@ -281,6 +293,7 @@ def test_final_certification_waits_for_successful_prerequisites(
         return {
             "workflow": workflow,
             "run_id": len(launched),
+            "run_attempt": 1,
             "url": "https://example.test/run",
         }
 

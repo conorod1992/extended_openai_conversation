@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 try:
     from ci.ha_dev_snapshot import resolve_ha_dev_sha
+    from ci.lifetime_scheduling import lifetime_job_names, wait_for_lifetime_start
     from ci.validation_inventory import (
         CERTIFICATION_WORKFLOW,
         HA_DEV_WORKFLOWS,
@@ -24,6 +25,7 @@ try:
     )
 except ImportError:
     from ha_dev_snapshot import resolve_ha_dev_sha
+    from lifetime_scheduling import lifetime_job_names, wait_for_lifetime_start
     from validation_inventory import (
         CERTIFICATION_WORKFLOW,
         HA_DEV_WORKFLOWS,
@@ -370,6 +372,29 @@ def main() -> int:
             print(
                 f"Could not dispatch {workflow}: {error}", file=sys.stderr, flush=True
             )
+        else:
+            if (
+                workflow == "enhanced-stress.yml"
+                and MODE == "full"
+                and not asynchronous
+            ):
+                item = launched[-1]
+                wait_for_lifetime_start(
+                    lambda endpoint: api("GET", endpoint),
+                    item["run_id"],
+                    item["run_attempt"],
+                    TARGET_SHA,
+                    lifetime_job_names(
+                        [
+                            {
+                                "campaign": "long-lifetime",
+                                "intensity": "heavy",
+                                "partition": part,
+                            }
+                            for part in ("reload", "uninterrupted")
+                        ]
+                    ),
+                )
     if asynchronous:
         Path("full-validation-cohort.json").write_text(
             json.dumps(
