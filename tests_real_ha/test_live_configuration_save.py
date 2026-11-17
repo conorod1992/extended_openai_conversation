@@ -16,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context
+from tests_real_ha.device_info_compat import device_info_field
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
 
@@ -122,12 +123,15 @@ async def test_setup_owned_changes_still_reload_the_real_agent(hass, changes):
     assert replacement is not None and replacement is not agent
     assert replacement.entry.runtime_data is not old_client
     if "title" in changes:
-        assert replacement.device_info["name"] == changes["title"]
+        assert device_info_field(replacement.device_info, "name") == changes["title"]
     else:
         assert (
             replacement.subentry.data["chat_model"] == changes["config"]["chat_model"]
         )
-        assert replacement.device_info["model"] == changes["config"]["chat_model"]
+        assert (
+            device_info_field(replacement.device_info, "model")
+            == changes["config"]["chat_model"]
+        )
 
 
 async def test_entry_credential_update_after_live_save_still_reauthenticates(
