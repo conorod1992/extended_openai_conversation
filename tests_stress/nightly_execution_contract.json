@@ -3371,7 +3371,20 @@
     "tests_real_ha/test_request_rules_script_semantics.py::test_single_rule_preview_and_native_script_suppress_terminal_ai_input[False-actions2-]",
     "tests_real_ha/test_request_rules_script_semantics.py::test_single_rule_preview_and_native_script_suppress_terminal_ai_input[True-actions0-Done]",
     "tests_real_ha/test_request_rules_script_semantics.py::test_single_rule_preview_and_native_script_suppress_terminal_ai_input[True-actions1-Script answer]",
-    "tests_real_ha/test_request_rules_script_semantics.py::test_single_rule_preview_and_native_script_suppress_terminal_ai_input[True-actions2-]"
+    "tests_real_ha/test_request_rules_script_semantics.py::test_single_rule_preview_and_native_script_suppress_terminal_ai_input[True-actions2-]",
+    "tests_real_ha/test_ai_task_runtime.py::test_public_ai_task_nested_conversation_owns_its_ha_tool_snapshot[absent-parent-reference-assist]",
+    "tests_real_ha/test_ai_task_runtime.py::test_public_ai_task_nested_conversation_owns_its_ha_tool_snapshot[absent-parent-reference-direct-service]",
+    "tests_real_ha/test_ai_task_runtime.py::test_public_ai_task_nested_conversation_owns_its_ha_tool_snapshot[matching-reference-assist]",
+    "tests_real_ha/test_ai_task_runtime.py::test_public_ai_task_nested_conversation_owns_its_ha_tool_snapshot[matching-reference-direct-service]",
+    "tests_real_ha/test_ai_task_runtime.py::test_public_ai_task_nested_conversation_owns_its_ha_tool_snapshot[unauthorized-assist]",
+    "tests_real_ha/test_ai_task_runtime.py::test_public_ai_task_nested_conversation_owns_its_ha_tool_snapshot[unauthorized-direct-service]",
+    "tests_real_ha/test_ai_task_runtime.py::test_public_ai_task_nested_conversation_owns_its_ha_tool_snapshot[unavailable-assist]",
+    "tests_real_ha/test_ai_task_runtime.py::test_public_ai_task_nested_conversation_owns_its_ha_tool_snapshot[unavailable-direct-service]",
+    "tests_real_ha/test_conversation_entry_ownership.py::test_request_entry_identity_and_public_paths_survive_real_setup_reload",
+    "tests_real_ha/test_conversation_entry_ownership.py::test_snapshot_boundary_precedes_maintenance_and_restores_failed_entries[cancelled-False]",
+    "tests_real_ha/test_conversation_entry_ownership.py::test_snapshot_boundary_precedes_maintenance_and_restores_failed_entries[cancelled-True]",
+    "tests_real_ha/test_conversation_entry_ownership.py::test_snapshot_boundary_precedes_maintenance_and_restores_failed_entries[raised-False]",
+    "tests_real_ha/test_conversation_entry_ownership.py::test_snapshot_boundary_precedes_maintenance_and_restores_failed_entries[raised-True]"
   ],
   "browser": {
     "browser": [

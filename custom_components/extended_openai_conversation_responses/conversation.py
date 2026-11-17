@@ -772,6 +772,7 @@ class ExtendedOpenAIAgentEntity(
             with (
                 bind_active_ha_context(user_input.context),
                 bind_request_satellite(getattr(user_input, "satellite_id", None)),
+                tool_snapshot_scope(ToolSnapshot()),
             ):
                 async with conversation_request_lease(self):
                     with conversation_debug_trace(self, user_input) as trace:

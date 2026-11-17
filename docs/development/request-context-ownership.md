@@ -9,15 +9,24 @@ it does not acquire a new conversation, user, execution receipt or storage lease
 | Owner | State | Lifetime and inheritance |
 | --- | --- | --- |
 | Public invocation | `RequestInvocation` in `request_context.py` | Each `async_process` or `async_process_direct` call installs fresh metadata and prefetch ownership. Ordinary child helpers inherit the binding; another public invocation installs its own. |
+| HA tool snapshot | `ToolSnapshot` in `ha_llm_tools.py` | Each ready, nonempty conversation invocation binds a fresh empty snapshot before maintenance, debug capture, runtime preparation and Request Rules. Its model path can then bind its own discovery projection. Both scopes restore their caller's exact snapshot on return, error or cancellation. |
 | Entity registration | Existing readiness event in `conversation.py` | Each HA add captures its own event. Removal retires that registration before initialization can resume; completion signals only its captured event. Requests reject a changed registration after waiting. |
 | Claimed turn | `ConversationTurnContext` in `request_context.py` | One resolved data scope, archive identity, privacy veto, temporary-memory scope, memory-session identity and Function Group session reference. Installed atomically after session lookup; restored even if admission or finalization fails. |
 | Native Request Rule script | `RuleActionExecution` in `request_rules.py` | The function callback, action authorizer and captured-result map are installed and restored together. Native script branches intentionally share that result map. A nested rule installs another record. |
 | Prepared Function call | `PreparedFunctionCall` in `function_execution.py` | The exact prepared input, validation snapshots and retained original input share one dispatch boundary. Nested dispatch restores its caller's binding. |
 
-These records are frozen bindings, not recursively frozen copies. Metadata and
-captured results retain their existing dictionary sharing. A Function Group
-session remains mutable state owned by its logical-conversation runtime. The
+The invocation and execution records are frozen bindings, not recursively frozen
+copies. Metadata and captured results retain their existing dictionary sharing.
+A Function Group session remains mutable state owned by its logical-conversation runtime. The
 records do not copy configuration, histories or Home Assistant objects.
+
+A caller-supplied AI Task API owns its supplied snapshot, API instances, prompts
+and serializer. A tool invoking either conversation entry point starts a separate
+tool scope: the child's Request Rules discover its configured capabilities using
+its own HA context instead of inheriting the parent's authoritative supplied API.
+Returning to the task restores that supplied snapshot and its continuation.
+Discovery is not globally forced for caller-provided APIs, which may legitimately
+be unregistered. Snapshots remain invocation state rather than entity attributes.
 
 Archive changes replace the **current task's** turn record. The privacy tool sets
 the turn veto before awaiting storage. Resuming saving changes the archive identity
