@@ -25,22 +25,26 @@ export function configKeyForControl(control) {
 
 export function configurationControlValue(control) {
   const key = control.dataset?.config || control.dataset?.memoryConfig;
+  const {value} = control;
   if (control.id === "voice-mappings") {
     try {
-      const value = JSON.parse(control.value || "{}");
-      return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+      const mapping = JSON.parse(value || "{}");
+      return mapping && typeof mapping === "object" && !Array.isArray(mapping) ? mapping : undefined;
     } catch (_) { return undefined; }
   }
   if (control.dataset?.type === "boolean" || control.type === "checkbox") return Boolean(control.checked);
-  // Recovery text inputs can display a saved boolean. Keep it invalid rather
-  // than converting it to 0/1/NaN when an untouched form is read.
-  if (control.dataset?.type === "number") return control.value === "true" ? true
-    : control.value === "false" ? false : Number(control.value);
-  if (key === "skills") return skillNamesFromText(control.value);
-  if (key?.startsWith("guest_readable_") || key?.startsWith("guest_controllable_")) {
-    return String(control.value).split(",").map((item) => item.trim()).filter(Boolean);
+  if (control.dataset?.type === "number") {
+    if (value === "true" || value === "false") return value === "true";
+    const number = Number(value);
+    // Keep malformed recovery text for validation. JSON converts NaN and
+    // Infinity to null, and empty recovery text does not specify zero.
+    return Number.isFinite(number) && (control.type !== "text" || value.trim()) ? number : value;
   }
-  return control.value;
+  if (key === "skills") return skillNamesFromText(value);
+  if (key?.startsWith("guest_readable_") || key?.startsWith("guest_controllable_")) {
+    return String(value).split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  return value;
 }
 
 // The full reader and delegated edits share both parsing and assignment rules.

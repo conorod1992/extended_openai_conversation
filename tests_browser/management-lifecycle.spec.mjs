@@ -15,9 +15,9 @@ test(`saved sampling booleans remain visible until explicitly repaired (${suppor
     window.samplingSubmissions = [];
     host._hass.callWS = async message => {
       if (message.section === "configuration" && ["save", "update"].includes(message.action)) {
-        window.samplingSubmissions.push(structuredClone(message));
-        const candidate = {...sampling, ...message.config};
-        if (typeof candidate.top_p === "boolean") throw new Error("top_p: must be a int or float");
+        window.samplingSubmissions.push(JSON.parse(JSON.stringify(message)));
+        const candidate = {...sampling, ...window.samplingSubmissions.at(-1).config};
+        if (typeof candidate.top_p !== "number") return {valid:false, errors:{top_p:"must be a int or float"}};
         Object.assign(sampling, message.config);
       }
       const result = await original(message);
@@ -43,10 +43,19 @@ test(`saved sampling booleans remain visible until explicitly repaired (${suppor
   await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(1);
   expect(await page.evaluate(() => browserHarness.panel._draft.top_p)).toBe(false);
   expect(await page.evaluate(() => window.samplingSubmissions[0].config)).toEqual({temperature:0.25});
+  for (const [index, value] of ["typo", ""].entries()) {
+    await topP.fill(value);
+    await panel.locator("#save-config").click();
+    await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(index + 2);
+    expect(await page.evaluate((i) => window.samplingSubmissions[i].config, index + 1)).toEqual({temperature:0.25, top_p:value});
+    await expect(topP).toHaveValue(value);
+    await expect(panel.locator('[data-error="top_p"]')).toContainText("must be a int or float");
+    await expect(panel.locator("#save-config")).toBeEnabled();
+  }
   await topP.fill("0.75");
   await panel.locator("#save-config").click();
-  await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(2);
-  expect(await page.evaluate(() => window.samplingSubmissions[1].config)).toEqual({temperature:0.25, top_p:0.75});
+  await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(4);
+  expect(await page.evaluate(() => window.samplingSubmissions[3].config)).toEqual({temperature:0.25, top_p:0.75});
   await expect(panel.locator("#save-config")).toHaveCount(0);
   expect(await page.evaluate(() => browserHarness.getState().configuration.config.top_p)).toBe(0.75);
   await expectHarnessClean(page, errors);

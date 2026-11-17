@@ -52,7 +52,7 @@ export const field = (panel, key, label, value, type = "text", description = "",
   const damaged = type === "number" && typeof value === "boolean";
   if (key === "memory_auto_retrieve_limit") {
     label = "Automatically include memories";
-    description = "Select up to this many relevant memories when a new conversation starts. The same memories remain available for that conversation. Set to 0 to use memory only on demand.";
+    description = "Limit memories selected once per conversation. Enter 0 for on-demand retrieval.";
   }
   let presentation = modelFieldPresentation(panel, key, value);
   if (presentation.visible === false && !forceVisible) return "";
