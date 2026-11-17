@@ -1,10 +1,4 @@
-export {embeddedFeatureStatusMarkup} from "./management-feature-status-core.js";
-
-export function selectedFeatureStatus(panel, featureName) {
-  const sectionStatus = panel._result?.feature_status;
-  if (sectionStatus && !sectionStatus[featureName]) return sectionStatus;
-  return sectionStatus?.[featureName] || panel._selectedAgent?.()?.feature_status?.[featureName] || null;
-}
+export {embeddedFeatureStatusMarkup, selectedFeatureStatus} from "./management-feature-status-core.js";
 
 export function featureStatusMarkup(panel, title, status, configureTarget = null) {
   if (!status) return "";

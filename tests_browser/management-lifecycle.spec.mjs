@@ -337,8 +337,36 @@ test("returning to Prompt Context owns a fresh exposure read while the prior vis
   await expectHarnessClean(page, errors);
 });
 
-test("Conversation History paints the selected scope before secondary data settles", async ({page}) => {
-  await page.goto(fixtureUrl("overview"));
+async function holdOverviewImplementation(page, fail = false) {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let requested;
+  const started = new Promise(resolve => { requested = resolve; });
+  let url;
+  await page.route("**/overview-page-impl*.js", async route => {
+    url = route.request().url();
+    requested();
+    await gate;
+    if (fail) await route.abort();
+    else await route.continue();
+  });
+  return {started, release, async settle() {
+    release();
+    await page.evaluate(async ({url, fail}) => {
+      try { await import(url); } catch (error) { if (!fail) throw error; }
+      // The import and its queued promise callbacks settle before this paint.
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }, {url, fail});
+  }};
+}
+
+for (const bundled of [false, true]) {
+test(`Conversation History paints the selected scope before secondary data settles${bundled ? " (bundle)" : ""}`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  const overview = await holdOverviewImplementation(page);
+  try {
+  await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""));
+  await overview.started;
   await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
   const result = await page.evaluate(async () => {
     const host = browserHarness.panel;
@@ -346,6 +374,8 @@ test("Conversation History paints the selected scope before secondary data settl
     const releases = {};
     const started = new Set();
     const observedScopeKinds = [];
+    let markStarted;
+    const allStarted = new Promise(resolve => { markStarted = resolve; });
     host._hass.callWS = async message => {
       const key = message.section === "scopes"
         ? "scopes"
@@ -357,48 +387,92 @@ test("Conversation History paints the selected scope before secondary data settl
       if (key) {
         started.add(key);
         if (key === "scopes") observedScopeKinds.push(message.scope_kind);
+        if (["scopes", "config", "active"].every(key => started.has(key))) markStarted();
         await new Promise(resolve => { releases[key] = resolve; });
       }
       return original(message);
     };
 
     const pending = host._navigate("data-memory", "conversations");
-    while (!["scopes", "config", "active"].every(key => started.has(key))) {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
-    for (let turn = 0; turn < 40 && (!host.shadowRoot.querySelector("#archive-query") || host._busy); turn++) {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
+    await allStarted;
+    await pending;
     const primaryVisible = Boolean(host.shadowRoot.querySelector("#archive-query")) && host._busy === false;
     const searchInput = host.shadowRoot.querySelector("#archive-query");
     const loadingSettings = host.shadowRoot.textContent.includes("Loading archive settings");
     const scopeKinds = observedScopeKinds;
+    window.historySearchInput = searchInput;
+    searchInput.value = "keep this history query";
+    searchInput.focus();
 
     releases.scopes();
     releases.config();
     releases.active();
-    await pending;
-    for (let turn = 0; turn < 20 && host._contentData?.loading?.active; turn++) {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
     host._hass.callWS = original;
     return {
       primaryVisible,
       loadingSettings,
       scopeKinds,
-      activeLoading: host._contentData?.loading?.active,
-      configReady: Boolean(host._configData),
-      searchPreserved: host.shadowRoot.querySelector("#archive-query") === searchInput,
     };
   });
 
   expect(result.primaryVisible).toBe(true);
   expect(result.loadingSettings).toBe(true);
   expect(result.scopeKinds.at(-1)).toBe("archive");
-  expect(result.activeLoading).toBe(false);
-  expect(result.configReady).toBe(true);
-  expect(result.searchPreserved).toBe(true);
+  const panel = page.locator("extended-openai-management-panel");
+  await expect.poll(() => panel.evaluate(host => host._contentData?.loading)).toEqual({scopes:false, config:false, active:false});
+  await expect.poll(() => panel.evaluate(host => host._eocHistoryEditorLoading)).toBe(false);
+  const retainedSearch = () => panel.evaluate(host => ({
+    activeLoading: host._contentData?.loading?.active,
+    configReady: Boolean(host._configData),
+    searchPreserved: host.shadowRoot.querySelector("#archive-query") === window.historySearchInput,
+    value: host.shadowRoot.querySelector("#archive-query")?.value,
+    focused: host.shadowRoot.activeElement === window.historySearchInput,
+    error: host._error,
+  }));
+  const expected = {activeLoading:false, configReady:true, searchPreserved:true, value:"keep this history query", focused:true, error:null};
+  expect(await retainedSearch()).toEqual(expected);
+  await overview.settle();
+  expect(await retainedSearch()).toEqual(expected);
+  await expectHarnessClean(page, errors);
+  } finally { overview.release(); }
 });
+
+test(`late Overview import failure cannot replace Conversation History${bundled ? " (bundle)" : ""}`, async ({page}) => {
+  const overview = await holdOverviewImplementation(page, true);
+  try {
+    await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""));
+    await overview.started;
+    await page.evaluate(() => browserHarness.panel._navigate("data-memory", "conversations"));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator("#archive-query")).toBeVisible();
+    await panel.locator("#archive-query").fill("keep failed-import query");
+    await panel.evaluate(host => { window.historySearchInput = host.shadowRoot.querySelector("#archive-query"); });
+    await overview.settle();
+    expect(await panel.evaluate(host => ({
+      preserved:host.shadowRoot.querySelector("#archive-query") === window.historySearchInput,
+      value:host.shadowRoot.querySelector("#archive-query")?.value,
+      view:host._viewKey(), error:host._error,
+    }))).toEqual({preserved:true, value:"keep failed-import query", view:"data-memory/conversations", error:null});
+    expect(await page.evaluate(() => ({errors:browserHarness.windowErrors, rejections:browserHarness.rejections}))).toEqual({errors:[], rejections:[]});
+  } finally { overview.release(); }
+});
+
+test(`Overview import failure remains visible on its current visit${bundled ? " (bundle)" : ""}`, async ({page}) => {
+  const overview = await holdOverviewImplementation(page, true);
+  try {
+    await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""));
+    await overview.started;
+    await overview.settle();
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator("main .route-error-state")).toContainText("Unable to load");
+    expect(await panel.evaluate(host => ({view:host._viewKey(), busy:host._busy}))).toEqual({view:"overview", busy:false});
+    expect(await page.evaluate(() => browserHarness.rejections)).toEqual([]);
+    await page.unroute("**/overview-page-impl*.js");
+    await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""));
+    await expect(panel.locator(".setup-health")).toBeVisible();
+  } finally { overview.release(); }
+});
+}
 
 test("conversation configuration starts before a pending scope catalog finishes", async ({page}) => {
   await page.goto(fixtureUrl("overview"));
