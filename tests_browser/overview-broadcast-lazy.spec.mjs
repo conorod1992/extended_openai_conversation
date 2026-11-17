@@ -11,7 +11,7 @@ test("Overview snapshot is usable while the full implementation is still loading
     });
   });
 
-  await page.goto(fixtureUrl("overview"));
+  await page.goto(fixtureUrl("overview"), {waitUntil:"domcontentloaded"});
   const panel = page.locator("extended-openai-management-panel");
   await requested;
 

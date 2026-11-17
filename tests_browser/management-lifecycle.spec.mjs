@@ -365,7 +365,7 @@ test(`Conversation History paints the selected scope before secondary data settl
   const errors = trackPageErrors(page);
   const overview = await holdOverviewImplementation(page);
   try {
-  await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""));
+  await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""), {waitUntil:"domcontentloaded"});
   await overview.started;
   await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
   const result = await page.evaluate(async () => {
@@ -440,7 +440,7 @@ test(`Conversation History paints the selected scope before secondary data settl
 test(`late Overview import failure cannot replace Conversation History${bundled ? " (bundle)" : ""}`, async ({page}) => {
   const overview = await holdOverviewImplementation(page, true);
   try {
-    await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""));
+    await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""), {waitUntil:"domcontentloaded"});
     await overview.started;
     await page.evaluate(() => browserHarness.panel._navigate("data-memory", "conversations"));
     const panel = page.locator("extended-openai-management-panel");
@@ -457,19 +457,23 @@ test(`late Overview import failure cannot replace Conversation History${bundled 
   } finally { overview.release(); }
 });
 
-test(`Overview import failure remains visible on its current visit${bundled ? " (bundle)" : ""}`, async ({page}) => {
+test(`Overview import failure remains visible on its current visit${bundled ? " (bundle)" : ""}`, async ({page, browser}) => {
   const overview = await holdOverviewImplementation(page, true);
   try {
-    await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""));
+    await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""), {waitUntil:"domcontentloaded"});
     await overview.started;
     await overview.settle();
     const panel = page.locator("extended-openai-management-panel");
     await expect(panel.locator("main .route-error-state")).toContainText("Unable to load");
     expect(await panel.evaluate(host => ({view:host._viewKey(), busy:host._busy}))).toEqual({view:"overview", busy:false});
     expect(await page.evaluate(() => browserHarness.rejections)).toEqual([]);
-    await page.unroute("**/overview-page-impl*.js");
-    await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""));
-    await expect(panel.locator(".setup-health")).toBeVisible();
+    // Failed module imports may remain cached by the browser context. Verify
+    // a clean application load independently from the injected network failure.
+    const recovery = await browser.newPage();
+    try {
+      await recovery.goto(new URL(fixtureUrl("overview", bundled ? "&bundle=1" : ""), page.url()).href);
+      await expect(recovery.locator("extended-openai-management-panel .setup-health")).toBeVisible();
+    } finally { await recovery.close(); }
   } finally { overview.release(); }
 });
 }
