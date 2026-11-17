@@ -902,19 +902,21 @@ def validate_speech_regex_replacements(value: Any) -> list[dict[str, str]]:
 
 
 def _require_type(
-    config: dict[str, Any], keys: tuple[str, ...], expected: type | tuple[type, ...]
+    config: Mapping[str, Any], keys: tuple[str, ...], expected: type | tuple[type, ...]
 ) -> None:
-    label = (
-        expected.__name__
-        if isinstance(expected, type)
-        else " or ".join(item.__name__ for item in expected)
-    )
+    types = (expected,) if isinstance(expected, type) else expected
+    label = " or ".join(item.__name__ for item in types)
     for key in keys:
         if key in config and (
             not isinstance(config[key], expected)
-            or (expected is int and isinstance(config[key], bool))
+            or (int in types and bool not in types and isinstance(config[key], bool))
         ):
             raise AgentConfigError(key, f"must be a {label}")
+
+
+def validate_agent_sampling_values(config: Mapping[str, Any]) -> None:
+    """Require numeric types for present sampling settings, excluding booleans."""
+    _require_type(config, (CONF_TOP_P, CONF_TEMPERATURE), (int, float))
 
 
 def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
@@ -1195,7 +1197,7 @@ def normalize_agent_config(
         ),
         int,
     )
-    _require_type(result, (CONF_TOP_P, CONF_TEMPERATURE), (int, float))
+    validate_agent_sampling_values(result)
 
     choices: dict[str, list[Any]] = {
         CONF_API_MODE: [item["key"] for item in API_MODE_OPTIONS],
