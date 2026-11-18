@@ -301,6 +301,7 @@ function restoreRetentionNotice(preview) {
 export function restorePreviewSummaryLines(preview = {}) {
   const count = (key) => Number(preview[key] || 0);
   const sections = new Set(preview.selected_sections || []);
+  if (preview.usage_retention) sections.add("usage");
   const lines = [
     ["configuration", "Agent configuration and Function Tools"],
     ["request_rules", `${count("request_rules")} Request Rules`],

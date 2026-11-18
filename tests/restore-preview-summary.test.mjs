@@ -148,3 +148,10 @@ assert.deepEqual(restorePreviewSummaryLines({
   usage_requests: 0,
   usage_retention: {expired_runs: 0, expired_requests: 3},
 }), ["Usage history (1 runs, 0 requests)", "Usage retention removes 0 runs and 3 requests. Usage totals will be kept."]);
+assert.deepEqual(restorePreviewSummaryLines({
+  selected_sections: ["configuration"],
+  usage_runs: 1,
+  usage_requests: 0,
+  usage_retention: {expired_runs: 0, expired_requests: 3},
+  shortened_usage_retention: {usage_request_retention_days: 0},
+}), ["Agent configuration and Function Tools", "Usage history (1 runs, 0 requests)", "Usage retention removes 0 runs and 3 requests. Usage totals will be kept."]);
