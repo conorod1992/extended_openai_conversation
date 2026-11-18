@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import partial
 from inspect import isawaitable
 import logging
@@ -122,6 +123,14 @@ def supports_openai_hosted_tools(
     if api_provider not in {None, DEFAULT_API_PROVIDER}:
         return False
     return not base_url or base_url.rstrip("/") == DEFAULT_CONF_BASE_URL.rstrip("/")
+
+
+def is_native_openai_connection(data: Mapping[str, Any]) -> bool:
+    """Return whether the configured connection uses the native OpenAI endpoint."""
+    base_url = data.get("base_url")
+    return supports_openai_hosted_tools(
+        effective_api_provider(data.get("api_provider"), base_url), base_url
+    )
 
 
 def get_token_param_for_model(model: str) -> str:

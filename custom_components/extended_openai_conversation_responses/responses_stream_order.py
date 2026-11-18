@@ -17,6 +17,7 @@ async def _validated_output_events(
     budget = budget or ProviderOutputBudget()
     terminal_seen = False
     completed_items: set[tuple[Any, Any]] = set()
+    unfinished_indices: set[int] = set()
     output_items: dict[Any, tuple[Any, Any, Any]] = {}
     argument_fragments: dict[Any, str] = {}
     try:
@@ -63,6 +64,10 @@ async def _validated_output_events(
                             error_type="invalid_event_sequence",
                         )
                     output_items[index] = identity
+                    if event_type == "response.output_item.added":
+                        unfinished_indices.add(index)
+                    else:
+                        unfinished_indices.discard(index)
                     if (
                         event_type == "response.output_item.done"
                         and index in argument_fragments
@@ -111,6 +116,11 @@ async def _validated_output_events(
                         )
                     completed_items.add(key)
             if event_type == "response.completed":
+                if unfinished_indices:
+                    raise ProviderStreamError(
+                        "Provider returned malformed data: unfinished output item",
+                        error_type="invalid_event_sequence",
+                    )
                 terminal_seen = True
             yield event
 

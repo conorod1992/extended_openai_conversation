@@ -64,7 +64,8 @@ query_image:
         config_entry:
           integration: extended_openai_conversation_responses
     model:
-      example: gpt-4.1-mini
+      description: Omit to use gpt-6-luna on native OpenAI or gpt-4.1-mini on other connections. Azure accepts a deployment name.
+      example: gpt-6-luna
       selector:
         text:
     api_mode:
@@ -303,12 +304,14 @@ rebuild_memory_embeddings:
   fields:
     config_entry:
       name: Provider connection
+      description: Connection that owns the conversation agent.
       required: true
       selector:
         config_entry:
           integration: extended_openai_conversation_responses
     agent_id:
       name: Conversation agent
+      description: Agent whose derived memory vectors should be cleared.
       required: true
       selector:
         entity:

@@ -1514,6 +1514,19 @@ class RequestRuleRuntime:
         self.get(session_id, timeout_minutes)
         return self._requests.begin(session_id, session_id)
 
+    def peek(self, session_id: str) -> dict[str, str]:
+        """Read live overrides without refreshing their retention."""
+        entry = self._conversation_overrides.get(session_id)
+        if entry is None:
+            return {}
+        values, last_used, timeout = entry
+        if (
+            not self._requests.active(session_id)
+            and monotonic() - last_used >= timeout * 60
+        ):
+            return {}
+        return dict(values)
+
     def request_ownership(
         self, session_id: str
     ) -> tuple[ConversationRequestToken[str], ...]:
@@ -3921,10 +3934,9 @@ async def _async_evaluate_matched_rule(
         else None
     )
     prior = dict(prior_request_override or {})
+    retained_before = runtime.peek(session_id)
     conversation_override = (
-        {}
-        if _REQUEST_RESET_SENTINEL in prior
-        else runtime.get(session_id, timeout_minutes)
+        {} if _REQUEST_RESET_SENTINEL in prior else dict(retained_before)
     )
     conversation_override.update(prior)
     selected_model = (
@@ -3989,17 +4001,26 @@ async def _async_evaluate_matched_rule(
     ):
         # A request reset/override can mask an incompatible retained sibling.
         # Validate what the next turn will inherit before mutating runtime state.
-        retained = {**runtime.get(session_id, timeout_minutes), **override}
-        if request_options is not None:
-            validate_routed_request_options(
-                {**request_options, **retained}, entry_data or {}
-            )
-        elif retained.get(CONF_REASONING_EFFORT):
+        defaults = request_options or {CONF_CHAT_MODEL: configured_model}
+        retained_override = routed_model_override(
+            defaults, model, underlying_model, entry_data or {}, retained_before
+        )
+        if effort:
+            retained_override[CONF_REASONING_EFFORT] = effort
+        retained = {**retained_before, **retained_override}
+        next_turn = {**defaults, **retained}
+        if retained.get(CONF_REASONING_EFFORT):
             _validate_effective_reasoning(
-                retained.get(CONF_CHAT_MODEL, configured_model),
+                capability_model_identity(next_turn, entry_data or {}),
                 retained[CONF_REASONING_EFFORT],
+                provider=effective_api_provider(
+                    (entry_data or {}).get("api_provider"),
+                    (entry_data or {}).get("base_url"),
+                ),
             )
-        runtime.set(session_id, override, timeout_minutes)
+        if request_options is not None:
+            validate_routed_request_options(next_turn, entry_data or {})
+        runtime.set(session_id, retained_override, timeout_minutes)
         request_override = None
     else:
         request_override = override

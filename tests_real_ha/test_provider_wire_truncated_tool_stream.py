@@ -360,11 +360,12 @@ async def test_rejected_responses_protocol_keeps_trailing_usage(
     assert calls == []
 
 
-@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("scenario", ["chat_completions", "responses", "responses-leading", "responses-flushed"])
 @pytest.mark.parametrize("report_usage", [False, True])
 async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
-    hass, monkeypatch, mode, report_usage
+    hass, monkeypatch, scenario, report_usage
 ):
+    mode = "chat_completions" if scenario == "chat_completions" else "responses"
     import httpx
 
     from custom_components.extended_openai_conversation_responses import (
@@ -374,6 +375,7 @@ async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
         _chat_sse_tool_call,
         _raw_client,
         _response_object,
+        _response_text_item,
     )
 
     # Exercise real SDK parsing without making its cold-start cost a deadline test.
@@ -412,12 +414,22 @@ async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
             "arguments": "{}",
             "status": "completed",
         }
-        response = _response_object("unfinished-output", [item])
+        events = []
+        output = []
+        if scenario == "responses-flushed":
+            first = _response_text_item("A completed item precedes unfinished output")
+            output.append(first)
+            events.extend([
+                {"type": "response.output_item.added", "output_index": 0, "item": first},
+                {"type": "response.output_item.done", "output_index": 0, "item": first},
+            ])
+        output.append(item)
+        response = _response_object("unfinished-output", output)
         response["usage"] = None
-        events = [
-            {"type": "response.output_item.added", "output_index": 1, "item": item},
+        events.extend([
+            {"type": "response.output_item.added", "output_index": 0 if scenario == "responses-leading" else 1, "item": item},
             {"type": "response.completed", "response": response},
-        ]
+        ])
         usage_event = {
             "type": "response.usage",
             "usage": {"input_tokens": 223, "output_tokens": 17, "total_tokens": 240},

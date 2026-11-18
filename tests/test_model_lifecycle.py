@@ -138,3 +138,43 @@ def test_clearing_failure_resolves_repair(monkeypatch) -> None:
 
     assert hass.data[model_lifecycle._DATA_FAILURES] == {}
     delete.assert_called_once()
+
+def test_independent_endpoints_clear_persisted_openai_retirement_repairs(monkeypatch):
+    hass = _hass()
+    subentry = SimpleNamespace(subentry_id="agent", subentry_type="conversation", title="Kitchen",
+                               data={"chat_model": "gpt-5.1"})
+    entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry}, data={})
+    issue_id = model_lifecycle._issue_id("entry", "agent")
+    issue = SimpleNamespace(data={"model": "gpt-5.1"}, active=True)
+    registry = Mock()
+    registry.async_get_issue.return_value = issue
+    monkeypatch.setattr(model_lifecycle.ir, "async_get", lambda _hass: registry)
+    delete = Mock()
+    create = Mock()
+    monkeypatch.setattr(model_lifecycle.ir, "async_delete_issue", delete)
+    monkeypatch.setattr(model_lifecycle.ir, "async_create_issue", create)
+    snapshot = model_lifecycle.lifecycle_snapshot
+    monkeypatch.setattr(model_lifecycle, "lifecycle_snapshot", lambda model, **_kwargs: snapshot(model, today=date(2027, 4, 2)))
+    error = ProviderStreamError("missing", code="model_not_found", status_code=404)
+
+    for independent in (
+        {"api_provider": "openai", "base_url": "https://compatible.example/v1"},
+        {"api_provider": "azure"},
+        {"base_url": "https://kitchen.openai.azure.com"},
+    ):
+        entry.data = {"base_url": "https://api.openai.com/v1/"}
+        model_lifecycle.sync_entry_model_lifecycle(hass, entry)
+        assert model_lifecycle.confirmed_retirement_failure(hass, "entry", "agent", "gpt-5.1")
+        delete.assert_not_called()
+        entry.data = independent
+        assert model_lifecycle.configured_lifecycle(subentry, entry_data=independent)["shutdown_reached"] is False
+        assert model_lifecycle.record_retirement_failure(
+            hass, entry_id="entry", subentry_id="agent", title="Kitchen",
+            model="gpt-5.1", error=error, entry_data=independent,
+        ) is None
+        create.assert_not_called()
+        hass.data.pop(model_lifecycle._DATA_FAILURES)
+        model_lifecycle.sync_entry_model_lifecycle(hass, entry)
+        delete.assert_called_once_with(hass, model_lifecycle.DOMAIN, issue_id)
+        assert not model_lifecycle.confirmed_retirement_failure(hass, "entry", "agent", "gpt-5.1")
+        delete.reset_mock()

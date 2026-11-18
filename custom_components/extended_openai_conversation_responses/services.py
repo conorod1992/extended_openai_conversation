@@ -69,7 +69,7 @@ from .const import (
 from .guest_mode import async_get_guest_mode
 from .ha_schema import schema_for_ha
 from .ha_tool_result_compat import tool_result_data
-from .helpers import get_api_mode, get_authenticated_client
+from .helpers import get_api_mode, get_authenticated_client, is_native_openai_connection
 from .live_subentry_updates import update_live_subentry
 from .memory import async_get_memory, memory_as_dict, memory_user_id
 from .model_capabilities import model_capability_snapshot
@@ -104,7 +104,7 @@ QUERY_IMAGE_SCHEMA = vol.Schema(
                 "integration": DOMAIN,
             }
         ),
-        vol.Required("model", default="gpt-4.1-mini"): cv.string,
+        vol.Optional("model"): cv.string,
         vol.Optional(CONF_API_MODE, default=DEFAULT_API_MODE): vol.In(
             [mode["key"] for mode in API_MODE_OPTIONS]
         ),
@@ -343,7 +343,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         await _async_require_service_admin(hass, call)
         entry = None
         try:
-            model = call.data["model"]
             if "max_tokens" in call.data and call.data["max_tokens"] in (None, ""):
                 raise HomeAssistantError("Output token limit is required")
             entry = hass.config_entries.async_get_entry(call.data["config_entry"])
@@ -356,10 +355,17 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             client = getattr(entry, "runtime_data", None)
             if client is None:
                 raise HomeAssistantError("Config entry client is unavailable")
+            entry_data = getattr(entry, "data", {})
+            model = call.data.get(
+                "model",
+                "gpt-6-luna"
+                if is_native_openai_connection(entry_data)
+                else "gpt-4.1-mini",
+            )
             with model_capability_snapshot(
                 model,
                 request_model_capabilities(
-                    {**call.data, CONF_CHAT_MODEL: model}, getattr(entry, "data", {})
+                    {**call.data, CONF_CHAT_MODEL: model}, entry_data
                 ),
             ):
                 api_mode = get_api_mode(call.data[CONF_API_MODE], model)
@@ -367,7 +373,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 model,
                 api_mode,
                 call.data,
-                getattr(entry, "data", {}),
+                entry_data,
             )
             image_params = await hass.async_add_executor_job(
                 prepare_image_params, hass, call.data["images"]

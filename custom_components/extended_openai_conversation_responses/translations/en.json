@@ -367,6 +367,20 @@
         }
       }
     },
+    "rebuild_memory_embeddings": {
+      "name": "Rebuild memory embeddings",
+      "description": "Clear the agent's derived Hybrid Memory vectors. Searches regenerate vectors for readable memories as needed. The memories themselves are retained.",
+      "fields": {
+        "config_entry": {
+          "name": "Provider connection",
+          "description": "Connection that owns the conversation agent."
+        },
+        "agent_id": {
+          "name": "Conversation agent",
+          "description": "Agent whose derived memory vectors should be cleared."
+        }
+      }
+    },
     "memory_clear": {
       "name": "Clear memories",
       "description": "Permanently clear all memories, or one category, for the calling Home Assistant user.",
@@ -491,8 +505,8 @@
                 },
                 "model": {
                     "name": "Model",
-                    "description": "The model",
-                    "example": "gpt-4.1-mini"
+                    "description": "Omit to use gpt-6-luna on native OpenAI or gpt-4.1-mini on other connections. Azure accepts a deployment name.",
+                    "example": "gpt-6-luna"
                 },
                 "api_mode": {
                     "name": "API mode",

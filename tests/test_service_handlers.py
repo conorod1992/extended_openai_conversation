@@ -1186,3 +1186,41 @@ async def test_change_config_invalid_legacy_provider_requires_correction(
         )
     authenticate.assert_not_awaited()
     hass.config_entries.async_update_entry.assert_not_called()
+
+@pytest.mark.parametrize(
+    ("entry_data", "requested", "expected"),
+    [
+        ({}, None, "gpt-6-luna"),
+        ({"base_url": "https://api.openai.com/v1/"}, "gpt-4.1", "gpt-4.1"),
+        ({"base_url": "https://compatible.example/v1"}, None, "gpt-4.1-mini"),
+        ({"base_url": "https://compatible.example/v1"}, "vision-custom", "vision-custom"),
+        ({"api_provider": "azure"}, None, "gpt-4.1-mini"),
+        ({"api_provider": "azure"}, "vision-deployment", "vision-deployment"),
+    ],
+)
+async def test_query_image_resolves_omitted_model_after_entry_selection(
+    hass, monkeypatch, entry_data, requested, expected
+):
+    create = AsyncMock(return_value=SimpleNamespace(model_dump=lambda: {"id": "image"}))
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=create),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+    )
+    hass.config_entries.async_get_entry.return_value = SimpleNamespace(
+        domain=DOMAIN, state=ConfigEntryState.LOADED, data=entry_data, runtime_data=client
+    )
+    monkeypatch.setattr(services, "ensure_successful_responses_result", MagicMock())
+    data = services.QUERY_IMAGE_SCHEMA({
+        "config_entry": "entry", "prompt": "Describe this",
+        "images": [{"url": "https://example.test/camera.jpg"}],
+        **({"model": requested} if requested else {}),
+    })
+    assert data.get("model") == requested
+    handlers = await _handlers(hass)
+    assert await handlers[SERVICE_QUERY_IMAGE](_call(data)) == {"id": "image"}
+    create.assert_awaited_once()
+    wire = create.await_args.kwargs
+    assert wire["model"] == expected
+    if expected == "gpt-6-luna":
+        assert wire["max_output_tokens"] > 300
+        assert wire["input"][0]["content"][1]["type"] == "input_image"

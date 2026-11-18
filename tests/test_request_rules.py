@@ -2907,3 +2907,54 @@ async def test_sentence_apostrophes_match_preview_and_local_evaluation(hass, pat
     assert outcome is not None and outcome.consume
     assert outcome.response == "Done"
     assert len(hass.services.calls) == 1
+
+@pytest.mark.parametrize("captured", [False, True])
+@pytest.mark.parametrize("request_reset", [False, True])
+@pytest.mark.parametrize(
+    ("entry_data", "model", "underlying", "accepted"),
+    [
+        ({}, "gpt-4o", None, False),
+        ({}, "gpt-5.6", None, True),
+        ({"api_provider": "azure"}, "office", "gpt-4o", False),
+        ({"api_provider": "azure"}, "office", "gpt-5.6", True),
+    ],
+    ids=["openai-reject", "openai-accept", "azure-reject", "azure-accept"],
+)
+async def test_conversation_effort_validates_unmasked_next_turn(
+    captured, request_reset, entry_data, model, underlying, accepted
+):
+    runtime = RequestRuleRuntime()
+    before = {CONF_CHAT_MODEL: model, **({"azure_model": underlying} if underlying else {})}
+    runtime.set("kitchen", before)
+    temporary = routing_rule(reset=request_reset)
+    temporary["continue_matching"] = True
+    temporary["action"].update(
+        model=None if request_reset else "temporary" if underlying else "gpt-5.6",
+        reasoning_effort=None,
+        continue_to_ai=False,
+        **({"azure_model": "gpt-5.6"} if underlying and not request_reset else {}),
+    )
+    retained = routing_rule(
+        scope="conversation", match_type="sentence_pattern" if captured else "starts_with"
+    )
+    retained["order"] = 1
+    retained["action"].update(model=None, reasoning_effort="{effort}" if captured else "high")
+    if captured:
+        retained["phrases"] = ["think carefully {effort}"]
+    rules = await manager(temporary, retained)
+    settings = dict(before)
+    if request_reset:
+        settings = {CONF_CHAT_MODEL: "gpt-5.6"} if not underlying else {CONF_CHAT_MODEL: "configured", "azure_model": "gpt-5.6"}
+    pending = async_evaluate_rule(
+        SimpleNamespace(), rules, runtime, "think carefully high", "kitchen",
+        configured_model=settings[CONF_CHAT_MODEL], request_options=settings, entry_data=entry_data,
+    )
+    if accepted:
+        await pending
+        assert runtime.peek("kitchen") == {**before, CONF_REASONING_EFFORT: "high"}
+    else:
+        state = dict(runtime._conversation_overrides)
+        with pytest.raises(HomeAssistantError, match="reasoning"):
+            await pending
+        assert runtime.peek("kitchen") == before
+        assert runtime._conversation_overrides == state

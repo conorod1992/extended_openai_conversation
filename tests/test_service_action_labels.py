@@ -48,3 +48,15 @@ def test_broadcast_and_quiet_hours_translations_match_targeted_service_fields():
                 for field_id, field in actual.get("fields", {}).items():
                     assert field == {key: expected["fields"][field_id][key] for key in ("name", "description")}
     assert len(services["broadcast"]["fields"]) == 8
+
+def test_rebuild_memory_action_has_matching_english_metadata():
+    action = "rebuild_memory_embeddings"
+    services = yaml.safe_load((ROOT / "services.yaml").read_text(encoding="utf-8"))
+    expected = {key: services[action][key] for key in ("name", "description")}
+    expected["fields"] = {
+        name: {key: field[key] for key in ("name", "description")}
+        for name, field in services[action]["fields"].items()
+    }
+    for path in (ROOT / "strings.json", ROOT / "translations/en.json"):
+        actual = json.loads(path.read_text(encoding="utf-8"))["services"][action]
+        assert actual == expected
