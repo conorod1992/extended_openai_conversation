@@ -404,8 +404,10 @@ for (const bundled of [false, true]) {
         const result = await original(message);
         if (message.type.endsWith("/model_catalog")) {
           host._azureRuleLookups ||= [];
-          if (message.model) host._azureRuleLookups.push(message.model);
-          return {...result, reasoning_effort_options: !message.model || message.model === "gpt-5.6" ? ["low", "high"] : []};
+          host._azureRuleLookups.push(message.model);
+          const efforts = !message.model ? ["low", "high", "minimal"]
+            : message.model === "gpt-5.6" ? ["low", "high"] : [];
+          return {...result, reasoning_effort_options: efforts};
         }
         return result;
       };
@@ -428,10 +430,18 @@ for (const bundled of [false, true]) {
     await panel.locator("#rule-model").fill("another-deployment");
     await expect.poll(() => panel.evaluate(host => host._azureRuleLookups.length)).toBeGreaterThan(2);
     await expect(panel.locator("#rule-reasoning")).toHaveValue("high");
-    expect(await panel.evaluate(host => host._azureRuleLookups.every(model => model === "gpt-5.6"))).toBe(true);
+    expect(await panel.evaluate(host => host._azureRuleLookups.filter(Boolean).every(model => model === "gpt-5.6"))).toBe(true);
+    await panel.locator("#rule-match").selectOption("sentence_pattern");
+    await panel.locator("#rule-phrases").fill("switch to {deployment}");
+    const lookups = await panel.evaluate(host => host._azureRuleLookups.length);
+    await panel.locator("#rule-model").fill("{deployment}");
+    await expect.poll(() => panel.evaluate(host => host._azureRuleLookups.length)).toBeGreaterThan(lookups);
+    await expect.poll(() => panel.evaluate(host => host._azureRuleLookups.at(-1))).toBe("gpt-5.6");
+    await expect(panel.locator('#rule-reasoning option[value="minimal"]')).toHaveCount(0);
+    await expect(panel.locator("#rule-reasoning")).toHaveValue("high");
     await panel.locator("#rule-save").click();
     const saved = await page.evaluate(() => browserHarness.getState().requestRules.rules.find(rule => rule.name === "Azure preserved route"));
-    expect(saved.action.model).toBe("another-deployment");
+    expect(saved.action.model).toBe("{deployment}");
     expect(saved.action.azure_model).toBe("gpt-5.6");
     expect(saved.action.reasoning_effort).toBe("high");
     await expectHarnessClean(page, errors);

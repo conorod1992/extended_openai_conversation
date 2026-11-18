@@ -58,7 +58,7 @@ retry._hass = {
   user: {id: "alice"}, config: {time_zone: "UTC"},
   callWS: async ({action}) => {
     actions.push(action);
-    if (!healthy && ["summary", "daily"].includes(action)) throw new Error("Unavailable");
+    if (!healthy && ["summary", "daily", "runs", "retention"].includes(action)) throw new Error("Unavailable");
     if (action === "summary") return {lifetime: {total_tokens: 133}};
     if (action === "daily") return {days: []};
     if (action === "runs") return {runs: [{run_id: "one"}]};
@@ -66,9 +66,13 @@ retry._hass = {
     return {};
   },
 };
+const errorKeys = () => retry._result.load_errors.map(({key}) => key).sort();
 await retry._loadSectionData(true);
-assert.deepEqual(retry._result.load_errors.map(({key}) => key).sort(), ["days", "summary"]);
+assert.deepEqual(errorKeys(), ["days", "retention", "runs", "summary"]);
 await retry._clearUsageDetails();
+assert.deepEqual(errorKeys(), ["days", "retention", "summary"]);
+assert.deepEqual(retry._result.runs.runs, []);
+assert.equal(retry._result.loading.runs, false);
 healthy = true;
 actions.length = 0;
 await retry._loadSectionData(true);

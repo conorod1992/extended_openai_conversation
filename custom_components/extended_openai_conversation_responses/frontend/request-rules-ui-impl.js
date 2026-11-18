@@ -303,13 +303,13 @@ function ensureModelCatalog() {
 }
 
 export function requestRuleCapabilityModel(panel, override = "", underlyingModel = "") {
-  if (!(override || underlyingModel) || /\{[^{}]+\}/.test(override + underlyingModel)) return "";
   const result = panel._result || {}, config = result.config || {};
   const azure = result.api_provider === "azure" || (!result.api_provider && config.azure_model);
   const configured = result.configured_model || config.chat_model;
   const binding = Object.hasOwn(result,"azure_model") ? result.azure_model : config.azure_model || result.effective_model;
-  return azure && underlyingModel ? underlyingModel
-    : azure && override === configured && binding ? binding : override;
+  const model = azure && underlyingModel ? underlyingModel
+    : azure && override && override === configured && binding ? binding : override;
+  return /\{[^{}]+\}/.test(model) ? "" : model;
 }
 
 function ensureDialog(panel) {

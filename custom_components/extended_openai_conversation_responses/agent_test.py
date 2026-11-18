@@ -491,6 +491,7 @@ async def async_test_agent(
             authentication_rejected = True
             await usage_manager.async_record_request(
                 successful=False,
+                usage=probe_usage,
                 provider=usage_provider,
                 model=usage_model,
                 api_mode=usage_api_mode,
@@ -508,6 +509,7 @@ async def async_test_agent(
         else:
             await usage_manager.async_record_request(
                 successful=False,
+                usage=probe_usage,
                 provider=usage_provider,
                 model=usage_model,
                 api_mode=usage_api_mode,

@@ -10,7 +10,8 @@ const azure = {_result: {api_provider: "azure", configured_model:"home-deploymen
 assert.equal(requestRuleCapabilityModel(azure, "home-deployment"), "gpt-5.6");
 assert.equal(requestRuleCapabilityModel(azure), "");
 for (const deployment of ["another-deployment", "gpt-4.1-mini"]) assert.equal(requestRuleCapabilityModel(azure, deployment), deployment);
-assert.equal(requestRuleCapabilityModel(azure,"{deployment}","gpt-4.1-mini"),"");
+assert.equal(requestRuleCapabilityModel(azure,"{deployment}","gpt-4.1-mini"),"gpt-4.1-mini");
+assert.equal(requestRuleCapabilityModel(azure,"home-deployment","{binding}"),"");
 assert.equal(requestRuleCapabilityModel(azure,"","gpt-4.1-mini"),"gpt-4.1-mini");
 assert.equal(requestRuleCapabilityModel(azure,"another-deployment","gpt-4.1-mini"),"gpt-4.1-mini");
 assert.equal(requestRuleCapabilityModel({_result: {api_provider: "openai", effective_model: "gpt-5.6"}}, "gpt-4o"), "gpt-4o");

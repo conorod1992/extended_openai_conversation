@@ -2927,6 +2927,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           days: days?.local_run_summary
             ? {...days, local_run_summary: {...days.local_run_summary, count: 0}} : days,
           runs: {...this._result.runs, runs: [], total: 0},
+          load_errors: load_errors.filter(issue => issue.key !== "runs"),
           loading: {...this._result.loading, runs: false}};
         writeSectionCache(this, this._sectionCacheKey(), {
           summary: failed("summary") ? undefined : this._result.summary,

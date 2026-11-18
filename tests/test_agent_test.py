@@ -23,6 +23,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     MEMORY_MODE_MANUAL,
     MEMORY_MODE_OFF,
 )
+from custom_components.extended_openai_conversation_responses.usage import RequestUsage
 
 
 def _chat_reply(usage: Any = None) -> SimpleNamespace:
@@ -174,6 +175,7 @@ async def test_chat_probe_requires_a_completed_text_reply(
         ("refusal", "Failed"),
         ("commentary", "Failed"),
         ("incomplete_message", "Failed"),
+        ("content_filter", "Failed"),
         ("budget", "Warning"),
     ],
 )
@@ -193,6 +195,10 @@ async def test_responses_probe_requires_a_completed_final_answer(case, expected_
         message.phase = "commentary"
     elif case == "incomplete_message":
         message.status = "incomplete"
+    elif case == "content_filter":
+        response.output = []
+        response.status = "incomplete"
+        response.incomplete_details = SimpleNamespace(reason="content_filter")
     elif case == "budget":
         response.output = []
         response.status = "incomplete"
@@ -417,7 +423,7 @@ async def test_responses_failed_status_is_reported() -> None:
                     code="server_error",
                     type="server_error",
                 ),
-                usage=None,
+                usage=SimpleNamespace(input_tokens=7, output_tokens=2, total_tokens=9),
             )
         )
     )
@@ -439,6 +445,7 @@ async def test_responses_failed_status_is_reported() -> None:
     assert "Provider request failed" in model.message
     usage.async_record_request.assert_awaited_once_with(
         successful=False,
+        usage=RequestUsage(input_tokens=7, output_tokens=2, total_tokens=9),
         **_usage_attribution(model="gpt-5.6", api_mode=API_MODE_RESPONSES),
     )
 
@@ -750,6 +757,7 @@ async def test_agent_test_authentication_failure_requests_reauth_first(
     assert usage.calls == [
         {
             "successful": False,
+            "usage": None,
             **_usage_attribution(
                 model=agent_test.DEFAULT_CHAT_MODEL,
                 api_mode=agent_test.API_MODE_RESPONSES,
@@ -784,6 +792,7 @@ async def test_agent_test_non_auth_provider_error_and_web_search_failure(
     assert usage.calls == [
         {
             "successful": False,
+            "usage": None,
             **_usage_attribution(
                 model=agent_test.DEFAULT_CHAT_MODEL,
                 api_mode=agent_test.API_MODE_RESPONSES,
