@@ -77,7 +77,7 @@ async def test_committed_policy_reaches_existing_volatile_accounting(
             )
         )["document"]
         artifact["config"].update(policy)
-        payload = {"document": artifact, "mode": "current", "confirm": True}
+        payload = {"document": artifact, "mode": "current", "confirm": True, "confirm_retention": True}
     else:
         payload = {"config": policy}
     await ui.async_management_command(

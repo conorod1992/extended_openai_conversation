@@ -1046,7 +1046,7 @@ class ConversationArchive:
             for session in self._sessions.values()
             if session.scope_id == scope_id and session.retention_state == "retained"
         ]
-        sessions.sort(key=lambda item: item.last_message_at, reverse=True)
+        sessions.sort(key=lambda item: _parse_time(item.last_message_at), reverse=True)
         page = sessions[max(0, offset) : max(0, offset) + limit]
         return {
             "sessions": [asdict(session) for session in page],
@@ -1812,13 +1812,12 @@ def _search_archive_snapshot(
     time_zone = time_zone or dt_util.DEFAULT_TIME_ZONE
     start, end = _local_date_bounds(start_date, end_date, time_zone)
     keep = offset + limit
-    ranked: list[tuple[float, str, int, ArchiveSession, ArchiveTurn, int]] = []
+    ranked: list[tuple[float, datetime, int, ArchiveSession, ArchiveTurn, int]] = []
     total = 0
     for session, turns in snapshot:
         for turn_index, turn in enumerate(turns):
-            if (start_date or end_date) and not (
-                start <= _parse_time(turn.timestamp) < end
-            ):
+            timestamp = _parse_time(turn.timestamp)
+            if (start_date or end_date) and not (start <= timestamp < end):
                 continue
             normalized_combined, tokens = _search_features(turn)
             overlap = len(query_tokens & tokens)
@@ -1838,7 +1837,7 @@ def _search_archive_snapshot(
             if literal_match:
                 score += 2
             # The sequence key preserves the previous stable ordering of ties.
-            candidate = (score, turn.timestamp, -total, session, turn, turn_index)
+            candidate = (score, timestamp, -total, session, turn, turn_index)
             total += 1
             if len(ranked) < keep:
                 heappush(ranked, candidate)
@@ -1852,15 +1851,12 @@ def _search_archive_snapshot(
                 "session_id": session.session_id,
                 "turn_id": turn.turn_id,
                 "turn_index": turn_index,
-                "date": _parse_time(turn.timestamp)
-                .astimezone(time_zone)
-                .date()
-                .isoformat(),
+                "date": timestamp.astimezone(time_zone).date().isoformat(),
                 "timestamp": turn.timestamp,
                 "title": session.title,
                 "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
             }
-            for _, _, _, session, turn, turn_index in page
+            for _, timestamp, _, session, turn, turn_index in page
         ],
         "offset": offset,
         "limit": limit,

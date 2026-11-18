@@ -26,11 +26,19 @@ from tests.test_speech_scope_regressions import all_splits, streamed
         ("Inline ```yaml``` text", "Inline yaml text"),
         ("```yaml```", "yaml"),
         ("`yaml`", "yaml"),
-        (r"\```yaml", r"\`yaml"),
+        (r"\```yaml", "`yaml"),
         ("```yam`l\nbody\n```", "yam`l\nbody"),
         ("```yaml", "yaml"),
         ("```yaml\n`inline` and \\literal\n```", "`inline` and \\literal"),
-        ("```yaml\n```not-an-opener\nbody\n```", "not-an-opener\nbody"),
+        ("```yaml\n```not-a-closer\nbody\n```", "```not-a-closer\nbody"),
+        (
+            "Instructions:\n```python\ndelimiter = '```'\nurl = 'https://example.com/docs'\n````\n**Done**. https://example.com",
+            "Instructions:\ndelimiter = '```'\nurl = 'https://example.com/docs'\nDone.",
+        ),
+        (
+            "> ```text\n> ``\n> ``` still code https://example.com\n> ```` \t\n**After** https://example.com",
+            "``\n``` still code https://example.com\nAfter",
+        ),
     ],
 )
 def test_fence_info_and_literal_controls_at_every_split(source, expected):
@@ -39,6 +47,27 @@ def test_fence_info_and_literal_controls_at_every_split(source, expected):
 
 def test_removed_url_cannot_create_a_block_fence():
     all_splits("https://example.com ```yaml\nbody\n```", "yaml\nbody")
+
+
+def test_unmatched_emphasis_cannot_consume_a_fenced_block():
+    code = "x = 1 * 7\n`literal` and **literal**\n"
+    after = "After with *emphasis* and ***strong emphasis***."
+    after_clean = "After with emphasis and strong emphasis."
+    long_code = "x" * 4_200 + "\n" + code
+    for marker in ("*", "**", "***"):
+        before = f"{marker}literal intro\n"
+        all_splits(
+            before + "```text\n" + code + "```\n" + after,
+            before + code + after_clean,
+            max_buffer_chars=64,
+        )
+
+        # Exercise the complete-message delimiter index and real streaming limit.
+        source = before + "```text\n" + long_code + "```\n" + after
+        expected = before + long_code + after_clean
+        assert clean(Sanitizer().process_complete(source)) == expected
+        for width in (1, 127, len(source)):
+            assert streamed(source, width) == expected
 
 
 def test_oversized_or_unfinished_opener_has_bounded_literal_fallback():
@@ -100,7 +129,7 @@ def test_replacements_run_after_fence_info_cleanup():
         ("Literal:\n    ```yaml\n    value: 1\n    ```", "Literal:\n yaml\n value: 1"),
         ("https://example.com > ```yaml\nbody\n```", "yaml\nbody"),
         ("- https://example.com ```yaml\nbody\n```", "yaml\nbody"),
-        (r"- \```yaml" + "\nbody\n", r"\`yaml" + "\nbody"),
+        (r"- \```yaml" + "\nbody\n", "`yaml\nbody"),
         (
             "- Example:\n    ```text\n    # heading\n    1. numbered\n    > quote\n    ---\n    https://example.com\n    ```\nAfter",
             "Example:\n # heading\n 1. numbered\n > quote\n ---\n https://example.com\nAfter",
@@ -122,3 +151,35 @@ def test_container_fences_disabled_and_bounded_fallback():
     for char in source:
         z.feed(char)
         assert z.buffered_chars <= 128
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "> ```python\n> print('hello')\n\n**More info** https://example.com",
+            "print('hello')\nMore info",
+        ),
+        (
+            "- Example:\n    ```text\n    valid **code**\n\n    https://inside.example\n**More info** https://example.com",
+            "Example:\n valid **code**\n https://inside.example\nMore info",
+        ),
+        (
+            "> - ```text\n>   **code**\n> **More info** https://example.com",
+            "**code**\nMore info",
+        ),
+        (
+            "> > ```text\n> > 2 >> 1\n> **More info** https://example.com",
+            "2 >> 1\nMore info",
+        ),
+    ],
+)
+def test_container_exit_implicitly_closes_fence_at_every_split(source, expected):
+    all_splits(source, expected)
+
+
+def test_large_completed_message_reindexes_after_implicit_fence_close():
+    source = "> ```text\n> " + ("x" * 4_200) + "\n**After** https://example.com"
+    expected = ("x" * 4_200) + "\nAfter"
+    assert clean(Sanitizer().process_complete(source)) == expected
+    assert streamed(source, 113) == expected

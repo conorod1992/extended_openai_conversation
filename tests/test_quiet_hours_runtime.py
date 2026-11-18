@@ -126,6 +126,31 @@ def _room_entry(entity_id: str, domain: str, device_id: str, *, name: str):
     )
 
 
+def _install_registered_controls(monkeypatch, *entity_ids):
+    """Model registry-backed controls with actual durable identity fields."""
+    entries = {
+        entity_id: _room_entry(
+            entity_id, entity_id.split(".")[0], "test-device", name=entity_id
+        )
+        for entity_id in entity_ids
+    }
+    monkeypatch.setattr(
+        runtime.er,
+        "async_get",
+        lambda _: SimpleNamespace(
+            async_get=entries.get,
+            async_get_entity_id=lambda *identity: next(
+                (
+                    item.entity_id
+                    for item in entries.values()
+                    if (item.domain, item.platform, item.unique_id) == identity
+                ),
+                None,
+            ),
+        ),
+    )
+
+
 def _install_registry(monkeypatch, *rooms: str) -> None:
     entries = {}
     for room in rooms:
@@ -776,6 +801,9 @@ async def test_reconcile_handles_uninitialized_inactive_and_period_rollover(
 async def test_volume_apply_covers_skip_noop_success_and_rollback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _install_registered_controls(
+        monkeypatch, "media_player.loud", "media_player.failed"
+    )
     manager = _public_manager(SimpleNamespace(), QuietHoursConfig(max_volume=0.2))
     manager._active = {
         "controls": {"media_player.owned": {"kind": "volume"}},
@@ -821,6 +849,7 @@ async def test_volume_apply_covers_skip_noop_success_and_rollback(
 async def test_switch_apply_covers_skip_noop_success_and_rollback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _install_registered_controls(monkeypatch, "switch.on", "switch.failed")
     manager = _public_manager(SimpleNamespace(), QuietHoursConfig(wake_sound="off"))
     manager._active = {
         "controls": {"switch.owned": {"kind": "switch"}},
@@ -1269,7 +1298,12 @@ async def test_reconcile_covers_disabled_new_and_stale_periods(monkeypatch) -> N
     assert manager._active["period_started_at"].startswith("2026-09-13T22:00")
 
 
-async def test_apply_controls_claim_only_needed_values_and_release_on_failure() -> None:
+async def test_apply_controls_claim_only_needed_values_and_release_on_failure(
+    monkeypatch,
+) -> None:
+    _install_registered_controls(
+        monkeypatch, "media_player.loud", "media_player.failed", "switch.on"
+    )
     hass = _hass(
         {
             "media_player.loud": _state("media_player.loud", "idle", volume_level=0.8),
@@ -1723,6 +1757,7 @@ async def test_apply_control_skips_already_owned_entity(kind: str) -> None:
 async def test_apply_switch_failure_releases_ownership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _install_registered_controls(monkeypatch, "switch.test")
     manager = _bare_runtime_manager(SimpleNamespace())
     controls: dict[str, Any] = {}
     manager._active = {"controls": controls}

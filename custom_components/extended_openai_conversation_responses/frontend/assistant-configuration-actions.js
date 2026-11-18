@@ -1,3 +1,4 @@
+import {usageRetentionDeletionNotice} from "./retention-settings-ui.js";
 import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft, recoverCommittedRetention} from "./configuration-acknowledgement.js";
 import {downloadConfigurationSharing} from "./sharing-review.js";
 import {invalidateOperation} from "./operation-ownership.js";
@@ -8,6 +9,7 @@ export function invalidateImportPreview(panel, applyButton, summary) {
   invalidateOperation(panel, "import-preview");
   panel._importDocument = null;
   panel._importRevision = null;
+  panel._importShortenedRetention = null;
   if (applyButton) applyButton.disabled = true;
   if (summary) summary.textContent = "Validate the document to preview it.";
 }
@@ -90,13 +92,18 @@ export async function applyConfigurationImport(panel, root) {
     invalidateImportPreview(panel, button, root.querySelector("#import-summary"));
     return;
   }
-  if (mode === "current" && !await panel._confirm("Overwrite this agent?", `The saved configuration will be replaced.${panel._configDirty ? " Your unsaved shared draft will be discarded." : ""} Retained history and parent-entry credentials are not affected.`, "Overwrite")) return;
+  const retentionNotice = usageRetentionDeletionNotice(panel._importShortenedRetention);
+  if (mode === "current" && !await panel._confirm(
+    "Overwrite this agent?",
+    `The saved configuration will be replaced.${panel._configDirty ? " Your unsaved shared draft will be discarded." : ""}${retentionNotice ? ` ${retentionNotice}` : ""}`,
+    retentionNotice ? "Overwrite and delete details" : "Overwrite",
+  )) return;
   if (!matches()) return;
   const submittedDraft = captureConfigurationSubmission(panel);
   panel._eocImportPending = true;
   button.disabled = true;
   try {
-    const result = await panel._call("configuration", "import", {document:source, mode, confirm:mode === "current", ...(mode === "current" ? {revision} : {})});
+    const result = await panel._call("configuration", "import", {document:source, mode, confirm:mode === "current", ...(mode === "current" ? {revision, ...(retentionNotice ? {confirm_retention:true} : {})} : {})});
     requireMutationAcknowledgement(result?.subentry_id && result.status === (mode === "current" ? "updated" : "created"), "importing the configuration");
     if (!configurationSubmissionIsCurrent(panel, intent.owner)) {
       // A confirmed create still changes the catalogue when its former editor

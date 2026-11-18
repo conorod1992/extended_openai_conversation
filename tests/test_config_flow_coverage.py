@@ -249,6 +249,7 @@ async def test_openai_credentials_error_retry_preserves_help_placeholders() -> N
         hass=MagicMock(),
         _setup_data={CONF_NAME: "Assistant", CONF_API_PROVIDER: "openai"},
         async_show_form=MagicMock(side_effect=_sync_result),
+        add_suggested_values_to_schema=lambda schema, values: ExtendedOpenAIConversationConfigFlow.add_suggested_values_to_schema(flow, schema, values),
     )
     first = await ExtendedOpenAIConversationConfigFlow.async_step_openai_credentials(
         flow
@@ -298,7 +299,7 @@ async def test_config_flow_success_errors_reauth_and_type_registration() -> None
         async_show_form=MagicMock(side_effect=_sync_result),
         async_create_entry=MagicMock(side_effect=_sync_result),
         async_abort=MagicMock(side_effect=_sync_result),
-        async_update_reload_and_abort=MagicMock(side_effect=_sync_result),
+        add_suggested_values_to_schema=lambda schema, values: ExtendedOpenAIConversationConfigFlow.add_suggested_values_to_schema(flow, schema, values),
     )
 
     async def finish(data, step_id, data_schema):
@@ -355,7 +356,8 @@ async def test_config_flow_success_errors_reauth_and_type_registration() -> None
     missing = await ExtendedOpenAIConversationConfigFlow.async_step_reauth_confirm(flow)
     assert missing == {"reason": "reauth_failed"}
 
-    entry = SimpleNamespace(data={CONF_API_KEY: "old", CONF_ORGANIZATION: "org"})
+    entry = SimpleNamespace(data={CONF_API_KEY: "old", CONF_ORGANIZATION: "org"},
+                            state=ConfigEntryState.LOADED, entry_id="entry-1", disabled_by=None)
     flow.hass.config_entries.async_get_entry.return_value = entry
     reauth_form = await ExtendedOpenAIConversationConfigFlow.async_step_reauth(flow, {})
     assert flow._reauth_entry is entry
@@ -393,7 +395,10 @@ async def test_config_flow_success_errors_reauth_and_type_registration() -> None
         updated = await ExtendedOpenAIConversationConfigFlow.async_step_reauth_confirm(
             flow, {CONF_API_KEY: "new"}
         )
-    assert updated["data"] == {CONF_API_KEY: "new", CONF_ORGANIZATION: "org"}
+    assert updated == {"reason": "reauth_successful"}
+    flow.hass.config_entries.async_update_entry.assert_called_once_with(
+        entry, data={CONF_API_KEY: "new", CONF_ORGANIZATION: "org"}
+    )
 
     assert isinstance(
         ExtendedOpenAIConversationConfigFlow.async_get_options_flow(entry),

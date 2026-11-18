@@ -18,6 +18,7 @@ PARSERS = {
     "json.loads",
     "json.load",
     "orjson.loads",
+    "ijson.basic_parse",
 }
 LOG_METHODS = {"warning", "error", "exception", "debug", "info", "critical", "log"}
 

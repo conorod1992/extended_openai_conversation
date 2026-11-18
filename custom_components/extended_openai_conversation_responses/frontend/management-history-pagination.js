@@ -116,7 +116,7 @@ function decorateConversationPager(panel) {
   status.textContent = `${pending ? "Loading; showing previous results. " : error ? "Unable to load results; showing previous results. " : ""}${pageLabel(
     sessions,
     successful.mode === "search" ? "matching turns" : "conversations",
-  )}${successful.mode === "search" ? ` for “${successful.query}”` : ""}`;
+  )}${successful.mode === "search" ? ` for “${successful.query}”` : ""}${sessions.browse_limit_reached ? ". Browse limit reached. Narrow your search to see more results." : ""}`;
   pager.append(status);
   if (error && !pending) {
     const retry = document.createElement("button");
@@ -146,7 +146,9 @@ function decorateConversationPager(panel) {
   previous.textContent = "Previous";
   const offset = integer(sessions.offset);
   const limit = Math.max(1, integer(sessions.limit, panel._eocHistoryMode === "search" ? SEARCH_PAGE_LIMIT : LIST_PAGE_LIMIT));
-  previous.disabled = offset === 0 || pending || Boolean(error);
+  const showingDifferentSearch = successful.mode !== (panel._eocHistoryMode || "list")
+    || (successful.mode === "search" && successful.query !== panel._eocHistoryQuery);
+  previous.disabled = offset === 0 || pending || Boolean(error && showingDifferentSearch);
   previous.addEventListener("click", () => void loadConversationPage(panel, Math.max(0, offset - limit)));
   pager.append(previous);
 

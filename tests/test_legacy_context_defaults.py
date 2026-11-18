@@ -116,6 +116,7 @@ async def test_management_read_preview_save_duplicate_import_and_reset(
         entry_id="entry", domain=DOMAIN, data={}, subentries={"agent": subentry}
     )
     monkeypatch.setattr(ui, "entry_and_agent", lambda *_: (entry, subentry))
+    hass.config_entries.async_get_entry.return_value = entry
     rules = await rule_manager()
     monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
     preview = AsyncMock(return_value={"preview": True})

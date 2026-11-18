@@ -335,5 +335,5 @@ def test_transfer_text_size_check_never_encodes_whole_input(monkeypatch):
             raise AssertionError("Whole input must not be encoded")
 
     monkeypatch.setattr(backup, "MAX_BACKUP_BYTES", 8192)
-    with pytest.raises(backup.BackupError, match="128 MB safety limit"):
+    with pytest.raises(backup.BackupError, match="uncompressed safety limit"):
         transfer.inspect_transfer(GuardedText("🙂" * 1000000), "agent")

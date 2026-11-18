@@ -168,8 +168,54 @@
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."
+        },
+    "broadcast": {
+      "name": "Trasmetti messaggio vocale",
+      "description": "Invia un annuncio TTS ai satelliti Assist selezionati senza interrompere le sessioni vocali in corso. La trasmissione deve prima essere abilitata in Extended OpenAI.",
+      "fields": {
+        "message": {
+          "name": "Messaggio",
+          "description": "Testo dell’annuncio."
+        },
+        "whole_home": {
+          "name": "Tutta la casa",
+          "description": "Invia a tutti i satelliti Assist che supportano gli annunci, tranne quello di origine."
+        },
+        "entity_id": {
+          "name": "Satelliti Assist",
+          "description": "Una o più entità satellite Assist."
+        },
+        "device_id": {
+          "name": "Dispositivi",
+          "description": "Dispositivi i cui satelliti Assist devono ricevere l’annuncio."
+        },
+        "area_id": {
+          "name": "Aree",
+          "description": "Aree i cui satelliti Assist devono ricevere l’annuncio."
+        },
+        "floor_id": {
+          "name": "Piani",
+          "description": "Piani i cui satelliti Assist devono ricevere l’annuncio."
+        },
+        "label_id": {
+          "name": "Etichette",
+          "description": "Etichette i cui satelliti Assist devono ricevere l’annuncio."
+        },
+        "ttl_seconds": {
+          "name": "Scadenza della coda",
+          "description": "Tempo massimo di attesa in secondi per la consegna a un satellite occupato."
         }
+      }
     },
+    "enable_quiet_hours": {
+      "name": "Abilita programma delle ore di quiete",
+      "description": "Attiva il programma salvato delle ore di quiete. Se è previsto un periodo di quiete adesso, inizia immediatamente."
+    },
+    "disable_quiet_hours": {
+      "name": "Disabilita programma delle ore di quiete",
+      "description": "Disattiva il programma salvato delle ore di quiete. Le impostazioni degli altoparlanti e della parola di attivazione modificate dalle ore di quiete vengono ripristinate se non sono state cambiate nel frattempo."
+    }
+  },
     "options": {
         "step": {
             "init": {

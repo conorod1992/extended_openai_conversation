@@ -150,12 +150,15 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         return object(), {"changes": 1, "selected_sections": ["memory"]}
 
     async def restore(
-        _hass, actual_entry, actual_subentry, actual_prepared, *, sections, precondition
+        _hass, actual_entry, actual_subentry, actual_prepared, *, sections, precondition,
+        confirm_retention, provider_connection, expected_provider_data,
     ):
         assert actual_entry is entry
         assert actual_subentry is subentry
         assert actual_prepared is prepared
         assert sections == ["memory"]
+        assert not confirm_retention
+        assert provider_connection is expected_provider_data is None
         await precondition()
         return {"restored": True}
 

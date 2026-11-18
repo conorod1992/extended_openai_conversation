@@ -7,6 +7,18 @@ const FIELDS = [
   ["usage_run_retention_days", "Keep run details for"],
 ];
 
+export function usageRetentionDeletionNotice(shortened) {
+  const deletions = FIELDS.flatMap(([key], index) => {
+    const days = shortened?.[key];
+    const detail = index === 0 ? "request details" : "run details";
+    if (!Number.isInteger(days) || days < 0) return [];
+    return [days === 0 ? `all ${detail}` : `${detail} older than ${days} days`];
+  });
+  return deletions.length
+    ? `Shorter Usage retention will delete ${deletions.join(" and ")}. Usage totals will be kept.`
+    : "";
+}
+
 function optionMarkup(panel, item, selected) {
   const value = item?.value ?? item;
   const label = item?.label ?? String(value);

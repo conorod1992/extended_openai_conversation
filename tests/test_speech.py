@@ -173,7 +173,7 @@ def test_common_markdown_is_simplified_conservatively() -> None:
             "sensor.kitchen_temperature and ordinary_under_scores",
         ),
         ("2 * 3 and _ unmatched *", "2 * 3 and _ unmatched *"),
-        (r"\*literal\* and \_literal\_", r"\*literal\* and \_literal\_"),
+        (r"\*literal\* and \_literal\_", "*literal* and _literal_"),
         ("*one* https://example.com/a_b _two_", "one two"),
     ],
 )
@@ -309,12 +309,18 @@ def test_streaming_preserves_word_boundaries_and_normal_brackets() -> None:
 
 
 def test_streaming_malformed_markdown_degrades_with_bounded_memory() -> None:
-    malformed = "[label](https://example.com/" + "x" * (
-        DEFAULT_STREAMING_BUFFER_LIMIT + 10
-    )
     sanitizer = StreamingSpeechSanitizer()
+    malformed = "[unfinished " + "x" * (DEFAULT_STREAMING_BUFFER_LIMIT + 10)
     emitted = sanitizer.feed(malformed)
     assert emitted == malformed
+    assert sanitizer.buffered_chars == 0
+    assert sanitizer.finish() == ""
+
+    sanitizer = StreamingSpeechSanitizer()
+    unfinished_url = (
+        "[label](https://example.com/" + "x" * DEFAULT_STREAMING_BUFFER_LIMIT
+    )
+    assert sanitizer.feed(unfinished_url) == "label"
     assert sanitizer.buffered_chars == 0
     assert sanitizer.finish() == ""
     assert _stream(["Keep [unfinished](https://example.com"], urls=False) == (
@@ -1014,13 +1020,13 @@ def test_removed_citations_keep_spoken_boundaries_and_formatting(
         ("A ***unfinished span", "A ***unfinished span"),
         ("A ~~unfinished span", "A ~~unfinished span"),
         ("**This is bold** and __this too__.", "This is bold and this too."),
-        (r"A \*literal\* and **bold**.", r"A \*literal\* and bold."),
-        (r"A \_literal\_ and __strong__.", r"A \_literal\_ and strong."),
+        (r"A \*literal\* and **bold**.", "A *literal* and bold."),
+        (r"A \_literal\_ and __strong__.", "A _literal_ and strong."),
         (
             r"A \` literal; **important**. See https://example.com now.",
-            r"A \` literal; important. See now.",
+            "A ` literal; important. See now.",
         ),
-        (r"Type \[name](target) literally.", r"Type \[name](target) literally."),
+        (r"Type \[name](target) literally.", "Type [name](target) literally."),
         (
             "0871234567. That is the contact number.",
             "0871234567. That is the contact number.",
@@ -1146,7 +1152,7 @@ def test_complete_speech_keeps_cleaning_after_long_unclosed_link() -> None:
         "Read [example.com](https://example.com) and continue.",
         "2**3; literal operators are preserved.",
         "*outer **inner** outer*",
-        "Use \`code **not bold**\` and **real bold**.",
+        r"Use \`code **not bold**\` and **real bold**.",
         r"A \*literal\* and **bold**.",
         "Hello **_[example.com](https://example.com)_** world.",
     ],

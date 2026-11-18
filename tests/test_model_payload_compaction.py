@@ -119,7 +119,7 @@ def _baseline_tools() -> list[dict[str, Any]]:
 def test_complete_provider_payload_matches_develop_baseline(
     api_mode, conditional_continue
 ) -> None:
-    """Compare complete serialized payloads captured before consolidation at 624d9f07."""
+    """Compare complete payloads with the baseline, including Knowledge cursors."""
     baseline = json.loads(
         (Path(__file__).parent / "fixtures" / "model_tool_payloads.json").read_text(
             encoding="utf-8"

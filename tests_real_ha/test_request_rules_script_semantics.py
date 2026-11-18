@@ -1,7 +1,7 @@
 """Request Rules executed by Home Assistant's real script engine."""
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -48,6 +48,330 @@ def _local(
 
 def _record_action(message):
     return {"action": "rule_probe.record", "data": {"message": message}}
+
+
+async def _safe_match_preview(hass, agent):
+    from custom_components.extended_openai_conversation_responses.management_ui import (
+        async_management_command,
+    )
+    from homeassistant.helpers.script import Script
+    from homeassistant.helpers.template import Template
+
+    # The public preview may match text/evaluate Only when conditions. It must
+    # never enter the Script engine or dispatch even one action service.
+    with (
+        # These rules have no Only when conditions; every authored template is
+        # an action template, including enabled, branch and response templates.
+        patch.object(Template, "async_render", side_effect=AssertionError("preview rendered action template")) as render,
+        patch.object(
+            Script,
+            "async_run",
+            AsyncMock(side_effect=AssertionError("preview ran Script")),
+        ) as run,
+        patch.object(
+            type(hass.services),
+            "async_call",
+            AsyncMock(side_effect=AssertionError("preview dispatched action")),
+        ) as call,
+    ):
+        result = await async_management_command(
+            hass,
+            None,
+            True,
+            {
+                "section": "request_rules",
+                "action": "test_match",
+                "text": "run rule",
+                "entry_id": agent.entry.entry_id,
+                "subentry_id": agent.subentry.subentry_id,
+            },
+        )
+        run.assert_not_called()
+        call.assert_not_called()
+        render.assert_not_called()
+    return result
+
+
+@pytest.mark.parametrize(
+    "actions,certainty,reply,markers",
+    [
+        pytest.param(
+            [{"stop": "finished"}], "terminal", "First complete", [], id="stop"
+        ),
+        pytest.param(
+            [{"stop": "{{ 1 / 0 }}"}],
+            "terminal",
+            "First complete",
+            [],
+            id="literal-stop-message",
+        ),
+        pytest.param(
+            [{"stop": "failed", "error": True}],
+            "terminal",
+            "Failed safely",
+            [],
+            id="error-stop",
+        ),
+        pytest.param(
+            [{"set_conversation_response": "Script answer"}],
+            "terminal",
+            "Script answer",
+            [],
+            id="response",
+        ),
+        pytest.param(
+            [{"stop": "disabled", "enabled": False}],
+            "continue",
+            "Provider answer",
+            [],
+            id="disabled-stop",
+        ),
+        pytest.param(
+            [{"stop": "maybe", "enabled": "{{ false }}"}],
+            "conditional",
+            "Provider answer",
+            [],
+            id="template-disabled-stop",
+        ),
+        pytest.param(
+            [{"stop": "maybe", "enabled": "{{ true }}"}],
+            "conditional",
+            "First complete",
+            [],
+            id="template-enabled-stop",
+        ),
+        pytest.param(
+            [{"if": "{{ false }}", "then": [{"stop": "nested"}]}],
+            "conditional",
+            "Provider answer",
+            [],
+            id="unreachable-nested-stop",
+        ),
+        pytest.param(
+            [{"if": "{{ true }}", "then": [{"stop": "nested"}]}],
+            "conditional",
+            "First complete",
+            [],
+            id="reached-nested-stop",
+        ),
+        pytest.param(
+            [{"parallel": [{"stop": "branch only"}]}],
+            "conditional",
+            "First complete",
+            [],
+            id="parallel-stop-scope",
+        ),
+        pytest.param(
+            [{"set_conversation_response": "old"}, {"set_conversation_response": None}],
+            "continue",
+            "Provider answer",
+            [],
+            id="cleared-response",
+        ),
+        pytest.param(
+            [
+                {"set_conversation_response": "old"},
+                {"set_conversation_response": "new"},
+            ],
+            "terminal",
+            "new",
+            [],
+            id="overwritten-response",
+        ),
+        pytest.param(
+            [
+                {"set_conversation_response": "kept"},
+                {"set_conversation_response": None, "enabled": False},
+            ],
+            "terminal",
+            "kept",
+            [],
+            id="disabled-clear",
+        ),
+        pytest.param(
+            [
+                {"set_conversation_response": "kept"},
+                {"set_conversation_response": None, "enabled": "{{ false }}"},
+            ],
+            "conditional",
+            "kept",
+            [],
+            id="conditional-clear",
+        ),
+        pytest.param(
+            [{"set_conversation_response": "{{ 'Rendered answer' }}"}],
+            "conditional",
+            "Rendered answer",
+            [],
+            id="templated-response",
+        ),
+        pytest.param(
+            [_record_action("ordinary")],
+            "conditional",
+            "Provider answer",
+            ["ordinary"],
+            id="ordinary-continuation",
+        ),
+        pytest.param(
+            [_record_action("before"), {"set_conversation_response": "Final answer"}],
+            "terminal",
+            "Final answer",
+            ["before"],
+            id="final-response-after-service",
+        ),
+        pytest.param(
+            [{"set_conversation_response": "Final answer"}, _record_action("after")],
+            "conditional",
+            "Final answer",
+            ["after"],
+            id="opaque-action-after-response",
+        ),
+    ],
+)
+async def test_safe_preview_matches_native_termination_without_executing_actions(
+    hass, monkeypatch, actions, certainty, reply, markers
+):
+    agent = await _agent(hass)
+    sent = _provider(monkeypatch, agent, ["Provider answer"])
+    calls = []
+
+    async def record(call):
+        calls.append(call.data["message"])
+
+    hass.services.async_register("rule_probe", "record", record)
+    await agent._request_rules.async_create(
+        {
+            **_local(actions, success="First complete"),
+            "name": "First",
+            "continue_matching": True,
+        }
+    )
+    await agent._request_rules.async_create(
+        {
+            **_rule(
+                "model_routing",
+                {"model": "gpt-5.6", "scope": "request", "continue_to_ai": True},
+                phrase="run rule",
+            ),
+            "name": "Second",
+            "order": 1,
+        }
+    )
+    snapshot = agent._request_rules.snapshot()
+    revision = agent._request_rules.revision()
+    preview = await _safe_match_preview(hass, agent)
+    assert agent._request_rules.snapshot() == snapshot
+    assert agent._request_rules.revision() == revision
+    assert sent == [] and calls == []
+    chain = preview["matched_rules"]
+    if certainty == "terminal":
+        assert preview["rule"]["name"] == "First"
+        assert len(chain) == 1 and chain[0]["status"] == "stopped"
+        assert chain[0]["ai_input"] is None
+        assert preview["would_do"]["consumed"] is True
+        assert preview["would_do"]["provider_input"] == "none"
+        assert preview["would_do"]["terminal"] is True
+    else:
+        assert preview["rule"]["name"] == "Second"
+        assert [item["rule"]["name"] for item in chain] == ["First", "Second"]
+        if certainty == "conditional":
+            assert preview["conditional"] is True
+            assert [item["status"] for item in chain] == ["conditional", "conditional"]
+            assert preview["would_do"]["consumed"] is None
+            assert preview["would_do"]["provider_input"] == "conditional"
+            assert chain[1]["ai_input"]["conditional"] is True
+        else:
+            assert [item["status"] for item in chain] == [
+                "continued",
+                "would_send_to_ai",
+            ]
+            assert "conditional" not in preview
+        assert chain[1]["ai_input"]["provider_input"] == "run rule"
+
+    # Real Assist execution uses HA Script, not a preview helper or fake executor.
+    result = await _say(hass, agent, "run rule")
+    assert _speech(result, successful=reply != "Failed safely") == reply
+    assert calls == markers
+    assert len(sent) == (1 if reply == "Provider answer" else 0)
+
+
+@pytest.mark.parametrize(
+    "actions,expected",
+    [
+        ([{"stop": "finished"}], "Done"),
+        ([{"set_conversation_response": "Script answer"}], "Script answer"),
+        ([{"set_conversation_response": ""}], ""),
+    ],
+)
+@pytest.mark.parametrize("continue_to_ai", [False, True])
+async def test_single_rule_preview_and_native_script_suppress_terminal_ai_input(
+    hass, monkeypatch, actions, expected, continue_to_ai
+):
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRuleRuntime,
+        async_evaluate_rule,
+    )
+
+    agent = await _agent(hass)
+    sent = _provider(monkeypatch, agent, [])
+    rule = _local(actions)
+    rule["action"]["continue_to_ai"] = continue_to_ai
+    await agent._request_rules.async_create(rule)
+    preview = await _safe_match_preview(hass, agent)
+    assert preview["would_do"]["terminal"] is True
+    assert preview["would_do"]["consumed"] is True
+    assert preview["would_do"]["provider_input"] == "none"
+    assert preview["matched_rules"][0]["status"] == "stopped"
+    assert preview["matched_rules"][0]["ai_input"] is None
+    outcome = await async_evaluate_rule(
+        hass,
+        agent._request_rules,
+        RequestRuleRuntime(),
+        "run rule",
+        "preview-terminal",
+    )
+    assert outcome.consume and outcome.successful and outcome.terminal
+    assert outcome.response == expected
+    assert outcome.provider_input is None
+    assert sent == []
+
+
+@pytest.mark.parametrize("stop_enabled", [False, True])
+@pytest.mark.parametrize("continue_matching", [False, True])
+async def test_conditional_local_handoff_keeps_capture_and_excludes_later_rules(
+    hass, monkeypatch, stop_enabled, continue_matching
+):
+    agent = await _agent(hass)
+    sent = _provider(monkeypatch, agent, ["Provider answer"])
+    rule = _local(
+        [{"stop": "maybe", "enabled": "{{ true }}" if stop_enabled else "{{ false }}"}],
+        phrase="run {question}", match_type="sentence_pattern", success="First complete",
+    )
+    rule.update(
+        name="First", continue_matching=continue_matching,
+        ai_input_mode="capture", ai_input_capture="question",
+    )
+    rule["action"]["continue_to_ai"] = True
+    await agent._request_rules.async_create(rule)
+    await agent._request_rules.async_create({
+        **_local([_record_action("unreachable")]), "name": "Second", "order": 1,
+    })
+    preview = await _safe_match_preview(hass, agent)
+    assert preview["rule"]["name"] == "First" and preview["conditional"] is True
+    assert len(preview["matched_rules"]) == 1
+    item = preview["matched_rules"][0]
+    assert item["status"] == "conditional"
+    assert item["ai_input"] == {
+        "mode": "capture", "capture": "question", "provider_input": "rule", "conditional": True,
+    }
+    assert preview["would_do"]["consumed"] is None
+    assert preview["would_do"]["provider_input"] == "conditional"
+    assert sent == []
+    result = await _say(hass, agent, "run rule")
+    assert _speech(result) == ("First complete" if stop_enabled else "Provider answer")
+    assert len(sent) == (0 if stop_enabled else 1)
+    if sent:
+        assert sent[0]["messages"][-1]["content"] == "rule"
 
 
 @pytest.mark.parametrize("match_type", ["equals", "starts_with", "ends_with", "contains"])

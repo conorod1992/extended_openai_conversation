@@ -18,9 +18,15 @@ for (const viewport of reachabilityInventory.viewports) for (const bundled of [f
       if (message.action === "summary") return {today:{date:"2026-09-29",total_tokens:110},lifetime:{total_tokens:110}};
       if (message.action === "daily") return {days:[{date:"2026-09-29",total_tokens:110}]};
       if (message.action === "retention") return {};
-      if (message.action === "runs") return {runs:[{run_id:"embedding-run",completed_at:"2026-09-29T12:00:00Z",total_tokens:110,request_count:110,successful:false,error_type:"EmbeddingFailure"}]};
+      if (message.action === "runs") return {runs:[
+        {run_id:"embedding-run",completed_at:"2026-09-29T12:00:00Z",total_tokens:110,request_count:110,successful:false,error_type:"EmbeddingFailure"},
+        {run_id:"successful-run",completed_at:"2026-09-29T12:00:00Z",request_count:1,successful:true},
+      ]};
       if (message.action === "requests") {
         host.__requestPages.push(structuredClone(message));
+        if (message.all_requests || message.run_id === "successful-run") {
+          return {requests:[{successful:true, model:message.all_requests ? "detached-request" : "successful-request"}]};
+        }
         const offset = message.offset || 0;
         if (offset === 100 && retryPage && !host.__pageRetrySeen) {
           host.__pageRetrySeen = true;
@@ -52,5 +58,11 @@ for (const viewport of reachabilityInventory.viewports) for (const bundled of [f
   expect(await panel.evaluate(host => host.__requestPages.map(call => call.offset || 0))).toEqual(bundled ? [0,100,0] : [0,100,100,0]);
   await panel.locator(".close-usage-requests").first().click();
   await expect(panel.locator("#usage-request-dialog")).toHaveJSProperty("open", false);
+  await panel.locator("[data-eoc-usage-runs] tr").filter({hasText:"Success"}).locator("[data-usage-recent-run-id]").click();
+  await expect(panel.locator("#usage-request-body")).toContainText("successful-request");
+  await panel.locator(".close-usage-requests").first().click();
+  await panel.locator("[data-usage-all-requests]").click();
+  await expect(panel.locator("#usage-request-body")).toContainText("detached-request");
+  await panel.locator(".close-usage-requests").first().click();
   await expectHarnessClean(page,errors);
 });

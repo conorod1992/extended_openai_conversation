@@ -168,8 +168,54 @@
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."
+        },
+    "broadcast": {
+      "name": "Gesproken bericht omroepen",
+      "description": "Stuur een TTS-aankondiging naar geselecteerde Assist-satellieten zonder actieve spraaksessies te onderbreken. Omroepen moet eerst worden ingeschakeld in Extended OpenAI.",
+      "fields": {
+        "message": {
+          "name": "Bericht",
+          "description": "Tekst om aan te kondigen."
+        },
+        "whole_home": {
+          "name": "Hele huis",
+          "description": "Stuur naar alle Assist-satellieten die aankondigingen ondersteunen, behalve de oorsprong."
+        },
+        "entity_id": {
+          "name": "Assist-satellieten",
+          "description": "Een of meer Assist-satellietentiteiten."
+        },
+        "device_id": {
+          "name": "Apparaten",
+          "description": "Apparaten waarvan de Assist-satellieten de aankondiging moeten ontvangen."
+        },
+        "area_id": {
+          "name": "Ruimtes",
+          "description": "Ruimtes waarvan de Assist-satellieten de aankondiging moeten ontvangen."
+        },
+        "floor_id": {
+          "name": "Verdiepingen",
+          "description": "Verdiepingen waarvan de Assist-satellieten de aankondiging moeten ontvangen."
+        },
+        "label_id": {
+          "name": "Labels",
+          "description": "Labels waarvan de Assist-satellieten de aankondiging moeten ontvangen."
+        },
+        "ttl_seconds": {
+          "name": "Wachtrij verlooptijd",
+          "description": "Maximale wachttijd in seconden voor bezorging aan een bezette satelliet."
         }
+      }
     },
+    "enable_quiet_hours": {
+      "name": "Schema voor stille uren inschakelen",
+      "description": "Schakel het opgeslagen schema voor stille uren in. Als er nu stille uren zijn gepland, beginnen ze onmiddellijk."
+    },
+    "disable_quiet_hours": {
+      "name": "Schema voor stille uren uitschakelen",
+      "description": "Schakel het opgeslagen schema voor stille uren uit. Luidspreker- en wekwoordinstellingen die door stille uren zijn gewijzigd, worden hersteld als ze sindsdien niet zijn gewijzigd."
+    }
+  },
     "options": {
         "step": {
             "init": {

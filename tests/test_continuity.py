@@ -537,35 +537,31 @@ async def test_request_end_missing_session_and_deferred_release_cleanup() -> Non
     assert resolved.key not in manager._pending_ends
 
 
-async def test_ignored_conversation_ids_are_bounded_and_consumed_once() -> None:
+async def test_retired_chat_id_is_ignored_until_native_session_cleanup() -> None:
+    from homeassistant.helpers.chat_session import ChatSession
+
     manager = ConversationContinuity("agent")
-    limit = continuity._MAX_IGNORED_CONVERSATION_IDS
+    session = ChatSession("retired-id")
+    await manager.async_retire_chat_session(session)
+    await manager.async_retire_chat_session(session)
+    # The markers are owned by live Core sessions, including across a restore.
+    for index in range(65):
+        await manager.async_retire_chat_session(ChatSession(f"other-{index}"))
+    manager.reset_all()
 
-    ids = [f"conversation-{index}" for index in range(limit + 1)]
-    for conversation_id in ids:
-        await manager.async_ignore_next_incoming_conversation_id(conversation_id)
+    async def resolve():
+        return await manager.async_resolve(
+            CONVERSATION_CONTINUITY_HA_DEFAULT,
+            user_scope("alice", source="test"),
+            None,
+            session.conversation_id,
+            30,
+        )
 
-    assert len(manager._ignored_conversation_ids) == limit
-    assert ids[0] not in manager._ignored_conversation_ids
-    assert ids[-1] in manager._ignored_conversation_ids
-
-    first = await manager.async_resolve(
-        CONVERSATION_CONTINUITY_HA_DEFAULT,
-        user_scope("alice", source="test"),
-        None,
-        ids[-1],
-        30,
-    )
-    second = await manager.async_resolve(
-        CONVERSATION_CONTINUITY_HA_DEFAULT,
-        user_scope("alice", source="test"),
-        None,
-        ids[-1],
-        30,
-    )
-
-    assert first.conversation_id is None
-    assert second.conversation_id == ids[-1]
+    assert (await resolve()).conversation_id is None
+    assert (await resolve()).conversation_id is None
+    session.async_cleanup()
+    assert (await resolve()).conversation_id == session.conversation_id
 
 
 async def test_memory_bundle_reuses_first_selection_and_clear_reports_state() -> None:

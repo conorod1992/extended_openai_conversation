@@ -2,12 +2,19 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import {CONFIGURATION_CONTROLS, configurationControlValue, applyConfigurationControl, readConfigurationDraft} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
 
+import {saveConfiguration} from "../custom_components/extended_openai_conversation_responses/frontend/management-actions.js";
+
 const cases = [
   [{dataset:{config:"skills"}, value:"weather, indoor\r\n calendar\n\nlocal notes "}, ["weather, indoor","calendar","local notes"]],
   [{dataset:{config:"guest_readable_entities"}, value:"light.one, light.two ,"}, ["light.one","light.two"]],
   [{dataset:{config:"web_search",type:"boolean"}, checked:false, value:"on"}, false],
   [{dataset:{memoryConfig:"memory_auto_retrieve_limit",type:"number"}, value:"3"}, 3],
   [{dataset:{config:"temperature",type:"number"}, value:"0"}, 0],
+  [{dataset:{config:"temperature",type:"number"}, type:"number", value:""}, 0],
+  [{dataset:{config:"temperature",type:"number"}, type:"number", value:"", validity:{badInput:true}}, ""],
+  ...[["true", true], ["false", false], ["0", 0], ["0.25", 0.25], ["", ""],
+      ["  ", "  "], ["typo", "typo"], ["1e999", "1e999"]].map(([value, expected]) =>
+    [{dataset:{config:"temperature",type:"number"}, type:"text", value}, expected]),
   [{dataset:{config:"prompt"}, value:"  exact prompt\n"}, "  exact prompt\n"],
   [{dataset:{config:"__title"}, value:"New title"}, "New title"],
   [{dataset:{}, id:"voice-mappings", value:'{"device":"user"}'}, {device:"user"}],
@@ -83,3 +90,24 @@ for (const key of ["prompt", "current_datetime_template", "exposed_entities_temp
   assert.equal(readConfigurationDraft(panel)[key],control.value);
   assert.equal(rebinds,1);
 }
+
+
+let validityPrompts = 0;
+const unfinishedNumber = {
+  dataset:{memoryConfig:"memory_auto_retrieve_limit",type:"number"},
+  validity:{badInput:true}, value:"", reportValidity(){validityPrompts++;}
+};
+const invalidSave = {
+  _draft:{memory_auto_retrieve_limit:2},
+  _selectedAgent:()=>({entry_id:"entry"}),
+  shadowRoot:{querySelectorAll:()=>[unfinishedNumber]},
+  _call(){assert.fail("Malformed native numbers must never be submitted");},
+};
+applyConfigurationControl(invalidSave, unfinishedNumber);
+assert.equal(invalidSave._draft.memory_auto_retrieve_limit, "");
+await saveConfiguration(invalidSave, {});
+assert.equal(validityPrompts, 1);
+unfinishedNumber.validity.badInput = false;
+unfinishedNumber.value = "3";
+assert.equal(applyConfigurationControl(invalidSave, unfinishedNumber).changed, true);
+assert.equal(invalidSave._draft.memory_auto_retrieve_limit, 3);

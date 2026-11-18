@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
+
+import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     agent_maintenance,
@@ -15,6 +19,15 @@ from custom_components.extended_openai_conversation_responses import (
 from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
     SERVICE_PROCESS,
+)
+from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+    ToolSnapshot,
+    current_snapshot,
+    tool_snapshot_scope,
+)
+from custom_components.extended_openai_conversation_responses.request_origin import (
+    bind_request_satellite,
+    get_request_satellite,
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context
@@ -116,3 +129,101 @@ async def test_request_entry_identity_and_public_paths_survive_real_setup_reload
             assert ha_permissions.get_active_ha_context() is outer
             assert manager.status()["count"] == before + 2
             provider.assert_not_awaited()
+
+
+@pytest.mark.parametrize("direct", [False, True])
+@pytest.mark.parametrize("outcome", ["raised", "cancelled"])
+async def test_snapshot_boundary_precedes_maintenance_and_restores_failed_entries(
+    hass, hass_admin_user, monkeypatch, direct, outcome
+):
+    """Fault lower preparation seams while keeping the real entry owners/lease."""
+    from tests_real_ha.test_cross_feature_acceptance import _agent
+
+    agent = await _agent(hass)
+    parent = ToolSnapshot(
+        caller_provided=True, caller_prompt="parent", unavailable_sources=["retain"]
+    )
+    parent_tools = parent.tools
+    outer_context, child_context = Context(), Context(user_id=hass_admin_user.id)
+    request = conversation.ConversationInput(
+        text="snapshot failure",
+        context=child_context,
+        conversation_id=None,
+        device_id=None,
+        satellite_id="assist_satellite.child",
+        language="en",
+        agent_id=agent.entity_id,
+    )
+    entered, hold = asyncio.Event(), asyncio.Event()
+    snapshots, restored = [], []
+    original_lease = agent_module.conversation_request_lease
+    failure = RuntimeError("snapshot preparation failed")
+
+    @asynccontextmanager
+    async def inspect_lease(entity):
+        snapshot = current_snapshot()
+        snapshots.append(snapshot)
+        assert snapshot is not parent and not snapshot.caller_provided
+        assert snapshot.tools == {} and snapshot.unavailable_sources == []
+        assert snapshot.caller_prompt == ""
+        assert ha_permissions.get_active_ha_context() is child_context
+        assert get_request_satellite() == "assist_satellite.child"
+        async with original_lease(entity):
+            yield
+
+    async def fail_preparation(_hass, _data):
+        entered.set()
+        assert current_snapshot() is snapshots[0]
+        if outcome == "raised":
+            raise failure
+        await hold.wait()
+
+    monkeypatch.setattr(agent_module, "conversation_request_lease", inspect_lease)
+    monkeypatch.setattr(
+        agent_module, "async_prepare_runtime_function_tools", fail_preparation
+    )
+
+    async def invoke():
+        try:
+            method = agent.async_process_direct if direct else agent.async_process
+            await method(request)
+        finally:
+            restored.append(
+                (
+                    current_snapshot(),
+                    ha_permissions.get_active_ha_context(),
+                    get_request_satellite(),
+                )
+            )
+            entered.set()
+
+    with (
+        tool_snapshot_scope(parent),
+        ha_permissions.bind_active_ha_context(outer_context),
+        bind_request_satellite("assist_satellite.parent"),
+    ):
+        task = asyncio.create_task(invoke())
+        await entered.wait()
+        if outcome == "cancelled":
+            task.cancel("snapshot cancellation")
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await task
+            assert caught.value.args == ("snapshot cancellation",)
+        else:
+            with pytest.raises(RuntimeError) as caught:
+                await task
+            assert caught.value is failure
+        assert current_snapshot() is parent
+    assert len(restored) == 1
+    assert restored[0][0] is parent and restored[0][1] is outer_context
+    assert restored[0][2] == "assist_satellite.parent"
+    assert parent.tools is parent_tools and parent.tools == {}
+    assert parent.caller_prompt == "parent" and parent.unavailable_sources == ["retain"]
+    gate = agent_maintenance.get_agent_maintenance_gate(
+        hass, agent.entry.entry_id, agent.subentry.subentry_id
+    )
+    assert (
+        gate._active_readers == 0
+        and gate._reader_depth == {}
+        and gate._reader_tasks == {}
+    )

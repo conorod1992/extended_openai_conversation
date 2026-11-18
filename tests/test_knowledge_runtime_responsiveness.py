@@ -36,7 +36,7 @@ def _assert_consistent(library):
     assert library._token_index == expected.token_index
 
 
-async def test_public_search_matches_prechange_oracle_after_edit_and_restart():
+async def test_public_search_preserves_expected_results_after_edit_and_restart():
     fixture = json.loads(
         (Path(__file__).parent / "fixtures/knowledge_search_parity.json").read_text(
             encoding="utf-8"

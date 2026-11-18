@@ -420,6 +420,11 @@ def _sampling_value(
     if not sampling_value_is_configured(parameter, value, legacy_default):
         return None
     if parameter_is_allowed(model, parameter, effort):
+        from .agent_config import validate_agent_sampling_values
+
+        # Saved settings can predate validation. Check only values that would
+        # reach the provider, preserving null/unsupported-parameter omission.
+        validate_agent_sampling_values({parameter: value})
         return value
     _LOGGER.debug(
         "Omitting stale parameter=%s for model=%s because the "

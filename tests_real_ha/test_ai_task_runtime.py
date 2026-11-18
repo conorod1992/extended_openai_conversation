@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,18 +17,28 @@ import voluptuous as vol
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     CONF_API_MODE,
+    CONF_FUNCTION_TOOLS,
     CONF_SKIP_AUTHENTICATION,
     CONFIG_ENTRY_VERSION,
     DEFAULT_AI_TASK_OPTIONS,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DOMAIN,
+    SERVICE_CALL_FUNCTION,
+    SERVICE_PROCESS,
 )
-from homeassistant.components import ai_task, media_source
+from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+    ToolSnapshot,
+    current_snapshot,
+    new_reference_tool,
+    reference_key,
+    tool_snapshot_scope,
+)
+from homeassistant.components import ai_task, conversation, media_source
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er, llm
+from homeassistant.helpers import device_registry as dr, entity_registry as er, llm
 
 
 class FakeStream:
@@ -451,3 +463,349 @@ async def test_invalid_structured_task_is_controlled_and_next_task_recovers(hass
     )
     assert result.data == {"answer": 2}
     assert len(client.completions.calls) == 2
+
+
+class SnapshotProbeTool(ContextProbeTool):
+    """Record the snapshot as well as the actual HA dispatch context."""
+
+    def __init__(self):
+        super().__init__()
+        self.snapshots = []
+
+    async def async_call(self, hass, tool_input, llm_context):
+        self.snapshots.append(current_snapshot())
+        return await super().async_call(hass, tool_input, llm_context)
+
+
+class SnapshotAPI(CallerAPI):
+    """A source that can be registered or supplied directly by an AI Task caller."""
+
+    def __init__(self, hass, api_id, tools, *, caller_device=None, denied=False):
+        super().__init__(hass=hass, id=api_id, name=api_id)
+        self.tools = tools
+        self.caller_device = caller_device
+        self.caller_context = None
+        self.denied = denied
+        self.instances = []
+        self.snapshots = []
+        self.contexts = []
+        self.prompt = "PARENT_API_PROMPT" if caller_device else "CHILD_API_PROMPT"
+        self.serializer = lambda schema: llm.selector_serializer(schema)
+
+    async def async_get_api_instance(self, llm_context):
+        self.snapshots.append(current_snapshot())
+        self.contexts.append(llm_context)
+        if self.denied:
+            raise HomeAssistantError("This source does not authorize the child device")
+        # HA's public AI Task API has no device argument. A supplied API owns its
+        # returned instance/context; retain that legitimate parent device context.
+        if self.caller_device:
+            llm_context = replace(
+                llm_context, device_id=self.caller_device,
+                context=self.caller_context or llm_context.context,
+            )
+        instance = llm.APIInstance(
+            api=self,
+            api_prompt=self.prompt,
+            llm_context=llm_context,
+            tools=list(self.tools),
+            custom_serializer=self.serializer,
+        )
+        self.instances.append(instance)
+        return instance
+
+
+class NestedConversationTool(llm.Tool):
+    """A caller-owned tool that invokes a conversation through public HA APIs."""
+
+    name = "nested_conversation"
+    description = "Invoke the child conversation."
+    parameters = vol.Schema({})
+
+    def __init__(self, invoke):
+        self.invoke = invoke
+
+    async def async_call(self, hass, tool_input, llm_context):
+        return await self.invoke(llm_context)
+
+
+def _snapshot_reference(api, tool):
+    return {
+        "type": "ha_llm",
+        "source_type": "api",
+        "api_id": api.id,
+        "source_id": f"{type(tool).__module__}.{type(tool).__qualname__}",
+        "tool_name": tool.name,
+    }
+
+
+@pytest.mark.parametrize("direct", [False, True], ids=["assist", "direct-service"])
+@pytest.mark.parametrize(
+    "access",
+    ["absent-parent-reference", "matching-reference", "unavailable", "unauthorized"],
+)
+async def test_public_ai_task_nested_conversation_owns_its_ha_tool_snapshot(
+    hass, hass_admin_user, direct, access
+):
+    from tests_real_ha.test_cross_feature_acceptance import _agent
+    from tests_real_ha.test_request_rules_script_semantics import _local
+
+    allowed = access in {"absent-parent-reference", "matching-reference"}
+    child_tool, parent_tool = SnapshotProbeTool(), SnapshotProbeTool()
+    child_api = SnapshotAPI(
+        hass,
+        "snapshot-child",
+        [] if access == "unavailable" else [child_tool],
+        denied=access == "unauthorized",
+    )
+    llm.async_register_api(hass, child_api)
+    reference = _snapshot_reference(child_api, child_tool)
+    saved = new_reference_tool(reference, set())
+    child = await _agent(hass, **{CONF_FUNCTION_TOOLS: [saved]})
+    await child._request_rules.async_create(
+        _local(
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {
+                        "function": saved["spec"]["name"],
+                        "arguments": {"value": "child-rule"},
+                    },
+                },
+            ],
+            phrase="invoke child rule",
+            success="Child rule succeeded",
+            failure="Child tool denied",
+        )
+    )
+
+    children, child_contexts, restored = [], [], []
+    parent_snapshots = []
+    parent_contents = {}
+    parent_maps = []
+
+    def child_model_round(kwargs):
+        snapshot = current_snapshot()
+        assert not snapshot.caller_provided
+        names = {item["function"]["name"] for item in kwargs.get("tools", [])}
+        assert (saved["spec"]["name"] in names) is allowed
+        assert "PARENT_API_PROMPT" not in _flatten_text(kwargs["messages"])
+        if not allowed:
+            return [_chunk(content="Child model complete")]
+        assert "CHILD_API_PROMPT" in _flatten_text(kwargs["messages"])
+        return [
+            _chunk(
+                content=None,
+                finish_reason="tool_calls",
+                tool_calls=[
+                    _tool_delta(
+                        0,
+                        saved["spec"]["name"],
+                        '{"value":"child-model"}',
+                        "child-call",
+                    ),
+                ],
+            )
+        ]
+
+    child_client = FakeClient(
+        [child_model_round, "Child model complete"] if allowed else [child_model_round]
+    )
+    child.entry.runtime_data = child_client
+
+    async def invoke(llm_context):
+        parent = current_snapshot()
+        for text, device in [
+            ("invoke child rule", child_device.id),
+            ("invoke child model", model_device.id),
+        ]:
+            context = Context(
+                user_id=llm_context.context.user_id, parent_id=llm_context.context.id
+            )
+            child_contexts.append(context)
+            if direct:
+                result = await hass.services.async_call(
+                    DOMAIN,
+                    SERVICE_PROCESS,
+                    {
+                        "agent_id": child.entity_id,
+                        "text": text,
+                        "language": "en",
+                        "device_id": device,
+                    },
+                    blocking=True,
+                    return_response=True,
+                    context=context,
+                )
+                children.append((result["successful"], result["response"]))
+            else:
+                result = await conversation.async_converse(
+                    hass,
+                    text=text,
+                    context=context,
+                    language="en",
+                    conversation_id=None,
+                    agent_id=child.entry.entry_id,
+                    device_id=device,
+                )
+                children.append(
+                    (
+                        result.response.error_code is None,
+                        result.response.as_dict()["speech"]["plain"]["speech"],
+                    )
+                )
+            restored.append(current_snapshot())
+        return {"children": children, "parent_restored": current_snapshot() is parent}
+
+    nested = NestedConversationTool(invoke)
+    # Even with the same API ID, the supplied object is distinct from the
+    # registered child source. Rediscovering parent tools would break this caller.
+    parent_id = (
+        "snapshot-parent-unregistered"
+        if access == "absent-parent-reference"
+        else child_api.id
+    )
+    parent_api = SnapshotAPI(
+        hass, parent_id, [nested, parent_tool], caller_device="pending"
+    )
+    nested_alias = new_reference_tool(_snapshot_reference(parent_api, nested), set())[
+        "spec"
+    ]["name"]
+    after_alias = new_reference_tool(
+        _snapshot_reference(parent_api, parent_tool), set()
+    )["spec"]["name"]
+
+    def parent_round(alias=None):
+        def respond(kwargs):
+            snapshot = current_snapshot()
+            parent_snapshots.append(snapshot)
+            parent_maps.append(snapshot.tools)
+            if not parent_contents:
+                parent_contents.update(snapshot.tools)
+            assert snapshot.caller_provided
+            assert "PARENT_API_PROMPT" in _flatten_text(kwargs["messages"])
+            assert "CHILD_API_PROMPT" not in _flatten_text(kwargs["messages"])
+            if alias is None:
+                return [_chunk(content="Parent complete")]
+            assert alias in {item["function"]["name"] for item in kwargs["tools"]}
+            arguments = "{}" if alias == nested_alias else '{"value":"parent-after"}'
+            return [
+                _chunk(
+                    content=None,
+                    finish_reason="tool_calls",
+                    tool_calls=[
+                        _tool_delta(
+                            0,
+                            alias,
+                            arguments,
+                            "nested-call" if alias == nested_alias else "after-call",
+                        ),
+                    ],
+                )
+            ]
+
+        return respond
+
+    parent_entry, task_entity, parent_client = await _setup_entry(
+        hass,
+        [parent_round(nested_alias), parent_round(after_alias), parent_round()],
+    )
+    registry = dr.async_get(hass)
+    child_device, model_device = [
+        registry.async_get_or_create(
+            config_entry_id=child.entry.entry_id, identifiers={(DOMAIN, name)}
+        )
+        for name in ("snapshot-child-rule", "snapshot-child-model")
+    ]
+    parent_device = registry.async_get_or_create(
+        config_entry_id=parent_entry.entry_id,
+        identifiers={(DOMAIN, "snapshot-parent")},
+    )
+    parent_api.caller_device = parent_device.id
+    assert all(api is not parent_api for api in llm.async_get_apis(hass))
+    parent_context = Context(user_id=hass_admin_user.id)
+    parent_api.caller_context = parent_context
+    task_context = (
+        {"context": parent_context}
+        if "context" in inspect.signature(ai_task.async_generate_data).parameters
+        else {}
+    )
+    outer = ToolSnapshot(
+        caller_provided=True, caller_prompt="outer", unavailable_sources=["retain"]
+    )
+    with tool_snapshot_scope(outer):
+        result = await ai_task.async_generate_data(
+            hass,
+            task_name="Nested snapshot task",
+            entity_id=task_entity,
+            instructions="Invoke the child, then the other supplied tool.",
+            llm_api=parent_api,
+            **task_context,
+        )
+        assert current_snapshot() is outer
+        assert outer.caller_prompt == "outer" and outer.unavailable_sources == [
+            "retain"
+        ]
+
+    assert result.data == "Parent complete"
+    assert children == [
+        (allowed, "Child rule succeeded" if allowed else "Child tool denied"),
+        (True, "Child model complete"),
+    ]
+    assert len(parent_snapshots) == 3 and len(restored) == 2
+    parent_snapshot = parent_snapshots[0]
+    assert all(
+        snapshot is parent_snapshot for snapshot in [*parent_snapshots, *restored]
+    )
+    assert parent_snapshot.caller_provided
+    assert parent_snapshot.unavailable_sources == [] and parent_snapshot.caller_prompt == ""
+    assert all(mapping is parent_snapshot.tools for mapping in parent_maps)
+    assert set(parent_snapshot.tools) == set(parent_contents)
+    assert all(
+        parent_snapshot.tools[key] is live for key, live in parent_contents.items()
+    )
+    assert (reference_key(reference) in parent_snapshot.tools) is (
+        access != "absent-parent-reference"
+    )
+    assert len(parent_api.instances) == 1
+    instance = parent_api.instances[0]
+    if task_context:
+        assert parent_api.contexts[0].context is parent_context
+    assert (
+        instance.api is parent_api
+        and instance.custom_serializer is parent_api.serializer
+    )
+    assert instance.api_prompt == "PARENT_API_PROMPT"
+    assert instance.llm_context.context is parent_context
+    assert instance.llm_context.device_id == parent_device.id
+    assert instance.tools == [nested, parent_tool]
+    assert all(live.instance is instance for live in parent_snapshot.tools.values())
+    assert len(parent_tool.calls) == 1
+    assert parent_tool.calls[0][0].tool_args == {"value": "parent-after"}
+    assert parent_tool.calls[0][1] is instance.llm_context
+    assert parent_tool.snapshots == [parent_snapshot]
+    assert len(parent_client.completions.calls) == 3
+    assert "parent-after" in _flatten_text(
+        parent_client.completions.calls[-1]["messages"]
+    )
+    assert [call[0].tool_args["value"] for call in child_tool.calls] == (
+        ["child-rule", "child-model"] if allowed else []
+    )
+    assert len(child_client.completions.calls) == (2 if allowed else 1)
+    assert child_api.snapshots[0] is not child_api.snapshots[1]
+    assert all(
+        not snapshot.caller_provided and snapshot is not parent_snapshot
+        for snapshot in child_api.snapshots
+    )
+    if allowed:
+        for index, (_, context) in enumerate(child_tool.calls):
+            assert context.context is child_contexts[index]
+            assert context.context.user_id == parent_context.user_id
+            assert context.device_id == (
+                child_device.id if index == 0 else model_device.id
+            )
+            assert context is not instance.llm_context
+        # First discovery is the local Rule; the next starts a separate model
+        # invocation. Later model dispatch owns its normal projected snapshot.
+        assert child_tool.snapshots[0].tools == {}
+        assert reference_key(reference) in child_tool.snapshots[1].tools

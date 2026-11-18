@@ -492,10 +492,13 @@ async def test_continue_matching_runs_each_local_rule_once_and_preview_is_safe(
         "Third",
     ]
     assert [item["status"] for item in preview["matched_rules"]] == [
-        "continued",
-        "continued",
-        "stopped",
+        "conditional",
+        "conditional",
+        "conditional",
     ]
+    assert preview["conditional"] is True
+    assert all(item["would_do"]["conditional"] for item in preview["matched_rules"])
+    assert all(item["ai_input"] is None for item in preview["matched_rules"])
     assert services.calls == []
 
     outcome = await async_evaluate_rule(

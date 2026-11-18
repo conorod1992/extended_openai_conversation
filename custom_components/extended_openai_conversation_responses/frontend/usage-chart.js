@@ -336,8 +336,8 @@ export function requestDetailsDialog() {
   return `<dialog id="usage-request-dialog" class="editor-dialog wide" aria-labelledby="usage-request-title"><div class="dialog-header"><h2 id="usage-request-title">Provider requests</h2><button type="button" class="icon close-usage-requests" aria-label="Close">×</button></div><div id="usage-request-body" class="dialog-body"></div><div class="dialog-actions"><button type="button" class="secondary close-usage-requests">Close</button></div></dialog>`;
 }
 
-function renderRequestDetails(panel, requests, offset = 0) {
-  if (!requests.length) return `<div class="empty">No saved provider-request details are available for this run.</div>`;
+function renderRequestDetails(panel, requests, offset = 0, all = false) {
+  if (!requests.length) return `<div class="empty">${all ? "No retained provider-request details are available." : "No saved provider-request details are available for this run."}</div>`;
   return `<div class="usage-request-list">${requests.map((request, index) => {
     const tokens = tokenBreakdown(request.total_tokens, request.cached_input_tokens);
     const timestamp = formatUsageTimestamp(request.timestamp, undefined, panel._hass?.config?.time_zone);
@@ -363,11 +363,14 @@ function usageRecentRows(panel, result) {
   const rows = (result.runs?.runs || []).map((run) => {
     const tokens = tokenBreakdown(run.total_tokens, run.cached_input_tokens);
     const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
-    return `<tr><td><time datetime="${panel._e(completed.datetime)}" title="${panel._e(completed.datetime)}">${panel._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${panel._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${panel._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
+    const details = run.request_count > 0 && run.run_id
+      ? `<button type="button" class="secondary" data-usage-recent-run-id="${panel._e(run.run_id)}" aria-label="Provider requests for run at ${panel._e(completed.display)}">Requests</button>`
+      : "";
+    return `<tr><td><time datetime="${panel._e(completed.datetime)}" title="${panel._e(completed.datetime)}">${panel._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${panel._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${panel._e(run.successful ? "Success" : run.error_type || "Failed")}</td><td>${details}</td></tr>`;
   }).join("");
   const state = usageDependency(result, "runs", "Recent runs");
-  const notice = state.message ? `<tr><td colspan="7" role="status">${panel._e(state.message)}</td></tr>` : "";
-  return notice + (rows || (state.loading || state.failed || !state.available ? "" : `<tr><td colspan="7">No saved recent runs.</td></tr>`));
+  const notice = state.message ? `<tr><td colspan="8" role="status">${panel._e(state.message)}</td></tr>` : "";
+  return notice + (rows || (state.loading || state.failed || !state.available ? "" : `<tr><td colspan="8">No saved recent runs.</td></tr>`));
 }
 
 export function reconcileUsageSecondary(panel, key) {
@@ -424,7 +427,7 @@ export function renderUsagePage(panel, result = {}) {
     <section class="content-card"><div class="card-heading"><h2>Tokens by ${chartByMonth ? "month" : "recorded day"}</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" tabindex="0" role="region" aria-label="Token usage for the selected period; cached input tokens are included within each total">${buckets.map((bucket) => renderUsageBar(panel, bucket, chartMax)).join("") || panel._empty(dailyState.available ? "No daily usage is recorded in this period." : dailyState.message)}</div>${chartAxis}<p class="chart-note"><strong>Cached input</strong> is input recognised as cached by the provider. It is included in total tokens and may be billed at a lower rate.</p></section>
     <section class="notice usage-history-note"><strong>Daily usage history: ${panel._e(availableText)}</strong><p>You’re viewing ${panel._e(selectedText)}. Older daily history is loaded only when you choose a longer history range. “All available” means all stored daily history, which may differ from your lifetime usage total.</p></section>
     <div data-eoc-usage-diagnostics>${renderUsageDiagnostics(panel, result)}</div>
-    <section class="content-card"><div class="card-heading"><div><h2>Recent runs</h2><p>This table shows saved individual runs. Changing the history range above does not load additional detailed records.</p></div></div><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody data-eoc-usage-runs>${usageRecentRows(panel, result)}</tbody></table></div></section>
+    <section class="content-card"><div class="card-heading"><div><h2>Recent runs</h2><p>This table shows saved individual runs. Changing the history range above does not load additional detailed records.</p></div>${panel._data?.is_admin ? `<button type="button" class="secondary" data-usage-all-requests>Browse retained requests</button>` : ""}</div><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result", "Details"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody data-eoc-usage-runs>${usageRecentRows(panel, result)}</tbody></table></div></section>
     ${panel._data?.is_admin ? `<section class="content-card"><div class="card-heading"><h2>Manage usage history</h2></div><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Deleting detailed records keeps daily and lifetime usage totals.</small></section>` : ""}`;
 }
 
@@ -475,11 +478,11 @@ export function bindUsageDiagnostics(panel) {
     body.innerHTML = panel._loading();
     if (!dialog.open) dialog.showModal();
     try {
-      const response = await panel._call("usage", "requests", {run_id: runId, limit: 100, offset});
+      const response = await panel._call("usage", "requests", { ...(runId ? {run_id: runId} : {all_requests: true}), limit: 100, offset });
       if (!current()) return;
       const requests = response?.requests || [];
       const nextOffset = response?.next_offset ?? offset + requests.length;
-      body.innerHTML = `${requests.length ? `<p id="usage-request-range" role="status">Requests ${offset + 1}–${offset + requests.length}</p>` : ""}${renderRequestDetails(panel, requests, offset)}<div class="dialog-actions"><button type="button" class="secondary" id="usage-request-previous" ${previousOffsets.length ? "" : "disabled"}>Previous</button><button type="button" class="secondary" id="usage-request-next" ${response?.has_more && nextOffset > offset ? "" : "disabled"}>Next</button></div>`;
+      body.innerHTML = `${requests.length ? `<p id="usage-request-range" role="status">Requests ${offset + 1}–${offset + requests.length}</p>` : ""}${renderRequestDetails(panel, requests, offset, !runId)}<div class="dialog-actions"><button type="button" class="secondary" id="usage-request-previous" ${previousOffsets.length ? "" : "disabled"}>Previous</button><button type="button" class="secondary" id="usage-request-next" ${response?.has_more && nextOffset > offset ? "" : "disabled"}>Next</button></div>`;
       body.querySelector("#usage-request-previous").onclick = () => { void loadRequests(runId, previousOffsets.at(-1), previousOffsets.slice(0,-1)); };
       body.querySelector("#usage-request-next").onclick = () => { void loadRequests(runId, nextOffset, [...previousOffsets,offset]); };
     } catch (err) {
@@ -489,7 +492,9 @@ export function bindUsageDiagnostics(panel) {
       }
     }
   };
-  root.querySelectorAll(".usage-run-details").forEach((button) => {
-    button.onclick = () => loadRequests(button.dataset.usageRunId);
+  root.querySelectorAll("[data-usage-run-id], [data-usage-recent-run-id]").forEach((button) => {
+    button.onclick = () => loadRequests(button.dataset.usageRunId ?? button.dataset.usageRecentRunId);
   });
+  const browse = root.querySelector("[data-usage-all-requests]");
+  if (browse) browse.onclick = () => loadRequests(null);
 }

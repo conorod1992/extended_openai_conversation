@@ -168,8 +168,54 @@
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."
+        },
+    "broadcast": {
+      "name": "Transmitir mensagem de voz",
+      "description": "Enviar um anúncio TTS aos satélites Assist selecionados sem interromper sessões de voz em curso. A transmissão deve ser ativada primeiro no Extended OpenAI.",
+      "fields": {
+        "message": {
+          "name": "Mensagem",
+          "description": "Texto do anúncio."
+        },
+        "whole_home": {
+          "name": "Casa inteira",
+          "description": "Enviar a todos os satélites Assist que suportam anúncios, exceto ao de origem."
+        },
+        "entity_id": {
+          "name": "Satélites Assist",
+          "description": "Uma ou mais entidades de satélite Assist."
+        },
+        "device_id": {
+          "name": "Dispositivos",
+          "description": "Dispositivos cujos satélites Assist devem receber o anúncio."
+        },
+        "area_id": {
+          "name": "Áreas",
+          "description": "Áreas cujos satélites Assist devem receber o anúncio."
+        },
+        "floor_id": {
+          "name": "Pisos",
+          "description": "Pisos cujos satélites Assist devem receber o anúncio."
+        },
+        "label_id": {
+          "name": "Etiquetas",
+          "description": "Etiquetas cujos satélites Assist devem receber o anúncio."
+        },
+        "ttl_seconds": {
+          "name": "Expiração da fila",
+          "description": "Tempo máximo de espera, em segundos, para entrega a um satélite ocupado."
         }
+      }
     },
+    "enable_quiet_hours": {
+      "name": "Ativar horário de silêncio",
+      "description": "Ativar o horário de silêncio guardado. Se o período de silêncio estiver previsto para agora, começa imediatamente."
+    },
+    "disable_quiet_hours": {
+      "name": "Desativar horário de silêncio",
+      "description": "Desativar o horário de silêncio guardado. As definições do altifalante e da palavra de ativação alteradas pelo período de silêncio são restauradas se não tiverem sido alteradas entretanto."
+    }
+  },
     "options": {
         "step": {
             "init": {

@@ -173,12 +173,16 @@ def _provider_config(provider):
 async def test_cross_provider_restore_validates_each_generation(
     hass, monkeypatch, old, new
 ):
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
+    from custom_components.extended_openai_conversation_responses import restore_recovery
+    from homeassistant.config_entries import ConfigEntryState
     from tests.test_selective_restore_concurrency import RestoreHarness
 
     tx = RestoreHarness(monkeypatch)
     tx.entry.data = _connection(old)
+    tx.entry.state = ConfigEntryState.NOT_LOADED
+    tx.entry.disabled_by = None
     tx.subentry.data = _provider_config(old)
     previous = deepcopy(tx.entry.data)
     document = private_document()
@@ -188,9 +192,12 @@ async def test_cross_provider_restore_validates_each_generation(
     def update_entry(entry, *, data):
         assert tx.journal.data is None
         entry.data = deepcopy(data)
+        return True
 
     tx.hass.config_entries.async_update_entry = update_entry
     tx.hass.config_entries.async_schedule_reload = MagicMock()
+    persist = AsyncMock()
+    monkeypatch.setattr(restore_recovery, "async_persist_config_entries", persist)
     result = await transfer.async_restore_transfer(
         tx.hass,
         tx.entry,
@@ -201,6 +208,8 @@ async def test_cross_provider_restore_validates_each_generation(
         expected_provider_data=previous,
     )
     assert result["provider_connection_restored"]
+    persist.assert_awaited_once()
+    tx.hass.config_entries.async_schedule_reload.assert_called_once_with(tx.entry.entry_id)
     assert tx.entry.data == _connection(new)
     assert tx.subentry.data == _provider_config(new)
     assert tx.journal.saved[-1]["configuration_providers"] == {

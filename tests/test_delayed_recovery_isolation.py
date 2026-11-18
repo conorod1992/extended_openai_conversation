@@ -25,8 +25,9 @@ from homeassistant.exceptions import HomeAssistantError
 
 @pytest.mark.parametrize("recovery_enabled", [True, False])
 async def test_delayed_batch_has_same_semantics_with_or_without_request_context(
-    hass, monkeypatch, recovery_enabled
+    hass, monkeypatch, recovery_enabled, caplog
 ):
+    caplog.set_level("INFO", logger=delayed_tools.__name__)
     tool = deepcopy(
         next(
             preset["tool"]
@@ -133,3 +134,5 @@ async def test_delayed_batch_has_same_semantics_with_or_without_request_context(
     assert observed_in_process == observed_recovered
     assert observed_in_process == ["light.working"]
     assert not in_process._records and not recovered._records
+    assert caplog.messages.count("Delayed Function Tool `batch` reported 1 failed result(s) out of 2") == 2
+    assert "Executed delayed Function Tool `batch`" not in caplog.messages

@@ -7,8 +7,31 @@ import os
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import backup
-from custom_components.extended_openai_conversation_responses import backup_transfer
+from custom_components.extended_openai_conversation_responses import (
+    backup,
+    backup_transfer,
+)
+
+
+@pytest.mark.parametrize(
+    ("filename", "max_mib"),
+    [("backup.json", 128), ("backup.zip", 160), ("backup", 160)],
+)
+async def test_import_keeps_format_specific_size_limits(
+    hass, monkeypatch, filename, max_mib
+) -> None:
+    async def allocate(_hass):
+        raise AssertionError("format limits must be checked before staging")
+
+    monkeypatch.setattr(backup_transfer, "_async_create_upload_file", allocate)
+
+    with pytest.raises(backup.BackupError, match=f"{max_mib} MB safety limit"):
+        await backup_transfer._start_import(
+            hass,
+            "entry-1",
+            "agent-1",
+            {"filename": filename, "size": max_mib * 1024 * 1024 + 1},
+        )
 
 
 async def test_import_quota_is_checked_before_temp_file(hass, monkeypatch) -> None:

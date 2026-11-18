@@ -13,6 +13,7 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
+from tests.test_quiet_hours_runtime import _install_registered_controls
 
 
 def _speaker(
@@ -28,8 +29,8 @@ def _speaker(
         state="idle", attributes={"volume_level": 0.8}, context=Context()
     )
     hass.states.get.side_effect = lambda _: state
-    monkeypatch.setattr(
-        runtime.er, "async_get", lambda _: SimpleNamespace(async_get=lambda _: None)
+    _install_registered_controls(
+        monkeypatch, "media_player.test", "assist_satellite.test"
     )
     manager = runtime.QuietHoursManager(hass)
     manager._initialized = True

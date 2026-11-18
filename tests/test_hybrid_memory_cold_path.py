@@ -111,7 +111,7 @@ async def test_scope_warmup_batches_only_requested_scope() -> None:
         for batch in calls
         for text in batch
     )
-    assert cache.save_calls == 2
+    assert cache.save_calls == 1
     assert len(cache.data["embeddings"]) == memory_count
 
 

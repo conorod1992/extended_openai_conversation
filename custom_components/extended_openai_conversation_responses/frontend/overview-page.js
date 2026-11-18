@@ -34,12 +34,19 @@ export function startOverviewBroadcastSnapshot(panel) {
 if (typeof document === "undefined") await ensureOverviewModule();
 
 function queueRender(panel) {
-  void ensureOverviewModule()
-    .then(() => panel._render?.())
-    .catch((err) => {
+  // The snapshot's implementation may finish after its route or assistant retires.
+  const assetToken = panel._eocViewAssetToken;
+  const agentId = panel._agentId;
+  const render = (...failure) => {
+    if (panel._viewKey?.() !== "overview" || panel._eocViewAssetToken !== assetToken
+        || panel._agentId !== agentId) return;
+    if (failure.length) {
+      const [err] = failure;
       panel._error = `Unable to load Overview: ${err.message || String(err)}`;
-      panel._render?.();
-    });
+    }
+    panel._render?.();
+  };
+  void ensureOverviewModule().then(() => render()).catch(render);
 }
 
 function overviewAgentFeatureProjection(agent) {

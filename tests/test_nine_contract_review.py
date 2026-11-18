@@ -63,7 +63,7 @@ def test_groups_alone_cannot_block_unrelated_settings(hass):
         ("*outer **inner***", "outer inner"),
         ("**outer *inner***", "outer inner"),
         ("2 ** 3 and 2 * 3", "2 ** 3 and 2 * 3"),
-        (r"\*literal\*", r"\*literal\*"),
+        (r"\*literal\*", "*literal*"),
         ("```\nplain code\n```", "plain code"),
     ],
 )

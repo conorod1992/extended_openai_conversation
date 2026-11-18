@@ -1,4 +1,4 @@
-import {same} from "./unsaved-state.js";
+import {same, clone} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
 import {requireMutationAcknowledgement, captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft, recoverCommittedRetention, USAGE_RETENTION_FIELDS} from "./configuration-acknowledgement.js";
 import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
@@ -6,7 +6,6 @@ import {SETTING_LOOKUP} from "./management-setting-lookup.js";
 import {focusManagementSetting} from "./frontend-navigation.js";
 import {voiceMappingDraftError} from "./voice-mapping-draft.js";
 import {pendingRetentionFields} from "./management-state-safety.js";
-const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function fieldErrorKey(key) {
   return key === "title" ? "__title" : key;
@@ -129,6 +128,12 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
+  const badNumber = [...(panel.shadowRoot?.querySelectorAll?.('[data-type="number"]') || [])]
+    .find(control => control.validity?.badInput);
+  if (badNumber) {
+    badNumber.reportValidity();
+    return;
+  }
   const mappingError = voiceMappingDraftError(panel);
   if (mappingError) {
     showErrors(panel, {voice_device_mappings:mappingError});

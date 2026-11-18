@@ -132,3 +132,7 @@ section.checked = false;
 refreshImportPreview(panel);
 assert.equal(nodes.get('#restore-summary').innerHTML, '');
 assert.equal(nodes.get('#restore-transfer-apply').disabled, true);
+assert.deepEqual(restorePreviewSummaryLines({
+  selected_sections: ["configuration"],
+  shortened_usage_retention: {usage_request_retention_days: 0, usage_run_retention_days: 7},
+}), ["Agent configuration and Function Tools", "Shorter Usage retention will delete all request details and run details older than 7 days. Usage totals will be kept."]);

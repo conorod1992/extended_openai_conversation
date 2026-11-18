@@ -159,6 +159,7 @@ test("Captured AI input keeps an invalid selection visible for repair", async ({
   await panel.locator("#rule-phrases").fill("deep think {question}\nthink {question}");
   await panel.locator("#rule-match").selectOption("sentence_pattern");
   await panel.locator("#rule-action-type").selectOption("model_routing");
+  await panel.locator("#rule-continue-to-ai").check();
   await panel.locator("#rule-ai-input-mode").selectOption("capture");
   await expect(panel.locator("#rule-ai-input-capture option")).toHaveCount(1);
   await expect(panel.locator("#rule-ai-input-capture")).toHaveValue("question");

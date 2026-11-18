@@ -14,6 +14,10 @@
       "required": false,
       "kind": "string"
     },
+    "all_requests": {
+      "required": false,
+      "kind": "boolean"
+    },
     "before_text_offset": {
       "required": false,
       "kind": "integer"
@@ -40,6 +44,10 @@
       "kind": "object"
     },
     "confirm": {
+      "required": false,
+      "kind": "boolean"
+    },
+    "confirm_retention": {
       "required": false,
       "kind": "boolean"
     },

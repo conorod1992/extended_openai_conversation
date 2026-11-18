@@ -32,6 +32,62 @@ def test_bare_url_wrappers_at_every_split(opening, closing):
     assert_all_splits(source, "Before after.")
 
 
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        "[Download]({})",
+        "([Download]({}))",
+        '[Download](<{}> "Title")',
+        "![Image]({})",
+        "[example.com]({})",
+        "<{}>",
+        "({})",
+        '"{}"',
+        '"**{}**"',
+        "**{}**",
+        "[{}]",
+    ],
+)
+@pytest.mark.parametrize("chunk_size", [13, 128, 4096])
+def test_long_url_wrappers_match_completed_speech(wrapper, chunk_size):
+    url = "https://example.com/(nested)/?signature=" + "x" * 4200
+    source = "Before " + wrapper.format(url) + ", after."
+    expected = StreamingSpeechSanitizer().process_complete(source)
+    sanitizer = StreamingSpeechSanitizer()
+    chunks = []
+    for start in range(0, len(source), chunk_size):
+        chunks.append(sanitizer.feed(source[start : start + chunk_size]))
+        assert sanitizer.buffered_chars <= sanitizer.max_buffer_chars + 256
+    chunks.append(sanitizer.finish())
+    assert "".join(chunks) == expected
+    assert "signature" not in "".join(chunks)
+
+
+@pytest.mark.parametrize(
+    "template,expected",
+    [
+        ('Before [Download]({} "Title"), after.', "Before Download, after."),
+        ('Before ([Download](<{}> "Title")), after.', "Before Download, after."),
+        ("Before[Download]({}), after.", "BeforeDownload, after."),
+    ],
+)
+def test_overlong_readable_link_preserves_spacing_at_the_buffer_boundary(
+    template, expected
+):
+    source = template.format("https://example.com/" + "x" * 4200)
+    assert StreamingSpeechSanitizer().process_complete(source) == expected
+    for width in (1, 11, 97, 4096, len(source)):
+        sanitizer = StreamingSpeechSanitizer()
+        assert (
+            "".join(
+                sanitizer.feed(source[index : index + width])
+                for index in range(0, len(source), width)
+            )
+            + sanitizer.finish()
+            == expected
+        ), width
+
+
 def assert_all_splits(source, expected):
     assert (
         _final_whitespace_cleanup(StreamingSpeechSanitizer().process_complete(source))
@@ -72,7 +128,7 @@ def assert_all_splits(source, expected):
         ("Before https://example.com/path** after", "Before after"),
         ("Before https://example.com/path_ after", "Before after"),
         ('Before https://example.com/path" after', "Before after"),
-        (r"Before \*https://example.com* after", r"Before \* after"),
+        (r"Before \*https://example.com* after", "Before * after"),
         (
             "Before `**https://example.com**` after",
             "Before **https://example.com** after",
@@ -116,7 +172,10 @@ def test_unbalanced_quote_tracking_is_bounded():
     "source,expected",
     [
         ("1. First https://example.com\n1. Second", "1. First\n1. Second"),
-        ("- First\n3. Third https://example.com\n7. Seventh", "First\n3. Third\n7. Seventh"),
+        (
+            "- First\n3. Third https://example.com\n7. Seventh",
+            "First\n3. Third\n7. Seventh",
+        ),
         ("- 3 degrees https://example.com\n7. Juli", "- 3 degrees 7. Juli"),
     ],
 )

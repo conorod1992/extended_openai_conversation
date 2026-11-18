@@ -698,8 +698,8 @@ async def test_parent_binding_reset_and_native_expiry_do_not_resurrect_history(
     start = dt_util.utcnow()
     original, original_source = await delegated("OLD_CHILD_SENTINEL")
     if transition == "reset":
-        await agent._continuity.async_ignore_next_incoming_conversation_id(
-            original.conversation_id
+        await agent._continuity.async_retire_chat_session(
+            hass.data[DATA_CHAT_SESSION][original.conversation_id]
         )
     else:
         freezer.move_to(start + timedelta(seconds=240))

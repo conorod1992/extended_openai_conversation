@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from .agent_config import function_tool_enabled
 from .const import (
+    DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     FUNCTION_GROUP_LOADER_TOOL_NAME,
     FUNCTION_GROUP_LOADING_ALWAYS,
     FUNCTION_GROUP_LOADING_ON_DEMAND,
@@ -65,6 +66,7 @@ class FunctionGroupSession:
     session_key: str
     last_active: float
     loaded_group_ids: set[str] = field(default_factory=set)
+    timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES
 
 
 @dataclass(slots=True)
@@ -90,18 +92,21 @@ class FunctionGroupRuntime:
     def begin(self, session_key: str, timeout_minutes: int) -> FunctionGroupSession:
         """Resolve a session and prune inactive conversation state."""
         now = time.monotonic()
-        cutoff = now - max(1, timeout_minutes) * 60
         for key, current_session in list(self._sessions.items()):
+            cutoff = now - current_session.timeout_minutes * 60
             if current_session.last_active < cutoff and not self._requests.active(
                 key, current_session
             ):
                 del self._sessions[key]
         session = self._sessions.get(session_key)
         if session is None:
-            session = FunctionGroupSession(session_key, now)
+            session = FunctionGroupSession(
+                session_key, now, timeout_minutes=max(1, timeout_minutes)
+            )
             self._sessions[session_key] = session
         else:
             session.last_active = now
+            session.timeout_minutes = max(1, timeout_minutes)
         return session
 
     def begin_request(self, session: FunctionGroupSession) -> object:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from .agent_config import AgentConfigError, normalized_agent_integer
 from .const import (
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
@@ -36,14 +37,13 @@ def management_feature_status(
     try:
         auto_retrieve_limit = max(
             0,
-            int(
-                options.get(
-                    CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
-                    DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
-                )
+            normalized_agent_integer(
+                options,
+                CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
+                DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
             ),
         )
-    except TypeError, ValueError:
+    except AgentConfigError, ValueError:
         auto_retrieve_limit = DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT
 
     if not memory_enabled:

@@ -93,7 +93,7 @@ def test_end_and_replacement_reject_late_completion(runtime, reset_all):
     assert not runtime.present(key)
 
 
-def test_function_groups_use_incoming_sweep_timeout_and_strict_boundary(monkeypatch):
+def test_function_groups_use_stored_timeout_and_strict_boundary(monkeypatch):
     now = 0.0
     monkeypatch.setattr(function_groups, "time", SimpleNamespace(monotonic=lambda: now))
     runtime = function_groups.FunctionGroupRuntime()
@@ -102,6 +102,12 @@ def test_function_groups_use_incoming_sweep_timeout_and_strict_boundary(monkeypa
     runtime.begin("sweep", 1)
     assert runtime._sessions["one"] is original
     now = 60.001
+    runtime.begin("sweep", 1)
+    assert runtime._sessions["one"] is original
+    now = 600
+    runtime.begin("sweep", 1)
+    assert runtime._sessions["one"] is original
+    now = 600.001
     runtime.begin("sweep", 1)
     assert "one" not in runtime._sessions
 

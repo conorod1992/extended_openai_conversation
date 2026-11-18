@@ -188,6 +188,7 @@ def test_live_action_targets_reject_changed_context_and_removed_entities(
 async def test_usage_fallback_is_explained_and_shared(
     hass, monkeypatch, caplog
 ) -> None:
+    hass.config_entries.async_get_entry.return_value = None
     caplog.set_level(logging.DEBUG)
     monkeypatch.setattr(
         usage,
@@ -326,11 +327,10 @@ async def test_restore_rollback_retains_original_cause(monkeypatch, caplog) -> N
 async def test_quiet_hours_apply_and_restore_failures_retain_context(
     hass, monkeypatch, caplog, kind
 ) -> None:
+    from tests.test_quiet_hours_runtime import _install_registered_controls
+
     caplog.set_level(logging.DEBUG)
-    monkeypatch.setattr(
-        quiet_hours_runtime.er, "async_get",
-        lambda _hass: SimpleNamespace(async_get=lambda _entity_id: None),
-    )
+    _install_registered_controls(monkeypatch, "media_player.room", "switch.wake")
     manager = quiet_hours_runtime.QuietHoursManager(hass)
     manager._async_save_locked = AsyncMock()
     manager._async_set_volume = AsyncMock(side_effect=RuntimeError(SECRET))
@@ -477,7 +477,13 @@ async def test_config_flow_unexpected_validation_never_logs_candidate(
     flow = config_flow.ExtendedOpenAIConversationConfigFlow()
     flow.hass = hass
     flow.async_show_form = Mock(return_value={})
-    await flow._async_finish_initial_setup({"api_key": SECRET}, "user", None)
+    await flow._async_finish_initial_setup(
+        {"api_key": SECRET}, "user", config_flow.LEGACY_STEP_USER_DATA_SCHEMA
+    )
+    shown = flow.async_show_form.call_args.kwargs
+    assert shown["errors"] == {"base": "unknown"}
+    key = next(key for key in shown["data_schema"].schema if str(key) == "api_key")
+    assert key.description["suggested_value"] == SECRET
     assert "stage=setup" in caplog.text and "RuntimeError" in caplog.text
     assert SECRET not in caplog.text
 
@@ -703,6 +709,7 @@ async def test_downloadable_diagnostics_allowlist(hass) -> None:
         },
         subentries={"assistant": subentry},
     )
+    hass.config_entries.async_get_entry.return_value = entry
     result = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
     assert result["provider_category"] == "compatible"
     assert result["model_catalogue"]["schema_version"] == CURRENT_SCHEMA_VERSION

@@ -126,6 +126,7 @@ async def test_config_flow_reports_normalized_timeout_as_cannot_connect() -> Non
         hass=MagicMock(),
         async_show_form=MagicMock(side_effect=lambda **kwargs: kwargs),
         async_create_entry=MagicMock(),
+        add_suggested_values_to_schema=lambda schema, values: ExtendedOpenAIConversationConfigFlow.add_suggested_values_to_schema(flow, schema, values),
     )
 
     with patch(

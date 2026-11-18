@@ -186,7 +186,14 @@ def test_release_day_bridge_does_not_guess_future_releases():
 
 
 @pytest.mark.parametrize("drift", [None, "metadata", "constants"])
-@pytest.mark.parametrize("ha_version", ["2026.11.0", "2026.11.1", "2026.11.2"])
+@pytest.mark.parametrize(
+    "ha_version",
+    [
+        version
+        for version, fixture in GENERATED_FIXTURES.items()
+        if fixture.official_package
+    ],
+)
 def test_official_fixture_bridge_preserves_source_and_single_plugin(
     tmp_path, drift, ha_version
 ):

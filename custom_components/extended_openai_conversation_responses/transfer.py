@@ -19,7 +19,12 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from . import backup
-from .agent_config import configured_function_tools_from_data, validate_agent_title
+from .agent_config import (
+    agent_retention_snapshot,
+    configured_function_tools_from_data,
+    shortened_usage_retention,
+    validate_agent_title,
+)
 from .bounded_json import (
     JSONBudgetExceeded,
     bounded_json_dumps,
@@ -1153,7 +1158,7 @@ def _decode_transfer_input(value: Any) -> Mapping[str, Any]:
             check_utf8_budget(value, backup.MAX_BACKUP_BYTES)
         except JSONBudgetExceeded as err:
             raise backup.BackupError(
-                "The transfer exceeds the 128 MB safety limit"
+                "The transfer exceeds the uncompressed safety limit"
             ) from err
         try:
             value = json.loads(value)
@@ -1622,6 +1627,29 @@ async def async_materialize_restore(
     target.preserve_retained_continuity = (
         selected == {SECTION_KNOWLEDGE} and provider_connection is None
     )
+    data_sections = {
+        key
+        for key, transfer_section in (
+            ("memories", SECTION_PERSISTENT_MEMORY),
+            ("temporary_memories", SECTION_TEMPORARY_MEMORY),
+            ("knowledge", SECTION_KNOWLEDGE),
+            ("archive", SECTION_CONVERSATION_ARCHIVE),
+            ("usage", SECTION_USAGE),
+            ("guest_mode", SECTION_GUEST_MODE),
+            ("request_rules", SECTION_REQUEST_RULES),
+        )
+        if transfer_section in selected
+    }
+    # Applying different retention settings can prune stored Usage details.
+    if SECTION_CONFIGURATION in selected and agent_retention_snapshot(
+        target.config
+    ) != agent_retention_snapshot(current.config):
+        data_sections.add("usage")
+    if SECTION_CONFIGURATION in selected and SECTION_USAGE not in selected:
+        shortened = shortened_usage_retention(current.config, target.config)
+        if shortened:
+            preview["shortened_usage_retention"] = shortened
+    target.journaled_sections = frozenset(data_sections)
     return target, preview
 
 
@@ -1635,6 +1663,7 @@ async def async_restore_transfer(
     precondition: Callable[[], Awaitable[None]] | None = None,
     provider_connection: dict[str, Any] | None = None,
     expected_provider_data: dict[str, Any] | None = None,
+    confirm_retention: bool = False,
 ) -> dict[str, Any]:
     """Preserve unselected state and commit under one shielded exclusive lease."""
     from .agent_maintenance import (
@@ -1669,6 +1698,10 @@ async def async_restore_transfer(
             sections=sections,
             **provider_options,
         )
+        if preview.get("shortened_usage_retention") and not confirm_retention:
+            raise backup.BackupError(
+                "Confirm applying shorter Usage detail retention before restoring configuration"
+            )
         # Exclusivity already covers the destination snapshot. Call the journaled
         # inner restore directly: the public backup wrapper would reacquire this
         # non-reentrant gate. Lock order remains maintenance gate -> backup lock.
@@ -1684,16 +1717,22 @@ async def async_restore_transfer(
             ),
         )
         if provider_connection is not None:
-            from .provider_credentials import restore_private_provider_connection
+            from .provider_credentials import async_restore_private_provider_connection
 
             assert expected_provider_data is not None
             try:
-                restore_private_provider_connection(
+                await async_restore_private_provider_connection(
                     hass,
                     entry,
                     provider_connection,
                     expected_provider_data,
                     confirmed=True,
+                )
+            except backup.BackupError:
+                result["provider_connection_restored"] = False
+                result["provider_connection_message"] = (
+                    "Agent data restored. The provider update could not be verified on disk. "
+                    "Check the shared provider connection before retrying."
                 )
             except HomeAssistantError:
                 result["provider_connection_restored"] = False

@@ -592,8 +592,54 @@
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."
+        },
+    "broadcast": {
+      "name": "Broadcast spoken message",
+      "description": "Send a TTS announcement to selected Assist satellites without interrupting busy voice sessions. Broadcast must be enabled from Extended OpenAI first.",
+      "fields": {
+        "message": {
+          "name": "Message",
+          "description": "Text to announce."
+        },
+        "whole_home": {
+          "name": "Whole home",
+          "description": "Send to every announcement-capable Assist satellite except the origin."
+        },
+        "entity_id": {
+          "name": "Assist satellites",
+          "description": "One or more Assist satellite entities."
+        },
+        "device_id": {
+          "name": "Devices",
+          "description": "Devices whose Assist satellites should receive the announcement."
+        },
+        "area_id": {
+          "name": "Areas",
+          "description": "Areas whose Assist satellites should receive the announcement."
+        },
+        "floor_id": {
+          "name": "Floors",
+          "description": "Floors whose Assist satellites should receive the announcement."
+        },
+        "label_id": {
+          "name": "Labels",
+          "description": "Labels whose Assist satellites should receive the announcement."
+        },
+        "ttl_seconds": {
+          "name": "Queue expiry",
+          "description": "Maximum number of seconds a busy satellite may wait for delivery."
         }
+      }
     },
+    "enable_quiet_hours": {
+      "name": "Enable Quiet Hours schedule",
+      "description": "Turn on the saved Quiet Hours schedule. If Quiet Hours is due now, it starts immediately."
+    },
+    "disable_quiet_hours": {
+      "name": "Disable Quiet Hours schedule",
+      "description": "Turn off the saved Quiet Hours schedule. Speaker and wake-word settings changed by Quiet Hours are restored when they have not been changed since."
+    }
+  },
     "issues": {
         "retired_model": {
             "title": "Extended OpenAI assistant uses a retired model",

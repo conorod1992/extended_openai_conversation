@@ -396,7 +396,6 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(
         _sessions={"old": object()},
         _memory_bundles={"old": object()},
         _pending_ends={"old"},
-        _ignored_conversation_ids={"old": None},
     )
     rule_runtime = request_rules.RequestRuleRuntime()
     rule_runtime.set("old", {"model": "old"})
@@ -438,7 +437,6 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(
     assert continuity_manager._sessions == {}
     assert continuity_manager._memory_bundles == {}
     assert continuity_manager._pending_ends == set()
-    assert continuity_manager._ignored_conversation_ids == {}
     assert hass.data[request_rules._RUNTIMES][key] is rule_runtime
     assert rule_runtime._conversation_overrides == {}
     assert hass.data[function_groups._RUNTIMES][key] is group_runtime

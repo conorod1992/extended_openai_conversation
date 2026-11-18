@@ -72,7 +72,7 @@ async def test_sort_parsing_is_bounded_and_reused_at_memory_limit(monkeypatch):
         )
     )
     await memory.async_initialize()
-    module._updated_at_instant.cache_clear()
+    module._memory_timestamp_instant.cache_clear()
     parsed = []
     original = module.dt_util.parse_datetime
 
@@ -85,7 +85,7 @@ async def test_sort_parsing_is_bounded_and_reused_at_memory_limit(monkeypatch):
     assert (await memory.async_list_page("alice", offset=100))[0][0].memory_id == "9899"
     assert (await memory.async_browse("alice", ""))[1] == 10_000
     assert len(parsed) == 10_000
-    assert module._updated_at_instant.cache_info().maxsize == 20_000
+    assert module._memory_timestamp_instant.cache_info().maxsize == 20_000
 
 
 @pytest.mark.parametrize("reader", ["async_list", "async_list_page", "async_browse"])
@@ -114,3 +114,27 @@ async def test_valid_extreme_offset_timestamps_do_not_overflow_listing(reader):
     assert [row.memory_id for row in rows] == ["1", "3", "0", "2"]
     assert [row.updated_at for row in memory._memories.values()] == stamps
     assert storage.save_count == 0
+
+
+@pytest.mark.parametrize("alternative", ["2026-01-01T13:00:00+01:00", "2026-01-01T12:00:00"])
+async def test_equivalent_validity_uses_existing_memory_without_writing(alternative):
+    storage = FakeStorage()
+    memory = PersistentMemory(storage)
+    await memory.async_initialize()
+    stored = "2026-01-01T12:00:00Z"
+    arguments = ("alice", "Tea is in the pantry.", "home", "explicit")
+    created = await memory.async_add(*arguments, valid_from=stored)
+    writes = storage.save_count
+
+    duplicate = await memory.async_add(*arguments, valid_from=alternative)
+    proposal = await memory.async_propose(*arguments, valid_from=alternative)
+    assert duplicate["status"] == "duplicate"
+    assert proposal["status"] == "unchanged"
+    for result in (duplicate, proposal):
+        assert result["memory"]["memory_id"] == created["memory"]["memory_id"]
+        assert result["memory"]["valid_from"] == stored
+    assert storage.save_count == writes
+
+    distinct = await memory.async_propose(*arguments, valid_from="2026-01-01T12:01:00Z")
+    assert distinct["status"] == "created"
+    assert distinct["memory"]["memory_id"] != created["memory"]["memory_id"]

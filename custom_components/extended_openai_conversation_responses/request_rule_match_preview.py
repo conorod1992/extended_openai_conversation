@@ -6,6 +6,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.template import is_template_string
 
 from . import request_rules
 from .request_rule_patterns import SentenceMatchLimitError
@@ -14,10 +15,41 @@ from .script_payload import effective_service_payload, is_function_service_actio
 from .script_structure import iter_script_actions
 
 
-def _preview_ai_input(match: RuleMatch, original: str) -> dict[str, Any] | None:
+def _local_continuation(actions: list[dict[str, Any]]) -> str:
+    """Prove only flat Script termination; never render or walk branch outcomes.
+
+    An earlier failure also prevents continuation, so an unconditional stop or
+    final literal response proves termination even after opaque actions. Other
+    actions may fail, stop within a nested scope, or change/clear the response.
+    """
+    response: bool | None = False  # False: cleared, True: non-null, None: unknown.
+    uncertain = False
+    for step in actions:
+        enabled = step.get("enabled", True)
+        if enabled is False:
+            continue
+        if enabled is not True:
+            uncertain, response = True, None
+        elif "stop" in step:
+            # HA treats the stop message as literal text, even with Jinja syntax.
+            return "terminal"
+        elif "set_conversation_response" in step:
+            value = step["set_conversation_response"]
+            if value is None:
+                response = False
+            elif isinstance(value, str) and not is_template_string(value):
+                response = True  # Empty text is non-null too.
+            else:
+                uncertain, response = True, None
+        else:
+            uncertain, response = True, None
+    if response is True:
+        return "terminal"
+    return "conditional" if uncertain or response is None else "continue"
+
+
+def _preview_ai_input(match: RuleMatch, original: str) -> dict[str, Any]:
     """Describe a handoff without invoking the provider."""
-    if not match.rule["action"].get("continue_to_ai", False):
-        return None
     capture = match.rule.get("ai_input_capture")
     return {
         "mode": match.rule.get("ai_input_mode", "original"),
@@ -27,7 +59,7 @@ def _preview_ai_input(match: RuleMatch, original: str) -> dict[str, Any] | None:
 
 
 def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
-    """Return a frontend-safe summary of the rule that would win."""
+    """Describe a match and conservative continuation without executing actions."""
     if match is None:
         return {"matched": False}
 
@@ -35,6 +67,11 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
     action = rule["action"]
     if rule["action_type"] == "local_action":
         continue_to_ai = bool(action.get("continue_to_ai", False))
+        continuation = _local_continuation(action.get("actions", []))
+        terminal = continuation == "terminal"
+        conditional = continuation == "conditional" and (
+            continue_to_ai or rule.get("continue_matching", False)
+        )
         functions = [
             {
                 "name": data["function"],
@@ -52,8 +89,14 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
         would_do: dict[str, Any] = {
             "type": "local_action",
             "action_count": len(action.get("actions", [])),
-            "consumed": not continue_to_ai,
-            "provider_input": "original" if continue_to_ai else "none",
+            "consumed": None
+            if conditional and continue_to_ai
+            else not continue_to_ai or terminal,
+            "provider_input": ("conditional" if conditional else "original")
+            if continue_to_ai and not terminal
+            else "none",
+            **({"terminal": True} if terminal else {}),
+            **({"conditional": True} if conditional else {}),
             **({"functions": functions} if functions else {}),
         }
     else:
@@ -77,6 +120,13 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
             "provider_input": "none" if consumed else "original",
         }
 
+    if (
+        rule.get("continue_matching")
+        and not continue_to_ai
+        and not would_do.get("terminal")
+    ):
+        would_do["continue_matching"] = True
+
     return {
         "matched": True,
         "rule": {
@@ -90,7 +140,49 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
         "score": round(match.score, 1),
         "captured_values": dict(match.slots),
         "would_do": would_do,
+        **({"conditional": True} if would_do.get("conditional") else {}),
     }
+
+
+def _preview_chain_step(
+    match: RuleMatch, text: str, conditional: bool = False
+) -> tuple[dict[str, Any], dict[str, Any], bool, bool]:
+    """Keep the selected summary, chain and potential AI input in agreement."""
+    summary = request_rule_match_preview(match)
+    action = summary["would_do"]
+    conditional = conditional or bool(action.get("conditional"))
+    ai_input = (
+        _preview_ai_input(match, text) if action["provider_input"] != "none" else None
+    )
+    if conditional:
+        summary["conditional"] = action["conditional"] = True
+        if ai_input is not None:
+            ai_input["conditional"] = True
+            action.update(consumed=None, provider_input="conditional")
+    stopped = (
+        bool(action.get("terminal"))
+        or ai_input is not None
+        or rule_stops_matching(match.rule)
+    )
+    return (
+        summary,
+        {
+            "rule": {"id": match.rule["id"], "name": match.rule["name"]},
+            "status": "conditional"
+            if conditional
+            else (
+                "would_send_to_ai"
+                if ai_input is not None
+                else "stopped"
+                if stopped
+                else "continued"
+            ),
+            "would_do": action,
+            "ai_input": ai_input,
+        },
+        stopped,
+        conditional,
+    )
 
 
 async def async_request_rule_match_preview(
@@ -103,25 +195,17 @@ async def async_request_rule_match_preview(
         if hasattr(rules, "async_eligible_matches") and rules._has_continuation:
             skipped: list[dict[str, str]] = []
             chain: list[dict[str, Any]] = []
-            last: RuleMatch | None = None
+            summary = request_rule_match_preview(None)
+            conditional = False
             async for match in rules.async_eligible_matches(hass, text, skipped):
-                last = match
-                handoff = bool(match.rule["action"].get("continue_to_ai", False))
-                stopped = rule_stops_matching(match.rule)
-                chain.append(
-                    {
-                        "rule": {"id": match.rule["id"], "name": match.rule["name"]},
-                        "status": "would_send_to_ai"
-                        if handoff
-                        else ("stopped" if stopped else "continued"),
-                        "would_do": request_rule_match_preview(match)["would_do"],
-                        "ai_input": _preview_ai_input(match, text),
-                    }
+                summary, item, stopped, conditional = _preview_chain_step(
+                    match, text, conditional
                 )
+                chain.append(item)
                 if stopped:
                     break
             return {
-                **request_rule_match_preview(last),
+                **summary,
                 "matched_rules": chain,
                 "skipped_conditions": skipped,
             }
@@ -131,20 +215,13 @@ async def async_request_rule_match_preview(
             match, skipped = await rules.async_match(hass, text), []
     except SentenceMatchLimitError as err:
         raise HomeAssistantError(str(err)) from err
-    summary = request_rule_match_preview(match)
+    if match is None:
+        summary, chain = request_rule_match_preview(None), []
+    else:
+        summary, item, _, _ = _preview_chain_step(match, text)
+        chain = [item]
     return {
         **summary,
         "skipped_conditions": skipped,
-        "matched_rules": [
-            {
-                "rule": {"id": match.rule["id"], "name": match.rule["name"]},
-                "status": "would_send_to_ai"
-                if match.rule["action"].get("continue_to_ai", False)
-                else "stopped",
-                "would_do": summary["would_do"],
-                "ai_input": _preview_ai_input(match, text),
-            }
-        ]
-        if match is not None
-        else [],
+        "matched_rules": chain,
     }

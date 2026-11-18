@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -446,7 +446,12 @@ class UsageManager:
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
             self.totals.conversation_count += 1
-            await self._async_save_aggregates()
+            try:
+                await self._async_save_aggregates()
+            finally:
+                # Preserve this API's save errors and in-memory accounting;
+                # observers must see the changed counter even if saving fails.
+                self._notify()
 
     @asynccontextmanager
     async def async_run(
@@ -916,7 +921,7 @@ class UsageManager:
             raise StorageRepairRequired("Usage")
 
     async def async_backup_data(self) -> dict[str, Any]:
-        """Return all persisted usage categories without in-flight run state."""
+        """Return accounting and unexpired details without in-flight run state."""
         if isinstance(self._storage, _VolatileUsageStorage):
             raise RuntimeError(
                 "Usage storage is unavailable; volatile accounting cannot provide a complete backup"
@@ -925,9 +930,8 @@ class UsageManager:
             if not self._initialized:
                 raise RuntimeError("usage statistics have not been initialized")
             self._require_writable()
-            # Completed records are immutable after publication. Capture their
-            # membership under the manager lock; serialize only local references.
-            requests, runs = list(self.requests), list(self.runs)
+            # Export must enforce the same cutoff between scheduled prunes.
+            requests, runs, _ = await asyncio.to_thread(self._pruned_detail_state)
             totals, daily = self.as_dict(), deepcopy(self.daily)
             details = await asyncio.to_thread(_serialize_usage_details, requests, runs)
             return {"totals": totals, "daily": daily, **details}
@@ -1437,15 +1441,21 @@ def _saved_retention(
     """Resolve authoritative policy before any caller loads durable detail."""
     entry = hass.config_entries.async_get_entry(entry_id)
     subentry = entry.subentries.get(subentry_id) if entry is not None else None
-    options = subentry.data if subentry is not None else {}
+    return usage_retention_policy(subentry.data if subentry is not None else {})
+
+
+def usage_retention_policy(options: Mapping[str, Any]) -> dict[str, int]:
+    """Read retention consistently for durable, volatile and platform consumers."""
+    from .agent_config import normalized_agent_integer
+
     return {
-        "request_retention_days": int(
-            options.get(
-                CONF_USAGE_REQUEST_RETENTION_DAYS, DEFAULT_USAGE_REQUEST_RETENTION_DAYS
-            )
+        "request_retention_days": normalized_agent_integer(
+            options,
+            CONF_USAGE_REQUEST_RETENTION_DAYS,
+            DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
         ),
-        "run_retention_days": int(
-            options.get(CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS)
+        "run_retention_days": normalized_agent_integer(
+            options, CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
         ),
     }
 

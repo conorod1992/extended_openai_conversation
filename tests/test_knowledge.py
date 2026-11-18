@@ -76,6 +76,18 @@ async def _library(storage=None) -> KnowledgeLibrary:
     return library
 
 
+async def test_phrase_ranking_preserves_programming_identifiers() -> None:
+    library = await _library()
+    await library.async_create("C# setup", "", "Follow the device instructions.")
+    matching = await library.async_create(
+        "C++ device setup", "", "Follow the device instructions."
+    )
+
+    results = await library.async_search("C++ setup")
+
+    assert results[0].source_id == matching.source_id
+
+
 async def test_empty_initialization_and_crud_persistence() -> None:
     storage = FakeStorage()
     library = await _library(storage)
@@ -522,6 +534,39 @@ async def test_tool_get_safe_error_and_pagination() -> None:
     assert result["content"] == source.content
     with pytest.raises(ValueError, match="not found"):
         await entity._async_execute_knowledge_tool("get", {"source_id": "bad"})
+
+
+@pytest.mark.parametrize("distant", [False, True])
+async def test_search_cursor_reads_selected_source_window_directly(distant):
+    """Cursors count Unicode characters and include trimmed leading whitespace."""
+    import json
+
+    library = await _library()
+    # Fixed-size windows with no line boundaries give an independently known
+    # start. The selected window's displayed text begins after whitespace.
+    prefix = ("é水😀 " * 6000)[:23800] if distant else ""
+    padding = " " * 303 if distant else ""
+    content = prefix + padding + "caféneedle 😀 details " + "tail " * 100
+    source = await library.async_create("Manual", "", content)
+    entity = _entity(True, 1)
+    entity._knowledge = library
+    result = await entity._async_execute_knowledge_tool("search", {"query": "caféneedle"})
+    payload = json.loads(json.dumps(result, ensure_ascii=False))
+    hit = payload["results"][0]
+    expected_start = 23800 if distant else 0
+    assert hit["start_character"] == expected_start
+    assert hit["excerpt"].startswith("caféneedle")
+    page = await entity._async_execute_knowledge_tool("get", {
+        "source_id": hit["source_id"], "start_character": hit["start_character"], "max_characters": 500,
+    })
+    assert page["start_character"] == expected_start
+    assert page["content"] == source.content[expected_start:expected_start + 500]
+    assert page["content"].startswith(padding + "caféneedle 😀")
+    assert page["next_start_character"] == expected_start + 500
+    following = await entity._async_execute_knowledge_tool("get", {
+        "source_id": hit["source_id"], "start_character": page["next_start_character"], "max_characters": 500,
+    })
+    assert following["content"] == source.content[expected_start + 500:expected_start + 1000]
 
 
 async def test_tool_list_returns_metadata_without_content() -> None:

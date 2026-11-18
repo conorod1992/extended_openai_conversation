@@ -24,7 +24,7 @@ def test_consecutive_removals_preserve_word_boundaries(links, gap, source, expec
 @pytest.mark.parametrize("source,expected", [
     ("The switch is ***off*** [a.com](https://a.com) ***now***.", "The switch is off now."),
     ("2**3 https://a.com https://b.com next", "2**3 next"),
-    (r"Keep \*literal\* https://a.com https://b.com next", r"Keep \*literal\* next"),
+    (r"Keep \*literal\* https://a.com https://b.com next", "Keep *literal* next"),
     ("`https://a.com https://b.com` next", "https://a.com https://b.com next"),
 ])
 def test_single_link_and_literal_controls(source, expected):

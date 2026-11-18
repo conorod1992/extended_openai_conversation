@@ -55,7 +55,7 @@ def test_empty_url_wrappers_across_all_splits(opener, closer, links, gap):
         ("Before **text https://a.com https://b.com** after.", "Before text after."),
         ("2**3 https://a.com https://b.com next", "2**3 next"),
         ("2 ** 3 https://a.com https://b.com next", "2 ** 3 next"),
-        (r"\**https://a.com https://b.com** next", r"\** next"),
+        (r"\**https://a.com https://b.com** next", "** next"),
         (
             "sensor__temperature https://a.com https://b.com next",
             "sensor__temperature next",
@@ -73,7 +73,7 @@ def test_empty_url_wrappers_across_all_splits(opener, closer, links, gap):
         ),
         (
             r"Keep \_literal\_ https://a.com https://b.com next",
-            r"Keep \_literal\_ next",
+            "Keep _literal_ next",
         ),
         ("1) **https://a.com [Guide](https://b.com)**", "1. Guide"),
         ("1) **https://a.com https://b.com text**", "1. text"),

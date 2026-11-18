@@ -3,6 +3,57 @@ import {acceptSharingReview, expectHarnessClean, fixtureUrl, trackPageErrors} fr
 
 const panelFor = (page) => page.locator("extended-openai-management-panel");
 
+for (const bundled of [false, true]) test(`New routing rules reflect and save the AI continuation choice (${bundled})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+  const panel = panelFor(page);
+  await panel.locator("#rule-add").click();
+  await panel.locator("#rule-name").fill("Exact local route");
+  await panel.locator("#rule-phrases").fill("change model");
+  await panel.locator("#rule-action-type").selectOption("model_routing");
+  await panel.locator("#rule-model").fill("gpt-5-mini");
+  const handoff = panel.locator("#rule-continue-to-ai");
+  const help = panel.locator("#rule-routing-scope-help");
+  const scope = panel.locator("#rule-scope");
+  await expect(handoff).not.toBeChecked();
+  await expect(scope).toBeDisabled();
+  await expect(scope).toHaveValue("conversation");
+  await expect(help).toContainText("acknowledged locally");
+  await panel.locator("#rule-advanced > summary").click();
+  const matching = panel.locator("#rule-continue-matching");
+  await matching.check();
+  await expect(scope).toBeEnabled();
+  await expect(scope).toHaveValue("request");
+  await expect(help).toContainText("Later matching rules can run");
+  await matching.uncheck();
+  await panel.locator("#rule-match").selectOption("starts_with");
+  await expect(handoff).toBeChecked();
+  await expect(scope).toHaveValue("request");
+  await expect(help).toContainText("sends the original request");
+  await scope.selectOption("conversation");
+  await panel.locator("#rule-match").selectOption("equals");
+  await expect(handoff).not.toBeChecked();
+  await handoff.check();
+  await expect(scope).toHaveValue("conversation");
+  await panel.locator("#rule-match").selectOption("sentence_pattern");
+  await expect(handoff).toBeChecked();
+  await panel.locator("#rule-match").selectOption("equals");
+  await handoff.uncheck();
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
+  const saved = await page.evaluate(() => browserHarness.calls.findLast(
+    call => call.section === "request_rules" && call.action === "create"
+  ).rule);
+  expect(saved.match_type).toBe("equals");
+  expect(saved.action.continue_to_ai).toBe(false);
+  expect(saved.action.scope).toBe("conversation");
+  await panel.locator("#rule-add").click();
+  await panel.locator("#rule-action-type").selectOption("model_routing");
+  await handoff.check();
+  await expect(scope).toHaveValue("request");
+  await expectHarnessClean(page, errors);
+});
+
 for (const bundled of [false, true]) test(`Legacy fuzzy rule editor saves only deterministic settings (${bundled})`, async ({page}) => {
   await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
   const panel = panelFor(page);
@@ -406,3 +457,26 @@ for (const bundled of [false, true]) {
     await expectHarnessClean(page, errors);
   });
 }
+
+
+for (const bundled of [false, true]) test(`Routing rules can select a reasoning capture (${bundled})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+  const panel = panelFor(page);
+  await panel.locator("#rule-add").click();
+  await panel.locator("#rule-name").fill("Captured model and reasoning");
+  await panel.locator("#rule-match").selectOption("sentence_pattern");
+  await panel.locator("#rule-action-type").selectOption("model_routing");
+  await panel.locator("#rule-model").fill("{model}");
+  await panel.locator("#rule-phrases").fill("route {model} with {effort}");
+  await panel.locator("#rule-reasoning").selectOption("{effort}");
+  await panel.locator("#rule-continue-to-ai").check();
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
+  const saved = await page.evaluate(() => browserHarness.calls.findLast(
+    call => call.section === "request_rules" && call.action === "create"
+  ).rule);
+  expect(saved.action.model).toBe("{model}");
+  expect(saved.action.reasoning_effort).toBe("{effort}");
+  await expectHarnessClean(page, errors);
+});

@@ -102,7 +102,6 @@ def test_runtime_reset_clears_distinct_registry_and_agent_runtime_objects(
             _sessions={"x": 1},
             _memory_bundles={"x": 1},
             _pending_ends={"x"},
-            _ignored_conversation_ids={"x": 1},
         )
 
     def rule_state(label):
@@ -139,7 +138,6 @@ def test_runtime_reset_clears_distinct_registry_and_agent_runtime_objects(
         assert current._sessions == {}
         assert current._memory_bundles == {}
         assert current._pending_ends == set()
-        assert current._ignored_conversation_ids == {}
     for current in (registry_rules, agent_rules):
         assert current._conversation_overrides == {}
         assert not current._requests
@@ -157,7 +155,6 @@ def _continuity_runtime(marker: str):
         _sessions={marker: object()},
         _memory_bundles={marker: object()},
         _pending_ends={marker},
-        _ignored_conversation_ids={marker: None},
     )
 
 
@@ -236,7 +233,6 @@ def test_runtime_reset_reconciles_distinct_registry_and_agent_objects(
         assert runtime._sessions == {}
         assert runtime._memory_bundles == {}
         assert runtime._pending_ends == set()
-        assert runtime._ignored_conversation_ids == {}
     for runtime in (registry_rules, agent_rules):
         assert runtime._conversation_overrides == {}
         assert not runtime._requests

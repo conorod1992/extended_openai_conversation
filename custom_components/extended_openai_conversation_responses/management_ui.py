@@ -33,6 +33,7 @@ from .agent_config import (
     AgentConfigError,
     agent_config_defaults,
     agent_config_options,
+    agent_config_sampling_repair_snapshot,
     agent_config_snapshot,
     function_tool_enabled,
     function_tool_yaml,
@@ -40,10 +41,12 @@ from .agent_config import (
     model_capabilities,
     normalize_agent_config,
     normalize_persisted_agent_config,
+    normalized_agent_integer,
     parse_configured_function_tools,
     preserve_agent_model_setting_omissions,
     project_agent_config_transfer,
     project_agent_config_updates,
+    shortened_usage_retention,
     starter_function_tool_yaml,
     validate_agent_title,
     validate_function_tools,
@@ -1596,7 +1599,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 default_snapshot=defaults,
                 provider=provider,
             )
-        except AgentConfigError:
+        except AgentConfigError as err:
             # Retain the normal cached fast path for valid tools. A malformed
             # Function Tool snapshot can still be served through quarantine,
             # including on cold reads before the catalogue is available.
@@ -1604,13 +1607,22 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             validation_started = perf_counter()
             state, state_cache_hit = repair_state_for_projection(projection)
             if state is None:
-                raise
-            return repair_response(
-                strict_skipped=False,
-                attempt_ms=snapshot_attempt_ms,
-                validation_ms=_elapsed_ms(validation_started),
-                state_cache_hit=state_cache_hit,
-            )
+                if err.field not in {"temperature", "top_p"}:
+                    raise
+                # This is display-only: keep the authoritative booleans visible
+                # and leave the validated projection cache empty. All writers
+                # and request construction retain their strict numeric checks.
+                config = agent_config_sampling_repair_snapshot(
+                    dict(projection.data), provider=provider
+                )
+                snapshot_cache_hit = False
+            else:
+                return repair_response(
+                    strict_skipped=False,
+                    attempt_ms=snapshot_attempt_ms,
+                    validation_ms=_elapsed_ms(validation_started),
+                    state_cache_hit=state_cache_hit,
+                )
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
@@ -1854,10 +1866,16 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         preview_config = preserve_agent_model_setting_omissions(
             parsed["config"], agent_config_snapshot(parsed["config"], provider=provider)
         )
+        shortened = (
+            shortened_usage_retention(subentry.data, parsed["config"])
+            if message.get("mode", "current") == "current"
+            else {}
+        )
         return {
             "valid": True,
             "title": parsed["title"],
             "config": preview_config,
+            **({"shortened_usage_retention": shortened} if shortened else {}),
             "summary": {
                 "model": parsed["config"][CONF_CHAT_MODEL],
                 "tools": len(
@@ -1887,6 +1905,13 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             if message.get("confirm") is not True:
                 raise HomeAssistantError("Explicit confirmation is required")
             _require_agent_config_revision(subentry, message.get("revision"))
+            if (
+                shortened_usage_retention(subentry.data, parsed["config"])
+                and message.get("confirm_retention") is not True
+            ):
+                raise HomeAssistantError(
+                    "Confirm applying shorter Usage detail retention before overwriting configuration"
+                )
             hass.config_entries.async_update_subentry(
                 entry, subentry, data=parsed["config"], title=parsed["title"]
             )
@@ -2592,7 +2617,9 @@ async def async_usage_command(request: _ManagementRequest) -> dict[str, Any]:
         )
     if action == "requests":
         run_id = message.get("run_id")
-        if not isinstance(run_id, str):
+        if not isinstance(run_id, str) and not (
+            run_id is None and message.get("all_requests") is True
+        ):
             raise HomeAssistantError("run_id is required")
         return usage_requests_page(
             usage,
@@ -2636,11 +2663,10 @@ async def async_conversations_command(request: _ManagementRequest) -> dict[str, 
         _require_admin(is_admin)
         return {
             "active": await continuity.async_list(
-                int(
-                    subentry.data.get(
-                        CONF_CONVERSATION_TIMEOUT_MINUTES,
-                        DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
-                    )
+                normalized_agent_integer(
+                    subentry.data,
+                    CONF_CONVERSATION_TIMEOUT_MINUTES,
+                    DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
                 )
             )
         }
@@ -3435,6 +3461,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("target_rule_id"): str,
         vol.Optional("source_id"): str,
         vol.Optional("run_id"): str,
+        vol.Optional("all_requests"): bool,
         vol.Optional("query"): str,
         vol.Optional("content"): str,
         vol.Optional("title"): str,
@@ -3455,6 +3482,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("before_text_offset"): int,
         vol.Optional("successful"): bool,
         vol.Optional("confirm"): bool,
+        vol.Optional("confirm_retention"): bool,
     }
 )
 @websocket_api.async_response

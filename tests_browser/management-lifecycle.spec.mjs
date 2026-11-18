@@ -1,6 +1,74 @@
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+for (const bundled of [false, true]) for (const supported of [false, true]) {
+test(`saved sampling booleans remain visible until explicitly repaired (${supported ? "supported" : "inactive"}, ${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("guide", bundled ? "&bundle=1" : ""));
+  await expect(page.locator("extended-openai-management-panel .page-heading")).toBeVisible();
+  await page.evaluate(async (supported) => {
+    const host = browserHarness.panel;
+    const original = host._hass.callWS;
+    const sampling = {temperature:true, top_p:false};
+    const capabilities = {supports_temperature:supported, supports_top_p:supported,
+      temperature:{support:supported ? "always" : "never"}, top_p:{support:supported ? "always" : "never"}};
+    window.samplingSubmissions = [];
+    host._hass.callWS = async message => {
+      if (message.section === "configuration" && ["save", "update"].includes(message.action)) {
+        window.samplingSubmissions.push(JSON.parse(JSON.stringify(message)));
+        const candidate = {...sampling, ...window.samplingSubmissions.at(-1).config};
+        if (typeof candidate.top_p !== "number") return {valid:false, errors:{top_p:"must be a int or float"}};
+        Object.assign(sampling, message.config);
+      }
+      const result = await original(message);
+      if (message.type.endsWith("/model_catalog")) result.model_capabilities = capabilities;
+      if (message.section === "configuration" && ["get", "save", "update"].includes(message.action)) {
+        result.config = {...result.config, chat_model:supported ? "gpt-4.1" : "gpt-5-mini", ...sampling};
+        result.model_capabilities = capabilities;
+      }
+      return result;
+    };
+    await host._navigate("assistant", "model-responses");
+  }, supported);
+  const panel = page.locator("extended-openai-management-panel");
+  const temperature = panel.locator('[data-config="temperature"]');
+  const topP = panel.locator('[data-config="top_p"]');
+  await expect(temperature).toHaveValue("true");
+  await expect(topP).toHaveValue("false");
+  await expect(temperature).toBeEnabled();
+  await expect(topP).toBeEnabled();
+  await expect(panel.locator('[data-error="temperature"]')).toContainText("Saved boolean");
+  await temperature.fill("0.25");
+  await panel.locator("#save-config").click();
+  await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(1);
+  expect(await page.evaluate(() => browserHarness.panel._draft.top_p)).toBe(false);
+  expect(await page.evaluate(() => window.samplingSubmissions[0].config)).toEqual({temperature:0.25});
+  for (const [index, value] of ["typo", ""].entries()) {
+    await topP.fill(value);
+    if (index === 0) {
+      await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
+      await panel.evaluate(host => host._navigate("assistant", "model-responses"));
+      await expect(topP).toHaveAttribute("type", "text");
+      await expect(topP).toBeEnabled();
+      await expect(topP).toHaveValue(value);
+    }
+    await panel.locator("#save-config").click();
+    await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(index + 2);
+    expect(await page.evaluate((i) => window.samplingSubmissions[i].config, index + 1)).toEqual({temperature:0.25, top_p:value});
+    await expect(topP).toHaveValue(value);
+    await expect(panel.locator('[data-error="top_p"]')).toContainText("must be a int or float");
+    await expect(panel.locator("#save-config")).toBeEnabled();
+  }
+  await topP.fill("0.75");
+  await panel.locator("#save-config").click();
+  await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(4);
+  expect(await page.evaluate(() => window.samplingSubmissions[3].config)).toEqual({temperature:0.25, top_p:0.75});
+  await expect(panel.locator("#save-config")).toHaveCount(0);
+  expect(await page.evaluate(() => browserHarness.getState().configuration.config.top_p)).toBe(0.75);
+  await expectHarnessClean(page, errors);
+});
+}
+
 // Reproduce the real HA cold-load case where HTTP/1.1 delays the full stylesheet.
 for (const bundled of [false, true]) {
 test(`critical CSS prevents shell and route-title FOUC while full stylesheet is delayed (${bundled ? "bundle" : "source"})`, async ({page}) => {
@@ -337,8 +405,36 @@ test("returning to Prompt Context owns a fresh exposure read while the prior vis
   await expectHarnessClean(page, errors);
 });
 
-test("Conversation History paints the selected scope before secondary data settles", async ({page}) => {
-  await page.goto(fixtureUrl("overview"));
+async function holdOverviewImplementation(page, fail = false) {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let requested;
+  const started = new Promise(resolve => { requested = resolve; });
+  let url;
+  await page.route("**/overview-page-impl*.js", async route => {
+    url = route.request().url();
+    requested();
+    await gate;
+    if (fail) await route.abort();
+    else await route.continue();
+  });
+  return {started, release, async settle() {
+    release();
+    await page.evaluate(async ({url, fail}) => {
+      try { await import(url); } catch (error) { if (!fail) throw error; }
+      // The import and its queued promise callbacks settle before this paint.
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }, {url, fail});
+  }};
+}
+
+for (const bundled of [false, true]) {
+test(`Conversation History paints the selected scope before secondary data settles${bundled ? " (bundle)" : ""}`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  const overview = await holdOverviewImplementation(page);
+  try {
+  await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""), {waitUntil:"domcontentloaded"});
+  await overview.started;
   await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
   const result = await page.evaluate(async () => {
     const host = browserHarness.panel;
@@ -346,6 +442,8 @@ test("Conversation History paints the selected scope before secondary data settl
     const releases = {};
     const started = new Set();
     const observedScopeKinds = [];
+    let markStarted;
+    const allStarted = new Promise(resolve => { markStarted = resolve; });
     host._hass.callWS = async message => {
       const key = message.section === "scopes"
         ? "scopes"
@@ -357,48 +455,96 @@ test("Conversation History paints the selected scope before secondary data settl
       if (key) {
         started.add(key);
         if (key === "scopes") observedScopeKinds.push(message.scope_kind);
+        if (["scopes", "config", "active"].every(key => started.has(key))) markStarted();
         await new Promise(resolve => { releases[key] = resolve; });
       }
       return original(message);
     };
 
     const pending = host._navigate("data-memory", "conversations");
-    while (!["scopes", "config", "active"].every(key => started.has(key))) {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
-    for (let turn = 0; turn < 40 && (!host.shadowRoot.querySelector("#archive-query") || host._busy); turn++) {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
+    await allStarted;
+    await pending;
     const primaryVisible = Boolean(host.shadowRoot.querySelector("#archive-query")) && host._busy === false;
     const searchInput = host.shadowRoot.querySelector("#archive-query");
     const loadingSettings = host.shadowRoot.textContent.includes("Loading archive settings");
     const scopeKinds = observedScopeKinds;
+    window.historySearchInput = searchInput;
+    searchInput.value = "keep this history query";
+    searchInput.focus();
 
     releases.scopes();
     releases.config();
     releases.active();
-    await pending;
-    for (let turn = 0; turn < 20 && host._contentData?.loading?.active; turn++) {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
     host._hass.callWS = original;
     return {
       primaryVisible,
       loadingSettings,
       scopeKinds,
-      activeLoading: host._contentData?.loading?.active,
-      configReady: Boolean(host._configData),
-      searchPreserved: host.shadowRoot.querySelector("#archive-query") === searchInput,
     };
   });
 
   expect(result.primaryVisible).toBe(true);
   expect(result.loadingSettings).toBe(true);
   expect(result.scopeKinds.at(-1)).toBe("archive");
-  expect(result.activeLoading).toBe(false);
-  expect(result.configReady).toBe(true);
-  expect(result.searchPreserved).toBe(true);
+  const panel = page.locator("extended-openai-management-panel");
+  await expect.poll(() => panel.evaluate(host => host._contentData?.loading)).toEqual({scopes:false, config:false, active:false});
+  await expect.poll(() => panel.evaluate(host => host._eocHistoryEditorLoading)).toBe(false);
+  const retainedSearch = () => panel.evaluate(host => ({
+    activeLoading: host._contentData?.loading?.active,
+    configReady: Boolean(host._configData),
+    searchPreserved: host.shadowRoot.querySelector("#archive-query") === window.historySearchInput,
+    value: host.shadowRoot.querySelector("#archive-query")?.value,
+    focused: host.shadowRoot.activeElement === window.historySearchInput,
+    error: host._error,
+  }));
+  const expected = {activeLoading:false, configReady:true, searchPreserved:true, value:"keep this history query", focused:true, error:null};
+  expect(await retainedSearch()).toEqual(expected);
+  await overview.settle();
+  expect(await retainedSearch()).toEqual(expected);
+  await expectHarnessClean(page, errors);
+  } finally { overview.release(); }
 });
+
+test(`late Overview import failure cannot replace Conversation History${bundled ? " (bundle)" : ""}`, async ({page}) => {
+  const overview = await holdOverviewImplementation(page, true);
+  try {
+    await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""), {waitUntil:"domcontentloaded"});
+    await overview.started;
+    await page.evaluate(() => browserHarness.panel._navigate("data-memory", "conversations"));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator("#archive-query")).toBeVisible();
+    await panel.locator("#archive-query").fill("keep failed-import query");
+    await panel.evaluate(host => { window.historySearchInput = host.shadowRoot.querySelector("#archive-query"); });
+    await overview.settle();
+    expect(await panel.evaluate(host => ({
+      preserved:host.shadowRoot.querySelector("#archive-query") === window.historySearchInput,
+      value:host.shadowRoot.querySelector("#archive-query")?.value,
+      view:host._viewKey(), error:host._error,
+    }))).toEqual({preserved:true, value:"keep failed-import query", view:"data-memory/conversations", error:null});
+    expect(await page.evaluate(() => ({errors:browserHarness.windowErrors, rejections:browserHarness.rejections}))).toEqual({errors:[], rejections:[]});
+  } finally { overview.release(); }
+});
+
+test(`Overview import failure remains visible on its current visit${bundled ? " (bundle)" : ""}`, async ({page, browser}) => {
+  const overview = await holdOverviewImplementation(page, true);
+  try {
+    await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""), {waitUntil:"domcontentloaded"});
+    await overview.started;
+    await overview.settle();
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator("main .route-error-state")).toContainText("Unable to load");
+    expect(await panel.evaluate(host => ({view:host._viewKey(), busy:host._busy}))).toEqual({view:"overview", busy:false});
+    expect(await page.evaluate(() => browserHarness.rejections)).toEqual([]);
+    // Failed module imports may remain cached by the browser context. Verify
+    // a clean application load independently from the injected network failure.
+    const recovery = await browser.newPage();
+    try {
+      await recovery.goto(new URL(fixtureUrl("overview", bundled ? "&bundle=1" : ""), page.url()).href);
+      await expect(recovery.locator("extended-openai-management-panel .setup-health")).toBeVisible();
+    } finally { await recovery.close(); }
+  } finally { overview.release(); }
+});
+}
 
 test("conversation configuration starts before a pending scope catalog finishes", async ({page}) => {
   await page.goto(fixtureUrl("overview"));

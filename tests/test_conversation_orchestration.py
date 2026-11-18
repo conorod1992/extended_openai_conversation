@@ -95,12 +95,14 @@ def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
     entity._async_begin_archive_session = AsyncMock(return_value=None)
     entity._async_handle_message_with_ha_tools = AsyncMock()
 
-    user_input = SimpleNamespace(
-        extra_system_prompt=None,
+    user_input = conversation.ConversationInput(
         text=text,
         language="en",
         conversation_id=None,
         context=Context(user_id="alice"),
+        agent_id="conversation.agent",
+        device_id=None,
+        satellite_id=None,
     )
     chat_log = SimpleNamespace(
         extra_system_prompt=None,
@@ -304,7 +306,10 @@ async def test_routing_rule_hands_captured_provider_input_to_ai(monkeypatch):
     assert await process() is expected
     assert chat_log.content[-1].content == "why the sky is blue"
     assert user_input.text == "ask why the sky is blue"
-    assert entity._async_handle_message_with_ha_tools.call_args.args[1] is chat_log
+    model_input, model_log, _ = entity._async_handle_message_with_ha_tools.call_args.args
+    assert model_log is chat_log
+    assert model_input.text == "why the sky is blue"
+    assert model_input.context is user_input.context
 
 
 @pytest.mark.parametrize(
@@ -565,17 +570,14 @@ def _assist_fixture(monkeypatch):
         incoming=None,
         direct=False,
     ):
-        request = SimpleNamespace(
-            extra_system_prompt=None,
+        request = conversation.ConversationInput(
             text=text,
             language="en",
             conversation_id=incoming,
             context=Context(user_id="alice"),
+            agent_id=entity.entity_id,
             device_id=device,
             satellite_id=satellite,
-        )
-        request.as_llm_context = lambda _domain: SimpleNamespace(
-            context=request.context
         )
         if direct:
             return await entity.async_process_direct(request)
@@ -868,6 +870,7 @@ async def test_fresh_conversation_request_resets_owned_state_after_response(
         continuity_key="device:kitchen",
         state_session_id="state-session",
         memory_session_id="memory-session",
+        chat_session=SimpleNamespace(conversation_id=chat_log.conversation_id),
     )
 
 
