@@ -225,6 +225,9 @@ class EmbeddingCacheStorage(Protocol):
     async def async_save(self, data: dict[str, Any]) -> None:
         """Save cached embeddings."""
 
+    async def async_remove(self) -> None:
+        """Remove persisted embeddings and propagate removal failures."""
+
 
 class MemoryStore(PropagatingWriteStore):
     """Versioned Home Assistant Store backend."""
@@ -266,13 +269,23 @@ class HomeAssistantMemoryStorage:
         await self._store.async_save(data)
 
 
+class _EmbeddingCacheStore(Store[dict[str, Any]]):
+    """Allow an explicit removal to discard any deferred cache generation."""
+
+    async def async_remove(self) -> None:
+        await super().async_remove()
+        # Store removes the file and its scheduled callbacks, but retains queued
+        # data in memory. A subsequent load must not revive that generation.
+        self._data = None
+
+
 class HomeAssistantEmbeddingCacheStorage:
     """Separate private Store for regenerable embedding vectors."""
 
     def __init__(self, hass: HomeAssistant, entry_id: str, subentry_id: str) -> None:
         """Initialize a private per-agent embedding cache."""
         key = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}.embeddings"
-        self._store = Store[dict[str, Any]](
+        self._store = _EmbeddingCacheStore(
             hass,
             EMBEDDING_CACHE_VERSION,
             key,
@@ -292,6 +305,10 @@ class HomeAssistantEmbeddingCacheStorage:
     async def async_save(self, data: dict[str, Any]) -> None:
         """Save cached embeddings."""
         await self._store.async_save(data)
+
+    async def async_remove(self) -> None:
+        """Remove the cache using the native operation that reports disk errors."""
+        await self._store.async_remove()
 
 
 class PersistentMemory:
@@ -831,20 +848,34 @@ class PersistentMemory:
 
     async def async_rebuild_embedding_cache(self) -> None:
         """Discard derived vectors so future searches embed their readable facts."""
-        async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+
+        async def reset() -> None:
+            if self._embedding_cache_storage is not None:
+                try:
+                    await self._embedding_cache_storage.async_remove()
+                except Exception as err:
+                    log_handled_failure(
+                        _LOGGER,
+                        "Could not remove the persistent memory embedding cache",
+                        err,
+                    )
+                    raise HomeAssistantError(
+                        "Could not persist the embedding cache reset"
+                    ) from None
             self._embedding_cache.clear()
-            self._embedding_cache_dirty = True
+            self._embedding_cache_dirty = False
+            self._embedding_cache_write_failed = False
             self._embedding_cache_retry_at = 0.0
             self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
             self._set_hybrid_status(
                 "ready" if self._embedding_provider else "lexical_fallback",
                 None if self._embedding_provider else "provider_not_configured",
             )
-            if not await async_settle_owned_operation(
-                self._async_save_embedding_cache_locked()
-            ):
-                raise HomeAssistantError("Could not persist the embedding cache reset")
+            self._committed_state = self._snapshot_mutation_state()
+
+        async with async_storage_lock(self._storage, self._lock):
+            self._ensure_initialized()
+            await async_settle_owned_operation(reset())
 
     async def async_get_many(
         self, references: Sequence[tuple[str, str]], readable_scope_ids: Sequence[str]

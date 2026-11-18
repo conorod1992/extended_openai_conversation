@@ -46,7 +46,7 @@ Private mode applies only to the exact active session. Enabling it deletes alrea
 
 Archive privacy controls only this integration's transcript retention. It does not stop the active conversation from being sent to the configured provider, disable separate memory features or opt-in Request debugging, or erase copies already exported or recorded elsewhere. Review those settings separately when you do not want information retained.
 
-Single-session deletion is exact. Semantic deletion begins with bounded search and requires selected session IDs. Date-range deletion selects whole sessions by their last retained turn in Home Assistant's timezone. The preview shows the affected sessions and turn counts, including turns from earlier dates. Confirm the whole-session deletion only if you also want those earlier turns removed. Date-range and whole-scope deletion return exact session and turn counts after confirmation. Deleting transcript text never changes token aggregates. You can verify the result under **Extended OpenAI → Data & Memory → Conversation history**.
+Single-session deletion is exact. Semantic deletion begins with bounded search and requires selected session IDs. Date-range deletion selects whole sessions by their last retained turn in Home Assistant's timezone. The preview shows affected sessions and counts turns outside the selected dates. If the preview includes turns outside the requested range, open **Extended OpenAI → Data & Memory → Conversation history**. Review each affected conversation and confirm its deletion there to remove all of its turns. Date-range and whole-scope deletion return exact session and turn counts after confirmation. Deleting transcript text never changes token aggregates.
 
 ## Voice satellite ownership
 

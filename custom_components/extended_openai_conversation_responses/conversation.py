@@ -3349,6 +3349,7 @@ class ExtendedOpenAIAgentEntity(
                     start_date,
                     end_date,
                     confirm=arguments.get("confirm") is True,
+                    allow_outside_range=False,
                 )
             raise ValueError("unknown archive operation")
         except RuntimeError, ValueError:

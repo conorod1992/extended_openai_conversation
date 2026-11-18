@@ -1391,6 +1391,7 @@
     "tests_real_ha/test_persistent_memory_runtime_recovery.py::test_cold_memory_storage_preserves_credential_categories_without_purge[deviceaccesstoken=private_memory_value]",
     "tests_real_ha/test_persistent_memory_runtime_recovery.py::test_loaded_memory_recovers_on_next_assist_without_config_change[before-commit]",
     "tests_real_ha/test_persistent_memory_runtime_recovery.py::test_loaded_memory_recovers_on_next_assist_without_config_change[lost-ack]",
+    "tests_real_ha/test_persistent_memory_runtime_recovery.py::test_rebuild_embeddings_requires_durable_removal",
     "tests_real_ha/test_persistent_memory_shutdown_recovery.py::test_graceful_shutdown_during_persistent_memory_write_recovers_cleanly[after_commit]",
     "tests_real_ha/test_persistent_memory_shutdown_recovery.py::test_graceful_shutdown_during_persistent_memory_write_recovers_cleanly[before_commit]",
     "tests_real_ha/test_populated_feature_assist_journey.py::test_populated_assist_feature_effects_and_real_oracle_canaries[chat_completions]",

@@ -30,6 +30,9 @@ class FakeStorage:
     async def async_save(self, data):
         self.data = deepcopy(data)
 
+    async def async_remove(self):
+        self.data = None
+
 
 class CountingCacheStorage(FakeStorage):
     """Embedding cache that records persistence frequency."""
@@ -106,7 +109,7 @@ async def test_repointed_alias_refreshes_only_readable_vectors_after_restart(
     }
     saved_facts = deepcopy(facts.data)
     await memory.async_rebuild_embedding_cache()
-    assert cache.data == {"embeddings": {}}
+    assert cache.data is None
     assert facts.data == saved_facts
     calls.clear()
     assert await memory.async_prepare_hybrid(["alice"], "third") == vector

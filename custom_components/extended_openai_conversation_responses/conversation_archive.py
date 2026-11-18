@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timedelta, tzinfo
 from heapq import heappush, heapreplace
@@ -1176,8 +1176,9 @@ class ConversationArchive:
         end_date: str,
         *,
         confirm: bool,
-    ) -> dict[str, int]:
-        """Delete sessions whose last retained turn is inside an exact date range."""
+        allow_outside_range: bool = True,
+    ) -> dict[str, Any]:
+        """Delete matching whole sessions or return the review required for outside turns."""
         if not confirm:
             raise ValueError("Explicit confirmation is required")
         if not isinstance(start_date, str) or not isinstance(end_date, str):
@@ -1185,14 +1186,18 @@ class ConversationArchive:
         start, end = _local_date_bounds(start_date, end_date, dt_util.DEFAULT_TIME_ZONE)
         async with self._lock:
             self._ensure_initialized()
-            targets = {
-                session.session_id
-                for session in _sessions_in_delete_range(
-                    self._sessions.values(), scope_id, start, end
-                )
-            }
-            if not targets:
+            sessions = _sessions_in_delete_range(
+                self._sessions.values(), scope_id, start, end
+            )
+            if not sessions:
                 return {"deleted_sessions": 0, "deleted_turns": 0}
+            if not allow_outside_range:
+                preview = await asyncio.to_thread(
+                    _describe_date_range_deletion, sessions, self._turns, start, end
+                )
+                if preview.get("status") == "user_confirmation_required":
+                    return preview
+            targets = {session.session_id for session in sessions}
             return await self._async_delete_owned_locked(scope_id, targets)
 
     async def async_preview_delete_date_range(
@@ -1764,10 +1769,12 @@ def archive_tools() -> list[dict[str, Any]]:
         ),
         _tool(
             "conversation_delete_date_range",
-            "Delete entire sessions whose last retained turn falls in the Home Assistant "
-            "date range. First call with confirm=false. Show the affected sessions and "
-            "turn counts, including earlier turns, and ask for explicit confirmation "
-            "to delete the whole sessions before calling with confirm=true.",
+            "Preview or delete sessions by the date of their last retained turn. "
+            "First call with confirm=false and show the affected sessions and counts. "
+            "If any turns fall outside the requested dates, direct the user to "
+            "Extended OpenAI → Data & Memory → Conversation history to review and "
+            "confirm whole-conversation deletion. Otherwise ask for confirmation "
+            "before calling with confirm=true.",
             {
                 "start_date": {"type": "string"},
                 "end_date": {"type": "string"},
@@ -1820,30 +1827,56 @@ def _preview_delete_range(
     start: datetime,
     end: datetime,
 ) -> dict[str, Any]:
-    targets = sorted(
+    return _describe_date_range_deletion(
         _sessions_in_delete_range(sessions.values(), scope_id, start, end),
+        turns,
+        start,
+        end,
+    )
+
+
+def _describe_date_range_deletion(
+    sessions: list[ArchiveSession],
+    turns: Mapping[str, Sequence[ArchiveTurn]],
+    start: datetime,
+    end: datetime,
+) -> dict[str, Any]:
+    targets = sorted(
+        sessions,
         key=lambda session: (session.last_message_at, session.session_id),
         reverse=True,
     )
-    return {
+    earlier_turns = later_turns = 0
+    for session in targets:
+        for turn in turns.get(session.session_id, ()):
+            timestamp = _parse_time(turn.timestamp)
+            earlier_turns += timestamp < start
+            later_turns += timestamp >= end
+    result = {
         "sessions": [
             {
                 "session_id": session.session_id,
                 "title": session.title,
                 "last_message_at": session.last_message_at,
-                "turn_count": len(turns[session.session_id]),
+                "turn_count": len(turns.get(session.session_id, ())),
             }
             for session in targets[:MAX_SEARCH_LIMIT]
         ],
         "session_count": len(targets),
-        "turn_count": sum(len(turns[session.session_id]) for session in targets),
-        "earlier_turn_count": sum(
-            _parse_time(turn.timestamp) < start
-            for session in targets
-            for turn in turns[session.session_id]
+        "turn_count": sum(
+            len(turns.get(session.session_id, ())) for session in targets
         ),
+        "earlier_turn_count": earlier_turns,
+        "later_turn_count": later_turns,
         "has_more_sessions": len(targets) > MAX_SEARCH_LIMIT,
     }
+    if earlier_turns or later_turns:
+        result["status"] = "user_confirmation_required"
+        result["confirmation"] = (
+            "Review and confirm each whole-conversation deletion under "
+            "Extended OpenAI → Data & Memory → Conversation history."
+        )
+    return result
 
 
 def _local_date_bounds(

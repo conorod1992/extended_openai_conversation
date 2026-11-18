@@ -567,7 +567,7 @@
     {
       "type": "function",
       "name": "conversation_delete_date_range",
-      "description": "Delete entire sessions whose last retained turn falls in the Home Assistant date range. First call with confirm=false. Show the affected sessions and turn counts, including earlier turns, and ask for explicit confirmation to delete the whole sessions before calling with confirm=true.",
+      "description": "Preview or delete sessions by the date of their last retained turn. First call with confirm=false and show the affected sessions and counts. If any turns fall outside the requested dates, direct the user to Extended OpenAI → Data & Memory → Conversation history to review and confirm whole-conversation deletion. Otherwise ask for confirmation before calling with confirm=true.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1374,7 +1374,7 @@
       "type": "function",
       "function": {
         "name": "conversation_delete_date_range",
-        "description": "Delete entire sessions whose last retained turn falls in the Home Assistant date range. First call with confirm=false. Show the affected sessions and turn counts, including earlier turns, and ask for explicit confirmation to delete the whole sessions before calling with confirm=true.",
+        "description": "Preview or delete sessions by the date of their last retained turn. First call with confirm=false and show the affected sessions and counts. If any turns fall outside the requested dates, direct the user to Extended OpenAI → Data & Memory → Conversation history to review and confirm whole-conversation deletion. Otherwise ask for confirmation before calling with confirm=true.",
         "parameters": {
           "type": "object",
           "properties": {
