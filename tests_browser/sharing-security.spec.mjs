@@ -67,7 +67,7 @@ test("Shared provider restoration is opt-in, previewed and configuration-depende
   await provider.check();
   await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
   await panel.locator("#restore-transfer-apply").click();
-  await expect(panel.getByText(/shared provider connection and credentials for ALL/)).toBeVisible();
+  await expect(panel.locator("#confirm-message")).toContainText(/provider connection and credentials for all its agents/i);
   await acceptConfirmation(panel);
   await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
   expect(await page.evaluate(() => browserHarness.calls.filter(call => call.action === "import_restore").at(-1)?.data?.restore_provider_connection)).toBe(true);

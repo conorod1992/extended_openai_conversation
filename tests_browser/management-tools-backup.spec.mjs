@@ -318,7 +318,7 @@ test("restore warns about replacing an active configuration draft only when appl
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", false);
   await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
   await panel.locator("#restore-transfer-apply").click();
-  await expect(panel.locator("#confirm-message")).toContainText("unsaved configuration changes will be replaced and lost");
+  await expect(panel.locator("#confirm-message")).toContainText(/unsaved configuration changes will be lost/i);
   await panel.locator("#confirm-cancel").click();
   await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
   expect(await page.evaluate(() => browserHarness.calls.filter((call) => call.action === "import_restore").length)).toBe(0);
