@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 import json
 import logging
@@ -103,19 +104,30 @@ def prepare_download(root: Path, name: str) -> SkillDownload:
     token = uuid4().hex
     record = root / f"download-{token}.json"
     directory = root / f"{name}.download-{token}"
-    handle = os.fdopen(
-        os.open(record, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600), "w+b"
-    )
+    fd = os.open(record, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    handle = None
+    directory_created = False
     try:
+        handle = os.fdopen(fd, "w+b")
         fcntl.flock(handle, fcntl.LOCK_EX)
         directory.mkdir(mode=0o700)
+        directory_created = True
         handle.write(
             json.dumps({"name": name, "identity": _identity(directory)}).encode()
         )
         handle.flush()
         os.fsync(handle.fileno())
     except BaseException:
-        handle.close()
+        if directory_created:
+            with suppress(OSError):
+                directory.rmdir()
+        with suppress(OSError):
+            record.unlink(missing_ok=True)
+        with suppress(OSError):
+            if handle is None:
+                os.close(fd)
+            else:
+                handle.close()
         raise
     return SkillDownload(directory, record, handle)
 
@@ -130,10 +142,16 @@ def _recover_abandoned_download(record: Path) -> None:
             or record.stat().st_size > 16 * 1024
         ):
             raise HomeAssistantError("Skill download ownership record is unsafe")
-        with os.fdopen(os.open(record, os.O_RDONLY | os.O_NOFOLLOW), "rb") as handle:
+        with os.fdopen(os.open(record, os.O_RDWR | os.O_NOFOLLOW), "rb") as handle:
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
+                return
+            if (
+                _DOWNLOAD.fullmatch(record.name)
+                and os.fstat(handle.fileno()).st_size == 0
+            ):
+                record.unlink(missing_ok=True)
                 return
             _recover_download(record, handle)
     except FileNotFoundError:

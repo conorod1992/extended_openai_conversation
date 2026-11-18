@@ -172,3 +172,53 @@ def test_ambiguous_recovery_fails_without_deleting_recoverable_data(tmp_path, mu
     assert (backup / "SKILL.md").read_text() == "OLD"
     assert (staged / "SKILL.md").read_text() == "NEW"
     assert journal.exists()
+
+@pytest.mark.parametrize("failure_stage", ["fdopen", "lock", "mkdir", "fsync"])
+def test_download_setup_failure_cleans_its_artifacts(tmp_path, monkeypatch, failure_stage):
+    import fcntl
+
+    root = tmp_path / ".staging"
+    module, name = (fcntl, "flock") if failure_stage == "lock" else (skill_transactions.os, failure_stage)
+
+    def fail(*_args, **_kwargs):
+        raise OSError("setup failed")
+
+    with monkeypatch.context() as fault:
+        if failure_stage == "mkdir":
+            mkdir = type(root).mkdir
+
+            def maybe_fail(path, *args, **kwargs):
+                if path.parent == root:
+                    fail()
+                mkdir(path, *args, **kwargs)
+
+            fault.setattr(type(root), "mkdir", maybe_fail)
+        else:
+            fault.setattr(module, name, fail)
+        with pytest.raises(OSError, match="setup failed"):
+            prepare_download(root, "example")
+    assert list(root.iterdir()) == []
+    owner = prepare_download(root, "example")
+    owner.close()
+    assert list(root.iterdir()) == []
+
+
+def test_recovery_retires_only_unlocked_empty_download_record(tmp_path):
+    import fcntl
+
+    root = tmp_path / ".staging"
+    root.mkdir()
+    token = "a" * 32
+    record = root / f"download-{token}.json"
+    directory = root / f"example.download-{token}"
+    directory.mkdir()
+    payload = directory / "partial"
+    payload.write_text("unverified")
+    with record.open("wb") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        recover_transactions(root, tmp_path / "installed")
+        assert record.exists()
+    recover_transactions(root, tmp_path / "installed")
+    recover_transactions(root, tmp_path / "installed")
+    assert not record.exists()
+    assert payload.read_text() == "unverified"
