@@ -14,9 +14,10 @@ deletion snapshot holds its live handles strongly while cleanup awaits I/O.
 Repeated binding deduplicates the handle; rebinding moves cleanup ownership
 along with the existing I/O guard.
 
-The regenerable embedding cache registers its plain HA Store separately. Its
-best-effort persistence semantics are unchanged. Shared delayed-job Stores and
-per-agent, transaction-owned restore journals remain outside this live cleanup
+The regenerable embedding cache registers its HA Store separately. Routine
+vector saves use native best-effort persistence. An explicit rebuild removes the
+saved cache and retires queued cache data before it reports success. Shared
+delayed-job Stores and per-agent, transaction-owned restore journals remain outside this live cleanup
 contract; sharing a storage implementation does not transfer their ownership.
 Hybrid refresh retains its manager lease through best-effort cache persistence,
 including native work that survives caller cancellation. A surfaced **local
