@@ -47,7 +47,10 @@ for (const bundled of [false, true]) for (const change of ["mutable user id ABA"
       const state = window.sharedHassOwner = {requests:[], toasts:[]};
       host._toast = (...args) => state.toasts.push(args);
       host.hass.callWS = request => {
-        if (!request.type?.endsWith("/model_catalog") || request.action !== "lookup") return original(request);
+        // The blank route also loads the catalogue-wide efforts. Hold only
+        // the explicit model lookup whose publication this test checks.
+        if (!request.type?.endsWith("/model_catalog") || request.action !== "lookup"
+          || request.model !== "held-shared-object-model") return original(request);
         return new Promise((resolve, reject) => state.requests.push({request:structuredClone(request), finish:async failed => {
           if (failed) reject(Error("Retired shared-object lookup failed"));
           else resolve({...await original(request), reasoning_effort_options:["retired-only"]});
