@@ -790,21 +790,27 @@ async def test_optional_structured_output_round_trips_provider_contract(
         {
             vol.Required("answer"): str,
             vol.Optional("text"): str,
+            vol.Optional("language", default="en"): str,
+            vol.Required("default"): str,
             vol.Optional("number"): int,
             vol.Optional("select"): vol.In(["red", "blue"]),
             vol.Optional("fixed"): vol.Equal("fixed"),
             vol.Optional("nested"): {
                 vol.Required("key"): str,
-                vol.Optional("count"): int,
+                vol.Optional("count", default=3): int,
             },
             vol.Optional("nullable"): vol.Any(None, str),
             vol.Required("required_nullable"): vol.Any(None, str),
-            vol.Optional("rows"): [{vol.Optional("text"): str}],
+            vol.Optional("rows"): [
+                {vol.Optional("text", default="row"): vol.Any(str, int)}
+            ],
         }
     )
     payload = {
         "answer": "ready",
         "text": None,
+        "language": None,
+        "default": "user field",
         "number": None,
         "select": None,
         "fixed": None,
@@ -838,16 +844,25 @@ async def test_optional_structured_output_round_trips_provider_contract(
     )["schema"]
     assert set(emitted["required"]) == set(emitted["properties"])
     assert emitted["properties"]["answer"] == {"type": "string"}
+    assert emitted["properties"]["default"] == {"type": "string"}
+    for property_schema in (
+        emitted["properties"]["language"],
+        emitted["properties"]["nested"]["properties"]["count"],
+        emitted["properties"]["rows"]["items"]["properties"]["text"],
+    ):
+        assert "default" not in property_schema
     Draft202012Validator(emitted).validate(payload)
     assert not Draft202012Validator(emitted).is_valid(invalid)
     expected = {
         "answer": "ready",
+        "language": "en",
+        "default": "user field",
         "nullable": None,
         "required_nullable": None,
-        "rows": [{}],
+        "rows": [{"text": "row"}],
     }
     if nested_present:
-        expected["nested"] = {"key": "inside"}
+        expected["nested"] = {"key": "inside", "count": 3}
     assert result.data == expected
     assert schema(result.data) == result.data
     for _ in range(2):

@@ -188,6 +188,7 @@ from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_d
 from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
 from .memory import (
+    EmbeddingBatch,
     MemoryRecord,
     PersistentMemory,
     async_get_memory,
@@ -1914,7 +1915,7 @@ class ExtendedOpenAIAgentEntity(
 
     async def _async_create_embeddings(
         self, inputs: list[str], *, model: str | None = None
-    ) -> list[list[float]]:
+    ) -> EmbeddingBatch:
         """Create embedding vectors without an LLM/classifier retrieval call."""
         selected_model = (
             model
@@ -1948,7 +1949,13 @@ class ExtendedOpenAIAgentEntity(
                     )
                 ordered[index] = list(item.embedding)
             successful = True
-            return [ordered[index] for index in range(len(inputs))]
+            returned_model = getattr(response, "model", None)
+            return EmbeddingBatch(
+                [ordered[index] for index in range(len(inputs))],
+                returned_model.strip() or None
+                if isinstance(returned_model, str)
+                else None,
+            )
         except BaseException as err:
             error_type = type(err).__name__
             raise
@@ -3333,6 +3340,10 @@ class ExtendedOpenAIAgentEntity(
                 end_date = arguments.get("end_date")
                 if not isinstance(start_date, str) or not isinstance(end_date, str):
                     raise ValueError("start_date and end_date are required")
+                if arguments.get("confirm") is False:
+                    return await self._archive.async_preview_delete_date_range(
+                        scope.scope_id, start_date, end_date
+                    )
                 return await self._archive.async_delete_date_range(
                     scope.scope_id,
                     start_date,

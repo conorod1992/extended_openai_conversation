@@ -66,6 +66,24 @@ def _reconfigure_task(options, *, provider="azure"):
     return flow, entry
 
 
+async def test_basic_ai_task_sampling_uses_updated_azure_binding(hass):
+    options = {
+        "chat_model": "deployment",
+        "azure_model": "gpt-4.1",
+        "api_mode": "responses",
+        "temperature": 0.3,
+        "top_p": 0.7,
+    }
+    flow, _ = _reconfigure_task(options)
+    result = await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_init(
+        flow, {"azure_model": "gpt-5-mini"}
+    )
+    saved = result["data"]
+    assert saved["chat_model"] == "deployment"
+    assert saved["azure_model"] == "gpt-5-mini"
+    assert "temperature" not in saved and "top_p" not in saved
+
+
 @pytest.mark.parametrize("advanced", [False, True])
 async def test_native_ai_task_clears_azure_binding_before_model_resolution(
     hass, advanced

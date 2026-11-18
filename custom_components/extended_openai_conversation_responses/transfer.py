@@ -70,7 +70,14 @@ from .secret_redaction import (
 )
 from .sharing import SHARING_VERSION, project_sharing_sections
 from .temporary_memory import TemporaryMemoryRecord, async_get_temporary_memory
-from .usage import UsageRequest, UsageRun, UsageTotals, async_get_usage
+from .usage import (
+    UsageRequest,
+    UsageRun,
+    UsageTotals,
+    async_get_usage,
+    retained_usage_details,
+    usage_retention_policy,
+)
 
 TRANSFER_FORMAT = "extended_openai_conversation_transfer"
 TRANSFER_VERSION = 1
@@ -1350,24 +1357,56 @@ def _copy_transfer_categories(prepared: PreparedTransfer) -> PreparedTransfer:
     return replace(prepared, **dict(zip(fields, copied, strict=True)))
 
 
-def _archive_restore_preview(target: backup.PreparedRestore) -> dict[str, Any]:
-    """Project the imported archive after the effective retention policy runs."""
+def _apply_archive_restore_retention(target: backup.PreparedRestore) -> dict[str, Any]:
+    """Filter only the incoming archive and count the state the restore will write."""
     days = normalized_agent_integer(
         target.config, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
     )
     expired = archive_sessions_past_retention(target.archive_sessions, days)
-    expired_turns = sum(turn.session_id in expired for turn in target.archive_turns)
+    original_turns = len(target.archive_turns)
+    if expired:
+        target.archive_sessions = [
+            session
+            for session in target.archive_sessions
+            if session.session_id not in expired
+        ]
+        target.archive_turns = [
+            turn for turn in target.archive_turns if turn.session_id not in expired
+        ]
+        if target.archive_active is not None:
+            target.archive_active = {
+                key: session_id
+                for key, session_id in target.archive_active.items()
+                if session_id not in expired
+            }
     result: dict[str, Any] = {
-        "archive_sessions": len(target.archive_sessions) - len(expired),
-        "archive_turns": len(target.archive_turns) - expired_turns,
+        "archive_sessions": len(target.archive_sessions),
+        "archive_turns": len(target.archive_turns),
     }
     if expired:
         result["archive_retention"] = {
             "days": days,
             "expired_sessions": len(expired),
-            "expired_turns": expired_turns,
+            "expired_turns": original_turns - len(target.archive_turns),
         }
     return result
+
+
+def _usage_restore_preview(target: backup.PreparedRestore) -> dict[str, Any]:
+    retention = usage_retention_policy(target.config)
+    requests, runs, expired = retained_usage_details(
+        target.usage_requests,
+        target.usage_runs,
+        request_days=retention["request_retention_days"],
+        run_days=retention["run_retention_days"],
+    )
+    counts: dict[str, Any] = {"usage_requests": len(requests), "usage_runs": len(runs)}
+    if any(expired.values()):
+        counts["usage_retention"] = {
+            "expired_requests": expired["deleted_requests"],
+            "expired_runs": expired["deleted_runs"],
+        }
+    return counts
 
 
 def _prepared_restore_from_selection(
@@ -1668,7 +1707,9 @@ async def async_materialize_restore(
         }
     )
     if SECTION_CONVERSATION_ARCHIVE in selected:
-        preview.update(await asyncio.to_thread(_archive_restore_preview, target))
+        preview.update(
+            await asyncio.to_thread(_apply_archive_restore_retention, target)
+        )
     target.preserve_retained_continuity = (
         selected == {SECTION_KNOWLEDGE} and provider_connection is None
     )
@@ -1694,6 +1735,8 @@ async def async_materialize_restore(
         shortened = shortened_usage_retention(current.config, target.config)
         if shortened:
             preview["shortened_usage_retention"] = shortened
+    if "usage" in data_sections:
+        preview.update(await asyncio.to_thread(_usage_restore_preview, target))
     target.journaled_sections = frozenset(data_sections)
     return target, preview
 

@@ -19,6 +19,7 @@ import unicodedata
 from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -74,7 +75,22 @@ MEMORY_TOOL_NAMES = {
 }
 MIN_LEXICAL_RELEVANCE_SCORE = 0.08
 MIN_SEMANTIC_SIMILARITY = 0.55
-EmbeddingProvider = Callable[[list[str]], Awaitable[list[list[float]]]]
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingBatch:
+    """Vectors and the model identity reported by the provider."""
+
+    vectors: list[list[float]]
+    provider_model: str | None = None
+
+
+EmbeddingResult = EmbeddingBatch | list[list[float]]
+EmbeddingProvider = Callable[[list[str]], Awaitable[EmbeddingResult]]
+
+
+def _embedding_batch(result: EmbeddingResult) -> EmbeddingBatch:
+    return result if isinstance(result, EmbeddingBatch) else EmbeddingBatch(result)
 
 
 class _UnsetType:
@@ -173,6 +189,7 @@ class EmbeddingCacheEntry:
     fingerprint: str
     vector: Sequence[float]
     space_id: str = ""
+    provider_model: str | None = None
 
     def __post_init__(self) -> None:
         # Frozen entries own immutable vectors; snapshots can safely share them.
@@ -727,7 +744,7 @@ class PersistentMemory:
             if provider is None:
                 self._set_hybrid_status("lexical_fallback", "provider_changed")
                 return None
-            vectors = await provider([query])
+            batch = _embedding_batch(await provider([query]))
             if (
                 self._embedding_provider is not provider
                 or self._embedding_model != model
@@ -736,24 +753,40 @@ class PersistentMemory:
             ):
                 self._set_hybrid_status("lexical_fallback", "provider_changed")
                 return None
-            if len(vectors) != 1:
+            if len(batch.vectors) != 1:
                 raise ValueError(
                     "embedding provider returned the wrong number of vectors"
                 )
-            vector = _clean_embedding(vectors[0])
+            vector = _clean_embedding(batch.vectors[0])
             width = len(vector)
             allowed_scopes = set(scope_ids)
+            readable = [
+                entry
+                for memory_id, entry in self._embedding_cache.items()
+                if entry.model == model
+                and entry.space_id == space_id
+                and (memory := self._memories.get(memory_id)) is not None
+                and memory.user_id in allowed_scopes
+            ]
+            if (
+                batch.provider_model is None
+                and len(
+                    {entry.provider_model for entry in readable if entry.provider_model}
+                )
+                > 1
+            ):
+                raise ValueError("embedding provider did not identify the query model")
             # A compatible endpoint can repoint the same model name without
             # changing our cache identity. Refresh only affected readable facts.
             if any(
-                entry.model == model
-                and entry.space_id == space_id
-                and len(entry.vector) != width
-                and (memory := self._memories.get(memory_id)) is not None
-                and memory.user_id in allowed_scopes
-                for memory_id, entry in self._embedding_cache.items()
+                len(entry.vector) != width
+                or (
+                    batch.provider_model is not None
+                    and entry.provider_model != batch.provider_model
+                )
+                for entry in readable
             ) and not await self._async_refresh_missing_embeddings(
-                scope_ids, dimensions=width
+                scope_ids, dimensions=width, provider_model=batch.provider_model
             ):
                 self._set_hybrid_status("lexical_fallback", "provider_changed")
                 return None
@@ -795,6 +828,23 @@ class PersistentMemory:
                     err,
                 )
             return None
+
+    async def async_rebuild_embedding_cache(self) -> None:
+        """Discard derived vectors so future searches embed their readable facts."""
+        async with async_storage_lock(self._storage, self._lock):
+            self._ensure_initialized()
+            self._embedding_cache.clear()
+            self._embedding_cache_dirty = True
+            self._embedding_cache_retry_at = 0.0
+            self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
+            self._set_hybrid_status(
+                "ready" if self._embedding_provider else "lexical_fallback",
+                None if self._embedding_provider else "provider_not_configured",
+            )
+            if not await async_settle_owned_operation(
+                self._async_save_embedding_cache_locked()
+            ):
+                raise HomeAssistantError("Could not persist the embedding cache reset")
 
     async def async_get_many(
         self, references: Sequence[tuple[str, str]], readable_scope_ids: Sequence[str]
@@ -1416,7 +1466,11 @@ class PersistentMemory:
         self._embedding_cache_dirty = snapshot.embedding_cache_dirty
 
     async def _async_refresh_missing_embeddings(
-        self, scope_ids: Sequence[str], *, dimensions: int | None = None
+        self,
+        scope_ids: Sequence[str],
+        *,
+        dimensions: int | None = None,
+        provider_model: str | None = None,
     ) -> bool:
         provider = self._embedding_provider
         if provider is None:
@@ -1431,7 +1485,10 @@ class PersistentMemory:
                 memory
                 for memory in self._memories.values()
                 if memory.user_id in allowed_scopes
-                and self._cached_embedding(memory, dimensions=dimensions) is None
+                and self._cached_embedding(
+                    memory, dimensions=dimensions, provider_model=provider_model
+                )
+                is None
             ]
 
         def provider_is_current() -> bool:
@@ -1443,9 +1500,20 @@ class PersistentMemory:
             )
 
         try:
+            batch_model = provider_model
             for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
                 batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
-                vectors = await provider([_embedding_text(memory) for memory in batch])
+                result = _embedding_batch(
+                    await provider([_embedding_text(memory) for memory in batch])
+                )
+                vectors = result.vectors
+                if (
+                    offset or batch_model is not None
+                ) and result.provider_model != batch_model:
+                    raise ValueError(
+                        "embedding provider returned incompatible model identities"
+                    )
+                batch_model = result.provider_model
                 if len(vectors) != len(batch):
                     raise ValueError(
                         "embedding provider returned the wrong number of vectors"
@@ -1461,7 +1529,11 @@ class PersistentMemory:
                             or current.user_id not in allowed_scopes
                             or _embedding_fingerprint(current)
                             != _embedding_fingerprint(memory)
-                            or self._cached_embedding(current, dimensions=dimensions)
+                            or self._cached_embedding(
+                                current,
+                                dimensions=dimensions,
+                                provider_model=provider_model,
+                            )
                             is not None
                         ):
                             continue
@@ -1473,6 +1545,7 @@ class PersistentMemory:
                         self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
                             model=model,
                             space_id=space_id,
+                            provider_model=result.provider_model,
                             fingerprint=_embedding_fingerprint(memory),
                             vector=cleaned,
                         )
@@ -1545,7 +1618,11 @@ class PersistentMemory:
             self._embedding_cache_dirty = True
 
     def _cached_embedding(
-        self, memory: MemoryRecord, *, dimensions: int | None = None
+        self,
+        memory: MemoryRecord,
+        *,
+        dimensions: int | None = None,
+        provider_model: str | None = None,
     ) -> Sequence[float] | None:
         entry = self._embedding_cache.get(memory.memory_id)
         if (
@@ -1553,6 +1630,7 @@ class PersistentMemory:
             or entry.model != self._embedding_model
             or entry.space_id != self._embedding_space_id
             or (dimensions is not None and len(entry.vector) != dimensions)
+            or (provider_model is not None and entry.provider_model != provider_model)
             or entry.fingerprint != _embedding_fingerprint(memory)
         ):
             return None
@@ -2470,6 +2548,9 @@ def _prepare_stored_embedding_cache(data: Any) -> dict[str, EmbeddingCacheEntry]
             space_id=raw.get("space_id", "")
             if isinstance(raw.get("space_id", ""), str)
             else "",
+            provider_model=raw.get("provider_model")
+            if isinstance(raw.get("provider_model"), str)
+            else None,
             vector=_clean_embedding(raw.get("vector")),
         )
     return entries
@@ -2681,6 +2762,7 @@ def _embedding_cache_payload(
                 "model": entry.model,
                 "fingerprint": entry.fingerprint,
                 "space_id": entry.space_id,
+                "provider_model": entry.provider_model,
                 "vector": list(entry.vector),
             }
             for memory_id, entry in entries.items()

@@ -297,6 +297,24 @@ memory_clear:
       description: Must be enabled to confirm this destructive action.
       selector:
         boolean:
+rebuild_memory_embeddings:
+  name: Rebuild memory embeddings
+  description: Clear the agent's derived Hybrid Memory vectors. Searches regenerate vectors for readable memories as needed. The memories themselves are retained.
+  fields:
+    config_entry:
+      name: Provider connection
+      required: true
+      selector:
+        config_entry:
+          integration: extended_openai_conversation_responses
+    agent_id:
+      name: Conversation agent
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: extended_openai_conversation_responses
+            domain: conversation
 enable_function_tools:
   name: Enable Function Tools
   description: Enable one or more configured Function Tools for a conversation agent. This administrator action is not exposed to the model automatically.

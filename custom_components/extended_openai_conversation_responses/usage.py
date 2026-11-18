@@ -694,27 +694,11 @@ class UsageManager:
         self,
     ) -> tuple[list[UsageRequest], list[UsageRun], dict[str, int]]:
         """Build the retained detail state without mutating live accounting."""
-        now = dt_util.utcnow()
-        request_cutoff = now - timedelta(days=max(0, self.request_retention_days))
-        run_cutoff = now - timedelta(days=max(0, self.run_retention_days))
-        requests = [
-            request
-            for request in self.requests
-            if self.request_retention_days > 0
-            and _parse_time(request.timestamp) >= request_cutoff
-        ]
-        runs = [
-            run
-            for run in self.runs
-            if self.run_retention_days > 0 and _parse_time(run.started_at) >= run_cutoff
-        ]
-        return (
-            requests,
-            runs,
-            {
-                "deleted_requests": len(self.requests) - len(requests),
-                "deleted_runs": len(self.runs) - len(runs),
-            },
+        return retained_usage_details(
+            self.requests,
+            self.runs,
+            request_days=self.request_retention_days,
+            run_days=self.run_retention_days,
         )
 
     async def _async_persist_detail_state(
@@ -1417,6 +1401,37 @@ def _parse_time(value: Any) -> datetime:
     except TypeError, ValueError:
         return datetime.min.replace(tzinfo=dt_util.UTC)
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_util.UTC)
+
+
+def retained_usage_details(
+    requests: list[UsageRequest],
+    runs: list[UsageRun],
+    *,
+    request_days: int,
+    run_days: int,
+) -> tuple[list[UsageRequest], list[UsageRun], dict[str, int]]:
+    """Project the same retained details for restore review and storage."""
+    now = dt_util.utcnow()
+    request_cutoff = now - timedelta(days=max(0, request_days))
+    run_cutoff = now - timedelta(days=max(0, run_days))
+    retained_requests = [
+        item
+        for item in requests
+        if request_days > 0 and _parse_time(item.timestamp) >= request_cutoff
+    ]
+    retained_runs = [
+        item
+        for item in runs
+        if run_days > 0 and _parse_time(item.started_at) >= run_cutoff
+    ]
+    return (
+        retained_requests,
+        retained_runs,
+        {
+            "deleted_requests": len(requests) - len(retained_requests),
+            "deleted_runs": len(runs) - len(retained_runs),
+        },
+    )
 
 
 def _register_usage_maintenance(hass: HomeAssistant, manager: UsageManager) -> None:

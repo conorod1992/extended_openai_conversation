@@ -9,6 +9,7 @@ from typing import Any, Literal
 from homeassistant.components import conversation
 
 from .ha_tool_result_compat import is_tool_result_content
+from .provider_content import answer_text
 
 type ProviderOutputKind = Literal[
     "answer", "commentary", "reasoning", "hosted_tool", "replay_only"
@@ -37,6 +38,20 @@ def classify_provider_output(item: Any) -> ProviderOutputKind:
     if native_type == "web_search_call":
         return "hosted_tool"
     return "replay_only"
+
+
+def responses_answer_text(output: Sequence[Any]) -> str:
+    """Read completed assistant answer parts, including unphased text."""
+    return "".join(
+        answer_text(part)
+        for item in output
+        if getattr(item, "type", None) == "message"
+        and getattr(item, "role", None) == "assistant"
+        and getattr(item, "status", None) in (None, "completed")
+        and classify_provider_output(item) == "answer"
+        for part in (getattr(item, "content", None) or ())
+        if getattr(part, "type", None) == "output_text"
+    )
 
 
 @asynccontextmanager

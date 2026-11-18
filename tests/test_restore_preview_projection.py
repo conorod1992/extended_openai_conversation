@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -55,15 +55,25 @@ def _activity(state, category):
 @pytest.mark.parametrize("include_config", [True, False])
 async def test_restore_preview_uses_effective_archive_retention(monkeypatch, include_config):
     tx = RestoreHarness(monkeypatch)
-    now = dt_util.utcnow()
+    now = datetime.fromisoformat("2026-11-18T12:00:00+00:00")
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
     source = deepcopy(tx.state)
     source.archive_sessions.clear()
     source.archive_turns.clear()
-    for days, suffix in ((20, "old"), (2, "recent")):
-        source.created_at = (now - timedelta(days=days)).isoformat()
+    cutoff = now - timedelta(days=7)
+    for timestamp, suffix in (
+        (cutoff - timedelta(microseconds=1), "old"),
+        (cutoff, "boundary"),
+        (now - timedelta(days=2), "recent"),
+    ):
+        source.created_at = timestamp.isoformat()
         _activity(source, transfer.SECTION_CONVERSATION_ARCHIVE)
-        source.archive_sessions[-1] = replace(source.archive_sessions[-1], session_id=suffix)
-        source.archive_turns[-1] = replace(source.archive_turns[-1], session_id=suffix, turn_id=suffix)
+        source.archive_sessions[-1] = replace(
+            source.archive_sessions[-1], session_id=suffix
+        )
+        source.archive_turns[-1] = replace(
+            source.archive_turns[-1], session_id=suffix, turn_id=suffix
+        )
     tx.imported = replace(
         tx.imported,
         config={**tx.state.config, "archive_retention_days": 7 if include_config else 90},
@@ -81,11 +91,56 @@ async def test_restore_preview_uses_effective_archive_retention(monkeypatch, inc
         tx.hass, tx.entry, tx.subentry, tx.imported,
         sections=frozenset(sections), current_snapshot=tx.state,
     )
-    assert preview["archive_sessions"] == preview["archive_turns"] == 1
+    assert preview["archive_sessions"] == preview["archive_turns"] == 2
     assert preview["archive_retention"] == {
         "days": 7, "expired_sessions": 1, "expired_turns": 1,
     }
-    assert len(target.archive_turns) == 2  # Actual runtime uses the same prune rule.
+    assert [turn.turn_id for turn in target.archive_turns] == ["boundary", "recent"]
+    assert [session.session_id for session in target.archive_sessions] == [
+        "boundary",
+        "recent",
+    ]
+    assert len(tx.imported.archive_turns) == 3
+
+
+async def test_archive_restore_failure_preserves_expired_rollback_snapshot(monkeypatch):
+    tx = RestoreHarness(monkeypatch)
+    tx.subentry.data["archive_retention_days"] = 7
+    tx.state.created_at = (dt_util.utcnow() - timedelta(days=20)).isoformat()
+    tx.state.archive_sessions.clear()
+    tx.state.archive_turns.clear()
+    _activity(tx.state, transfer.SECTION_CONVERSATION_ARCHIVE)
+    original_sessions, original_turns = (
+        tx.state.archive_sessions[:],
+        tx.state.archive_turns[:],
+    )
+    archive = tx.managers.archive
+    original_replace = archive.async_replace_backup
+
+    async def fail_empty_archive(sessions, turns, **kwargs):
+        await original_replace(sessions, turns, **kwargs)
+        if not sessions:
+            assert turns == []
+            raise OSError("archive replacement failed")
+
+    archive.async_replace_backup = fail_empty_archive
+    imported = replace(
+        tx.imported,
+        available_sections=frozenset({transfer.SECTION_CONVERSATION_ARCHIVE}),
+        archive_sessions=original_sessions,
+        archive_turns=original_turns,
+    )
+    with pytest.raises((OSError, backup.BackupError), match="archive replacement failed"):
+        await transfer.async_restore_transfer(
+            tx.hass,
+            tx.entry,
+            tx.subentry,
+            imported,
+            sections=[transfer.SECTION_CONVERSATION_ARCHIVE],
+        )
+    assert tx.state.archive_sessions == original_sessions
+    assert tx.state.archive_turns == original_turns
+    assert tx.journal.saved and tx.journal.data is None
 
 
 @pytest.mark.parametrize(

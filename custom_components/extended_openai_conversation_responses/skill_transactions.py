@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import logging
 import os
@@ -9,11 +10,14 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+from typing import BinaryIO
+from uuid import uuid4
 
 from homeassistant.exceptions import HomeAssistantError
 
 _LOGGER = logging.getLogger(__name__)
 _TRANSACTION = re.compile(r"transaction-([0-9a-f]{32})\.json")
+_DOWNLOAD = re.compile(r"download-([0-9a-f]{32})\.json")
 
 
 def _identity(path: Path) -> list[int] | None:
@@ -33,6 +37,109 @@ def _remove(path: Path) -> None:
         shutil.rmtree(path)
     else:
         path.unlink(missing_ok=True)
+
+
+def _recover_download(record: Path, handle: BinaryIO) -> None:
+    """Remove only the directory identified by this download's ownership record."""
+    match = _DOWNLOAD.fullmatch(record.name)
+    document = json.loads(handle.read(16 * 1024 + 1))
+    name = document.get("name") if isinstance(document, dict) else None
+    identity = document.get("identity") if isinstance(document, dict) else None
+    if (
+        match is None
+        or not isinstance(name, str)
+        or not re.fullmatch(r"[A-Za-z0-9_-]+", name)
+        or not isinstance(identity, list)
+        or len(identity) != 2
+        or any(type(value) is not int for value in identity)
+    ):
+        raise HomeAssistantError("Invalid Skill download ownership record")
+    directory = record.parent / f"{name}.download-{match[1]}"
+    current = _identity(directory)
+    if current is not None:
+        if current != identity or not directory.is_dir():
+            raise HomeAssistantError("Skill download directory ownership changed")
+        _remove(directory)
+    record.unlink(missing_ok=True)
+
+
+@dataclass(slots=True)
+class SkillDownload:
+    """Hold download ownership until cleanup or journaled publication."""
+
+    directory: Path
+    record: Path
+    handle: BinaryIO
+    handed_off: bool = False
+
+    def hand_off(self) -> None:
+        """Retire this record after publication has durably assumed ownership."""
+        self.handed_off = True
+        self.record.unlink(missing_ok=True)
+
+    def close(self) -> None:
+        with self.handle:
+            if not self.handed_off:
+                try:
+                    self.handle.seek(0)
+                    _recover_download(self.record, self.handle)
+                except OSError, ValueError, HomeAssistantError:
+                    _LOGGER.warning(
+                        "Could not clean up Skill download %s",
+                        self.record,
+                        exc_info=True,
+                    )
+
+
+def prepare_download(root: Path, name: str) -> SkillDownload:
+    """Create and lock ownership before the first download payload write."""
+    import fcntl
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+        raise HomeAssistantError("Invalid Skill download name")
+    root.mkdir(parents=True, exist_ok=True)
+    if root.is_symlink():
+        raise HomeAssistantError("Skill staging root must not be a symbolic link")
+    token = uuid4().hex
+    record = root / f"download-{token}.json"
+    directory = root / f"{name}.download-{token}"
+    handle = os.fdopen(
+        os.open(record, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600), "w+b"
+    )
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        directory.mkdir(mode=0o700)
+        handle.write(
+            json.dumps({"name": name, "identity": _identity(directory)}).encode()
+        )
+        handle.flush()
+        os.fsync(handle.fileno())
+    except BaseException:
+        handle.close()
+        raise
+    return SkillDownload(directory, record, handle)
+
+
+def _recover_abandoned_download(record: Path) -> None:
+    import fcntl
+
+    try:
+        if (
+            record.is_symlink()
+            or not record.is_file()
+            or record.stat().st_size > 16 * 1024
+        ):
+            raise HomeAssistantError("Skill download ownership record is unsafe")
+        with os.fdopen(os.open(record, os.O_RDONLY | os.O_NOFOLLOW), "rb") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return
+            _recover_download(record, handle)
+    except FileNotFoundError:
+        return
+    except OSError, ValueError, HomeAssistantError:
+        _LOGGER.warning("Could not recover Skill download %s", record, exc_info=True)
 
 
 def _write(path: Path, document: dict) -> None:
@@ -163,6 +270,8 @@ def recover_transactions(root: Path, installed: Path) -> None:
                 "Skill recovery journal must not be a symbolic link"
             )
         recover_transaction(journal, installed)
+    for record in root.glob("download-*.json"):
+        _recover_abandoned_download(record)
     for pattern in ("*.backup-*", "*.remove-*"):
         for residue in root.glob(pattern):
             _LOGGER.warning(

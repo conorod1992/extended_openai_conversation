@@ -36,10 +36,14 @@ from custom_components.extended_openai_conversation_responses.scope import user_
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     async_get_temporary_memory,
 )
+from custom_components.extended_openai_conversation_responses.usage import (
+    async_get_durable_usage,
+)
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockUser
+from tests.test_usage import _coverage_request, _coverage_run
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_knowledge_provider_wire_e2e import (
     _chat_sse_text,
@@ -58,16 +62,18 @@ _CURRENT_KNOWLEDGE = "stale-orbit-amber"
 _SEARCH_CALL_ID = "call-restored-knowledge-search"
 
 
-@pytest.mark.parametrize("include_archive", [False, True])
+@pytest.mark.parametrize(
+    "include_config,include_archive", [(True, False), (True, True), (False, True)]
+)
 async def test_shorter_archive_retention_requires_selecting_the_archive(
-    hass, include_archive
+    hass, include_config, include_archive
 ):
     entry = _make_entry(
         "Archive retention restore",
         include_ai_task=False,
         conversation_options={
             CONF_ARCHIVE_ENABLED: True,
-            CONF_ARCHIVE_RETENTION_DAYS: 90,
+            CONF_ARCHIVE_RETENTION_DAYS: 90 if include_config else 7,
         },
     )
     await _setup_entry(hass, entry)
@@ -103,9 +109,11 @@ async def test_shorter_archive_retention_requires_selecting_the_archive(
         [replace(turn, timestamp=timestamp)],
     )
     snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
-    snapshot["agent"]["config"][CONF_ARCHIVE_RETENTION_DAYS] = 7
+    snapshot["agent"]["config"][CONF_ARCHIVE_RETENTION_DAYS] = (
+        7 if include_config else 90
+    )
     document = backup.finalize_backup_snapshot(snapshot)["document"]
-    sections = [transfer.SECTION_CONFIGURATION]
+    sections = [transfer.SECTION_CONFIGURATION] if include_config else []
     if include_archive:
         sections.append(transfer.SECTION_CONVERSATION_ARCHIVE)
     result = await transfer.async_restore_transfer(
@@ -118,6 +126,75 @@ async def test_shorter_archive_retention_requires_selecting_the_archive(
     assert len((await archive.async_backup_data())["turns"]) == (
         0 if include_archive else 1
     )
+    results = await archive.async_search(_OWNER_SCOPE, "Previous transcript")
+    assert bool(results["results"]) is not include_archive
+
+
+@pytest.mark.parametrize("selection", ["usage", "both", "configuration"])
+async def test_usage_restore_projects_retention_and_keeps_aggregate_totals(
+    hass, selection
+):
+    request_days, run_days = "usage_request_retention_days", "usage_run_retention_days"
+    entry = _make_entry(
+        "Usage retention restore",
+        include_ai_task=False,
+        conversation_options={request_days: 0, run_days: 30},
+    )
+    await _setup_entry(hass, entry)
+    subentry = next(iter(entry.subentries.values()))
+    snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    original = snapshot["usage"]
+    now = dt_util.utcnow().isoformat()
+    original["requests"] = [_coverage_request(timestamp=now)]
+    original["runs"] = [_coverage_run(started_at=now, completed_at=now)]
+    original["totals"]["api_request_count"] = 1
+    snapshot["agent"]["config"].update({request_days: 30, run_days: 0})
+    usage = await async_get_durable_usage(hass, entry.entry_id, subentry.subentry_id)
+    async with usage.async_run():
+        await usage.async_record_request(successful=True, usage=None)
+    before = await usage.async_backup_data()
+    original["daily"] = before["daily"]
+    sections = []
+    if selection != "configuration":
+        sections.append(transfer.SECTION_USAGE)
+    if selection != "usage":
+        sections.append(transfer.SECTION_CONFIGURATION)
+    result = await transfer.async_restore_transfer(
+        hass,
+        entry,
+        subentry,
+        backup.finalize_backup_snapshot(snapshot)["document"],
+        sections=sections,
+        confirm_retention=True,
+    )
+    projected = result["transfer"]
+    actual_usage = await async_get_durable_usage(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    actual = await actual_usage.async_backup_data()
+    assert projected["usage_requests"] == len(actual["requests"])
+    assert projected["usage_runs"] == len(actual["runs"])
+    if selection == "usage":
+        assert projected["usage_retention"] == {
+            "expired_requests": 1,
+            "expired_runs": 0,
+        }
+    if selection == "both":
+        assert projected["usage_retention"] == {
+            "expired_requests": 0,
+            "expired_runs": 1,
+        }
+    if selection == "configuration":
+        assert projected["usage_retention"] == {
+            "expired_requests": 0,
+            "expired_runs": 1,
+        }
+    assert (
+        actual["totals"]["api_request_count"]
+        == before["totals"]["api_request_count"]
+        == 1
+    )
+    assert actual["daily"] == before["daily"]
 
 
 def _system_prompt(body: dict[str, Any]) -> str:
@@ -305,7 +382,11 @@ async def test_successful_loaded_restore_refreshes_live_subsystem_objects_and_tu
         await live_agent._knowledge.async_get(current_knowledge.source_id)
     # Compound components can legitimately match the restored source via "orbit".
     old_query_results = await live_agent._knowledge.async_search(_CURRENT_KNOWLEDGE)
-    assert all(item.source_id != current_knowledge.source_id and _CURRENT_KNOWLEDGE not in item.excerpt for item in old_query_results)
+    assert all(
+        item.source_id != current_knowledge.source_id
+        and _CURRENT_KNOWLEDGE not in item.excerpt
+        for item in old_query_results
+    )
 
     # Finally exercise the restored objects through the actual loaded conversation
     # entity. Temporary Memory must already be injected into the next provider prompt,

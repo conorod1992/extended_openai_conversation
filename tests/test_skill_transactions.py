@@ -4,8 +4,10 @@ import json
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import skill_transactions
 from custom_components.extended_openai_conversation_responses.skill_transactions import (
     commit_transaction,
+    prepare_download,
     prepare_transaction,
     recover_transaction,
     recover_transactions,
@@ -66,6 +68,64 @@ def test_unjournaled_backup_is_preserved_for_manual_recovery(tmp_path, caplog):
     recover_transactions(root, tmp_path / "installed")
     assert (backup / "SKILL.md").read_text() == "UNRELATED-OLD"
     assert "recover manually" in caplog.text
+
+
+def test_download_recovery_leaves_active_and_unknown_staging(tmp_path):
+    root, installed = tmp_path / ".staging", tmp_path / "installed"
+    owner = prepare_download(root, "example")
+    try:
+        (owner.directory / "partial").write_text("download in progress")
+        legacy = root / f"unknown.download-{'b' * 32}"
+        legacy.mkdir()
+        (legacy / "partial").write_text("unowned")
+        recover_transactions(root, installed)
+        assert (owner.directory / "partial").exists()
+    finally:
+        owner.handle.close()  # Process exited without running normal cleanup.
+    recover_transactions(root, installed)
+    assert not owner.directory.exists() and not owner.record.exists()
+    assert (legacy / "partial").read_text() == "unowned"
+
+
+@pytest.mark.parametrize("handed_off", [False, True])
+def test_download_recovery_respects_prepared_replacement(tmp_path, handed_off):
+    root, installed = tmp_path / ".staging", tmp_path / "installed"
+    owner = prepare_download(root, "example")
+    target = installed / "example"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("OLD")
+    backup = root / f"example.backup-{'a' * 32}"
+    try:
+        (owner.directory / "SKILL.md").write_text("NEW")
+        journal = prepare_transaction(root, target, backup, owner.directory)
+        if handed_off:
+            owner.hand_off()
+            target.rename(backup)
+            owner.directory.rename(target)
+    finally:
+        owner.handle.close()
+    recover_transactions(root, installed)
+    assert (target / "SKILL.md").read_text() == "OLD"
+    assert not any(
+        path.exists() for path in (journal, backup, owner.directory, owner.record)
+    )
+
+
+def test_download_recovery_retries_a_failed_cleanup(tmp_path, monkeypatch):
+    root, installed = tmp_path / ".staging", tmp_path / "installed"
+    owner = prepare_download(root, "example")
+    owner.handle.close()
+    with monkeypatch.context() as patch:
+
+        def unavailable(_path):
+            raise OSError("directory temporarily unavailable")
+
+        patch.setattr(skill_transactions, "_remove", unavailable)
+        recover_transactions(root, installed)
+    assert owner.directory.exists() and owner.record.exists()
+    recover_transactions(root, installed)
+    recover_transactions(root, installed)
+    assert not owner.directory.exists() and not owner.record.exists()
 
 
 @pytest.mark.parametrize(

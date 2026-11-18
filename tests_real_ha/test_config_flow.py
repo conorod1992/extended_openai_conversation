@@ -237,6 +237,43 @@ async def _settle_entry(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     assert entry.state is ConfigEntryState.LOADED
 
 
+@pytest.mark.parametrize(
+    "next_model,keeps_sampling", [("gpt-5-mini", False), ("gpt-4o", True)]
+)
+async def test_basic_ai_task_model_round_trip_cleans_incompatible_sampling(
+    hass, next_model, keeps_sampling
+):
+    baseline = {
+        **DEFAULT_AI_TASK_OPTIONS,
+        CONF_CHAT_MODEL: "gpt-4.1",
+        CONF_TEMPERATURE: 0.3,
+        CONF_TOP_P: 0.7,
+    }
+    entry = _make_entry(ai_task_data=baseline)
+    await _setup_entry(hass, entry)
+    try:
+        subentry_id = _subentry_id(entry, "ai_task_data")
+        for model, should_keep in (
+            ("gpt-4.1", True),
+            (next_model, keeps_sampling),
+            ("gpt-4.1", keeps_sampling),
+        ):
+            form = await entry.start_subentry_reconfigure_flow(hass, subentry_id)
+            result = await hass.config_entries.subentries.async_configure(
+                form["flow_id"], {CONF_CHAT_MODEL: model}
+            )
+            assert result["type"] is FlowResultType.ABORT
+            assert result["reason"] == "reconfigure_successful"
+            await _settle_entry(hass, entry)
+            saved = entry.subentries[subentry_id].data
+            assert saved[CONF_CHAT_MODEL] == model
+            assert (CONF_TEMPERATURE in saved) == (CONF_TOP_P in saved) == should_keep
+            if should_keep:
+                assert (saved[CONF_TEMPERATURE], saved[CONF_TOP_P]) == (0.3, 0.7)
+    finally:
+        await _unload_entry(hass, entry)
+
+
 async def _unload_entry(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     """Explicitly tear down an acceptance entry and its scheduled callbacks."""
     await hass.async_block_till_done()

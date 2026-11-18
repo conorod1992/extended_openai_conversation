@@ -1187,14 +1187,22 @@ class ConversationArchive:
             self._ensure_initialized()
             targets = {
                 session.session_id
-                for session in self._sessions.values()
-                if session.scope_id == scope_id
-                and session.retention_state == "retained"
-                and start <= _parse_time(session.last_message_at) < end
+                for session in _sessions_in_delete_range(
+                    self._sessions.values(), scope_id, start, end
+                )
             }
             if not targets:
                 return {"deleted_sessions": 0, "deleted_turns": 0}
             return await self._async_delete_owned_locked(scope_id, targets)
+
+    async def async_preview_delete_date_range(
+        self, scope_id: str, start_date: str, end_date: str
+    ) -> dict[str, Any]:
+        """Describe whole sessions and their earlier turns without deleting them."""
+        start, end = _local_date_bounds(start_date, end_date, dt_util.DEFAULT_TIME_ZONE)
+        return await self.async_query_snapshot(
+            scope_id, _preview_delete_range, start, end, include_turns=True
+        )
 
     async def async_prune(self, retention_days: int) -> dict[str, int]:
         """Delete expired transcript sessions using the restart-safe journal."""
@@ -1756,7 +1764,10 @@ def archive_tools() -> list[dict[str, Any]]:
         ),
         _tool(
             "conversation_delete_date_range",
-            "Delete confirmed retained sessions in a date range.",
+            "Delete entire sessions whose last retained turn falls in the Home Assistant "
+            "date range. First call with confirm=false. Show the affected sessions and "
+            "turn counts, including earlier turns, and ask for explicit confirmation "
+            "to delete the whole sessions before calling with confirm=true.",
             {
                 "start_date": {"type": "string"},
                 "end_date": {"type": "string"},
@@ -1787,6 +1798,51 @@ def _tool(
             },
         },
         "function": {"type": "archive", "operation": operation},
+    }
+
+
+def _sessions_in_delete_range(
+    sessions: Iterable[ArchiveSession], scope_id: str, start: datetime, end: datetime
+) -> list[ArchiveSession]:
+    return [
+        session
+        for session in sessions
+        if session.scope_id == scope_id
+        and session.retention_state == "retained"
+        and start <= _parse_time(session.last_message_at) < end
+    ]
+
+
+def _preview_delete_range(
+    sessions: dict[str, ArchiveSession],
+    turns: dict[str, tuple[ArchiveTurn, ...]],
+    scope_id: str,
+    start: datetime,
+    end: datetime,
+) -> dict[str, Any]:
+    targets = sorted(
+        _sessions_in_delete_range(sessions.values(), scope_id, start, end),
+        key=lambda session: (session.last_message_at, session.session_id),
+        reverse=True,
+    )
+    return {
+        "sessions": [
+            {
+                "session_id": session.session_id,
+                "title": session.title,
+                "last_message_at": session.last_message_at,
+                "turn_count": len(turns[session.session_id]),
+            }
+            for session in targets[:MAX_SEARCH_LIMIT]
+        ],
+        "session_count": len(targets),
+        "turn_count": sum(len(turns[session.session_id]) for session in targets),
+        "earlier_turn_count": sum(
+            _parse_time(turn.timestamp) < start
+            for session in targets
+            for turn in turns[session.session_id]
+        ),
+        "has_more_sessions": len(targets) > MAX_SEARCH_LIMIT,
     }
 
 

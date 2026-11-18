@@ -33,7 +33,7 @@ from .const import (
     MEMORY_RETRIEVAL_HYBRID,
     TEMPORARY_MEMORY_OFF,
 )
-from .memory import memory_enabled
+from .memory import EmbeddingResult, memory_enabled
 from .speech import has_custom_speech_replacements
 from .usage import usage_retention_policy
 
@@ -47,10 +47,10 @@ _RUNTIME_CONFIG_LOCK = "_extended_openai_runtime_config_lock"
 class MemoryEmbeddingProvider:
     """Bind a model to its agent callback, with stable configuration equality."""
 
-    create: Callable[..., Awaitable[list[list[float]]]]
+    create: Callable[..., Awaitable[EmbeddingResult]]
     model: str
 
-    async def __call__(self, inputs: list[str]) -> list[list[float]]:
+    async def __call__(self, inputs: list[str]) -> EmbeddingResult:
         return await self.create(inputs, model=self.model)
 
 

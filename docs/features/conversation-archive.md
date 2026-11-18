@@ -40,13 +40,13 @@ These commands use backend tools; they are not a promise made only in generated 
 >
 > Delete our conversation about the medical appointment.
 >
-> Forget everything we discussed today.
+> Preview the conversations whose last saved turn was today.
 
 Private mode applies only to the exact active session. Enabling it deletes already retained turns and the conversation-derived title for that session, returns the exact turn count, and prevents future turns in that session from being archived. Existing private-session titles are removed when loaded; importing an older backup also removes those titles. Other browser or satellite sessions are unaffected. Resuming saving creates a new retained session for future turns; private messages are not restored or saved retroactively. A request that makes the conversation private is never archived, even if it also resumes saving later in the same turn. This applies when saving was already active and is resumed before making the conversation private.
 
 Archive privacy controls only this integration's transcript retention. It does not stop the active conversation from being sent to the configured provider, disable separate memory features or opt-in Request debugging, or erase copies already exported or recorded elsewhere. Review those settings separately when you do not want information retained.
 
-Single-session deletion is exact. Semantic deletion begins with bounded search and requires selected session IDs. Date-range and whole-scope deletion require explicit confirmation and return exact session and turn counts. Deleting transcript text never changes token aggregates. You can verify the result under **Extended OpenAI → Data & Memory → Conversation history**.
+Single-session deletion is exact. Semantic deletion begins with bounded search and requires selected session IDs. Date-range deletion selects whole sessions by their last retained turn in Home Assistant's timezone. The preview shows the affected sessions and turn counts, including turns from earlier dates. Confirm the whole-session deletion only if you also want those earlier turns removed. Date-range and whole-scope deletion return exact session and turn counts after confirmation. Deleting transcript text never changes token aggregates. You can verify the result under **Extended OpenAI → Data & Memory → Conversation history**.
 
 ## Voice satellite ownership
 

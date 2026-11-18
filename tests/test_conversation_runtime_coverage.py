@@ -371,7 +371,7 @@ async def test_embedding_results_are_count_checked_and_sorted_by_provider_index(
         )
     ))
 
-    assert await agent._async_create_embeddings(["first", "second"]) == [
+    assert (await agent._async_create_embeddings(["first", "second"])).vectors == [
         [1.0],
         [2.0],
     ]

@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from types import SimpleNamespace
 
+import pytest
+
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
+)
 from custom_components.extended_openai_conversation_responses.memory import (
     EMBEDDING_CACHE_BATCH_SIZE,
+    EmbeddingBatch,
     PersistentMemory,
 )
 
@@ -47,6 +54,90 @@ async def _memory(cache=None) -> PersistentMemory:
     memory = PersistentMemory(FakeStorage(), cache or FakeStorage())
     await memory.async_initialize()
     return memory
+
+
+@pytest.mark.parametrize("previous_model", ["backend-a", None])
+async def test_repointed_alias_refreshes_only_readable_vectors_after_restart(
+    previous_model,
+):
+    facts, cache = FakeStorage(), FakeStorage()
+    memory = PersistentMemory(facts, cache)
+    await memory.async_initialize()
+    await memory.async_add("alice", "Alice likes tea.", "preferences", "explicit")
+    await memory.async_add("bob", "Bob likes bread.", "preferences", "explicit")
+    backend, vector = previous_model, [1.0, 0.0]
+    calls = []
+
+    async def create(*, model, input):
+        assert model == "alias"
+        calls.extend(input)
+        return SimpleNamespace(
+            model=backend,
+            data=[
+                SimpleNamespace(index=index, embedding=vector)
+                for index in range(len(input))
+            ],
+        )
+
+    entity = SimpleNamespace(
+        _client=SimpleNamespace(embeddings=SimpleNamespace(create=create)), _usage=None
+    )
+
+    async def provider(texts):
+        return await ExtendedOpenAIAgentEntity._async_create_embeddings(
+            entity, texts, model="alias"
+        )
+
+    memory.set_embedding_provider(provider, "alias", space_id="same")
+    assert await memory.async_prepare_hybrid(["alice", "bob"], "first")
+    if previous_model is None:
+        for entry in cache.data["embeddings"].values():
+            entry.pop("provider_model")
+    memory = PersistentMemory(facts, cache)
+    await memory.async_initialize()
+    memory.set_embedding_provider(provider, "alias", space_id="same")
+    backend, vector = "backend-b", [0.0, 1.0]
+    calls.clear()
+    assert await memory.async_prepare_hybrid(["alice"], "second") == vector
+    assert calls == ["second", "preferences | Alice likes tea."]
+    assert {entry.provider_model for entry in memory._embedding_cache.values()} == {
+        previous_model,
+        "backend-b",
+    }
+    saved_facts = deepcopy(facts.data)
+    await memory.async_rebuild_embedding_cache()
+    assert cache.data == {"embeddings": {}}
+    assert facts.data == saved_facts
+    calls.clear()
+    assert await memory.async_prepare_hybrid(["alice"], "third") == vector
+    assert calls == ["preferences | Alice likes tea.", "third"]
+
+
+async def test_inconsistent_model_during_alias_refresh_uses_lexical_fallback(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.memory.EMBEDDING_CACHE_BATCH_SIZE",
+        1,
+    )
+    memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea.", "preferences", "explicit")
+    await memory.async_add("alice", "Alice has a bicycle.", "hobbies", "explicit")
+
+    async def initial(texts):
+        return EmbeddingBatch([[1.0, 0.0] for _ in texts], "before")
+
+    memory.set_embedding_provider(initial, "alias")
+    assert await memory.async_prepare_hybrid(["alice"], "first")
+    results = iter(["after", "after", "another-backend"])
+
+    async def changed(texts):
+        return EmbeddingBatch([[0.0, 1.0] for _ in texts], next(results))
+
+    memory.set_embedding_provider(changed, "alias")
+    assert await memory.async_prepare_hybrid(["alice"], "tea") is None
+    assert memory.hybrid_status()["status"] == "lexical_fallback"
+    assert (await memory.async_search("alice", "tea"))[0].content == "Alice likes tea."
 
 
 async def test_provider_configuration_does_not_prewarm_existing_memories() -> None:

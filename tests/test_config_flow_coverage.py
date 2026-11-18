@@ -426,13 +426,18 @@ async def test_conversation_subentry_handler_covers_all_lifecycle_paths() -> Non
     )
     defaults = {"prompt": "default"}
     flow = SimpleNamespace(
-        options={}, async_step_init=AsyncMock(return_value={"step": "init"})
+        options={},
+        _get_entry=lambda: SimpleNamespace(data={}),
+        async_step_init=AsyncMock(return_value={"step": "init"}),
     )
     with patch.object(config_flow, "agent_config_defaults", return_value=defaults):
         assert await ExtendedOpenAISubentryFlowHandler.async_step_user(flow) == {
             "step": "init"
         }
-    assert flow.options == defaults
+    assert flow.options == {
+        **defaults,
+        CONF_CHAT_MODEL: config_flow.DEFAULT_OPENAI_SETUP_MODEL,
+    }
 
     existing = SimpleNamespace(data={"legacy": "value"})
     flow._get_reconfigure_subentry = MagicMock(return_value=existing)
@@ -521,12 +526,17 @@ async def test_ai_task_handler_covers_basic_and_advanced_lifecycle_paths() -> No
         is False
     )
     flow = SimpleNamespace(
-        options={}, async_step_init=AsyncMock(return_value={"step": "init"})
+        options={},
+        _get_entry=lambda: SimpleNamespace(data={}),
+        async_step_init=AsyncMock(return_value={"step": "init"}),
     )
     assert await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_user(flow) == {
         "step": "init"
     }
-    assert flow.options == dict(DEFAULT_AI_TASK_OPTIONS)
+    assert flow.options == {
+        **DEFAULT_AI_TASK_OPTIONS,
+        CONF_CHAT_MODEL: config_flow.DEFAULT_OPENAI_SETUP_MODEL,
+    }
 
     existing = SimpleNamespace(data={CONF_CHAT_MODEL: "saved-model"})
     flow._get_reconfigure_subentry = MagicMock(return_value=existing)

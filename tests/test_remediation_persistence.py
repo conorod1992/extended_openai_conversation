@@ -6,17 +6,18 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from homeassistant.util import dt as dt_util
+
 from custom_components.extended_openai_conversation_responses import conversation
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.management_history_queries import (
-    usage_runs_page,
     usage_requests_page,
+    usage_runs_page,
 )
-from tests.test_memory import _memory, FakeStorage
-from tests.test_usage_detail_lifecycle import _manager, _run, _request, DetailStorage
+from homeassistant.util import dt as dt_util
+from tests.test_memory import FakeStorage
+from tests.test_usage_detail_lifecycle import DetailStorage, _manager, _request, _run
 
 
 async def test_disabled_archive_still_prunes_existing_storage(monkeypatch):
@@ -65,9 +66,9 @@ async def test_embedding_requests_account_for_usage_and_failures(failed):
             with pytest.raises(RuntimeError):
                 await entity._async_create_embeddings(["tea"], model="embedding-test")
         else:
-            assert await entity._async_create_embeddings(
-                ["tea"], model="embedding-test"
-            ) == [[1.0, 0.0]]
+            assert (
+                await entity._async_create_embeddings(["tea"], model="embedding-test")
+            ).vectors == [[1.0, 0.0]]
     assert usage.as_dict()["api_request_count"] == 1
     assert usage.latest_run.request_count == 1
     assert usage.as_dict()["total_tokens"] == (0 if failed else 123)

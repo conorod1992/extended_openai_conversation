@@ -4,7 +4,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from openai import AuthenticationError, OpenAIError
+import httpx
+from openai import AsyncOpenAI, AuthenticationError, OpenAIError
 import pytest
 import yaml
 
@@ -83,6 +84,56 @@ def _usage_attribution(
     api_mode: str = API_MODE_CHAT_COMPLETIONS,
 ) -> dict[str, str]:
     return {"provider": provider, "model": model, "api_mode": api_mode}
+
+
+@pytest.mark.parametrize(
+    "content,finish,refusal,passed",
+    [
+        ("OK", "stop", None, True),
+        ([{"type": "text", "text": "OK"}], "stop", None, True),
+        ([], "stop", None, False),
+        ([{"type": "reasoning", "text": "Private"}], "stop", None, False),
+        (None, "stop", "I refuse", False),
+        ("partial", "content_filter", None, False),
+    ],
+    ids=["string", "typed", "empty", "reasoning", "refusal", "filtered"],
+)
+async def test_chat_probe_uses_live_text_parser_on_sdk_replies(
+    content, finish, refusal, passed
+):
+    hass, entry, subentry, _, usage = _objects()
+    body = {
+        "id": "chat-probe",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "gpt-4.1-mini",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": finish,
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                    "refusal": refusal,
+                },
+            }
+        ],
+    }
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=body))
+    async with AsyncOpenAI(
+        api_key="test", http_client=httpx.AsyncClient(transport=transport)
+    ) as client:
+        entry.runtime_data = client
+        with (
+            patch.object(agent_test, "get_exposed_entities", return_value=[{}]),
+            patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)),
+        ):
+            result = await async_test_agent(hass, entry, subentry)
+    model_access = next(
+        check for check in result.checks if check.name == "Model access"
+    )
+    assert model_access.status == ("Passed" if passed else "Failed")
+    assert usage.async_record_request.await_args.kwargs["successful"] is passed
 
 
 async def _run(options: dict | None = None, *, exposed: int = 1):

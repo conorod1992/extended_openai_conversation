@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 import logging
 import types
 from typing import Any
@@ -83,14 +84,20 @@ from .const import (
     DOMAIN,
 )
 from .ha_schema import schema_for_ha
-from .helpers import effective_api_provider, get_authenticated_client
+from .helpers import (
+    effective_api_provider,
+    get_authenticated_client,
+    supports_openai_hosted_tools,
+)
 from .model_capabilities import (
     get_model_capabilities,
+    model_capability_snapshot,
     parameter_is_allowed,
     recommended_reasoning_effort,
 )
 from .operational_errors import log_handled_failure
 from .provider_errors import classify_config_provider_error, provider_log_remediation
+from .request import capability_model_identity, request_model_capabilities
 from .skills import SkillManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -281,6 +288,20 @@ DEFAULT_CONF_FUNCTION_TOOLS_STR = yaml.dump(
 )
 
 DEFAULT_OPTIONS = types.MappingProxyType(agent_config_defaults())
+DEFAULT_OPENAI_SETUP_MODEL = "gpt-6.1-terra"
+
+
+def _new_agent_options(
+    defaults: Mapping[str, Any], entry_data: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Give new direct-OpenAI agents a supported model at creation time."""
+    options = dict(defaults)
+    base_url = entry_data.get(CONF_BASE_URL)
+    if supports_openai_hosted_tools(
+        effective_api_provider(entry_data.get(CONF_API_PROVIDER), base_url), base_url
+    ):
+        options[CONF_CHAT_MODEL] = DEFAULT_OPENAI_SETUP_MODEL
+    return options
 
 
 def _ai_task_display_reasoning_effort(
@@ -482,13 +503,13 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                 subentries=[
                     {
                         "subentry_type": "conversation",
-                        "data": dict(DEFAULT_OPTIONS),
+                        "data": _new_agent_options(agent_config_defaults(), data),
                         "title": DEFAULT_CONVERSATION_NAME,
                         "unique_id": None,
                     },
                     {
                         "subentry_type": "ai_task_data",
-                        "data": dict(DEFAULT_AI_TASK_OPTIONS),
+                        "data": _new_agent_options(DEFAULT_AI_TASK_OPTIONS, data),
                         "title": DEFAULT_AI_TASK_NAME,
                         "unique_id": None,
                     },
@@ -602,7 +623,9 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Add a subentry."""
-        self.options = agent_config_defaults()
+        self.options = _new_agent_options(
+            agent_config_defaults(), self._get_entry().data
+        )
         return await self.async_step_init()
 
     async def async_step_reconfigure(
@@ -744,6 +767,42 @@ def _ai_task_apply_form_edits(
     return candidate, cleared, edits
 
 
+def _ai_task_clean_sampling(
+    saved: Mapping[str, Any],
+    candidate: dict[str, Any],
+    entry_data: Mapping[str, Any],
+    *,
+    creation: bool,
+    submitted: Collection[str] = (),
+) -> set[str]:
+    """Clean changed routes and reject incompatible sampling submitted by a form."""
+    model = capability_model_identity(candidate, entry_data)
+    metadata = request_model_capabilities(candidate, entry_data)
+    recommended = metadata.get("recommended_profile", {}).get("reasoning_effort")
+    effort = candidate.get(CONF_REASONING_EFFORT)
+    if effort is None:
+        effort = recommended
+    previous_effort = saved.get(CONF_REASONING_EFFORT)
+    if previous_effort is None:
+        previous_effort = recommended
+    route_changed = (
+        creation
+        or model != capability_model_identity(saved, entry_data)
+        or effort != previous_effort
+    )
+    with model_capability_snapshot(model, metadata):
+        removed = {
+            parameter
+            for parameter in (CONF_TEMPERATURE, CONF_TOP_P)
+            if parameter in candidate
+            and (route_changed or parameter in submitted)
+            and not parameter_is_allowed(model, parameter, effort)
+        }
+    for parameter in removed:
+        candidate.pop(parameter)
+    return removed
+
+
 class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
     """Flow for managing AI Task subentries."""
 
@@ -759,7 +818,9 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Add a subentry."""
-        self.options = dict(DEFAULT_AI_TASK_OPTIONS)
+        self.options = _new_agent_options(
+            DEFAULT_AI_TASK_OPTIONS, self._get_entry().data
+        )
         return await self.async_step_init()
 
     async def async_step_reconfigure(
@@ -782,29 +843,29 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
 
         if user_input is not None:
             candidate, _, _ = _ai_task_apply_form_edits(self.options, user_input)
+            entry_data = self._get_entry().data
+            model_changed = capability_model_identity(
+                candidate, entry_data
+            ) != capability_model_identity(self.options, entry_data)
+            if model_changed:
+                candidate[CONF_REASONING_EFFORT] = (
+                    request_model_capabilities(candidate, entry_data)
+                    .get("recommended_profile", {})
+                    .get("reasoning_effort")
+                )
             # Check if advanced options is enabled
             if user_input.get(CONF_ADVANCED_OPTIONS, False):
                 # Store data and move to advanced step
                 self._temp_data = dict(user_input)
-                if (candidate.get("azure_model") or candidate.get(CONF_CHAT_MODEL)) != (
-                    self.options.get("azure_model") or self.options.get(CONF_CHAT_MODEL)
-                ):
-                    self._temp_data[CONF_REASONING_EFFORT] = (
-                        recommended_reasoning_effort(
-                            str(
-                                candidate.get("azure_model")
-                                or candidate[CONF_CHAT_MODEL]
-                            )
-                        )
-                    )
+                if model_changed:
+                    self._temp_data[CONF_REASONING_EFFORT] = candidate[
+                        CONF_REASONING_EFFORT
+                    ]
                 return await self.async_step_advanced()
 
-            if (candidate.get("azure_model") or candidate.get(CONF_CHAT_MODEL)) != (
-                self.options.get("azure_model") or self.options.get(CONF_CHAT_MODEL)
-            ):
-                candidate[CONF_REASONING_EFFORT] = recommended_reasoning_effort(
-                    str(candidate.get("azure_model") or candidate[CONF_CHAT_MODEL])
-                )
+            _ai_task_clean_sampling(
+                self.options, candidate, entry_data, creation=self._is_new
+            )
             from .request import build_provider_request_snapshot
 
             try:
@@ -846,7 +907,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             {
                 vol.Optional(
                     CONF_CHAT_MODEL,
-                    default=DEFAULT_CHAT_MODEL,
+                    default=self.options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
                 ): str,
                 vol.Optional("azure_model", default=""): str,
                 **(
@@ -940,28 +1001,24 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 if configured_effort is not None
                 else recommended_effort
             )
-            for parameter in (CONF_TEMPERATURE, CONF_TOP_P):
-                if parameter in final_data and not parameter_is_allowed(
-                    capability_model, parameter, effective_effort
-                ):
-                    final_data.pop(parameter, None)
+            removed_sampling = _ai_task_clean_sampling(
+                self.options,
+                final_data,
+                entry_data,
+                creation=self._is_new,
+                submitted=edited,
+            )
 
             if not self._is_new:
                 owned = set(edited) | cleared
-                model_changed = capability_model != str(
-                    self.options.get("azure_model")
-                    or self.options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
-                )
+                model_changed = capability_model_identity(
+                    final_data, entry_data
+                ) != capability_model_identity(self.options, entry_data)
                 if model_changed:
                     owned.add(CONF_REASONING_EFFORT)
                 # Changing the model/effort deliberately clears now-unsupported
                 # sampling fields. Other edits preserve their raw presence.
-                if model_changed or CONF_REASONING_EFFORT in submitted:
-                    owned.update(
-                        key
-                        for key in (CONF_TEMPERATURE, CONF_TOP_P)
-                        if key not in final_data
-                    )
+                owned.update(removed_sampling)
                 final_data = project_agent_config_fields(
                     self.options, owned, final_data
                 )

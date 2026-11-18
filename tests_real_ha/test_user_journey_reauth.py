@@ -107,9 +107,9 @@ async def test_reauthentication_keeps_agent_usable_and_refreshes_wire_auth(
         instructions="Return a short result",
     )
     assert task_result.data == "Task repaired."
-    assert await agent._async_create_embeddings(["Credential embedding probe"]) == [
-        [1.0, 0.0]
-    ]
+    assert (
+        await agent._async_create_embeddings(["Credential embedding probe"])
+    ).vectors == [[1.0, 0.0]]
     assert [request["path"] for request in wire.requests] == [
         endpoint,
         endpoint,

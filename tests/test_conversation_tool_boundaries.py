@@ -229,6 +229,9 @@ async def test_archive_dispatcher_routes_session_operations_and_resume_boundary(
         async_resume_saving=AsyncMock(return_value=resumed_session),
         async_delete_session=AsyncMock(return_value={"deleted_turns": 1}),
         async_delete_selected=AsyncMock(return_value={"deleted_sessions": 2}),
+        async_preview_delete_date_range=AsyncMock(
+            return_value={"earlier_turn_count": 1}
+        ),
         async_delete_date_range=AsyncMock(return_value={"deleted_sessions": 3}),
     )
     scope = user_scope("alice", source="test")
@@ -261,6 +264,11 @@ async def test_archive_dispatcher_routes_session_operations_and_resume_boundary(
             "delete_selected",
             {"session_ids": ["session-2", "selected"], "confirm": True},
         )
+        range_preview = await entity._async_execute_archive_tool(
+            "delete_range",
+            {"start_date": "2026-09-01", "end_date": "2026-09-11", "confirm": False},
+        )
+        entity._archive.async_delete_date_range.assert_not_awaited()
         range_deleted = await entity._async_execute_archive_tool(
             "delete_range",
             {
@@ -297,6 +305,10 @@ async def test_archive_dispatcher_routes_session_operations_and_resume_boundary(
     entity._archive.async_delete_date_range.assert_awaited_once_with(
         "user:alice", "2026-09-01", "2026-09-11", confirm=True
     )
+    entity._archive.async_preview_delete_date_range.assert_awaited_once_with(
+        "user:alice", "2026-09-01", "2026-09-11"
+    )
+    assert range_preview == {"earlier_turn_count": 1}
     assert searched == {"results": []}
     assert fetched == {"session_id": "selected"}
     assert private == {"deleted_turns": 2}

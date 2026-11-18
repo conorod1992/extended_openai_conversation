@@ -6,6 +6,7 @@ from dataclasses import asdict, replace
 from datetime import datetime
 from threading import get_ident
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -34,6 +35,7 @@ from custom_components.extended_openai_conversation_responses.scope import (
     unretained_scope,
     user_scope,
 )
+from homeassistant.util import dt as dt_util
 
 
 class FakeArchiveStorage:
@@ -68,6 +70,51 @@ async def _archive():
     archive = ConversationArchive(FakeArchiveStorage(), "agent-1")
     await archive.async_initialize()
     return archive
+
+
+async def test_date_delete_previews_earlier_turns_in_home_assistants_timezone(
+    monkeypatch,
+):
+    zone = ZoneInfo("Europe/Dublin")
+    # Both turns fall on the same UTC date, but opposite sides of local midnight.
+    timestamps = [
+        datetime.fromisoformat(value)
+        for value in ("2026-07-12T22:59:00+00:00", "2026-07-12T23:01:00+00:00")
+    ]
+    archive = await _archive()
+    scope = user_scope("alice", source="authenticated_user")
+    monkeypatch.setattr(dt_util, "utcnow", lambda: timestamps[0])
+    session = await archive.async_begin_session(
+        "midnight",
+        scope,
+        "chat",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    for timestamp in timestamps:
+        monkeypatch.setattr(dt_util, "utcnow", lambda timestamp=timestamp: timestamp)
+        await archive.async_record_turn(
+            session.session_id,
+            run_id=None,
+            user_text="Midnight transcript",
+            assistant_text="Okay",
+            successful=True,
+        )
+    scope_id = scope.scope_id
+    with monkeypatch.context() as local:
+        local.setattr(dt_util, "DEFAULT_TIME_ZONE", zone)
+        preview = await archive.async_preview_delete_date_range(
+            scope_id, "2026-07-13", "2026-07-13"
+        )
+        assert preview["session_count"] == 1
+        assert preview["turn_count"] == 2
+        assert preview["earlier_turn_count"] == 1
+        assert preview["sessions"][0]["session_id"] == session.session_id
+        assert len((await archive.async_backup_data())["turns"]) == 2
+        assert await archive.async_delete_date_range(
+            scope_id, "2026-07-13", "2026-07-13", confirm=True
+        ) == {"deleted_sessions": 1, "deleted_turns": 2}
 
 
 async def test_live_archive_writes_build_payloads_off_loop_for_only_changed_months(

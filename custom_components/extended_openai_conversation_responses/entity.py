@@ -35,6 +35,7 @@ from homeassistant.util import slugify
 from .assistant_response import (
     classify_provider_output,
     provider_output_presentation,
+    responses_answer_text,
     separate_assistant_messages,
 )
 from .const import (
@@ -384,6 +385,7 @@ def _adjust_schema(
     # HA selectors emit domain-specific annotations outside strict provider schemas.
     schema.pop("format", None)
     schema.pop("uniqueItems", None)
+    schema.pop("default", None)
     if azure:
         # Azure's strict subset excludes constraints supported by direct OpenAI.
         # The caller's original schema still validates the returned task data.
@@ -2997,7 +2999,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     **settings,
                     store=False,
                 )
-                text = getattr(response, "output_text", None)
+                output = getattr(response, "output", None)
+                text = (
+                    responses_answer_text(output)
+                    if output is not None
+                    else getattr(response, "output_text", None)
+                )
                 details = getattr(response, "incomplete_details", None)
                 reason = (
                     details.get("reason")

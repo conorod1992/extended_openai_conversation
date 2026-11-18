@@ -26,6 +26,7 @@ from .skill_resource_limits import (
     read_bounded_skill_text,
 )
 from .skill_transactions import (
+    SkillDownload,
     commit_transaction,
     prepare_transaction,
     recover_transaction,
@@ -289,12 +290,18 @@ class SkillManager:
             yield
 
     async def async_publish_staged_skill(
-        self, skill_name: str, staged_dir: Path
+        self,
+        skill_name: str,
+        staged_dir: Path,
+        *,
+        download: SkillDownload | None = None,
     ) -> None:
         """Publish a completed staged Skill and refresh the catalogue atomically."""
         self._validate_direct_skill_name(skill_name)
         staging_root = self.staging_dir.resolve()
         staged = staged_dir.resolve()
+        if download is not None and download.directory.resolve() != staged:
+            raise HomeAssistantError("Skill download does not own the staged directory")
         if staged == staging_root or not staged.is_relative_to(staging_root):
             raise HomeAssistantError(
                 "Skill staging path is outside the managed staging area"
@@ -310,6 +317,8 @@ class SkillManager:
                 prepare_transaction, self.staging_dir, target, backup, staged
             )
             try:
+                if download is not None:
+                    await self._hass.async_add_executor_job(download.hand_off)
                 await self._hass.async_add_executor_job(
                     self._activate_staged_skill_sync, staged, target, backup
                 )

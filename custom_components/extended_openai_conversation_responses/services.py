@@ -6,10 +6,8 @@ import logging
 import mimetypes
 from pathlib import Path
 import re
-import shutil
 from typing import Any, cast
 from urllib.parse import quote, urlparse
-from uuid import uuid4
 
 from openai._exceptions import OpenAIError
 import voluptuous as vol
@@ -65,6 +63,7 @@ from .const import (
     SERVICE_MEMORY_LIST,
     SERVICE_PROCESS,
     SERVICE_QUERY_IMAGE,
+    SERVICE_REBUILD_MEMORY_EMBEDDINGS,
     SERVICE_RELOAD_SKILLS,
 )
 from .guest_mode import async_get_guest_mode
@@ -93,6 +92,7 @@ from .skill_resource_limits import (
     async_read_bounded_json,
     async_read_bounded_response,
 )
+from .skill_transactions import SkillDownload, prepare_download
 
 SERVICE_ENABLE_FUNCTION_GROUPS = "enable_function_groups"
 SERVICE_DISABLE_FUNCTION_GROUPS = "disable_function_groups"
@@ -584,7 +584,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         )
         downloaded_files: list[str] = []
         download_budget = SkillDownloadBudget()
-        owns_staging = False
+        download: SkillDownload | None = None
 
         def _safe_child(base: Path, name: str) -> Path:
             root = base.resolve()
@@ -654,16 +654,10 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
 
-        def _prepare_staging(root: Path, staging: Path) -> None:
-            nonlocal owns_staging
-            root.mkdir(parents=True, exist_ok=True)
-            # A UUID collision is not authority to delete someone else's files.
-            staging.mkdir()
-            owns_staging = True
-
-        def _cleanup_path(path: Path) -> None:
-            if path.exists():
-                shutil.rmtree(path)
+        def _prepare_staging(root: Path) -> SkillDownload:
+            nonlocal download
+            download = prepare_download(root, skill_name)
+            return download
 
         skill_manager = await SkillManager.async_get_instance(hass)
         skills_root = skill_manager.user_skills_dir.resolve()
@@ -672,21 +666,20 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             raise HomeAssistantError("Skill target directory is unsafe")
 
         staging_root = skill_manager.staging_dir.resolve()
-        staging_dir = staging_root / f"{skill_name}.download-{uuid4().hex}"
-        published = False
-
         try:
-            await async_settle_owned_operation(
-                hass.async_add_executor_job(_prepare_staging, staging_root, staging_dir)
+            owner = await async_settle_owned_operation(
+                hass.async_add_executor_job(_prepare_staging, staging_root)
             )
+            staging_dir = owner.directory
             _LOGGER.info("Downloading skill `%s` from `%s`", skill_name, source_ref)
             await _download_directory(api_url, staging_dir)
             if not (staging_dir / "SKILL.md").is_file():
                 raise HomeAssistantError(
                     f"Downloaded skill `{skill_name}` does not contain SKILL.md"
                 )
-            await skill_manager.async_publish_staged_skill(skill_name, staging_dir)
-            published = True
+            await skill_manager.async_publish_staged_skill(
+                skill_name, staging_dir, download=owner
+            )
         except HomeAssistantError:
             raise
         except Exception as err:
@@ -694,9 +687,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 f"Failed to download skill `{skill_name}`: {err}"
             ) from err
         finally:
-            if owns_staging and not published:
+            if download is not None:
                 await async_settle_owned_operation(
-                    hass.async_add_executor_job(_cleanup_path, staging_dir)
+                    hass.async_add_executor_job(download.close)
                 )
 
         _LOGGER.info(
@@ -775,6 +768,16 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             call.data["functions"],
             True,
         )
+
+    async def rebuild_memory_embeddings(call: ServiceCall) -> None:
+        """Reset derived embeddings for an agent while preserving memories."""
+        await _async_require_service_admin(hass, call)
+        entry_id, subentry_id = resolve_memory_agent(
+            hass, call.data["config_entry"], call.data["agent_id"]
+        )
+        async with get_agent_maintenance_gate(hass, entry_id, subentry_id).exclusive():
+            memory = await async_get_memory(hass, entry_id, subentry_id)
+            await memory.async_rebuild_embedding_cache()
 
     async def disable_function_tools(call: ServiceCall) -> None:
         """Disable one or more configured Function Tools."""
@@ -996,6 +999,12 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         SERVICE_ENABLE_FUNCTION_TOOLS,
         enable_function_tools,
         schema=schema_for_ha(FUNCTION_TOOL_STATE_SCHEMA),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REBUILD_MEMORY_EMBEDDINGS,
+        rebuild_memory_embeddings,
+        schema=schema_for_ha(vol.Schema(MEMORY_AGENT_FIELDS)),
     )
     hass.services.async_register(
         DOMAIN,

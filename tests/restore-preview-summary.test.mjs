@@ -142,3 +142,9 @@ assert.deepEqual(restorePreviewSummaryLines({
   archive_turns: 0,
   archive_retention: {days: 7, expired_sessions: 2, expired_turns: 4},
 }), ["0 archived conversations (0 turns)", "Archive retention (7 days) removes 2 conversations and 4 turns from the backup."]);
+assert.deepEqual(restorePreviewSummaryLines({
+  selected_sections: ["usage"],
+  usage_runs: 1,
+  usage_requests: 0,
+  usage_retention: {expired_runs: 0, expired_requests: 3},
+}), ["Usage history (1 runs, 0 requests)", "Usage retention removes 0 runs and 3 requests. Usage totals will be kept."]);

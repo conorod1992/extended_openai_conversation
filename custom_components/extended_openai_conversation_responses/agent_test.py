@@ -16,7 +16,7 @@ from .agent_config import (
     parse_configured_function_tools,
     validate_function_groups,
 )
-from .assistant_response import classify_provider_output
+from .assistant_response import responses_answer_text
 from .const import (
     API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
@@ -414,16 +414,9 @@ async def async_test_agent(
             )
             if not probe_budget_exhausted:
                 ensure_successful_responses_result(response)
-                if not any(
-                    answer_text(part).strip()
-                    for item in (getattr(response, "output", None) or ())
-                    if getattr(item, "type", None) == "message"
-                    and getattr(item, "role", None) == "assistant"
-                    and getattr(item, "status", None) in (None, "completed")
-                    and classify_provider_output(item) == "answer"
-                    for part in (getattr(item, "content", None) or ())
-                    if getattr(part, "type", None) == "output_text"
-                ):
+                if not responses_answer_text(
+                    getattr(response, "output", None) or ()
+                ).strip():
                     raise HomeAssistantError(
                         "Responses probe did not receive a completed text reply"
                     )
@@ -469,11 +462,10 @@ async def async_test_agent(
             probe_budget_exhausted = finish_reason == "length"
             if not probe_budget_exhausted:
                 message = getattr(choice, "message", None)
-                content = getattr(message, "content", None)
+                content = answer_text(getattr(message, "content", None))
                 if (
                     finish_reason != "stop"
                     or getattr(message, "refusal", None)
-                    or not isinstance(content, str)
                     or not content.strip()
                 ):
                     raise HomeAssistantError(
