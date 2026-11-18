@@ -364,7 +364,7 @@ class ExtendedOpenAIAgentEntity(
 
     _attr_supports_streaming = True
     _attr_supported_features = ConversationEntityFeature.CONTROL
-    skill_manager: SkillManager
+    skill_manager: SkillManager | None = None
     _memory: PersistentMemory | None = None
     _temporary_memory: TemporaryMemory | None = None
     _continuity: ConversationContinuity | None = None
@@ -460,9 +460,19 @@ class ExtendedOpenAIAgentEntity(
         else:
             skills_dir = Path(self.hass.config.config_dir) / working_dir / "skills"
 
-        self.skill_manager = await SkillManager.async_get_instance(
-            self.hass, user_skills_dir=str(skills_dir)
-        )
+        self.skill_manager = None
+        try:
+            self.skill_manager = await SkillManager.async_get_instance(
+                self.hass, user_skills_dir=str(skills_dir)
+            )
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER,
+                "Skills could not be initialized. Check the Skills recovery files "
+                "and reload Skills after resolving the problem. The assistant will "
+                "continue without Skills.",
+                err,
+            )
 
         self._usage = await async_get_usage(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
@@ -2044,9 +2054,15 @@ class ExtendedOpenAIAgentEntity(
         enabled_skill_names = self.skills
         if not enabled_skill_names:
             return []
-        all_skills = self.skill_manager.get_all_skills()
+        manager = self.skill_manager or SkillManager.get_loaded_instance()
+        if manager is None:
+            return []
 
-        return [s for s in all_skills if s.name in enabled_skill_names]
+        return [
+            skill
+            for skill in manager.get_all_skills()
+            if skill.name in enabled_skill_names
+        ]
 
     def _get_exposed_entities(self) -> list[dict[str, Any]]:
         started = time.monotonic()

@@ -53,6 +53,7 @@ Provider restoration requires an explicit shared-connection choice because other
 
 1. Select the destination conversation agent and choose **Choose file** under **Import / Restore**. The panel accepts Extended OpenAI JSON exports and ZIP backups.
 2. Review the validated summary and select **Sections to replace**. Only sections present in the file are offered. If restoring Configuration shortens Usage retention while Usage is unselected, the preview identifies the details that will expire and asks you to confirm the deletion. Aggregate Usage totals are kept when Usage is unselected.
+   If Conversation archive is unselected, Configuration restore preserves the destination's retention period when the incoming period would shorten it.
 3. If the backup contains personal data for users missing from this installation, map each source user to a destination Home Assistant user.
 4. Choose whether to **Also restore the provider connection**, if the file contains one. This affects all agents sharing that connection.
 5. Choose **Restore selected sections** and confirm the replacement.

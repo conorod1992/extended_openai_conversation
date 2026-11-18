@@ -368,6 +368,7 @@ async def async_test_agent(
     }
     usage_manager = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
     probe_budget_exhausted = False
+    probe_usage = None
     try:
         # Use the same reasoning default and validator as live requests without
         # imposing unrelated request settings on this minimal capability probe.
@@ -401,6 +402,7 @@ async def async_test_agent(
             if tools:
                 response_kwargs.update(tools=tools, tool_choice="none")
             response = await client.responses.create(**response_kwargs)
+            probe_usage = extract_usage(getattr(response, "usage", None))
             probe_budget_exhausted = (
                 getattr(response, "error", None) is None
                 and getattr(response, "status", None) == "incomplete"
@@ -440,10 +442,29 @@ async def async_test_agent(
                     tool_choice="none",
                 )
             response = await client.chat.completions.create(**kwargs)
-            probe_budget_exhausted = any(
-                getattr(choice, "finish_reason", None) == "length"
-                for choice in getattr(response, "choices", [])
-            )
+            probe_usage = extract_usage(getattr(response, "usage", None))
+            choices = getattr(response, "choices", None)
+            if not choices or len(choices) != 1:
+                raise HomeAssistantError("Chat Completions probe expected one reply")
+            choice = choices[0]
+            finish_reason = getattr(choice, "finish_reason", None)
+            if finish_reason == "content_filter":
+                raise HomeAssistantError(
+                    "The provider content filter blocked the probe"
+                )
+            probe_budget_exhausted = finish_reason == "length"
+            if not probe_budget_exhausted:
+                message = getattr(choice, "message", None)
+                content = getattr(message, "content", None)
+                if (
+                    finish_reason != "stop"
+                    or getattr(message, "refusal", None)
+                    or not isinstance(content, str)
+                    or not content.strip()
+                ):
+                    raise HomeAssistantError(
+                        "Chat Completions probe did not receive a completed text reply"
+                    )
     except OpenAIError as err:
         is_authentication_failure = (
             classify_config_provider_error(err) == "invalid_auth"
@@ -487,6 +508,7 @@ async def async_test_agent(
     except Exception as err:
         await usage_manager.async_record_request(
             successful=False,
+            usage=probe_usage,
             provider=usage_provider,
             model=usage_model,
             api_mode=usage_api_mode,
@@ -499,7 +521,7 @@ async def async_test_agent(
     else:
         await usage_manager.async_record_request(
             successful=True,
-            usage=extract_usage(getattr(response, "usage", None)),
+            usage=probe_usage,
             provider=usage_provider,
             model=usage_model,
             api_mode=usage_api_mode,

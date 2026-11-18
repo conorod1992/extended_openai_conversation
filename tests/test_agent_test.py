@@ -25,6 +25,15 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 
 
+def _chat_reply(usage: Any = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="OK"))
+        ],
+        usage=usage,
+    )
+
+
 def _objects(options: dict | None = None):
     subentry = SimpleNamespace(
         subentry_id="agent-1",
@@ -38,9 +47,8 @@ def _objects(options: dict | None = None):
             **(options or {}),
         },
     )
-    response = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="OK"))],
-        usage=SimpleNamespace(prompt_tokens=4, completion_tokens=1, total_tokens=5),
+    response = _chat_reply(
+        SimpleNamespace(prompt_tokens=4, completion_tokens=1, total_tokens=5)
     )
     client = SimpleNamespace(
         chat=SimpleNamespace(
@@ -103,7 +111,47 @@ async def test_successful_agent_test() -> None:
     client.chat.completions.create.assert_awaited_once()
     usage.async_record_request.assert_awaited_once_with(
         successful=True,
-        usage=agent_test.extract_usage(client.chat.completions.create.return_value.usage),
+        usage=agent_test.extract_usage(
+            client.chat.completions.create.return_value.usage
+        ),
+        **_usage_attribution(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("finish_reason", "content", "expected_status"),
+    [
+        (None, None, "Failed"),
+        ("content_filter", None, "Failed"),
+        ("stop", " ", "Failed"),
+        ("tool_calls", None, "Failed"),
+        ("length", None, "Warning"),
+    ],
+)
+async def test_chat_probe_requires_a_completed_text_reply(
+    finish_reason, content, expected_status
+) -> None:
+    hass, entry, subentry, client, usage = _objects()
+    response = client.chat.completions.create.return_value
+    response.choices = (
+        [
+            SimpleNamespace(
+                finish_reason=finish_reason, message=SimpleNamespace(content=content)
+            )
+        ]
+        if finish_reason is not None
+        else []
+    )
+    with (
+        patch.object(agent_test, "get_exposed_entities", return_value=[{}]),
+        patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)),
+    ):
+        result = await async_test_agent(hass, entry, subentry)
+    model_check = next(check for check in result.checks if check.name == "Model access")
+    assert model_check.status == expected_status
+    usage.async_record_request.assert_awaited_once_with(
+        successful=expected_status == "Warning",
+        usage=agent_test.extract_usage(response.usage),
         **_usage_attribution(),
     )
 
@@ -708,6 +756,7 @@ async def test_agent_test_unexpected_probe_error_is_reported(
     assert usage.calls == [
         {
             "successful": False,
+            "usage": None,
             **_usage_attribution(
                 model=agent_test.DEFAULT_CHAT_MODEL,
                 api_mode=agent_test.API_MODE_RESPONSES,
@@ -762,7 +811,7 @@ async def test_agent_test_usage_attribution_uses_configured_provider_model_and_m
         lambda *_args: agent_test.API_MODE_CHAT_COMPLETIONS,
     )
     monkeypatch.setattr(agent_test, "extract_usage", lambda _raw: {})
-    create = _CoverageCreate(result=SimpleNamespace(usage=None))
+    create = _CoverageCreate(result=_chat_reply())
     client = SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=create.create))
     )
@@ -798,7 +847,7 @@ async def test_agent_test_chat_completions_probe_uses_wrapped_function_schema(
     _coverage_patch_common(monkeypatch)
     monkeypatch.setattr(agent_test, "get_api_mode", lambda *_args: agent_test.API_MODE_CHAT_COMPLETIONS)
     monkeypatch.setattr(agent_test, "extract_usage", lambda _raw: {})
-    create = _CoverageCreate(result=SimpleNamespace(usage=None))
+    create = _CoverageCreate(result=_chat_reply())
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create.create)))
 
     result = await agent_test.async_test_agent(
@@ -992,6 +1041,7 @@ async def test_unexpected_probe_error_marks_compatible_web_search_failed(
     assert usage.calls == [
         {
             "successful": False,
+            "usage": None,
             **_usage_attribution(
                 model="gpt-5.6",
                 api_mode=agent_test.API_MODE_RESPONSES,
@@ -1010,7 +1060,11 @@ async def test_text_only_unknown_provider_is_probed_without_function_schema(api_
     async def text_only(**kwargs):
         assert "tools" not in kwargs
         assert "tool_choice" not in kwargs
-        return SimpleNamespace(status="completed", usage=None)
+        return (
+            SimpleNamespace(status="completed", usage=None)
+            if api_mode == API_MODE_RESPONSES
+            else _chat_reply()
+        )
     client.chat.completions.create = AsyncMock(side_effect=text_only)
     client.responses = SimpleNamespace(create=AsyncMock(side_effect=text_only))
     with patch.object(agent_test, "get_exposed_entities", return_value=[{}]), patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)):

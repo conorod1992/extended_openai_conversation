@@ -446,7 +446,12 @@ export function bindUsageDiagnostics(panel) {
       const days = await loadUsageWindow(panel, next, usageCalendarToday(panel));
       if (generation !== panel._usageWindowGeneration || panel._agentId !== agentId || panel._viewKey?.() !== "usage-maintenance/usage") return;
       panel._usageHistoryWindow = next;
-      panel._result = {...(panel._result || {}), days};
+      panel._result = {
+        ...(panel._result || {}),
+        days,
+        load_errors: (panel._result?.load_errors || []).filter(issue => issue.key !== "days"),
+        loading: {...(panel._result?.loading || {}), days: false},
+      };
       panel._render();
     } catch (err) {
       if (generation === panel._usageWindowGeneration && panel._agentId === agentId && panel._viewKey?.() === "usage-maintenance/usage") {

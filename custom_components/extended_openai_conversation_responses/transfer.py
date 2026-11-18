@@ -22,6 +22,7 @@ from . import backup
 from .agent_config import (
     agent_retention_snapshot,
     configured_function_tools_from_data,
+    normalized_agent_integer,
     shortened_usage_retention,
     validate_agent_title,
 )
@@ -33,8 +34,10 @@ from .bounded_json import (
 )
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
+    CONF_ARCHIVE_RETENTION_DAYS,
     CONF_VOICE_DEFAULT_USER_ID,
     CONF_VOICE_DEVICE_MAPPINGS,
+    DEFAULT_ARCHIVE_RETENTION_DAYS,
 )
 from .conversation_archive import ArchiveSession, ArchiveTurn, async_get_archive
 from .function_dependency_integrity import async_validate_request_rule_functions
@@ -1381,6 +1384,21 @@ def _prepared_restore_from_selection(
             config = deepcopy(imported.config)
         else:
             raise backup.BackupError("Transferred configuration is unavailable")
+        if SECTION_CONVERSATION_ARCHIVE not in selected:
+            retention = normalized_agent_integer(
+                current.config,
+                CONF_ARCHIVE_RETENTION_DAYS,
+                DEFAULT_ARCHIVE_RETENTION_DAYS,
+            )
+            if (
+                normalized_agent_integer(
+                    config, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+                )
+                < retention
+            ):
+                # Agent startup prunes using the restored policy. A configuration
+                # restore cannot shorten retention for unselected Archive data.
+                config[CONF_ARCHIVE_RETENTION_DAYS] = retention
     else:
         # Unselected configuration is authoritative private source. Validate a
         # separate projection without rewriting credentials, YAML or omissions.

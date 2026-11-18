@@ -3294,6 +3294,10 @@ def validate_rule_model_request(
         return  # The complete deployment/binding pair is checked after capture resolution.
     values = routed_model_override(options, model, underlying_model, entry_data)
     effort = action.get("reasoning_effort")
+    if effort and not model and not underlying_model:
+        # Effort syntax has already been validated. A conversation override
+        # can supply a different model, so validate the pair at execution.
+        return
     candidate = {
         **options,
         **values,

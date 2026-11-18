@@ -271,6 +271,48 @@ def test_astra_reasoning_values_are_model_specific() -> None:
         ), {}, {})
 
 
+async def test_literal_effort_only_rule_uses_the_inherited_model() -> None:
+    options = {"chat_model": "gpt-4.1-mini", "api_mode": "auto"}
+    rule = validate_rule(
+        _rule(
+            "think-hard",
+            "think hard",
+            action={
+                "reasoning_effort": "high",
+                "scope": "request",
+                "continue_to_ai": True,
+            },
+        )
+    )
+    validate_rule_model_request(rule, options, {})
+    rules = RequestRules(MemoryStore({"rules": [rule]}))
+    await rules.async_initialize()
+    runtime = RequestRuleRuntime()
+    runtime.set("routed", {CONF_CHAT_MODEL: "gpt-5.6"})
+
+    async def evaluate(session):
+        return await async_evaluate_rule(
+            SimpleNamespace(),
+            rules,
+            runtime,
+            "think hard",
+            session,
+            options["chat_model"],
+            request_options=options,
+            entry_data={},
+        )
+
+    result = await evaluate("routed")
+    assert result is not None
+    effective = runtime.effective_options(options, "routed", result.request_override)
+    assert effective[CONF_CHAT_MODEL] == "gpt-5.6"
+    assert effective[CONF_REASONING_EFFORT] == "high"
+
+    with pytest.raises(HomeAssistantError, match="does not support reasoning effort"):
+        await evaluate("default")
+    assert runtime.get("default") == {}
+
+
 async def test_captured_reasoning_uses_effective_routed_model_before_publish() -> None:
     runtime = RequestRuleRuntime()
     runtime.set("session", {CONF_CHAT_MODEL: "gpt-5.6"})

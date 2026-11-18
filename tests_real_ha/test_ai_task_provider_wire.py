@@ -16,6 +16,7 @@ from pytest_homeassistant_custom_component.common import MockUser
 import voluptuous as vol
 
 from custom_components.extended_openai_conversation_responses.const import (
+    API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     DOMAIN,
@@ -382,7 +383,7 @@ async def test_caller_tool_round_trip_crosses_sdk_wire_with_ha_context(
     assert "call-ai-task-wire" not in json.dumps(last_body)
 
 
-@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("mode", (*MODES, API_MODE_AUTO))
 @pytest.mark.parametrize(
     "mime_type,filename", [("image/png", "probe.png"), ("application/pdf", "probe.pdf")]
 )
@@ -398,8 +399,15 @@ async def test_local_attachment_bytes_cross_sdk_wire(
     content = b"EOAI local attachment bytes \x00\xff"
     source.write_bytes(content)
     hass.config.media_dirs["local"] = str(tmp_path)
-    entry, entity_id = await _task_entity(hass, mode)
-    wire = _wire(monkeypatch, entry, [_text_reply(mode, "Attachment inspected")])
+    entry, entity_id = await _task_entity(hass, mode, chat_model="gpt-5-mini")
+    wire_mode = mode
+    if mode == API_MODE_AUTO:
+        wire_mode = (
+            API_MODE_RESPONSES
+            if mime_type == "application/pdf"
+            else API_MODE_CHAT_COMPLETIONS
+        )
+    wire = _wire(monkeypatch, entry, [_text_reply(wire_mode, "Attachment inspected")])
     attachment = {
         "media_content_id": f"media-source://media_source/local/{filename}",
         "media_content_type": mime_type,
@@ -423,7 +431,7 @@ async def test_local_attachment_bytes_cross_sdk_wire(
         attachments=[attachment],
     )
     assert result.data == "Attachment inspected"
-    _assert_paths(wire, mode, 1)
+    _assert_paths(wire, wire_mode, 1)
     user = next(
         item
         for item in wire.requests[0]["body"].get(
@@ -434,13 +442,13 @@ async def test_local_attachment_bytes_cross_sdk_wire(
     part = next(
         item
         for item in user["content"]
-        if item["type"] != ("input_text" if mode == API_MODE_RESPONSES else "text")
+        if item["type"] != ("input_text" if wire_mode == API_MODE_RESPONSES else "text")
     )
     if mime_type == "application/pdf":
         assert part["type"] == "input_file"
         assert part["filename"] == filename
         data_url = part["file_data"]
-    elif mode == API_MODE_RESPONSES:
+    elif wire_mode == API_MODE_RESPONSES:
         assert part["type"] == "input_image"
         data_url = part["image_url"]
     else:

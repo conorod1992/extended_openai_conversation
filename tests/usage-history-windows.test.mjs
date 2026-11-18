@@ -5,6 +5,7 @@ import {loadAllUsageDays, loadUsageWindow, loadUsageDaily} from "../custom_compo
 
 import {
   addUsageCalendarDays,
+  bindUsageDiagnostics,
   localUsageDateKey,
   renderUsagePage,
   selectUsageHistory,
@@ -158,6 +159,36 @@ const sevenDayStart = usageCalls.at(-1).start_date;
 const sevenDayEnd = usageCalls.at(-1).end_date;
 assert.equal((Date.parse(sevenDayEnd) - Date.parse(sevenDayStart)) / 86_400_000, 6,
   "initial route read uses the selected seven-day window");
+
+const windowSelector = {value: "90", disabled: false};
+const freshDays = {days: [makeDay(localUsageDateKey(new Date(), "UTC"), 25)]};
+const summaryError = {key: "summary", message: "Summary read failed"};
+const recoveryPanel = {
+  ...tablePanel,
+  ...usagePanel,
+  _hass: {config: {time_zone: "UTC"}},
+  _usageHistoryWindow: "30",
+  _viewKey: () => "usage-maintenance/usage",
+  _call: async () => freshDays,
+  _result: {
+    load_errors: [{key: "days", message: "Daily usage read failed"}, summaryError],
+    loading: {days: true, runs: true},
+  },
+  shadowRoot: {
+    querySelectorAll: () => [],
+    querySelector: selector => selector === "#usage-window" ? windowSelector : null,
+  },
+  _render() {
+    this.rendered = renderUsagePage(this, this._result);
+  },
+};
+bindUsageDiagnostics(recoveryPanel);
+await windowSelector.onchange({target: windowSelector});
+assert.deepEqual(recoveryPanel._result.days.days, freshDays.days);
+assert.deepEqual(recoveryPanel._result.load_errors, [summaryError]);
+assert.deepEqual(recoveryPanel._result.loading, {days: false, runs: true});
+assert.doesNotMatch(recoveryPanel.rendered, /Daily usage unavailable|may be stale/);
+assert.match(recoveryPanel.rendered, /Usage summary unavailable/);
 
 // The management-window feature must not replace or reinterpret Today / Month sensor semantics.
 const sensorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/sensor.py", import.meta.url), "utf8");

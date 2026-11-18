@@ -14,6 +14,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .capabilities import resolve_effective_capabilities
 from .const import (
+    API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -597,6 +598,7 @@ def build_provider_request_snapshot(
     *,
     tools_required: bool | None = None,
     model_capabilities: Mapping[str, Any] | None = None,
+    responses_required: bool = False,
 ) -> ProviderRequestSnapshot:
     """Build validated/normalized settings used by the live OpenAI request."""
     from .agent_config import normalize_agent_numeric_values
@@ -623,6 +625,8 @@ def build_provider_request_snapshot(
         else tools_required
     )
     configured_api = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
+    if responses_required and configured_api == API_MODE_AUTO:
+        configured_api = API_MODE_RESPONSES
     try:
         capabilities = request_model_capabilities(
             options, entry_data, model_capabilities

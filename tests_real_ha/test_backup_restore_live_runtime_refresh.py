@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 import json
 from typing import Any
@@ -9,10 +10,12 @@ from typing import Any
 import pytest
 
 from custom_components.extended_openai_conversation_responses.private_backup import encode_document
-from custom_components.extended_openai_conversation_responses import backup
+from custom_components.extended_openai_conversation_responses import backup, transfer
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     CONF_API_MODE,
+    CONF_ARCHIVE_ENABLED,
+    CONF_ARCHIVE_RETENTION_DAYS,
     CONF_CHAT_MODEL,
     CONF_CONVERSATION_CONTINUITY,
     CONF_KNOWLEDGE_ENABLED,
@@ -22,10 +25,14 @@ from custom_components.extended_openai_conversation_responses.const import (
     MEMORY_MODE_MANUAL,
     TEMPORARY_MEMORY_BALANCED,
 )
+from custom_components.extended_openai_conversation_responses.conversation_archive import (
+    async_get_archive,
+)
 from custom_components.extended_openai_conversation_responses.knowledge import (
     async_get_knowledge,
 )
 from custom_components.extended_openai_conversation_responses.memory import async_get_memory
+from custom_components.extended_openai_conversation_responses.scope import user_scope
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     async_get_temporary_memory,
 )
@@ -49,6 +56,68 @@ _CURRENT_TEMPORARY = "Current temporary marker is stale-copper."
 _TARGET_KNOWLEDGE = "restored-orbit-cobalt"
 _CURRENT_KNOWLEDGE = "stale-orbit-amber"
 _SEARCH_CALL_ID = "call-restored-knowledge-search"
+
+
+@pytest.mark.parametrize("include_archive", [False, True])
+async def test_shorter_archive_retention_requires_selecting_the_archive(
+    hass, include_archive
+):
+    entry = _make_entry(
+        "Archive retention restore",
+        include_ai_task=False,
+        conversation_options={
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_ARCHIVE_RETENTION_DAYS: 90,
+        },
+    )
+    await _setup_entry(hass, entry)
+    subentry = next(iter(entry.subentries.values()))
+    archive = await async_get_archive(hass, entry.entry_id, subentry.subentry_id)
+    session = await archive.async_begin_session(
+        "session",
+        user_scope(_USER_ID, source="authenticated_user"),
+        "chat",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    turn = await archive.async_record_turn(
+        session.session_id,
+        run_id=None,
+        user_text="Previous transcript",
+        assistant_text="Archived reply",
+        successful=True,
+    )
+    timestamp = (dt_util.utcnow() - timedelta(days=20)).isoformat()
+    await archive.async_replace_backup(
+        [
+            replace(
+                session,
+                started_at=timestamp,
+                last_message_at=timestamp,
+                last_activity_at=timestamp,
+                turn_count=1,
+                title="Previous transcript",
+            )
+        ],
+        [replace(turn, timestamp=timestamp)],
+    )
+    snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    snapshot["agent"]["config"][CONF_ARCHIVE_RETENTION_DAYS] = 7
+    document = backup.finalize_backup_snapshot(snapshot)["document"]
+    sections = [transfer.SECTION_CONFIGURATION]
+    if include_archive:
+        sections.append(transfer.SECTION_CONVERSATION_ARCHIVE)
+    result = await transfer.async_restore_transfer(
+        hass, entry, subentry, document, sections=sections
+    )
+    assert result["status"] == "restored"
+    saved = entry.subentries[subentry.subentry_id].data
+    assert saved[CONF_ARCHIVE_RETENTION_DAYS] == (7 if include_archive else 90)
+    archive = await async_get_archive(hass, entry.entry_id, subentry.subentry_id)
+    assert len((await archive.async_backup_data())["turns"]) == (
+        0 if include_archive else 1
+    )
 
 
 def _system_prompt(body: dict[str, Any]) -> str:

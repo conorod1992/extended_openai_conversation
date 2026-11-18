@@ -303,15 +303,11 @@ class _BoundedResponse:
         selected_encoding = encoding or self._response.charset or "utf-8"
         try:
             return body.decode(selected_encoding, errors=errors)
-        except UnicodeDecodeError as err:
+        except (UnicodeError, LookupError) as err:
             if encoding is None:
                 # RestData retries the same cached body with its configured
                 # encoding when the server's advertised charset is incorrect.
                 raise
-            raise HomeAssistantError(
-                "Remote response cannot be decoded with the configured encoding"
-            ) from err
-        except (UnicodeError, LookupError) as err:
             raise HomeAssistantError(
                 "Remote response cannot be decoded with the configured encoding"
             ) from err
@@ -445,7 +441,7 @@ async def _private_rest_update(data: rest.data.RestData) -> None:
             if not data._force_use_set_encoding and response.charset:
                 try:
                     data.data = await response.text()
-                except UnicodeDecodeError:
+                except UnicodeError, LookupError:
                     data._force_use_set_encoding = True
             if data._force_use_set_encoding or not response.charset:
                 data.data = await response.text(encoding=data._encoding)

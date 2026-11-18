@@ -38,6 +38,7 @@ from .assistant_response import (
     separate_assistant_messages,
 )
 from .const import (
+    API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -861,6 +862,15 @@ def _is_post_terminal_chat_accounting_choice(
     )
 
 
+def _attachment_mime_type(attachment: conversation.Attachment) -> str | None:
+    return attachment.mime_type or mimetypes.guess_type(attachment.path)[0]
+
+
+def _attachments_include_pdf(attachments: list[conversation.Attachment]) -> bool:
+    """Identify PDFs using the same MIME lookup as the attachment encoder."""
+    return any(_attachment_mime_type(item) == "application/pdf" for item in attachments)
+
+
 class ExtendedOpenAIBaseLLMEntity(Entity):
     """Extended OpenAI base entity."""
 
@@ -922,6 +932,23 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
             )
 
+            users = [
+                item
+                for item in chat_log.content
+                if isinstance(item, conversation.UserContent)
+            ]
+            current_attachments = (
+                (getattr(users[-1], "attachments", None) or []) if users else []
+            )
+            responses_required = False
+            if (
+                options.get(CONF_API_MODE, DEFAULT_API_MODE) == API_MODE_AUTO
+                and 0 < len(current_attachments) <= MAX_ATTACHMENT_COUNT
+            ):
+                responses_required = await self.hass.async_add_executor_job(
+                    _attachments_include_pdf, current_attachments
+                )
+
             def snapshot_for_live_tools() -> tuple[
                 list[dict[str, Any]], ProviderRequestSnapshot
             ]:
@@ -945,13 +972,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     options,
                     getattr(self.entry, "data", {}),
                     tools_required=bool(initial_tools) or conditional_continue,
+                    responses_required=responses_required,
                 )
 
-            attachment_io = any(
-                getattr(item, "attachments", None)
-                for item in chat_log.content
-                if isinstance(item, conversation.UserContent)
-            )
+            attachment_io = any(getattr(item, "attachments", None) for item in users)
             # Text-only turns still assemble their live catalogue exactly once,
             # after the attachment await. File-bearing turns need an initial API
             # choice so incompatible files never consume its replay budget.
@@ -1976,7 +2000,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         raise HomeAssistantError(f"`{path}` does not exist")
                     if not path.is_file():
                         raise HomeAssistantError(f"`{path}` is not a file")
-                    mime_type = attachment.mime_type or mimetypes.guess_type(path)[0]
+                    mime_type = _attachment_mime_type(attachment)
                     if not mime_type:
                         raise HomeAssistantError(
                             f"Unable to determine attachment type for `{path}`"

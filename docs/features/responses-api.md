@@ -6,7 +6,7 @@ The integration supports both OpenAI's Chat Completions API and the newer Respon
 
 For most users, leave **Provider API format** (API mode) set to **Auto** under **Assistant → Basics → Advanced request settings**.
 
-- **Auto** selects an endpoint from the active catalogue using the exact model, reasoning setting and required tools.
+- **Auto** selects an endpoint from the active catalogue using the exact model, reasoning setting and required tools. A new PDF attachment requires Responses.
 - **Chat Completions** selects `/v1/chat/completions`.
 - **Responses** selects `/v1/responses`.
 
