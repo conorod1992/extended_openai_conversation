@@ -4,7 +4,11 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from openai.types.responses import ResponseFunctionWebSearch, ResponseTextDoneEvent
+from openai.types.responses import (
+    ResponseFunctionWebSearch,
+    ResponseOutputRefusal,
+    ResponseTextDoneEvent,
+)
 import pytest
 
 from custom_components.extended_openai_conversation_responses import assistant_response
@@ -170,8 +174,11 @@ async def test_listener_answer_and_native_replay_are_independent(
     await output_witness(hass, cleanup=cleanup, phase=phase, completed=completed)
 
 
-@pytest.mark.parametrize("finalization_only", ["done", "item", "item_without_added"])
-async def test_finalized_response_text_reaches_chat_and_speech(hass, finalization_only):
+@pytest.mark.parametrize(
+    "text_delivery",
+    ["done", "partial_then_done", "partial_then_item", "item", "item_without_added"],
+)
+async def test_finalized_response_text_reaches_chat_and_speech(hass, text_delivery):
     progress = message("progress", "Internal commentary")
     answer = message("answer", "The kitchen light is on.").model_copy(
         update={"phase": "final_answer"}
@@ -179,7 +186,9 @@ async def test_finalized_response_text_reaches_chat_and_speech(hass, finalizatio
     output = []
     for event in events([progress, answer]).events:
         if event.type == "response.output_text.delta":
-            if finalization_only == "done":
+            if text_delivery in {"partial_then_done", "partial_then_item"}:
+                output.append(event.model_copy(update={"delta": event.delta[:8]}))
+            if text_delivery in {"done", "partial_then_done"}:
                 output.append(
                     ResponseTextDoneEvent(
                         type="response.output_text.done",
@@ -191,12 +200,12 @@ async def test_finalized_response_text_reaches_chat_and_speech(hass, finalizatio
                         logprobs=[],
                     )
                 )
-                if event.item_id == "progress":
+                if text_delivery == "done" and event.item_id == "progress":
                     # A provider can include both delta and done for the same part.
                     output.insert(-1, event)
             continue
         if (
-            finalization_only == "item_without_added"
+            text_delivery == "item_without_added"
             and event.type == "response.output_item.added"
         ):
             continue
@@ -213,6 +222,42 @@ async def test_finalized_response_text_reaches_chat_and_speech(hass, finalizatio
     assert final_assistant_text(log.content) == answer.content[0].text
     assert log.content[-1].native == answer
     assert sum(item.content == "Internal commentary" for item in log.content) == 1
+
+
+@pytest.mark.parametrize("include_added", [True, False])
+async def test_finalized_refusal_is_separate_from_earlier_commentary(
+    hass, include_added
+):
+    progress = message("progress", "Internal commentary")
+    refusal = "I can't help with that request."
+    answer = message("refusal", "").model_copy(
+        update={
+            "phase": "final_answer",
+            "content": [ResponseOutputRefusal(type="refusal", refusal=refusal)],
+        }
+    )
+    response = SimpleNamespace(
+        output=[progress, answer], status="completed", usage=None
+    )
+    stream = [
+        event
+        async for event in completed_responses_events(response)
+        if include_added
+        or event.type != "response.output_item.added"
+        or event.output_index != 1
+    ]
+    obj, _ = entity(hass, [FakeStream(stream)])
+    log = conversation.ChatLog(hass, "finalized-refusal")
+    log.async_add_user_content(conversation.UserContent(content="Question"))
+    heard = []
+    log.delta_listener = lambda _log, delta: heard.append(delta.get("content", ""))
+
+    await obj._async_handle_chat_log(log, [], [])
+
+    assert "".join(heard) == refusal
+    assert final_assistant_text(log.content) == refusal
+    assert log.content[-2].native == progress
+    assert log.content[-1].native == answer
 
 
 async def test_responses_speech_separates_answer_text_across_tool_rounds(hass):
@@ -241,6 +286,7 @@ async def test_responses_speech_separates_answer_text_across_tool_rounds(hass):
     log = conversation.ChatLog(hass, "tool-round-speech")
     log.async_add_user_content(conversation.UserContent(content="Light status?"))
     heard = []
+
     def listener(_log, delta):
         heard.append(delta.get("content", ""))
 

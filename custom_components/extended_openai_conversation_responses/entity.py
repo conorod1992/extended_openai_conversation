@@ -2415,14 +2415,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     part_key = (output_index, getattr(event, "content_index", None))
                     # Before an item is introduced its final phase is unknown.
                     # The completed item below supplies the fallback in that case.
-                    if (
-                        output_index in started_messages
-                        and (text := event.text)
-                        and part_key not in response_text_lengths
-                    ):
-                        streamed_messages.add(output_index)
-                        response_text_lengths[part_key] = len(text)
-                        yield {"content": text}
+                    if output_index in started_messages and (text := event.text):
+                        already_streamed = response_text_lengths.get(part_key, 0)
+                        if len(text) > already_streamed:
+                            streamed_messages.add(output_index)
+                            response_text_lengths[part_key] = len(text)
+                            yield {"content": text[already_streamed:]}
                     continue
 
                 if event_type == "response.refusal.delta":
@@ -2445,13 +2443,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if event_type == "response.refusal.done":
                     refusal = getattr(event, "refusal", None)
                     if refusal:
+                        part_key = (
+                            output_index,
+                            getattr(event, "content_index", None),
+                        )
+                        # Defer an indexed refusal with no open message to the
+                        # completed item, which can establish its own role and phase.
+                        if (
+                            output_index is not None
+                            and output_index not in started_messages
+                            and None not in started_messages
+                            and part_key not in response_refusal_lengths
+                        ):
+                            continue
                         streamed_messages.add(output_index)
                         if not isinstance(refusal, str):
                             refusal = str(refusal)
-                        part_key = (
-                            getattr(event, "output_index", None),
-                            getattr(event, "content_index", None),
-                        )
                         already_streamed = response_refusal_lengths.get(part_key, 0)
                         if len(refusal) > already_streamed:
                             yield {"content": refusal[already_streamed:]}
@@ -2507,18 +2514,18 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             for content_index, part in enumerate(item.content):
                                 part_key = (output_index, content_index)
                                 part_type = getattr(part, "type", None)
-                                if (
-                                    part_type == "output_text"
-                                    and part_key not in response_text_lengths
-                                    and part.text
-                                ):
-                                    yield {"content": part.text}
-                                elif (
-                                    part_type == "refusal"
-                                    and part_key not in response_refusal_lengths
-                                    and part.refusal
-                                ):
-                                    yield {"content": part.refusal}
+                                if part_type == "output_text":
+                                    missing = (part.text or "")[
+                                        response_text_lengths.get(part_key, 0) :
+                                    ]
+                                elif part_type == "refusal":
+                                    missing = (part.refusal or "")[
+                                        response_refusal_lengths.get(part_key, 0) :
+                                    ]
+                                else:
+                                    continue
+                                if missing:
+                                    yield {"content": missing}
                         streamed_messages.discard(None)
                         started_messages.discard(output_index)
                         # Keep URL citation annotations internally. Home Assistant's
