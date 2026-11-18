@@ -369,6 +369,7 @@ async def test_rejected_responses_protocol_keeps_trailing_usage(
         "responses-flushed",
         "responses-text-only",
         "responses-text-after-item",
+        "responses-reused-index",
         "responses-arguments-only",
     ],
 )
@@ -427,20 +428,20 @@ async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
         }
         events = []
         output = []
-        if scenario in {"responses-flushed", "responses-text-after-item"}:
+        if scenario in {"responses-flushed", "responses-text-after-item", "responses-reused-index"}:
             first = _response_text_item("A completed item precedes unfinished output")
             output.append(first)
             events.extend([
                 {"type": "response.output_item.added", "output_index": 0, "item": first},
                 {"type": "response.output_item.done", "output_index": 0, "item": first},
             ])
-        if scenario in {"responses-text-only", "responses-text-after-item"}:
+        if scenario in {"responses-text-only", "responses-text-after-item", "responses-reused-index"}:
             item = _response_text_item("This answer was never completed on the wire")
             item["id"] = "msg-orphan"
             events.append(
                 {
                     "type": "response.output_text.delta",
-                    "output_index": len(output),
+                    "output_index": 0 if scenario == "responses-reused-index" else len(output),
                     "content_index": 0,
                     "item_id": item["id"],
                     "delta": "Partial text",
@@ -464,7 +465,8 @@ async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
                     "item": item,
                 }
             )
-        output.append(item)
+        if scenario != "responses-reused-index":
+            output.append(item)
         response = _response_object("unfinished-output", output)
         response["usage"] = None
         events.append({"type": "response.completed", "response": response})
@@ -551,4 +553,41 @@ async def test_indexed_text_without_add_completes_through_item_done(hass, monkey
     result = await _say(hass, agent)
     assert result.response.error_code is None
     assert _speech(result) == text
+    assert len(wire.requests) == 1
+
+@pytest.mark.parametrize("late_add", [False, True])
+async def test_indexed_delta_of_future_item_waits_for_its_own_entry(
+    hass, monkeypatch, late_add
+):
+    from tests_real_ha.test_provider_wire_e2e import _response_object, _response_text_item
+
+    first = _response_text_item("First item.")
+    second = _response_text_item("Second item.")
+    second["id"] = "msg-second"
+
+    def added(index, item):
+        return {"type": "response.output_item.added", "output_index": index,
+                "item": {**item, "status": "in_progress", "content": []}}
+
+    def delta(index, item, text):
+        return {"type": "response.output_text.delta", "content_index": 0,
+                "output_index": index, "item_id": item["id"], "delta": text, "logprobs": []}
+
+    events = [added(0, first), delta(0, first, "First "), delta(1, second, "Second ")]
+    if late_add:
+        events.append(added(1, second))
+    events.extend([
+        {"type": "response.output_item.done", "output_index": 1, "item": second},
+        {"type": "response.output_item.done", "output_index": 0, "item": first},
+        {"type": "response.completed", "response": _response_object("ordered", [first, second])},
+    ])
+    stream = "".join(
+        f"data: {json.dumps({**event, 'sequence_number': i})}\n\n"
+        for i, event in enumerate(events)
+    ).encode()
+    agent = await _agent(hass, "responses")
+    wire = _install_wire(monkeypatch, agent, [stream])
+    result = await _say(hass, agent)
+    assert result.response.error_code is None
+    assert "".join(_speech(result).split()) == "Firstitem.Seconditem."
     assert len(wire.requests) == 1

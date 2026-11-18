@@ -203,8 +203,12 @@ async def test_responses_stream_ignores_empty_events_and_normalizes_metadata() -
     )
 
     assert deltas == [
-        {"content": "ok"}, {"content": "123"}, {"content": "45"},
-        {"native": message}, {"native": refusal},
+        {"content": "ok"},
+        {"native": message},
+        {"role": "assistant"},
+        {"content": "123"},
+        {"content": "45"},
+        {"native": refusal},
     ]
 
 

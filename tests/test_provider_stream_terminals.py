@@ -561,6 +561,7 @@ async def test_responses_refusal_done_fills_missing_delta_tail() -> None:
     ]
 
     assert deltas == [
+        {"role": "assistant"},
         {"content": "I can't"},
         {"content": " help with that."},
         {"native": item},
@@ -625,7 +626,7 @@ async def test_responses_completed_terminal_is_accepted() -> None:
         )
     ]
 
-    assert deltas == [{"content": "Done"}, {"native": item}]
+    assert deltas == [{"role": "assistant"}, {"content": "Done"}, {"native": item}]
 
 
 async def test_responses_incomplete_terminal_is_error() -> None:
