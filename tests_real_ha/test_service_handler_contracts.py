@@ -354,6 +354,7 @@ async def test_process_service_preserves_assist_failure_and_followup(hass, monke
     [
         (None, "https://compatible.example/v1", "gpt-4.1-mini", False),
         ("https://api.openai.com/v1", "https://api.openai.com/v1", "gpt-6-luna", True),
+        ("https://api.openai.com:443/v1/", "https://api.openai.com/v1", "gpt-6-luna", True),
     ],
 )
 async def test_image_default_and_retirement_use_resolved_sdk_endpoint(

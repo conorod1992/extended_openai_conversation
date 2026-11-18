@@ -32,6 +32,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 AZURE_DOMAINS = ("openai.azure.com", "azure-api.net", "services.ai.azure.com")
+_OPENAI_ENDPOINT = urlsplit(DEFAULT_CONF_BASE_URL)
 
 
 def get_api_mode(
@@ -123,7 +124,24 @@ def supports_openai_hosted_tools(
     """Return whether the entry uses OpenAI's native hosted tools endpoint."""
     if api_provider not in {None, DEFAULT_API_PROVIDER}:
         return False
-    return not base_url or base_url.rstrip("/") == DEFAULT_CONF_BASE_URL.rstrip("/")
+    if base_url is None or base_url == "":
+        return True
+    if not isinstance(base_url, str):
+        return False
+    try:
+        endpoint = urlsplit(base_url)
+        return (
+            endpoint.scheme == _OPENAI_ENDPOINT.scheme
+            and endpoint.hostname == _OPENAI_ENDPOINT.hostname
+            and endpoint.port in {None, 443}
+            and endpoint.path.rstrip("/") == _OPENAI_ENDPOINT.path
+            and endpoint.username is None
+            and endpoint.password is None
+            and not endpoint.query
+            and not endpoint.fragment
+        )
+    except ValueError:
+        return False
 
 
 def is_native_openai_connection(data: Mapping[str, Any], *, client: Any = None) -> bool:
@@ -137,9 +155,7 @@ def is_native_openai_connection(data: Mapping[str, Any], *, client: Any = None) 
         else:
             base_url = os.environ.get("OPENAI_BASE_URL")
     # An inferred Azure connection necessarily has a different endpoint.
-    return (
-        base_url is None or isinstance(base_url, str)
-    ) and supports_openai_hosted_tools(data.get("api_provider"), base_url)
+    return supports_openai_hosted_tools(data.get("api_provider"), base_url)
 
 
 def get_token_param_for_model(model: str) -> str:
