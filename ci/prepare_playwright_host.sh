@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Hosted Ubuntu runners put Azure first in a per-download mirror list. An
-# unavailable Azure endpoint was retried for every index/package until the
-# browser job timed out. Retain the runner's official HTTPS archive/security
-# mirrors and normal package-signature verification.
+# Hosted Ubuntu runners use a per-download mirror list. Avoid the Azure
+# endpoint that failed requests and the Ohio EC2 mirror that timed out during
+# browser setup. Keep normal Ubuntu archive and signature verification.
 if [[ -f /etc/apt/apt-mirrors.txt ]]; then
-  sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+  sudo sed -i \
+    -e '/azure\.archive\.ubuntu\.com/d' \
+    -e 's|^https\?://us-east-2\.ec2\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|' \
+    /etc/apt/apt-mirrors.txt
 fi
 
 # Match the runner vendor's bounded acquisition policy, applied after older
