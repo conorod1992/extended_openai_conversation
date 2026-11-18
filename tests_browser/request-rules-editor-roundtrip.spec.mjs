@@ -230,6 +230,38 @@ test("Request Rule editor round-trips local and routing forms through reopen and
 
 
 for (const bundled of [false, true]) {
+  test(`inherited reasoning effort survives editing with a nonreasoning default (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+    const panel = panelFor(page);
+    await panel.evaluate(node => {
+      node._result.effective_model = "gpt-4.1-mini";
+      const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+      browserHarness.hass.callWS = async message => {
+        const result = await original(message);
+        return message.type.endsWith("/model_catalog")
+          ? {...result, reasoning_effort_options: message.model ? [] : ["low", "high"]}
+          : result;
+      };
+    });
+    await panel.getByRole("button", {name: "Create rule", exact: true}).first().click();
+    await panel.locator("#rule-name").fill("Think hard");
+    await panel.locator("#rule-phrases").fill("think hard");
+    await panel.locator("#rule-action-type").selectOption("model_routing");
+    await panel.locator("#rule-continue-to-ai").check();
+    await panel.locator("#rule-advanced summary").click();
+    await panel.locator("#rule-reasoning").selectOption("high");
+    await panel.locator("#rule-save").click();
+    await panel.locator(".request-rule-card").filter({hasText:"Think hard"}).locator(".rule-edit").click();
+    await expect(panel.locator("#rule-reasoning")).toHaveValue("high");
+    await panel.locator("#rule-name").fill("Think harder");
+    await panel.locator("#rule-save").click();
+    await expect.poll(() => page.evaluate(() =>
+      browserHarness.getState().requestRules.rules.find(rule => rule.name === "Think harder")?.action.reasoning_effort
+    )).toBe("high");
+    await expectHarnessClean(page, errors);
+  });
+
   test(`mounted Rule editor shares routing scope and reasoning controls (${bundled})`, async ({page}) => {
     const errors = trackPageErrors(page);
     await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
@@ -372,8 +404,8 @@ for (const bundled of [false, true]) {
         const result = await original(message);
         if (message.type.endsWith("/model_catalog")) {
           host._azureRuleLookups ||= [];
-          host._azureRuleLookups.push(message.model);
-          return {...result, reasoning_effort_options: message.model === "gpt-5.6" ? ["low", "high"] : []};
+          if (message.model) host._azureRuleLookups.push(message.model);
+          return {...result, reasoning_effort_options: !message.model || message.model === "gpt-5.6" ? ["low", "high"] : []};
         }
         return result;
       };

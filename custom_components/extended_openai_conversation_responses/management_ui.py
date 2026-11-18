@@ -2804,13 +2804,7 @@ async def _async_temporary_memories_command(
     if action == "temporary_clear":
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
-        records = await manager_any.async_list_owned(owner)
-        deleted = 0
-        for offset in range(0, len(records), 50):
-            deleted += await manager_any.async_delete_owned(
-                owner, [record.memory_id for record in records[offset : offset + 50]]
-            )
-        return {"deleted": deleted}
+        return {"deleted": await manager.async_clear_owned(owner)}
     memory_id = message.get("memory_id")
     if not isinstance(memory_id, str) or not memory_id:
         raise HomeAssistantError("memory_id is required")

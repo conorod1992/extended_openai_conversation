@@ -11,7 +11,7 @@ async function prepare(page, bundled, holdWrites = false) {
     const probe = window.ruleAsyncOwner = {lookups:[], writes:[], toasts:[]};
     host._toast = (...args) => probe.toasts.push(args);
     host.hass = {...host.hass, user:{id:"rule-owner-A", is_admin:true}, callWS:request => {
-      const lookup = request.type?.endsWith("/model_catalog") && request.action === "lookup";
+      const lookup = request.type?.endsWith("/model_catalog") && request.action === "lookup" && request.model;
       const write = holdWrites && request.section === "request_rules" && ["create","update"].includes(request.action);
       if (!lookup && !write) return original(request);
       return new Promise((resolve, reject) => {
@@ -90,7 +90,10 @@ for (const bundled of [false,true]) for (const supersession of ["local","empty",
     await panel.locator("#rule-model").fill("held-old-model");
     await expect.poll(() => page.evaluate(() => ruleAsyncOwner.lookups.length)).toBe(1);
     if (supersession === "local") await panel.locator("#rule-action-type").selectOption("local_action");
-    if (supersession === "empty") await panel.locator("#rule-model").fill("");
+    if (supersession === "empty") {
+      await panel.locator("#rule-model").fill("");
+      await expect.poll(async () => (await snapshot(panel)).catalog?.requested_model).toBe("");
+    }
     if (supersession === "newer-model") {
       await panel.locator("#rule-model").fill("held-new-model");
       await expect.poll(() => page.evaluate(() => ruleAsyncOwner.lookups.length)).toBe(2);

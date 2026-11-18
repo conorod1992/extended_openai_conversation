@@ -140,7 +140,7 @@ class UsageRequest:
     """Bounded, content-free detail for one provider request."""
 
     request_id: str
-    run_id: str
+    run_id: str | None
     timestamp: str
     agent_subentry_id: str
     provider: str
@@ -617,38 +617,41 @@ class UsageManager:
                 }:
                     run.successful = False
                     run.error_type = error_type or run.error_type or "provider_error"
-                if self.request_retention_days > 0:
-                    self.requests.append(
-                        UsageRequest(
-                            request_id=uuid4().hex,
-                            run_id=run.run_id,
-                            timestamp=completed_at.isoformat(),
-                            agent_subentry_id=self._agent_subentry_id,
-                            provider=provider,
-                            model=model,
-                            api_mode=api_mode,
-                            successful=successful,
-                            duration_ms=max(0, duration_ms),
-                            input_tokens=usage.input_tokens,
-                            output_tokens=usage.output_tokens,
-                            total_tokens=usage.total_tokens,
-                            cached_input_tokens=usage.cached_input_tokens,
-                            reasoning_tokens=usage.reasoning_tokens,
-                            request_stage=request_stage,
-                            tool_calls_requested=max(0, tool_calls_requested),
-                            web_search_used=web_search_used,
-                            error_type=error_type,
-                            details=dict(usage.details),
-                        )
+            retain_request = self.request_retention_days > 0
+            if retain_request:
+                self.requests.append(
+                    UsageRequest(
+                        request_id=uuid4().hex,
+                        run_id=run.run_id if run is not None else None,
+                        timestamp=completed_at.isoformat(),
+                        agent_subentry_id=self._agent_subentry_id,
+                        provider=provider,
+                        model=model,
+                        api_mode=api_mode,
+                        successful=successful,
+                        duration_ms=max(0, duration_ms),
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        total_tokens=usage.total_tokens,
+                        cached_input_tokens=usage.cached_input_tokens,
+                        reasoning_tokens=usage.reasoning_tokens,
+                        request_stage=request_stage,
+                        tool_calls_requested=max(0, tool_calls_requested),
+                        web_search_used=web_search_used,
+                        error_type=error_type,
+                        details=dict(usage.details),
                     )
+                )
             await self._async_save_safely(
                 "request aggregates", self._async_save_aggregates
             )
-            if self._detail_storage is not None and run is not None:
+            if self._detail_storage is not None and retain_request:
                 await self._async_save_safely(
                     "request details", self._async_save_details
                 )
             self._notify()
+        if run is None:
+            await self._async_prune_usage_if_due()
 
     @_settle_accounting
     async def _async_finalize_run(self, run: UsageRun) -> None:
@@ -1211,7 +1214,6 @@ def _usage_request_from_record(raw: Any) -> UsageRequest:
         raise ValueError("usage request is invalid") from err
     string_values = (
         request.request_id,
-        request.run_id,
         request.timestamp,
         request.agent_subentry_id,
         request.provider,
@@ -1231,7 +1233,10 @@ def _usage_request_from_record(raw: Any) -> UsageRequest:
     if (
         not all(isinstance(value, str) for value in string_values)
         or not request.request_id
-        or not request.run_id
+        or (
+            request.run_id is not None
+            and (not isinstance(request.run_id, str) or not request.run_id)
+        )
         or not isinstance(request.successful, bool)
         or not isinstance(request.web_search_used, bool)
         or (request.error_type is not None and not isinstance(request.error_type, str))

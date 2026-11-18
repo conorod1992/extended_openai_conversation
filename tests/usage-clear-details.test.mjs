@@ -45,3 +45,35 @@ assert.equal(countInUI(),'0');
 assert.equal((await loadUsageWindow(p,'30',today)).local_run_summary.count,0);
 assert.equal(p._result.days.local_run_summary.retention_days,30);
 assert.equal(p._sectionCache.get(p._sectionCacheKey()).days.local_run_summary.count,0);
+
+const retry = new ExtendedOpenAIManagementPanel();
+Object.assign(retry, {
+  _page: "usage-maintenance", _subsection: "usage", _agentId: "one",
+  _scopeId: "user:alice", _data: p._data, _render() {}, _toast() {},
+  _confirm: async () => true,
+});
+let healthy = false;
+const actions = [];
+retry._hass = {
+  user: {id: "alice"}, config: {time_zone: "UTC"},
+  callWS: async ({action}) => {
+    actions.push(action);
+    if (!healthy && ["summary", "daily"].includes(action)) throw new Error("Unavailable");
+    if (action === "summary") return {lifetime: {total_tokens: 133}};
+    if (action === "daily") return {days: []};
+    if (action === "runs") return {runs: [{run_id: "one"}]};
+    if (action === "clear_details") return {deleted_runs: 1, deleted_requests: 0};
+    return {};
+  },
+};
+await retry._loadSectionData(true);
+assert.deepEqual(retry._result.load_errors.map(({key}) => key).sort(), ["days", "summary"]);
+await retry._clearUsageDetails();
+healthy = true;
+actions.length = 0;
+await retry._loadSectionData(true);
+assert.ok(actions.includes("summary"));
+assert.ok(actions.includes("daily"));
+assert.equal(retry._result.summary.lifetime.total_tokens, 133);
+assert.deepEqual(retry._result.days.days, []);
+assert.deepEqual(retry._result.load_errors, []);

@@ -288,6 +288,14 @@ function formatSourceKind(value) {
   }[value] || "Extended OpenAI transfer";
 }
 
+function restoreRetentionNotice(preview) {
+  const archive = preview?.archive_retention;
+  return [
+    archive && `Archive retention (${archive.days} days) removes ${archive.expired_sessions} conversations and ${archive.expired_turns} turns from the backup.`,
+    usageRetentionDeletionNotice(preview?.shortened_usage_retention),
+  ].filter(Boolean).join(" ");
+}
+
 export function restorePreviewSummaryLines(preview = {}) {
   const count = (key) => Number(preview[key] || 0);
   const sections = new Set(preview.selected_sections || []);
@@ -302,7 +310,7 @@ export function restorePreviewSummaryLines(preview = {}) {
     ["guest_mode", `Guest Mode schedule ${preview.guest_mode_scheduled ? "included" : "inactive"}`],
   ];
   const summary = lines.filter(([section]) => sections.has(section)).map(([, line]) => line);
-  const retentionNotice = usageRetentionDeletionNotice(preview.shortened_usage_retention);
+  const retentionNotice = restoreRetentionNotice(preview);
   if (retentionNotice) summary.push(retentionNotice);
   return summary;
 }
@@ -623,13 +631,13 @@ export function bindBackupTransfer(panel) {
     const serverPreviewToken = panel._backupTransferPreviewToken;
     if (!serverPreviewToken) return;
     const restoredDraft = captureConfigurationSubmission(panel);
-    const retentionNotice = usageRetentionDeletionNotice(panel._backupTransferPreview?.shortened_usage_retention);
+    const retentionNotice = restoreRetentionNotice(panel._backupTransferPreview);
     if (typeof panel._confirm === "function") {
       const losesDraft = panel._configDirty && panel._draftAgentId === panel._agentId && sections.includes("configuration");
       const confirmed = await panel._confirm(
         "Restore selected sections?",
-        `This will replace, not merge, the following sections on the current agent: ${labels}.${restoreProvider ? " The shared provider connection and credentials for ALL its agents will also be replaced." : ""}${losesDraft ? " Your unsaved configuration changes will be replaced and lost." : ""}${retentionNotice ? ` ${retentionNotice}` : ""}`,
-        retentionNotice ? "Restore and delete details" : "Restore",
+        `Replace ${labels} for this agent.${restoreProvider ? " This replaces the provider connection and credentials for all its agents." : ""}${losesDraft ? " Unsaved configuration changes will be lost." : ""}${retentionNotice ? ` ${retentionNotice}` : ""}`,
+        retentionNotice ? "Restore and delete" : "Restore",
       );
       if (!confirmed) return;
     }

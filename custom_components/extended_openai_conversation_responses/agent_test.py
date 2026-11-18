@@ -16,6 +16,7 @@ from .agent_config import (
     parse_configured_function_tools,
     validate_function_groups,
 )
+from .assistant_response import classify_provider_output
 from .const import (
     API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
@@ -52,6 +53,7 @@ from .model_capabilities import (
     validate_reasoning_effort,
 )
 from .model_catalog import model_metadata
+from .provider_content import answer_text
 from .provider_errors import (
     classify_config_provider_error,
     ensure_successful_responses_result,
@@ -379,7 +381,7 @@ async def async_test_agent(
                 if configured_effort is None:
                     configured_effort = recommended_reasoning_effort(model)
                 effort = validate_reasoning_effort(model, configured_effort, api_mode)
-        probe_reasoning = (
+        probe_reasoning: dict[str, str | dict[str, str]] = (
             (
                 {"reasoning": {"effort": effort}}
                 if api_mode == API_MODE_RESPONSES
@@ -413,6 +415,19 @@ async def async_test_agent(
             )
             if not probe_budget_exhausted:
                 ensure_successful_responses_result(response)
+                if not any(
+                    answer_text(part).strip()
+                    for item in (getattr(response, "output", None) or ())
+                    if getattr(item, "type", None) == "message"
+                    and getattr(item, "role", None) == "assistant"
+                    and getattr(item, "status", None) in (None, "completed")
+                    and classify_provider_output(item) == "answer"
+                    for part in (getattr(item, "content", None) or ())
+                    if getattr(part, "type", None) == "output_text"
+                ):
+                    raise HomeAssistantError(
+                        "Responses probe did not receive a completed text reply"
+                    )
         else:
             kwargs: dict[str, Any] = {
                 "model": model,

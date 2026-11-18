@@ -675,7 +675,16 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
 
     async def _async_get_skills(self) -> list[dict[str, Any]]:
         """Load available skills using SkillManager."""
-        skill_manager = await SkillManager.async_get_instance(self.hass)
+        try:
+            skill_manager = await SkillManager.async_get_instance(self.hass)
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER,
+                "Skills could not be loaded for the new assistant. Check the "
+                "Skills recovery files and select Skills after recovery.",
+                err,
+            )
+            return []
         return [
             {
                 "name": skill.name,

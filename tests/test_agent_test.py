@@ -34,6 +34,15 @@ def _chat_reply(usage: Any = None) -> SimpleNamespace:
     )
 
 
+def _responses_reply(usage: Any = None) -> SimpleNamespace:
+    message = SimpleNamespace(
+        type="message",
+        role="assistant",
+        content=[SimpleNamespace(type="output_text", text="OK")],
+    )
+    return SimpleNamespace(status="completed", output=[message], usage=usage)
+
+
 def _objects(options: dict | None = None):
     subentry = SimpleNamespace(
         subentry_id="agent-1",
@@ -156,6 +165,53 @@ async def test_chat_probe_requires_a_completed_text_reply(
     )
 
 
+@pytest.mark.parametrize(
+    ("case", "expected_status"),
+    [
+        ("answer", "Passed"),
+        ("empty", "Failed"),
+        ("whitespace", "Failed"),
+        ("refusal", "Failed"),
+        ("commentary", "Failed"),
+        ("incomplete_message", "Failed"),
+        ("budget", "Warning"),
+    ],
+)
+async def test_responses_probe_requires_a_completed_final_answer(case, expected_status):
+    hass, entry, subentry, client, usage = _objects({CONF_API_MODE: API_MODE_RESPONSES})
+    response = _responses_reply(
+        SimpleNamespace(input_tokens=4, output_tokens=1, total_tokens=5)
+    )
+    message = response.output[0]
+    if case == "empty":
+        response.output = []
+    elif case == "whitespace":
+        message.content[0].text = "  "
+    elif case == "refusal":
+        message.content = [SimpleNamespace(type="refusal", refusal="I cannot answer")]
+    elif case == "commentary":
+        message.phase = "commentary"
+    elif case == "incomplete_message":
+        message.status = "incomplete"
+    elif case == "budget":
+        response.output = []
+        response.status = "incomplete"
+        response.incomplete_details = SimpleNamespace(reason="max_output_tokens")
+    client.responses = SimpleNamespace(create=AsyncMock(return_value=response))
+    with (
+        patch.object(agent_test, "get_exposed_entities", return_value=[{}]),
+        patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)),
+    ):
+        result = await async_test_agent(hass, entry, subentry)
+    model_check = next(check for check in result.checks if check.name == "Model access")
+    assert model_check.status == expected_status
+    usage.async_record_request.assert_awaited_once_with(
+        successful=expected_status != "Failed",
+        usage=agent_test.extract_usage(response.usage),
+        **_usage_attribution(api_mode=API_MODE_RESPONSES),
+    )
+
+
 async def test_azure_deployment_probe_uses_bound_underlying_capabilities() -> None:
     hass, entry, subentry, client, usage = _objects(
         {CONF_CHAT_MODEL: "ha-production", "azure_model": "gpt-4.1"}
@@ -187,7 +243,7 @@ async def test_underlying_model_binding_requires_azure_before_probe() -> None:
 
 async def test_auto_web_search_probes_production_responses_path():
     hass, entry, subentry, client, usage = _objects({CONF_API_MODE: "auto", CONF_WEB_SEARCH: True})
-    client.responses = SimpleNamespace(create=AsyncMock(return_value=SimpleNamespace(status="completed", error=None, usage=None)))
+    client.responses = SimpleNamespace(create=AsyncMock(return_value=_responses_reply()))
     with patch.object(agent_test, "get_exposed_entities", return_value=[{"entity_id": "light.test"}]), patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)):
         result = await async_test_agent(hass, entry, subentry)
     assert result.status == "Passed"
@@ -773,7 +829,7 @@ async def test_agent_test_successful_responses_probe_records_usage_and_web_searc
     monkeypatch.setattr(agent_test, "supports_openai_hosted_tools", lambda *_args: True)
     monkeypatch.setattr(agent_test, "ensure_successful_responses_result", lambda response: None)
     monkeypatch.setattr(agent_test, "extract_usage", lambda raw: {"input_tokens": 3} if raw == "usage" else {})
-    create = _CoverageCreate(result=SimpleNamespace(usage="usage"))
+    create = _CoverageCreate(result=_responses_reply("usage"))
     client = SimpleNamespace(responses=SimpleNamespace(create=create.create))
 
     result = await agent_test.async_test_agent(
@@ -941,7 +997,7 @@ async def _residual_run_agent(
     memory_is_enabled: bool = False,
 ) -> tuple[agent_test.AgentTestResult, _ResidualUsage]:
     usage = _ResidualUsage()
-    create = _ResidualCreate(result=SimpleNamespace(usage=None), error=probe_error)
+    create = _ResidualCreate(result=_responses_reply(), error=probe_error)
     client = SimpleNamespace(responses=SimpleNamespace(create=create.create))
     entry = SimpleNamespace(entry_id="entry-1", runtime_data=client, data={})
     subentry = SimpleNamespace(
@@ -1061,7 +1117,7 @@ async def test_text_only_unknown_provider_is_probed_without_function_schema(api_
         assert "tools" not in kwargs
         assert "tool_choice" not in kwargs
         return (
-            SimpleNamespace(status="completed", usage=None)
+            _responses_reply()
             if api_mode == API_MODE_RESPONSES
             else _chat_reply()
         )

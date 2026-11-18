@@ -470,6 +470,23 @@ async def test_conversation_subentry_handler_covers_all_lifecycle_paths() -> Non
         )
     assert created["title"] == "Named Agent"
 
+    handler._async_get_skills = lambda: ExtendedOpenAISubentryFlowHandler._async_get_skills(
+        SimpleNamespace(hass=MagicMock())
+    )
+    with (
+        patch.object(
+            config_flow.SkillManager,
+            "async_get_instance",
+            AsyncMock(side_effect=HomeAssistantError("manual Skills recovery required")),
+        ),
+        patch.object(config_flow, "normalize_agent_config", side_effect=dict),
+    ):
+        created = await ExtendedOpenAISubentryFlowHandler.async_step_init(
+            handler, {CONF_NAME: "Without Skills"}
+        )
+    assert created["title"] == "Without Skills"
+    assert created["data"][CONF_SKILLS] == []
+
     handler._is_new = False
     shown = await ExtendedOpenAISubentryFlowHandler.async_step_init(handler)
     assert shown["data_schema"]({})["management_panel"].startswith("Open Extended")

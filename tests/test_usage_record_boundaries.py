@@ -1,6 +1,9 @@
 from copy import deepcopy
 import pytest
 from custom_components.extended_openai_conversation_responses import usage
+from custom_components.extended_openai_conversation_responses.management_history_queries import (
+    usage_requests_page,
+)
 from tests.test_usage import FakeStorage, _coverage_request, _coverage_run
 from homeassistant.util import dt as dt_util
 
@@ -76,3 +79,39 @@ async def test_damaged_usage_stays_readable_but_export_requires_repaired_storage
     usage.UsageManager.validate_backup_data(
         await fresh.async_backup_data(), "next-agent"
     )
+
+
+@pytest.mark.parametrize("retention", [0, 30])
+async def test_detached_provider_requests_follow_retention_across_restart_and_backup(retention):
+    stores = (FakeStorage(), FakeStorage(), FakeStorage())
+    manager = usage.UsageManager(*stores, request_retention_days=retention)
+    await manager.async_initialize()
+    async with manager.async_run() as run:
+        await manager.async_record_request(successful=True, request_stage="initial")
+    await manager.async_record_request(
+        successful=False,
+        request_stage="context_summary",
+        error_type="TimeoutError",
+        usage=usage.RequestUsage(input_tokens=10, total_tokens=10),
+    )
+    fresh = usage.UsageManager(*stores, request_retention_days=retention)
+    await fresh.async_initialize()
+    assert fresh.totals.api_request_count == 2
+    assert fresh.totals.conversation_count == 1
+    assert fresh.totals.total_tokens == 10
+    requests = usage_requests_page(fresh, None)["requests"]
+    if retention:
+        detached, attached = requests
+        assert detached["run_id"] is None
+        assert detached["request_stage"] == "context_summary"
+        assert detached["error_type"] == "TimeoutError"
+        assert detached["total_tokens"] == 10
+        assert attached["run_id"] == run.run_id
+        assert usage_requests_page(fresh, run.run_id)["requests"] == [attached]
+        snapshot = await fresh.async_backup_data()
+        _, _, restored, runs = usage.UsageManager.validate_backup_data(snapshot, "restored")
+        assert [row.run_id for row in restored] == [run.run_id, None]
+        assert [row.agent_subentry_id for row in restored] == ["restored", "restored"]
+        assert [row.run_id for row in runs] == [run.run_id]
+    else:
+        assert requests == []

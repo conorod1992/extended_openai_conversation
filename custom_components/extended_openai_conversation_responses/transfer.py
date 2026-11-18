@@ -39,7 +39,12 @@ from .const import (
     CONF_VOICE_DEVICE_MAPPINGS,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
 )
-from .conversation_archive import ArchiveSession, ArchiveTurn, async_get_archive
+from .conversation_archive import (
+    ArchiveSession,
+    ArchiveTurn,
+    archive_sessions_past_retention,
+    async_get_archive,
+)
 from .function_dependency_integrity import async_validate_request_rule_functions
 from .function_yaml import decoded_function_fields
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
@@ -1345,6 +1350,26 @@ def _copy_transfer_categories(prepared: PreparedTransfer) -> PreparedTransfer:
     return replace(prepared, **dict(zip(fields, copied, strict=True)))
 
 
+def _archive_restore_preview(target: backup.PreparedRestore) -> dict[str, Any]:
+    """Project the imported archive after the effective retention policy runs."""
+    days = normalized_agent_integer(
+        target.config, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+    )
+    expired = archive_sessions_past_retention(target.archive_sessions, days)
+    expired_turns = sum(turn.session_id in expired for turn in target.archive_turns)
+    result: dict[str, Any] = {
+        "archive_sessions": len(target.archive_sessions) - len(expired),
+        "archive_turns": len(target.archive_turns) - expired_turns,
+    }
+    if expired:
+        result["archive_retention"] = {
+            "days": days,
+            "expired_sessions": len(expired),
+            "expired_turns": expired_turns,
+        }
+    return result
+
+
 def _prepared_restore_from_selection(
     current: backup.PreparedRestore,
     imported: PreparedTransfer,
@@ -1642,6 +1667,8 @@ async def async_materialize_restore(
             "target_title": target.title,
         }
     )
+    if SECTION_CONVERSATION_ARCHIVE in selected:
+        preview.update(await asyncio.to_thread(_archive_restore_preview, target))
     target.preserve_retained_continuity = (
         selected == {SECTION_KNOWLEDGE} and provider_connection is None
     )

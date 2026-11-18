@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
     ArchiveSession,
     ArchiveTurn,
 )
+from homeassistant.util import dt as dt_util
 from tests.test_restore_recovery import _states
 from tests.test_selective_restore_concurrency import RestoreHarness
 
@@ -48,6 +50,42 @@ def _activity(state, category):
         state.archive_turns.append(
             ArchiveTurn("turn", "session", None, now, "Hello", "Done", True)
         )
+
+
+@pytest.mark.parametrize("include_config", [True, False])
+async def test_restore_preview_uses_effective_archive_retention(monkeypatch, include_config):
+    tx = RestoreHarness(monkeypatch)
+    now = dt_util.utcnow()
+    source = deepcopy(tx.state)
+    source.archive_sessions.clear()
+    source.archive_turns.clear()
+    for days, suffix in ((20, "old"), (2, "recent")):
+        source.created_at = (now - timedelta(days=days)).isoformat()
+        _activity(source, transfer.SECTION_CONVERSATION_ARCHIVE)
+        source.archive_sessions[-1] = replace(source.archive_sessions[-1], session_id=suffix)
+        source.archive_turns[-1] = replace(source.archive_turns[-1], session_id=suffix, turn_id=suffix)
+    tx.imported = replace(
+        tx.imported,
+        config={**tx.state.config, "archive_retention_days": 7 if include_config else 90},
+        archive_sessions=source.archive_sessions,
+        archive_turns=source.archive_turns,
+        available_sections=frozenset({
+            transfer.SECTION_CONFIGURATION, transfer.SECTION_CONVERSATION_ARCHIVE
+        }),
+    )
+    tx.state.config["archive_retention_days"] = 90 if include_config else 7
+    sections = {transfer.SECTION_CONVERSATION_ARCHIVE}
+    if include_config:
+        sections.add(transfer.SECTION_CONFIGURATION)
+    target, preview = await transfer.async_materialize_restore(
+        tx.hass, tx.entry, tx.subentry, tx.imported,
+        sections=frozenset(sections), current_snapshot=tx.state,
+    )
+    assert preview["archive_sessions"] == preview["archive_turns"] == 1
+    assert preview["archive_retention"] == {
+        "days": 7, "expired_sessions": 1, "expired_turns": 1,
+    }
+    assert len(target.archive_turns) == 2  # Actual runtime uses the same prune rule.
 
 
 @pytest.mark.parametrize(

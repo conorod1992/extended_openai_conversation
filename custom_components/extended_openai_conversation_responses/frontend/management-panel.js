@@ -2912,7 +2912,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _clearUsageDetails(button = null) {
     const owner = this._retainedMutationOwner();
     const submission = captureConfigurationOwner(this);
-    if (!await this._confirm("Clear recent usage details?", "Request and run details will be removed. Daily, monthly, and lifetime totals remain.", "Clear details")) return;
+    if (!await this._confirm("Clear recent usage details?", "Remove recent runs and requests. Usage totals are kept.", "Clear details")) return;
     if (!configurationSubmissionIsCurrent(this, submission) || !this._ownsRetainedMutation(owner)) return;
     this._setSaving(button, true, "Clearing…");
     try {
@@ -2921,15 +2921,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       requireMutationAcknowledgement([response?.deleted_requests, response?.deleted_runs].every(value => Number.isInteger(value) && value >= 0), "clearing usage details");
       return await presentAcknowledgedMutation(this, submission, "Recent usage details cleared", () => {
         this._usageDetailGeneration = (this._usageDetailGeneration || 0) + 1;
-        this._result = {...this._result, summary: {...this._result.summary, latest: null},
-          days: {...this._result.days, ...(this._result.days?.local_run_summary ? {
-            local_run_summary: {...this._result.days.local_run_summary, count: 0},
-          } : {})},
+        const {summary, days, load_errors = []} = this._result;
+        const failed = key => load_errors.some(issue => issue.key === key);
+        this._result = {...this._result, summary: summary && {...summary, latest: null},
+          days: days?.local_run_summary
+            ? {...days, local_run_summary: {...days.local_run_summary, count: 0}} : days,
           runs: {...this._result.runs, runs: [], total: 0},
           loading: {...this._result.loading, runs: false}};
         writeSectionCache(this, this._sectionCacheKey(), {
-          summary: this._result.summary,
-          days: this._result.days,
+          summary: failed("summary") ? undefined : this._result.summary,
+          days: failed("days") ? undefined : this._result.days,
         });
         this.shadowRoot.querySelector("#usage-request-dialog")?.close();
         this._render();

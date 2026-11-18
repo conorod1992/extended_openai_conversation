@@ -453,14 +453,23 @@ async def test_public_responses_preserves_all_final_messages_in_reply_archive_an
         ]
 
 
-@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("mode", ["chat_completions", "responses", "auto"])
 @pytest.mark.parametrize(
     "kind", ["missing-image", "missing-pdf", "pdf-after-api-change"]
 )
 async def test_historical_attachment_unavailability_does_not_break_public_followup(
     hass, tmp_path, mode, kind
 ):
-    agent = await _contract_agent(hass, api_mode=mode)
+    auto_options = (
+        {
+            "chat_model": "gpt-5-mini",
+            "reasoning_effort": "minimal",
+            "max_function_calls_per_conversation": 0,
+        }
+        if mode == "auto"
+        else {}
+    )
+    agent = await _contract_agent(hass, api_mode=mode, **auto_options)
     path = tmp_path / ("historical.pdf" if "pdf" in kind else "historical.png")
     if kind == "pdf-after-api-change":
         path.write_bytes(b"%PDF-1.4\n%%EOF")
@@ -482,7 +491,10 @@ async def test_historical_attachment_unavailability_does_not_break_public_follow
                     agent_id=agent.entity_id, content="Earlier answer"
                 )
             )
-    reply = _responses_sse_text if mode == "responses" else _chat_sse_text
+    uses_responses = mode == "responses" or (
+        mode == "auto" and kind == "pdf-after-api-change"
+    )
+    reply = _responses_sse_text if uses_responses else _chat_sse_text
     async with _transport(agent.entry, [reply("Follow-up is healthy")]) as wire:
         result = await _say(hass, agent, "Text-only follow-up", cid)
         assert _speech(result) == "Follow-up is healthy"
@@ -490,7 +502,7 @@ async def test_historical_attachment_unavailability_does_not_break_public_follow
         text = json.dumps(wire.requests[0]["body"])
         assert "Earlier attachment question" in text and "Earlier answer" in text
         assert "Text-only follow-up" in text
-        if mode == "responses" and kind == "pdf-after-api-change":
+        if uses_responses and kind == "pdf-after-api-change":
             assert "input_file" in text
         else:
             assert "Earlier attachment omitted" in text

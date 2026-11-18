@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
-from contextlib import AsyncExitStack, aclosing
+from contextlib import AsyncExitStack, aclosing, suppress
 from copy import deepcopy
 from dataclasses import replace
 from hashlib import sha256
@@ -145,7 +145,11 @@ from .request import (
     validate_provider_tool_count,
 )
 from .request_static_cache import cached_format_tools
-from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
+from .resource_limits import (
+    MAX_ATTACHMENT_COUNT,
+    bounded_local_file_size,
+    read_bounded_local_file,
+)
 from .responses_stream_order import ordered_output_events
 from .schema_normalization import normalize_exclusive_bounds
 from .speech import async_streaming_speech_cleanup
@@ -871,6 +875,39 @@ def _attachments_include_pdf(attachments: list[conversation.Attachment]) -> bool
     return any(_attachment_mime_type(item) == "application/pdf" for item in attachments)
 
 
+def _pdf_attachment_routing(
+    turns: list[list[conversation.Attachment]],
+) -> tuple[bool, bool]:
+    """Return whether a current PDF requires, or a usable earlier PDF prefers, Responses."""
+    if _attachments_include_pdf(turns[-1]):
+        return True, False
+    if not any(_attachments_include_pdf(attachments) for attachments in turns[:-1]):
+        return False, False
+
+    total_bytes = count = 0
+    for attachments in reversed(turns):
+        for attachment in attachments:
+            if count >= MAX_ATTACHMENT_COUNT:
+                return False, False
+            mime = _attachment_mime_type(attachment) or ""
+            if mime != "application/pdf" and not mime.startswith("image/"):
+                continue
+            path = Path(attachment.path)
+            try:
+                if not path.is_file():
+                    continue
+                size = bounded_local_file_size(path, total_bytes)
+                with path.open("rb"):
+                    pass
+            except HomeAssistantError, OSError:
+                continue
+            if mime == "application/pdf":
+                return False, True
+            total_bytes += size
+            count += 1
+    return False, False
+
+
 class ExtendedOpenAIBaseLLMEntity(Entity):
     """Extended OpenAI base entity."""
 
@@ -937,16 +974,21 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 for item in chat_log.content
                 if isinstance(item, conversation.UserContent)
             ]
-            current_attachments = (
-                (getattr(users[-1], "attachments", None) or []) if users else []
-            )
-            responses_required = False
+            attachment_turns = [
+                getattr(user, "attachments", None) or [] for user in users
+            ]
+            attachment_io = any(attachment_turns)
+            responses_required = responses_preferred = False
             if (
                 options.get(CONF_API_MODE, DEFAULT_API_MODE) == API_MODE_AUTO
-                and 0 < len(current_attachments) <= MAX_ATTACHMENT_COUNT
+                and attachment_io
+                and len(attachment_turns[-1]) <= MAX_ATTACHMENT_COUNT
             ):
-                responses_required = await self.hass.async_add_executor_job(
-                    _attachments_include_pdf, current_attachments
+                (
+                    responses_required,
+                    responses_preferred,
+                ) = await self.hass.async_add_executor_job(
+                    _pdf_attachment_routing, attachment_turns
                 )
 
             def snapshot_for_live_tools() -> tuple[
@@ -968,14 +1010,25 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         if tool.get("function", {}).get("type")
                         == "function_group_loader"
                     ]
-                return initial_tools, build_provider_request_snapshot(
-                    options,
-                    getattr(self.entry, "data", {}),
-                    tools_required=bool(initial_tools) or conditional_continue,
-                    responses_required=responses_required,
-                )
 
-            attachment_io = any(getattr(item, "attachments", None) for item in users)
+                def request_snapshot(
+                    require_responses: bool,
+                ) -> ProviderRequestSnapshot:
+                    return build_provider_request_snapshot(
+                        options,
+                        getattr(self.entry, "data", {}),
+                        tools_required=bool(initial_tools) or conditional_continue,
+                        responses_required=require_responses,
+                    )
+
+                snapshot = request_snapshot(responses_required)
+                if responses_preferred and snapshot.api_mode != API_MODE_RESPONSES:
+                    # Earlier files can be omitted when the current route
+                    # cannot send them, just as in explicit Chat mode.
+                    with suppress(HomeAssistantError):
+                        snapshot = request_snapshot(True)
+                return initial_tools, snapshot
+
             # Text-only turns still assemble their live catalogue exactly once,
             # after the attachment await. File-bearing turns need an initial API
             # choice so incompatible files never consume its replay budget.

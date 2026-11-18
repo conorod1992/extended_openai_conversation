@@ -741,6 +741,22 @@ class PersistentMemory:
                     "embedding provider returned the wrong number of vectors"
                 )
             vector = _clean_embedding(vectors[0])
+            width = len(vector)
+            allowed_scopes = set(scope_ids)
+            # A compatible endpoint can repoint the same model name without
+            # changing our cache identity. Refresh only affected readable facts.
+            if any(
+                entry.model == model
+                and entry.space_id == space_id
+                and len(entry.vector) != width
+                and (memory := self._memories.get(memory_id)) is not None
+                and memory.user_id in allowed_scopes
+                for memory_id, entry in self._embedding_cache.items()
+            ) and not await self._async_refresh_missing_embeddings(
+                scope_ids, dimensions=width
+            ):
+                self._set_hybrid_status("lexical_fallback", "provider_changed")
+                return None
             self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
             self._set_hybrid_status(
                 "active",
@@ -1399,7 +1415,9 @@ class PersistentMemory:
         self._embedding_cache = dict(snapshot.embedding_cache)
         self._embedding_cache_dirty = snapshot.embedding_cache_dirty
 
-    async def _async_refresh_missing_embeddings(self, scope_ids: Sequence[str]) -> bool:
+    async def _async_refresh_missing_embeddings(
+        self, scope_ids: Sequence[str], *, dimensions: int | None = None
+    ) -> bool:
         provider = self._embedding_provider
         if provider is None:
             return False
@@ -1413,7 +1431,7 @@ class PersistentMemory:
                 memory
                 for memory in self._memories.values()
                 if memory.user_id in allowed_scopes
-                and self._cached_embedding(memory) is None
+                and self._cached_embedding(memory, dimensions=dimensions) is None
             ]
 
         def provider_is_current() -> bool:
@@ -1443,10 +1461,15 @@ class PersistentMemory:
                             or current.user_id not in allowed_scopes
                             or _embedding_fingerprint(current)
                             != _embedding_fingerprint(memory)
-                            or self._cached_embedding(current) is not None
+                            or self._cached_embedding(current, dimensions=dimensions)
+                            is not None
                         ):
                             continue
                         cleaned = _clean_embedding(vector)
+                        if dimensions is not None and len(cleaned) != dimensions:
+                            raise ValueError(
+                                "embedding provider returned incompatible document and query dimensions"
+                            )
                         self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
                             model=model,
                             space_id=space_id,
@@ -1521,12 +1544,15 @@ class PersistentMemory:
             self._embedding_cache.clear()
             self._embedding_cache_dirty = True
 
-    def _cached_embedding(self, memory: MemoryRecord) -> Sequence[float] | None:
+    def _cached_embedding(
+        self, memory: MemoryRecord, *, dimensions: int | None = None
+    ) -> Sequence[float] | None:
         entry = self._embedding_cache.get(memory.memory_id)
         if (
             entry is None
             or entry.model != self._embedding_model
             or entry.space_id != self._embedding_space_id
+            or (dimensions is not None and len(entry.vector) != dimensions)
             or entry.fingerprint != _embedding_fingerprint(memory)
         ):
             return None

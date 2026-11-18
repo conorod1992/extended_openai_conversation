@@ -303,13 +303,13 @@ function ensureModelCatalog() {
 }
 
 export function requestRuleCapabilityModel(panel, override = "", underlyingModel = "") {
+  if (!(override || underlyingModel) || /\{[^{}]+\}/.test(override + underlyingModel)) return "";
   const result = panel._result || {}, config = result.config || {};
   const azure = result.api_provider === "azure" || (!result.api_provider && config.azure_model);
   const configured = result.configured_model || config.chat_model;
   const binding = Object.hasOwn(result,"azure_model") ? result.azure_model : config.azure_model || result.effective_model;
-  return String(azure && underlyingModel ? underlyingModel
-    : azure && (!override || override === configured) ? binding || override || result.effective_model
-    : override || result.effective_model || config.chat_model || "").trim();
+  return azure && underlyingModel ? underlyingModel
+    : azure && override === configured && binding ? binding : override;
 }
 
 function ensureDialog(panel) {
@@ -379,20 +379,15 @@ function refreshEditor(panel) {
   const invalid=mode.value==="capture" && (!handoff || !common.length || !common.includes(capture.value));
   capture.setAttribute("aria-invalid",String(invalid));
   help.hidden=!invalid;
-  help.textContent=!handoff ? "Enable Continue to AI or choose Original request." : q("#rule-match").value!=="sentence_pattern" ? "Captured value requires Sentence Pattern matching." : common.length ? "The selected captured value is not available in every trigger. Choose a common value or Original request." : "No captured values are available for every trigger. Use Sentence Pattern matching and make each trigger capture the same value, such as {question}.";
+  help.textContent=!handoff ? "Enable Continue to AI or choose Original request." : !grammar ? "Captured input requires Sentence Pattern matching." : common.length ? "Choose a value captured by every trigger or choose Original request." : "No captured values are available for every trigger. Add the same capture to each trigger, such as {question}.";
   const efforts = [...q("#rule-reasoning").options].map(option => option.value).filter(Boolean);
-  const routedModel = q("#rule-model")?.value.trim();
-  const azureModel = q("#rule-azure-model")?.value.trim();
-  const fixedRoute = Boolean(routedModel || azureModel)
-    && ![routedModel, azureModel].some(value => /\{[^{}]+\}/.test(value || ""));
-  syncRequestRuleRoutingControls(root, efforts, null, common, !fixedRoute || efforts.some(value => !value.startsWith("{")));
+  const model=requestRuleCapabilityModel(panel,q("#rule-model").value.trim(),q("#rule-azure-model").value.trim());
+  syncRequestRuleRoutingControls(root, efforts, null, common, !model || efforts.some(value => !value.startsWith("{")));
   const state=editorState(panel), latest=beginOperation(panel,"rule-model-lookup");
   if(local)return;
-  const model=requestRuleCapabilityModel(panel,routedModel,azureModel);
-  if(!model || /\{[^{}]+\}/.test(model))return;
   const ownsEditor=captureRuleEditorOwner(panel), current=()=>latest() && ownsEditor() && state.dialog.open;
   void ensureModelCatalog().then((module)=>current() ? module.lookupModelData(panel,model,"lookup",current) : null).then((data)=>{
-    if(current() && data) syncRequestRuleRoutingControls(root,data.reasoning_effort_options,null,common,!fixedRoute || Boolean(data.reasoning_effort_options?.length));
+    if(current() && data) syncRequestRuleRoutingControls(root,data.reasoning_effort_options,null,common,!model || Boolean(data.reasoning_effort_options?.length));
   }).catch((err)=>{if(current())panel._toast(`Unable to load model choices: ${err.message || String(err)}`,true);});
 }
 

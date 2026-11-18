@@ -497,7 +497,7 @@ async def test_initialize_salvages_valid_detail_records_and_applies_retention() 
     assert [item.request_id for item in manager.requests] == ["recent"]
 
 
-async def test_request_outside_run_updates_aggregates_without_detail_record() -> None:
+async def test_request_outside_run_updates_aggregates_without_creating_run() -> None:
     details = CoverageMemoryStorage()
     manager = await _coverage_manager(CoverageMemoryStorage(), CoverageMemoryStorage(), details)
     await manager.async_record_request(
@@ -511,8 +511,10 @@ async def test_request_outside_run_updates_aggregates_without_detail_record() ->
 
     assert manager.totals.api_request_count == 1
     assert manager.totals.failed_request_count == 1
-    assert manager.requests == []
-    assert details.saves == []
+    assert len(manager.requests) == 1
+    assert manager.requests[0].run_id is None
+    assert details.data["requests"] == [asdict(manager.requests[0])]
+    assert details.data["runs"] == []
     assert manager.latest_run is None
 
 

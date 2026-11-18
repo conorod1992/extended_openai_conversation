@@ -636,6 +636,23 @@ class TemporaryMemory:
         owner = _require_owner_scope_id(owner_scope_id)
         return await self.async_delete(owner, memory_ids, owner_scope_id=owner)
 
+    async def async_clear_owned(self, owner_scope_id: str) -> int:
+        """Clear one owner's active records in a single storage write."""
+        owner = _require_owner_scope_id(owner_scope_id)
+        async with async_storage_lock(self, self._lock):
+            await self._async_initialize_locked()
+            pruned = self._prune_expired_locked()
+            owned = [
+                memory_id
+                for memory_id, record in self._records.items()
+                if record.owner_scope_id == owner
+            ]
+            for memory_id in owned:
+                del self._records[memory_id]
+            if owned or pruned:
+                await self._async_save_locked()
+            return len(owned)
+
     def owner_counts(self) -> dict[str, int]:
         now = dt_util.utcnow()
         counts: Counter[str] = Counter()

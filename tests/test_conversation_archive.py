@@ -4,6 +4,7 @@ import asyncio
 from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime
+from threading import get_ident
 from types import SimpleNamespace
 
 import pytest
@@ -67,6 +68,50 @@ async def _archive():
     archive = ConversationArchive(FakeArchiveStorage(), "agent-1")
     await archive.async_initialize()
     return archive
+
+
+async def test_live_archive_writes_build_payloads_off_loop_for_only_changed_months(
+    monkeypatch,
+):
+    archive = await _archive()
+    scope = user_scope("alice", source="authenticated_user")
+    times = iter([
+        datetime.fromisoformat("2026-09-01T00:00:00+00:00"),
+        datetime.fromisoformat("2026-09-01T00:00:00+00:00"),
+        datetime.fromisoformat("2026-10-01T00:00:00+00:00"),
+        datetime.fromisoformat("2026-10-01T00:00:00+00:00"),
+    ])
+    monkeypatch.setattr(archive_module.dt_util, "utcnow", lambda: next(times))
+    loop = get_ident()
+    metadata_threads = []
+    months = []
+    metadata = archive._metadata_payload_for_state
+    turn_payload = archive_module._turn_payload
+
+    def observe_metadata(*args):
+        metadata_threads.append(get_ident())
+        return metadata(*args)
+
+    def observe_turn(turn):
+        assert get_ident() != loop
+        months.append(turn.timestamp[:7])
+        return turn_payload(turn)
+
+    monkeypatch.setattr(archive, "_metadata_payload_for_state", observe_metadata)
+    monkeypatch.setattr(archive_module, "_turn_payload", observe_turn)
+    for key in ("september", "october"):
+        session = await archive.async_begin_session(
+            key, scope, key, archive_enabled=True, shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
+        await archive.async_record_turn(
+            session.session_id, run_id=None, user_text=key, assistant_text="OK",
+            successful=True,
+        )
+    assert len(metadata_threads) == 4 and loop not in metadata_threads
+    assert months == ["2026-09", "2026-10"]
+    assert archive._storage.metadata["partitions"] == ["2026-09", "2026-10"]
+    assert "pending_partitions" not in archive._storage.metadata
 
 
 async def test_archive_is_unretained_when_disabled_or_scope_is_unresolved() -> None:

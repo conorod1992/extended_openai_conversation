@@ -136,3 +136,9 @@ assert.deepEqual(restorePreviewSummaryLines({
   selected_sections: ["configuration"],
   shortened_usage_retention: {usage_request_retention_days: 0, usage_run_retention_days: 7},
 }), ["Agent configuration and Function Tools", "Shorter Usage retention will delete all request details and run details older than 7 days. Usage totals will be kept."]);
+assert.deepEqual(restorePreviewSummaryLines({
+  selected_sections: ["conversation_archive"],
+  archive_sessions: 0,
+  archive_turns: 0,
+  archive_retention: {days: 7, expired_sessions: 2, expired_turns: 4},
+}), ["0 archived conversations (0 turns)", "Archive retention (7 days) removes 2 conversations and 4 turns from the backup."]);

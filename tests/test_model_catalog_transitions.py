@@ -123,6 +123,7 @@ def _subentry(*, model="gpt-5.6", effort=None):
     return SimpleNamespace(
         subentry_type="conversation",
         subentry_id="agent",
+        title="Test assistant",
         data=values,
     )
 
@@ -509,6 +510,36 @@ async def test_candidate_rejects_invalid_saved_agent_before_loading_rules(
         is False
     )
     get_rules.assert_not_awaited()
+
+
+@pytest.mark.parametrize("effort", ["high", "minimal"])
+async def test_effort_only_route_preserves_the_model_it_can_inherit(
+    manager, monkeypatch, effort
+):
+    manager.catalog = _expanded_candidate()
+    data.activate_catalog(manager.catalog)
+    manager.hass.config_entries.async_entries.return_value = [
+        _entry(_subentry(model="gpt-4.1-mini"))
+    ]
+    rules = [
+        {"action_type": "model_routing", "action": {
+            "model": "gpt-5.6", "reasoning_effort": "low", "scope": "conversation",
+        }},
+        {"action_type": "model_routing", "action": {
+            "reasoning_effort": effort, "scope": "request", "continue_to_ai": True,
+        }},
+    ]
+    monkeypatch.setattr(
+        runtime, "async_get_request_rules",
+        AsyncMock(return_value=SimpleNamespace(snapshot=lambda: {"rules": rules})),
+    )
+    updated = deepcopy(manager.catalog)
+    updated["catalog_version"] += 1
+    _transport(monkeypatch, json.dumps(updated).encode())
+    assert (await manager.async_check(force=True))["update_available"] is True
+    assert (await manager.async_apply_update())["last_error"] is None
+    reset = await manager.async_reset()
+    assert (reset["last_error"] is None) is (effort == "high")
 
 
 @pytest.mark.parametrize(

@@ -747,7 +747,15 @@ async def test_text_only_agent_diagnostic_accepts_provider_without_functions(has
     async def text_provider(**kwargs):
         assert "tools" not in kwargs
         assert "tool_choice" not in kwargs
-        return SimpleNamespace(status="completed", usage=None)
+        if api_mode == "chat_completions":
+            return SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="OK"))
+            ], usage=None)
+        return SimpleNamespace(status="completed", output=[
+            SimpleNamespace(type="message", role="assistant", content=[
+                SimpleNamespace(type="output_text", text="OK")
+            ])
+        ], usage=None)
     create = AsyncMock(side_effect=text_provider)
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)), responses=SimpleNamespace(create=create))
     monkeypatch.setattr(entry, "runtime_data", client)
