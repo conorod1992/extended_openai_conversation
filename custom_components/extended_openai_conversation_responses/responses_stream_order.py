@@ -10,6 +10,8 @@ from .provider_output_budget import ProviderOutputBudget
 
 _ADDED = "response.output_item.added"
 _DONE = "response.output_item.done"
+_ARGUMENT_DELTA = "response.function_call_arguments.delta"
+_ARGUMENT_DONE = "response.function_call_arguments.done"
 _USAGE = {"response.usage", "response.usage.updated"}
 _RESPONSE_EVENTS = {
     "response.created",
@@ -50,7 +52,12 @@ class _OutputItem:
     def observe(self, event: Any, kind: str, item_id: str | None) -> None:
         if item_id:
             if self.item_id and self.item_id != item_id:
-                raise _malformed("conflicting output item id")
+                reason = (
+                    "conflicting argument item"
+                    if kind in {_ARGUMENT_DELTA, _ARGUMENT_DONE}
+                    else "conflicting output item id"
+                )
+                raise _malformed(reason)
             self.item_id = item_id
         if self.done:
             if kind == _DONE:
@@ -81,9 +88,9 @@ class _OutputItem:
             self.observe_arguments(event, kind)
 
     def observe_arguments(self, event: Any, kind: str) -> None:
-        if kind == "response.function_call_arguments.delta":
+        if kind == _ARGUMENT_DELTA:
             self.arguments = (self.arguments or "") + event.delta
-        elif kind == "response.function_call_arguments.done":
+        elif kind == _ARGUMENT_DONE:
             self.check_arguments(event.arguments)
 
     def check_arguments(self, arguments: str | None) -> None:
