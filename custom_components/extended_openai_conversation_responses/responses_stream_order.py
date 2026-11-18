@@ -17,13 +17,14 @@ async def _validated_output_events(
     budget = budget or ProviderOutputBudget()
     terminal_seen = False
     completed_items: set[tuple[Any, Any]] = set()
-    unfinished_indices: set[int] = set()
+    completed_by_index: dict[int, bool] = {}
     output_items: dict[Any, tuple[Any, Any, Any]] = {}
     argument_fragments: dict[Any, str] = {}
     try:
         async for event in events:
             budget.responses_event(event)
             event_type = getattr(event, "type", "")
+            index = getattr(event, "output_index", None)
             if (
                 terminal_seen
                 and event_type.startswith("response.")
@@ -34,11 +35,20 @@ async def _validated_output_events(
                     error_type="invalid_event_sequence",
                 )
 
+            if index is not None and event_type.startswith("response."):
+                if event_type == "response.output_item.done":
+                    completed_by_index[index] = True
+                elif event_type == "response.output_item.added":
+                    completed_by_index[index] = False
+                elif event_type not in {"response.usage", "response.usage.updated"}:
+                    # Deltas and item progress can arrive before an explicit add.
+                    # Late advisory events for a completed item do not reopen it.
+                    completed_by_index.setdefault(index, False)
+
             if event_type in {
                 "response.output_item.added",
                 "response.output_item.done",
             }:
-                index = getattr(event, "output_index", None)
                 item = event.item
                 identity = (
                     getattr(item, "id", None),
@@ -64,10 +74,6 @@ async def _validated_output_events(
                             error_type="invalid_event_sequence",
                         )
                     output_items[index] = identity
-                    if event_type == "response.output_item.added":
-                        unfinished_indices.add(index)
-                    else:
-                        unfinished_indices.discard(index)
                     if (
                         event_type == "response.output_item.done"
                         and index in argument_fragments
@@ -82,7 +88,6 @@ async def _validated_output_events(
                 "response.function_call_arguments.delta",
                 "response.function_call_arguments.done",
             }:
-                index = getattr(event, "output_index", None)
                 if (
                     index in output_items
                     and getattr(event, "item_id", None) != output_items[index][0]
@@ -107,7 +112,7 @@ async def _validated_output_events(
 
             if event_type == "response.output_item.done":
                 item = event.item
-                key = (getattr(event, "output_index", None), getattr(item, "id", None))
+                key = (index, getattr(item, "id", None))
                 if key != (None, None):
                     if key in completed_items:
                         raise ProviderStreamError(
@@ -116,7 +121,7 @@ async def _validated_output_events(
                         )
                     completed_items.add(key)
             if event_type == "response.completed":
-                if unfinished_indices:
+                if not all(completed_by_index.values()):
                     raise ProviderStreamError(
                         "Provider returned malformed data: unfinished output item",
                         error_type="invalid_event_sequence",

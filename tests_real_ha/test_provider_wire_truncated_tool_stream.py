@@ -360,7 +360,18 @@ async def test_rejected_responses_protocol_keeps_trailing_usage(
     assert calls == []
 
 
-@pytest.mark.parametrize("scenario", ["chat_completions", "responses", "responses-leading", "responses-flushed"])
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "chat_completions",
+        "responses",
+        "responses-leading",
+        "responses-flushed",
+        "responses-text-only",
+        "responses-text-after-item",
+        "responses-arguments-only",
+    ],
+)
 @pytest.mark.parametrize("report_usage", [False, True])
 async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
     hass, monkeypatch, scenario, report_usage
@@ -416,20 +427,47 @@ async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
         }
         events = []
         output = []
-        if scenario == "responses-flushed":
+        if scenario in {"responses-flushed", "responses-text-after-item"}:
             first = _response_text_item("A completed item precedes unfinished output")
             output.append(first)
             events.extend([
                 {"type": "response.output_item.added", "output_index": 0, "item": first},
                 {"type": "response.output_item.done", "output_index": 0, "item": first},
             ])
+        if scenario in {"responses-text-only", "responses-text-after-item"}:
+            item = _response_text_item("This answer was never completed on the wire")
+            item["id"] = "msg-orphan"
+            events.append(
+                {
+                    "type": "response.output_text.delta",
+                    "output_index": len(output),
+                    "content_index": 0,
+                    "item_id": item["id"],
+                    "delta": "Partial text",
+                    "logprobs": [],
+                }
+            )
+        elif scenario == "responses-arguments-only":
+            events.append(
+                {
+                    "type": "response.function_call_arguments.delta",
+                    "output_index": 0,
+                    "item_id": item["id"],
+                    "delta": item["arguments"],
+                }
+            )
+        else:
+            events.append(
+                {
+                    "type": "response.output_item.added",
+                    "output_index": 0 if scenario == "responses-leading" else 1,
+                    "item": item,
+                }
+            )
         output.append(item)
         response = _response_object("unfinished-output", output)
         response["usage"] = None
-        events.extend([
-            {"type": "response.output_item.added", "output_index": 0 if scenario == "responses-leading" else 1, "item": item},
-            {"type": "response.completed", "response": response},
-        ])
+        events.append({"type": "response.completed", "response": response})
         usage_event = {
             "type": "response.usage",
             "usage": {"input_tokens": 223, "output_tokens": 17, "total_tokens": 240},
@@ -494,3 +532,23 @@ async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
     recovered = await followup(hass, agent, "continue", failed.conversation_id)
     assert _speech(recovered) == "Healthy follow-up"
     assert calls == []
+
+async def test_indexed_text_without_add_completes_through_item_done(hass, monkeypatch):
+    """A done item can complete indexed content and supply its missing suffix."""
+    text = "The complete provider answer."
+    events = [
+        json.loads(line[6:])
+        for line in _responses_sse_text(text).decode().splitlines()
+        if line.startswith("data: ")
+    ][1:]
+    events[0]["delta"] = "The complete"
+    stream = "".join(
+        f"data: {json.dumps({**event, 'sequence_number': i})}\n\n"
+        for i, event in enumerate(events)
+    ).encode()
+    agent = await _agent(hass, "responses")
+    wire = _install_wire(monkeypatch, agent, [stream])
+    result = await _say(hass, agent)
+    assert result.response.error_code is None
+    assert _speech(result) == text
+    assert len(wire.requests) == 1
