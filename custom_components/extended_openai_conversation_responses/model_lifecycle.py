@@ -269,9 +269,8 @@ def sync_entry_model_lifecycle(hass: Any, entry: Any) -> None:
     """Refresh one entry's deprecation logging and stale retirement Repairs."""
     active_subentries: set[str] = set()
     entry_data = getattr(entry, "data", {})
-    native_openai = is_native_openai_connection(
-        entry_data, client=getattr(entry, "runtime_data", None)
-    )
+    client = getattr(entry, "runtime_data", None)
+    native_openai = is_native_openai_connection(entry_data, client=client)
     for subentry in entry.subentries.values():
         if subentry.subentry_type not in {"conversation", "ai_task_data"}:
             continue
@@ -284,9 +283,7 @@ def sync_entry_model_lifecycle(hass: Any, entry: Any) -> None:
             if ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None:
                 ir.async_delete_issue(hass, DOMAIN, issue_id)
             continue
-        lifecycle = lifecycle_snapshot(
-            str(subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip()
-        )
+        lifecycle = configured_lifecycle(subentry, entry_data=entry_data, client=client)
         log_deprecation_once(
             hass,
             entry_id=entry.entry_id,

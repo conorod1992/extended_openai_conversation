@@ -40,7 +40,17 @@ async def _validated_output_events(
                     completed_by_index[index] = True
                 elif event_type == "response.output_item.added":
                     completed_by_index[index] = False
-                elif event_type not in {"response.usage", "response.usage.updated"}:
+                elif event_type not in {
+                    "response.created",
+                    "response.in_progress",
+                    "response.queued",
+                    "response.completed",
+                    "response.incomplete",
+                    "response.failed",
+                    "response.error",
+                    "response.usage",
+                    "response.usage.updated",
+                }:
                     # Deltas and item progress can arrive before an explicit add.
                     # Late advisory events for a completed item do not reopen it.
                     completed_by_index.setdefault(index, False)
