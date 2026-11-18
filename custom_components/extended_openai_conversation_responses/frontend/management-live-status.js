@@ -120,8 +120,10 @@ export function watchTimedFeatureStatus(panel, feature) {
       const before = panel[draft];
       initializePageDraft(panel);
       feature?.refreshTimedStatus(panel);
-      if (!same(before, panel[draft]) || previous?.legacy_policy !== result.legacy_policy
-          || !same(previous?.satellites, result.satellites)) {
+      const remount = feature?.timedStructure
+        ? !same(feature.timedStructure(previous), feature.timedStructure(result))
+        : !same(before, panel[draft]) || previous?.legacy_policy !== result.legacy_policy;
+      if (remount) {
         refreshEditor(panel, () => current() && panel._loadToken === read.visit
           && panel._cacheGeneration === read.generation);
       }

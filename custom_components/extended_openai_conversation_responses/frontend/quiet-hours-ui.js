@@ -88,36 +88,26 @@ export function quietHoursSatellitePresentation(panel, satellite, config) {
   };
 }
 
+function pickerHelp(satellite, media) {
+  const {source, automatic, candidates} = pickerContext(satellite, media);
+  if (source === "manual") return media ? "Manually selected for this satellite." : "Confirm this controls the wake-word chime.";
+  if (automatic) return `Found automatically: ${automatic}`;
+  if (media) return candidates.length ? "Choose a speaker on this device." : "This device has no media player entity.";
+  return candidates.length ? "Choose the wake-word chime switch." : "This device has no switch for the optional chime.";
+}
+
 function satelliteCard(panel, satellite, config) {
-  const autoMedia = satellite.media_player_source === "auto" ? satellite.media_player_entity_id : null;
-  const autoWake = satellite.wake_sound_source === "auto" ? satellite.wake_sound_entity_id : null;
-  const mediaCandidates = satellite.media_player_candidates || [];
-  const wakeCandidates = satellite.wake_sound_candidates || [];
   const presentation = quietHoursSatellitePresentation(panel, satellite, config);
   const speakerStatus = presentation.speaker;
-  const mediaHelp = satellite.media_player_source === "manual"
-    ? "Manually selected for this satellite."
-    : autoMedia
-      ? `Found automatically: ${panel._e(autoMedia)}`
-      : mediaCandidates.length
-        ? "Choose a speaker from the media players on this device."
-        : "This device has no media player entity.";
-  const wakeHelp = satellite.wake_sound_source === "manual"
-    ? "Confirm this controls the wake-word chime."
-    : autoWake
-      ? `Found automatically: ${panel._e(autoWake)}`
-      : wakeCandidates.length
-        ? "Choose the wake-word chime switch."
-        : "This device has no switch for the optional chime.";
-  return `<article class="qh-satellite" data-qh-satellite="${panel._e(satellite.satellite_entity_id)}">
+  return `<article class="qh-satellite" data-qh-satellite="${panel._e(satellite.satellite_entity_id)}" ${presentation.needsAttention ? "data-qh-attention" : ""}>
     <div class="qh-satellite-heading">
       <div><strong>${panel._e(satellite.name)}</strong><small>${panel._e(satellite.satellite_entity_id)}</small></div>
       <span data-qh-speaker-status class="${speakerStatus.ready ? "availability-badge" : "disabled-badge"}">${speakerStatus.label}</span>
     </div>
     <div class="qh-satellite-summary"><span>Speaker: <span data-qh-media-summary>${panel._e(presentation.mediaSummary)}</span></span><span>Wake-word switch: <span data-qh-wake-summary>${panel._e(presentation.wakeSummary)}</span></span></div>
     <details class="qh-satellite-config eoc-details-base" ${presentation.needsAttention ? "open" : ""}><summary>Configure</summary><div class="qh-grid">
-      <label><span>Speaker volume entity</span><ha-entity-picker class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="media_player_entity_id" data-domain="media_player" data-auto-entity="${panel._e(autoMedia || "")}"></ha-entity-picker><small>${mediaHelp}</small></label>
-      <label><span>Wake-word sound switch</span><ha-entity-picker class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="wake_sound_entity_id" data-domain="switch" data-auto-entity="${panel._e(autoWake || "")}"></ha-entity-picker><small>${wakeHelp}</small></label>
+      <label><span>Speaker volume entity</span><ha-entity-picker class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="media_player_entity_id" data-domain="media_player"></ha-entity-picker><small>${panel._e(pickerHelp(satellite, true))}</small></label>
+      <label><span>Wake-word sound switch</span><ha-entity-picker class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="wake_sound_entity_id" data-domain="switch"></ha-entity-picker><small>${panel._e(pickerHelp(satellite, false))}</small></label>
     </div></details>
   </article>`;
 }
@@ -129,6 +119,8 @@ function quietHoursStatus(panel) {
   return `<div><strong data-qh-live-title>${title}</strong><small>${detail}</small></div><span data-qh-live-badge class="${active ? "availability-badge" : "neutral-badge"}">${active ? "Active" : "Inactive"}</span>`;
 }
 
+const refreshable = (root, control, blurred) => blurred ? control === blurred : control !== root.activeElement;
+
 function refreshScheduleControls(panel, blurred) {
   const root = panel.shadowRoot, config = panel._quietHoursDraft;
   if (!config) return;
@@ -139,7 +131,7 @@ function refreshScheduleControls(panel, blurred) {
   };
   for (const [name, value] of Object.entries(values)) {
     const input = root.querySelector("#qh-" + name);
-    if (input && (blurred ? input === blurred : input !== root.activeElement)) {
+    if (input && refreshable(root, input, blurred)) {
       input[name === "enabled" ? "checked" : "value"] = value;
     }
   }
@@ -151,6 +143,11 @@ export function refreshTimedStatus(panel) {
   const node = panel.shadowRoot.querySelector(".qh-status");
   if (node) node.innerHTML = quietHoursStatus(panel);
   refreshScheduleControls(panel);
+  refreshSatelliteControls(panel);
+}
+
+export function timedStructure(result) {
+  return [result?.available, result?.state_entity_id, result?.satellites?.map(item => [item.satellite_entity_id, item.name])];
 }
 
 export function renderQuietHours(panel) {
@@ -173,7 +170,7 @@ export function renderQuietHours(panel) {
         <label><span>Start</span><input id="qh-start" type="time" value="${panel._e(config.start || "22:00")}"></label>
         <label><span>End</span><input id="qh-end" type="time" value="${panel._e(config.end || "07:00")}"></label>
         <label><span>Starting volume limit</span><div class="qh-volume"><input id="qh-volume" type="range" min="0" max="100" step="1" value="${maxPercent}"><output id="qh-volume-value">${maxPercent}%</output></div><small>At startup, louder satellites are lowered to this level. The quieter ones stay unchanged. Satellites appearing later may also be adjusted. Later volume changes by you or automations are respected. Volume is restored only if it was not independently changed. Changing this limit mid-period may briefly restore previous volumes. Other audio played on the satellite is affected too.</small></label>
-        <label><span>Wake-word sound</span><select id="qh-wake"><option value="off" ${config.wake_sound === "off" ? "selected" : ""}>Off during Quiet Hours</option><option value="on" ${config.wake_sound === "on" ? "selected" : ""}>On during Quiet Hours</option><option value="unchanged" ${config.wake_sound === "unchanged" ? "selected" : ""}>Don't change it</option></select><small>The chime played when a satellite hears its wake word.</small></label>
+        <label><span>Wake-word sound</span><select id="qh-wake"><option value="off" ${config.wake_sound === "off" ? "selected" : ""}>Off during Quiet Hours</option><option value="on" ${config.wake_sound === "on" ? "selected" : ""}>On during Quiet Hours</option><option value="unchanged" ${config.wake_sound === "unchanged" ? "selected" : ""}>Don't change it</option></select><small>The chime played when a satellite hears its wake word. Requires a compatible switch.</small></label>
       </div>
       <div class="qh-entity-note"><strong>Use Quiet Hours in automations</strong><code>${panel._e(result.state_entity_id || "binary_sensor.extended_openai_quiet_hours")}</code><small>This entity stays on throughout Quiet Hours. Use these actions to change the schedule <code>enable_quiet_hours</code> and <code>disable_quiet_hours</code>.</small></div>
     </section>
@@ -200,7 +197,45 @@ function refreshSatelliteSummary(panel, card, satellite) {
   const status = card.querySelector("[data-qh-speaker-status]");
   status.textContent = result.speaker.label;
   status.className = result.speaker.ready ? "availability-badge" : "disabled-badge";
-  if (result.needsAttention) card.querySelector(".qh-satellite-config").open = true;
+  if (result.needsAttention && !card.hasAttribute("data-qh-attention")) card.querySelector(".qh-satellite-config").open = true;
+  card.toggleAttribute("data-qh-attention", result.needsAttention);
+}
+
+function satelliteFor(panel, id) {
+  return panel._result?.satellites?.find(item => item.satellite_entity_id === id);
+}
+
+function pickerContext(satellite, media) {
+  const source = media ? satellite?.media_player_source : satellite?.wake_sound_source;
+  return {
+    source,
+    automatic: source === "auto" && (media ? satellite.media_player_entity_id : satellite.wake_sound_entity_id),
+    candidates: (media ? satellite?.media_player_candidates : satellite?.wake_sound_candidates) || [],
+  };
+}
+
+function projectPicker(panel, picker, satellite) {
+  const {kind, satellite: id} = picker.dataset;
+  const media = kind === "media_player_entity_id";
+  const {candidates, automatic} = pickerContext(satellite, media);
+  const selected = manualOverride(panel._quietHoursDraft, id)[kind] || "";
+  picker.includeEntities = selected && !candidates.includes(selected) ? [...candidates, selected] : candidates;
+  picker.placeholder = automatic ? `Automatic · ${automatic}` : "Automatic";
+  if (picker.value !== selected) picker.value = selected;
+  const help = picker.parentElement?.lastElementChild;
+  if (help) help.textContent = pickerHelp(satellite, media);
+}
+
+function refreshSatelliteControls(panel, blurred) {
+  const root = panel.shadowRoot;
+  for (const card of root.querySelectorAll("[data-qh-satellite]")) {
+    const satellite = satelliteFor(panel, card.dataset.qhSatellite);
+    if (!satellite) continue;
+    refreshSatelliteSummary(panel, card, satellite);
+    for (const picker of card.querySelectorAll(".qh-override")) {
+      if (!picker.hidden && refreshable(root, picker, blurred)) projectPicker(panel, picker, satellite);
+    }
+  }
 }
 
 export function bindQuietHours(panel) {
@@ -208,9 +243,9 @@ export function bindQuietHours(panel) {
   if (!root.__eocQuietSummaryBound) {
     root.__eocQuietSummaryBound = true;
     root.addEventListener("focusout", ({target}) => {
-      if (panel._viewKey?.() === VIEW && target.id?.startsWith("qh-")) {
-        refreshScheduleControls(panel, target);
-      }
+      if (panel._viewKey?.() !== VIEW) return;
+      if (target.matches(".qh-override")) refreshSatelliteControls(panel, target);
+      else if (target.id?.startsWith("qh-")) refreshScheduleControls(panel, target);
     });
     let snapshot = panel._result;
     // Page saves preserve the route DOM. Refresh resolved entity summaries when
@@ -218,17 +253,7 @@ export function bindQuietHours(panel) {
     root.addEventListener("eoc-config-dirty-changed", () => {
       if (panel._viewKey?.() !== VIEW || snapshot === panel._result) return;
       snapshot = panel._result;
-      for (const card of root.querySelectorAll("[data-qh-satellite]")) {
-        const satellite = (snapshot?.satellites || []).find(item => item.satellite_entity_id === card.dataset.qhSatellite);
-        if (!satellite) continue;
-        refreshSatelliteSummary(panel, card, satellite);
-        for (const picker of card.querySelectorAll(".qh-override")) {
-          const source = picker.dataset.kind === "media_player_entity_id" ? satellite.media_player_source : satellite.wake_sound_source;
-          const automatic = source === "auto" ? satellite[picker.dataset.kind] || "" : "";
-          picker.dataset.autoEntity = automatic;
-          if (!picker.hidden) picker.placeholder = automatic ? `Automatic · ${automatic}` : "Automatic";
-        }
-      }
+      refreshTimedStatus(panel);
     });
   }
   root.querySelector("#qh-enabled")?.addEventListener("change", (event) => { panel._quietHoursDraft.enabled = event.target.checked; });
@@ -236,10 +261,7 @@ export function bindQuietHours(panel) {
   root.querySelector("#qh-end")?.addEventListener("input", (event) => { panel._quietHoursDraft.end = event.target.value; });
   root.querySelector("#qh-wake")?.addEventListener("change", (event) => {
     panel._quietHoursDraft.wake_sound = event.target.value;
-    root.querySelectorAll("[data-qh-satellite]").forEach((card) => {
-      const satellite = (panel._result?.satellites || []).find((item) => item.satellite_entity_id === card.dataset.qhSatellite);
-      refreshSatelliteSummary(panel, card, satellite);
-    });
+    refreshSatelliteControls(panel);
   });
   const volume = root.querySelector("#qh-volume");
   volume?.addEventListener("input", (event) => {
@@ -248,9 +270,7 @@ export function bindQuietHours(panel) {
     const output = root.querySelector("#qh-volume-value");
     if (output) output.textContent = `${percent}%`;
   });
-  const satellites = new Map((panel._result?.satellites || []).map((satellite) => [satellite.satellite_entity_id, satellite]));
   root.querySelectorAll(".qh-override").forEach((picker) => {
-    const satellite = satellites.get(picker.dataset.satellite);
     const agentId = panel._agentId;
     // Assign native properties only after upgrade: pre-upgrade own properties
     // can shadow HA's accessors even after its component has been registered.
@@ -262,15 +282,10 @@ export function bindQuietHours(panel) {
     const current = () => picker.isConnected && panel._agentId === agentId && panel._viewKey?.() === VIEW;
     const initialize = () => {
       if (!current()) return;
-      const candidates = picker.dataset.kind === "media_player_entity_id"
-        ? satellite?.media_player_candidates || [] : satellite?.wake_sound_candidates || [];
-      const selected = manualOverride(panel._quietHoursDraft, picker.dataset.satellite)?.[picker.dataset.kind] || "";
       picker.hass = panel._hass;
-      picker.value = selected;
       picker.includeDomains = [picker.dataset.domain];
-      picker.includeEntities = selected && !candidates.includes(selected) ? [...candidates, selected] : candidates;
       picker.allowCustomEntity = false;
-      picker.placeholder = picker.dataset.autoEntity ? `Automatic · ${picker.dataset.autoEntity}` : "Automatic";
+      projectPicker(panel, picker, satelliteFor(panel, picker.dataset.satellite));
       picker.hidden = false;
       status.remove();
     };
@@ -280,10 +295,10 @@ export function bindQuietHours(panel) {
       status.textContent = "Entity selector could not be loaded. Reload the page to try again.";
     });
     picker.addEventListener("value-changed", (event) => {
-      const value = String(event?.detail?.value || picker.value || "");
+      const value = String(event?.detail?.value ?? picker.value ?? "");
       picker.value = value;
       setOverride(panel, picker.dataset.satellite, picker.dataset.kind, value);
-      refreshSatelliteSummary(panel, picker.closest(".qh-satellite"), (panel._result?.satellites || []).find(item => item.satellite_entity_id === picker.dataset.satellite));
+      refreshSatelliteSummary(panel, picker.closest(".qh-satellite"), satelliteFor(panel, picker.dataset.satellite));
     });
   });
 

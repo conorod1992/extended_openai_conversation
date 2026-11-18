@@ -136,6 +136,61 @@ for(const guest of [true,false])test(`${guest?"Guest Mode":"Quiet Hours"} natura
   await expectHarnessClean(page,errors);
 });
 
+test("Quiet Hours reconciles both satellite selectors in place and preserves the focused picker", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  await page.clock.install();
+  await panel.evaluate(async host => {
+    if (!customElements.get("ha-entity-picker")) customElements.define("ha-entity-picker", class extends HTMLElement {});
+    const call = host._hass.callWS;
+    host._hass = {...host._hass, callWS:async message => {
+      const result = await call(message);
+      if (message.section !== "quiet_hours" || message.action !== "get") return result;
+      const version = host._testExternalVersion || 0;
+      const id = "assist_satellite.kitchen";
+      const media = "media_player.speaker_" + version, wake = "switch.chime_" + version;
+      return {...result, revision:String(version), period_ends_at:new Date(Date.now()+1000).toISOString(),
+        config:{...result.config, enabled:true, overrides:{[id]:{media_player_entity_id:media,wake_sound_entity_id:wake}}},
+        satellites:[{satellite_entity_id:id,name:"Kitchen",media_player_entity_id:media,media_player_source:"manual",
+          media_player_candidates:["media_player.detected"],wake_sound_entity_id:wake,wake_sound_source:"manual",
+          wake_sound_candidates:["switch.detected"]}]};
+    }};
+    await host._navigate("capabilities", "quiet-hours");
+  });
+
+  const card = panel.locator('[data-qh-satellite="assist_satellite.kitchen"]');
+  const speaker = card.locator('[data-kind="media_player_entity_id"]');
+  const chime = card.locator('[data-kind="wake_sound_entity_id"]');
+  const end = panel.locator("#qh-end");
+  await expect(speaker).toHaveJSProperty("value", "media_player.speaker_0");
+  await card.locator("summary").click();
+  await expect(card.locator("details")).toHaveJSProperty("open",false);
+  await end.focus();
+  await panel.evaluate(host => {host._testExternalVersion = 1;});
+  await page.clock.fastForward(1500);
+  await expect(speaker).toHaveJSProperty("value", "media_player.speaker_1");
+  await expect(speaker).toHaveJSProperty("includeEntities", ["media_player.detected","media_player.speaker_1"]);
+  await expect(chime).toHaveJSProperty("value", "switch.chime_1");
+  await expect(card.locator("[data-qh-media-summary]")).toContainText("media_player.speaker_1");
+  await expect(card.locator("details")).toHaveJSProperty("open",false);
+  await expect(end).toBeFocused();
+  await card.locator("summary").click();
+  await speaker.evaluate(node => {node.tabIndex = 0; window.originalQuietPicker = node;});
+  await speaker.focus();
+  await panel.evaluate(host => {host._testExternalVersion = 2;});
+  await page.clock.fastForward(1500);
+  await expect(chime).toHaveJSProperty("value", "switch.chime_2");
+  await expect(speaker).toBeFocused();
+  await expect(speaker).toHaveJSProperty("value", "media_player.speaker_1");
+  await end.focus();
+  await expect(speaker).toHaveJSProperty("value", "media_player.speaker_2");
+  expect(await speaker.evaluate(node => node === window.originalQuietPicker)).toBe(true);
+  expect(await panel.evaluate(host=>host._unsavedState.scopes.get(host._viewKey()).revision)).toBe("2");
+  await expectHarnessClean(page,errors);
+});
+
 test("Broadcast pending history settles without device refresh or draft replacement",async({page})=>{
   const errors=trackPageErrors(page);
   await page.goto(fixtureUrl("overview"));
