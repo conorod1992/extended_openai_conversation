@@ -137,12 +137,15 @@ async def test_delete_retires_live_archive_partition_outside_manager_cache(hass)
 async def test_delete_retires_plain_embedding_cache_without_changing_io_policy(hass):
     cache = HomeAssistantEmbeddingCacheStorage(hass, "provider", "departing")
     store = cache._store
-    assert type(store) is Store
+    assert isinstance(store, Store)
+    assert type(store).async_save is Store.async_save
+    assert type(store).async_delay_save is Store.async_delay_save
     store.async_delay_save(lambda: {"vectors": []}, 3600)
     try:
         await async_delete_agent_data(hass, "provider", "departing")
         assert store._delay_handle is None
         assert store._unsub_final_write_listener is None
+        assert store._data is None
     finally:
         store._async_cleanup_delay_listener()
         store._async_cleanup_final_write_listener()

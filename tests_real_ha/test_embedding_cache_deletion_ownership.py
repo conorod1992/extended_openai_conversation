@@ -42,7 +42,8 @@ async def test_hybrid_cache_worker_settles_before_permanent_deletion(
     primary_path = Path(primary._store.path)
     cache_path = Path(cache._store.path)
     assert primary_path.is_file()
-    assert type(cache._store) is Store
+    assert isinstance(cache._store, Store)
+    assert type(cache._store).async_save is Store.async_save
 
     async def embeddings(texts):
         return [[1.0, 0.0, 0.0] for _ in texts]
