@@ -21,7 +21,7 @@ The configuration editor's **Export configuration** is also for sharing configur
 
 Exports use saved configuration. Save any draft settings first if you want them included.
 
-Private ZIP backups are limited to 160 MiB compressed and 320 MiB uncompressed. If a Full Backup exceeds a limit, export smaller groups of sections with Custom.
+Private ZIP backups are limited to 160 MiB compressed and 320 MiB uncompressed. Legacy plain JSON imports are limited to 128 MiB. If a Full Backup exceeds a limit, export smaller groups of sections with Custom.
 
 Shareable Setup with reviewed custom content retains quarantined Function Tool and Group definitions for repair after import, subject to the usual sharing omissions. Export does not silently repair malformed records or missing references. If omitting private content would make an ambiguous Function collection executable, its retained Functions are disabled and that change is listed in the omission summary. Usable disabled and load-when-needed groups retain their availability restrictions.
 

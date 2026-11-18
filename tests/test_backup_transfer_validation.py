@@ -195,13 +195,14 @@ def test_legacy_json_rejects_malformed_documents(tmp_path, payload, match) -> No
         backup_transfer._load_legacy_json_document(str(path))
 
 
-def test_legacy_json_rejects_oversized_file(tmp_path, monkeypatch) -> None:
-    path = tmp_path / "backup.json"
+@pytest.mark.parametrize("kind", ["legacy_json", "auto"])
+def test_legacy_json_rejects_oversized_file(tmp_path, monkeypatch, kind) -> None:
+    path = tmp_path / "uploaded-backup"
     path.write_bytes(b"{}")
-    monkeypatch.setattr(backup_transfer, "MAX_BACKUP_UNCOMPRESSED_BYTES", 1)
+    monkeypatch.setattr(backup_transfer, "MAX_LEGACY_JSON_IMPORT_BYTES", 1)
 
     with pytest.raises(backup.BackupError, match="uncompressed safety limit"):
-        backup_transfer._load_legacy_json_document(str(path))
+        backup_transfer._load_uploaded_document(str(path), kind)
 
 
 def test_legacy_json_reports_unavailable_file(tmp_path) -> None:
@@ -315,7 +316,7 @@ def test_legacy_json_loader_rejects_read_overflow_when_stat_underreports(
     """The actual read ceiling protects against a file growing after stat()."""
     path = tmp_path / "growing.json"
     path.write_bytes(b"12345")
-    monkeypatch.setattr(backup_transfer, "MAX_BACKUP_UNCOMPRESSED_BYTES", 4)
+    monkeypatch.setattr(backup_transfer, "MAX_LEGACY_JSON_IMPORT_BYTES", 4)
     real_getsize = backup_transfer.os.path.getsize
 
     def underreported_size(candidate):

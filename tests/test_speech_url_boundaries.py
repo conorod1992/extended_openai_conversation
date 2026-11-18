@@ -63,6 +63,31 @@ def test_long_url_wrappers_match_completed_speech(wrapper, chunk_size):
     assert "signature" not in "".join(chunks)
 
 
+@pytest.mark.parametrize(
+    "template,expected",
+    [
+        ('Before [Download]({} "Title"), after.', "Before Download, after."),
+        ('Before ([Download](<{}> "Title")), after.', "Before Download, after."),
+        ("Before[Download]({}), after.", "BeforeDownload, after."),
+    ],
+)
+def test_overlong_readable_link_preserves_spacing_at_the_buffer_boundary(
+    template, expected
+):
+    source = template.format("https://example.com/" + "x" * 4200)
+    assert StreamingSpeechSanitizer().process_complete(source) == expected
+    for width in (1, 11, 97, 4096, len(source)):
+        sanitizer = StreamingSpeechSanitizer()
+        assert (
+            "".join(
+                sanitizer.feed(source[index : index + width])
+                for index in range(0, len(source), width)
+            )
+            + sanitizer.finish()
+            == expected
+        ), width
+
+
 def assert_all_splits(source, expected):
     assert (
         _final_whitespace_cleanup(StreamingSpeechSanitizer().process_complete(source))

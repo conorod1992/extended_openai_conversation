@@ -49,6 +49,9 @@ MANIFEST_NAME = "manifest.json"
 BACKUP_CHUNK_BYTES = 512 * 1024
 MAX_BACKUP_ARCHIVE_BYTES = 160 * 1024 * 1024
 MAX_BACKUP_UNCOMPRESSED_BYTES = backup.MAX_BACKUP_BYTES
+# Historical plain JSON uses the whole-document stdlib decoder. Reserve the
+# larger payload budget for the streaming ZIP loader.
+MAX_LEGACY_JSON_IMPORT_BYTES = 128 * 1024 * 1024
 MAX_BACKUP_ARCHIVE_MEMBERS = 2
 MAX_MANIFEST_BYTES = 64 * 1024
 MAX_TRANSFER_SESSIONS = 4
@@ -850,17 +853,17 @@ def _load_archive_document(path: str) -> dict[str, Any]:
 def _load_legacy_json_document(path: str) -> dict[str, Any]:
     try:
         size = os.path.getsize(path)
-        if size > MAX_BACKUP_UNCOMPRESSED_BYTES:
+        if size > MAX_LEGACY_JSON_IMPORT_BYTES:
             raise backup.BackupError(
                 "The JSON backup exceeds the uncompressed safety limit"
             )
         with open(path, "rb") as file_handle:
-            payload = file_handle.read(MAX_BACKUP_UNCOMPRESSED_BYTES + 1)
+            payload = file_handle.read(MAX_LEGACY_JSON_IMPORT_BYTES + 1)
     except backup.BackupError:
         raise
     except OSError as err:
         raise backup.BackupError("The staged JSON backup is unavailable") from err
-    if len(payload) > MAX_BACKUP_UNCOMPRESSED_BYTES:
+    if len(payload) > MAX_LEGACY_JSON_IMPORT_BYTES:
         raise backup.BackupError(
             "The JSON backup exceeds the uncompressed safety limit"
         )
@@ -1081,7 +1084,9 @@ async def _start_import(
         else "auto"
     )
     limit = (
-        MAX_BACKUP_ARCHIVE_BYTES if kind == "archive" else MAX_BACKUP_UNCOMPRESSED_BYTES
+        MAX_LEGACY_JSON_IMPORT_BYTES
+        if kind == "legacy_json"
+        else MAX_BACKUP_ARCHIVE_BYTES
     )
     if size > limit:
         label = "compressed" if kind == "archive" else "uploaded"

@@ -1310,7 +1310,9 @@ class StreamingSpeechSanitizer:
                         text, link_start, final, self._completed_links
                     )
                     if status == "incomplete":
-                        if len(text) - index > self.max_buffer_chars:
+                        if len(text) - index >= self.max_buffer_chars:
+                            # Resolve a long destination before its held
+                            # whitespace runs out of buffer space.
                             start = self._start_long_destination(
                                 output, text, index, markdown=True
                             )
@@ -1424,17 +1426,21 @@ class StreamingSpeechSanitizer:
                     text, markdown_start, final, self._completed_links
                 )
                 if status == "incomplete":
-                    if len(text) - index > self.max_buffer_chars:
+                    if len(text) - index >= self.max_buffer_chars:
                         start = self._start_long_destination(
                             output, text, index, markdown=True
                         )
                         if start is not None:
                             index = start
                             continue
-                        if self.urls and self._is_url_start(text, markdown_start + 1):
-                            self._emit(output, text[index : markdown_start + 1])
-                            index = markdown_start + 1
-                            continue
+                    if (
+                        len(text) - index > self.max_buffer_chars
+                        and self.urls
+                        and self._is_url_start(text, markdown_start + 1)
+                    ):
+                        self._emit(output, text[index : markdown_start + 1])
+                        index = markdown_start + 1
+                        continue
                     held_whitespace = self._hold_preceding_whitespace(output)
                     break
                 if status == "complete":
