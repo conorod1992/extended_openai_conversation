@@ -131,7 +131,6 @@ def test_continuity_reset_keeps_diagnostics_and_lock_ownership():
         _sessions={"old": object()},
         _memory_bundles={"old": object()},
         _pending_ends={"old"},
-        _ignored_conversation_ids={"old": None},
     )
     manager.resume_count = 3
     manager.new_session_count = 5
@@ -144,7 +143,6 @@ def test_continuity_reset_keeps_diagnostics_and_lock_ownership():
     assert not manager._sessions
     assert not manager._memory_bundles
     assert not manager._pending_ends
-    assert not manager._ignored_conversation_ids
     assert (manager.resume_count, manager.new_session_count) == (3, 5)
     assert manager._ha_default_locks == {"owner": lock}
     assert manager._ha_default_lock_users == {"owner": 1}

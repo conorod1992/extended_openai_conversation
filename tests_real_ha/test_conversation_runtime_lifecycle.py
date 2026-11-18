@@ -4,6 +4,7 @@ import asyncio
 from datetime import timedelta
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
@@ -14,21 +15,29 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
+    CONF_ARCHIVE_RETENTION_DAYS,
+    CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_ENABLED,
+    CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
+    CONF_MEMORY_RETRIEVAL_MODE,
+    CONF_PROMPT,
     CONF_TEMPORARY_MEMORY,
+    CONF_USAGE_REQUEST_RETENTION_DAYS,
+    CONF_USAGE_RUN_RETENTION_DAYS,
     CONVERSATION_CONTINUITY_HA_DEFAULT,
     CONVERSATION_CONTINUITY_USER,
+    MEMORY_RETRIEVAL_HYBRID,
     TEMPORARY_MEMORY_BALANCED,
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context
 from homeassistant.util import dt as dt_util
-from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _speech
+from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _rule, _speech
 
 
 def _tool(name, arguments=None):
@@ -106,6 +115,7 @@ async def test_public_start_fresh_discards_transient_state_preserves_stores_and_
             _tool("start_fresh_conversation"),
             "Starting fresh.",
             "New discussion.",
+            "Another fresh discussion.",
             "Continued.",
         ],
     )
@@ -170,10 +180,19 @@ async def test_public_start_fresh_discards_transient_state_preserves_stores_and_
     assert not any(
         item.get("content") == "Starting fresh." for item in sent[4]["messages"]
     )
-    followup = await _say(hass, agent, "Follow up", fresh.conversation_id)
-    assert followup.conversation_id == fresh.conversation_id
+    stale_retry = await _say(hass, agent, "Another topic", first.conversation_id)
+    assert _speech(stale_retry) == "Another fresh discussion."
+    assert stale_retry.conversation_id != first.conversation_id
+    assert all(
+        item.get("content") not in {"Prior secret", "Starting fresh."}
+        for item in sent[5]["messages"]
+    )
+    followup_id = fresh.conversation_id if mode == CONVERSATION_CONTINUITY_HA_DEFAULT else stale_retry.conversation_id
+    followup = await _say(hass, agent, "Follow up", followup_id)
+    assert followup.conversation_id == followup_id
     assert _speech(followup) == "Continued."
-    assert any(item.get("content") == "New discussion." for item in sent[5]["messages"])
+    expected_context = "New discussion." if mode == CONVERSATION_CONTINUITY_HA_DEFAULT else "Another fresh discussion."
+    assert any(item.get("content") == expected_context for item in sent[6]["messages"])
 
 
 async def test_long_successful_public_request_keeps_groups_route_and_history_until_real_inactivity(
@@ -244,3 +263,60 @@ async def test_long_successful_public_request_keeps_groups_route_and_history_unt
     assert not any(
         item.get("content") == "Long request completed." for item in sent[4]["messages"]
     )
+
+
+async def test_native_startup_and_turn_accept_legacy_numeric_settings(hass, monkeypatch):
+    MockUser(id="lifecycle-owner", name="Owner").add_to_hass(hass)
+    agent = await _agent(
+        hass,
+        **{
+            CONF_USAGE_REQUEST_RETENTION_DAYS: " 30.00 ",
+            CONF_USAGE_RUN_RETENTION_DAYS: "90.0",
+            CONF_CONVERSATION_TIMEOUT_MINUTES: "30.0",
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_ARCHIVE_RETENTION_DAYS: "30.0",
+            CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: "15.0",
+        },
+    )
+    assert agent._usage.request_retention_days == 30
+    assert agent._usage.run_retention_days == 90
+    assert agent._archive is not None
+    _provider(monkeypatch, agent, ["Ready."])
+    assert _speech(await _say(hass, agent, "Hello")) == "Ready."
+    sessions = await agent._archive.async_list_sessions("user:lifecycle-owner")
+    assert sessions["sessions"][0]["turn_count"] == 1
+
+
+async def test_captured_input_is_used_for_generation_prompt_and_hybrid_recall(hass, monkeypatch):
+    MockUser(id="lifecycle-owner", name="Owner").add_to_hass(hass)
+    agent = await _agent(
+        hass,
+        **{
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_MEMORY_ENABLED: True,
+            CONF_MEMORY_RETRIEVAL_MODE: MEMORY_RETRIEVAL_HYBRID,
+            CONF_MEMORY_AUTO_RETRIEVE_LIMIT: "2.0",
+            CONF_PROMPT: "Effective input is {{ user_input.text }}",
+        },
+    )
+    rule = _rule(
+        "model_routing",
+        {"model": "gpt-5.6", "scope": "request", "continue_to_ai": True},
+        match_type="sentence_pattern",
+        phrase="ask for {recipient} about {question}",
+    )
+    rule.update(ai_input_mode="capture", ai_input_capture="question")
+    await agent._request_rules.async_create(rule)
+    embedding = AsyncMock(return_value=SimpleNamespace(data=[SimpleNamespace(index=0, embedding=[0.1])]))
+    monkeypatch.setattr(agent._client.embeddings, "create", embedding)
+    sent = _provider(monkeypatch, agent, ["Blue."])
+    original = "ask for Alice about why the sky is blue"
+    effective = "why the sky is blue"
+    assert _speech(await _say(hass, agent, original)) == "Blue."
+    assert embedding.await_args.kwargs["input"] == [effective]
+    messages = sent[0]["messages"]
+    assert messages[-1]["content"] == effective
+    assert f"Effective input is {effective}" in messages[0]["content"]
+    assert all(original not in item.get("content", "") for item in messages)
+    archive = await agent._archive.async_search("user:lifecycle-owner", "Alice")
+    assert len(archive["results"]) == 1

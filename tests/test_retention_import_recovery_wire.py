@@ -16,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.mutation_outcomes 
     mutation_error_code,
 )
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.exceptions import HomeAssistantError
 from tests.test_usage_detail_lifecycle import DetailStorage, TotalsStorage
 
 
@@ -63,6 +64,21 @@ async def test_import_retry_after_real_pruning_failure(
     document = exported["document"]
     document["config"][field] = 0
     document["title"] = "Imported policy"
+    with pytest.raises(HomeAssistantError, match="Confirm applying shorter Usage"):
+        await ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            management_message(
+                "configuration",
+                "import",
+                document=document,
+                mode="current",
+                confirm=True,
+                revision=baseline["revision"],
+            ),
+        )
+    assert subentry.data.get(field, baseline["config"][field]) > 0
     original = manager._detail_storage.async_save
     attempts = []
 
@@ -154,4 +170,6 @@ async def test_import_retry_after_real_pruning_failure(
     assert len(attempts) == (1 if scenario == "healthy-replace-title" else 2), (
         "UI retry must reach the healthy retention transaction"
     )
+    first_import = next(r for r in requests if r["action"] == "import")
+    assert first_import["confirm_retention"] is True
     assert manager._detail_storage.data[f"{detail}s"] == []

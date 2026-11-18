@@ -639,3 +639,186 @@ async def test_enable_toggle_resolves_unprocessed_manual_selection_rename(hass):
         assert manager.config.overrides[0].media_player_entity_id == renamed
     finally:
         await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("kind", ["volume", "switch"])
+async def test_public_policy_skips_unregistered_control_and_retries_after_restart(
+    hass, caplog, kind
+):
+    """An unsupported YAML control cannot poison verified offline restoration."""
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    from custom_components.extended_openai_conversation_responses.management_ui import (
+        async_management_command,
+    )
+
+    satellite, media, wake = _install_satellite_entities(hass, volume=0.8)
+    unsupported = (
+        "media_player.yaml_speaker" if kind == "volume" else "switch.yaml_wake"
+    )
+    healthy = wake if kind == "volume" else media
+    attributes = {"volume_level": 0.8} if kind == "volume" else {}
+    hass.states.async_set(unsupported, "idle" if kind == "volume" else "on", attributes)
+    original = hass.states.get(unsupported)
+    registry = er.async_get(hass)
+    assert registry.async_get(unsupported) is None
+    calls = []
+    _install_control_services(hass, calls)
+    admin = await hass.auth.async_create_user("Quiet admin", group_ids=["system-admin"])
+
+    async def manage(action, **fields):
+        return await async_management_command(
+            hass, admin.id, True, {"section": "quiet_hours", "action": action, **fields}
+        )
+
+    now = dt_util.now()
+    field = "media_player_entity_id" if kind == "volume" else "wake_sound_entity_id"
+    config = {
+        "enabled": True,
+        "start": (now - timedelta(hours=1)).strftime("%H:%M"),
+        "end": (now + timedelta(hours=1)).strftime("%H:%M"),
+        "max_volume": 0.2,
+        "wake_sound": "off",
+        "overrides": {satellite: {field: unsupported}},
+    }
+    result = await manage("update", config=config)
+    manager = await async_get_quiet_hours(hass)
+    try:
+        assert result["config"]["overrides"][satellite][field] == unsupported
+        assert hass.states.get(unsupported) is original
+        assert all(entity_id != unsupported for _, entity_id in calls)
+        assert unsupported in caplog.text and "registry identity" in caplog.text
+        assert unsupported not in manager.active["observed_controls"]
+        assert unsupported not in manager.active["pending_controls"]
+        assert set(manager.active["controls"]) == {healthy}
+        healthy_quiet = hass.states.get(healthy)
+        record = deepcopy(manager.active["controls"][healthy])
+        assert record["registry_identity"]
+
+        # A graceful shutdown must retain the healthy device's offline baseline.
+        for entity_id in (unsupported, healthy):
+            hass.states.async_set(entity_id, "unavailable")
+        await manager.async_shutdown()
+        record["restoration_pending"] = True
+        stored = await manager._store.async_load()
+        assert stored["active"]["controls"][healthy] == record
+        assert unsupported not in stored["active"]["controls"]
+        hass.data[DOMAIN].pop("quiet_hours_manager")
+        manager = await async_get_quiet_hours(hass)
+        assert not manager.startup_unavailable
+        assert (await manage("get"))["config"]["overrides"][satellite][
+            field
+        ] == unsupported
+        assert manager.active["controls"][healthy] == record
+
+        # The retained selection is retryable; its genuine registry event applies
+        # the policy without an editor save or a synthetic ownership identity.
+        hass.states.async_remove(unsupported)
+        registered = registry.async_get_or_create(
+            unsupported.split(".")[0],
+            "test",
+            "now-durable-control",
+            suggested_object_id=unsupported.split(".")[1],
+        )
+        assert registered.entity_id == unsupported
+        hass.states.async_set(unsupported, original.state, dict(original.attributes))
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert manager.active["controls"][unsupported]["registry_identity"] == [
+            registered.domain,
+            registered.platform,
+            registered.unique_id,
+        ]
+        assert manager.active["controls"][unsupported]["original_value"] == (
+            0.8 if kind == "volume" else True
+        )
+        assert (
+            calls.count(("volume_set" if kind == "volume" else "turn_off", unsupported))
+            == 1
+        )
+
+        # Disabling restores the new control, preserving the older offline one
+        # until it reports the quiet value again with its original effect context.
+        await manage("update", config={**config, "enabled": False})
+        assert hass.states.get(unsupported).state == original.state
+        assert dict(hass.states.get(unsupported).attributes) == dict(
+            original.attributes
+        )
+        record["restore_before_apply"] = True
+        assert manager.active["controls"][healthy] == record
+        hass.states.async_set(
+            healthy,
+            healthy_quiet.state,
+            dict(healthy_quiet.attributes),
+            context=healthy_quiet.context,
+        )
+        await manager.async_reconcile()
+        restored = hass.states.get(healthy)
+        assert (
+            restored.state if kind == "volume" else restored.attributes["volume_level"]
+        ) == ("on" if kind == "volume" else 0.8)
+        assert manager.active is None
+    finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("kind", ["volume", "switch"])
+async def test_unregistered_no_change_observation_still_respects_manual_release(
+    hass, kind
+):
+    """Only a new effect requires identity; a non-owning observation stays released."""
+    satellite, _, _ = _install_satellite_entities(hass)
+    entity_id = "media_player.yaml_quiet" if kind == "volume" else "switch.yaml_quiet"
+    hass.states.async_set(
+        entity_id,
+        "idle" if kind == "volume" else "off",
+        {"volume_level": 0.1} if kind == "volume" else {},
+    )
+    calls = []
+    _install_control_services(hass, calls)
+    manager = await async_get_quiet_hours(hass)
+    now = dt_util.now()
+    try:
+        await manager.async_update_config(
+            {
+                "enabled": True,
+                "start": (now - timedelta(hours=1)).strftime("%H:%M"),
+                "end": (now + timedelta(hours=1)).strftime("%H:%M"),
+                "max_volume": 0.2,
+                "wake_sound": "off",
+                "overrides": {
+                    satellite: {
+                        "media_player_entity_id"
+                        if kind == "volume"
+                        else "wake_sound_entity_id": entity_id,
+                    }
+                },
+            }
+        )
+        assert entity_id in manager.active["observed_controls"]
+        hass.states.async_set(
+            entity_id,
+            "idle" if kind == "volume" else "on",
+            {"volume_level": 0.7} if kind == "volume" else {},
+        )
+        manual = hass.states.get(entity_id)
+        hass.states.async_remove(entity_id)
+        registered = er.async_get(hass).async_get_or_create(
+            entity_id.split(".")[0],
+            "test",
+            "registered-after-observation",
+            suggested_object_id=entity_id.split(".")[1],
+        )
+        assert registered.entity_id == entity_id
+        hass.states.async_set(
+            entity_id,
+            manual.state,
+            dict(manual.attributes),
+            context=manual.context,
+        )
+        manual = hass.states.get(entity_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        await manager.async_reconcile()
+        await manager.async_set_enabled(False)
+        assert hass.states.get(entity_id) is manual
+        assert all(target != entity_id for _, target in calls)
+    finally:
+        await manager.async_shutdown()

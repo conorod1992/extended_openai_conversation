@@ -10,6 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 from .agent_config import (
     configured_function_tools_from_data,
     function_tool_enabled,
+    normalized_agent_integer,
     validate_function_groups,
 )
 from .const import (
@@ -334,10 +335,8 @@ async def async_preview_effective_request(
         ) from err
 
     if (
-        int(
-            options.get(
-                CONF_MEMORY_AUTO_RETRIEVE_LIMIT, DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT
-            )
+        normalized_agent_integer(
+            options, CONF_MEMORY_AUTO_RETRIEVE_LIMIT, DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT
         )
         <= 0
     ):

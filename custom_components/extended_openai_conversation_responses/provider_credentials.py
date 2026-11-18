@@ -116,7 +116,7 @@ def incompatible_provider_agent(
     )
 
 
-def restore_private_provider_connection(
+async def async_restore_private_provider_connection(
     hass: HomeAssistant,
     entry: Any,
     connection: dict[str, Any],
@@ -139,8 +139,25 @@ def restore_private_provider_connection(
         raise HomeAssistantError(
             "The provider connection changed after preview; import and preview again"
         )
-    hass.config_entries.async_update_entry(entry, data=deepcopy(connection))
-    hass.config_entries.async_schedule_reload(entry.entry_id)
+    from .restore_recovery import async_persist_config_entries
+
+    def matches(persisted: Any) -> bool:
+        entries = persisted.get("entries") if isinstance(persisted, Mapping) else None
+        return isinstance(entries, list) and any(
+            isinstance(item, Mapping)
+            and item.get("entry_id") == entry.entry_id
+            and item.get("data") == connection
+            for item in entries
+        )
+
+    state_before = entry.state
+    changed = hass.config_entries.async_update_entry(entry, data=deepcopy(connection))
+    await async_persist_config_entries(
+        hass, matches, "Restored provider connection could not be durably verified"
+    )
+    request_provider_reload_after_update(
+        hass, entry, state_before, changed=changed, retry_unchanged=True
+    )
 
 
 def _validation_error(error: OpenAIError) -> HomeAssistantError:
@@ -158,7 +175,7 @@ def request_provider_reload_after_update(
     state_before: ConfigEntryState,
     *,
     changed: bool,
-    validation_performed: bool,
+    retry_unchanged: bool,
 ) -> bool:
     """Share post-save recovery without duplicating the loaded update listener."""
     if entry.disabled_by is not None:
@@ -166,7 +183,7 @@ def request_provider_reload_after_update(
     if state_before is ConfigEntryState.LOADED:
         if changed:
             return True  # The normal update listener owns this reload.
-        if not validation_performed:
+        if not retry_unchanged:
             return False
     elif not state_before.recoverable:
         return False
@@ -238,7 +255,7 @@ async def async_replace_api_key(
         entry,
         state_before,
         changed=changed,
-        validation_performed=not skip_authentication,
+        retry_unchanged=not skip_authentication,
     )
 
     return {

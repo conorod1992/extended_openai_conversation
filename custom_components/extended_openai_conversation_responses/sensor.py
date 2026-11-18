@@ -3,34 +3,27 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime, time, timedelta
 import logging
 
 from homeassistant.components import sensor as sensor_component
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigSubentry
-from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EVENT_CORE_CONFIG_UPDATE, EntityCategory
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.util import dt as dt_util
 
 from . import ExtendedOpenAIConfigEntry
 from .agent_maintenance import get_agent_maintenance_gate
-from .const import (
-    CONF_CHAT_MODEL,
-    CONF_USAGE_REQUEST_RETENTION_DAYS,
-    CONF_USAGE_RUN_RETENTION_DAYS,
-    DEFAULT_CHAT_MODEL,
-    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-    DEFAULT_USAGE_RUN_RETENTION_DAYS,
-    DOMAIN,
-)
+from .const import CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL, DOMAIN
 from .guest_mode import GuestModeManager, async_get_guest_mode
+from .local_time import resolve_wall_time
 from .persistence_hardening import StorageRepairRequired
-from .usage import UsageManager, async_get_usage
+from .usage import UsageManager, async_get_usage, usage_retention_policy
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,17 +62,9 @@ async def async_setup_entry(
                 subentry.subentry_id,
             )
             continue
-        usage.request_retention_days = int(
-            subentry.data.get(
-                CONF_USAGE_REQUEST_RETENTION_DAYS,
-                DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-            )
-        )
-        usage.run_retention_days = int(
-            subentry.data.get(
-                CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
-            )
-        )
+        retention = usage_retention_policy(subentry.data)
+        usage.request_retention_days = retention["request_retention_days"]
+        usage.run_retention_days = retention["run_retention_days"]
         async_add_entities(
             [
                 UsageSensor(subentry, usage),
@@ -98,6 +83,7 @@ class GuestModeSensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "guest_mode"
     _attr_icon = "mdi:account-lock"
+    _attr_should_poll = False
 
     def __init__(self, subentry: ConfigSubentry, guest_mode: GuestModeManager) -> None:
         self._guest_mode = guest_mode
@@ -153,6 +139,7 @@ class UsageSensor(SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
     _attr_native_unit_of_measurement = "tokens"
+    _attr_should_poll = False
     # Backup restore can legitimately decrease this counter. A decrease is a
     # correction, not a new meter cycle whose entire value should be added.
     _attr_state_class: SensorStateClass | None = SensorStateClass.TOTAL
@@ -218,6 +205,7 @@ class _PeriodUsageSensor(UsageSensor):
 
     def __init__(self, subentry: ConfigSubentry, usage: UsageManager) -> None:
         super().__init__(subentry, usage)
+        self._cancel_period_rollover: Callable[[], None] | None = None
 
     def _summary(self) -> dict:
         raise NotImplementedError
@@ -243,19 +231,42 @@ class _PeriodUsageSensor(UsageSensor):
     async def async_added_to_hass(self) -> None:
         """Refresh event-driven period state when the local date rolls over."""
         await super().async_added_to_hass()
+        self._reschedule_period_rollover()
+        self.async_on_remove(self._remove_period_rollover)
         self.async_on_remove(
-            async_track_time_change(
-                self.hass,
-                self._handle_period_rollover,
-                hour=0,
-                minute=0,
-                second=0,
+            self.hass.bus.async_listen(
+                EVENT_CORE_CONFIG_UPDATE, self._handle_core_config_update
             )
         )
 
     @callback
+    def _remove_period_rollover(self) -> None:
+        cancel, self._cancel_period_rollover = self._cancel_period_rollover, None
+        if cancel is not None:
+            cancel()
+
+    @callback
+    def _reschedule_period_rollover(self) -> None:
+        self._remove_period_rollover()
+        zone = dt_util.DEFAULT_TIME_ZONE
+        tomorrow = dt_util.now().date() + timedelta(days=1)
+        boundary = resolve_wall_time(tomorrow, time.min, zone).astimezone(UTC)
+        self._cancel_period_rollover = async_track_point_in_utc_time(
+            self.hass, self._handle_period_rollover, boundary
+        )
+
+    @callback
+    def _handle_core_config_update(self, event: Event) -> None:
+        """Rebase the current period and next midnight when HA changes timezone."""
+        if "time_zone" in event.data:
+            self._reschedule_period_rollover()
+            self.async_write_ha_state()
+
+    @callback
     def _handle_period_rollover(self, _now: datetime) -> None:
         """Publish the new local day/month even when there is no new usage."""
+        self._cancel_period_rollover = None
+        self._reschedule_period_rollover()
         self.async_write_ha_state()
 
 
@@ -300,6 +311,8 @@ class LastResponseUsageSensor(UsageSensor):
 
     _attr_translation_key = "last_response_usage"
     _attr_state_class = None
+    # Run detail expires with time even without another accounting event.
+    _attr_should_poll = True
 
     def __init__(self, subentry: ConfigSubentry, usage: UsageManager) -> None:
         super().__init__(subentry, usage)

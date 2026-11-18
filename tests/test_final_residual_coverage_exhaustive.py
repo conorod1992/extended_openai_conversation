@@ -251,7 +251,6 @@ def test_restore_runtime_clears_registry_only_managers(hass, monkeypatch) -> Non
         _sessions={"x": 1},
         _memory_bundles={"x": 1},
         _pending_ends={"x"},
-        _ignored_conversation_ids={"x": None},
     )
     rules = request_rules.RequestRuleRuntime()
     rules.set("x", {"model": "x"})

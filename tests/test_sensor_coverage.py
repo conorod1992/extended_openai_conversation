@@ -1,6 +1,6 @@
 """Focused coverage for diagnostic sensor setup and lifecycle behavior."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -312,14 +312,17 @@ async def test_period_sensor_tracks_midnight_and_rollover_writes_state(
     tracked = {}
     remove_time_listener = Mock(name="remove_time_listener")
 
-    def track_time_change(hass, action, **kwargs):
-        tracked.update(hass=hass, action=action, kwargs=kwargs)
+    def track_point(hass, action, point):
+        tracked.update(hass=hass, action=action, point=point)
         return remove_time_listener
 
-    monkeypatch.setattr(sensor_module, "async_track_time_change", track_time_change)
+    monkeypatch.setattr(sensor_module, "async_track_point_in_utc_time", track_point)
+    monkeypatch.setattr(
+        sensor_module.dt_util, "now", lambda: datetime(2026, 9, 13, 22, tzinfo=UTC)
+    )
     usage = FakeUsage()
     sensor = UsageTodaySensor(_subentry(), usage)
-    hass = SimpleNamespace()
+    hass = SimpleNamespace(bus=SimpleNamespace(async_listen=Mock(return_value=Mock())))
     sensor.hass = hass
     write_state = Mock()
     monkeypatch.setattr(sensor, "async_write_ha_state", write_state)
@@ -329,7 +332,7 @@ async def test_period_sensor_tracks_midnight_and_rollover_writes_state(
     assert tracked == {
         "hass": hass,
         "action": sensor._handle_period_rollover,
-        "kwargs": {"hour": 0, "minute": 0, "second": 0},
+        "point": datetime(2026, 9, 14, tzinfo=UTC),
     }
     tracked["action"](datetime(2026, 9, 14, 0, 0, 0))
     write_state.assert_called_once_with()

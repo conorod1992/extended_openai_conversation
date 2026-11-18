@@ -382,6 +382,26 @@ async def test_embedding_cache_noop_and_storageless_save_paths() -> None:
     assert await uninitialized_with_cache._async_save_embedding_cache_locked() is True
 
 
+async def test_cold_hybrid_refill_persists_multiple_batches_once(monkeypatch) -> None:
+    monkeypatch.setattr(memory_module, "EMBEDDING_CACHE_BATCH_SIZE", 2)
+    cache = FakeStorage()
+    manager = PersistentMemory(FakeStorage(), cache)
+    await manager.async_initialize()
+    for index in range(5):
+        await manager.async_add("alice", f"Reminder number {index}.", "notes", "explicit")
+    batches = []
+
+    async def embed(texts):
+        batches.append(len(texts))
+        return [[1.0, 0.0] for _ in texts]
+
+    manager.set_embedding_provider(embed)
+    assert await manager.async_prepare_hybrid(["alice"], "reminder") is not None
+    assert batches == [2, 2, 1, 1]
+    assert cache.save_count == 1
+    assert len(cache.data["embeddings"]) == 5
+
+
 async def test_first_save_failure_has_no_committed_snapshot() -> None:
     manager = PersistentMemory(FakeStorage(fail_save=True))
     with pytest.raises(OSError, match="storage unavailable"):

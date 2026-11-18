@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
-from contextlib import aclosing
+from contextlib import AsyncExitStack, aclosing
 from copy import deepcopy
 from dataclasses import replace
 from hashlib import sha256
@@ -32,7 +32,11 @@ from homeassistant.helpers import device_registry as dr, llm
 from homeassistant.helpers.entity import Entity
 from homeassistant.util import slugify
 
-from .assistant_response import classify_provider_output, provider_output_presentation
+from .assistant_response import (
+    classify_provider_output,
+    provider_output_presentation,
+    separate_assistant_messages,
+)
 from .const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
@@ -900,7 +904,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
         await async_prepare_tool_results(chat_log.content)
-        async with context_summary_request(self, chat_log):
+        async with (
+            context_summary_request(self, chat_log),
+            AsyncExitStack() as presentation,
+        ):
             if self._usage is not None:
                 current_run = getattr(self._usage, "current_run", None)
                 if current_run is None or current_run() is None:
@@ -1024,6 +1031,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             )
             model = str(api_kwargs["model"])
             api_mode = provider_snapshot.api_mode
+            presentation.enter_context(
+                separate_assistant_messages(
+                    chat_log, enabled=api_mode == API_MODE_RESPONSES
+                )
+            )
             max_function_calls = options.get(
                 CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
                 DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -2353,6 +2365,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         url_citations: dict[tuple[int | None, int | None], list[dict[str, Any]]] = {}
         terminal_event_seen = False
         completed_calls: list[llm.ToolInput] = []
+        started_messages: set[int | None] = set()
+        streamed_messages: set[int | None] = set()
         event_count = 0
         async with (
             provider_output_presentation(chat_log) as select_output,
@@ -2368,9 +2382,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             async for event in events:
                 event_count += 1
                 event_type = getattr(event, "type", "")
+                output_index = getattr(event, "output_index", None)
                 if event_type == "response.output_item.added":
                     select_output(event.item)
                     item_type = getattr(event.item, "type", "")
+                    if item_type == "message":
+                        started_messages.add(output_index)
+                        streamed_messages.discard(None)
                     if item_type in {
                         "message",
                         "function_call",
@@ -2382,8 +2400,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
                 if event_type == "response.output_text.delta":
                     if event.delta:
+                        streamed_messages.add(output_index)
                         part_key = (
-                            getattr(event, "output_index", None),
+                            output_index,
                             getattr(event, "content_index", None),
                         )
                         response_text_lengths[part_key] = response_text_lengths.get(
@@ -2392,9 +2411,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         yield {"content": event.delta}
                     continue
 
+                if event_type == "response.output_text.done":
+                    part_key = (output_index, getattr(event, "content_index", None))
+                    # Before an item is introduced its final phase is unknown.
+                    # The completed item below supplies the fallback in that case.
+                    if output_index in started_messages and (text := event.text):
+                        already_streamed = response_text_lengths.get(part_key, 0)
+                        if len(text) > already_streamed:
+                            streamed_messages.add(output_index)
+                            response_text_lengths[part_key] = len(text)
+                            yield {"content": text[already_streamed:]}
+                    continue
+
                 if event_type == "response.refusal.delta":
                     refusal_delta = getattr(event, "delta", None)
                     if refusal_delta:
+                        streamed_messages.add(output_index)
                         if not isinstance(refusal_delta, str):
                             refusal_delta = str(refusal_delta)
                         part_key = (
@@ -2411,12 +2443,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if event_type == "response.refusal.done":
                     refusal = getattr(event, "refusal", None)
                     if refusal:
-                        if not isinstance(refusal, str):
-                            refusal = str(refusal)
                         part_key = (
-                            getattr(event, "output_index", None),
+                            output_index,
                             getattr(event, "content_index", None),
                         )
+                        # Defer an indexed refusal with no open message to the
+                        # completed item, which can establish its own role and phase.
+                        if (
+                            output_index is not None
+                            and output_index not in started_messages
+                            and None not in started_messages
+                            and part_key not in response_refusal_lengths
+                        ):
+                            continue
+                        streamed_messages.add(output_index)
+                        if not isinstance(refusal, str):
+                            refusal = str(refusal)
                         already_streamed = response_refusal_lengths.get(part_key, 0)
                         if len(refusal) > already_streamed:
                             yield {"content": refusal[already_streamed:]}
@@ -2459,6 +2501,33 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         item_type == "message"
                         and getattr(item, "content", None) is not None
                     ):
+                        if output_index not in started_messages:
+                            select_output(item)
+                            if (
+                                output_index not in streamed_messages
+                                and None not in streamed_messages
+                            ):
+                                yield {"role": "assistant"}
+                        # SDK events index every content part. Legacy providers
+                        # with unindexed deltas already supplied this item's text.
+                        if None not in streamed_messages:
+                            for content_index, part in enumerate(item.content):
+                                part_key = (output_index, content_index)
+                                part_type = getattr(part, "type", None)
+                                if part_type == "output_text":
+                                    missing = (part.text or "")[
+                                        response_text_lengths.get(part_key, 0) :
+                                    ]
+                                elif part_type == "refusal":
+                                    missing = (part.refusal or "")[
+                                        response_refusal_lengths.get(part_key, 0) :
+                                    ]
+                                else:
+                                    continue
+                                if missing:
+                                    yield {"content": missing}
+                        streamed_messages.discard(None)
+                        started_messages.discard(output_index)
                         # Keep URL citation annotations internally. Home Assistant's
                         # native field is not exposed to the streaming listener, so the
                         # original message and structured metadata remain available for
@@ -2652,8 +2721,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     exposed_entities,
                 )
             if delayed:
-                # Retain the scheduler's existing textual result contract.
-                result = str(result)
+                from .ha_tool_result_compat import ExecutionFailure
+
+                # Preserve producer-owned failure markers for the scheduler.
+                if not isinstance(result, ExecutionFailure) and not (
+                    isinstance(result, list)
+                    and any(isinstance(item, ExecutionFailure) for item in result)
+                ):
+                    result = str(result)
         except HomeAssistantError as err:
             from .exceptions import EffectReplayBlocked
 

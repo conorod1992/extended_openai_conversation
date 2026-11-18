@@ -26,13 +26,14 @@ syncRequestRuleRoutingControls(root);
 assert.equal(scope.disabled, true);
 assert.equal(scope.value, "conversation");
 assert.equal(requestOption.disabled, true);
-assert.match(help.textContent, /not sent to the AI provider/);
+assert.match(help.textContent, /acknowledged locally/);
 
 continueToAi.checked = true;
 syncRequestRuleRoutingControls(root);
 assert.equal(scope.disabled, false);
 assert.equal(requestOption.disabled, false);
-assert.match(help.textContent, /original request to the AI unchanged/);
+assert.match(help.textContent, /original request to the AI/);
+assert.equal(scope.value, "request");
 
 scope.value = "request";
 syncRequestRuleRoutingControls(root);
@@ -70,6 +71,21 @@ for (const controls of [actualEditorControls, syncRequestRuleRoutingControls]) {
   assert.deepEqual(reasoning.options.map(option => option.value), [""]);
   reasoning.value = "{effort}";
   controls(root, ["low", "high"]);
+  assert.equal(reasoning.value, "{effort}");
+  reasoning.value = "";
+  controls(root, [], null, ["effort", "style"]);
+  assert.deepEqual(reasoning.options.map(option => option.value), ["", "{effort}", "{style}"]);
+  reasoning.value = "{effort}";
+  controls(root, ["high", "{style}"], null, ["effort"]);
+  assert.deepEqual(reasoning.options.map(option => option.value), ["", "high", "{effort}"]);
+  reasoning.value = "";
+  controls(root, [], null, ["effort"], false);
+  assert.deepEqual(reasoning.options.map(option => option.value), [""]);
+  controls(root, [], "{effort}", ["effort"], false);
+  assert.equal(reasoning.options[1].disabled, true);
+  assert.match(reasoning.options[1].textContent, /unsupported by model/);
+  controls(root, ["low", "high"], null, ["effort"], true);
+  assert.equal(reasoning.options.find(option => option.value === "{effort}").disabled, false);
   assert.equal(reasoning.value, "{effort}");
   elements.set("#rule-reasoning", null);
 }

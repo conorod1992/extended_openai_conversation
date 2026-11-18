@@ -6,11 +6,22 @@ import {loadAllUsageDays, loadUsageWindow, loadUsageDaily} from "../custom_compo
 import {
   addUsageCalendarDays,
   localUsageDateKey,
+  renderUsagePage,
   selectUsageHistory,
   usageChartBuckets,
   usageLifetimeDiffersFromDaily,
   usageWindowBounds,
 } from "../custom_components/extended_openai_conversation_responses/frontend/usage-chart.js";
+
+const tablePanel = {_data: {is_admin: true}, _e: String, _metric: () => "", _empty: () => ""};
+const runs = Array.from({length: 7}, (_, nth) => ({
+  run_id: `run-${nth}`, successful: nth === 0, request_count: 1,
+  completed_at: "2026-09-07T18:00:00Z",
+}));
+const tableContent = renderUsagePage(tablePanel, {runs: {runs}})
+  .split("<tbody data-eoc-usage-runs>")[1].split("</tbody>")[0];
+for (const run of runs) assert.ok(tableContent.includes(`data-usage-recent-run-id="${run.run_id}"`));
+assert.match(renderUsagePage(tablePanel), /Browse retained requests/);
 
 const today = "2026-09-07";
 assert.deepEqual(usageWindowBounds("7", today), {
@@ -152,4 +163,5 @@ assert.equal((Date.parse(sevenDayEnd) - Date.parse(sevenDayStart)) / 86_400_000,
 const sensorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/sensor.py", import.meta.url), "utf8");
 assert.match(sensorSource, /return self\._usage\.today_summary\(\)/);
 assert.match(sensorSource, /return self\._usage\.month_summary\(\)/);
-assert.match(sensorSource, /async_track_time_change\([\s\S]*hour=0,[\s\S]*minute=0,[\s\S]*second=0/);
+assert.match(sensorSource, /resolve_wall_time\(tomorrow, time\.min, zone\)/);
+assert.match(sensorSource, /async_track_point_in_utc_time\(\s*self\.hass, self\._handle_period_rollover, boundary/);

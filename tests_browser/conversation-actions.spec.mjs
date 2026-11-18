@@ -1,6 +1,48 @@
 import {expect, test} from "@playwright/test";
 import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+for (const bundled of [false, true]) test(`Archive browse limit keeps backward navigation available (${bundled})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("data-memory/conversations", `&seed_conversations=1${bundled ? "&bundle=1" : ""}`));
+  const panel = page.locator("extended-openai-management-panel");
+  const pager = panel.locator(".eoc-history-pager");
+  await expect(pager).toContainText("conversations");
+  await panel.evaluate(host => {
+    const archive = (host._contentData || host._result).sessions;
+    const pageAt = offset => ({
+      ...archive, offset, returned:50, limit:50, total:10051,
+      has_more:offset < 10000, next_offset:offset < 10000 ? offset + 50 : null,
+      browse_limit_reached:offset === 10000,
+    });
+    Object.assign(archive, pageAt(9950));
+    const original = host._hass.callWS;
+    let failPrevious = true;
+    window.archivePageOffsets = [];
+    host._hass.callWS = async message => {
+      if (message.section !== "conversations" || message.action !== "list") return original(message);
+      window.archivePageOffsets.push(message.offset);
+      if (message.offset === 9950 && failPrevious) {
+        failPrevious = false;
+        throw new Error("Temporary archive failure");
+      }
+      return pageAt(message.offset);
+    };
+    host._render();
+  });
+  const next = pager.getByRole("button", {name:"Next", exact:true});
+  const previous = pager.getByRole("button", {name:"Previous", exact:true});
+  await next.click();
+  await expect(pager).toContainText("Browse limit reached");
+  await expect(next).toBeDisabled();
+  await previous.click();
+  await expect(pager).toContainText("Unable to load results");
+  await expect(previous).toBeEnabled();
+  await previous.click();
+  await expect(next).toBeEnabled();
+  expect(await page.evaluate(() => window.archivePageOffsets)).toEqual([10000, 9950, 9950]);
+  await expectHarnessClean(page, errors);
+});
+
 test("Archive search and repeated page navigation settle their controls", async ({page}) => {
   const errors = trackPageErrors(page);
   const url = fixtureUrl("data-memory/conversations", "&seed_conversations=1");

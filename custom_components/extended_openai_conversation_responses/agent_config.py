@@ -902,19 +902,21 @@ def validate_speech_regex_replacements(value: Any) -> list[dict[str, str]]:
 
 
 def _require_type(
-    config: dict[str, Any], keys: tuple[str, ...], expected: type | tuple[type, ...]
+    config: Mapping[str, Any], keys: tuple[str, ...], expected: type | tuple[type, ...]
 ) -> None:
-    label = (
-        expected.__name__
-        if isinstance(expected, type)
-        else " or ".join(item.__name__ for item in expected)
-    )
+    types = (expected,) if isinstance(expected, type) else expected
+    label = " or ".join(item.__name__ for item in types)
     for key in keys:
         if key in config and (
             not isinstance(config[key], expected)
-            or (expected is int and isinstance(config[key], bool))
+            or (int in types and bool not in types and isinstance(config[key], bool))
         ):
             raise AgentConfigError(key, f"must be a {label}")
+
+
+def validate_agent_sampling_values(config: Mapping[str, Any]) -> None:
+    """Require numeric types for present sampling settings, excluding booleans."""
+    _require_type(config, (CONF_TOP_P, CONF_TEMPERATURE), (int, float))
 
 
 def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
@@ -953,15 +955,23 @@ def normalize_agent_numeric_values(candidate: dict[str, Any]) -> None:
     _coerce_legacy_numbers(candidate)
 
 
-def normalized_function_call_budget(data: Mapping[str, Any]) -> int:
-    """Read a historical budget without validating unrelated damaged fields."""
-    key = CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION
-    scalar = {key: data.get(key, DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION)}
+def normalized_agent_integer(data: Mapping[str, Any], key: str, default: int) -> int:
+    """Read one historical integer without validating unrelated settings."""
+    scalar = {key: data.get(key, default)}
     normalize_agent_numeric_values(scalar)
     _require_type(scalar, (key,), int)
-    if scalar[key] < 0:
-        raise AgentConfigError(key, "must be at least 0")
     return cast(int, scalar[key])
+
+
+def normalized_function_call_budget(data: Mapping[str, Any]) -> int:
+    """Read and validate the historical Function Tool budget."""
+    key = CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION
+    budget = normalized_agent_integer(
+        data, key, DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION
+    )
+    if budget < 0:
+        raise AgentConfigError(key, "must be at least 0")
+    return budget
 
 
 def _configuration_reasoning_context(
@@ -1096,6 +1106,19 @@ def agent_retention_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def shortened_usage_retention(
+    current: Mapping[str, Any], target: Mapping[str, Any]
+) -> dict[str, int]:
+    """Return destination detail windows that can delete existing records."""
+    previous = agent_retention_snapshot(current)
+    result = {}
+    for key, days in agent_retention_snapshot(target).items():
+        old = previous[key]
+        if type(days) is int and (type(old) is not int or days < old):
+            result[key] = days
+    return result
+
+
 def normalize_agent_config(
     data: dict[str, Any],
     *,
@@ -1195,7 +1218,7 @@ def normalize_agent_config(
         ),
         int,
     )
-    _require_type(result, (CONF_TOP_P, CONF_TEMPERATURE), (int, float))
+    validate_agent_sampling_values(result)
 
     choices: dict[str, list[Any]] = {
         CONF_API_MODE: [item["key"] for item in API_MODE_OPTIONS],
@@ -1499,6 +1522,24 @@ def model_capabilities(model: str, *, provider: str | None = None) -> dict[str, 
         model, metadata=model_metadata(model, provider=provider)
     )
     return capabilities
+
+
+def agent_config_sampling_repair_snapshot(
+    data: dict[str, Any], *, provider: str | None = None
+) -> dict[str, Any]:
+    """Display legacy sampling booleans without certifying them for a save/run.
+
+    Validate every other setting using a private numeric stand-in, then restore
+    the exact damaged values for the editor. Never cache this as validated data.
+    """
+    damaged = {
+        key: data[key]
+        for key in (CONF_TEMPERATURE, CONF_TOP_P)
+        if isinstance(data.get(key), bool)
+    }
+    defaults = agent_config_defaults()
+    source = {**data, **{key: defaults[key] for key in damaged}}
+    return {**agent_config_snapshot(source, provider=provider), **damaged}
 
 
 def _configured_tools_yaml(data: Mapping[str, Any]) -> str | None:

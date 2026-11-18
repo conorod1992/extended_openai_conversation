@@ -32,6 +32,7 @@ from .function_tool_quarantine import (
 )
 from .function_tool_resolution import latest_function_tool_for_execution
 from .ha_permissions import bind_active_ha_context
+from .ha_tool_result_compat import ExecutionFailure, tool_result_data
 from .helpers import get_exposed_entities
 from .persistence_hardening import (
     _async_repair_private_store_mode,
@@ -830,7 +831,7 @@ class DelayedToolManager:
                                 lateness,
                                 scheduled_utc.isoformat(),
                             )
-                    await agent._execute_function_tool(
+                    tool_result = await agent._execute_function_tool(
                         current_tool,
                         llm.ToolInput(
                             id=record.call_id,
@@ -847,7 +848,21 @@ class DelayedToolManager:
                     record.tool_name,
                 )
             else:
-                _LOGGER.info("Executed delayed Function Tool `%s`", record.tool_name)
+                payload = tool_result_data(tool_result)
+                outcome = payload.get("result") if isinstance(payload, dict) else None
+                results = outcome if isinstance(outcome, list) else [outcome]
+                failed = sum(isinstance(item, ExecutionFailure) for item in results)
+                if failed:
+                    _LOGGER.warning(
+                        "Delayed Function Tool `%s` reported %d failed result(s) out of %d",
+                        record.tool_name,
+                        failed,
+                        len(results),
+                    )
+                else:
+                    _LOGGER.info(
+                        "Executed delayed Function Tool `%s`", record.tool_name
+                    )
             finally:
                 await self._async_finalize(call_id)
             return False

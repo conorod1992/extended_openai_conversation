@@ -140,6 +140,8 @@ def test_usage_pagination_controls_have_reviewed_browser_coverage() -> None:
         "#usage-request-previous",
         "#usage-request-next",
         "#usage-request-retry",
+        "[data-usage-recent-run-id]",
+        "[data-usage-all-requests]",
     ]
     spec = (ROOT / controls["browser_spec"]).read_text(encoding="utf-8")
     assert "reachabilityInventory.viewports" in spec

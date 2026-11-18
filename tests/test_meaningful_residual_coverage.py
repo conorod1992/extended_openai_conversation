@@ -570,13 +570,11 @@ def test_restore_runtime_rebinds_live_agent_and_clears_transient_state(
         _sessions={"old": 1},
         _memory_bundles={"old": 1},
         _pending_ends={"old"},
-        _ignored_conversation_ids={"old": None},
     )
     agent_continuity = _seeded_continuity(
         _sessions={"live": 1},
         _memory_bundles={"live": 1},
         _pending_ends={"live"},
-        _ignored_conversation_ids={"live": None},
     )
     registry_rules = request_rules.RequestRuleRuntime()
     agent_rules = request_rules.RequestRuleRuntime()
@@ -624,7 +622,6 @@ def test_restore_runtime_rebinds_live_agent_and_clears_transient_state(
         assert manager._sessions == {}
         assert manager._memory_bundles == {}
         assert manager._pending_ends == set()
-        assert manager._ignored_conversation_ids == {}
     assert registry_rules._conversation_overrides == {}
     assert agent_rules._conversation_overrides == {}
     assert registry_groups._sessions == {}

@@ -223,8 +223,9 @@ async def test_omitted_restore_sections_reuses_preview_selection(
     monkeypatch.setattr(backup_transfer, "_snapshot_revision", lambda *_args: "revision")
     monkeypatch.setattr(backup_transfer, "_async_remove_path", AsyncMock())
 
-    async def restore(*args, sections, precondition):
+    async def restore(*args, sections, precondition, confirm_retention, **_kwargs):
         assert sections == ("memory",)
+        assert not confirm_retention
         await precondition()
         return {"status": "restored"}
 

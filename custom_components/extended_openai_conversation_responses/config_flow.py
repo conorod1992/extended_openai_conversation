@@ -376,7 +376,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             legacy_data = dict(LEGACY_STEP_USER_DATA_SCHEMA(dict(user_input)))
             return (
                 await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
-                    self, legacy_data, "user", STEP_USER_DATA_SCHEMA
+                    self, legacy_data, "user", LEGACY_STEP_USER_DATA_SCHEMA
                 )
             )
 
@@ -459,6 +459,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         data_schema: vol.Schema,
     ) -> ConfigFlowResult:
         """Validate provider settings and create the parent plus default agents."""
+        display_values = dict(data)
         errors: dict[str, str] = {}
         try:
             await validate_input(self.hass, data)
@@ -494,9 +495,17 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                 ],
             )
 
+        # Rebuild only the displayed retry form; failed values never become
+        # setup data. Legacy retries expose the submitted credential fields,
+        # preserving the original user step's extra-field policy.
+        retry_schema = self.add_suggested_values_to_schema(
+            schema_for_ha(data_schema), display_values
+        )
+        if step_id == "user":
+            retry_schema = retry_schema.extend({}, extra=STEP_USER_DATA_SCHEMA.extra)
         return self.async_show_form(
             step_id=step_id,
-            data_schema=schema_for_ha(data_schema),
+            data_schema=retry_schema,
             errors=errors,
             description_placeholders=(
                 dict(_OPENAI_CREDENTIAL_DESCRIPTION_PLACEHOLDERS)
@@ -543,9 +552,23 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                 if dict(self._reauth_entry.data) != original_data:
                     errors["base"] = "config_changed"
                 else:
-                    return self.async_update_reload_and_abort(
-                        self._reauth_entry, data=updated
+                    from .provider_credentials import (
+                        request_provider_reload_after_update,
                     )
+
+                    entry = self._reauth_entry
+                    state_before = entry.state
+                    changed = self.hass.config_entries.async_update_entry(
+                        entry, data=updated
+                    )
+                    request_provider_reload_after_update(
+                        self.hass,
+                        entry,
+                        state_before,
+                        changed=changed,
+                        retry_unchanged=True,
+                    )
+                    return self.async_abort(reason="reauth_successful")
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=schema_for_ha(vol.Schema({vol.Required(CONF_API_KEY): str})),

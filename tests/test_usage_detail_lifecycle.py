@@ -85,6 +85,29 @@ def _manager(
     )
 
 
+async def test_backup_filters_expired_details_before_daily_prune() -> None:
+    details = DetailStorage()
+    source = _manager(details, request_retention_days=7, run_retention_days=7)
+    await source.async_initialize()
+    now = dt_util.utcnow()
+    recent = (now - timedelta(days=1)).isoformat()
+    expired = (now - timedelta(days=7, hours=1)).isoformat()
+    source.requests = [_request("recent", recent), _request("expired", expired)]
+    source.runs = [_run("run-recent", recent), _run("run-expired", expired)]
+    source.totals.conversation_count = 2
+
+    exported = await source.async_backup_data()
+    destination = _manager(DetailStorage(), request_retention_days=30, run_retention_days=30)
+    await destination.async_initialize()
+    await destination.async_replace_backup(*UsageManager.validate_backup_data(exported, "agent"))
+
+    assert [item.request_id for item in destination.requests] == ["recent"]
+    assert [item.run_id for item in destination.runs] == ["run-recent"]
+    assert destination.totals.conversation_count == 2
+    assert len(source.requests) == len(source.runs) == 2
+    assert not details.saves
+
+
 async def test_prune_applies_independent_retention_windows_and_persists_survivors() -> None:
     """Request and run detail retention are evaluated independently."""
     details = DetailStorage()

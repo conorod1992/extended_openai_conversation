@@ -19,7 +19,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
 )
 from homeassistant.components import conversation
-from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntries, ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -173,6 +173,14 @@ async def test_runtime_401_drives_native_ha_reauthentication_and_reload(
         authenticate,
     )
 
+    reloads = []
+    reload_entry = ConfigEntries.async_reload
+
+    async def count_reload(manager, changed_entry_id):
+        reloads.append(changed_entry_id)
+        return await reload_entry(manager, changed_entry_id)
+
+    monkeypatch.setattr(ConfigEntries, "async_reload", count_reload)
     result = await hass.config_entries.flow.async_configure(
         reauth["flow_id"],
         {CONF_API_KEY: _REPLACEMENT_KEY},
@@ -183,9 +191,8 @@ async def test_runtime_401_drives_native_ha_reauthentication_and_reload(
     authenticate.assert_awaited_once()
     assert authenticate.await_args.kwargs["api_key"] == _REPLACEMENT_KEY
 
-    # async_update_reload_and_abort() keeps the same config entry identity but reloads
-    # its platforms. The post-reauth runtime must therefore be a newly created agent.
     await hass.async_block_till_done()
+    assert reloads == [entry_id]
     current_entry = hass.config_entries.async_get_entry(entry_id)
     assert current_entry is entry
     assert current_entry.data[CONF_API_KEY] == _REPLACEMENT_KEY

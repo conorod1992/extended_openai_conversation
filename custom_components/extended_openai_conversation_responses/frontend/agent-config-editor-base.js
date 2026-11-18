@@ -1,3 +1,4 @@
+import {usageRetentionDeletionNotice} from "./retention-settings-ui.js";
 import {captureAuthentication} from "./authentication-presentation.js";
 import {copyTextToClipboard} from "./clipboard.js";
 import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions, applyConfigurationImport, refreshUncertainConfigurationImport} from "./assistant-configuration-actions.js";
@@ -13,14 +14,13 @@ import {modelFieldPresentation, modelFieldNotes, webSearchControlState, modelCap
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
-import {saveBarMarkup} from "./unsaved-state.js";
+import {saveBarMarkup, clone} from "./unsaved-state.js";
 import {modelDataControls, bindModelDataControls} from "./model-catalog.js";
 import {bindHelp, helpButton, helpPopover} from "./agent-config-help.js";
 export {modelCapabilitiesForDraft} from "./agent-config-model-presentation.js";
 export {modelDataControls} from "./model-catalog.js";
 export {helpButton} from "./agent-config-help.js";
 
-const clone = (value) => JSON.parse(JSON.stringify(value));
 const bool = (value) => value ? "checked" : "";
 export {skillNamesFromText} from "./configuration-controls.js";
 export const option = (panel, value, selected, label = null, disabled = false) => `<option value="${panel._e(value)}" ${disabled ? "disabled" : ""} ${String(value) === String(selected) ? "selected" : ""}>${panel._e(label || panel._titleCase(value))}</option>`;
@@ -50,15 +50,18 @@ export const labelRow = (panel, label, key, helpKey = null, strong = false, valu
   return `<span class="setting-label-row"><label for="config-${key}">${strong ? `<strong>${text}</strong>` : text}</label>${helpKey ? helpButton(panel, helpKey) : ""}${settingBadgesMarkup(panel, key, value, disabled)}</span>`;
 };
 export const field = (panel, key, label, value, type = "text", description = "", disabled = false, helpKey = null, forceVisible = false) => {
+  const savedBoolean = typeof value === "boolean";
+  const damaged = type === "number" && (savedBoolean || typeof value === "string");
   if (key === "memory_auto_retrieve_limit") {
     label = "Automatically include memories";
-    description = "Select up to this many relevant memories when a new conversation starts. The same memories remain available for that conversation. Set to 0 to use memory only on demand.";
+    description = "Limit memories selected once per conversation. Enter 0 for on-demand retrieval.";
   }
   let presentation = modelFieldPresentation(panel, key, value);
   if (presentation.visible === false && !forceVisible) return "";
   if (presentation.visible === false) presentation = {};
-  disabled = forceVisible || (presentation.disabled ?? disabled);
-  let result = `<div class="setting ${presentation.disabled || forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<input id="config-${key}" data-config="${key}" data-type="${type}" type="${type === "number" ? "number" : "text"}" value="${panel._e(value)}" ${presentation.max ? `max="${presentation.max}"` : ""} ${presentation.models ? 'list="extended-openai-model-catalog"' : ""} ${disabled ? "disabled" : ""}>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span>${modelFieldNotes(panel, presentation)}</div>`;
+  disabled = !damaged && (forceVisible || (presentation.disabled ?? disabled));
+  const error = damaged ? (savedBoolean ? "Saved boolean; enter a number." : "Enter a number.") : "";
+  let result = `<div class="setting ${presentation.disabled || forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<input id="config-${key}" data-config="${key}" data-type="${type}" type="${type === "number" && !damaged ? "number" : "text"}" value="${panel._e(value)}" ${presentation.max ? `max="${presentation.max}"` : ""} ${presentation.models ? 'list="extended-openai-model-catalog"' : ""} ${disabled ? "disabled" : ""}>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}">${error}</span>${modelFieldNotes(panel, presentation)}</div>`;
   if (key === "memory_auto_retrieve_limit") {
     const config = panel._draft || panel._result?.config || {};
     const choices = panel._result?.options?.memory_retrieval_mode || [];
@@ -381,7 +384,9 @@ export function bindConfiguration(panel) {
       panel._importDocument = document;
       panel._importMode = mode;
       panel._importRevision = revision;
-      importSummary.textContent = `${result.title} / ${result.summary.model} / ${result.summary.tools} tools / ${result.summary.function_groups} function groups / ${result.summary.speech_rules} speech rules`;
+      panel._importShortenedRetention = result.shortened_usage_retention || null;
+      const retentionNotice = usageRetentionDeletionNotice(panel._importShortenedRetention);
+      importSummary.textContent = `${result.title} / ${result.summary.model} / ${result.summary.tools} tools / ${result.summary.function_groups} function groups / ${result.summary.speech_rules} speech rules${retentionNotice ? `. ${retentionNotice}` : ""}`;
       importApply.disabled = false;
     } catch (err) {
       if (!current()) return;

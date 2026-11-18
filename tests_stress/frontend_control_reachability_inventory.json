@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 467,
+  "expected_total_markers": 469,
   "viewports": [
     {
       "name": "small-phone",
@@ -79,7 +79,7 @@
     "retention-settings-ui.js": 1,
     "sharing-review.js": 7,
     "unsaved-state.js": 2,
-    "usage-chart.js": 10,
+    "usage-chart.js": 12,
     "voice-identity-core.js": 4,
     "voice-identity-ui.js": 8
   },
@@ -129,11 +129,13 @@
     },
     {
       "source": "usage-chart.js",
-      "scenario": "More than 100 retained requests, a failed request on page two, and a retryable page load",
+      "scenario": "More than 100 retained requests, a retryable page load, and access to requests from successful or expired runs",
       "selectors": [
         "#usage-request-previous",
         "#usage-request-next",
-        "#usage-request-retry"
+        "#usage-request-retry",
+        "[data-usage-recent-run-id]",
+        "[data-usage-all-requests]"
       ],
       "browser_spec": "tests_browser/usage-request-pagination.spec.mjs"
     },

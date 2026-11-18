@@ -48,9 +48,9 @@ MAX_EXCERPT_CHARACTERS = 2_000
 
 KNOWLEDGE_TOOL_NAMES = {"knowledge_search", "knowledge_list", "knowledge_get"}
 
-_TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
 _LINE_END_PATTERN = re.compile(r"[ \t]+$", re.MULTILINE)
+_PHRASE_TOKEN_PATTERN = re.compile(r"[\w'-]+[+#]*")
 
 # English question scaffolding has little retrieval value in a mixed query.
 # Keep negation, control words (on/off), identifiers and all CJK tokens salient.
@@ -130,6 +130,7 @@ class SearchResult:
     excerpt: str
     score: float
     updated_at: str
+    start_character: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -673,6 +674,7 @@ class KnowledgeLibrary:
                     excerpt=chunk.text[:MAX_EXCERPT_CHARACTERS],
                     score=round(score, 4),
                     updated_at=source.updated_at,
+                    start_character=chunk.start,
                 )
             )
         return results
@@ -1005,7 +1007,13 @@ def knowledge_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "knowledge_search",
-                "description": "Search the local Knowledge Library.",
+                "description": (
+                    "Search the local Knowledge Library. Each result includes "
+                    "start_character, a zero-based character cursor into the stored "
+                    "source at the selected chunk's start, directly usable with "
+                    "knowledge_get. It need not locate the excerpt's first character "
+                    "or the query match."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1076,6 +1084,11 @@ def knowledge_tools() -> list[dict[str, Any]]:
                             "type": "integer",
                             "minimum": 0,
                             "default": 0,
+                            "description": (
+                                "Zero-based character cursor into the stored source. "
+                                "Use a search result's start_character or a page's "
+                                "next_start_character."
+                            ),
                         },
                         "max_characters": {
                             "type": "integer",
@@ -1228,11 +1241,8 @@ def _tokens(value: str) -> set[str]:
 
 
 def _normalize(value: str) -> str:
-    return " ".join(
-        _TOKEN_PATTERN.findall(
-            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
-        )
-    )
+    normalized = unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+    return " ".join(_PHRASE_TOKEN_PATTERN.findall(normalized))
 
 
 def _normalize_catalog(value: str) -> str:

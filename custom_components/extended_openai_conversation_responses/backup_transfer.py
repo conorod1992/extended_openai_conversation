@@ -8,6 +8,7 @@ import binascii
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, is_dataclass
+from decimal import Decimal
 import hashlib
 import io
 import json
@@ -19,10 +20,12 @@ import re
 import stat
 import tempfile
 import time
-from typing import Any, cast
+from typing import IO, Any, cast
 from uuid import uuid4
 import zipfile
 
+import ijson
+from ijson.common import JSONError, ObjectBuilder
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
@@ -44,12 +47,15 @@ ARCHIVE_VERSION = 1
 PAYLOAD_NAME = "backup.json"
 MANIFEST_NAME = "manifest.json"
 BACKUP_CHUNK_BYTES = 512 * 1024
-MAX_BACKUP_ARCHIVE_BYTES = 64 * 1024 * 1024
+MAX_BACKUP_ARCHIVE_BYTES = 160 * 1024 * 1024
 MAX_BACKUP_UNCOMPRESSED_BYTES = backup.MAX_BACKUP_BYTES
+# Historical plain JSON uses the whole-document stdlib decoder. Reserve the
+# larger payload budget for the streaming ZIP loader.
+MAX_LEGACY_JSON_IMPORT_BYTES = 128 * 1024 * 1024
 MAX_BACKUP_ARCHIVE_MEMBERS = 2
 MAX_MANIFEST_BYTES = 64 * 1024
 MAX_TRANSFER_SESSIONS = 4
-MAX_TRANSFER_TEMP_BYTES = 256 * 1024 * 1024
+MAX_TRANSFER_TEMP_BYTES = 512 * 1024 * 1024
 TRANSFER_TTL_SECONDS = 15 * 60
 IMPORT_INSPECTION_TIMEOUT_SECONDS = 60
 _MAX_BASE64_CHUNK_CHARS = 4 * math.ceil(BACKUP_CHUNK_BYTES / 3) + 4
@@ -465,9 +471,7 @@ class _BoundedArchiveFile(io.BufferedRandom):
         # ZipFile seeks back to rewrite local headers. Bound the resulting end
         # position rather than cumulative writes, including the central directory.
         if self.tell() + len(data) > MAX_BACKUP_ARCHIVE_BYTES:
-            raise backup.BackupError(
-                "This full backup exceeds the 64 MB compressed safety limit"
-            )
+            raise backup.BackupError("This backup exceeds the compressed safety limit")
         return super().write(data)
 
 
@@ -479,7 +483,7 @@ def _build_archive_file(
         check_redaction_budget(snapshot, MAX_BACKUP_UNCOMPRESSED_BYTES)
     except JSONBudgetExceeded as err:
         raise backup.BackupError(
-            "This full backup exceeds the 128 MB uncompressed safety limit"
+            "This backup exceeds the uncompressed safety limit"
         ) from err
     document = _redacted_document(snapshot)
     fd, path = tempfile.mkstemp(
@@ -519,9 +523,7 @@ def _build_archive_file(
             archive_file.flush()
             size = archive_file.tell()
         if size > MAX_BACKUP_ARCHIVE_BYTES:
-            raise backup.BackupError(
-                "This full backup exceeds the 64 MB compressed safety limit"
-            )
+            raise backup.BackupError("This backup exceeds the compressed safety limit")
         return {
             "path": path,
             "filename": _safe_export_filename(document),
@@ -532,7 +534,7 @@ def _build_archive_file(
     except JSONBudgetExceeded as err:
         _remove_file(path)
         raise backup.BackupError(
-            "This full backup exceeds the 128 MB uncompressed safety limit"
+            "This backup exceeds the uncompressed safety limit"
         ) from err
     except BaseException:
         _remove_file(path)
@@ -712,13 +714,69 @@ def _read_archive_member_bounded(
     return bytes(data)
 
 
+class _ArchivePayloadReader:
+    """Track the actual decompressed length and hash as the parser reads."""
+
+    def __init__(self, member: IO[bytes]) -> None:
+        self.member = member
+        self.length = 0
+        self.digest = hashlib.sha256()
+
+    def read(self, size: int) -> bytes:
+        chunk = self.member.read(
+            min(size, MAX_BACKUP_UNCOMPRESSED_BYTES + 1 - self.length)
+        )
+        self.length += len(chunk)
+        if self.length > MAX_BACKUP_UNCOMPRESSED_BYTES:
+            raise backup.BackupError(
+                "The backup archive exceeds the uncompressed safety limit"
+            )
+        self.digest.update(chunk)
+        return chunk
+
+
+def _load_archive_payload(
+    archive: zipfile.ZipFile, expected_bytes: int, expected_hash: str
+) -> Any:
+    """Build the decoded tree without retaining the full raw or decoded JSON."""
+    invalid = False
+    builder = ObjectBuilder()
+    try:
+        with archive.open(PAYLOAD_NAME) as member:
+            reader = _ArchivePayloadReader(member)
+            try:
+                for event, value in ijson.basic_parse(reader, use_float=False):
+                    # Keep exact integers (including >64 bits) while preserving
+                    # the stdlib decoder's float representation for fractions.
+                    builder.event(
+                        event, float(value) if isinstance(value, Decimal) else value
+                    )
+            except JSONError, UnicodeError, ValueError, OverflowError:
+                invalid = True
+                # Finish checking the wire even if a malformed token stopped parsing.
+                while reader.read(64 * 1024):
+                    pass
+    except backup.BackupError:
+        raise
+    except (RuntimeError, zipfile.BadZipFile, OSError, EOFError) as err:
+        raise backup.BackupError("The backup archive payload is corrupted") from err
+    if reader.length != expected_bytes:
+        raise backup.BackupError("The backup archive payload is incomplete")
+    if reader.digest.hexdigest() != expected_hash:
+        raise backup.BackupError("The backup archive payload checksum does not match")
+    if invalid:
+        # Parser diagnostics can include the private source text.
+        raise backup.BackupError("The backup archive payload is not valid JSON")
+    return builder.value
+
+
 def _load_archive_document(path: str) -> dict[str, Any]:
     try:
         size = os.path.getsize(path)
     except OSError as err:
         raise backup.BackupError("The staged backup archive is unavailable") from err
     if size > MAX_BACKUP_ARCHIVE_BYTES:
-        raise backup.BackupError("The compressed backup exceeds the 64 MB safety limit")
+        raise backup.BackupError("The compressed backup exceeds the safety limit")
     try:
         archive = zipfile.ZipFile(path, "r")
     except (zipfile.BadZipFile, OSError) as err:
@@ -786,25 +844,7 @@ def _load_archive_document(path: str) -> dict[str, Any]:
             or _HEX_SHA256.fullmatch(payload_sha256) is None
         ):
             raise backup.BackupError("The backup archive manifest is invalid")
-        payload = _read_archive_member_bounded(
-            archive,
-            PAYLOAD_NAME,
-            MAX_BACKUP_UNCOMPRESSED_BYTES,
-            "The backup archive exceeds the uncompressed safety limit",
-            "The backup archive payload is corrupted",
-        )
-        if len(payload) != payload_bytes:
-            raise backup.BackupError("The backup archive payload is incomplete")
-        if hashlib.sha256(payload).hexdigest() != payload_sha256:
-            raise backup.BackupError(
-                "The backup archive payload checksum does not match"
-            )
-        try:
-            document = json.loads(payload)
-        except (UnicodeDecodeError, json.JSONDecodeError) as err:
-            raise backup.BackupError(
-                "The backup archive payload is not valid JSON"
-            ) from err
+        document = _load_archive_payload(archive, payload_bytes, payload_sha256)
     if not isinstance(document, dict):
         raise backup.BackupError("The backup archive payload is invalid")
     return document
@@ -813,16 +853,20 @@ def _load_archive_document(path: str) -> dict[str, Any]:
 def _load_legacy_json_document(path: str) -> dict[str, Any]:
     try:
         size = os.path.getsize(path)
-        if size > MAX_BACKUP_UNCOMPRESSED_BYTES:
-            raise backup.BackupError("The JSON backup exceeds the 128 MB safety limit")
+        if size > MAX_LEGACY_JSON_IMPORT_BYTES:
+            raise backup.BackupError(
+                "The JSON backup exceeds the uncompressed safety limit"
+            )
         with open(path, "rb") as file_handle:
-            payload = file_handle.read(MAX_BACKUP_UNCOMPRESSED_BYTES + 1)
+            payload = file_handle.read(MAX_LEGACY_JSON_IMPORT_BYTES + 1)
     except backup.BackupError:
         raise
     except OSError as err:
         raise backup.BackupError("The staged JSON backup is unavailable") from err
-    if len(payload) > MAX_BACKUP_UNCOMPRESSED_BYTES:
-        raise backup.BackupError("The JSON backup exceeds the 128 MB safety limit")
+    if len(payload) > MAX_LEGACY_JSON_IMPORT_BYTES:
+        raise backup.BackupError(
+            "The JSON backup exceeds the uncompressed safety limit"
+        )
     try:
         document = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as err:
@@ -1040,7 +1084,9 @@ async def _start_import(
         else "auto"
     )
     limit = (
-        MAX_BACKUP_ARCHIVE_BYTES if kind == "archive" else MAX_BACKUP_UNCOMPRESSED_BYTES
+        MAX_LEGACY_JSON_IMPORT_BYTES
+        if kind == "legacy_json"
+        else MAX_BACKUP_ARCHIVE_BYTES
     )
     if size > limit:
         label = "compressed" if kind == "archive" else "uploaded"
@@ -1417,14 +1463,13 @@ async def _restore_import(
             if data.get("sections") is not None
             else session.preview_sections,
             precondition=validate_preview,
-            **(
-                {
-                    "provider_connection": prepared.provider_connection,
-                    "expected_provider_data": session.preview_provider_data,
-                }
-                if restore_provider
-                else {}
-            ),
+            confirm_retention=data.get("confirm_retention") is True,
+            provider_connection=prepared.provider_connection
+            if restore_provider
+            else None,
+            expected_provider_data=session.preview_provider_data
+            if restore_provider
+            else None,
         )
     finally:
         if _imports(hass).get(session.session_id) is not session:

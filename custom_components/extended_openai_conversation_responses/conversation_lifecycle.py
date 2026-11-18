@@ -6,6 +6,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.chat_session import DATA_CHAT_SESSION, ChatSession
 
 from .continuity import ConversationContinuity
 from .function_groups import get_function_group_runtime
@@ -81,14 +82,17 @@ async def async_reset_conversation_context(
     continuity_key: str | None,
     state_session_id: str,
     memory_session_id: str,
+    chat_session: ChatSession | None = None,
 ) -> None:
     """Discard only ephemeral state associated with one logical conversation."""
     if continuity_key is not None:
         await continuity.async_request_end(continuity_key)
     elif state_session_id.startswith("conversation:"):
         conversation_id = state_session_id.removeprefix("conversation:")
-        if conversation_id:
-            await continuity.async_ignore_next_incoming_conversation_id(conversation_id)
+        if chat_session is None and conversation_id:
+            chat_session = hass.data.get(DATA_CHAT_SESSION, {}).get(conversation_id)
+        if chat_session is not None and chat_session.conversation_id == conversation_id:
+            await continuity.async_retire_chat_session(chat_session)
     await continuity.async_clear_memory_bundle(memory_session_id)
 
     function_groups = get_function_group_runtime(hass, entry_id, subentry_id)

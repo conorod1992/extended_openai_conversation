@@ -168,8 +168,54 @@
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."
+        },
+    "broadcast": {
+      "name": "Hangüzenet közvetítése",
+      "description": "TTS-közlemény küldése a kiválasztott Assist-szatelliteknek a folyamatban lévő hangmunkamenetek megszakítása nélkül. A közvetítést előbb engedélyezni kell az Extended OpenAI felületén.",
+      "fields": {
+        "message": {
+          "name": "Üzenet",
+          "description": "A közlemény szövege."
+        },
+        "whole_home": {
+          "name": "Teljes otthon",
+          "description": "Küldés minden közleményfogadásra képes Assist-szatellitnek a kiinduló eszköz kivételével."
+        },
+        "entity_id": {
+          "name": "Assist-szatellitek",
+          "description": "Egy vagy több Assist-szatellit entitás."
+        },
+        "device_id": {
+          "name": "Eszközök",
+          "description": "Azok az eszközök, amelyek Assist-szatellitjei fogadják a közleményt."
+        },
+        "area_id": {
+          "name": "Területek",
+          "description": "Azok a területek, amelyek Assist-szatellitjei fogadják a közleményt."
+        },
+        "floor_id": {
+          "name": "Emeletek",
+          "description": "Azok az emeletek, amelyek Assist-szatellitjei fogadják a közleményt."
+        },
+        "label_id": {
+          "name": "Címkék",
+          "description": "Azok a címkék, amelyek Assist-szatellitjei fogadják a közleményt."
+        },
+        "ttl_seconds": {
+          "name": "Várólista lejárata",
+          "description": "A foglalt szatellitnek történő kézbesítés maximális várakozási ideje másodpercben."
         }
+      }
     },
+    "enable_quiet_hours": {
+      "name": "Csendes időszak ütemezésének engedélyezése",
+      "description": "A mentett csendesidőszak-ütemezés bekapcsolása. Ha most csendes időszak van ütemezve, az azonnal elkezdődik."
+    },
+    "disable_quiet_hours": {
+      "name": "Csendes időszak ütemezésének letiltása",
+      "description": "A mentett csendesidőszak-ütemezés kikapcsolása. A csendes időszak által módosított hangszóró- és ébresztőszó-beállítások visszaállnak, ha azóta nem módosították őket."
+    }
+  },
     "options": {
         "step": {
             "init": {

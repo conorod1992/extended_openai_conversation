@@ -168,8 +168,54 @@
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."
+        },
+    "broadcast": {
+      "name": "Sprachnachricht übertragen",
+      "description": "Eine TTS-Durchsage an ausgewählte Assist-Satelliten senden, ohne laufende Sprachsitzungen zu unterbrechen. Die Übertragung muss zuerst in Extended OpenAI aktiviert werden.",
+      "fields": {
+        "message": {
+          "name": "Nachricht",
+          "description": "Text der Durchsage."
+        },
+        "whole_home": {
+          "name": "Ganzes Zuhause",
+          "description": "An alle durchsagefähigen Assist-Satelliten außer dem Ursprung senden."
+        },
+        "entity_id": {
+          "name": "Assist-Satelliten",
+          "description": "Eine oder mehrere Assist-Satelliten-Entitäten."
+        },
+        "device_id": {
+          "name": "Geräte",
+          "description": "Geräte, deren Assist-Satelliten die Durchsage empfangen sollen."
+        },
+        "area_id": {
+          "name": "Bereiche",
+          "description": "Bereiche, deren Assist-Satelliten die Durchsage empfangen sollen."
+        },
+        "floor_id": {
+          "name": "Etagen",
+          "description": "Etagen, deren Assist-Satelliten die Durchsage empfangen sollen."
+        },
+        "label_id": {
+          "name": "Labels",
+          "description": "Labels, deren Assist-Satelliten die Durchsage empfangen sollen."
+        },
+        "ttl_seconds": {
+          "name": "Warteschlangenablauf",
+          "description": "Maximale Wartezeit in Sekunden für die Zustellung an einen beschäftigten Satelliten."
         }
+      }
     },
+    "enable_quiet_hours": {
+      "name": "Ruhezeiten-Zeitplan aktivieren",
+      "description": "Den gespeicherten Ruhezeiten-Zeitplan einschalten. Falls jetzt Ruhezeit vorgesehen ist, beginnt sie sofort."
+    },
+    "disable_quiet_hours": {
+      "name": "Ruhezeiten-Zeitplan deaktivieren",
+      "description": "Den gespeicherten Ruhezeiten-Zeitplan ausschalten. Durch Ruhezeiten geänderte Lautsprecher- und Aktivierungswort-Einstellungen werden wiederhergestellt, sofern sie seitdem nicht geändert wurden."
+    }
+  },
     "options": {
         "step": {
             "init": {

@@ -119,7 +119,10 @@ async def test_loaded_restore_resets_continuity_without_replacing_live_owner(has
     manager = agent._continuity
     snapshot = await backup.async_collect_backup_snapshot(hass, entry, agent.subentry)
     await manager.async_set_memory_bundle("cached", [("id", "stale")], 5)
-    await manager.async_ignore_next_incoming_conversation_id("stale-chat")
+    from homeassistant.helpers.chat_session import ChatSession
+
+    retired = ChatSession("stale-chat")
+    await manager.async_retire_chat_session(retired)
     manager.resume_count = 4
     manager.new_session_count = 6
     assert await manager.async_get_memory_bundle("cached", 5)
@@ -128,5 +131,7 @@ async def test_loaded_restore_resets_continuity_without_replacing_live_owner(has
     assert result["status"] == "restored"
     assert agent._continuity is manager
     assert await manager.async_get_memory_bundle("cached", 5) is None
-    assert not manager._ignored_conversation_ids
+    assert manager._retired_chat_sessions == {"stale-chat": retired}
+    retired.async_cleanup()
+    assert not manager._retired_chat_sessions
     assert (manager.resume_count, manager.new_session_count) == (4, 6)

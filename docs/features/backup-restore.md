@@ -21,6 +21,8 @@ The configuration editor's **Export configuration** is also for sharing configur
 
 Exports use saved configuration. Save any draft settings first if you want them included.
 
+Private ZIP backups are limited to 160 MiB compressed and 320 MiB uncompressed. Legacy plain JSON imports are limited to 128 MiB. If a Full Backup exceeds a limit, export smaller groups of sections with Custom.
+
 Shareable Setup with reviewed custom content retains quarantined Function Tool and Group definitions for repair after import, subject to the usual sharing omissions. Export does not silently repair malformed records or missing references. If omitting private content would make an ambiguous Function collection executable, its retained Functions are disabled and that change is listed in the omission summary. Usable disabled and load-when-needed groups retain their availability restrictions.
 
 If sharing omissions remove or disable the built-in Skill loader, the export also omits the now-unavailable Skill selections and lists that omission. This lets ordinary configuration import complete without enabling an omitted or disabled Function. Reconfigure the loader and select the desired Skills after import. The source assistant and private backups retain their original selections.
@@ -36,7 +38,7 @@ A full backup contains the selected agent's:
 - Knowledge Library source text and metadata
 - retained conversation archive sessions and turns
 - Guest Mode schedule
-- saved lifetime, daily, request and run usage data
+- saved lifetime and daily usage totals, plus request and run details within their retention periods
 - the parent provider connection and credentials
 
 ## What it does not include
@@ -50,7 +52,7 @@ Provider restoration requires an explicit shared-connection choice because other
 ## What happens when you restore
 
 1. Select the destination conversation agent and choose **Choose file** under **Import / Restore**. The panel accepts Extended OpenAI JSON exports and ZIP backups.
-2. Review the validated summary and select **Sections to replace**. Only sections present in the file are offered; unselected destination sections remain unchanged.
+2. Review the validated summary and select **Sections to replace**. Only sections present in the file are offered. If restoring Configuration shortens Usage retention while Usage is unselected, the preview identifies the details that will expire and asks you to confirm the deletion. Aggregate Usage totals are kept when Usage is unselected.
 3. If the backup contains personal data for users missing from this installation, map each source user to a destination Home Assistant user.
 4. Choose whether to **Also restore the provider connection**, if the file contains one. This affects all agents sharing that connection.
 5. Choose **Restore selected sections** and confirm the replacement.
@@ -63,11 +65,11 @@ Restore is designed to avoid leaving only half of the backup applied. If saving 
 
 Delayed Function Tools are paused behind the same restore operation, so a due action is not deliberately run while the agent's configuration or restrictions are only partly restored.
 
-The shared provider connection is updated separately after the agent restore. A connection-update failure does not undo an already committed agent restore; read the outcome message and import/preview again before retrying that connection update.
+The shared provider connection is updated separately after the agent restore. Extended OpenAI verifies the connection on disk before reporting it as restored. If verification fails, check the shared connection before retrying. The completed agent restore stays committed.
 
 ## Interrupted restore or uncertain result
 
-The integration keeps a private local recovery record while replacing saved data. If Home Assistant stops during the operation, startup uses the saved decision to recover the previous state or finish the committed restore. If recovery cannot finish, the affected assistant remains blocked rather than processing requests with partly restored state.
+The integration keeps a private local recovery record for configuration and the data stores the restore can change. If Home Assistant stops during the operation, startup uses the saved decision to recover the previous state or finish the committed restore. If recovery cannot finish, the affected assistant remains blocked rather than processing requests with partly restored state.
 
 If the panel reports **Restore recovery is pending** or that completion is pending, restart Home Assistant as directed and resolve any reported storage problem before trying another restore. Keep the recovery files intact. If the browser loses the result and reports **Restore outcome is unknown**, refresh the agent's saved state before deciding whether another restore is needed; losing the response does not prove that nothing changed.
 

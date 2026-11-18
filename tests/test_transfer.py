@@ -785,7 +785,7 @@ def test_inspection_rejects_unrecognised_inputs(value, message) -> None:
 
 def test_inspection_enforces_raw_json_size_limit(monkeypatch) -> None:
     monkeypatch.setattr(backup, "MAX_BACKUP_BYTES", 1)
-    with pytest.raises(backup.BackupError, match="128 MB safety limit"):
+    with pytest.raises(backup.BackupError, match="uncompressed safety limit"):
         transfer.inspect_transfer(json.dumps({}), "target-agent")
 
 

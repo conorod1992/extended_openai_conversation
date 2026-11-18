@@ -203,11 +203,17 @@ class ProviderOutputBudget:
         elif kind == "response.function_call_arguments.done":
             if len(event.arguments) > MAX_ARGUMENT_CHARACTERS:
                 _exceeded()
-        elif kind == "response.refusal.done":
+        elif kind in {"response.output_text.done", "response.refusal.done"}:
             self._text(
                 key,
-                (key, getattr(event, "content_index", None), "response.refusal"),
-                _text_weight(event.refusal),
+                (
+                    key,
+                    getattr(event, "content_index", None),
+                    kind.removesuffix(".done"),
+                ),
+                _text_weight(
+                    event.text if kind == "response.output_text.done" else event.refusal
+                ),
                 complete=True,
             )
         elif kind == "response.output_text.annotation.added":

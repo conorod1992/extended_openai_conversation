@@ -56,7 +56,9 @@ for (const bundled of [false, true]) for (const returnToOriginal of [false, true
       await panel.locator("#memory-save").click();
       expect(await page.evaluate(() => memorySubmits)).toBe(0);
       expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => ["add","temporary_add"].includes(call.action)))).toEqual([]);
-      await expiry.fill(await page.evaluate(() => new Date(Date.now() + 86400000).toISOString().slice(0,19)));
+      // datetime-local normalizes zero seconds out of its value.
+      await page.clock.setFixedTime(Math.floor(Date.now() / 60_000) * 60_000);
+      await expiry.fill(await page.evaluate(() => new Date(Date.now() + 86_400_000).toISOString().slice(0, 16)));
     }
     await panel.locator("#memory-save").click();
     await expect(panel.locator("#memory-dialog")).not.toHaveJSProperty("open", true);

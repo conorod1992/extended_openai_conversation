@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime
 from heapq import heappush, heapreplace
 from typing import Any
 
@@ -174,18 +175,20 @@ def usage_runs_page(
 
 def usage_requests_page(
     manager: Any,
-    run_id: str,
+    run_id: str | None,
     *,
     limit: int = MANAGEMENT_USAGE_PAGE_MAX,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Page one run's requests without first copying every matching request."""
+    """Page one run chronologically, or all retained requests newest first."""
     safe_limit = max(1, min(int(limit), MANAGEMENT_USAGE_PAGE_MAX))
     safe_offset = max(0, int(offset))
     matching = (
         request
-        for request in manager.requests
-        if request.run_id == run_id
+        for request in (
+            manager.requests if run_id is not None else reversed(manager.requests)
+        )
+        if (run_id is None or request.run_id == run_id)
         and manager.detail_is_current(request.timestamp, request=True)
     )
     page, has_more = page_from_iterable(matching, offset=safe_offset, limit=safe_limit)
@@ -270,17 +273,35 @@ def _validate_archive_page(offset: int, limit: int, maximum: int) -> tuple[int, 
     return safe_offset, max(1, min(int(limit), maximum))
 
 
+def _archive_page_metadata(
+    offset: int, limit: int, returned: int, total: int
+) -> dict[str, Any]:
+    next_offset = offset + returned
+    more_results = total > next_offset
+    at_limit = more_results and next_offset > MAX_MANAGEMENT_HISTORY_OFFSET
+    metadata = page_metadata(
+        offset=offset,
+        limit=limit,
+        returned=returned,
+        has_more=more_results and not at_limit,
+        total=total,
+    )
+    if at_limit:
+        metadata["browse_limit_reached"] = True
+    return metadata
+
+
 def _archive_list_sync(
     sessions: dict[str, Any], scope_id: str, offset: int, limit: int
 ) -> dict[str, Any]:
     keep = offset + limit
-    heap: list[tuple[str, str, Any]] = []
+    heap: list[tuple[datetime, str, Any]] = []
     total = 0
     for session in sessions.values():
         if session.scope_id != scope_id or session.retention_state != "retained":
             continue
         total += 1
-        candidate = (session.last_message_at, session.session_id, session)
+        candidate = (_parse_time(session.last_message_at), session.session_id, session)
         if len(heap) < keep:
             heappush(heap, candidate)
         elif candidate[:2] > heap[0][:2]:
@@ -290,13 +311,7 @@ def _archive_list_sync(
     records = [asdict(item[2]) for item in page]
     return {
         "sessions": records,
-        **page_metadata(
-            offset=offset,
-            limit=limit,
-            returned=len(records),
-            has_more=total > offset + len(records),
-            total=total,
-        ),
+        **_archive_page_metadata(offset, limit, len(records), total),
     }
 
 
@@ -330,7 +345,7 @@ def _archive_search_sync(
     normalized_query = _normalize(query)
     start, end = _local_date_bounds(start_date, end_date, time_zone)
     keep = offset + limit
-    heap: list[tuple[float, str, str, str, Any, Any, int]] = []
+    heap: list[tuple[float, datetime, str, str, Any, Any, int]] = []
     total = 0
     for session in sessions.values():
         if session.scope_id != scope_id or session.retention_state != "retained":
@@ -356,7 +371,7 @@ def _archive_search_sync(
             total += 1
             candidate = (
                 score,
-                turn.timestamp,
+                timestamp,
                 session.session_id,
                 turn.turn_id,
                 session,
@@ -374,25 +389,16 @@ def _archive_search_sync(
             "session_id": session.session_id,
             "turn_id": turn.turn_id,
             "turn_index": turn_index,
-            "date": _parse_time(turn.timestamp)
-            .astimezone(time_zone)
-            .date()
-            .isoformat(),
+            "date": timestamp.astimezone(time_zone).date().isoformat(),
             "timestamp": turn.timestamp,
             "title": session.title,
             "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
         }
-        for _, _, _, _, session, turn, turn_index in page
+        for _, timestamp, _, _, session, turn, turn_index in page
     ]
     return {
         "results": records,
-        **page_metadata(
-            offset=offset,
-            limit=limit,
-            returned=len(records),
-            has_more=total > offset + len(records),
-            total=total,
-        ),
+        **_archive_page_metadata(offset, limit, len(records), total),
     }
 
 

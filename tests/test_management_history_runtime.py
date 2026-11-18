@@ -213,6 +213,24 @@ async def test_usage_requests_routes_with_pagination(
     assert result == {"requests": True}
     helper.assert_called_once_with("USAGE", "run-1", limit=9, offset=6)
 
+    message = runtime.websocket_management._ws_schema(
+        {
+            "id": 1,
+            "type": runtime.websocket_management._ws_command,
+            "section": "usage",
+            "action": "requests",
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "all_requests": True,
+            "limit": 2,
+            "offset": 4,
+        }
+    )
+    assert await command(hass, "user", True, message) == {"requests": True}
+    helper.assert_called_with("USAGE", None, limit=2, offset=4)
+    with pytest.raises(HomeAssistantError):
+        await command(hass, "user", False, message)
+
 
 async def test_unknown_usage_action_has_owned_error(
     hass, management_message, monkeypatch

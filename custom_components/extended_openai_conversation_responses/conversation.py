@@ -39,6 +39,7 @@ from .agent_config import (
     AgentConfigError,
     async_prepare_runtime_function_tools,
     function_tool_enabled,
+    normalized_agent_integer,
 )
 from .agent_configuration import (
     _archive_runtime_required,
@@ -73,8 +74,6 @@ from .const import (
     CONF_SHARED_MEMORY_MODE,
     CONF_SKILLS,
     CONF_TEMPORARY_MEMORY,
-    CONF_USAGE_REQUEST_RETENTION_DAYS,
-    CONF_USAGE_RUN_RETENTION_DAYS,
     CONTINUE_CONVERSATION_ALWAYS,
     CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_ARCHIVE_ENABLED,
@@ -93,8 +92,6 @@ from .const import (
     DEFAULT_SHARED_ARCHIVE_ENABLED,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_TEMPORARY_MEMORY,
-    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-    DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_WORKING_DIRECTORY,
     DOMAIN,
     MEMORY_RETRIEVAL_HYBRID,
@@ -270,7 +267,7 @@ from .tool_replay_guard import (
     has_unacknowledged_calls,
     remember_unacknowledged_calls,
 )
-from .usage import async_get_usage, extract_usage
+from .usage import async_get_usage, extract_usage, usage_retention_policy
 from .voice_identity_runtime import voice_identity_scope, voice_source_device_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -473,17 +470,9 @@ class ExtendedOpenAIAgentEntity(
         self._guest_mode = await async_get_guest_mode(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
-        self._usage.request_retention_days = int(
-            self.subentry.data.get(
-                CONF_USAGE_REQUEST_RETENTION_DAYS,
-                DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-            )
-        )
-        self._usage.run_retention_days = int(
-            self.subentry.data.get(
-                CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
-            )
-        )
+        retention = usage_retention_policy(self.subentry.data)
+        self._usage.request_retention_days = retention["request_retention_days"]
+        self._usage.run_retention_days = retention["run_retention_days"]
         try:
             await self._usage.async_prune_details()
         except Exception:
@@ -613,10 +602,10 @@ class ExtendedOpenAIAgentEntity(
                     self.hass, self.entry.entry_id, self.subentry.subentry_id
                 )
                 await archive.async_prune(
-                    int(
-                        self.subentry.data.get(
-                            CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
-                        )
+                    normalized_agent_integer(
+                        self.subentry.data,
+                        CONF_ARCHIVE_RETENTION_DAYS,
+                        DEFAULT_ARCHIVE_RETENTION_DAYS,
                     )
                 )
         except Exception:
@@ -639,10 +628,10 @@ class ExtendedOpenAIAgentEntity(
                 self.hass, self.entry.entry_id, self.subentry.subentry_id
             )
             await self._archive.async_prune(
-                int(
-                    self.subentry.data.get(
-                        CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
-                    )
+                normalized_agent_integer(
+                    self.subentry.data,
+                    CONF_ARCHIVE_RETENTION_DAYS,
+                    DEFAULT_ARCHIVE_RETENTION_DAYS,
                 )
             )
         except Exception as err:
@@ -698,11 +687,10 @@ class ExtendedOpenAIAgentEntity(
                         CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED
                     )
                 ),
-                inactivity_minutes=int(
-                    self.subentry.data.get(
-                        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-                        DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-                    )
+                inactivity_minutes=normalized_agent_integer(
+                    self.subentry.data,
+                    CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+                    DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
                 ),
             )
         except Exception as err:
@@ -772,6 +760,7 @@ class ExtendedOpenAIAgentEntity(
             with (
                 bind_active_ha_context(user_input.context),
                 bind_request_satellite(getattr(user_input, "satellite_id", None)),
+                tool_snapshot_scope(ToolSnapshot()),
             ):
                 async with conversation_request_lease(self):
                     with conversation_debug_trace(self, user_input) as trace:
@@ -831,11 +820,10 @@ class ExtendedOpenAIAgentEntity(
                 continuity_mode = self.subentry.data.get(
                     CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY
                 )
-                timeout_minutes = int(
-                    self.subentry.data.get(
-                        CONF_CONVERSATION_TIMEOUT_MINUTES,
-                        DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
-                    )
+                timeout_minutes = normalized_agent_integer(
+                    self.subentry.data,
+                    CONF_CONVERSATION_TIMEOUT_MINUTES,
+                    DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
                 )
                 source_device_id = source_device_id or scope.device_id
                 if self._continuity is None:
@@ -1145,6 +1133,7 @@ class ExtendedOpenAIAgentEntity(
                             )
                             request_successful = evaluation.successful
                             return result
+                        model_input = user_input
                         if (
                             evaluation is not None
                             and evaluation.provider_input is not None
@@ -1156,6 +1145,9 @@ class ExtendedOpenAIAgentEntity(
                                 )
                             chat_log.content[-1] = replace(
                                 current_user, content=evaluation.provider_input
+                            )
+                            model_input = replace(
+                                user_input, text=evaluation.provider_input
                             )
                         request_options = (
                             self._request_rule_runtime.effective_options(
@@ -1169,7 +1161,7 @@ class ExtendedOpenAIAgentEntity(
                         )
                         if self._usage is None:
                             result = await self._async_dispatch_message(
-                                user_input,
+                                model_input,
                                 chat_log,
                                 request_options,
                                 try_locally=evaluation is None,
@@ -1192,7 +1184,7 @@ class ExtendedOpenAIAgentEntity(
                             return result
                         assert run is not None
                         result = await self._async_dispatch_message(
-                            user_input,
+                            model_input,
                             chat_log,
                             request_options,
                             try_locally=evaluation is None,
@@ -1233,6 +1225,7 @@ class ExtendedOpenAIAgentEntity(
                                         continuity_key=resolution.key,
                                         state_session_id=reset_request.state_session_id,
                                         memory_session_id=reset_request.memory_session_id,
+                                        chat_session=session,
                                     )
                                 )
                         finally:
@@ -1818,11 +1811,10 @@ class ExtendedOpenAIAgentEntity(
         if not readable_scope_ids:
             return []
         try:
-            retrieve_limit = int(
-                self.subentry.data.get(
-                    CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
-                    DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
-                )
+            retrieve_limit = normalized_agent_integer(
+                self.subentry.data,
+                CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
+                DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
             )
             if retrieve_limit <= 0:
                 return []

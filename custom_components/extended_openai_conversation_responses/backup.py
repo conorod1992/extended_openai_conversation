@@ -71,7 +71,9 @@ BACKUP_FORMAT = "extended_openai_conversation_backup"
 BACKUP_VERSION = 5
 # The management UI uses the chunked transfer path for large files. Keep validation
 # bounded even when a document was reconstructed from many small WebSocket frames.
-MAX_BACKUP_BYTES = 128 * 1024 * 1024
+# A whole Knowledge Library can use up to 500 * 100,000 characters. JSON
+# can use six bytes per character for escaped control characters, plus metadata.
+MAX_BACKUP_BYTES = 320 * 1024 * 1024
 # The old one-message JSON transport remains for API compatibility only. It must
 # never grow into a WebSocket frame large enough to destabilize Home Assistant.
 MAX_LEGACY_EXPORT_BYTES = 16 * 1024 * 1024
@@ -126,6 +128,11 @@ class PreparedRestore:
     # Live Knowledge-only commits may retain untouched conversation state.
     # Deliberately absent from journal/portable documents: recovery resets safely.
     preserve_retained_continuity: bool = False
+    # None preserves the full-replacement semantics of legacy journals.
+    journaled_sections: frozenset[str] | None = None
+
+    def restores(self, section: str) -> bool:
+        return self.journaled_sections is None or section in self.journaled_sections
 
     def summary(self) -> dict[str, Any]:
         return {

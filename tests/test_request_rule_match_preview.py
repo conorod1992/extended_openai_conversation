@@ -8,6 +8,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
+    async_request_rule_match_preview,
     request_rule_match_preview,
 )
 from custom_components.extended_openai_conversation_responses.request_rule_patterns import (
@@ -78,11 +79,39 @@ def test_preview_lists_function_alias_without_executing_or_inventing_result() ->
     assert preview["would_do"] == {
         "type": "local_action",
         "action_count": 1,
-        "consumed": False,
-        "provider_input": "original",
+        "consumed": None,
+        "provider_input": "conditional",
+        "conditional": True,
         "functions": [{"name": "get_battery", "result_alias": "battery"}],
     }
+    assert preview["conditional"] is True
     assert "result" not in preview["would_do"]
+
+
+@pytest.mark.parametrize("match_type,handoff", [("equals", False), ("starts_with", True)])
+async def test_single_legacy_routing_summary_and_chain_agree(hass, match_type, handoff):
+    match = RuleMatch(
+        rule={
+            "id": "legacy", "name": "Legacy", "match_type": match_type,
+            "action_type": "model_routing", "action": {"model": "gpt-5"},
+        },
+        phrase="think", fuzzy=False, score=100,
+    )
+
+    class Rules:
+        async def async_match(self, _hass, _text):
+            return match
+
+    result = await async_request_rule_match_preview(hass, Rules(), "think carefully")
+    assert result["would_do"]["consumed"] is (not handoff)
+    assert result["would_do"]["provider_input"] == ("original" if handoff else "none")
+    item = result["matched_rules"][0]
+    assert item["would_do"] == result["would_do"]
+    assert item["status"] == ("would_send_to_ai" if handoff else "stopped")
+    assert item["ai_input"] == (
+        {"mode": "original", "capture": None, "provider_input": "think carefully"}
+        if handoff else None
+    )
 
 
 def test_preview_summarizes_model_routing_and_no_match() -> None:

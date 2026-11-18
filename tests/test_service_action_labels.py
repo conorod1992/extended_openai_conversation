@@ -5,7 +5,6 @@ from pathlib import Path
 
 import yaml
 
-
 ROOT = Path(__file__).parents[1] / "custom_components" / "extended_openai_conversation_responses"
 
 
@@ -28,3 +27,24 @@ def test_action_field_names_are_published_in_metadata_and_english_translations()
                 assert source["services"][action]["fields"][field]["name"], (
                     action, field
                 )
+
+
+def test_broadcast_and_quiet_hours_translations_match_targeted_service_fields():
+    """Older locale omissions must not expand this three-service contract."""
+    services = yaml.safe_load((ROOT / "services.yaml").read_text(encoding="utf-8"))
+    targeted = ("broadcast", "enable_quiet_hours", "disable_quiet_hours")
+    for path in [ROOT / "strings.json", *sorted((ROOT / "translations").glob("*.json"))]:
+        translated = json.loads(path.read_text(encoding="utf-8"))["services"]
+        for service_id in targeted:
+            expected = services[service_id]
+            actual = translated[service_id]
+            assert actual["name"] and actual["description"], (path.name, service_id)
+            assert set(actual.get("fields", {})) == set(expected.get("fields", {}))
+            for field_id, field in actual.get("fields", {}).items():
+                assert field["name"] and field["description"], (path.name, field_id)
+            if path.name in {"strings.json", "en.json"}:
+                assert actual["name"] == expected["name"]
+                assert actual["description"] == expected["description"]
+                for field_id, field in actual.get("fields", {}).items():
+                    assert field == {key: expected["fields"][field_id][key] for key in ("name", "description")}
+    assert len(services["broadcast"]["fields"]) == 8

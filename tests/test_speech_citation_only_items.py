@@ -45,7 +45,7 @@ def test_citation_only_items_without_whitespace_cleanup(prefix, tail, ending):
         ("2) https://example.com .5 volts", "2. .5 volts"),
         ("2) https://example.com -3 degrees", "2. -3 degrees"),
         ("2) https://example.com `2**3`", "2. 2**3"),
-        (r"2) https://example.com \*literal\*", r"2. \*literal\*"),
+        (r"2) https://example.com \*literal\*", "2. *literal*"),
         ("2) https://a.com **[b.com](https://b.com)** Next", "2. Next"),
         ("1) First\n2) https://example.com.\n3) Third", "1. First\n3. Third"),
         (

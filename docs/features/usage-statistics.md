@@ -23,7 +23,17 @@ Each conversation-agent device has four disabled-by-default diagnostic entities:
 - **Usage this month** is derived from daily aggregates.
 - **Last response usage** contains the latest retained completed run's bounded token, request, model, duration, and success details. It has no value when run-detail retention is disabled, after that detail expires, or after a successful **Clear details**. A failed clear preserves the retained detail. Lifetime, Today, and This month aggregate sensors remain intact.
 
-No sensor is created per day, model, request, or transcript session. Updates are listener-driven and do not poll. The selectable management-panel history period does not change the Today or This month sensor periods.
+No sensor is created per day, model, request, or transcript session. Lifetime,
+Today, and This month update through accounting/restore listeners without polling.
+Today and This month also refresh at Home Assistant's local midnight, including
+across daylight-saving changes. Timezone changes refresh the period sensors and
+their next midnight callback.
+Last response usage receives accounting updates
+and retains Home Assistant polling so an idle run that passes its retention limit
+loses its value even without further usage. It then has no token value or run
+attributes (Home Assistant displays an unknown state). This expiry may take up
+to the normal sensor polling interval. The selectable management-panel history
+period does not change the Today or This month sensor periods.
 
 Lifetime usage uses Home Assistant's `total` state class without `last_reset`.
 Restoring an older backup can reduce the lifetime counter; HA records that as a
@@ -43,7 +53,7 @@ The selected period drives the aggregate token totals, chart, model/provider/API
 
 The **Usage diagnostics** section summarizes the same selected daily-aggregate period as the chart. It highlights cache reuse, run and provider-request success rates, average provider requests per run, average run duration, token mix, tool-call and web-search activity, and token distribution by model, provider, and API mode. This makes it easier to spot repeated provider calls, unexpectedly slow turns, poor cache reuse, or a model/API route accounting for most token use.
 
-Recent failed runs are called out separately. Recent-run and provider-request detail is retention-bounded and does not expand when a longer aggregate-history period is selected. When retained request detail exists, **View requests** shows the individual provider calls in that run, including stage, provider, model, API mode, token counts, cache/reasoning metadata, duration, requested tool-call count, web-search use, and success/error state. This detail remains content-free.
+Recent failed runs are called out separately. Recent-run and provider-request detail stays within its configured retention periods. Use **Requests** on a recent run to see its individual provider calls, or **Browse retained requests** to include calls whose run detail has expired and calls recorded independently of a run. The detail includes stage, provider, model, API mode, token counts, cache and reasoning metadata, duration, requested tool-call count, web-search use, and success or error state.
 
 Recent-run timestamps are displayed in Home Assistant's configured timezone using the browser's locale, while the exact provider timestamp remains available on the semantic time element. **Cached input** is request content the provider has seen before and can reuse. It remains part of total tokens rather than additional usage, and may cost less than uncached input when the provider supports discounted caching.
 

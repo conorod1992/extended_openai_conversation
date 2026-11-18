@@ -463,7 +463,7 @@ class PersistentMemory:
                     elif (
                         valid_from is not None
                         and duplicate.valid_from is not None
-                        and duplicate.valid_from != valid_from
+                        and not _same_validity_instant(duplicate.valid_from, valid_from)
                     ):
                         conflict = "valid_from"
                     elif (
@@ -598,8 +598,10 @@ class PersistentMemory:
                         or candidate.subject == cleaned_subject
                     )
                     and (
-                        cleaned_valid_from is _UNSET
-                        or candidate.valid_from == cleaned_valid_from
+                        isinstance(cleaned_valid_from, _UnsetType)
+                        or _same_validity_instant(
+                            candidate.valid_from, cleaned_valid_from
+                        )
                     )
                     and (cleaned_key is _UNSET or candidate.key == cleaned_key)
                 )
@@ -814,7 +816,8 @@ class PersistentMemory:
                 and (category_filter is None or memory.category == category_filter)
             ]
             memories.sort(
-                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                reverse=True,
             )
             return memories[offset : offset + limit]
 
@@ -839,7 +842,8 @@ class PersistentMemory:
                 and (category_filter is None or memory.category == category_filter)
             ]
             memories.sort(
-                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                reverse=True,
             )
             end = offset + limit
             return memories[offset:end], len(memories) > end
@@ -883,7 +887,8 @@ class PersistentMemory:
                 ).casefold()
             ]
             memories.sort(
-                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                reverse=True,
             )
             total = len(memories)
             return memories[offset : offset + limit], total
@@ -1299,7 +1304,7 @@ class PersistentMemory:
         if (
             valid_from is not None
             and candidate.valid_from is not None
-            and valid_from != candidate.valid_from
+            and not _same_validity_instant(valid_from, candidate.valid_from)
         ):
             return None
         return candidate
@@ -1333,7 +1338,7 @@ class PersistentMemory:
             and not (
                 valid_from is not None
                 and memory.valid_from is not None
-                and valid_from != memory.valid_from
+                and not _same_validity_instant(valid_from, memory.valid_from)
             )
         ]
         return sorted(matches, key=lambda memory: memory.memory_id)
@@ -1410,62 +1415,55 @@ class PersistentMemory:
                 if memory.user_id in allowed_scopes
                 and self._cached_embedding(memory) is None
             ]
-        for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
-            batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
-            vectors = await provider([_embedding_text(memory) for memory in batch])
-            if len(vectors) != len(batch):
-                raise ValueError(
-                    "embedding provider returned the wrong number of vectors"
-                )
-            batch_generated = False
-            async with async_storage_lock(self._storage, self._lock):
-                if (
-                    self._embedding_provider is not provider
-                    or self._embedding_model != model
-                    or self._embedding_space_id != space_id
-                    or self._embedding_retry_identity != retry_identity
-                ):
-                    return False
-                for memory, vector in zip(batch, vectors, strict=True):
-                    current = self._memories.get(memory.memory_id)
-                    if (
-                        current is None
-                        or current.user_id != memory.user_id
-                        or current.user_id not in allowed_scopes
-                        or _embedding_fingerprint(current)
-                        != _embedding_fingerprint(memory)
-                        or self._cached_embedding(current) is not None
-                    ):
-                        continue
-                    self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
-                        model=model,
-                        space_id=space_id,
-                        fingerprint=_embedding_fingerprint(memory),
-                        vector=_clean_embedding(vector),
-                    )
-                    batch_generated = True
-                if not batch_generated:
-                    continue
-                self._embedding_cache_dirty = True
-                # Keep the manager lease until its best-effort native write has
-                # settled, including when reader retirement cancels this refresh.
-                await async_settle_owned_operation(
-                    self._async_save_embedding_cache_locked()
-                )
-        # A warm scope still offers a retry opportunity after the cooldown.
-        # Best-effort persistence must never gate valid in-memory vectors.
-        async with async_storage_lock(self._storage, self._lock):
-            if (
-                self._embedding_provider is not provider
-                or self._embedding_model != model
-                or self._embedding_space_id != space_id
-                or self._embedding_retry_identity != retry_identity
-            ):
-                return False
-            await async_settle_owned_operation(
-                self._async_save_embedding_cache_locked()
+
+        def provider_is_current() -> bool:
+            return (
+                self._embedding_provider is provider
+                and self._embedding_model == model
+                and self._embedding_space_id == space_id
+                and self._embedding_retry_identity == retry_identity
             )
-        return True
+
+        try:
+            for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
+                batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
+                vectors = await provider([_embedding_text(memory) for memory in batch])
+                if len(vectors) != len(batch):
+                    raise ValueError(
+                        "embedding provider returned the wrong number of vectors"
+                    )
+                async with async_storage_lock(self._storage, self._lock):
+                    if not provider_is_current():
+                        return False
+                    for memory, vector in zip(batch, vectors, strict=True):
+                        current = self._memories.get(memory.memory_id)
+                        if (
+                            current is None
+                            or current.user_id != memory.user_id
+                            or current.user_id not in allowed_scopes
+                            or _embedding_fingerprint(current)
+                            != _embedding_fingerprint(memory)
+                            or self._cached_embedding(current) is not None
+                        ):
+                            continue
+                        cleaned = _clean_embedding(vector)
+                        self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
+                            model=model,
+                            space_id=space_id,
+                            fingerprint=_embedding_fingerprint(memory),
+                            vector=cleaned,
+                        )
+                        self._embedding_cache_dirty = True
+        finally:
+            # Save once per refill, including progress before a failed batch.
+            # A warm scope still retries a previous failed save after cooldown.
+            async with async_storage_lock(self._storage, self._lock):
+                same_provider = provider_is_current()
+                if same_provider:
+                    await async_settle_owned_operation(
+                        self._async_save_embedding_cache_locked()
+                    )
+        return same_provider
 
     async def _async_save_locked(self, *, replacing: bool = False) -> None:
         """Settle writes and rebuild memory indexes from authoritative storage."""
@@ -2584,7 +2582,7 @@ def _clean_key(value: str | None) -> str | None:
 
 
 @lru_cache(maxsize=20_000)
-def _updated_at_instant(value: str) -> datetime:
+def _memory_timestamp_instant(value: str) -> datetime:
     """Sort validated timestamps by instant; legacy naive values mean UTC.
 
     Keep stored strings intact and reuse parsing across management pages. Python's
@@ -2595,6 +2593,14 @@ def _updated_at_instant(value: str) -> datetime:
     # Aware datetime comparisons already compare instants. Converting to UTC
     # would overflow for valid offset timestamps at the year 1/9999 boundaries.
     return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+
+
+def _same_validity_instant(first: str | None, second: str | None) -> bool:
+    return first == second or (
+        first is not None
+        and second is not None
+        and _memory_timestamp_instant(first) == _memory_timestamp_instant(second)
+    )
 
 
 def _clean_timestamp(value: str | None, field: str) -> str | None:

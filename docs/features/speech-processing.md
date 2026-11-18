@@ -12,13 +12,30 @@ The built-in cleanup can remove content that is useful on screen but awkward whe
 - formatting markers
 - bare URLs
 
-It works with Responses, Chat Completions and compatible providers. It also keeps track of text across streamed chunks, so a Markdown link or URL split across several pieces can still be removed before it is spoken.
+It works with Responses, Chat Completions and compatible providers. Cleanup follows links across streamed chunks. When a recognized URL exceeds the streaming buffer, cleanup keeps skipping the URL even if its closing delimiter never arrives.
 
 Link labels such as `Sources`, `References`, and `1` remain spoken. Only empty labels and labels that are themselves URLs or addresses are suppressed; cleanup does not guess whether a label is a citation.
 
 Numbered list items keep their numbers for TTS: `2) Check the switch` becomes `2. Check the switch`. Bullet markers are removed. Items containing only removed URLs or citations disappear with their markers, while standalone numerical text such as `5.` or `5)` stays intact. This also applies to streamed replies and nested lists.
 
 Inline code preserves literal operators and URLs while its backtick delimiters are removed, including when enclosed in emphasis. Final whitespace cleanup preserves parentheses such as `call()`. Configured replacement rules can deliberately change this content.
+
+With Markdown cleanup enabled, backslashes escaping ASCII punctuation are removed
+outside recognized code. The punctuation stays literal: `\*word\*` is spoken as
+`*word*`, without treating those stars as emphasis. Other backslashes and a final
+unpaired backslash remain. Streaming waits for the character after a trailing
+backslash before deciding how to speak it.
+
+Completed cleanup attaches ordinary punctuation to preceding prose, such as
+`Hello , world` becoming `Hello, world`. Spaces before escaped punctuation stay:
+`off now. \!photo` becomes `off now. !photo`. Custom replacements still run before
+final whitespace cleanup. Copied text and regex backreferences retain this
+literal spacing; newly written replacement punctuation uses normal attachment.
+
+Short, contiguous `=` Setext underlines after plain top-level heading text are
+removed. Standalone equals runs, spaced `= = =`, operators, escapes, and code stay
+literal. Recognition is deliberately bounded to 32 characters per underline and
+does not cover headings in list/quote containers or after complex inline syntax.
 
 Backtick block fences omit their opening info string, such as `yaml`, at the
 start of an original source line (with up to three spaces), after list markers,

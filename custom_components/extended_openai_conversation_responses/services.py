@@ -550,7 +550,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             entry,
             state_before,
             changed=changed,
-            validation_performed=not new_data.get(CONF_SKIP_AUTHENTICATION, False),
+            retry_unchanged=not new_data.get(CONF_SKIP_AUTHENTICATION, False),
         )
 
     async def reload_skills(call: ServiceCall) -> ServiceResponse:

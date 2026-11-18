@@ -33,6 +33,7 @@ test("mutation declarations preserve real revisions and cached projections", asy
     await panel.locator("#rule-name").fill("After configuration save");
     await panel.locator("#rule-phrases").fill("mutation test phrase");
     await panel.locator("#rule-action-type").selectOption("model_routing");
+    await panel.locator("#rule-continue-to-ai").check();
     await panel.locator("#rule-model").fill("gpt-5-mini");
     await panel.locator("#rule-scope").selectOption("conversation");
     await panel.locator("#rule-save").click();
@@ -64,6 +65,7 @@ test("mutation declarations preserve real revisions and cached projections", asy
     await panel.locator("#rule-name").fill("Submitted genuine HA Rule");
     await panel.locator("#rule-phrases").fill("held genuine rule command");
     await panel.locator("#rule-action-type").selectOption("model_routing");
+    await panel.locator("#rule-continue-to-ai").check();
     await panel.locator("#rule-model").fill("gpt-5-mini");
     await panel.locator("#rule-scope").selectOption("conversation");
     await panel.locator("#rule-save").click();

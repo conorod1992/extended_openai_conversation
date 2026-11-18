@@ -74,3 +74,25 @@ test("disabling Web Search retains its saved detail preference", async ({page}) 
   await expect(detail).toHaveValue("high");
   await expectHarnessClean(page, errors);
 });
+
+
+test("unfinished numeric input blocks Save without turning into zero", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("data-memory/memory-settings", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  const limit = panel.locator('[data-memory-config="memory_auto_retrieve_limit"]');
+  await expect(limit).toBeVisible();
+  const saved = await page.evaluate(() => browserHarness.getState().configuration.config.memory_auto_retrieve_limit);
+  await limit.fill("");
+  await limit.press("-");
+  expect(await limit.evaluate(control => control.validity.badInput)).toBe(true);
+  const save = panel.getByRole("button", {name:"Save changes", exact:true});
+  await save.click();
+  expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "save"))).toHaveLength(0);
+  expect(await page.evaluate(() => browserHarness.getState().configuration.config.memory_auto_retrieve_limit)).toBe(saved);
+  const updated = saved === 7 ? 6 : 7;
+  await limit.fill(String(updated));
+  await save.click();
+  await expect.poll(() => page.evaluate(() => browserHarness.getState().configuration.config.memory_auto_retrieve_limit)).toBe(updated);
+  await expectHarnessClean(page, errors);
+});
