@@ -52,7 +52,6 @@ from .model_capabilities import (
     recommended_reasoning_effort,
     validate_reasoning_effort,
 )
-from .model_catalog import model_metadata
 from .provider_content import answer_text
 from .provider_errors import (
     classify_config_provider_error,
@@ -60,7 +59,11 @@ from .provider_errors import (
     provider_user_message,
     request_reauthentication,
 )
-from .request import auxiliary_output_token_limit, conversation_tools_required
+from .request import (
+    auxiliary_output_token_limit,
+    conversation_tools_required,
+    request_model_capabilities,
+)
 from .skill_availability import skill_loader_status
 from .skills import SkillManager
 from .usage import async_get_usage, extract_usage
@@ -153,14 +156,11 @@ async def async_test_agent(
             _check("API mode", "Failed", f"Unsupported mode: {configured_mode}")
         )
         return AgentTestResult(_overall(checks), checks)
-    underlying_model = subentry.data.get("azure_model")
-    if (
-        underlying_model
-        and effective_api_provider(
-            entry.data.get(CONF_API_PROVIDER), entry.data.get(CONF_BASE_URL)
-        )
-        != "azure"
-    ):
+    usage_provider = effective_api_provider(
+        entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+        entry.data.get(CONF_BASE_URL),
+    )
+    if subentry.data.get("azure_model") and usage_provider != "azure":
         checks.append(
             _check(
                 "Configuration",
@@ -169,7 +169,7 @@ async def async_test_agent(
             )
         )
         return AgentTestResult(_overall(checks), checks)
-    metadata = model_metadata(str(underlying_model or model))
+    metadata = request_model_capabilities(subentry.data, entry.data)
     try:
         with model_capability_snapshot(model, metadata):
             effort = (
@@ -198,7 +198,6 @@ async def async_test_agent(
         )
         return AgentTestResult(_overall(checks), checks)
     checks.append(_check("API mode", "Passed", api_mode.replace("_", " ").title()))
-    usage_provider = str(entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER))
     usage_model = str(model)
     usage_api_mode = str(api_mode)
 

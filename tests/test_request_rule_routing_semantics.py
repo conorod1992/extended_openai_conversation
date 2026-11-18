@@ -123,6 +123,44 @@ def test_captured_reasoning_requires_effort_support_for_fixed_routes(model) -> N
 
 
 
+@pytest.mark.parametrize(
+    ("binding", "effort", "valid"),
+    [
+        ("gpt-4.1", "high", False),
+        ("gpt-4.1", "{effort}", False),
+        ("gpt-5.6", "high", True),
+        ("gpt-5.6", "{effort}", True),
+        ("{binding}", "high", True),
+    ],
+)
+def test_captured_azure_deployment_validates_fixed_bound_capabilities(
+    binding, effort, valid
+) -> None:
+    rule = validate_rule(
+        _rule(
+            "azure-captured-deployment",
+            "route {deployment} via {binding} at {effort=low|high}",
+            match_type="sentence_pattern",
+            action={
+                "model": "{deployment}",
+                "azure_model": binding,
+                "reasoning_effort": effort,
+                "scope": "request",
+                "continue_to_ai": True,
+            },
+        )
+    )
+    options = {CONF_CHAT_MODEL: "ha-default", "azure_model": "gpt-4.1"}
+    entry_data = {"api_provider": "azure"}
+    if valid:
+        validate_rule_model_request(rule, options, entry_data)
+    else:
+        with pytest.raises(HomeAssistantError, match="does not support reasoning effort"):
+            validate_rule_model_request(rule, options, entry_data)
+        validate_rule_model_request({**rule, "enabled": False}, options, entry_data)
+        validate_saved_model_routes([rule], options, entry_data)
+
+
 async def test_continued_routing_uses_later_override_in_global_order(hass) -> None:
     first = _rule("first", "route", order=0, action={
         "model": "gpt-5.6", "reasoning_effort": None, "scope": "request",

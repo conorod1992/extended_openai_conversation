@@ -3287,11 +3287,20 @@ def validate_rule_model_request(
     from .model_routing import routed_model_override
 
     model = action.get("model")
-    if isinstance(model, str) and SLOT_REFERENCE.search(model):
-        return  # A captured model is validated once resolved, before storing state.
     underlying_model = action.get("azure_model")
     if isinstance(underlying_model, str) and SLOT_REFERENCE.search(underlying_model):
         return  # The complete deployment/binding pair is checked after capture resolution.
+    if isinstance(model, str) and SLOT_REFERENCE.search(model):
+        # Previously saved routes remain repairable and can always be disabled.
+        if not (
+            underlying_model
+            and check_captured_effort_support
+            and rule.get("enabled", True)
+        ):
+            return
+        # A fixed Azure binding already supplies the capabilities. The
+        # captured deployment name can be checked when the rule runs.
+        model = None
     values = routed_model_override(options, model, underlying_model, entry_data)
     effort = action.get("reasoning_effort")
     if effort and not model and not underlying_model:

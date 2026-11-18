@@ -19,6 +19,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_CHAT_MODEL,
     CONF_FUNCTION_TOOLS,
     CONF_MEMORY_MODE,
+    CONF_REASONING_EFFORT,
     CONF_WEB_SEARCH,
     MEMORY_MODE_MANUAL,
     MEMORY_MODE_OFF,
@@ -233,6 +234,37 @@ async def test_azure_deployment_probe_uses_bound_underlying_capabilities() -> No
     assert request["model"] == "ha-production"
     assert request["tools"]
     assert usage.async_record_request.await_args.kwargs["model"] == "ha-production"
+
+
+@pytest.mark.parametrize(
+    "entry_data",
+    [
+        {"api_provider": "azure"},
+        {"base_url": "https://test-resource.openai.azure.com"},
+    ],
+    ids=["explicit-provider", "provider-from-hostname"],
+)
+async def test_azure_o3_pro_probe_sends_configured_reasoning_effort(entry_data) -> None:
+    hass, entry, subentry, client, usage = _objects(
+        {
+            CONF_API_MODE: API_MODE_RESPONSES,
+            CONF_CHAT_MODEL: "ha-o3-deployment",
+            "azure_model": "o3-pro",
+            CONF_REASONING_EFFORT: "high",
+        }
+    )
+    entry.data = entry_data
+    client.responses = SimpleNamespace(create=AsyncMock(return_value=_responses_reply()))
+    with (
+        patch.object(agent_test, "get_exposed_entities", return_value=[{}]),
+        patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)),
+    ):
+        result = await async_test_agent(hass, entry, subentry)
+    assert result.status == "Passed", result.as_text()
+    request = client.responses.create.await_args.kwargs
+    assert request["model"] == "ha-o3-deployment"
+    assert request["reasoning"] == {"effort": "high"}
+    assert usage.async_record_request.await_args.kwargs["provider"] == "azure"
 
 
 async def test_underlying_model_binding_requires_azure_before_probe() -> None:
