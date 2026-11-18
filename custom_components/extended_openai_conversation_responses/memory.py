@@ -756,6 +756,7 @@ class PersistentMemory:
             return None
         attempt_identity = self._embedding_retry_identity
         attempt_provider = self._embedding_provider
+        migrated_model = None
         batch_budget = (
             iter(range(AUTO_RECALL_EMBEDDING_BATCHES)) if automatic_recall else None
         )
@@ -821,6 +822,7 @@ class PersistentMemory:
                         )
                         return None
                     self._embedding_model_changed_at = now
+                    migrated_model = batch.provider_model
                 self._query_embedding_model = batch.provider_model
             # A compatible endpoint can repoint the same model name without
             # changing our cache identity. Refresh only affected readable facts.
@@ -882,6 +884,15 @@ class PersistentMemory:
                     err,
                 )
             return None
+        finally:
+            # A long refill must not consume its own stability window.
+            if (
+                migrated_model is not None
+                and self._query_embedding_model == migrated_model
+                and self._embedding_provider is attempt_provider
+                and self._embedding_retry_identity == attempt_identity
+            ):
+                self._embedding_model_changed_at = monotonic()
 
     async def async_rebuild_embedding_cache(self) -> None:
         """Discard derived vectors so future searches embed their readable facts."""

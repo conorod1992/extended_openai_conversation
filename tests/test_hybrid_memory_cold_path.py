@@ -445,8 +445,10 @@ async def test_oscillating_embedding_alias_limits_rebuilds_and_recovers(monkeypa
     document_calls = []
 
     async def provider(texts):
+        nonlocal now
         if texts != ["tea"]:
             document_calls.append(texts)
+            now += 45  # A rebuild can outlast the stability window.
         vector = [1.0, 0.0] if backend == "a" else [0.0, 1.0]
         return EmbeddingBatch([vector for _ in texts], backend)
 
