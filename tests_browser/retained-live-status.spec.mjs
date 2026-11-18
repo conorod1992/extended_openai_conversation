@@ -52,24 +52,65 @@ for(const guest of [true,false])test(`${guest?"Guest Mode":"Quiet Hours"} natura
   await page.goto(fixtureUrl("overview"));
   const panel=page.locator("extended-openai-management-panel");
   await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  await page.clock.install();
   await panel.evaluate(async(host,guest)=>{
     const original=host._hass.callWS;
     let reads=0;
     host._hass={...host._hass,callWS:async message=>{
       const result=await original(message);
       if(message.section===(guest?"guest_mode":"quiet_hours")&&message.action==="get"){
-        reads++;
-        if(guest)result.status={state:reads===1?"active":"inactive",currently_active:reads===1,active_from:new Date(Date.now()-1000).toISOString(),active_until:new Date(Date.now()+300).toISOString()};
-        else Object.assign(result,{active:reads===1,period_ends_at:new Date(Date.now()+300).toISOString()});
+        const phase = host._testTimedPhase || (++reads === 1 ? "active" : "inactive");
+        const active = phase === "active", scheduled = phase === "scheduled";
+        const from = scheduled ? new Date(Date.now()+300).toISOString() : active ? new Date(Date.now()-1000).toISOString() : null;
+        const until = active || scheduled ? new Date(Date.now()+300).toISOString() : null;
+        if (guest) {
+          result.status = {state:phase,currently_active:active,scheduled,active_from:from,active_until:until,indefinite:false};
+          if (host._testTimedPhase) Object.assign(result, {revision:phase,config:{...result.config,guest_mode_enabled:active,guest_excluded_entities:["light.external"]}});
+        } else {
+          Object.assign(result, {active,period_ends_at:until,revision:phase,config:{...result.config,enabled:active||scheduled,max_volume:0.62}});
+        }
       }
       return result;
     }};
     await host._navigate("capabilities",guest?"guest-mode":"quiet-hours");
+    host._testTimedRevision = host._unsavedState.scopes.get(host._viewKey()).revision;
     if(guest)host._guestDraft.guest_excluded_entities=["light.keep_draft"];
     else host._quietHoursDraft.max_volume=0.37;
   },guest);
+  const url = guest ? "capabilities/guest-mode" : "capabilities/quiet-hours";
+  const focused = panel.locator(guest ? "#guest-start" : "#qh-start");
+  await focused.focus();
   await expect(panel.locator(guest?"[data-guest-live-status]":"[data-qh-live-badge]")).toContainText("Inactive");
+  await expect(focused).toBeFocused();
   expect(await panel.evaluate((host,guest)=>guest?host._guestDraft.guest_excluded_entities:host._quietHoursDraft.max_volume,guest)).toEqual(guest?["light.keep_draft"]:0.37);
+  for (const phase of ["scheduled", "active", "inactive"]) {
+    await panel.evaluate((host, phase)=>{host._testTimedPhase=phase;},phase);
+    await page.clock.fastForward(61000);
+    if (guest) {
+      if (phase === "inactive") await expect(panel.locator("#guest-disable")).toHaveCount(0);
+      else await expect(panel.locator("#guest-disable")).toHaveText(phase === "scheduled" ? "Cancel schedule" : "End Guest Mode");
+      await expect(panel.locator("#guest-start")).toHaveValue(phase === "inactive" ? "" : /T/);
+    } else {
+      await expect(panel.locator("[data-qh-live-title]")).toHaveText({scheduled:"Outside Quiet Hours",active:"Quiet Hours active now",inactive:"Quiet Hours schedule disabled"}[phase]);
+    }
+    expect(await panel.evaluate((host, view)=>host._unsavedState.scopes.get(view).revision === host._testTimedRevision,url)).toBe(true);
+    await expect(focused).toBeFocused();
+  }
+  await panel.evaluate((host, view)=>{
+    host._unsavedState.scopes.get(view).discard();
+    host._render();
+  },url);
+  if (guest) {
+    await expect(panel.locator("#guest-controls-enabled")).not.toBeChecked();
+    expect(await panel.evaluate(host=>host._guestDraft.guest_excluded_entities)).toEqual(["light.external"]);
+  } else {
+    await expect(panel.locator("#qh-enabled")).not.toBeChecked();
+    await expect(panel.locator("#qh-volume")).toHaveValue("62");
+  }
+  await panel.evaluate(host=>{host._testTimedPhase="active";});
+  await page.clock.fastForward(61000);
+  await expect(panel.locator(guest ? "#guest-controls-enabled" : "#qh-enabled")).toBeChecked();
+  expect(await panel.evaluate((host,view)=>host._unsavedState.scopes.get(view).revision,url)).toBe("active");
   await expectHarnessClean(page,errors);
 });
 

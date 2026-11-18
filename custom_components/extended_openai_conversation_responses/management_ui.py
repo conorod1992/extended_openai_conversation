@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
@@ -2955,22 +2954,31 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
     return _unknown_management_action(request)
 
 
+def _knowledge_availability(options: Mapping[str, Any], library: Any) -> dict[str, Any]:
+    from .feature_status import management_feature_status
+
+    return management_feature_status(
+        options,
+        knowledge_source_count=library.source_count,
+        knowledge_total_source_count=library.total_source_count,
+    )["knowledge"]
+
+
 def _knowledge_mutation_result(
     request: _ManagementRequest,
     library: Any,
     result: dict[str, Any],
     source: Any = None,
 ) -> dict[str, Any]:
-    from .feature_status import management_feature_status
     from .knowledge import source_summary
 
     if source is not None:
         result["source"] = knowledge_source_as_dict(source)
     enrichments = {
         "stats": library.stats,
-        "feature_status": lambda: management_feature_status(
-            request.subentry.data, knowledge_source_count=library.total_source_count
-        )["knowledge"],
+        "feature_status": lambda: _knowledge_availability(
+            request.subentry.data, library
+        ),
     }
     if source is not None:
         enrichments["summary"] = lambda: source_summary(source)
@@ -2992,24 +3000,13 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
     _selected_scope(request.user_id, request.is_admin, request.message.get("scope_id"))
     library = await async_get_knowledge(hass, entry_id, subentry_id)
     if action == "list":
-        from .feature_status import management_feature_status
-
         sources = await library.async_list()
-        stats = library.stats()
-        source_count = len(sources) if isinstance(sources, list) else 0
-        if isinstance(stats, Mapping):
-            with suppress(TypeError, ValueError):
-                source_count = int(stats.get("source_count", source_count))
         return {
             "sources": sources,
-            "stats": stats,
-            "feature_status": management_feature_status(
-                request.subentry.data, knowledge_source_count=source_count
-            )["knowledge"],
+            "stats": library.stats(),
+            "feature_status": _knowledge_availability(request.subentry.data, library),
         }
     if action == "set_enabled":
-        from .feature_status import management_feature_status
-
         _require_admin(request.is_admin)
         enabled = message.get("enabled")
         if not isinstance(enabled, bool):
@@ -3031,9 +3028,7 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         result: dict[str, Any] = {
             "revision": None,
             "knowledge_enabled": bool(persisted.get(CONF_KNOWLEDGE_ENABLED, False)),
-            "feature_status": management_feature_status(
-                persisted, knowledge_source_count=library.total_source_count
-            )["knowledge"],
+            "feature_status": _knowledge_availability(persisted, library),
         }
         update_live_subentry(
             request.hass, request.entry, request.subentry, data=persisted

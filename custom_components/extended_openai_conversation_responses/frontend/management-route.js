@@ -756,6 +756,6 @@ export function nonAdminOverviewKnowledgeSnapshot(panel) {
   const agent = panel?._selectedAgent?.();
   return {
     sources: [],
-    stats: {source_count: Number(agent?.knowledge_source_count || 0)},
+    stats: {source_count: Number(agent?.knowledge_total_source_count ?? agent?.knowledge_source_count ?? 0)},
   };
 }

@@ -21,7 +21,10 @@ from .memory import get_memory_mode
 
 
 def management_feature_status(
-    options: Mapping[str, Any], *, knowledge_source_count: int
+    options: Mapping[str, Any],
+    *,
+    knowledge_source_count: int,
+    knowledge_total_source_count: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Describe what Memory and Knowledge currently mean for one agent.
 
@@ -89,6 +92,7 @@ def management_feature_status(
         memory_state = "enabled"
 
     source_count = max(0, int(knowledge_source_count))
+    total_source_count = max(source_count, int(knowledge_total_source_count or 0))
     knowledge_enabled = bool(
         options.get(CONF_KNOWLEDGE_ENABLED, DEFAULT_KNOWLEDGE_ENABLED)
     )
@@ -96,7 +100,7 @@ def management_feature_status(
         knowledge_state = "disabled"
         knowledge_label = "Off"
         knowledge_summary = (
-            f"{source_count} stored source{'s' if source_count != 1 else ''} retained; "
+            f"{total_source_count} stored source{'s' if total_source_count != 1 else ''} retained; "
             "model access is off."
         )
         knowledge_detail = (
@@ -105,12 +109,15 @@ def management_feature_status(
         )
     elif source_count == 0:
         knowledge_state = "empty"
-        knowledge_label = "Needs sources"
-        knowledge_summary = "Enabled, but no sources exist yet."
-        knowledge_detail = (
-            "Knowledge Library is enabled, but its model tools remain unavailable until "
-            "at least one source exists."
+        knowledge_label = (
+            "No enabled sources" if total_source_count else "Needs sources"
         )
+        knowledge_summary = (
+            "All stored sources are disabled."
+            if total_source_count
+            else "Enabled, but no sources exist yet."
+        )
+        knowledge_detail = "Knowledge tools require at least one enabled source."
     else:
         knowledge_state = "available"
         knowledge_label = "Available"
@@ -145,5 +152,6 @@ def management_feature_status(
             "enabled": knowledge_enabled,
             "available": knowledge_enabled and source_count > 0,
             "source_count": source_count,
+            "total_source_count": total_source_count,
         },
     }

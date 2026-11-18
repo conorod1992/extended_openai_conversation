@@ -1314,3 +1314,35 @@ async def test_search_exact_identifiers_outrank_secondary_forms_and_unindex() ->
     assert singular.source_id not in {
         result.source_id for result in await library.async_search("password")
     }
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "a" * 1993 + " sensorKitchen",
+        "a" * 1696 + "longsensor " + "z" * 350,
+        "a" * 1993 + " sensor\u0301Kitchen",
+        "q" * 1699 + "sensor" + "q" * 2100,
+    ],
+    ids=["right-edge", "overlap-start", "combining-mark", "long-identifier"],
+)
+async def test_chunk_edges_do_not_create_lexical_or_phrase_matches(content):
+    library = await _library()
+    await library.async_create("Boundary", "", content)
+    assert await library.async_search("sensor") == []
+
+
+async def test_chunk_overlap_preserves_real_matches_cjk_and_source_offsets():
+    from custom_components.extended_openai_conversation_responses.knowledge import (
+        CHUNK_SIZE,
+        _searchable_chunks,
+    )
+
+    content = " " * 6 + "a" * 1985 + " temperature sensor " + "温度制御" * 1100
+    chunks = _searchable_chunks(content)
+    assert chunks[0][0] == 0
+    assert all(len(text) <= CHUNK_SIZE and content[start:start + CHUNK_SIZE].lstrip().startswith(text) for start, text, _, _ in chunks)
+    assert all(before[0] < after[0] for before, after in zip(chunks, chunks[1:]))
+    library = await _library()
+    source = await library.async_create("Boundary", "", content)
+    assert (await library.async_search("temperature sensor"))[0].source_id == source.source_id
+    assert (await library.async_search("温度制御"))[0].source_id == source.source_id

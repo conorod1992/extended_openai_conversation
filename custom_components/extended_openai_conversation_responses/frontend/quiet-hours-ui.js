@@ -100,15 +100,15 @@ function satelliteCard(panel, satellite, config) {
     : autoMedia
       ? `Found automatically: ${panel._e(autoMedia)}`
       : mediaCandidates.length
-        ? "Manual selection required. Choose the speaker from the media players registered to this satellite's device, including temporarily unavailable players."
-        : "No media player entity is attached to this satellite's Home Assistant device.";
+        ? "Choose a speaker from the media players on this device."
+        : "This device has no media player entity.";
   const wakeHelp = satellite.wake_sound_source === "manual"
-    ? "Manually selected for this satellite. Make sure this switch controls the chime played when the wake word is heard."
+    ? "Confirm that this switch controls the wake-word chime."
     : autoWake
       ? `Found automatically: ${panel._e(autoWake)}`
       : wakeCandidates.length
-        ? "Select a switch manually only if it controls the chime played when the wake word is heard. Other switches on this device do not establish support for this optional feature."
-        : "No switch entity is attached to this satellite's Home Assistant device. That is normal for many satellites.";
+        ? "Choose only a switch that controls the wake-word chime."
+        : "This device has no switch for the optional chime.";
   return `<article class="qh-satellite" data-qh-satellite="${panel._e(satellite.satellite_entity_id)}">
     <div class="qh-satellite-heading">
       <div><strong>${panel._e(satellite.name)}</strong><small>${panel._e(satellite.satellite_entity_id)}</small></div>
@@ -120,6 +120,20 @@ function satelliteCard(panel, satellite, config) {
       <label><span>Wake-word sound switch</span><ha-entity-picker class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="wake_sound_entity_id" data-domain="switch" data-auto-entity="${panel._e(autoWake || "")}"></ha-entity-picker><small>${wakeHelp}</small></label>
     </div></details>
   </article>`;
+}
+
+function quietHoursStatus(panel) {
+  const {active, config = {}} = panel._result || {};
+  const title = active ? "Quiet Hours active now" : config.enabled ? "Outside Quiet Hours" : "Quiet Hours schedule disabled";
+  const detail = config.enabled ? `${panel._e(config.start || "22:00")}–${panel._e(config.end || "07:00")} every day` : "The saved schedule is currently turned off.";
+  return `<div><strong data-qh-live-title>${title}</strong><small>${detail}</small></div><span data-qh-live-badge class="${active ? "availability-badge" : "neutral-badge"}">${active ? "Active" : "Inactive"}</span>`;
+}
+
+export function refreshTimedStatus(panel) {
+  const root = panel.shadowRoot, node = root.querySelector(".qh-status");
+  if (node) node.innerHTML = quietHoursStatus(panel);
+  const enabled = root.querySelector("#qh-enabled");
+  if (enabled && enabled !== root.activeElement) enabled.checked = Boolean(panel._quietHoursDraft?.enabled);
 }
 
 export function renderQuietHours(panel) {
@@ -134,21 +148,19 @@ export function renderQuietHours(panel) {
   const config = panel._quietHoursDraft || savedConfig;
   const satellites = result.satellites || [];
   const maxPercent = Math.round(Number(config.max_volume ?? 0.2) * 100);
-  const statusTitle = result.active ? "Quiet Hours active now" : savedConfig.enabled ? "Outside Quiet Hours" : "Quiet Hours schedule disabled";
-  const statusDetail = savedConfig.enabled ? `${panel._e(savedConfig.start || "22:00")}–${panel._e(savedConfig.end || "07:00")} every day` : "The saved schedule is currently turned off.";
-  return `<style>${QUIET_HOURS_STYLES}</style><section class="page-intro"><h1>Quiet Hours</h1><p>Make Assist satellites quieter at set times each day. Quiet Hours can lower speaker volume and, where supported, change the wake-word sound; use its Home Assistant entity for other automation effects.</p></section>
+  return `<style>${QUIET_HOURS_STYLES}</style><section class="page-intro"><h1>Quiet Hours</h1><p>Lower Assist satellite volume and adjust supported wake-word chimes on a daily schedule.</p></section>
     <section class="content-card">
-      <div class="qh-status"><div><strong data-qh-live-title>${statusTitle}</strong><small>${statusDetail}</small></div><span data-qh-live-badge class="${result.active ? "availability-badge" : "neutral-badge"}">${result.active ? "Active" : "Inactive"}</span></div>
-      <div class="config-toggle setting"><span class="setting-copy"><span class="setting-label-row"><label for="qh-enabled"><strong>Enable daily schedule</strong></label></span><small>When enabled, Quiet Hours starts and ends automatically at the times below. If you save while the current time is inside that period, it starts immediately.</small></span><label class="switch-control" for="qh-enabled"><input id="qh-enabled" type="checkbox" role="switch" ${config.enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>
+      <div class="qh-status">${quietHoursStatus(panel)}</div>
+      <div class="config-toggle setting"><span class="setting-copy"><span class="setting-label-row"><label for="qh-enabled"><strong>Enable daily schedule</strong></label></span><small>Starts and ends at the times below. Enabling during that period takes effect immediately.</small></span><label class="switch-control" for="qh-enabled"><input id="qh-enabled" type="checkbox" role="switch" ${config.enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>
       <div class="qh-grid qh-policy">
         <label><span>Start</span><input id="qh-start" type="time" value="${panel._e(config.start || "22:00")}"></label>
         <label><span>End</span><input id="qh-end" type="time" value="${panel._e(config.end || "07:00")}"></label>
-        <label><span>Starting volume limit</span><div class="qh-volume"><input id="qh-volume" type="range" min="0" max="100" step="1" value="${maxPercent}"><output id="qh-volume-value">${maxPercent}%</output></div><small>When Quiet Hours starts, louder satellites are lowered to this level; quieter ones stay unchanged. Satellites appearing later may also be adjusted. Later volume changes by you or automations are respected; an earlier volume is restored only if it was not independently changed. Changing this limit mid-period may briefly restore previous volumes before the new limit applies. Other audio played on the satellite is affected too.</small></label>
-        <label><span>Wake-word sound</span><select id="qh-wake"><option value="off" ${config.wake_sound === "off" ? "selected" : ""}>Off during Quiet Hours</option><option value="on" ${config.wake_sound === "on" ? "selected" : ""}>On during Quiet Hours</option><option value="unchanged" ${config.wake_sound === "unchanged" ? "selected" : ""}>Don't change it</option></select><small>This is the chime played when a satellite hears its wake word. Quiet Hours changes it only where a compatible switch is found or manually selected.</small></label>
+        <label><span>Starting volume limit</span><div class="qh-volume"><input id="qh-volume" type="range" min="0" max="100" step="1" value="${maxPercent}"><output id="qh-volume-value">${maxPercent}%</output></div><small>At startup, louder satellites are lowered to this level and quieter ones stay unchanged. Satellites appearing later may also be adjusted. Later volume changes by you or automations are respected. Volume is restored only if it was not independently changed. Editing mid-period may briefly restore previous volumes. Other audio played on the satellite is affected too.</small></label>
+        <label><span>Wake-word sound</span><select id="qh-wake"><option value="off" ${config.wake_sound === "off" ? "selected" : ""}>Off during Quiet Hours</option><option value="on" ${config.wake_sound === "on" ? "selected" : ""}>On during Quiet Hours</option><option value="unchanged" ${config.wake_sound === "unchanged" ? "selected" : ""}>Don't change it</option></select><small>The chime played when a satellite hears its wake word. Requires a compatible switch.</small></label>
       </div>
-      <div class="qh-entity-note"><strong>Use Quiet Hours in automations</strong><code>${panel._e(result.state_entity_id || "binary_sensor.extended_openai_quiet_hours")}</code><small>This read-only entity is on for the whole Quiet Hours period, even if no speaker needs changing. You can use it to control LEDs or anything else in your own Home Assistant automations. The saved schedule can also be turned on or off with the Extended OpenAI actions <code>enable_quiet_hours</code> and <code>disable_quiet_hours</code>.</small></div>
+      <div class="qh-entity-note"><strong>Use Quiet Hours in automations</strong><code>${panel._e(result.state_entity_id || "binary_sensor.extended_openai_quiet_hours")}</code><small>This entity stays on throughout Quiet Hours. Use these actions to change the schedule <code>enable_quiet_hours</code> and <code>disable_quiet_hours</code>.</small></div>
     </section>
-    <section class="content-card"><div class="section-heading"><div><h2>Assist satellites</h2><p>Quiet Hours selects controls automatically only when their association is unambiguous. Choose controls manually when needed. If discovery changes during an active period, existing owned controls stay managed until that period ends; your own changes and explicit selections still take precedence.</p></div></div>${satellites.length ? `<div class="qh-satellites">${satellites.map((satellite) => satelliteCard(panel, satellite, config)).join("")}</div>` : `<p class="empty">No Assist satellites were found. Quiet Hours will keep checking and will pick them up when they become available.</p>`}</section>
+    <section class="content-card"><div class="section-heading"><div><h2>Assist satellites</h2><p>Choose controls manually if discovery is ambiguous. Active controls stay managed until the period ends. Manual changes and selections take precedence.</p></div></div>${satellites.length ? `<div class="qh-satellites">${satellites.map((satellite) => satelliteCard(panel, satellite, config)).join("")}</div>` : `<p class="empty">Quiet Hours will keep checking and will pick them up as they become available.</p>`}</section>
     `;
 }
 

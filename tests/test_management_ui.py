@@ -1123,7 +1123,7 @@ async def test_agents_overview_skips_non_conversation_subentries(
 
     usage = SimpleNamespace(today_summary=lambda: {"total_tokens": 123})
     memory = SimpleNamespace(stats=lambda: {"memory_count": 4})
-    knowledge = SimpleNamespace(source_count=2)
+    knowledge = SimpleNamespace(source_count=2, total_source_count=2)
     guest = SimpleNamespace(status=lambda: {"state": "inactive"})
     monkeypatch.setattr(management_ui, "async_get_usage", AsyncMock(return_value=usage))
     monkeypatch.setattr(
@@ -1635,6 +1635,7 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
         updated_at="2026-01-01",
     )
     library = SimpleNamespace(
+        source_count=1,
         total_source_count=1,
         async_list=AsyncMock(return_value=[{"source_id": "source-1"}]),
         stats=lambda: {"source_count": 1},

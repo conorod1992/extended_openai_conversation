@@ -114,7 +114,7 @@ async def test_overview_knowledge_detail_projects_feature_status(
     monkeypatch.setattr(
         loading,
         "async_get_knowledge",
-        AsyncMock(return_value=SimpleNamespace(source_count=3)),
+        AsyncMock(return_value=SimpleNamespace(source_count=3, total_source_count=3)),
     )
     feature = Mock(return_value={"knowledge": "ready"})
     monkeypatch.setattr(loading, "management_feature_status", feature)
@@ -130,7 +130,7 @@ async def test_overview_knowledge_detail_projects_feature_status(
     assert result["agent"]["knowledge_source_count"] == 3
     assert result["agent"]["feature_status"] == {"knowledge": "ready"}
     assert result["setup_health"]["knowledge"]["source_count"] == 3
-    feature.assert_called_once_with({}, knowledge_source_count=3)
+    feature.assert_called_once_with({}, knowledge_source_count=3, knowledge_total_source_count=3)
 
 
 @pytest.mark.asyncio

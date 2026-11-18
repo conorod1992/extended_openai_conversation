@@ -24,13 +24,23 @@ function knowledgeAccessState(panel) {
     : "Add a source to make Knowledge available to the assistant.";
   return {
     enabled, state, detail,
-    label: exceptional ? current.label || "Unknown" : {available:"Available", empty:"Needs sources", disabled:"Off"}[state],
+    label: exceptional ? current.label || "Unknown" : {available:"Available", empty:sources.length ? "No enabled sources" : "Needs sources", disabled:"Off"}[state],
   };
 }
 const statusMarkup = panel => {
   const status = knowledgeAccessState(panel);
   return `<div class="compact-status"><small>${panel._e(status.detail)}</small><strong class="status-value ${["enabled", "available"].includes(status.state) ? "on" : ""}">${panel._e(status.label)}</strong></div>`;
 };
+
+function updateAgentKnowledge(panel, status, enabled = status?.enabled) {
+  const agent = panel._selectedAgent?.();
+  if (!agent) return;
+  if (typeof enabled === "boolean") agent.knowledge_enabled = enabled;
+  if (!status) return;
+  agent.feature_status = {...agent.feature_status, knowledge:status};
+  agent.knowledge_source_count = status.source_count;
+  agent.knowledge_total_source_count = status.total_source_count;
+}
 
 export function applyKnowledgeMutation(panel, response, deletedId = null) {
   if (!panel._result || !Array.isArray(panel._result.sources)) return false;
@@ -45,6 +55,7 @@ export function applyKnowledgeMutation(panel, response, deletedId = null) {
     ...(response.stats ? {stats: response.stats} : {}),
     ...(response.feature_status ? {feature_status: response.feature_status} : {}),
   };
+  updateAgentKnowledge(panel, response.feature_status);
   return true;
 }
 
@@ -74,11 +85,7 @@ async function saveKnowledgeAvailability(panel, input) {
     await completeConfigurationAcknowledgement(panel, {revision:result.revision, config:{knowledge_enabled:result.knowledge_enabled}}, submission, {
       response:result, fields:["knowledge_enabled"], message:`Knowledge ${result.knowledge_enabled ? "enabled" : "disabled"}`,
       refresh:() => {
-        const agent = panel._selectedAgent?.();
-        if (agent) {
-          agent.knowledge_enabled = result.knowledge_enabled;
-          agent.feature_status = {...agent.feature_status, knowledge:result.feature_status};
-        }
+        updateAgentKnowledge(panel, result.feature_status, result.knowledge_enabled);
         if (panel._viewKey?.() !== "data-memory/knowledge" || panel._loadToken !== loadToken) return;
         if (panel._result) panel._result = {...panel._result, feature_status:result.feature_status};
         panel._render();

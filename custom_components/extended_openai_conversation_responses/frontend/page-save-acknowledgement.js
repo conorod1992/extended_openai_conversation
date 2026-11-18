@@ -67,8 +67,8 @@ function pageProjection(result, view, revisionRequired = false, knownConfig = nu
 
 // Called only at accepted publication boundaries, never merely because a load
 // promise resolved. Metadata can change without replacing the policy projection.
-export function acceptPageRead(panel, result, read) {
-  if (!currentRead(panel, read) || panel._result !== result) return false;
+export function acceptPageRead(panel, result, read, {publish = false} = {}) {
+  if (!currentRead(panel, read) || (!publish && panel._result !== result)) return false;
   const scope = panel._unsavedState?.scopes.get(read.view);
   const ownsScope = scope?.isCurrent?.();
   const projection = pageProjection(result, read.view, Boolean(ownsScope && scope.revision != null),
@@ -77,8 +77,9 @@ export function acceptPageRead(panel, result, read) {
   // replacement baseline or be used by the rendering/draft initializer.
   if (read.view !== "capabilities/request-rules") requireMutationAcknowledgement(Boolean(projection), "loading the saved policy");
   if (!projection) return false;
+  if (publish) panel._result = result;
   acceptedReads.set(panel, {...read, projection, sequence:(acceptedReads.get(panel)?.sequence || 0) + 1});
-  if (ownsScope) scope.reconcileUncertainRead?.(result);
+  if (ownsScope && !publish) scope.reconcileUncertainRead?.(result);
   if (read.view === "capabilities/guest-mode") panel._unsavedState?.scopes.get("guest-interval")?.reconcileRead?.(result.status, read.interval);
   const obligations = readObligations.get(panel);
   for (const entry of obligations || []) {

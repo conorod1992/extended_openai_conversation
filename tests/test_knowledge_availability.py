@@ -223,6 +223,10 @@ async def test_unified_management_preserves_knowledge_availability() -> None:
         assert updated["source"]["title"] == "Renamed manual"
         assert updated["source"]["enabled"] is False
         assert library.source_count == 0
+        status = updated["feature_status"]
+        assert (status["source_count"], status["total_source_count"]) == (0, 1)
+        assert status["label"] == "No enabled sources"
+        assert not status["available"]
 
         reenabled = await management_ui.async_management_command(
             hass,
@@ -237,6 +241,7 @@ async def test_unified_management_preserves_knowledge_availability() -> None:
         )
         assert reenabled["source"]["enabled"] is True
         assert library.source_count == 1
+        assert reenabled["feature_status"]["available"]
 
         defaulted = await management_ui.async_management_command(
             hass,
@@ -295,6 +300,10 @@ async def test_management_set_enabled_updates_only_knowledge_config() -> None:
 
     assert result["knowledge_enabled"] is False
     assert result["feature_status"]["enabled"] is False
+    assert result["feature_status"]["total_source_count"] == 1
+    assert result["feature_status"]["source_count"] == 1
+    assert not result["feature_status"]["available"]
+    assert "1 stored source" in result["feature_status"]["summary"]
     assert isinstance(result["revision"], str)
     hass.config_entries.async_update_subentry.assert_called_once()
     args = hass.config_entries.async_update_subentry.call_args

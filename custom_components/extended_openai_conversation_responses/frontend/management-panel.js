@@ -2355,9 +2355,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "capabilities/guest-mode") {
       getRouteFeature("capabilities/guest-mode")?.bindGuestInterval(this);
       q("#guest-indefinite")?.addEventListener("change", (event) => { const end = q("#guest-end"); if (end) end.disabled = event.target.checked; });
-      q("#guest-update")?.addEventListener("click", () => this._updateGuestMode(false));
-      q("#guest-now")?.addEventListener("click", () => this._updateGuestMode(true));
-      q("#guest-disable")?.addEventListener("click", () => this._disableGuestMode());
       q("#guest-review-converted")?.addEventListener("click", () => { this._guestMigrationReview = true; this._render(); });
       q("#guest-start-fresh")?.addEventListener("click", () => this._startFreshGuestPolicy());
       q("#guest-separate-control")?.addEventListener("change", (event) => { this._guestDraft.guest_separate_control_restrictions = event.target.checked; this._render(); });
@@ -2388,7 +2385,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     if (view === "assistant/voice") getRouteFeature(view)?.bindVoiceIdentityCore(this);
     if (view === "capabilities/quiet-hours") getRouteFeature(view)?.bindQuietHours(this);
-    watchTimedFeatureStatus(this);
+    const timed = getRouteFeature(view);
+    if (timed?.refreshTimedStatus) watchTimedFeatureStatus(this, timed);
     if (view === "usage-maintenance/usage") {
       getRouteFeature(view)?.bindUsageDiagnostics(this);
     }
@@ -2658,8 +2656,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         // The editor owns its acknowledgement across a refresh, but only the
         // original visit owns collection data. A newer read must remain intact.
         if (ownsList) writeSectionCache(this, this._sectionCacheKey(), this._result);
-        const agent = this._selectedAgent();
-        if (ownsList && agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
         this._render();
         if (returnFocus && !dialog.open) getRouteFeature("data-memory/knowledge")?.restoreCollectionFocus(this.shadowRoot, `.source-edit-button[data-id="${CSS.escape(response.source.source_id)}"]`, "#add-source");
         if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
@@ -2790,8 +2786,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (!getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response, sourceId)) throw new Error("The deleted source could not be removed from the display.");
         if (fromDialog) this.shadowRoot.querySelector("#knowledge-dialog").close();
         writeSectionCache(this, this._sectionCacheKey(), this._result);
-        const agent = this._selectedAgent();
-        if (agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
         this._render();
       }, response);
     } catch (err) { this._toast(`Unable to delete source: ${err.message || String(err)}`, true); }
