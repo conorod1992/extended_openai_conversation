@@ -130,7 +130,7 @@ async def test_archive_restore_failure_preserves_expired_rollback_snapshot(monke
         archive_sessions=original_sessions,
         archive_turns=original_turns,
     )
-    with pytest.raises((OSError, backup.BackupError), match="archive replacement failed"):
+    with pytest.raises(backup.BackupError, match="previous agent state was recovered") as error:
         await transfer.async_restore_transfer(
             tx.hass,
             tx.entry,
@@ -138,6 +138,8 @@ async def test_archive_restore_failure_preserves_expired_rollback_snapshot(monke
             imported,
             sections=[transfer.SECTION_CONVERSATION_ARCHIVE],
         )
+    assert isinstance(error.value.__cause__, OSError)
+    assert str(error.value.__cause__) == "archive replacement failed"
     assert tx.state.archive_sessions == original_sessions
     assert tx.state.archive_turns == original_turns
     assert tx.journal.saved and tx.journal.data is None
