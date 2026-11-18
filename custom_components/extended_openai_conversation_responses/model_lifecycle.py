@@ -50,10 +50,11 @@ def configured_lifecycle(
     *,
     today: date | None = None,
     entry_data: Mapping[str, Any] | None = None,
+    client: Any = None,
 ) -> dict[str, Any]:
     """Return lifecycle facts for one conversation subentry."""
     model = str(subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip()
-    if not is_native_openai_connection(entry_data or {}):
+    if not is_native_openai_connection(entry_data or {}, client=client):
         return {
             "model": model,
             "status": "unknown",
@@ -140,9 +141,10 @@ def record_retirement_failure(
     configured_model: str | None = None,
     logger: logging.Logger | None = None,
     entry_data: Mapping[str, Any] | None = None,
+    client: Any = None,
 ) -> str | None:
     """Record a provider-confirmed retirement and create an actionable HA Repair."""
-    if not is_native_openai_connection(entry_data or {}):
+    if not is_native_openai_connection(entry_data or {}, client=client):
         return None
     lifecycle = lifecycle_snapshot(model)
     if (
@@ -267,7 +269,9 @@ def sync_entry_model_lifecycle(hass: Any, entry: Any) -> None:
     """Refresh one entry's deprecation logging and stale retirement Repairs."""
     active_subentries: set[str] = set()
     entry_data = getattr(entry, "data", {})
-    native_openai = is_native_openai_connection(entry_data)
+    native_openai = is_native_openai_connection(
+        entry_data, client=getattr(entry, "runtime_data", None)
+    )
     for subentry in entry.subentries.values():
         if subentry.subentry_type not in {"conversation", "ai_task_data"}:
             continue
@@ -280,7 +284,9 @@ def sync_entry_model_lifecycle(hass: Any, entry: Any) -> None:
             if ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None:
                 ir.async_delete_issue(hass, DOMAIN, issue_id)
             continue
-        lifecycle = configured_lifecycle(subentry)
+        lifecycle = lifecycle_snapshot(
+            str(subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip()
+        )
         log_deprecation_once(
             hass,
             entry_id=entry.entry_id,
@@ -377,6 +383,7 @@ def record_entity_retirement_failure(
         ).strip(),
         logger=logger,
         entry_data=getattr(entry, "data", {}),
+        client=getattr(entity, "_client", None),
     )
 
 

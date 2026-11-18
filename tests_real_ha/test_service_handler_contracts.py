@@ -348,3 +348,70 @@ async def test_process_service_preserves_assist_failure_and_followup(hass, monke
     assert response["continue_conversation"] is True
     assert response["intent_response"] == intent.as_dict()
     await hass.async_block_till_done()
+
+@pytest.mark.parametrize(
+    ("base_url", "expected_endpoint", "expected_model", "native"),
+    [
+        (None, "https://compatible.example/v1", "gpt-4.1-mini", False),
+        ("https://api.openai.com/v1", "https://api.openai.com/v1", "gpt-6-luna", True),
+    ],
+)
+async def test_image_default_and_retirement_use_resolved_sdk_endpoint(
+    hass, monkeypatch, base_url, expected_endpoint, expected_model, native
+):
+    """Implicit endpoints follow the SDK, and explicitly saved URLs take priority."""
+    from datetime import date
+
+    from homeassistant.components import conversation
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.extended_openai_conversation_responses import model_lifecycle
+    from custom_components.extended_openai_conversation_responses.provider_errors import (
+        ProviderStreamError,
+    )
+    from tests_real_ha.test_acceptance_lifecycle import _make_entry
+    from tests_real_ha.test_provider_wire_e2e import (
+        _install_wire,
+        _raw_client,
+        _response_object,
+        _response_text_item,
+    )
+
+    lifecycle_snapshot = model_lifecycle.lifecycle_snapshot
+    monkeypatch.setattr(
+        model_lifecycle, "lifecycle_snapshot",
+        lambda model, **_kwargs: lifecycle_snapshot(model, today=date(2027, 4, 2)),
+    )
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://compatible.example/v1")
+    entry = _make_entry(
+        include_ai_task=False, base_url=base_url, conversation_options={"chat_model": "gpt-5.1"}
+    )
+    subentry = _conversation_subentry(entry)
+    error = ProviderStreamError("missing", code="model_not_found", status_code=404)
+    assert model_lifecycle.record_retirement_failure(
+        hass, entry_id=entry.entry_id, subentry_id=subentry.subentry_id,
+        title=subentry.title, model="gpt-5.1", error=error,
+        entry_data={"base_url": "https://api.openai.com/v1"},
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert str(_raw_client(agent).base_url).rstrip("/") == expected_endpoint
+    issue_id = model_lifecycle._issue_id(entry.entry_id, subentry.subentry_id)
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert (issue is not None) is native
+
+    # Classification follows the existing SDK client even if the process env changes.
+    monkeypatch.delenv("OPENAI_BASE_URL")
+    wire = _install_wire(
+        monkeypatch, agent, [(200, _response_object("resp-image", [_response_text_item("A dog")]))]
+    )
+    await _response_service_call(
+        hass, SERVICE_QUERY_IMAGE,
+        {"config_entry": entry.entry_id, CONF_API_MODE: API_MODE_RESPONSES,
+         "prompt": "What is shown?", "images": [{"url": "https://image.example/dog.png"}]},
+    )
+    assert wire.requests[0]["body"]["model"] == expected_model
+    assert bool(model_lifecycle.record_entity_retirement_failure(agent, error)) is native
+    assert model_lifecycle.configured_lifecycle(
+        subentry, entry_data=entry.data, client=entry.runtime_data,
+    )["shutdown_reached"] is native

@@ -356,12 +356,13 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             if client is None:
                 raise HomeAssistantError("Config entry client is unavailable")
             entry_data = getattr(entry, "data", {})
-            model = call.data.get(
-                "model",
-                "gpt-6-luna"
-                if is_native_openai_connection(entry_data)
-                else "gpt-4.1-mini",
-            )
+            model = call.data.get("model")
+            if model is None:
+                model = (
+                    "gpt-6-luna"
+                    if is_native_openai_connection(entry_data, client=client)
+                    else "gpt-4.1-mini"
+                )
             with model_capability_snapshot(
                 model,
                 request_model_capabilities(

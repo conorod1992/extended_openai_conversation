@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from functools import partial
 from inspect import isawaitable
 import logging
+import os
 from typing import Annotated, Any, cast, get_args, get_origin
 from urllib.parse import urlsplit
 
@@ -125,9 +126,16 @@ def supports_openai_hosted_tools(
     return not base_url or base_url.rstrip("/") == DEFAULT_CONF_BASE_URL.rstrip("/")
 
 
-def is_native_openai_connection(data: Mapping[str, Any]) -> bool:
-    """Return whether the configured connection uses the native OpenAI endpoint."""
+def is_native_openai_connection(data: Mapping[str, Any], *, client: Any = None) -> bool:
+    """Classify the configured endpoint or the SDK's effective default."""
     base_url = data.get("base_url")
+    if base_url is None:
+        sdk_url = getattr(client, "base_url", None)
+        # SDK versions expose their own HTTPX URL types. Both have a string host.
+        if isinstance(sdk_url, str) or isinstance(getattr(sdk_url, "host", None), str):
+            base_url = str(sdk_url)
+        else:
+            base_url = os.environ.get("OPENAI_BASE_URL")
     # An inferred Azure connection necessarily has a different endpoint.
     return (
         base_url is None or isinstance(base_url, str)

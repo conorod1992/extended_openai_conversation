@@ -6,6 +6,8 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses import model_lifecycle
 from custom_components.extended_openai_conversation_responses.provider_errors import (
     ProviderStreamError,
@@ -25,6 +27,21 @@ def test_structured_deprecation_dates_drive_shutdown_phase() -> None:
     assert before["shutdown_at"] == "2027-04-01"
     assert before["shutdown_reached"] is False
     assert after["shutdown_reached"] is True
+
+
+@pytest.mark.parametrize(
+    ("configured", "native"),
+    [({}, False), ({"base_url": "https://api.openai.com/v1"}, True)],
+)
+def test_model_lifecycle_resolves_implicit_endpoint_without_a_client(
+    monkeypatch, configured, native
+) -> None:
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://compatible.example/v1")
+    subentry = SimpleNamespace(data={"chat_model": "gpt-5.1"})
+    lifecycle = model_lifecycle.configured_lifecycle(
+        subentry, today=date(2027, 4, 2), entry_data=configured,
+    )
+    assert lifecycle["shutdown_reached"] is native
 
 
 def test_model_unavailable_error_classification_is_narrow() -> None:

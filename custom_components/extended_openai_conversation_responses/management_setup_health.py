@@ -72,7 +72,9 @@ def build_setup_health_facts(
             exposed_entity_count = _exposed_entity_count(hass)
 
     guidance = configuration_guidance_snapshot(entry.data, options)
-    lifecycle = configured_lifecycle(subentry, entry_data=entry.data)
+    lifecycle = configured_lifecycle(
+        subentry, entry_data=entry.data, client=getattr(entry, "runtime_data", None)
+    )
     lifecycle["confirmed_unavailable"] = lifecycle[
         "shutdown_reached"
     ] and confirmed_retirement_failure(
