@@ -1,5 +1,6 @@
 """Recover invalidated Memory through ordinary Assist, using durable storage."""
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     SUBSYSTEM_STATUS_KEY,
 )
 from homeassistant.components import conversation
-from homeassistant.core import Context
+from homeassistant.core import Context, CoreState
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util.file import WriteError
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
@@ -76,7 +77,25 @@ async def test_rebuild_embeddings_requires_durable_removal(hass, monkeypatch):
     monkeypatch.setattr(cache._store, "_async_write_data", writer)
     # Rebuilding must also retire a pending native generation.
     cache._store.async_delay_save(lambda: {"embeddings": {}}, delay=3600)
-    await rebuild()
+    started, release = asyncio.Event(), asyncio.Event()
+    native_remove = cache.async_remove
+
+    async def delayed_remove():
+        started.set()
+        await release.wait()
+        await native_remove()
+
+    monkeypatch.setattr(cache, "async_remove", delayed_remove)
+    with monkeypatch.context() as stopping:
+        stopping.setattr(hass, "state", CoreState.stopping)
+        operation = asyncio.create_task(manager.async_rebuild_embedding_cache())
+        await started.wait()
+        operation.cancel()
+        await asyncio.sleep(0)
+        assert not operation.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
     writer.assert_not_awaited()
     assert not await hass.async_add_executor_job(path.exists)
     assert await cache.async_load() is None
@@ -101,6 +120,16 @@ async def test_rebuild_embeddings_requires_durable_removal(hass, monkeypatch):
         ["general | The orchid is purple."],
         ["fresh query"],
     ]
+    await hass.async_add_executor_job(path.write_bytes, b"{invalid")
+    recovered = memory.PersistentMemory(
+        manager._storage, memory.HomeAssistantEmbeddingCacheStorage(hass, entry.entry_id, agent_id)
+    )
+    await recovered.async_initialize()
+    assert await recovered.async_list("review-user") == [fact]
+    recovered.set_embedding_provider(provider, "alias")
+    provider.reset_mock()
+    assert await recovered.async_prepare_hybrid(["review-user"], "after corruption") == [0.0, 1.0]
+    assert provider.await_count == 2
 
 
 class FaultStorage:

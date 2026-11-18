@@ -433,3 +433,64 @@ async def test_local_cache_write_failure_does_not_backoff_remote_provider():
     assert await memory.async_prepare_hybrid(["alice"], "query") == [1.0, 0.0]
     assert provider.await_count == 3
     assert memory._embedding_cache_dirty
+
+async def test_oscillating_embedding_alias_limits_rebuilds_and_recovers(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import memory as module
+
+    memory = await _memory()
+    await memory.async_add("alice", "Alice prefers green tea.", "preferences", "explicit")
+    await memory.async_add("bob", "Bob prefers black tea.", "preferences", "explicit")
+    now, backend = 10.0, "a"
+    monkeypatch.setattr(module, "monotonic", lambda: now)
+    document_calls = []
+
+    async def provider(texts):
+        if texts != ["tea"]:
+            document_calls.append(texts)
+        vector = [1.0, 0.0] if backend == "a" else [0.0, 1.0]
+        return EmbeddingBatch([vector for _ in texts], backend)
+
+    memory.set_embedding_provider(provider, "alias")
+    assert await memory.async_prepare_hybrid(["alice"], "tea") == [1.0, 0.0]
+    backend = "b"
+    assert await memory.async_prepare_hybrid(["alice"], "tea") == [0.0, 1.0]
+    assert await memory.async_prepare_hybrid(["alice"], "tea") == [0.0, 1.0]
+    backend = "a"
+    assert await memory.async_prepare_hybrid(["alice"], "tea") is None
+    assert memory.hybrid_status()["reason"] == "embedding_model_unstable"
+    backend = "b"
+    assert await memory.async_prepare_hybrid(["alice"], "tea") is None
+    assert len(document_calls) == 2
+    assert all("Bob" not in text for batch in document_calls for text in batch)
+    now += 31
+    backend = "a"
+    assert await memory.async_prepare_hybrid(["alice"], "tea") == [1.0, 0.0]
+    assert len(document_calls) == 3
+
+
+async def test_automatic_embedding_preparation_saves_batches_and_resumes(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import memory as module
+
+    monkeypatch.setattr(module, "EMBEDDING_CACHE_BATCH_SIZE", 1)
+    cache = CountingCacheStorage()
+    memory = await _memory(cache)
+    for name in ("green", "black", "herbal"):
+        await memory.async_add("alice", f"Alice likes {name} tea.", "preferences", "explicit")
+    await memory.async_add("bob", "Bob likes coffee.", "preferences", "explicit")
+    calls = []
+
+    async def provider(texts):
+        calls.extend(texts)
+        return EmbeddingBatch([[1.0, 0.0] for _ in texts], "a")
+
+    memory.set_embedding_provider(provider, "alias")
+    assert await memory.async_prepare_hybrid(["alice"], "tea", automatic_recall=True) is None
+    assert memory.hybrid_status()["reason"] == "embedding_preparation_budget_exhausted"
+    assert len(cache.data["embeddings"]) == 2
+    assert len(calls) == 2
+    assert await memory.async_search("alice", "tea")
+    assert await memory.async_prepare_hybrid(["alice"], "tea", automatic_recall=True) == [1.0, 0.0]
+    assert len(cache.data["embeddings"]) == 3
+    assert len(calls) == 4
+    assert calls[-1] == "tea"
+    assert not any("Bob" in text for text in calls)

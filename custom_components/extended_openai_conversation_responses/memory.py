@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -54,6 +54,7 @@ STORAGE_VERSION = 2
 
 EMBEDDING_CACHE_VERSION = 1
 EMBEDDING_CACHE_BATCH_SIZE = 64
+AUTO_RECALL_EMBEDDING_BATCHES = 2
 HYBRID_RETRY_INITIAL_SECONDS = 30.0
 HYBRID_RETRY_MAX_SECONDS = 300.0
 EMBEDDING_CACHE_RETRY_SECONDS = 60
@@ -75,6 +76,10 @@ MEMORY_TOOL_NAMES = {
 }
 MIN_LEXICAL_RELEVANCE_SCORE = 0.08
 MIN_SEMANTIC_SIMILARITY = 0.55
+
+
+class _EmbeddingPreparationBudgetExhausted(Exception):
+    """The automatic recall turn used its document-embedding allowance."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,6 +336,8 @@ class PersistentMemory:
         self._embedding_cache_dirty = False
         self._embedding_cache_write_failed = False
         self._embedding_retry_identity: object = None
+        self._query_embedding_model: str | None = None
+        self._embedding_model_changed_at: float | None = None
         self._hybrid_retry_at = 0.0
         self._hybrid_retry_delay = 0.0
         self._embedding_cache_retry_at = 0.0
@@ -401,6 +408,7 @@ class PersistentMemory:
                 self._embedding_provider = provider
             return
         self._embedding_retry_identity = identity
+        self._query_embedding_model = self._embedding_model_changed_at = None
         self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
         self._embedding_provider = provider
         self._embedding_model = model
@@ -738,7 +746,7 @@ class PersistentMemory:
             ]
 
     async def async_prepare_hybrid(
-        self, scope_ids: Sequence[str], query: str
+        self, scope_ids: Sequence[str], query: str, *, automatic_recall: bool = False
     ) -> list[float] | None:
         """Prepare embeddings only for searched scopes and return the query vector."""
         if self._embedding_provider is None:
@@ -748,8 +756,13 @@ class PersistentMemory:
             return None
         attempt_identity = self._embedding_retry_identity
         attempt_provider = self._embedding_provider
+        batch_budget = (
+            iter(range(AUTO_RECALL_EMBEDDING_BATCHES)) if automatic_recall else None
+        )
         try:
-            if not await self._async_refresh_missing_embeddings(scope_ids):
+            if not await self._async_refresh_missing_embeddings(
+                scope_ids, batch_budget=batch_budget
+            ):
                 self._set_hybrid_status(
                     "lexical_fallback",
                     "embedding_preparation_failed",
@@ -793,6 +806,22 @@ class PersistentMemory:
                 > 1
             ):
                 raise ValueError("embedding provider did not identify the query model")
+            if batch.provider_model is not None:
+                previous = self._query_embedding_model
+                if previous is not None and previous != batch.provider_model:
+                    now = monotonic()
+                    changed_at = self._embedding_model_changed_at
+                    if (
+                        changed_at is not None
+                        and now - changed_at < HYBRID_RETRY_INITIAL_SECONDS
+                    ):
+                        self._hybrid_retry_at = now + HYBRID_RETRY_INITIAL_SECONDS
+                        self._set_hybrid_status(
+                            "lexical_fallback", "embedding_model_unstable"
+                        )
+                        return None
+                    self._embedding_model_changed_at = now
+                self._query_embedding_model = batch.provider_model
             # A compatible endpoint can repoint the same model name without
             # changing our cache identity. Refresh only affected readable facts.
             if any(
@@ -803,7 +832,10 @@ class PersistentMemory:
                 )
                 for entry in readable
             ) and not await self._async_refresh_missing_embeddings(
-                scope_ids, dimensions=width, provider_model=batch.provider_model
+                scope_ids,
+                dimensions=width,
+                provider_model=batch.provider_model,
+                batch_budget=batch_budget,
             ):
                 self._set_hybrid_status("lexical_fallback", "provider_changed")
                 return None
@@ -815,6 +847,11 @@ class PersistentMemory:
                 else None,
             )
             return vector
+        except _EmbeddingPreparationBudgetExhausted:
+            self._set_hybrid_status(
+                "lexical_fallback", "embedding_preparation_budget_exhausted"
+            )
+            return None
         except Exception as err:
             if (
                 attempt_identity != self._embedding_retry_identity
@@ -866,6 +903,7 @@ class PersistentMemory:
             self._embedding_cache_dirty = False
             self._embedding_cache_write_failed = False
             self._embedding_cache_retry_at = 0.0
+            self._query_embedding_model = self._embedding_model_changed_at = None
             self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
             self._set_hybrid_status(
                 "ready" if self._embedding_provider else "lexical_fallback",
@@ -1502,6 +1540,7 @@ class PersistentMemory:
         *,
         dimensions: int | None = None,
         provider_model: str | None = None,
+        batch_budget: Iterator[int] | None = None,
     ) -> bool:
         provider = self._embedding_provider
         if provider is None:
@@ -1533,6 +1572,8 @@ class PersistentMemory:
         try:
             batch_model = provider_model
             for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
+                if batch_budget is not None and next(batch_budget, None) is None:
+                    raise _EmbeddingPreparationBudgetExhausted
                 batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
                 result = _embedding_batch(
                     await provider([_embedding_text(memory) for memory in batch])
@@ -1549,10 +1590,17 @@ class PersistentMemory:
                     raise ValueError(
                         "embedding provider returned the wrong number of vectors"
                     )
+                cleaned_vectors = [_clean_embedding(vector) for vector in vectors]
+                if dimensions is not None and any(
+                    len(vector) != dimensions for vector in cleaned_vectors
+                ):
+                    raise ValueError(
+                        "embedding provider returned incompatible document and query dimensions"
+                    )
                 async with async_storage_lock(self._storage, self._lock):
                     if not provider_is_current():
                         return False
-                    for memory, vector in zip(batch, vectors, strict=True):
+                    for memory, cleaned in zip(batch, cleaned_vectors, strict=True):
                         current = self._memories.get(memory.memory_id)
                         if (
                             current is None
@@ -1568,11 +1616,6 @@ class PersistentMemory:
                             is not None
                         ):
                             continue
-                        cleaned = _clean_embedding(vector)
-                        if dimensions is not None and len(cleaned) != dimensions:
-                            raise ValueError(
-                                "embedding provider returned incompatible document and query dimensions"
-                            )
                         self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
                             model=model,
                             space_id=space_id,
