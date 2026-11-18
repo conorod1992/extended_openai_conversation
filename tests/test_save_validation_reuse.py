@@ -148,7 +148,7 @@ async def test_specialised_settings_reuse_and_seed_exact_projection(
     monkeypatch.setattr(
         management_ui,
         "async_get_knowledge",
-        AsyncMock(return_value=SimpleNamespace(total_source_count=0)),
+        AsyncMock(return_value=SimpleNamespace(source_count=0, total_source_count=0)),
     )
     request = management_ui._ManagementRequest(
         hass,

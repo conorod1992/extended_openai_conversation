@@ -50,7 +50,7 @@ def test_setup_health_recomputes_live_state_instead_of_reusing_stale_facts(
     monkeypatch.setattr(
         management_setup_health,
         "configured_lifecycle",
-        lambda subentry: {
+        lambda subentry, *, entry_data: {
             "model": subentry.data.get(CONF_CHAT_MODEL, "gpt-test"),
             "status": "supported",
             "shutdown_at": None,

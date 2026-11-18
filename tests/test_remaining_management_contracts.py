@@ -287,7 +287,8 @@ async def test_knowledge_count_projection_falls_back_when_statistics_are_malform
     result = await ui.async_knowledge_command(_request(hass, "knowledge", "list"))
     assert result["sources"] == [{"id": "one"}]
     assert result["stats"] == {"source_count": "unavailable"}
-    assert result["feature_status"]
+    assert result["feature_status"]["source_count"] == 1
+    assert result["feature_status"]["total_source_count"] == 1
 
 
 async def test_function_save_requires_unambiguous_yaml_or_object(hass):

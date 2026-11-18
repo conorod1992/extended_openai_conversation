@@ -2954,13 +2954,15 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
     return _unknown_management_action(request)
 
 
-def _knowledge_availability(options: Mapping[str, Any], library: Any) -> dict[str, Any]:
+def _knowledge_availability(
+    options: Mapping[str, Any], enabled_count: int, total_count: int
+) -> dict[str, Any]:
     from .feature_status import management_feature_status
 
     return management_feature_status(
         options,
-        knowledge_source_count=library.source_count,
-        knowledge_total_source_count=library.total_source_count,
+        knowledge_source_count=enabled_count,
+        knowledge_total_source_count=total_count,
     )["knowledge"]
 
 
@@ -2977,7 +2979,7 @@ def _knowledge_mutation_result(
     enrichments = {
         "stats": library.stats,
         "feature_status": lambda: _knowledge_availability(
-            request.subentry.data, library
+            request.subentry.data, library.source_count, library.total_source_count
         ),
     }
     if source is not None:
@@ -3001,10 +3003,18 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
     library = await async_get_knowledge(hass, entry_id, subentry_id)
     if action == "list":
         sources = await library.async_list()
+        # The list includes disabled sources even when diagnostics are malformed.
+        listed = sources if isinstance(sources, list) else []
+        enabled_count = sum(
+            isinstance(source, Mapping) and source.get("enabled") is not False
+            for source in listed
+        )
         return {
             "sources": sources,
             "stats": library.stats(),
-            "feature_status": _knowledge_availability(request.subentry.data, library),
+            "feature_status": _knowledge_availability(
+                request.subentry.data, enabled_count, len(listed)
+            ),
         }
     if action == "set_enabled":
         _require_admin(request.is_admin)
@@ -3028,7 +3038,9 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         result: dict[str, Any] = {
             "revision": None,
             "knowledge_enabled": bool(persisted.get(CONF_KNOWLEDGE_ENABLED, False)),
-            "feature_status": _knowledge_availability(persisted, library),
+            "feature_status": _knowledge_availability(
+                persisted, library.source_count, library.total_source_count
+            ),
         }
         update_live_subentry(
             request.hass, request.entry, request.subentry, data=persisted

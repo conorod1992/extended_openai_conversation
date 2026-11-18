@@ -104,7 +104,11 @@ def build_setup_health_facts(
         "knowledge": {
             "enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
             "source_count": knowledge_source_count,
-            "total_source_count": knowledge_total_source_count,
+            **(
+                {"total_source_count": knowledge_total_source_count}
+                if knowledge_total_source_count is not None
+                else {}
+            ),
             "available": knowledge_available,
         },
         "web_search": {
@@ -140,7 +144,11 @@ def add_setup_health(
             subentry,
             memory_available="memories" not in failed_keys,
             knowledge_source_count=int(agent.get("knowledge_source_count") or 0),
-            knowledge_total_source_count=agent.get("knowledge_total_source_count"),
+            **(
+                {"knowledge_total_source_count": agent["knowledge_total_source_count"]}
+                if "knowledge_total_source_count" in agent
+                else {}
+            ),
             knowledge_available="knowledge" not in failed_keys,
             is_admin=is_admin,
             function_tools_health=function_tools_health,

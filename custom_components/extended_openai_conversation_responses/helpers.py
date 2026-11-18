@@ -128,9 +128,10 @@ def supports_openai_hosted_tools(
 def is_native_openai_connection(data: Mapping[str, Any]) -> bool:
     """Return whether the configured connection uses the native OpenAI endpoint."""
     base_url = data.get("base_url")
-    return supports_openai_hosted_tools(
-        effective_api_provider(data.get("api_provider"), base_url), base_url
-    )
+    # An inferred Azure connection necessarily has a different endpoint.
+    return (
+        base_url is None or isinstance(base_url, str)
+    ) and supports_openai_hosted_tools(data.get("api_provider"), base_url)
 
 
 def get_token_param_for_model(model: str) -> str:
