@@ -67,7 +67,12 @@ for(const guest of [true,false])test(`${guest?"Guest Mode":"Quiet Hours"} natura
           result.status = {state:phase,currently_active:active,scheduled,active_from:from,active_until:until,indefinite:false};
           if (host._testTimedPhase) Object.assign(result, {revision:phase,config:{...result.config,guest_mode_enabled:active,guest_excluded_entities:["light.external"]}});
         } else {
-          Object.assign(result, {active,period_ends_at:until,revision:phase,config:{...result.config,enabled:active||scheduled,max_volume:0.62}});
+          const externallyEdited = phase === "external";
+          Object.assign(result, {active,period_ends_at:until,revision:phase,config:{
+            ...result.config,enabled:active||scheduled||externallyEdited,max_volume:externallyEdited ? 0.46 : 0.62,
+            start:externallyEdited ? "20:00" : "22:00",end:externallyEdited ? "06:30" : "07:00",
+            wake_sound:externallyEdited ? "on" : "unchanged",
+          }});
         }
       }
       return result;
@@ -111,6 +116,23 @@ for(const guest of [true,false])test(`${guest?"Guest Mode":"Quiet Hours"} natura
   await page.clock.fastForward(61000);
   await expect(panel.locator(guest ? "#guest-controls-enabled" : "#qh-enabled")).toBeChecked();
   expect(await panel.evaluate((host,view)=>host._unsavedState.scopes.get(view).revision,url)).toBe("active");
+  if (!guest) {
+    const end = panel.locator("#qh-end"), start = panel.locator("#qh-start");
+    await end.focus();
+    await panel.evaluate(host=>{host._testTimedPhase="external";});
+    await page.clock.fastForward(61000);
+    await expect(panel.locator(".qh-status small")).toContainText("20:00–06:30");
+    await expect(end).toBeFocused();
+    await expect(end).toHaveValue("07:00");
+    await expect(start).toHaveValue("20:00");
+    await expect(panel.locator("#qh-wake")).toHaveValue("on");
+    await expect(panel.locator("#qh-volume")).toHaveValue("46");
+    await expect(panel.locator("#qh-volume-value")).toHaveText("46%");
+    await start.focus();
+    await expect(end).toHaveValue("06:30");
+    await expect(start).toBeFocused();
+    expect(await panel.evaluate(host=>host._unsavedState.scopes.get(host._viewKey()).revision)).toBe("external");
+  }
   await expectHarnessClean(page,errors);
 });
 
