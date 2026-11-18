@@ -15,6 +15,8 @@ from uuid import uuid4
 
 from homeassistant.exceptions import HomeAssistantError
 
+from .operational_errors import log_handled_failure
+
 _LOGGER = logging.getLogger(__name__)
 _TRANSACTION = re.compile(r"transaction-([0-9a-f]{32})\.json")
 _DOWNLOAD = re.compile(r"download-([0-9a-f]{32})\.json")
@@ -83,11 +85,9 @@ class SkillDownload:
                 try:
                     self.handle.seek(0)
                     _recover_download(self.record, self.handle)
-                except OSError, ValueError, HomeAssistantError:
-                    _LOGGER.warning(
-                        "Could not clean up Skill download %s",
-                        self.record,
-                        exc_info=True,
+                except (OSError, ValueError, RecursionError, HomeAssistantError) as err:
+                    log_handled_failure(
+                        _LOGGER, "Could not clean up Skill download", err
                     )
 
 
@@ -138,8 +138,8 @@ def _recover_abandoned_download(record: Path) -> None:
             _recover_download(record, handle)
     except FileNotFoundError:
         return
-    except OSError, ValueError, HomeAssistantError:
-        _LOGGER.warning("Could not recover Skill download %s", record, exc_info=True)
+    except (OSError, ValueError, RecursionError, HomeAssistantError) as err:
+        log_handled_failure(_LOGGER, "Could not recover Skill download", err)
 
 
 def _write(path: Path, document: dict) -> None:

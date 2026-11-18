@@ -1,6 +1,6 @@
 {
   "excluded": {
-    "AgentConfigError:service_tier": 116,
+    "AgentConfigError:service_tier": 120,
     "ModelCapabilityError:Invalid reasoning_effort 'low' for gpt-5-pro through responses; allowed": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'low' for gpt-5.2-pro through responses; allowed": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'low' for gpt-5.4-pro through responses; allowed": 1,
@@ -33,6 +33,7 @@
     "ModelCapabilityError:Invalid reasoning_effort 'max' for gpt-5.6-terra through chat_completions; allow": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'max' for gpt-6-luna through chat_completions; allowed": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'max' for gpt-6-sol through chat_completions; allowed": 1,
+    "ModelCapabilityError:Invalid reasoning_effort 'max' for gpt-6.1-terra through chat_completions; allow": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'max' for o3 through chat_completions; allowed": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'max' for o3 through responses; allowed": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'medium' for gpt-5-pro through responses; allowed": 1,
@@ -68,6 +69,8 @@
     "ModelCapabilityError:Invalid reasoning_effort 'minimal' for gpt-6-sol through responses; allowed": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'minimal' for gpt-6.1-sol through chat_completions; all": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'minimal' for gpt-6.1-sol through responses; allowed": 1,
+    "ModelCapabilityError:Invalid reasoning_effort 'minimal' for gpt-6.1-terra through chat_completions; a": 1,
+    "ModelCapabilityError:Invalid reasoning_effort 'minimal' for gpt-6.1-terra through responses; allowed": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'minimal' for o3 through chat_completions; allowed": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'minimal' for o3 through responses; allowed": 1,
     "ModelCapabilityError:Invalid reasoning_effort 'none' for gpt-5 through chat_completions; allowed": 1,
@@ -157,12 +160,14 @@
     "ModelCapabilityError:gpt-6-sol has no supported API path for function/tool calling.": 2,
     "ModelCapabilityError:gpt-6.1-sol does not support function/tool calling through chat_completions at r": 9,
     "ModelCapabilityError:gpt-6.1-sol has no supported API path for function/tool calling.": 4,
+    "ModelCapabilityError:gpt-6.1-terra does not support function/tool calling through chat_completions at": 9,
+    "ModelCapabilityError:gpt-6.1-terra has no supported API path for function/tool calling.": 2,
     "ModelCapabilityError:o3 has no supported API path for function/tool calling.": 8,
     "ModelCapabilityError:o3-pro does not support Web Search through responses at reasoning_effort=None.": 1,
     "ModelCapabilityError:o3-pro does not support chat_completions.": 11,
     "ModelCapabilityError:o3-pro does not support reasoning_effort; omit the setting.": 7,
     "ModelCapabilityError:o3-pro has no supported API path for function/tool calling.": 16
   },
-  "obligation_count": 7949,
-  "obligation_digest": "e6964410beae496c66db05bd0130efd5ddc45bf80f7db69bd5c2dbab74383a7a"
+  "obligation_count": 8057,
+  "obligation_digest": "10c12daf16762c6d76f9ff355059ceb000c8119d67a6e36c33c38207c0926c6b"
 }

@@ -129,6 +129,27 @@ def test_download_recovery_retries_a_failed_cleanup(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "record_text",
+    [
+        '{"name":"example","identity":[-1,-1]}',
+        " " * (16 * 1024 + 1),
+        "[" * 1500 + "]" * 1500,
+    ],
+    ids=["incorrect-owner", "oversized", "deeply-nested"],
+)
+def test_download_recovery_preserves_unverified_payload(tmp_path, record_text):
+    root, installed = tmp_path / ".staging", tmp_path / "installed"
+    owner = prepare_download(root, "example")
+    owner.handle.close()
+    payload = owner.directory / "partial"
+    payload.write_text("Preserve unverified data")
+    owner.record.write_text(record_text)
+    recover_transactions(root, installed)
+    assert payload.read_text() == "Preserve unverified data"
+    assert owner.record.exists()
+
+
+@pytest.mark.parametrize(
     "mutation",
     ["path_escape", "backup_identity", "target_identity", "oversized", "invalid_phase"],
 )
