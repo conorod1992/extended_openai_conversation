@@ -846,6 +846,20 @@ async def _async_persist_config_entries(
         ),
         "Restored agent configuration could not be durably verified",
     )
+    await _apply_restored_volatile_retention(hass, entry_id, subentry_id, prepared)
+
+
+async def _apply_restored_volatile_retention(
+    hass: HomeAssistant,
+    entry_id: str,
+    subentry_id: str,
+    prepared: backup.PreparedRestore,
+) -> None:
+    from .usage import async_apply_volatile_usage_retention, usage_retention_policy
+
+    await async_apply_volatile_usage_retention(
+        hass, entry_id, subentry_id, usage_retention_policy(prepared.config)
+    )
 
 
 async def async_persist_config_entries(
@@ -1003,6 +1017,9 @@ async def _async_publish_provider_pair(
             provider_data=provider_data,
         ),
         "Restored assistant and provider connection could not be durably verified",
+    )
+    await _apply_restored_volatile_retention(
+        hass, entry.entry_id, subentry.subentry_id, prepared
     )
     if client is not None:
         entry.runtime_data = _wrap_provider_client(

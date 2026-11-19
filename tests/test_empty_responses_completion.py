@@ -93,7 +93,10 @@ async def exercise_empty_responses_completion(
         "message": [message("msg", "")],
         "reasoning": [reasoning("rs")],
         "spoken": [message("spoken", "Done")],
+        "commentary": [message("progress", "Working on it")],
     }
+    for shape_name in ("message", "spoken"):
+        shapes[shape_name][0].phase = "final_answer"
     items = shapes[shape]
 
     async def provider(**kwargs):
@@ -126,7 +129,7 @@ async def exercise_empty_responses_completion(
         "failed": "response failed",
         "in_progress": "before a terminal event",
     }.get(status)
-    if status == "completed" and shape == "empty" and action_first:
+    if status == "completed" and shape in {"empty", "reasoning", "commentary"} and action_first:
         expected_error = "completed without assistant output after tool results"
     async with completion_event_scope():
         try:
@@ -154,7 +157,10 @@ async def exercise_empty_responses_completion(
     assert entity._execute_function_tool.await_count == int(action_first)
     if expected_error:
         assert expected_error in str(failure.value)
-        assert log.content[-1].role == "tool_result"
+        if shape in {"reasoning", "commentary"}:
+            assert log.content[-1].native == items[0]
+        else:
+            assert log.content[-1].role == "tool_result"
         results = [
             item
             for item in log.content
@@ -235,7 +241,14 @@ async def test_conditional_empty_fallback_is_bounded(hass, monkeypatch, streamin
     )
 
 
-async def test_public_empty_after_tool_is_a_bounded_error(hass, monkeypatch):
+async def test_commentary_after_tool_is_not_an_answer(hass, monkeypatch):
+    await exercise_empty_responses_completion(hass, monkeypatch, True, "commentary")
+
+
+@pytest.mark.parametrize("reasoning_only", [False, True])
+async def test_public_empty_after_tool_is_a_bounded_error(
+    hass, monkeypatch, reasoning_only
+):
     from custom_components.extended_openai_conversation_responses.const import (
         EVENT_CONVERSATION_FINISHED,
     )
@@ -250,7 +263,7 @@ async def test_public_empty_after_tool_is_a_bounded_error(hass, monkeypatch):
             True,
             [call("lookup", "action")]
             if client.responses.create.await_count == 1
-            else [],
+            else [reasoning("rs")] if reasoning_only else [],
         )
 
     client.responses.create.side_effect = provider

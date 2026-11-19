@@ -36,6 +36,7 @@ from .assistant_response import (
     classify_provider_output,
     provider_output_presentation,
     responses_answer_text,
+    responses_leave_tool_results_unanswered,
     separate_assistant_messages,
 )
 from .const import (
@@ -1889,10 +1890,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if (
                     api_mode == API_MODE_RESPONSES
                     and not round_tool_calls
-                    and chat_log.unresponded_tool_results
+                    and responses_leave_tool_results_unanswered(chat_log.content)
                 ):
-                    # A completed response without output is not an assistant
-                    # acknowledgement. Preserve the calls/results for replay
+                    # Replay-only output does not acknowledge tool results.
+                    # Preserve the calls/results for replay
                     # protection, but never resubmit them until the safety limit.
                     raise HomeAssistantError(
                         "OpenAI Responses completed without assistant output "

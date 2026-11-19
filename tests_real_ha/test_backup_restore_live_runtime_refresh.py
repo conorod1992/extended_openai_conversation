@@ -39,6 +39,7 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
 from custom_components.extended_openai_conversation_responses.usage import (
     async_get_durable_usage,
 )
+from custom_components.extended_openai_conversation_responses import usage as usage_module
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -195,6 +196,44 @@ async def test_usage_restore_projects_retention_and_keeps_aggregate_totals(
         == 1
     )
     assert actual["daily"] == before["daily"]
+
+
+async def test_configuration_restore_prunes_unloaded_volatile_usage(hass, monkeypatch):
+    days = {"usage_request_retention_days": 30, "usage_run_retention_days": 30}
+    entry = _make_entry("Fallback retention restore", include_ai_task=False, conversation_options=days)
+    await _setup_entry(hass, entry)
+    subentry = next(iter(entry.subentries.values()))
+    snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    snapshot["agent"]["config"].update(dict.fromkeys(days, 0))
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+    async def unavailable(*_):
+        raise OSError("Usage storage temporarily unavailable")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(usage_module, "async_get_durable_usage", unavailable)
+        fallback = await usage_module.async_get_usage(hass, entry.entry_id, subentry.subentry_id)
+    async with fallback.async_run():
+        await fallback.async_record_request(
+            successful=True, usage=usage_module.RequestUsage(total_tokens=23)
+        )
+    runs = fallback.recent_runs()["runs"]
+    assert len(runs) == 1
+    run_id = runs[0]["run_id"]
+    assert len(fallback.requests_for_run(run_id)["requests"]) == 1
+    totals, daily = fallback.as_dict(), fallback.today_summary()
+
+    result = await transfer.async_restore_transfer(
+        hass, entry, subentry, backup.finalize_backup_snapshot(snapshot)["document"],
+        sections=[transfer.SECTION_CONFIGURATION], confirm_retention=True,
+    )
+    assert result["status"] == "restored"
+    effective = await usage_module.async_get_usage(hass, entry.entry_id, subentry.subentry_id)
+    assert effective is fallback
+    assert effective.recent_runs()["runs"] == []
+    assert effective.requests_for_run(run_id)["requests"] == []
+    assert effective.as_dict() == totals
+    assert effective.today_summary() == daily
 
 
 def _system_prompt(body: dict[str, Any]) -> str:

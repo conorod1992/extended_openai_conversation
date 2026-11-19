@@ -1786,11 +1786,10 @@ async def async_get_durable_usage(
         return manager
 
 
-async def async_apply_usage_retention(
-    hass: HomeAssistant, entry_id: str, subentry_id: str
+async def async_apply_volatile_usage_retention(
+    hass: HomeAssistant, entry_id: str, subentry_id: str, policy: dict[str, int]
 ) -> None:
-    """Apply committed policy to both accounting lifetimes, including fallback."""
-    policy = _saved_retention(hass, entry_id, subentry_id)
+    """Apply committed policy to any existing in-memory fallback."""
     fallback = hass.data.get(_VOLATILE_USAGE_MANAGERS, {}).get((entry_id, subentry_id))
     if fallback is not None:
         fallback.request_retention_days = policy["request_retention_days"]
@@ -1798,6 +1797,14 @@ async def async_apply_usage_retention(
         # Its storage deliberately has no persistence; prune existing memory even
         # when durable initialization or pruning still needs an explicit retry.
         await fallback.async_prune_details(save=False)
+
+
+async def async_apply_usage_retention(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> None:
+    """Apply committed policy to both accounting lifetimes, including fallback."""
+    policy = _saved_retention(hass, entry_id, subentry_id)
+    await async_apply_volatile_usage_retention(hass, entry_id, subentry_id, policy)
     durable = await async_get_durable_usage(hass, entry_id, subentry_id)
     durable.request_retention_days = policy["request_retention_days"]
     durable.run_retention_days = policy["run_retention_days"]

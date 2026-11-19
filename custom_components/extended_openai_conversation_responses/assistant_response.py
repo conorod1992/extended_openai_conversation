@@ -142,3 +142,26 @@ def final_assistant_text(
         if item.content:
             texts.append(item.content)
     return separator.join(reversed(texts))
+
+
+def responses_leave_tool_results_unanswered(
+    content: Sequence[conversation.Content],
+) -> bool:
+    """Check the current exchange while ignoring replay-only provider output."""
+    for item in reversed(content):
+        if isinstance(item, conversation.UserContent):
+            break
+        if is_tool_result_content(item):
+            return True
+        if (
+            isinstance(item, conversation.AssistantContent)
+            and not item.tool_calls
+            and classify_provider_output(item.native) == "answer"
+            and (
+                (item.content or "").strip()
+                # A completed assistant message can deliberately be empty.
+                or getattr(item.native, "type", None) == "message"
+            )
+        ):
+            break
+    return False
