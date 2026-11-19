@@ -82,7 +82,8 @@ async def test_archive_failed_intent_compares_the_actual_durable_generation(
             failed.setattr(storage, "async_save_partition", fail_partition)
             with pytest.raises(OSError, match="pending month"):
                 await record("Earlier saved text")
-        assert "pending_partitions" in storage.metadata
+        assert storage.metadata["pending_append"]["turn"]["user_text"] == "Earlier saved text"
+        assert "pending_partitions" not in storage.metadata
     else:
         await record("Earlier saved text")
     instant += timedelta(minutes=1)
