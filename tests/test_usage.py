@@ -1073,6 +1073,76 @@ async def test_cross_midnight_run_attribution(monkeypatch) -> None:
     assert manager.month_summary("2026-10")["average_tokens_per_completed_run"] == 250
 
 
+async def test_daily_store_keeps_compatible_rows_and_exact_attribution(monkeypatch):
+    now = datetime(2026, 9, 13, 12, tzinfo=UTC)
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    monkeypatch.setattr(dt_util, "DEFAULT_TIME_ZONE", UTC)
+    date = now.date().isoformat()
+    totals, daily, details = (CoverageMemoryStorage() for _ in range(3))
+    manager = await _coverage_manager(totals, daily, details)
+
+    async with manager.async_run():
+        await manager.async_record_request(
+            successful=True, usage=RequestUsage(total_tokens=5)
+        )
+    await manager.async_record_request(
+        successful=True, usage=RequestUsage(total_tokens=20)
+    )
+
+    counters = {
+        "run_total_tokens": 5,
+        "run_request_count": 1,
+        "unattributed_run_count": 0,
+    }
+    assert daily.data == manager._usage_snapshot("daily")
+    assert daily.data["run_attribution"] == {date: counters}
+    assert counters.keys().isdisjoint(daily.data["days"][date])
+    assert daily.data["days"][date]["total_tokens"] == 25
+    assert daily.data["days"][date]["average_tokens_per_completed_run"] == 5
+
+    reloaded = await _coverage_manager(totals, daily, details)
+    await reloaded.async_clear_details(confirm=True)
+    assert reloaded.summary_for_date(date) == manager.summary_for_date(date)
+    assert reloaded.month_summary("2026-09")["average_requests_per_completed_run"] == 1
+    assert (await reloaded.async_backup_data())["daily"][date] == (
+        manager.summary_for_date(date)
+    )
+
+
+async def test_days_only_rollback_rewrite_cannot_publish_stale_attribution():
+    saved = _coverage_backup()
+    date, day = next(iter(saved["daily"].items()))
+    day.update(run_total_tokens=5, run_request_count=1)
+    totals = CoverageMemoryStorage(saved["totals"])
+    daily = CoverageMemoryStorage({"totals": saved["totals"], "days": saved["daily"]})
+    current = await _coverage_manager(totals, daily)
+    assert current.summary_for_date(date)["average_tokens_per_completed_run"] == 5
+
+    # Older builds rewrite the envelope and update the standard counters only.
+    day.update(
+        run_count=2,
+        successful_run_count=2,
+        api_request_count=2,
+        successful_request_count=2,
+        total_tokens=12,
+    )
+    totals.data.update(conversation_count=2, api_request_count=2, total_tokens=12)
+    daily.data = {"days": {date: day}}
+    reupgraded = await _coverage_manager(totals, daily)
+
+    assert not daily.saves
+    assert reupgraded.persistence_status()["mode"] == "durable"
+    assert reupgraded.as_dict()["total_tokens"] == 12
+    for period in (
+        reupgraded.summary_for_date(date), reupgraded.month_summary("2026-09")
+    ):
+        assert period["run_count"] == 2
+        assert period["total_tokens"] == 12
+        assert period["unattributed_run_count"] == 2
+        assert period["average_tokens_per_completed_run"] is None
+        assert period["average_requests_per_completed_run"] is None
+
+
 @pytest.mark.parametrize("destination_zone", ["UTC", "America/New_York"])
 @pytest.mark.parametrize(
     "explicit_attribution", [False, True], ids=["legacy", "current"]

@@ -49,6 +49,10 @@ _USAGE_SAVE_DELAY_SECONDS = 5.0
 _USAGE_PRUNE_RETRY_SECONDS = 300.0
 _USAGE_PRUNE_MAX_ATTEMPTS_PER_DAY = 2
 _RUN_ACCOUNTING_DATES = "run_accounting_dates"
+_DAILY_RUN_ATTRIBUTION = "run_attribution"
+_RUN_ATTRIBUTION_COUNTERS = frozenset(
+    {"run_total_tokens", "run_request_count", "unattributed_run_count"}
+)
 MAX_RECENT_LIMIT = 200
 _LOGGER = logging.getLogger(__name__)
 _EXPLICIT_USAGE_SAVE: ContextVar[bool] = ContextVar(
@@ -357,20 +361,8 @@ class UsageManager:
                 staged_totals = _totals_from_storage(totals_data)
             repair_required |= _stored_totals_need_repair(totals_data)
 
-            days = daily_data.get("days")
-            repair_required |= "days" in daily_data and not isinstance(days, dict)
-            staged_daily = {}
-            for key, value in (days if isinstance(days, dict) else {}).items():
-                if not isinstance(value, dict):
-                    repair_required = True
-                    continue
-                try:
-                    # Older stores omit newer counters. Migrate omissions only;
-                    # malformed supplied values must not become valid zeros.
-                    staged_daily[key] = _validate_usage_day(key, value, stored=True)
-                except TypeError, ValueError:
-                    repair_required = True
-                    continue
+            staged_daily, daily_needs_repair = _load_stored_usage_days(daily_data)
+            repair_required |= daily_needs_repair
             staged_requests: list[UsageRequest] = []
             staged_runs: list[UsageRun] = []
             request_ids: set[str] = set()
@@ -1017,9 +1009,10 @@ class UsageManager:
         if self._daily_storage is None:
             await self._async_save_totals(replacing=replacing)
             return
-        await self._daily_storage.async_save(
-            {"totals": self.as_dict(), "days": self.daily}
+        daily_payload = await asyncio.to_thread(
+            _serialize_usage_aggregate_store, self.as_dict(), self.daily
         )
+        await self._daily_storage.async_save(daily_payload)
         try:
             await self._async_save_totals(replacing=replacing)
         except Exception:
@@ -1042,10 +1035,7 @@ class UsageManager:
         if category == "totals":
             return self.as_dict()
         if category == "daily":
-            return {
-                "totals": deepcopy(self.as_dict()),
-                "days": deepcopy(self.daily),
-            }
+            return _serialize_usage_aggregate_store(self.as_dict(), self.daily)
         if category == "details":
             return _serialize_usage_detail_store(self.requests, self.runs)
         raise ValueError(f"Unknown usage persistence category: {category}")
@@ -1152,6 +1142,51 @@ def _validate_breakdown(value: Any, label: str) -> dict[str, int]:
     return dict(value)
 
 
+def _load_stored_usage_days(
+    data: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], bool]:
+    """Read compatible snapshots and earlier generations of the daily Store."""
+    raw_days = data.get("days", {})
+    if not isinstance(raw_days, dict):
+        return {}, True
+    attribution = data.get(_DAILY_RUN_ATTRIBUTION, {})
+    authoritative = "totals" in data
+    repair_required = not isinstance(attribution, dict) or (
+        bool(attribution) and not authoritative
+    )
+    if repair_required:
+        attribution = {}
+    repair_required |= not attribution.keys() <= raw_days.keys()
+
+    days = {}
+    for date, raw in raw_days.items():
+        try:
+            if date in attribution:
+                counters = attribution[date]
+                if (
+                    not isinstance(raw, dict)
+                    or not isinstance(counters, dict)
+                    or counters.keys() != _RUN_ATTRIBUTION_COUNTERS
+                    or not _RUN_ATTRIBUTION_COUNTERS.isdisjoint(raw)
+                ):
+                    raise ValueError("daily usage attribution is invalid")
+                raw = {**raw, **counters}
+            day = _validate_usage_day(date, raw, stored=True)
+            if not authoritative and not _RUN_ATTRIBUTION_COUNTERS.isdisjoint(raw):
+                # 6.8.3 rewrites a days-only snapshot and leaves any inline
+                # counters from an earlier build stale when it adds runs.
+                day.update(
+                    run_total_tokens=0,
+                    run_request_count=0,
+                    unattributed_run_count=day["run_count"],
+                )
+                _calculate_averages(day)
+            days[date] = day
+        except TypeError, ValueError:
+            repair_required = True
+    return days, repair_required
+
+
 def _validate_usage_day(
     date: str, value: Any, *, stored: bool = False
 ) -> dict[str, Any]:
@@ -1164,8 +1199,7 @@ def _validate_usage_day(
     expected = _empty_day(date)
     if not isinstance(value, dict):
         raise ValueError("daily usage record is invalid")
-    attribution = {"run_total_tokens", "run_request_count", "unattributed_run_count"}
-    if attribution.isdisjoint(value):
+    if _RUN_ATTRIBUTION_COUNTERS.isdisjoint(value):
         # Legacy run details lack the local day assigned at completion.
         value = {
             **value,
@@ -1173,7 +1207,7 @@ def _validate_usage_day(
             "run_request_count": 0,
             "unattributed_run_count": value.get("run_count", 0),
         }
-    elif not attribution.issubset(value):
+    elif not _RUN_ATTRIBUTION_COUNTERS.issubset(value):
         raise ValueError("daily usage attribution is incomplete")
     if stored:
         value = {**expected, **value}
@@ -1639,7 +1673,7 @@ async def async_stage_usage_journal_recovery(
         totals_payload = asdict(valid_totals)
         return (
             totals_payload,
-            {"totals": totals_payload, "days": valid_daily},
+            _serialize_usage_aggregate_store(totals_payload, valid_daily),
             _serialize_usage_detail_store(valid_requests, valid_runs),
         )
 
@@ -1754,6 +1788,31 @@ async def async_get_usage(
                 fallbacks[key] = manager
                 _register_usage_maintenance(hass, manager)
                 return manager
+
+
+def _serialize_usage_aggregate_store(
+    totals: dict[str, Any], daily: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Keep day rows readable by 6.8.3 while saving attribution atomically."""
+    days = {}
+    attribution = {}
+    for date, daily_record in daily.items():
+        day = deepcopy(daily_record)
+        counters = {key: day.pop(key) for key in _RUN_ATTRIBUTION_COUNTERS}
+        if day["run_count"] or any(counters.values()):
+            attribution[date] = counters
+        # 6.8.3 expects numeric daily averages and uses these broader totals.
+        if day["average_tokens_per_completed_run"] is None:
+            count = day["run_count"]
+            day["average_tokens_per_completed_run"] = round(day["total_tokens"] / count)
+            day["average_requests_per_completed_run"] = round(
+                day["api_request_count"] / count, 2
+            )
+        days[date] = day
+    payload = {"totals": totals, "days": days}
+    if attribution:
+        payload[_DAILY_RUN_ATTRIBUTION] = attribution
+    return payload
 
 
 def _serialize_usage_details(

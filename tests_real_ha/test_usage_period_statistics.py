@@ -289,8 +289,9 @@ async def test_readable_legacy_usage_starts_durably_during_a_write_outage(
     assert summary["lifetime"]["conversation_count"] == 2
     assert aggregate["totals"]["conversation_count"] == 2
     assert aggregate["days"][date]["run_count"] == 2
-    assert aggregate["days"][date]["unattributed_run_count"] == 1
-    assert aggregate["days"][date]["average_tokens_per_completed_run"] is None
+    assert "unattributed_run_count" not in aggregate["days"][date]
+    assert aggregate["run_attribution"][date]["unattributed_run_count"] == 1
+    assert summary["today"]["average_tokens_per_completed_run"] is None
 
 
 @pytest.mark.parametrize("restore", ["none", "dated", "legacy"])

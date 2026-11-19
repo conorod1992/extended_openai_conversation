@@ -67,6 +67,8 @@ Detailed request and run records are content-free. They never contain prompts, r
 
 Compact lifetime totals and daily aggregates are persisted as one authoritative aggregate snapshot when daily Usage storage is available; the existing lifetime-totals store is retained as a compatibility mirror. Request and run details have their own retention policy. Recorded completed-run averages survive clearing or expiring those details.
 
+The daily records remain readable after rolling back to 6.8.3. Saving Usage in 6.8.3 removes newer run attribution from the snapshot. After upgrading again, affected average tokens and requests per completed run show **Unavailable** until the selected period contains only runs with recorded attribution. Daily totals, lifetime totals, and retained run records remain readable.
+
 - request details: 30 days by default
 - run details: 90 days by default
 - daily aggregates: indefinite
