@@ -46,6 +46,7 @@ class _SpeechText(str):
 _URL_PREFIXES = ("http://", "https://", "www.")
 _URL_TRAILING_PUNCTUATION = frozenset(".,;:!?")
 _URL_PROSE_DASHES = "\u2014\u2013"
+_URL_USERINFO = re.compile(r"[^/?#@]*@")
 type _BareUrlPhase = Literal["authority", "long_userinfo", "host", "path"]
 _WWW_ADDRESS = re.compile(
     r"www\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+",
@@ -86,6 +87,7 @@ _URL_WRAPPERS_BY_INITIAL = {
     for initial in {pair[0][0] for pair in _URL_WRAPPERS}
 }
 _URL_QUOTES_BY_INITIAL = {pair[0]: (pair,) for pair in _URL_QUOTE_WRAPPERS}
+_URL_OPENER_BY_CLOSER = {closer: opener for opener, closer in _URL_WRAPPERS}
 _URL_QUOTE_MAP = dict(_URL_QUOTE_WRAPPERS)
 _URL_QUOTE_CLOSERS = frozenset(_URL_QUOTE_MAP.values())
 _EMPHASIS_TOKENS = {"*": re.compile(r"`+|\*"), "_": re.compile(r"`+|_")}
@@ -727,7 +729,7 @@ class StreamingSpeechSanitizer:
                 if phase == "host":
                     break
                 closes_wrapper = self._wrapper_before_url_dash(
-                    text, start, end, closer, final=final
+                    text, start, end, phase, closer, final=final
                 )
                 if closes_wrapper is None:
                     return end, phase, True
@@ -763,12 +765,20 @@ class StreamingSpeechSanitizer:
         return end, phase, False
 
     def _wrapper_before_url_dash(
-        self, text: str, start: int, dash: int, closer: str, *, final: bool
+        self,
+        text: str,
+        start: int,
+        dash: int,
+        phase: _BareUrlPhase,
+        closer: str,
+        *,
+        final: bool,
     ) -> bool | None:
         """Recognize a closer before prose, allowing for a later URL closer."""
         before = text[max(start, dash - _FORMAT_PREFIX_LIMIT) : dash]
         if len(before) < _FORMAT_PREFIX_LIMIT and self._long_url_tail:
             before = (self._long_url_tail + before)[-_FORMAT_PREFIX_LIMIT:]
+        before = before[: self._bare_url_end(before, 0, len(before), (0, 0))]
         if closer:
             if not self._terminal_url_closer(before, len(before), closer):
                 return False
@@ -789,7 +799,7 @@ class StreamingSpeechSanitizer:
             if text[end] in _URL_PROSE_DASHES and self._terminal_url_closer(
                 text, end, closer
             ):
-                return False
+                break
             end += 1
         if end == limit:
             if limit - dash > self.max_buffer_chars:
@@ -797,7 +807,23 @@ class StreamingSpeechSanitizer:
             if not final:
                 return None
         trailing = self._bare_url_end(text, dash + 1, end)
-        return not self._terminal_url_closer(text, trailing, closer)
+        if not self._terminal_url_closer(text, trailing, closer):
+            return True
+        # A matching opener immediately after the dash makes this a separate
+        # prose span, even if its closer would also match the URL's wrapper.
+        opener = _URL_OPENER_BY_CLOSER.get(closer)
+        if (
+            opener is None
+            or dash + 1 + len(opener) >= trailing - len(closer)
+            or not text.startswith(opener, dash + 1)
+        ):
+            return False
+        # Before a confirmed host/path boundary these markers can still be
+        # literal userinfo. A raw @ before /?# takes precedence there.
+        return (
+            phase not in ("authority", "long_userinfo")
+            or _URL_USERINFO.match(text, dash + 1, trailing) is None
+        )
 
     @staticmethod
     def _terminal_url_closer(text: str, end: int, closer: str) -> bool:

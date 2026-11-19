@@ -105,6 +105,55 @@ def test_wrapper_before_dash_respects_enclosing_and_escaped_markers(source, expe
 
 @pytest.mark.parametrize(
     "source,expected",
+    [
+        (
+            "Open **https://example.invalid/guide**,\u2014never press Reset.",
+            "Open,\u2014never press Reset.",
+        ),
+        (
+            "Open \u201chttps://example.invalid/guide\u201d\u2014\u201ccontact@example.invalid\u201d can help.",
+            "Open \u2014\u201ccontact@example.invalid\u201d can help.",
+        ),
+        (
+            "Open **https://example.invalid/guide**\u2014**never**\u2014press Reset.",
+            "Open \u2014never\u2014press Reset.",
+        ),
+        (
+            "Open **https://example.invalid/guide**,\u2013label/details** first.",
+            "Open first.",
+        ),
+        (
+            "Open **https://demo:sample**,\u2013**label@example.invalid** first.",
+            "Open first.",
+        ),
+    ],
+)
+def test_wrapper_before_dash_preserves_punctuation_and_separate_prose(source, expected):
+    assert_all_splits(source, expected)
+
+
+@pytest.mark.parametrize(
+    "suffix,expected",
+    [
+        (",\u2014never press Reset.", ",\u2014never press Reset."),
+        ("\u2014**never**\u2014press Reset.", " \u2014never\u2014press Reset."),
+    ],
+)
+def test_overlong_wrapped_path_preserves_punctuation_and_separate_prose(suffix, expected):
+    raw = "Open **https://example.invalid/" + "a" * 140 + "**" + suffix
+    expected = "Open" + expected
+    assert StreamingSpeechSanitizer(max_buffer_chars=64).process_complete(raw) == expected
+    for split in range(len(raw) + 1):
+        sanitizer = StreamingSpeechSanitizer(max_buffer_chars=64)
+        first = sanitizer.feed(raw[:split])
+        assert sanitizer.buffered_chars <= sanitizer.max_buffer_chars + 256
+        second = sanitizer.feed(raw[split:])
+        assert sanitizer.buffered_chars <= sanitizer.max_buffer_chars + 256
+        assert first + second + sanitizer.finish() == expected, split
+
+
+@pytest.mark.parametrize(
+    "source,expected",
     [('Open "{}"', "Open "), ("Open **{}**", "Open "), ("**Open {}**", "Open")],
 )
 def test_overlong_wrapped_url_ends_before_prose_with_an_email(source, expected):

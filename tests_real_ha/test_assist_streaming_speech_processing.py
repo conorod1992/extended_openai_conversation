@@ -50,7 +50,10 @@ _SPOKEN_RESPONSE = "Hello see and docs done."
     ("Router: http://router.local:8080\u2014never press Reset.", "Router: \u2014never press Reset.", None),
     ('Open "https://example.invalid"\u2014contact@example.invalid can help.', "Open \u2014contact@example.invalid can help.", None),
     ("**Open https://example.invalid**\u2014contact@example.invalid can help.", "Open\u2014contact@example.invalid can help.", None),
-], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined", "escaped-punctuation-code", "setext-equals", "literal-spacing", "single-emphasis-spacing", "nested-emphasis-spacing", "punctuation-attachment", "dashed-url-userinfo", "prose-dash-after-port", "dashed-prose-after-quoted-url", "dashed-prose-after-emphasized-phrase"])
+    ("Open **https://example.invalid/guide**,\u2014never press Reset.", "Open,\u2014never press Reset.", None),
+    ("Open \u201chttps://example.invalid/guide\u201d\u2014\u201ccontact@example.invalid\u201d can help.", "Open \u2014\u201ccontact@example.invalid\u201d can help.", None),
+    ("Open **https://example.invalid/guide**\u2014**never**\u2014press Reset.", "Open \u2014never\u2014press Reset.", None),
+], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined", "escaped-punctuation-code", "setext-equals", "literal-spacing", "single-emphasis-spacing", "nested-emphasis-spacing", "punctuation-attachment", "dashed-url-userinfo", "prose-dash-after-port", "dashed-prose-after-quoted-url", "dashed-prose-after-emphasized-phrase", "comma-before-dashed-negation", "separate-quoted-prose", "separate-emphasized-negation"])
 async def test_assist_speech_regressions_preserve_provider_history(
     hass, hass_ws_client, monkeypatch, raw, expected, progressive_expected
 ):
