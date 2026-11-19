@@ -286,7 +286,10 @@ async def test_openai_credentials_error_retry_preserves_help_placeholders() -> N
             "openai_advanced",
             config_flow.STEP_OPENAI_ADVANCED_SCHEMA,
         )
-    assert advanced["description_placeholders"] is None
+    initial_advanced = await ExtendedOpenAIConversationConfigFlow.async_step_openai_advanced(flow)
+    assert advanced["description_placeholders"] == initial_advanced["description_placeholders"] == {
+        "openai_base_url": DEFAULT_CONF_BASE_URL,
+    }
 
 
 async def test_config_flow_success_errors_reauth_and_type_registration() -> None:

@@ -70,6 +70,7 @@ from .const import (
     DEFAULT_API_MODE,
     DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
+    DEFAULT_CONF_BASE_URL,
     DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_MAX_TOKENS,
@@ -358,12 +359,15 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> AsyncOpen
     )
 
 
-_OPENAI_CREDENTIAL_DESCRIPTION_PLACEHOLDERS = {
-    "api_key_guide_url": (
-        "https://conorod1992.github.io/extended_openai_conversation/"
-        "getting-started/api-key/"
-    ),
-    "openai_api_keys_url": "https://platform.openai.com/api-keys",
+_OPENAI_FORM_PLACEHOLDERS = {
+    "openai_credentials": {
+        "api_key_guide_url": (
+            "https://conorod1992.github.io/extended_openai_conversation/"
+            "getting-started/api-key/"
+        ),
+        "openai_api_keys_url": "https://platform.openai.com/api-keys",
+    },
+    "openai_advanced": {"openai_base_url": DEFAULT_CONF_BASE_URL},
 }
 
 
@@ -416,7 +420,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                 step_id="openai_credentials",
                 data_schema=schema_for_ha(STEP_OPENAI_CREDENTIALS_SCHEMA),
                 description_placeholders=dict(
-                    _OPENAI_CREDENTIAL_DESCRIPTION_PLACEHOLDERS
+                    _OPENAI_FORM_PLACEHOLDERS["openai_credentials"]
                 ),
             )
 
@@ -442,6 +446,9 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_show_form(
                 step_id="openai_advanced",
                 data_schema=schema_for_ha(STEP_OPENAI_ADVANCED_SCHEMA),
+                description_placeholders=dict(
+                    _OPENAI_FORM_PLACEHOLDERS["openai_advanced"]
+                ),
             )
 
         data = {**self._setup_data, **user_input}
@@ -526,15 +533,12 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         if step_id == "user":
             retry_schema = retry_schema.extend({}, extra=STEP_USER_DATA_SCHEMA.extra)
+        placeholders = _OPENAI_FORM_PLACEHOLDERS.get(step_id)
         return self.async_show_form(
             step_id=step_id,
             data_schema=retry_schema,
             errors=errors,
-            description_placeholders=(
-                dict(_OPENAI_CREDENTIAL_DESCRIPTION_PLACEHOLDERS)
-                if step_id == "openai_credentials"
-                else None
-            ),
+            description_placeholders=dict(placeholders) if placeholders else None,
         )
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:

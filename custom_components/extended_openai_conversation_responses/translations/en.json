@@ -55,7 +55,7 @@
                     "skip_authentication": "Skip authentication"
                 },
                 "data_description": {
-                    "base_url": "Leave blank to use the SDK default, including OPENAI_BASE_URL if set. Enter https://api.openai.com/v1 to select OpenAI explicitly, or enter a compatible gateway URL.",
+          "base_url": "Leave blank to use the SDK default, including OPENAI_BASE_URL if set. Enter {openai_base_url} to select OpenAI explicitly, or enter a compatible gateway URL.",
                     "organization": "Optional. Most users should leave this blank.",
                     "skip_authentication": "Leave this off for OpenAI. Use it only for a compatible endpoint that does not require authentication."
                 }
