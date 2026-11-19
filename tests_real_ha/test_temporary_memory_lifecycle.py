@@ -5,8 +5,16 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import timedelta
 import json
+from pathlib import Path
 from typing import Any
 
+import pytest
+from pytest_homeassistant_custom_component.common import MockUser
+
+from custom_components.extended_openai_conversation_responses import (
+    conversation_archive,
+    temporary_memory,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     CONF_API_MODE,
@@ -14,18 +22,22 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_CONVERSATION_CONTINUITY,
     CONF_TEMPORARY_MEMORY,
     CONVERSATION_CONTINUITY_USER,
+    DOMAIN,
     TEMPORARY_MEMORY_BALANCED,
+    TEMPORARY_MEMORY_OFF,
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockUser
-from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
-from tests_real_ha.test_provider_wire_e2e import (
-    _chat_sse_text,
-    _install_wire,
-    _speech,
+from tests.test_temporary_memory import stored_record
+from tests_real_ha.test_acceptance_lifecycle import (
+    _conversation_subentry,
+    _make_entry,
+    _setup_entry,
 )
+from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 _OWNER_ID = "temporary-memory-owner"
 _FOREIGN_ID = "temporary-memory-foreign"
@@ -246,3 +258,55 @@ async def test_temporary_memory_created_by_model_is_owned_injected_pruned_and_re
 
     assert _speech(healthy_turn) == "Everything is working normally."
     assert _MEMORY_TEXT not in _system_prompt(healthy_wire.requests[0]["body"])
+
+
+@pytest.mark.parametrize("has_store", [False, True], ids=["missing", "existing"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_disabled_conversation_prunes_temporary_memory_off_at_startup(
+    hass, has_store
+):
+    entry = _make_entry(
+        "Disabled Temporary Memory startup",
+        include_ai_task=False,
+        conversation_options={CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_OFF},
+    )
+    subentry = _conversation_subentry(entry)
+    entry.add_to_hass(hass)
+    registry_entry = er.async_get(hass).async_get_or_create(
+        "conversation",
+        DOMAIN,
+        subentry.subentry_id,
+        config_entry=entry,
+        config_subentry_id=subentry.subentry_id,
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    assert registry_entry.disabled_by is er.RegistryEntryDisabler.USER
+    store = temporary_memory._temporary_memory_store(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    if has_store:
+        legacy = stored_record(1, scope_id="device:satellite", owner_scope_id=None)
+        legacy.pop("owner_scope_id")
+        expired = {
+            **legacy,
+            "memory_id": "expired",
+            "expires_at": (dt_util.utcnow() - timedelta(days=1)).isoformat(),
+        }
+        await store.async_save({"records": [expired, legacy]})
+        archive = conversation_archive.HomeAssistantArchiveStorage(
+            hass, entry.entry_id, subentry.subentry_id
+        )
+        await archive.async_save_metadata({"pending_partitions": []})
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert conversation.async_get_agent(hass, entry.entry_id) is None
+    fresh = temporary_memory._temporary_memory_store(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    if has_store:
+        assert await fresh.async_load() == {
+            "records": [{**legacy, "owner_scope_id": None}]
+        }
+    else:
+        assert not Path(fresh.path).exists()

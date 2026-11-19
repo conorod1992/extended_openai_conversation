@@ -8,11 +8,16 @@ from weakref import ref
 
 from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS, ChatLog
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers.chat_session import DATA_CHAT_SESSION
+from homeassistant.helpers.chat_session import CONVERSATION_TIMEOUT, DATA_CHAT_SESSION
 from homeassistant.helpers.typing import UNDEFINED
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .conversation_ids import GUEST_CONTINUITY_NAMESPACE, create_conversation_id
+from .conversation_ids import (
+    GUEST_CONTINUITY_NAMESPACE,
+    GUEST_CONVERSATION_ID_PREFIX,
+    create_conversation_id,
+)
 from .scope import ResolvedDataScope
 
 _CONVERSATION_ID_OWNERS = f"{DOMAIN}.conversation_id_owners"
@@ -58,6 +63,26 @@ def conversation_id_is_owned(hass: HomeAssistant | None, conversation_id: str) -
     data = getattr(hass, "data", {})
     return isinstance(data, dict) and conversation_id in data.get(
         _CONVERSATION_ID_OWNERS, {}
+    )
+
+
+def has_live_conversation_owner(
+    hass: HomeAssistant, agent_id: str, conversation_id: str, scope_id: str
+) -> bool:
+    """Check that a retained Archive binding still owns the active native chat."""
+    if conversation_id.startswith(GUEST_CONVERSATION_ID_PREFIX):
+        return False
+    owner = (agent_id, scope_id)
+    session = hass.data.get(DATA_CHAT_SESSION, {}).get(conversation_id)
+    registration = hass.data.get(_CLEANUP_REGISTRATIONS, {}).get(conversation_id)
+    return (
+        hass.data.get(_CONVERSATION_ID_OWNERS, {}).get(conversation_id) == owner
+        and session is not None
+        and registration is not None
+        and registration.session is session
+        and registration.owner == owner
+        and conversation_id in hass.data.get(DATA_CHAT_LOGS, {})
+        and session.last_updated + CONVERSATION_TIMEOUT >= dt_util.utcnow()
     )
 
 

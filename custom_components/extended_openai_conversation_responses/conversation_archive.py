@@ -183,8 +183,16 @@ def async_start_archive_retention(hass: HomeAssistant) -> None:
         return
     token = object()
 
-    async def _async_prune_archive_retention(_now: datetime) -> None:
+    async def _async_prune_archive_retention(
+        _now: datetime, *, startup: bool = False
+    ) -> None:
         from .agent_config import normalized_agent_integer
+        from .const import (
+            CONF_TEMPORARY_MEMORY,
+            DEFAULT_TEMPORARY_MEMORY,
+            TEMPORARY_MEMORY_OFF,
+        )
+        from .temporary_memory import async_expire_existing_temporary_memory
 
         for entry in hass.config_entries.async_entries(DOMAIN):
             for subentry in tuple(entry.subentries.values()):
@@ -204,6 +212,23 @@ def async_start_archive_retention(hass: HomeAssistant) -> None:
                         agent = current.subentries.get(subentry_id) if current else None
                         if agent is None or agent.subentry_type != "conversation":
                             continue
+                        if (
+                            startup
+                            and agent.data.get(
+                                CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY
+                            )
+                            == TEMPORARY_MEMORY_OFF
+                        ):
+                            try:
+                                await async_expire_existing_temporary_memory(
+                                    hass, entry_id, subentry_id
+                                )
+                            except Exception:
+                                _LOGGER.exception(
+                                    "Startup Temporary Memory expiry failed for %s/%s",
+                                    entry_id,
+                                    subentry_id,
+                                )
                         archive = await async_get_archive(hass, entry_id, subentry_id)
                         await archive.async_prune(
                             normalized_agent_integer(
@@ -223,8 +248,8 @@ def async_start_archive_retention(hass: HomeAssistant) -> None:
         hass, _async_prune_archive_retention, timedelta(days=1)
     )
     startup = hass.async_create_background_task(
-        _async_prune_archive_retention(dt_util.utcnow()),
-        "EOAI startup archive retention",
+        _async_prune_archive_retention(dt_util.utcnow(), startup=True),
+        "EOAI startup assistant retention",
         eager_start=False,
     )
 
@@ -419,6 +444,18 @@ class ConversationArchive:
     def retained_continuity_bindings(self) -> dict[str, str]:
         """Identify unchanged retained conversations under exclusive maintenance."""
         return self._continuity_bindings("retained")
+
+    def retained_ha_default_scopes(self) -> dict[str, str]:
+        """Identify retained Archive bindings keyed by their native conversation ID."""
+        return {
+            session.home_assistant_conversation_id: session.scope_id
+            for key, session_id in self._active.items()
+            if (session := self._sessions.get(session_id)) is not None
+            and session.retention_state == "retained"
+            and session.agent_subentry_id == self._agent_subentry_id
+            and session.home_assistant_conversation_id
+            and key == f"conversation:{session.home_assistant_conversation_id}"
+        }
 
     def _continuity_bindings(self, retention_state: str) -> dict[str, str]:
         return {

@@ -689,6 +689,7 @@ def reset_restored_runtime(
 ) -> None:
     """Reset transient state without splitting live agents from manager registries."""
     from . import continuity, function_groups, request_rules, usage
+    from .conversation_id_ownership import has_live_conversation_owner
 
     key = (entry_id, subentry_id)
     agent = _active_agent(hass, entry_id, subentry_id)
@@ -704,6 +705,17 @@ def reset_restored_runtime(
     continuity_managers = hass.data.setdefault(continuity._MANAGERS, {})
     continuity_manager = continuity_managers.get(key)
     agent_continuity = getattr(agent, "_continuity", None)
+    retained_ha_default_ids = (
+        frozenset(
+            conversation_id
+            for conversation_id, scope_id in archive.retained_ha_default_scopes().items()
+            if has_live_conversation_owner(hass, subentry_id, conversation_id, scope_id)
+        )
+        if preserve_continuity
+        and agent_continuity is not None
+        and isinstance(archive, backup.ConversationArchive)
+        else frozenset()
+    )
     retained_sessions: frozenset[str] = frozenset()
     for current in {
         id(item): item
@@ -714,11 +726,16 @@ def reset_restored_runtime(
             retained = current.reset_all(
                 private_bindings=private_bindings,
                 retained_bindings=archive.retained_continuity_bindings(),
+                retained_ha_default_ids=(
+                    retained_ha_default_ids
+                    if current is agent_continuity
+                    else frozenset()
+                ),
             )
             if current is (agent_continuity or continuity_manager):
                 retained_sessions = frozenset(
-                    request_rules.request_rule_session_id(key, conversation_id)
-                    for key, conversation_id in retained.items()
+                    request_rules.request_rule_session_id(continuity_key, conversation_id)
+                    for continuity_key, conversation_id in retained
                 )
         else:
             current.reset_all(private_bindings=private_bindings)
