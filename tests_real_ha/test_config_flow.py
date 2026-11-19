@@ -112,11 +112,10 @@ async def test_provider_retry_suggests_original_display_values_without_persistin
             assert result["data"][key] == corrected[key]
         elif key == CONF_ORGANIZATION:
             assert key not in result["data"]
-    if corrected.get(CONF_BASE_URL, DEFAULT_CONF_BASE_URL) == DEFAULT_CONF_BASE_URL:
-        assert CONF_BASE_URL not in result["data"]
-        assert authenticate.await_args.kwargs["base_url"] is None
-    else:
-        assert result["data"][CONF_BASE_URL] == corrected[CONF_BASE_URL]
+    expected_url = corrected.get(CONF_BASE_URL) or None
+    assert result["data"].get(CONF_BASE_URL) == expected_url
+    assert (CONF_BASE_URL in result["data"]) is (expected_url is not None)
+    assert authenticate.await_args.kwargs["base_url"] == expected_url
     assert config_flow.STEP_USER_DATA_SCHEMA.extra == vol.ALLOW_EXTRA
 
 
@@ -125,7 +124,7 @@ async def test_provider_retry_suggests_original_display_values_without_persistin
     ({CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_SKIP_AUTHENTICATION: True},
      {CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "new-org", CONF_SKIP_AUTHENTICATION: False}),
     ({CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_API_VERSION: "old", CONF_SKIP_AUTHENTICATION: True},
-     {CONF_BASE_URL: DEFAULT_CONF_BASE_URL, CONF_ORGANIZATION: "", CONF_SKIP_AUTHENTICATION: False}),
+     {CONF_BASE_URL: "", CONF_ORGANIZATION: "", CONF_SKIP_AUTHENTICATION: False}),
     ({CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_API_VERSION: "old", CONF_SKIP_AUTHENTICATION: True}, {}),
     ({CONF_API_PROVIDER: "azure", CONF_BASE_URL: "https://unit.openai.azure.com/", CONF_API_VERSION: "2026-01-01"},
      {CONF_API_PROVIDER: "azure", CONF_BASE_URL: "https://unit.openai.azure.com/", CONF_API_VERSION: "2026-02-01"}),
@@ -171,12 +170,10 @@ async def test_legacy_retry_renders_full_credentials_and_corrects_submission(
         else:
             assert key not in result["data"]
     assert result["data"][CONF_SKIP_AUTHENTICATION] == corrected.get(CONF_SKIP_AUTHENTICATION, False)
-    if corrected.get(CONF_BASE_URL, DEFAULT_CONF_BASE_URL) == DEFAULT_CONF_BASE_URL:
-        assert CONF_BASE_URL not in result["data"]
-        assert authenticate.await_args.kwargs["base_url"] is None
-    else:
-        assert result["data"][CONF_BASE_URL] == corrected[CONF_BASE_URL]
-        assert authenticate.await_args.kwargs["base_url"] == corrected[CONF_BASE_URL]
+    expected_url = corrected.get(CONF_BASE_URL) or None
+    assert result["data"].get(CONF_BASE_URL) == expected_url
+    assert (CONF_BASE_URL in result["data"]) is (expected_url is not None)
+    assert authenticate.await_args.kwargs["base_url"] == expected_url
     expected_provider = "azure" if ".openai.azure.com" in corrected.get(CONF_BASE_URL, "") else "openai"
     assert authenticate.await_args.kwargs["api_provider"] == expected_provider
 
