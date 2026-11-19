@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 import logging
-from math import inf, nextafter
+from math import inf, isfinite, nextafter
 
 from homeassistant.components import sensor as sensor_component
 from homeassistant.components.recorder import history
@@ -221,6 +221,7 @@ class _PeriodObservation:
     reset: datetime
     tokens: int
     lifetime_tokens: int | None
+    timestamp: float | None = None
 
 
 def _period_observation(state: State | None) -> _PeriodObservation | None:
@@ -236,7 +237,27 @@ def _period_observation(state: State | None) -> _PeriodObservation | None:
         return None
     if marker is None or marker.tzinfo is None or tokens < 0:
         return None
-    return _PeriodObservation(marker, tokens, None)
+    return _PeriodObservation(marker, tokens, None, state.last_updated_timestamp)
+
+
+def _saved_recorder_observation(data: object) -> _PeriodObservation | None:
+    if not isinstance(data, dict) or not isinstance(reset := data.get("reset"), str):
+        return None
+    marker = dt_util.parse_datetime(reset)
+    tokens = data.get("tokens")
+    lifetime = data.get("lifetime_tokens")
+    timestamp = data.get("timestamp")
+    if (
+        marker is None
+        or marker.tzinfo is None
+        or type(tokens) is not int
+        or tokens < 0
+        or (lifetime is not None and (type(lifetime) is not int or lifetime < 0))
+        or type(timestamp) not in (int, float)
+        or not isfinite(timestamp)
+    ):
+        return None
+    return _PeriodObservation(marker, tokens, lifetime, timestamp)
 
 
 class _PeriodUsageSensor(UsageSensor, RestoreEntity):
@@ -248,6 +269,7 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         super().__init__(subentry, usage)
         self._cancel_period_rollover: Callable[[], None] | None = None
         self._observation: _PeriodObservation | None = None
+        self._recorded_observation: _PeriodObservation | None = None
         self._recorder_baseline: int | None = None
 
     def _summary(self) -> dict:
@@ -277,7 +299,22 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
     def extra_restore_state_data(self) -> ExtraStoredData | None:
         if self._observation is None:
             return None
-        return RestoredExtraData({"lifetime_tokens": self._observation.lifetime_tokens})
+        recorded = self._recorded_observation
+        return RestoredExtraData(
+            {
+                "lifetime_tokens": self._observation.lifetime_tokens,
+                "recorded": (
+                    {
+                        "reset": recorded.reset.isoformat(),
+                        "tokens": recorded.tokens,
+                        "lifetime_tokens": recorded.lifetime_tokens,
+                        "timestamp": recorded.timestamp,
+                    }
+                    if recorded is not None
+                    else None
+                ),
+            }
+        )
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -314,48 +351,59 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         )
         observation = _period_observation(restored)
         previous_state = restored if observation is not None else None
-        if observation is not None and (
-            extra := await self.async_get_last_extra_data()
-        ):
-            tokens = extra.as_dict().get("lifetime_tokens")
+        extra = await self.async_get_last_extra_data() if restored is not None else None
+        data = extra.as_dict() if extra is not None else {}
+        if observation is not None:
+            tokens = data.get("lifetime_tokens")
             if type(tokens) is int and tokens >= 0:
-                observation = _PeriodObservation(
-                    observation.reset, observation.tokens, tokens
-                )
+                observation = replace(observation, lifetime_tokens=tokens)
+        recorded = _saved_recorder_observation(data.get("recorded"))
         live_state = self.hass.states.get(self.entity_id)
         if live := _period_observation(live_state):
-            self._observation = (
-                observation
-                if observation is not None
-                and (live.reset, live.tokens) == (observation.reset, observation.tokens)
-                else live
-            )
-            return live_state
+            if observation is not None and (live.reset, live.tokens) == (
+                observation.reset,
+                observation.tokens,
+            ):
+                live = replace(live, lifetime_tokens=observation.lifetime_tokens)
+            observation, previous_state = live, live_state
+        previous_visible = observation
 
         # Before these sensors used RestoreEntity, Recorder held their offset-
-        # bearing marker. Migrate it without minting a new cycle on upgrade.
+        # bearing marker. It also distinguishes a saved visible state published
+        # during a pause from the last state accepted by Recorder.
+        historical = None
         if (recorder := self.hass.data.get(DATA_RECORDER_INSTANCE)) is not None:
             try:
                 states = await recorder.async_add_executor_job(
                     history.get_last_state_changes, self.hass, 8, self.entity_id
                 )
                 for state in reversed(states.get(self.entity_id, [])):
-                    if (
-                        observation is not None
-                        and restored is not None
-                        and state.last_updated <= restored.last_updated
-                    ):
-                        break
-                    if recorded := _period_observation(state):
-                        observation = recorded
-                        previous_state = state
+                    if historical := _period_observation(state):
+                        if (
+                            previous_state is None
+                            or state.last_updated > previous_state.last_updated
+                        ):
+                            observation, previous_state = historical, state
                         break
             except Exception:
                 _LOGGER.debug(
                     "Unable to read the previous Usage period from Recorder",
                     exc_info=True,
                 )
+        if historical is not None and (
+            recorded is None or (historical.timestamp or 0) > (recorded.timestamp or 0)
+        ):
+            known = recorded or previous_visible
+            if known is not None and (known.reset, known.tokens) == (
+                historical.reset,
+                historical.tokens,
+            ):
+                historical = replace(historical, lifetime_tokens=known.lifetime_tokens)
+            recorded = historical
+        elif recorded is None and "recorded" not in data and self._records_period():
+            recorded = observation
         self._observation = observation
+        self._recorded_observation = recorded
         return previous_state
 
     @callback
@@ -371,20 +419,18 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         )
 
     @callback
-    def _preserve_period_sample_order(self, previous: State) -> None:
-        if (
-            self.hass is None
-            or (sample := self.hass.states.get(self.entity_id)) is None
-        ):
+    def _preserve_period_sample_order(
+        self, previous: _PeriodObservation, sample: State
+    ) -> None:
+        if previous.timestamp is None:
             return
         previous_time, sample_time = (
-            previous.last_updated_timestamp,
+            previous.timestamp,
             sample.last_updated_timestamp,
         )
         if previous_time < sample_time or (
             previous_time == sample_time
-            and previous.attributes.get(ATTR_LAST_RESET)
-            == sample.attributes.get(ATTR_LAST_RESET)
+            and previous.reset.isoformat() == sample.attributes.get(ATTR_LAST_RESET)
         ):
             return
         # Recorder can read all samples tied at the window start. Publish the
@@ -396,6 +442,12 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
             != sample_time // _RECORDER_WINDOW_SECONDS
         ):
             return
+        self._write_recorded_sample(sample, timestamp)
+
+    @callback
+    def _write_recorded_sample(
+        self, sample: State, timestamp: float | None = None
+    ) -> None:
         self.hass.states.async_set(
             self.entity_id,
             sample.state,
@@ -407,18 +459,53 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         )
 
     @callback
+    def _track_recorded_sample(
+        self, previous: _PeriodObservation | None, before: State | None
+    ) -> None:
+        if (
+            self.hass is None
+            or self._observation is None
+            or not self._records_period()
+            or (sample := self.hass.states.get(self.entity_id)) is None
+        ):
+            return
+        if sample is before:
+            if previous is not None and (previous.reset, previous.tokens) == (
+                self._observation.reset,
+                self._observation.tokens,
+            ):
+                # Lifetime-only reconciliation does not change this period's
+                # Recorder sample and must not become usage at the next reset.
+                self._recorded_observation = replace(
+                    previous, lifetime_tokens=self._observation.lifetime_tokens
+                )
+                return
+            # The real gauge may already be visible from while Recorder was
+            # paused. Ensure the newly accepted sample reaches its state log.
+            self._write_recorded_sample(sample)
+            sample = self.hass.states.get(self.entity_id) or sample
+        if previous is not None:
+            self._preserve_period_sample_order(previous, sample)
+            sample = self.hass.states.get(self.entity_id) or sample
+        self._recorded_observation = replace(
+            self._observation, timestamp=sample.last_updated_timestamp
+        )
+
+    @callback
     def _publish_period(
         self, *, initial: bool = False, previous_state: State | None = None
     ) -> None:
         period = self._period_start(dt_util.now().date())
         tokens = self.native_value
         lifetime = self._usage.totals.total_tokens
-        previous = self._observation
+        visible = self._observation
+        previous = self._recorded_observation
+        before = self.hass.states.get(self.entity_id)
         reset = dt_util.start_of_local_day(period)
-        if not initial:
-            previous_state = self.hass.states.get(self.entity_id)
         recording = self._records_period()
-        if previous is not None:
+        if visible is not None and visible.reset.date() == period:
+            reset = visible.reset
+        if recording and previous is not None:
             if previous.reset.date() == period:
                 reset = previous.reset
             else:
@@ -428,12 +515,14 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                 delta = (
                     lifetime - previous.lifetime_tokens
                     if previous.lifetime_tokens is not None
+                    else lifetime - visible.lifetime_tokens
+                    if visible is not None and visible.lifetime_tokens is not None
                     else 0
                 )
                 # Recorder adds the full state on a reset. Close the old cycle
                 # with a correction first when only part of the new bucket is
                 # new usage. The next write displays the actual bucket value.
-                if delta != tokens and recording:
+                if delta != tokens:
                     baseline = previous.tokens + delta - tokens
                     if initial and previous_state is not None:
                         # The Entity API starts writing only after registration.
@@ -451,13 +540,11 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         self._observation = _PeriodObservation(reset, tokens, lifetime)
         if not initial:
             self.async_write_ha_state()
-        if previous_state is not None and recording:
+        if recording:
             if initial:
-                self.hass.loop.call_soon(
-                    self._preserve_period_sample_order, previous_state
-                )
+                self.hass.loop.call_soon(self._track_recorded_sample, previous, before)
             else:
-                self._preserve_period_sample_order(previous_state)
+                self._track_recorded_sample(previous, before)
 
     @callback
     def _handle_usage_update(self) -> None:

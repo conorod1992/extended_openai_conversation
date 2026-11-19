@@ -761,14 +761,15 @@ async def test_period_sensors_refresh_and_rearm_after_timezone_change(hass, free
 
 @pytest.mark.parametrize("transition", ["same-period", "backward", "forward", "midnight"])
 @pytest.mark.parametrize("reload_at", ["never", "before-reentry", "across-reentry"])
+@pytest.mark.parametrize("paused", [False, True], ids=["recording", "paused"])
 async def test_timezone_changes_do_not_recount_period_sensor_usage(
-    hass, freezer, transition, reload_at
+    hass, freezer, transition, reload_at, paused
 ):
     from homeassistant.const import EVENT_STATE_CHANGED
     from homeassistant.core import callback
 
     start_text, other_zone = {
-        "same-period": ("2026-06-12T12:00:00+00:00", "Europe/Dublin"),
+        "same-period": ("2026-06-30T12:00:00+00:00", "Europe/Dublin"),
         "backward": ("2026-06-01T00:00:00+00:00", "America/New_York"),
         "forward": ("2026-06-30T12:00:00+00:00", "Pacific/Kiritimati"),
         "midnight": ("2026-06-01T03:35:00+00:00", "America/New_York"),
@@ -811,6 +812,12 @@ async def test_timezone_changes_do_not_recount_period_sensor_usage(
     await record(85)
     await compile_window(5, 85, 85)
     original_markers = markers()
+    if not paused and transition == "forward":
+        # A restored lifetime-only count changes no daily aggregate. It must
+        # never be carried into Recorder as usage on the new local date.
+        restored_totals = deepcopy(usage.totals)
+        restored_totals.total_tokens += 40
+        await usage.async_replace_backup(restored_totals, usage.daily, usage.requests, usage.runs)
 
     await hass.config.async_update(time_zone=other_zone)
     await hass.async_block_till_done()
@@ -819,6 +826,11 @@ async def test_timezone_changes_do_not_recount_period_sensor_usage(
     await compile_window(10, 85 if same_period else 0, 85)
     await record(20)
     await compile_window(15, 105 if same_period else 20, 105)
+    if paused:
+        await hass.services.async_call("recorder", "disable", blocking=True)
+        if same_period:
+            await hass.config.async_update(time_zone="Pacific/Kiritimati")
+            await hass.async_block_till_done()
     if reload_at == "before-reentry":
         detour_markers = markers()
         assert await hass.config_entries.async_reload(agent.entry.entry_id)
@@ -843,6 +855,8 @@ async def test_timezone_changes_do_not_recount_period_sensor_usage(
             midnight = start + timedelta(minutes=25)
             freezer.move_to(midnight)
             async_fire_time_changed(hass, midnight)
+        elif paused and same_period:
+            await hass.config.async_update(time_zone=other_zone)
         else:
             await hass.config.async_update(time_zone="UTC")
         if reload_at == "across-reentry":
@@ -854,18 +868,32 @@ async def test_timezone_changes_do_not_recount_period_sensor_usage(
 
     value = 105 if same_period else 85
     assert {hass.states.get(key).state for key in ids} == {str(value)}
-    assert witnessed.count(-65) == (0 if same_period else len(ids))
+    assert witnessed.count(-65) == (0 if same_period or paused else len(ids))
     segment = 25 if transition == "midnight" else 20
-    await compile_window(segment, value, 105)
-    await compile_window(segment + 5, value, 105)
-    await record(17)
-    await compile_window(segment + 10, value + 17, 122)
+    pause_usage = 0
+    if paused:
+        # Keep the exact 85 + 20 + 17 witness in the backward cases and also
+        # exercise usage during the gap, as with an ordinary TOTAL meter.
+        if same_period or transition == "forward":
+            pause_usage = 4
+            await record(pause_usage)
+        await compile_window(segment, 105 if same_period else 20, 105)
+        await hass.services.async_call("recorder", "enable", blocking=True)
+        await record(17)
+        if same_period:
+            assert markers() == original_markers
+        await compile_window(segment + 5, value + pause_usage + 17, 122 + pause_usage)
+    else:
+        await compile_window(segment, value, 105)
+        await compile_window(segment + 5, value, 105)
+        await record(17)
+    await compile_window(segment + 10, value + pause_usage + 17, 122 + pause_usage)
     current_markers = markers()
     restored_daily = deepcopy(usage.daily)
     restored_daily[dt_util.now().date().isoformat()]["total_tokens"] -= 7
     await usage.async_replace_backup(usage.totals, restored_daily, usage.requests, usage.runs)
     assert markers() == current_markers
-    await compile_window(segment + 15, value + 10, 115)
+    await compile_window(segment + 15, value + pause_usage + 10, 115 + pause_usage)
 
 
 async def test_existing_period_recorder_marker_is_migrated_before_first_write(hass, freezer):

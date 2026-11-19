@@ -1801,7 +1801,8 @@ def test_usage_period_sensor_summary_and_last_reset_branches(monkeypatch) -> Non
         data={},
     )
     day_start = datetime(2026, 10, 5, tzinfo=UTC)
-    monkeypatch.setattr(sensor.dt_util, "start_of_local_day", Mock(return_value=day_start))
+    monkeypatch.setattr(sensor.dt_util, "now", lambda: day_start.replace(hour=12))
+    monkeypatch.setattr(sensor.dt_util, "DEFAULT_TIME_ZONE", UTC)
 
     today = sensor.UsageTodaySensor(subentry, usage)
     month = sensor.UsageMonthSensor(subentry, usage)
