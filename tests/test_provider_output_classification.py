@@ -29,6 +29,9 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 from custom_components.extended_openai_conversation_responses.non_streaming import (
     completed_responses_events,
 )
+from custom_components.extended_openai_conversation_responses.provider_errors import (
+    ProviderStreamError,
+)
 from custom_components.extended_openai_conversation_responses.speech import (
     async_streaming_speech_cleanup,
     process_speech_text,
@@ -396,6 +399,44 @@ async def test_conditional_fallback_does_not_speak_retained_commentary(hass):
         for item in _convert_content_to_responses_param(log.content)
         if "id" in item
     ] == ["draft", "progress", "final", "suffix"]
+
+
+@pytest.mark.parametrize("retry_blank_answer", [False, True])
+@pytest.mark.parametrize("has_draft_answer", [False, True])
+async def test_conditional_fallback_preserves_only_a_displayable_draft(
+    hass, has_draft_answer, retry_blank_answer
+):
+    first = message(
+        "draft", "The switch is on." if has_draft_answer else "Checking the switch."
+    ).model_copy(update={"phase": "final_answer" if has_draft_answer else "commentary"})
+    retry = [message("progress", "Still checking.")]
+    if retry_blank_answer:
+        retry.append(
+            message("blank", "  ").model_copy(update={"phase": "final_answer"})
+        )
+    obj, client = entity(hass, [events([first]), events(retry)])
+    log = conversation.ChatLog(hass, "conditional-draft")
+    log.async_add_user_content(conversation.UserContent(content="Question"))
+    heard = []
+    log.delta_listener = lambda _log, delta: heard.append(delta.get("content", ""))
+    async with completion_event_scope():
+        if has_draft_answer:
+            assert (
+                await obj._async_handle_chat_log(log, [], [], conditional_continue=True)
+                is None
+            )
+            assert final_assistant_text(log.content) == "The switch is on."
+            assert "".join(heard) == "The switch is on."
+            assert [
+                item["id"]
+                for item in _convert_content_to_responses_param(log.content)
+                if "id" in item
+            ] == ["draft", "progress"] + (["blank"] if retry_blank_answer else [])
+        else:
+            with pytest.raises(ProviderStreamError, match="returned no answer"):
+                await obj._async_handle_chat_log(log, [], [], conditional_continue=True)
+            assert not "".join(heard)
+    assert client.responses.create.await_count == 2
 
 
 async def test_role_boundary_flushes_previous_answer_without_spoken_progress(hass):

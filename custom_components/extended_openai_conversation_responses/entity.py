@@ -1276,7 +1276,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             )
             ha_prompt_applied = False
             draft_content_ids: set[int] = set()
-            draft_content: list[Any] = []
+            draft_content: list[conversation.AssistantContent] = []
             context_measurement: ContextInputMeasurement | None = None
             loader_rounds = 0
             integration_loader_seen = False
@@ -1815,15 +1815,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     and not control_calls
                     and not loader_calls
                 ):
+                    round_text = [
+                        content
+                        for content in chat_log.content
+                        if id(content) not in existing_content_ids
+                        and isinstance(content, conversation.AssistantContent)
+                        and content.content
+                        and not content.tool_calls
+                    ]
                     if not finalization_retry_attempted:
-                        draft_content.extend(
-                            content
-                            for content in chat_log.content
-                            if id(content) not in existing_content_ids
-                            and isinstance(content, conversation.AssistantContent)
-                            and bool(content.content)
-                            and not content.tool_calls
-                        )
+                        draft_content = round_text
                         draft_content_ids.update(
                             id(content) for content in draft_content
                         )
@@ -1836,41 +1837,53 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                         continue
 
-                    _LOGGER.error(
-                        "Conditional response omitted %s after the finalization retry; "
-                        "using the assistant text with continuation disabled",
-                        CONTINUE_CONVERSATION_TOOL_NAME,
-                    )
-                    if draft_content_ids:
+                    answers = [
+                        content
+                        for content in round_text
+                        if classify_provider_output(content.native) == "answer"
+                    ]
+                    if any((content.content or "").strip() for content in answers):
                         _discard_conditional_drafts(
                             chat_log,
                             draft_content_ids,
                             preserve_native=api_mode == API_MODE_RESPONSES,
                         )
+                    else:
+                        # A commentary-only or blank retry cannot replace an
+                        # answer. Keep the draft and retain native retry items.
+                        _discard_conditional_drafts(
+                            chat_log,
+                            {id(content) for content in answers},
+                            preserve_native=api_mode == API_MODE_RESPONSES,
+                        )
+                        answers = [
+                            content
+                            for content in chat_log.content
+                            if id(content) in draft_content_ids
+                            and isinstance(content, conversation.AssistantContent)
+                            and classify_provider_output(content.native) == "answer"
+                        ]
+                        if not any(
+                            (content.content or "").strip() for content in answers
+                        ):
+                            raise ProviderStreamError(
+                                "Provider omitted the conversation finalizer "
+                                "and returned no answer"
+                            )
+                    _LOGGER.error(
+                        "Conditional response omitted %s after the finalization retry; "
+                        "using the assistant text with continuation disabled",
+                        CONTINUE_CONVERSATION_TOOL_NAME,
+                    )
                     if chat_log.delta_listener:
                         with async_streaming_speech_cleanup(
                             chat_log, options, completed=True
                         ) as speech_presentation:
-                            for finalizer_content in chat_log.content:
-                                if (
-                                    id(finalizer_content) not in existing_content_ids
-                                    and isinstance(
-                                        finalizer_content, conversation.AssistantContent
-                                    )
-                                    and finalizer_content.content
-                                    and not finalizer_content.tool_calls
-                                    and classify_provider_output(
-                                        finalizer_content.native
-                                    )
-                                    == "answer"
-                                ):
-                                    chat_log.delta_listener(
-                                        chat_log,
-                                        {
-                                            "role": "assistant",
-                                            "content": finalizer_content.content,
-                                        },
-                                    )
+                            for answer in answers:
+                                chat_log.delta_listener(
+                                    chat_log,
+                                    {"role": "assistant", "content": answer.content},
+                                )
                             if speech_presentation is not None:
                                 await speech_presentation.async_flush_completed(
                                     self.hass, chat_log
