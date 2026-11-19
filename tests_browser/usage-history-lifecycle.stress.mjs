@@ -26,7 +26,7 @@ async function openUsage(page, handler) {
   return panel;
 }
 
-test("nightly Usage history windows load lazily, cache selections, page all history, and keep charts responsive", async ({page}) => {
+test("nightly Usage history windows load lazily, revalidate selections, page all history, and keep charts responsive", async ({page}) => {
   const errors = trackPageErrors(page);
   const panel = await openUsage(page, async (message) => {
     if (message.action === "summary") return {today:{date:"2026-09-29",total_tokens:9999},lifetime:{total_tokens:9999}};
@@ -74,7 +74,7 @@ test("nightly Usage history windows load lazily, cache selections, page all hist
   await expect(panel.locator(".chart-column")).toHaveCount(2);
   await windowControl.selectOption("30");
   await windowControl.selectOption("90");
-  expect(await page.evaluate(() => usageNightly.calls.filter((call) => call.action === "daily" && call.start_date === "2026-07-02").length)).toBe(1);
+  expect(await page.evaluate(() => usageNightly.calls.filter((call) => call.action === "daily" && call.start_date === "2026-07-02").length)).toBe(2);
 
   await windowControl.selectOption("year");
   await expect(panel.getByRole("heading", {name:"Tokens by month"})).toBeVisible();
@@ -94,7 +94,7 @@ test("nightly Usage history windows load lazily, cache selections, page all hist
   const responsiveChart = await panel.locator(".chart").evaluate((element) => ({clientWidth:element.clientWidth,scrollWidth:element.scrollWidth,columns:element.children.length}));
   expect(responsiveChart.columns).toBe(14);
   expect(responsiveChart.scrollWidth).toBeLessThanOrEqual(responsiveChart.clientWidth);
-  expect(await page.evaluate(() => usageNightly.calls.filter((call) => call.action === "daily").length)).toBe(6);
+  expect(await page.evaluate(() => usageNightly.calls.filter((call) => call.action === "daily").length)).toBe(8);
   await expectHarnessClean(page, errors);
 });
 
@@ -124,4 +124,42 @@ test("nightly Usage window waits for pending history before accepting another se
   await expect(panel.locator(".chart-column")).toHaveAttribute("aria-label", /90 total/);
   expect(await panel.evaluate((host) => host._usageHistoryWindow)).toBe("90");
   await expectHarnessClean(page, errors);
+});
+
+test("multi-year Usage history reuses fresh pages and revalidates after expiry", async ({page}, info) => {
+  const panel = await openUsage(page, async (message) => {
+    if (message.action !== "daily") return undefined;
+    const first = Date.UTC(2020, 8, 29);
+    const day = 86_400_000;
+    const start = message.start_date === "0000-01-01" ? first : Date.parse(message.start_date);
+    const end = Date.parse(message.end_date);
+    const length = Math.min(366, Math.floor((end - start) / day) + 1);
+    const days = Array.from({length}, (_, i) => ({
+      date: new Date(start + i * day).toISOString().slice(0, 10),
+      total_tokens: window.usageTokens || 11,
+    }));
+    return {days, has_more: start + length * day <= end};
+  });
+  const selector = panel.locator("#usage-window");
+  const select = async value => {
+    const start = performance.now();
+    await selector.selectOption(value);
+    await expect.poll(() => panel.evaluate(host => host._usageHistoryWindow)).toBe(value);
+    return Math.round(performance.now() - start);
+  };
+  const reads = () => page.evaluate(() => usageNightly.calls.filter(call => call.action === "daily").length);
+  const initialReads = await reads();
+  const first = await select("all");
+  const pages = await reads() - initialReads;
+  expect(pages).toBe(6);
+  await select("7");
+  const warm = await select("all");
+  expect(await reads()).toBe(initialReads + pages + 1);
+  await select("7");
+  await page.evaluate(() => { window.usageTokens = 26; });
+  await page.clock.fastForward(31_000);
+  const refreshed = await select("all");
+  expect(await reads()).toBe(initialReads + pages * 2 + 2);
+  expect(await panel.evaluate(host => host._result.days.days.at(-1).total_tokens)).toBe(26);
+  info.annotations.push({type:"duration-ms", description:JSON.stringify({first, warm, refreshed, pages})});
 });

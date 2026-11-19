@@ -1,4 +1,5 @@
 import {tokenCount, tokenBreakdown, formatUsageNumber, formatUsageTimestamp} from "./usage-format.js";
+import {readSectionCache, writeSectionCache} from "./management-cache.js";
 import {loadUsageWindow} from "./usage-data.js";
 export {loadAllUsageDays} from "./usage-data.js";
 export {tokenBreakdown, formatUsageNumber, formatUsageTimestamp} from "./usage-format.js";
@@ -100,7 +101,8 @@ const diagnosticCounters = [
   "run_count", "successful_run_count", "failed_run_count", "api_request_count",
   "successful_request_count", "failed_request_count", "input_tokens", "output_tokens",
   "total_tokens", "cached_input_tokens", "reasoning_tokens", "tool_call_count",
-  "web_search_run_count", "total_run_duration_ms",
+  "web_search_run_count", "total_run_duration_ms", "run_request_count", "run_total_tokens",
+  "unattributed_run_count",
 ];
 
 function mergeBreakdown(target, source) {
@@ -117,6 +119,7 @@ export function summarizeUsageDiagnostics(days = []) {
   summary.api_mode_breakdown = {};
   for (const day of Array.isArray(days) ? days : []) {
     for (const key of diagnosticCounters) summary[key] += tokenCount(day?.[key]);
+    if (day?.unattributed_run_count === undefined) summary.unattributed_run_count += tokenCount(day?.run_count);
     mergeBreakdown(summary.provider_breakdown, day?.provider_breakdown);
     mergeBreakdown(summary.model_breakdown, day?.model_breakdown);
     mergeBreakdown(summary.api_mode_breakdown, day?.api_mode_breakdown);
@@ -124,8 +127,9 @@ export function summarizeUsageDiagnostics(days = []) {
   summary.cache_percent = summary.input_tokens ? Math.min(100, summary.cached_input_tokens / summary.input_tokens * 100) : null;
   summary.run_success_percent = summary.run_count ? summary.successful_run_count / summary.run_count * 100 : null;
   summary.request_success_percent = summary.api_request_count ? summary.successful_request_count / summary.api_request_count * 100 : null;
-  summary.average_tokens_per_run = summary.run_count ? summary.total_tokens / summary.run_count : 0;
-  summary.average_requests_per_run = summary.run_count ? summary.api_request_count / summary.run_count : 0;
+  const runAverage = value => summary.unattributed_run_count ? null : value / (summary.run_count || 1);
+  summary.average_tokens_per_run = runAverage(summary.run_total_tokens);
+  summary.average_requests_per_run = runAverage(summary.run_request_count);
   summary.average_duration_ms = summary.run_count ? summary.total_run_duration_ms / summary.run_count : 0;
   return summary;
 }
@@ -297,7 +301,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
       ${dailyState.available ? `      <div class="usage-diagnostic-grid">
         ${diagnosticMetric(panel, "Cached input", formatPercent(summary.cache_percent), cacheDetail)}
         ${diagnosticMetric(panel, "Run success", formatPercent(summary.run_success_percent), `${formatUsageNumber(summary.failed_run_count)} failed run${summary.failed_run_count === 1 ? "" : "s"}`)}
-        ${diagnosticMetric(panel, "Requests per run", summary.average_requests_per_run.toFixed(summary.average_requests_per_run >= 10 ? 1 : 2), `${formatUsageNumber(summary.api_request_count)} provider requests`)}
+        ${diagnosticMetric(panel, "Requests per run", summary.average_requests_per_run?.toFixed(summary.average_requests_per_run >= 10 ? 1 : 2) ?? "Unavailable", `${formatUsageNumber(summary.api_request_count)} provider requests`)}
         ${diagnosticMetric(panel, "Average run time", formatDuration(summary.average_duration_ms), `${formatUsageNumber(summary.run_count)} completed runs`)}
       </div>
       <div class="usage-diagnostic-columns">
@@ -306,7 +310,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
           <div class="usage-fact"><span>Output</span><strong>${formatUsageNumber(summary.output_tokens)}</strong></div>
           <div class="usage-fact"><span>Cached input</span><strong>${formatUsageNumber(summary.cached_input_tokens)}</strong></div>
           <div class="usage-fact"><span>Reasoning</span><strong>${formatUsageNumber(summary.reasoning_tokens)}</strong></div>
-          <div class="usage-fact"><span>Average total / run</span><strong>${formatUsageNumber(Math.round(summary.average_tokens_per_run))}</strong></div>
+          <div class="usage-fact"><span>Average total / run</span><strong>${summary.average_tokens_per_run === null ? "Unavailable" : formatUsageNumber(Math.round(summary.average_tokens_per_run))}</strong></div>
           <div class="usage-fact"><span>Request success</span><strong>${panel._e(formatPercent(summary.request_success_percent))}</strong></div>
         </div></section>
         <section class="usage-diagnostic-panel"><h3>Activity</h3><div class="usage-facts">
@@ -443,8 +447,16 @@ export function bindUsageDiagnostics(panel) {
     const generation = panel._usageWindowGeneration = (panel._usageWindowGeneration || 0) + 1;
     event.target.disabled = true;
     try {
-      const days = await loadUsageWindow(panel, next, usageCalendarToday(panel));
+      const today = usageCalendarToday(panel);
+      // Only All can require multiple WebSocket pages. Its short-lived snapshot
+      // uses the route cache and the same agent/restore invalidation as Usage.
+      const allDaysKey = next === "all" && panel._sectionCache
+        ? `${agentId}|usage-maintenance/usage|all-days` : null;
+      const cached = allDaysKey ? readSectionCache(panel, "usage-maintenance/usage", allDaysKey) : null;
+      const reuse = cached?.fresh && cached.result?.today === today;
+      const days = reuse ? cached.result.days : await loadUsageWindow(panel, next, today);
       if (generation !== panel._usageWindowGeneration || panel._agentId !== agentId || panel._viewKey?.() !== "usage-maintenance/usage") return;
+      if (allDaysKey && !reuse) writeSectionCache(panel, allDaysKey, {days, today});
       panel._usageHistoryWindow = next;
       panel._result = {
         ...(panel._result || {}),

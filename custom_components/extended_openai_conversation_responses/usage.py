@@ -365,9 +365,7 @@ class UsageManager:
                 try:
                     # Older stores omit newer counters. Migrate omissions only;
                     # malformed supplied values must not become valid zeros.
-                    staged_daily[key] = _validate_usage_day(
-                        key, {**_empty_day(key), **value}
-                    )
+                    staged_daily[key] = _validate_usage_day(key, value, stored=True)
                 except TypeError, ValueError:
                     repair_required = True
                     continue
@@ -411,6 +409,12 @@ class UsageManager:
                         continue
 
             now = dt_util.utcnow()
+            recovered = _backfill_run_attribution(staged_daily, staged_runs)
+            if recovered and not repair_required and self._daily_storage is not None:
+                # Retention or a manual clear may remove the only supporting detail.
+                await self._daily_storage.async_save(
+                    {**daily_data, "days": staged_daily}
+                )
             loaded_detail_count = len(staged_requests) + len(staged_runs)
             request_cutoff = now - timedelta(days=max(0, self.request_retention_days))
             run_cutoff = now - timedelta(days=max(0, self.run_retention_days))
@@ -962,6 +966,7 @@ class UsageManager:
             raise ValueError("usage request IDs must be unique")
         if len({run.run_id for run in runs}) != len(runs):
             raise ValueError("usage run IDs must be unique")
+        _backfill_run_attribution(daily, runs)
         return totals, daily, requests, runs
 
     async def async_replace_backup(
@@ -1148,7 +1153,9 @@ def _validate_breakdown(value: Any, label: str) -> dict[str, int]:
     return dict(value)
 
 
-def _validate_usage_day(date: str, value: Any) -> dict[str, Any]:
+def _validate_usage_day(
+    date: str, value: Any, *, stored: bool = False
+) -> dict[str, Any]:
     if not isinstance(date, str) or len(date) != 10:
         raise ValueError("daily usage date is invalid")
     try:
@@ -1156,7 +1163,21 @@ def _validate_usage_day(date: str, value: Any) -> dict[str, Any]:
     except ValueError as err:
         raise ValueError("daily usage date is invalid") from err
     expected = _empty_day(date)
-    if not isinstance(value, dict) or set(value) != set(expected):
+    if not isinstance(value, dict):
+        raise ValueError("daily usage record is invalid")
+    attribution = {"run_total_tokens", "run_request_count", "unattributed_run_count"}
+    if attribution.isdisjoint(value):
+        value = {
+            **value,
+            "run_total_tokens": 0,
+            "run_request_count": 0,
+            "unattributed_run_count": value.get("run_count", 0),
+        }
+    elif not attribution.issubset(value):
+        raise ValueError("daily usage attribution is incomplete")
+    if stored:
+        value = {**expected, **value}
+    if set(value) != set(expected):
         raise ValueError("daily usage record is invalid")
     if value.get("date") != date:
         raise ValueError("daily usage date does not match its key")
@@ -1165,12 +1186,25 @@ def _validate_usage_day(date: str, value: Any) -> dict[str, Any]:
         for key, default in expected.items()
         if isinstance(default, int) and not isinstance(default, bool)
     }
+    if (
+        value.get("unattributed_run_count")
+        and value["average_tokens_per_completed_run"] is None
+    ):
+        counter_keys.discard("average_tokens_per_completed_run")
     _validate_counter_mapping(value, counter_keys)
+    if value["unattributed_run_count"] > value["run_count"]:
+        raise ValueError("daily usage attribution exceeds completed runs")
     for key in (
         "average_requests_per_completed_run",
         "average_duration_ms_per_completed_run",
     ):
         amount = value[key]
+        if (
+            key == "average_requests_per_completed_run"
+            and amount is None
+            and value["unattributed_run_count"]
+        ):
+            continue
         if (
             not isinstance(amount, int | float)
             or isinstance(amount, bool)
@@ -1178,6 +1212,7 @@ def _validate_usage_day(date: str, value: Any) -> dict[str, Any]:
         ):
             raise ValueError(f"daily usage value {key} is invalid")
     result = dict(value)
+    _calculate_averages(result)
     for key in ("provider_breakdown", "model_breakdown", "api_mode_breakdown"):
         result[key] = _validate_breakdown(value[key], key)
     return result
@@ -1314,6 +1349,9 @@ def _empty_day(date: str) -> dict[str, Any]:
         "tool_call_count": 0,
         "web_search_run_count": 0,
         "total_run_duration_ms": 0,
+        "run_total_tokens": 0,
+        "run_request_count": 0,
+        "unattributed_run_count": 0,
         "average_tokens_per_completed_run": 0,
         "average_requests_per_completed_run": 0.0,
         "average_duration_ms_per_completed_run": 0.0,
@@ -1354,6 +1392,8 @@ def _add_request_to_day(
 
 
 def _add_run_to_day(day: dict[str, Any], run: UsageRun) -> None:
+    day["run_total_tokens"] += run.total_tokens
+    day["run_request_count"] += run.request_count
     day["run_count"] += 1
     day["successful_run_count"] += int(run.successful)
     day["failed_run_count"] += int(not run.successful)
@@ -1381,13 +1421,48 @@ def _merge_day(target: dict[str, Any], source: dict[str, Any]) -> None:
 def _calculate_averages(day: dict[str, Any]) -> None:
     count = day["run_count"]
     if count:
-        day["average_tokens_per_completed_run"] = round(day["total_tokens"] / count)
-        day["average_requests_per_completed_run"] = round(
-            day["api_request_count"] / count, 2
-        )
+        if day["unattributed_run_count"]:
+            day["average_tokens_per_completed_run"] = None
+            day["average_requests_per_completed_run"] = None
+        else:
+            day["average_tokens_per_completed_run"] = round(
+                day["run_total_tokens"] / count
+            )
+            day["average_requests_per_completed_run"] = round(
+                day["run_request_count"] / count, 2
+            )
         day["average_duration_ms_per_completed_run"] = round(
             day["total_run_duration_ms"] / count, 2
         )
+
+
+def _backfill_run_attribution(
+    days: dict[str, dict[str, Any]], runs: list[UsageRun]
+) -> bool:
+    """Return whether complete historical run details supplied missing counters."""
+    missing = {date for date, day in days.items() if day["unattributed_run_count"]}
+    if not missing:
+        return False
+    recovered = False
+    by_date: dict[str, list[UsageRun]] = {}
+    for run in runs:
+        if run.completed_at is not None:
+            date = _local_day_key(_parse_time(run.completed_at))
+            if date in missing:
+                by_date.setdefault(date, []).append(run)
+    for date, records in by_date.items():
+        day = days[date]
+        if (
+            len(records) == day["run_count"]
+            and sum(run.duration_ms for run in records) == day["total_run_duration_ms"]
+            and sum(run.successful for run in records) == day["successful_run_count"]
+        ):
+            day["run_total_tokens"] = sum(run.total_tokens for run in records)
+            day["run_request_count"] = sum(run.request_count for run in records)
+            day["unattributed_run_count"] = 0
+            _calculate_averages(day)
+            recovered = True
+    return recovered
 
 
 def _local_day_key(timestamp: datetime) -> str:

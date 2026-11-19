@@ -149,9 +149,7 @@ assert.deepEqual(usageCalls[0], {
   start_date:"2026-08-09", end_date:"2026-09-07",
 });
 await loadUsageWindow(usagePanel, "30", "2026-09-07");
-assert.equal(usageCalls.length, 1, "in-page window revisits reuse the loaded aggregate range");
-await loadUsageWindow(usagePanel, "30", "2026-09-07", {useCache:false});
-assert.equal(usageCalls.length, 2, "route refreshes can bypass the in-page Usage cache");
+assert.equal(usageCalls.length, 2, "in-page window revisits read the current aggregate range");
 usagePanel._usageHistoryWindow = "7";
 await loadUsageDaily(usagePanel);
 assert.equal(usageCalls.at(-1).end_date >= usageCalls.at(-1).start_date, true);

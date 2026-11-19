@@ -1138,12 +1138,8 @@ for (const failedKind of ["usage", "memory", "knowledge", "guest_mode", "setup_h
   panel._usageHistoryWindow = "90";
   assert.notEqual(panel._sectionCacheKey(), key30);
   panel._sectionCache.set(key30, {days:{requested_window:"30"}});
-  const oldCache = new Map([["agent-a|7|2026-10-09", {days:["old"]}]]);
-  panel._eocUsageWindowCache = oldCache;
   panel._invalidateAfterMutation("agent-a", "backup", "restore");
   assert.equal(panel._sectionCache.has(key30), false);
-  assert.notEqual(panel._eocUsageWindowCache, oldCache);
-  assert.equal(panel._eocUsageWindowCache.size, 0);
 }
 
 // Audit: deleting from a full first page must not skip the final survivor.

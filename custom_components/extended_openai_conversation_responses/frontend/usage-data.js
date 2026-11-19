@@ -1,4 +1,3 @@
-import {invalidateUsageWindows} from "./usage-cache.js";
 
 const DAILY_PAGE_SIZE = 366;
 const MAX_DAILY_PAGES = 128;
@@ -66,34 +65,15 @@ export async function loadAllUsageDays(
   );
 }
 
-function usageCache(panel) {
-  panel._eocUsageWindowCache ||= new Map();
-  return panel._eocUsageWindowCache;
-}
-
-function usageCacheKey(panel, window, today) {
-  return `${panel._agentId || ""}|${window}|${today}`;
-}
-
 export async function loadUsageWindow(
   panel,
   window = DEFAULT_USAGE_WINDOW,
   today = localUsageDateKey(panel),
-  {useCache = true} = {},
 ) {
   const agent = panel._selectedAgent?.();
   const identity = agent
     ? {entry_id: agent.entry_id, subentry_id: agent.subentry_id}
     : {};
-  const key = usageCacheKey(panel, window, today);
-  const cache = usageCache(panel);
-  panel._eocUsageWindowGenerations ||= new Map();
-  const generations = panel._eocUsageWindowGenerations;
-  const agentId = panel._agentId || "";
-  if (!useCache) invalidateUsageWindows(panel, agentId);
-  const generation = generations.get(agentId) || 0;
-  if (useCache && cache.has(key)) return cache.get(key);
-
   const {startDate, endDate} = usageWindowBounds(window, today);
   const pending = window === "all"
     ? loadAllUsageDays((pageStart, pageEnd) => panel._call("usage", "daily", {
@@ -108,13 +88,11 @@ export async function loadUsageWindow(
       });
 
   const response = await pending;
-  const result = {
+  return {
     ...response,
     requested_window: String(window || DEFAULT_USAGE_WINDOW),
     complete_history: window === "all",
   };
-  if ((generations.get(agentId) || 0) === generation) cache.set(key, result);
-  return result;
 }
 
 export function loadUsageDaily(panel, extra = {}) {
@@ -125,6 +103,9 @@ export function loadUsageDaily(panel, extra = {}) {
       : {};
     return panel._call("usage", "daily", {...extra, ...identity});
   }
+  // A fresh route read also retires previously selected multi-page history.
+  panel._sectionCache?.delete(`${panel._agentId}|usage-maintenance/usage|all-days`);
+  panel._eocSectionCacheTimes?.delete(`${panel._agentId}|usage-maintenance/usage|all-days`);
   return loadUsageWindow(panel, panel._usageHistoryWindow || DEFAULT_USAGE_WINDOW,
-    localUsageDateKey(panel), {useCache: false});
+    localUsageDateKey(panel));
 }

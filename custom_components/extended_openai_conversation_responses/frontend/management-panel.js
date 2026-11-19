@@ -3,7 +3,6 @@ import {clearRequestRuleUncertainty, requestRuleUncertainty, requireRequestRuleA
 import {mutationEffects} from "./management-mutation-effects.js";
 import {clearVoiceMappingDraft} from "./voice-mapping-draft.js";
 import {observeCatalogGeneration} from "./model-catalog.js";
-import {invalidateUsageWindows} from "./usage-cache.js";
 import {scheduleWallTime} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
 import {updateAuthenticationPresentation} from "./authentication-presentation.js";
@@ -1084,7 +1083,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._invalidateCleanConfiguration(agentId);
     }
     if (agentId && effects?.usageWindows) {
-      invalidateUsageWindows(this, agentId);
       if (agentId === this._agentId) this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
       for (const key of this._sectionCache.keys()) {
         if (!key.startsWith(`${agentId}|usage-maintenance/usage`)) continue;
@@ -1110,11 +1108,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     if (agentId && effects?.restore) {
       if (currentAgent) this._cacheGeneration += 1;
-      // Replacing the map also isolates reads started before the restore.
-      if (currentAgent) {
-        this._eocUsageWindowCache = new Map();
-        this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
-      } else invalidateUsageWindows(this, agentId);
+      if (currentAgent) this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
       const prefix = `${agentId}|`;
       for (const key of this._sectionCache.keys()) if (key.startsWith(prefix)) this._sectionCache.delete(key);
       for (const key of this._eocSectionCacheTimes.keys()) if (key.startsWith(prefix)) this._eocSectionCacheTimes.delete(key);

@@ -29,6 +29,7 @@ assert.deepEqual(formatUsageTimestamp("not-a-date", "en-US", "UTC"), {display:"n
 const diagnostics = summarizeUsageDiagnostics([
   {
     date:"2026-08-28",run_count:2,successful_run_count:2,failed_run_count:0,
+    run_request_count:2,run_total_tokens:750,unattributed_run_count:0,
     api_request_count:3,successful_request_count:3,failed_request_count:0,
     input_tokens:1000,output_tokens:200,total_tokens:1200,cached_input_tokens:400,
     reasoning_tokens:50,tool_call_count:2,web_search_run_count:1,total_run_duration_ms:5000,
@@ -36,6 +37,7 @@ const diagnostics = summarizeUsageDiagnostics([
   },
   {
     date:"2026-08-29",run_count:1,successful_run_count:0,failed_run_count:1,
+    run_request_count:1,run_total_tokens:450,unattributed_run_count:0,
     api_request_count:1,successful_request_count:0,failed_request_count:1,
     input_tokens:500,output_tokens:100,total_tokens:600,cached_input_tokens:100,
     reasoning_tokens:25,tool_call_count:0,web_search_run_count:0,total_run_duration_ms:4000,
@@ -47,7 +49,9 @@ assert.equal(diagnostics.total_tokens, 1800);
 assert.equal(diagnostics.cached_input_tokens, 500);
 assert.equal(diagnostics.cache_percent, 500 / 1500 * 100);
 assert.equal(diagnostics.run_success_percent, 2 / 3 * 100);
-assert.equal(diagnostics.average_requests_per_run, 4 / 3);
+assert.equal(diagnostics.average_requests_per_run, 1);
+assert.equal(diagnostics.average_tokens_per_run, 400);
+assert.equal(summarizeUsageDiagnostics([{run_count: 2}]).average_tokens_per_run, null);
 assert.equal(diagnostics.average_duration_ms, 3000);
 assert.deepEqual(diagnostics.provider_breakdown, {OpenAI:1800});
 assert.deepEqual(sortedUsageBreakdown({beta:20,alpha:20,gamma:40}), [

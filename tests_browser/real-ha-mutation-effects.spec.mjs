@@ -162,12 +162,9 @@ test("mutation declarations preserve real revisions and cached projections", asy
     await expect.poll(() => panel.evaluate(host => host._usageHistoryWindow)).toBe("7");
     await panel.locator("#usage-window").selectOption("90");
     await expect.poll(() => panel.evaluate(host => host._usageHistoryWindow)).toBe("90");
-    const before = await panel.evaluate(async host => ({runs:await host._call("usage", "runs"), keys:[...host._eocUsageWindowCache.keys()]}));
-    expect(before.runs.runs.length).toBeGreaterThan(0);
-    expect(before.keys.some(k => k.includes("|7|"))).toBe(true);
-    expect(before.keys.some(k => k.includes("|90|"))).toBe(true);
+    const before = await panel.evaluate(host => host._call("usage", "runs"));
+    expect(before.runs.length).toBeGreaterThan(0);
     await panel.evaluate(host => host._call("usage", "clear_details", {confirm:true}));
-    expect(await panel.evaluate(host => [...host._eocUsageWindowCache.keys()].filter(k => k.startsWith(`${host._agentId}|`)))).toEqual([]);
     expect(await panel.evaluate(host => [...host._sectionCache.keys()].some(k => k.startsWith(`${host._agentId}|usage-maintenance/usage`)))).toBe(false);
     await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
     await panel.evaluate(host => host._navigate("usage-maintenance", "usage"));

@@ -53,6 +53,8 @@ The selected period drives the aggregate token totals, chart, model/provider/API
 
 The **Usage diagnostics** section summarizes the same selected daily-aggregate period as the chart. It highlights cache reuse, run and provider-request success rates, average provider requests per run, average run duration, token mix, tool-call and web-search activity, and token distribution by model, provider, and API mode. This makes it easier to spot repeated provider calls, unexpectedly slow turns, poor cache reuse, or a model/API route accounting for most token use.
 
+Run averages count requests and tokens from runs that finished during the selected period. A run that crosses local midnight contributes to its completion day. Standalone provider calls contribute to request and token totals only. For older days, the integration recovers these averages when the complete run details are available. A period with incomplete historical coverage displays **Unavailable** for those averages.
+
 Recent failed runs are called out separately. Recent-run and provider-request detail stays within its configured retention periods. Use **Requests** on a recent run to see its individual provider calls, or **Browse retained requests** to include calls whose run detail has expired and calls recorded independently of a run. The detail includes stage, provider, model, API mode, token counts, cache and reasoning metadata, duration, requested tool-call count, web-search use, and success or error state.
 
 Recent-run timestamps are displayed in Home Assistant's configured timezone using the browser's locale, while the exact provider timestamp remains available on the semantic time element. **Cached input** is request content the provider has seen before and can reuse. It remains part of total tokens rather than additional usage, and may cost less than uncached input when the provider supports discounted caching.
@@ -61,7 +63,7 @@ Detailed request and run records are content-free. They never contain prompts, r
 
 ## Storage and retention
 
-Compact lifetime totals and daily aggregates are persisted as one authoritative aggregate snapshot when daily Usage storage is available; the existing lifetime-totals store is retained as a compatibility mirror. Bounded request/run detail remains separate, so missing, expired, or pruned detail never reconstructs or changes aggregate counters.
+Compact lifetime totals and daily aggregates are persisted as one authoritative aggregate snapshot when daily Usage storage is available; the existing lifetime-totals store is retained as a compatibility mirror. Request and run details have their own retention policy. Once recovered during an upgrade, the historical run averages survive clearing or expiring those details.
 
 - request details: 30 days by default
 - run details: 90 days by default
