@@ -5,7 +5,7 @@ import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
 import {SETTING_LOOKUP} from "./management-setting-lookup.js";
 import {focusManagementSetting} from "./frontend-navigation.js";
 import {voiceMappingDraftError} from "./voice-mapping-draft.js";
-import {configKeyForControl} from "./configuration-controls.js";
+import {configKeyForControl, isTimeoutKey, validTimeout} from "./configuration-controls.js";
 import {pendingRetentionFields} from "./management-state-safety.js";
 
 function fieldErrorKey(key) {
@@ -129,18 +129,18 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
-  const numericControls = [...(panel.shadowRoot?.querySelectorAll?.('input[data-type="number"]') || [])];
-  const badNumber = numericControls.find(control => control.validity?.badInput);
-  if (badNumber) {
-    badNumber.reportValidity();
-    return;
-  }
-  const blankNumber = numericControls.find(control => control.value === ""
-    && panel._eocDirtyConfigKeys?.has(configKeyForControl(control)));
-  if (blankNumber) {
-    showErrors(panel, {[configKeyForControl(blankNumber)]: "Enter a number."});
-    focusManagementSetting(blankNumber);
-    return;
+  for (const control of panel.shadowRoot.querySelectorAll('input[data-type=number]')) {
+    if (control.disabled) continue;
+    const key = configKeyForControl(control), timeout = isTimeoutKey(key);
+    if (control.validity?.badInput) {
+      control.reportValidity();
+      return;
+    }
+    if (timeout ? !validTimeout(Number(control.value)) : !control.value && panel._eocDirtyConfigKeys?.has(key)) {
+      showErrors(panel, {[key]: control.value ? "Enter a whole number from 1 to 1440." : "Enter a number."});
+      focusManagementSetting(control);
+      return;
+    }
   }
   const mappingError = voiceMappingDraftError(panel);
   if (mappingError && panel._draft.voice_scope_policy === "device_mapping") {

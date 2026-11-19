@@ -92,3 +92,48 @@ test("Configuration save sends dirty fields and consumes the normalized response
   ).length)).toBe(reads);
   await expectHarnessClean(page, errors);
 });
+
+for (const {route, key, parent, settings, options, disable, disabledValue} of [
+  {
+    route:"data-memory/conversations", key:"archive_session_timeout_minutes", parent:"archive_enabled",
+    settings:{archive_enabled:true, archive_session_timeout_minutes:30}, options:{},
+    disable: control => control.uncheck(), disabledValue:false,
+  },
+  {
+    route:"assistant/conversation", key:"conversation_timeout_minutes", parent:"conversation_continuity",
+    settings:{conversation_continuity:"device", conversation_timeout_minutes:30},
+    options:{conversation_continuity:[{value:"ha_default", label:"Home Assistant"}, {value:"device", label:"Device"}], conversation_timeout_minutes:[{value:30, label:"30 minutes"}]},
+    disable: control => control.selectOption("ha_default"), disabledValue:"ha_default",
+  },
+]) {
+  test(`Saving disabled ${parent} preserves the last valid timeout`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl(route));
+    const panel = page.locator("extended-openai-management-panel");
+    const toggle = panel.locator(`[data-config="${parent}"]`);
+    const timeout = panel.locator(`[data-config="${key}"]`);
+    await expect(toggle).toBeAttached();
+    await panel.evaluate((host, settings) => host._call("configuration", "save", {
+      config:settings, revision:host._configData.revision,
+    }), settings);
+    await page.goto(fixtureUrl(route));
+    await expect(toggle).toBeAttached();
+    if (parent === "conversation_continuity") await panel.evaluate((host, options) => {
+      Object.assign(host._configData.options, options);
+      host._render();
+    }, options);
+    if (parent === "conversation_continuity") await panel.locator("#conversation-timeout-preset").selectOption("custom");
+    await timeout.fill("47");
+    await timeout.fill("");
+    await panel.locator("#save-config").click();
+    await expect(timeout).toBeFocused();
+    const saves = () => page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "save"));
+    expect(await saves()).toEqual([]);
+    await disable(toggle);
+    await expect(timeout).toBeDisabled();
+    await panel.locator("#save-config").click();
+    await expect(panel.locator("#save-config")).toHaveCount(0);
+    expect(await saves()).toMatchObject([{config:{[parent]:disabledValue, [key]:47}}]);
+    await expectHarnessClean(page, errors);
+  });
+}
