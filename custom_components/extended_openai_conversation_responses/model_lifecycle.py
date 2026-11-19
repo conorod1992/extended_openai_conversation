@@ -209,7 +209,12 @@ def clear_retirement_failure(
         and failure.get("model") != model
     ):
         return
-    failures.pop(key, None)
+    remove_retirement_issue(hass, entry_id=entry_id, subentry_id=subentry_id)
+
+
+def remove_retirement_issue(hass: Any, *, entry_id: str, subentry_id: str) -> None:
+    """Remove this exact assistant's Repair, including an unloaded registry issue."""
+    hass.data.get(_DATA_FAILURES, {}).pop(_failure_key(entry_id, subentry_id), None)
     ir.async_delete_issue(hass, DOMAIN, _issue_id(entry_id, subentry_id))
 
 

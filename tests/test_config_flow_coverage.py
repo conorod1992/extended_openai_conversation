@@ -118,10 +118,10 @@ async def test_options_flow_covers_menu_guidance_and_agent_test() -> None:
     assert await ExtendedOpenAIOptionsFlow.async_step_test_result(flow, {}) == menu
 
 
-async def test_validate_input_normalizes_openai_and_forwards_provider_settings() -> (
+async def test_validate_input_preserves_explicit_openai_and_forwards_provider_settings() -> (
     None
 ):
-    """Canonical OpenAI URLs are omitted while custom provider settings are forwarded."""
+    """An explicit canonical URL still pins the SDK endpoint."""
     hass = MagicMock()
     authenticate = AsyncMock()
     canonical = {
@@ -142,8 +142,8 @@ async def test_validate_input_normalizes_openai_and_forwards_provider_settings()
         await config_flow.validate_input(hass, canonical)
         await config_flow.validate_input(hass, custom)
 
-    assert CONF_BASE_URL not in canonical
-    assert authenticate.await_args_list[0].kwargs["base_url"] is None
+    assert canonical[CONF_BASE_URL] == DEFAULT_CONF_BASE_URL
+    assert authenticate.await_args_list[0].kwargs["base_url"] == DEFAULT_CONF_BASE_URL
     assert authenticate.await_args_list[0].kwargs["skip_authentication"] is False
     assert authenticate.await_args_list[1].kwargs == {
         "hass": hass,

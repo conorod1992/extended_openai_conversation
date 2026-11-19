@@ -102,9 +102,9 @@ from .global_runtime import global_runtime_lock, initialize_global_runtime
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import (
     effective_api_provider,
+    entry_api_provider,
     get_authenticated_client,
     get_model_config,
-    supports_openai_hosted_tools,
 )
 from .intercom_services import async_setup_intercom_services
 from .live_subentry_updates import is_live_subentry_update
@@ -228,6 +228,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+def _wrap_provider_client(client, entry, authentication):
+    """Use the same provider instrumentation on initial setup and restore."""
+    from .helpers import is_native_openai_connection
+
+    return PerformanceOpenAIClientProxy(
+        DebugOpenAIClientProxy(client, authentication_snapshot=authentication),
+        direct_openai=is_native_openai_connection(entry.data, client=client),
+    )
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ExtendedOpenAIConfigEntry
 ) -> bool:
@@ -271,16 +281,7 @@ async def async_setup_entry(
         entry.subentries
     )
 
-    debug_client = DebugOpenAIClientProxy(
-        client, authentication_snapshot=authentication_snapshot
-    )
-    entry.runtime_data = PerformanceOpenAIClientProxy(  # type: ignore[assignment]
-        debug_client,
-        direct_openai=supports_openai_hosted_tools(
-            entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
-            entry.data.get(CONF_BASE_URL),
-        ),
-    )
+    entry.runtime_data = _wrap_provider_client(client, entry, authentication_snapshot)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     sync_entry_model_lifecycle(hass, entry)
@@ -493,14 +494,30 @@ def _migrate_saved_default_prompt(data: dict) -> bool:
     return True
 
 
-def _migrate_saved_service_tier(data: dict) -> bool:
-    """Repair the historical gpt-5-mini/Flex default before reads or requests.
+def _migrate_saved_service_tier(data: dict, provider: str | None = None) -> bool:
+    """Repair known historical stock or unused processing tiers.
 
     Releases through 6.7.0 persisted this pair on agent creation. The current
     catalogue rejects Flex for that model, including on configuration reads.
     Keep this compatibility repair separate from strict validation of new edits.
     """
     model = data.get("azure_model") or data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+    from .agent_config import legacy_processing_tier_was_omitted
+
+    if (
+        not data.get("azure_model")
+        and legacy_processing_tier_was_omitted(model)
+        and data.get(CONF_SERVICE_TIER) in ("auto", "flex", "priority")
+        and data[CONF_SERVICE_TIER]
+        not in get_model_config(model, provider=provider).get(
+            "service_tier_options", []
+        )
+    ):
+        data.pop(CONF_SERVICE_TIER)
+        _LOGGER.warning(
+            "Removing a legacy processing tier previously ignored for %s", model
+        )
+        return True
     if (
         model != "gpt-5-mini"
         or data.get(CONF_SERVICE_TIER) != "flex"
@@ -525,9 +542,11 @@ def _migrate_saved_native_function_schemas(data: dict) -> bool:
     return changed
 
 
-def _migrate_saved_agent_defaults(data: dict, subentry_type: str) -> bool:
+def _migrate_saved_agent_defaults(
+    data: dict, subentry_type: str, provider: str | None = None
+) -> bool:
     """Repair shared model defaults without adding conversation fields to tasks."""
-    changed = _migrate_saved_service_tier(data)
+    changed = _migrate_saved_service_tier(data, provider)
     if subentry_type == "conversation":
         changed = _migrate_saved_native_function_schemas(data) or changed
         changed = _migrate_saved_default_prompt(data) or changed
@@ -563,7 +582,10 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             source = subentry.data
             data = dict(source)
             changed = await asyncio.to_thread(
-                _migrate_saved_agent_defaults, data, subentry.subentry_type
+                _migrate_saved_agent_defaults,
+                data,
+                subentry.subentry_type,
+                entry_api_provider(entry),
             )
             # Preparation yields: preserve any newer save or agent/entry removal.
             if (
@@ -620,7 +642,10 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             source = subentry.data
             data = dict(source)
             changed = await asyncio.to_thread(
-                _migrate_saved_agent_defaults, data, subentry.subentry_type
+                _migrate_saved_agent_defaults,
+                data,
+                subentry.subentry_type,
+                entry_api_provider(entry),
             )
             # Preparation yields: preserve any newer save or agent/entry removal.
             if (

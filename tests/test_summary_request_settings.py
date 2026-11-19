@@ -214,7 +214,7 @@ async def test_model_ceiling_prevents_a_pointless_retry(monkeypatch, mode):
 
     capabilities = deepcopy(request.get_model_capabilities("gpt-5"))
     capabilities["limits"]["max_output_tokens"] = 1024
-    monkeypatch.setattr(request, "request_model_capabilities", lambda *_: capabilities)
+    monkeypatch.setattr(request, "request_model_capabilities", lambda *_, **_kwargs: capabilities)
     entity, create = _entity(
         mode, _response(mode, exhausted=True), {"reasoning_effort": "minimal"}
     )

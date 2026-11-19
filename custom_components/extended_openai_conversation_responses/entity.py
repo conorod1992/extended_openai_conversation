@@ -7,7 +7,7 @@ import base64
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
 from contextlib import AsyncExitStack, aclosing, suppress
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from hashlib import sha256
 import json
 import logging
@@ -627,8 +627,38 @@ def _discard_conditional_drafts(
     chat_log.content[:] = retained
 
 
+@dataclass(frozen=True, slots=True)
+class _RoutedReasoning:
+    route: str
+    item: Any
+    type = "reasoning"
+
+
+def _responses_reasoning_route(
+    entry: Any, client: Any, options: Mapping[str, Any]
+) -> str:
+    """Bind encrypted items to the client connection and routed deployment."""
+    from .provider_errors import provider_authentication_snapshot
+
+    authentication = getattr(client, "_eoai_authentication_snapshot", None)
+    if not isinstance(authentication, tuple):
+        authentication = provider_authentication_snapshot(entry)
+    endpoint = getattr(client, "base_url", None)
+    route = (
+        authentication,
+        str(endpoint)
+        if isinstance(endpoint, str) or isinstance(getattr(endpoint, "host", None), str)
+        else None,
+        options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
+        options.get("azure_model"),
+    )
+    return sha256(json.dumps(route).encode()).hexdigest()
+
+
 def _serialize_response_item(item: Any) -> dict[str, Any]:
     """Serialize an SDK Responses item for use as a subsequent input item."""
+    if isinstance(item, _RoutedReasoning):
+        item = item.item
     if hasattr(item, "model_dump"):
         serialized = cast(dict[str, Any], item.model_dump(exclude_none=True))
     elif hasattr(item, "to_dict"):
@@ -652,6 +682,7 @@ def _convert_content_to_responses_param(
     prepared_user_content: Mapping[int, Any] | None = None,
     *,
     include_reasoning: bool = True,
+    reasoning_route: str | None = None,
 ) -> list[dict[str, Any]]:
     """Convert Home Assistant chat content to Responses API input items."""
     items: list[dict[str, Any]] = []
@@ -673,7 +704,9 @@ def _convert_content_to_responses_param(
         if isinstance(content, conversation.AssistantContent):
             native = content.native
             native_type = getattr(native, "type", "") if native is not None else ""
-            if (include_reasoning or native_type != "reasoning") and native_type in {
+            origin = native.route if isinstance(native, _RoutedReasoning) else None
+            replay_reasoning = include_reasoning and origin == reasoning_route
+            if (replay_reasoning or native_type != "reasoning") and native_type in {
                 "reasoning",
                 "web_search_call",
                 "message",
@@ -952,6 +985,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         structure_schema: dict[str, Any] | None = None,
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
+        from .provider_credentials import require_provider_restore_complete
+
+        hass = getattr(self, "hass", None)
+        entry_id = getattr(self.entry, "entry_id", None)
+        if hass is not None and isinstance(entry_id, str):
+            require_provider_restore_complete(hass, entry_id)
+        provider_client = self._client
+        provider_entry_data = getattr(self.entry, "data", {})
         await async_prepare_tool_results(chat_log.content)
         async with (
             context_summary_request(self, chat_log),
@@ -1018,9 +1059,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 ) -> ProviderRequestSnapshot:
                     return build_provider_request_snapshot(
                         options,
-                        getattr(self.entry, "data", {}),
+                        provider_entry_data,
                         tools_required=bool(initial_tools) or conditional_continue,
                         responses_required=require_responses,
+                        client=provider_client,
                     )
 
                 snapshot = request_snapshot(responses_required)
@@ -1080,6 +1122,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
             }
 
+            reasoning_route = (
+                _responses_reasoning_route(self.entry, provider_client, options)
+                if provider_snapshot.api_mode == API_MODE_RESPONSES
+                and entry_api_provider(self.entry) == "azure"
+                else None
+            )
+
             def responses_input(
                 content: Iterable[conversation.Content],
             ) -> list[dict[str, Any]]:
@@ -1087,6 +1136,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     content,
                     prepared_user_content,
                     include_reasoning=provider_snapshot.reasoning_items_supported,
+                    reasoning_route=reasoning_route,
                 )
 
             # Initial attachment preparation precedes the final capability snapshot.
@@ -1390,7 +1440,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 streaming = api_kwargs.get("stream", True)
                 try:
                     if api_mode == API_MODE_RESPONSES:
-                        response = await self._client.responses.create(
+                        response = await provider_client.responses.create(
                             input=messages,
                             **api_kwargs,
                             **tool_kwargs,
@@ -1407,9 +1457,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             response_events,
                             request_usage,
                             effective_output_limit=effective_output_limit,
+                            reasoning_route=reasoning_route,
                         )
                     else:
-                        response = await self._client.chat.completions.create(
+                        response = await provider_client.chat.completions.create(
                             messages=messages,
                             **api_kwargs,
                             **tool_kwargs,
@@ -2398,6 +2449,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         request_usage: RequestTokenMeasurements | None = None,
         *,
         effective_output_limit: int | None = None,
+        reasoning_route: str | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -2412,6 +2464,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     result,
                     request_usage,
                     effective_output_limit=effective_output_limit,
+                    reasoning_route=reasoning_route,
                 )
             ) as events:
                 async for delta in events:
@@ -2433,6 +2486,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         request_usage: RequestTokenMeasurements | None = None,
         *,
         effective_output_limit: int | None = None,
+        reasoning_route: str | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -2575,7 +2629,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if item_type in {"reasoning", "web_search_call"}:
                         # Preserve native hosted-tool and reasoning output so stateless
                         # chained function calls retain the complete Responses context.
-                        yield {"native": item}
+                        yield {
+                            "native": _RoutedReasoning(reasoning_route, item)
+                            if item_type == "reasoning" and reasoning_route is not None
+                            else item
+                        }
                     elif (
                         item_type == "message"
                         and getattr(item, "content", None) is not None

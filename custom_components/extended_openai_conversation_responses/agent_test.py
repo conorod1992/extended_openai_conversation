@@ -43,7 +43,7 @@ from .helpers import (
     effective_api_provider,
     get_api_mode,
     get_exposed_entities,
-    supports_openai_hosted_tools,
+    is_native_openai_connection,
 )
 from .memory import async_get_memory, memory_enabled
 from .model_capabilities import (
@@ -53,6 +53,7 @@ from .model_capabilities import (
     validate_reasoning_effort,
 )
 from .provider_content import answer_text
+from .provider_credentials import require_provider_restore_complete
 from .provider_errors import (
     classify_config_provider_error,
     ensure_successful_responses_result,
@@ -61,6 +62,7 @@ from .provider_errors import (
 )
 from .request import (
     auxiliary_output_token_limit,
+    build_provider_request_snapshot,
     conversation_tools_required,
     request_model_capabilities,
 )
@@ -139,6 +141,10 @@ async def async_test_agent(
     """Test one agent with local checks and at most one minimal live request."""
     checks: list[TestCheck] = []
     authentication_rejected = False
+    try:
+        require_provider_restore_complete(hass, getattr(entry, "entry_id", ""))
+    except HomeAssistantError as err:
+        return AgentTestResult("Failed", [_check("Authentication", "Failed", str(err))])
     client = getattr(entry, "runtime_data", None)
     if client is None:
         checks.append(_check("Authentication", "Failed", "API client is unavailable"))
@@ -169,7 +175,25 @@ async def async_test_agent(
             )
         )
         return AgentTestResult(_overall(checks), checks)
-    metadata = request_model_capabilities(subentry.data, entry.data)
+    function_tools_required = getattr(
+        subentry, "subentry_type", "conversation"
+    ) == "conversation" and conversation_tools_required(subentry.data)
+    try:
+        build_provider_request_snapshot(
+            subentry.data,
+            entry.data,
+            tools_required=function_tools_required,
+            client=client,
+        )
+    except HomeAssistantError as err:
+        checks.append(_check("Saved request settings", "Failed", str(err)))
+    else:
+        checks.append(
+            _check(
+                "Saved request settings", "Passed", "Valid for the configured provider"
+            )
+        )
+    metadata = request_model_capabilities(subentry.data, entry.data, client=client)
     try:
         with model_capability_snapshot(model, metadata):
             effort = (
@@ -333,9 +357,7 @@ async def async_test_agent(
                 effort=subentry.data.get("reasoning_effort")
                 or metadata.get("recommended_profile", {}).get("reasoning_effort"),
             )
-            and supports_openai_hosted_tools(
-                entry.data.get(CONF_API_PROVIDER), entry.data.get(CONF_BASE_URL)
-            )
+            and is_native_openai_connection(entry.data, client=client)
         )
     if web_search and not web_search_compatible:
         checks.append(
@@ -348,9 +370,6 @@ async def async_test_agent(
     elif not web_search:
         checks.append(_check("Web Search", "Passed", "Disabled"))
 
-    function_tools_required = getattr(
-        subentry, "subentry_type", "conversation"
-    ) == "conversation" and conversation_tools_required(subentry.data)
     if not function_tools_required:
         checks.append(
             _check("Function calling", "Skipped", "Not required by this agent")
@@ -428,7 +447,12 @@ async def async_test_agent(
                 **dict(
                     [
                         auxiliary_output_token_limit(
-                            model, api_mode, 16, subentry.data, entry.data
+                            model,
+                            api_mode,
+                            16,
+                            subentry.data,
+                            entry.data,
+                            client=client,
                         )
                     ]
                 ),

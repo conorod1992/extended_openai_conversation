@@ -1,6 +1,7 @@
 """Tests for transactional and fail-open archive session persistence."""
 
 from copy import deepcopy
+from datetime import UTC
 from types import SimpleNamespace
 
 import pytest
@@ -40,6 +41,74 @@ class FailingArchiveStorage:
 
     async def async_save_partition(self, partition, data):
         self.partitions[partition] = deepcopy(data)
+
+
+@pytest.mark.parametrize("pending", [False, True])
+@pytest.mark.parametrize("committed", [False, True])
+async def test_archive_failed_intent_compares_the_actual_durable_generation(
+    monkeypatch, pending, committed
+):
+    """Live activity timestamps do not invalidate a known durable state."""
+    from datetime import datetime, timedelta
+
+    from custom_components.extended_openai_conversation_responses import (
+        conversation_archive,
+    )
+
+    storage = FailingArchiveStorage()
+    archive = await _archive(storage)
+    instant = datetime(2026, 11, 18, tzinfo=UTC)
+    monkeypatch.setattr(conversation_archive.dt_util, "utcnow", lambda: instant)
+
+    async def begin():
+        return await archive.async_begin_session(
+            "conversation:ha-id", user_scope("alice", source="test"), "ha-id",
+            archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30,
+        )
+
+    session = await begin()
+
+    async def record(speech):
+        return await archive.async_record_turn(
+            session.session_id, run_id=None, user_text=speech, assistant_text="OK",
+            successful=True,
+        )
+
+    if pending:
+        async def fail_partition(*_):
+            raise OSError("pending month")
+
+        with monkeypatch.context() as failed:
+            failed.setattr(storage, "async_save_partition", fail_partition)
+            with pytest.raises(OSError, match="pending month"):
+                await record("Earlier saved text")
+        assert "pending_partitions" in storage.metadata
+    else:
+        await record("Earlier saved text")
+    instant += timedelta(minutes=1)
+    assert (await begin()).session_id == session.session_id
+    assert storage.metadata["sessions"][0]["last_activity_at"] != instant.isoformat()
+
+    save_metadata = storage.async_save_metadata
+
+    async def fail_metadata(data):
+        if committed:
+            await save_metadata(data)
+        raise OSError("write acknowledgement lost")
+
+    with monkeypatch.context() as failed:
+        failed.setattr(storage, "async_save_metadata", fail_metadata)
+        with pytest.raises(OSError, match="acknowledgement"):
+            await record("Candidate text")
+    assert archive.initialized
+    await record("Successful retry")
+    fresh = await _archive(storage)
+    data = await fresh.async_backup_data()
+    assert [turn["user_text"] for turn in data["turns"]] == [
+        "Earlier saved text",
+        *(["Candidate text"] if committed else []),
+        "Successful retry",
+    ]
 
 
 async def _archive(storage: FailingArchiveStorage) -> ConversationArchive:

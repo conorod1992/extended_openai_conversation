@@ -640,6 +640,7 @@ class DebugOpenAIClientProxy:
         self, delegate: Any, *, authentication_snapshot: tuple[str, str] | None = None
     ) -> None:
         self._delegate = delegate
+        self._eoai_authentication_snapshot = authentication_snapshot
         self.responses = _DebugEndpointProxy(
             delegate.responses, "responses", authentication_snapshot
         )

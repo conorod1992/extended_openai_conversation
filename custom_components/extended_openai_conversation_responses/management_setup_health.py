@@ -71,7 +71,9 @@ def build_setup_health_facts(
         with suppress(Exception):
             exposed_entity_count = _exposed_entity_count(hass)
 
-    guidance = configuration_guidance_snapshot(entry.data, options)
+    guidance = configuration_guidance_snapshot(
+        entry.data, options, client=getattr(entry, "runtime_data", None)
+    )
     lifecycle = configured_lifecycle(
         subentry, entry_data=entry.data, client=getattr(entry, "runtime_data", None)
     )

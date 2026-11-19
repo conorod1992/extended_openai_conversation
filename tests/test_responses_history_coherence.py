@@ -462,7 +462,11 @@ async def test_o3_pro_replays_reasoning_without_adjustable_effort(hass, model, a
         item.get("type") == "reasoning"
         for item in client.responses.create.await_args_list[2].kwargs["input"]
     )
-    obj.subentry.data = {"chat_model": model, "api_mode": "responses"}
+    obj.subentry.data = (
+        {"chat_model": "deployment", "azure_model": model, "api_mode": "responses",
+         "reasoning_effort": "low"}
+        if azure else {"chat_model": model, "api_mode": "responses"}
+    )
     log.async_add_user_content(conversation.UserContent(content="Again"))
     await obj._async_handle_chat_log(log, [], [])
     assert any(

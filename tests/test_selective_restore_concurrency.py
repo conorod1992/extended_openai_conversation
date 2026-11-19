@@ -1,6 +1,7 @@
 """Selective planning and journaled commit share one maintenance transaction."""
 
 import asyncio
+from contextvars import Context
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
@@ -244,7 +245,7 @@ async def test_cancellation_waits_for_selective_transaction_to_commit(
 async def test_cancelled_waiter_does_not_snapshot_or_write(transaction):
     tx = transaction
     async with tx.gate.shared():
-        restore = asyncio.create_task(tx.restore())
+        restore = asyncio.create_task(tx.restore(), context=Context())
         await asyncio.sleep(0)
         assert tx.gate._waiting_writers == 1
         restore.cancel()
@@ -450,9 +451,15 @@ async def test_private_active_conversation_survives_selective_restore_and_rollba
 @pytest.mark.parametrize("full_restore", [False, True])
 @pytest.mark.parametrize("retention", ["private", "retained"])
 async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeypatch, full_restore, retention):
-    from custom_components.extended_openai_conversation_responses.continuity import ConversationContinuity
-    from custom_components.extended_openai_conversation_responses.const import CONVERSATION_CONTINUITY_USER
-    from custom_components.extended_openai_conversation_responses.scope import user_scope
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONVERSATION_CONTINUITY_USER,
+    )
+    from custom_components.extended_openai_conversation_responses.continuity import (
+        ConversationContinuity,
+    )
+    from custom_components.extended_openai_conversation_responses.scope import (
+        user_scope,
+    )
     from homeassistant.components import conversation
 
     reset = restore_recovery.reset_restored_runtime
@@ -460,7 +467,9 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeyp
     manager = ConversationContinuity(tx.subentry.subentry_id)
     scope = user_scope("alice", source="authenticated_user")
     before = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, None, 30)
-    from custom_components.extended_openai_conversation_responses.conversation_archive import ConversationArchive
+    from custom_components.extended_openai_conversation_responses.conversation_archive import (
+        ConversationArchive,
+    )
     from tests.test_conversation_archive import FakeArchiveStorage
     archive = ConversationArchive(FakeArchiveStorage(), tx.subentry.subentry_id)
     await archive.async_initialize()

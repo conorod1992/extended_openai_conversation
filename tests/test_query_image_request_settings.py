@@ -138,7 +138,7 @@ def test_defaults_respect_model_ceiling_and_api_effort_support(monkeypatch, mode
     caps = deepcopy(request.get_model_capabilities("gpt-5"))
     caps["limits"]["max_output_tokens"] = 1024
     caps["reasoning"]["by_api"][mode]["efforts"] = []
-    monkeypatch.setattr(request, "request_model_capabilities", lambda *_: caps)
+    monkeypatch.setattr(request, "request_model_capabilities", lambda *_, **_kwargs: caps)
     settings = request.query_image_request_settings("deployment", mode, {}, {})
     assert settings == {
         "max_output_tokens" if mode == "responses" else "max_completion_tokens": 1024

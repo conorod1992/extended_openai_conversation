@@ -244,7 +244,7 @@ def test_web_search_tool_rejects_unsupported_capability(monkeypatch) -> None:
     capabilities = {
         "recommended_profile": {"reasoning_effort": "medium"},
     }
-    monkeypatch.setattr(request, "supports_openai_hosted_tools", Mock(return_value=True))
+    monkeypatch.setattr(request, "is_native_openai_connection", Mock(return_value=True))
     monkeypatch.setattr(request, "capability_allowed", Mock(return_value=False))
 
     with pytest.raises(HomeAssistantError, match="does not support Responses Web Search"):

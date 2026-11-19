@@ -190,7 +190,8 @@ async def test_cross_provider_restore_validates_each_generation(
     document["provider_connection"] = _connection(new)
 
     def update_entry(entry, *, data):
-        assert tx.journal.data is None
+        assert tx.journal.data["phase"] == "committed"
+        assert tx.subentry.data == document["agent"]["config"]
         entry.data = deepcopy(data)
         return True
 
@@ -240,6 +241,8 @@ async def test_cross_provider_journal_replay_retains_generation_context(
     target.config = _provider_config(new)
     target.title = "New provider agent"
     tx.subentry.data = deepcopy(target.config if published else before.config)
+    if published:
+        tx.subentry.title = target.title
     journal = restore_recovery._new_journal(
         tx.entry.entry_id,
         tx.subentry.subentry_id,
@@ -250,14 +253,24 @@ async def test_cross_provider_journal_replay_retains_generation_context(
     )
     journal["phase"] = phase
     tx.journal.data = deepcopy(journal)
-    assert await restore_recovery.async_recover_pending_restore(
-        tx.hass, tx.entry, tx.subentry
+    compatible = (phase == "applying" and not parent_changed) or (
+        phase == "committed" and parent_changed and published
     )
-    assert tx.subentry.data == (
-        target.config if phase == "committed" else before.config
-    )
-    assert tx.journal.data is None
-    # Replay validates configurations; provider credentials remain a separate confirmed update.
+    if compatible:
+        assert await restore_recovery.async_recover_pending_restore(
+            tx.hass, tx.entry, tx.subentry
+        )
+        assert tx.subentry.data == (
+            target.config if phase == "committed" else before.config
+        )
+        assert tx.journal.data is None
+    else:
+        with pytest.raises(backup.BackupError, match="matching provider"):
+            await restore_recovery.async_recover_pending_restore(
+                tx.hass, tx.entry, tx.subentry
+            )
+        assert tx.journal.data is not None
+        assert tx.subentry.data == (target.config if published else before.config)
     assert tx.entry.data == _connection(new if parent_changed else old)
 
 

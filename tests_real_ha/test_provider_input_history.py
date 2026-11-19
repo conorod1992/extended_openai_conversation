@@ -122,6 +122,86 @@ async def test_native_only_history_has_valid_chat_follow_up_and_intact_call_pair
     ] == ["reasoning", "web_search_call"]
 
 
+async def test_azure_request_route_keeps_encrypted_reasoning_with_its_deployment(hass, monkeypatch):
+    from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
+    from tests_real_ha.test_cross_feature_acceptance import _rule
+    from tests_real_ha.test_provider_wire_e2e import _install_wire, _raw_client, _response_object, _response_text_item
+
+    tool = {
+        "spec": {"name": "route_probe", "description": "Resolve a test value.",
+                 "parameters": {"type": "object", "properties": {}}},
+        "function": {"type": "template", "value_template": "Ready"},
+    }
+    entry = _make_entry(
+        include_ai_task=False,
+        data={"api_provider": "azure", "api_key": "test-azure", "skip_authentication": True,
+              "base_url": "https://example.openai.azure.com", "api_version": "2025-04-01-preview"},
+        conversation_options={"api_mode": "responses", "chat_model": "deployment-a",
+                              "azure_model": "gpt-5.6-terra", "functions": [tool]},
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    await agent._request_rules.async_create(_rule(
+        "model_routing", {"model": "deployment-b", "azure_model": "gpt-5.6-terra",
+                          "scope": "request", "continue_to_ai": True},
+        phrase="use alternate deployment",
+    ))
+
+    def response(name, items):
+        events = [
+            {"type": "response.output_item.done", "output_index": index, "item": item}
+            for index, item in enumerate(items)
+        ]
+        events.append({"type": "response.completed", "response": _response_object(name, items)})
+        return "".join(
+            f"data: {json.dumps({**event, 'sequence_number': index})}\n\n"
+            for index, event in enumerate(events)
+        ).encode()
+
+    def reasoning(label):
+        return {"type": "reasoning", "id": f"rs-{label}", "summary": [],
+                "encrypted_content": f"cipher-{label}"}
+
+    def reasoning_ids(request):
+        return [item["id"] for item in request["body"]["input"] if item["type"] == "reasoning"]
+
+    wire = _install_wire(monkeypatch, agent, [
+        response("a-tool", [
+            reasoning("only-a"), {"type": "function_call", "id": "fc-route",
+            "call_id": "call-route", "name": "route_probe", "arguments": "{}", "status": "completed"},
+        ]),
+        _responses_sse_text("Answer from A."),
+        response("b", [reasoning("only-b"), _response_text_item("Answer from B.")]),
+        _responses_sse_text("A again."),
+        _responses_sse_text("A on the new connection."),
+    ])
+    first = await _say(hass, agent, "first question")
+    assert _speech(first) == "Answer from A."
+    assert reasoning_ids(wire.requests[1]) == ["rs-only-a"]
+    second = await _say(hass, agent, "use alternate deployment", first.conversation_id)
+    assert _speech(second) == "Answer from B."
+    assert reasoning_ids(wire.requests[2]) == []
+    assert "Answer from A." in str(wire.requests[2]["body"]["input"])
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    monkeypatch.setattr(_raw_client(agent)._client, "send", wire.send)
+    third = await _say(hass, agent, "ordinary followup", first.conversation_id)
+    assert _speech(third) == "A again."
+    assert reasoning_ids(wire.requests[3]) == ["rs-only-a"]
+    assert "Answer from B." in str(wire.requests[3]["body"]["input"])
+    hass.config_entries.async_update_entry(entry, data={**entry.data, "api_key": "another-test-key"})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    monkeypatch.setattr(_raw_client(agent)._client, "send", wire.send)
+    fourth = await _say(hass, agent, "same deployment after reconnect", first.conversation_id)
+    assert _speech(fourth) == "A on the new connection."
+    assert reasoning_ids(wire.requests[4]) == []
+    assert "A again." in str(wire.requests[4]["body"]["input"])
+    assert [request["body"]["model"] for request in wire.requests] == [
+        "deployment-a", "deployment-a", "deployment-b", "deployment-a", "deployment-a",
+    ]
+
+
 class HistoryTool(llm.Tool):
     name = "history_echo"
     integration = DOMAIN

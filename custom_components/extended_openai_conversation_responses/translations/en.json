@@ -48,14 +48,14 @@
             },
             "openai_advanced": {
                 "title": "Advanced provider settings",
-                "description": "Most OpenAI users do not need to change anything here. Leave the Base URL unchanged and Organization blank unless you know your provider requires different settings.",
+                "description": "Most OpenAI users do not need to change anything here. Leave Base URL and Organization blank to use the SDK defaults.",
                 "data": {
                     "base_url": "Base URL",
                     "organization": "Organization",
                     "skip_authentication": "Skip authentication"
                 },
                 "data_description": {
-                    "base_url": "Leave this unchanged for OpenAI. Change it only for a compatible custom endpoint.",
+                    "base_url": "Leave blank to use the SDK default, including OPENAI_BASE_URL if set. Enter https://api.openai.com/v1 to select OpenAI explicitly, or enter a compatible gateway URL.",
                     "organization": "Optional. Most users should leave this blank.",
                     "skip_authentication": "Leave this off for OpenAI. Use it only for a compatible endpoint that does not require authentication."
                 }

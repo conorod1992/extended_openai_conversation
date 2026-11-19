@@ -264,7 +264,7 @@ async def test_startup_worker_does_not_overwrite_a_newer_configuration(
         )
     )
 
-    def migrate(data, kind):
+    def migrate(data, kind, provider):
         data["migration_marker"] = "stale candidate"
         entered.set()
         assert release.wait(10)

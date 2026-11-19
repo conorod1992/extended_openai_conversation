@@ -67,7 +67,7 @@ async def test_agent_deletion_cancels_owned_background_work_and_fences_agent(
     from custom_components.extended_openai_conversation_responses import model_lifecycle as lifecycle
 
     cleared = Mock()
-    monkeypatch.setattr(lifecycle, "clear_retirement_failure", cleared)
+    monkeypatch.setattr(lifecycle, "remove_retirement_issue", cleared)
 
     await agent_deletion.async_delete_agent_data(hass, *key)
 

@@ -50,7 +50,7 @@ from .const import (
 from .conversation_archive import archive_tools
 from .conversation_lifecycle import conversation_lifecycle_active
 from .guest_mode import GuestCapabilityPolicy, guest_mode_restrict_tool
-from .helpers import effective_api_provider, supports_openai_hosted_tools
+from .helpers import effective_api_provider, is_native_openai_connection
 from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
 from .memory import MEMORY_TOOL_NAMES, memory_tools
 from .model_capabilities import (
@@ -314,6 +314,8 @@ def build_web_search_tool(
     api_mode: str,
     entry_data: Mapping[str, Any],
     capabilities: Mapping[str, Any] | None = None,
+    *,
+    client: Any = None,
 ) -> dict[str, Any] | None:
     """Build the native OpenAI Responses Web Search tool when enabled."""
     if not options.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH):
@@ -323,12 +325,7 @@ def build_web_search_tool(
             "Web Search requires the Responses API. Select Responses API mode or "
             "use a model for which Auto resolves to Responses."
         )
-    if not supports_openai_hosted_tools(
-        effective_api_provider(
-            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-        ),
-        entry_data.get(CONF_BASE_URL),
-    ):
+    if not is_native_openai_connection(entry_data, client=client):
         raise HomeAssistantError(
             "Web Search is available only with the direct OpenAI Responses API; "
             "Azure and custom base URLs are not supported."
@@ -455,6 +452,8 @@ def request_model_capabilities(
     options: Mapping[str, Any],
     entry_data: Mapping[str, Any],
     model_capabilities: Mapping[str, Any] | None = None,
+    *,
+    client: Any = None,
 ) -> Mapping[str, Any]:
     """Resolve provider-aware capabilities independently of request purpose."""
     capabilities = (
@@ -473,13 +472,7 @@ def request_model_capabilities(
             entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
         )
         != "azure"
-        and entry_data.get(CONF_BASE_URL)
-        and not supports_openai_hosted_tools(
-            effective_api_provider(
-                entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-            ),
-            entry_data.get(CONF_BASE_URL),
-        )
+        and not is_native_openai_connection(entry_data, client=client)
     ):
         # Unknown third-party Chat Completions models use the broadly
         # supported field; exact catalog entries retain their own mapping.
@@ -500,10 +493,12 @@ def auxiliary_output_token_limit(
     limit: int | str | None,
     options: Mapping[str, Any],
     entry_data: Mapping[str, Any],
+    *,
+    client: Any = None,
 ) -> tuple[str, int]:
     """Select a small auxiliary request's token field using live provider rules."""
     capabilities = request_model_capabilities(
-        {**options, CONF_CHAT_MODEL: model}, entry_data
+        {**options, CONF_CHAT_MODEL: model}, entry_data, client=client
     )
     with model_capability_snapshot(model, capabilities):
         try:
@@ -599,9 +594,13 @@ def build_provider_request_snapshot(
     tools_required: bool | None = None,
     model_capabilities: Mapping[str, Any] | None = None,
     responses_required: bool = False,
+    client: Any = None,
 ) -> ProviderRequestSnapshot:
     """Build validated/normalized settings used by the live OpenAI request."""
-    from .agent_config import normalize_agent_numeric_values
+    from .agent_config import (
+        legacy_processing_tier_was_omitted,
+        normalize_agent_numeric_values,
+    )
 
     # Decode legacy scalar representations without materializing defaults or
     # changing the authoritative mapping. In particular, sampling must reach
@@ -629,7 +628,7 @@ def build_provider_request_snapshot(
         configured_api = API_MODE_RESPONSES
     try:
         capabilities = request_model_capabilities(
-            options, entry_data, model_capabilities
+            options, entry_data, model_capabilities, client=client
         )
         with model_capability_snapshot(model, capabilities):
             effort: str | None = None
@@ -706,12 +705,17 @@ def build_provider_request_snapshot(
                 raise ModelCapabilityError(
                     f"{model} does not support processing tier {service_tier!r}."
                 )
-            if service_tier in capabilities.get("service_tiers", []):
+            if service_tier in capabilities.get("service_tiers", []) and (
+                CONF_SERVICE_TIER in options
+                or not legacy_processing_tier_was_omitted(model)
+            ):
                 api_kwargs["service_tier"] = service_tier
     except ModelCapabilityError as err:
         raise HomeAssistantError(str(err)) from err
 
-    provider_tool = build_web_search_tool(options, api_mode, entry_data, capabilities)
+    provider_tool = build_web_search_tool(
+        options, api_mode, entry_data, capabilities, client=client
+    )
     return ProviderRequestSnapshot(
         api_mode,
         api_kwargs,

@@ -591,3 +591,48 @@ async def test_indexed_delta_of_future_item_waits_for_its_own_entry(
     assert result.response.error_code is None
     assert "".join(_speech(result).split()) == "Firstitem.Seconditem."
     assert len(wire.requests) == 1
+
+
+@pytest.mark.parametrize("kind", ["text", "reasoned-text", "refusal", "tool", "conflict"])
+async def test_responses_terminal_output_has_safe_recovery(hass, monkeypatch, kind):
+    from tests_real_ha.test_provider_wire_e2e import _response_object, _response_text_item
+
+    agent = await _agent(hass, "responses")
+    calls = await _prepare_service(hass)
+    message = "I cannot help with that." if kind == "refusal" else "Terminal answer."
+    item = _response_text_item(message)
+    events = []
+    if kind == "refusal":
+        item["content"] = [{"type": "refusal", "refusal": message}]
+    if kind == "tool":
+        item = {
+            "type": "function_call", "id": "fc-terminal", "call_id": "call-terminal",
+            "status": "completed", "name": "execute_services", "arguments": "{}",
+        }
+    if kind == "conflict":
+        events.append({"type": "response.output_item.done", "output_index": 0, "item": item})
+        item = {**item, "id": "conflicting-id"}
+    output = [item]
+    if kind == "reasoned-text":
+        output.insert(0, {"id": "rs-terminal", "type": "reasoning", "summary": [],
+                          "encrypted_content": "ciphertext"})
+    response = _response_object("terminal-body", output)
+    response["usage"] = {"input_tokens": 17, "output_tokens": 4, "total_tokens": 21,
+                         "input_tokens_details": {"cached_tokens": 0},
+                         "output_tokens_details": {"reasoning_tokens": 0}}
+    events.append({"type": "response.completed", "response": response})
+    stream = "".join(
+        f"data: {json.dumps({**event, 'sequence_number': index})}\n\n"
+        for index, event in enumerate(events)
+    ).encode()
+    wire = _install_wire(monkeypatch, agent, [stream])
+    result = await _say(hass, agent)
+    if kind in {"text", "reasoned-text", "refusal"}:
+        assert result.response.error_code is None
+        assert _speech(result) == message
+    else:
+        assert result.response.error_code is not None
+    usage = agent._usage.requests[-1]
+    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (17, 4, 21)
+    assert calls == []
+    assert len(wire.requests) == 1

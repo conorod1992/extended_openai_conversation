@@ -133,7 +133,7 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                 DATA_DELAYED_TOOL_MANAGER,
                 async_remove_stored_agent_calls,
             )
-            from .model_lifecycle import clear_retirement_failure
+            from .model_lifecycle import remove_retirement_issue
 
             delayed = hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
             if delayed is not None:
@@ -164,7 +164,7 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                 await PropagatingWriteStore(hass, 1, name).async_remove()
             for suffix in _MANAGER_KEYS:
                 hass.data.get(f"{DOMAIN}.{suffix}", {}).pop(key, None)
-            clear_retirement_failure(hass, entry_id=entry_id, subentry_id=subentry_id)
+            remove_retirement_issue(hass, entry_id=entry_id, subentry_id=subentry_id)
             gate.deleted = True
 
     await _async_run_exclusive_operation(gate, remove)

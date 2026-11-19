@@ -46,7 +46,6 @@ from .const import (
     CONF_ORGANIZATION,
     CONF_SKIP_AUTHENTICATION,
     DEFAULT_API_MODE,
-    DEFAULT_CONF_BASE_URL,
     DOMAIN,
     GITHUB_REPO_NAME,
     GITHUB_REPO_OWNER,
@@ -350,6 +349,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 raise HomeAssistantError("Config entry not found")
             if getattr(entry, "state", None) is not ConfigEntryState.LOADED:
                 raise HomeAssistantError("Config entry is not loaded")
+            from .provider_credentials import require_provider_restore_complete
+
+            require_provider_restore_complete(hass, call.data["config_entry"])
             # Setup can fail before assigning a runtime client. Do not parse
             # images or make a provider request for an unavailable connection.
             client = getattr(entry, "runtime_data", None)
@@ -477,10 +479,12 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         from .provider_credentials import (
             incompatible_provider_agent,
             request_provider_reload_after_update,
+            require_provider_restore_complete,
             validate_agent_provider_request,
             validate_provider_connection,
         )
 
+        require_provider_restore_complete(hass, entry_id)
         provider = validate_provider_connection(new_data)
 
         _LOGGER.debug(
@@ -489,9 +493,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             ", ".join(sorted(updates)),
         )
 
-        if new_data.get(CONF_BASE_URL) == DEFAULT_CONF_BASE_URL:
-            # Do not pin the SDK's default URL to the current OpenAI endpoint.
-            new_data.pop(CONF_BASE_URL)
         if provider == "azure":
             new_data[CONF_API_PROVIDER] = provider
 

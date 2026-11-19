@@ -31,6 +31,100 @@ from tests_real_ha.test_service_registry_acceptance import (
 )
 
 
+async def test_deleting_unloaded_assistant_clears_only_its_persisted_repair(hass):
+    from custom_components.extended_openai_conversation_responses.agent_deletion import (
+        async_reconcile_agent_storage, async_setup_agent_deletion,
+    )
+    from custom_components.extended_openai_conversation_responses.model_lifecycle import (
+        _DATA_FAILURES, _issue_id,
+    )
+    from homeassistant.config_entries import ConfigEntryState, ConfigSubentry
+    from homeassistant.helpers import issue_registry as ir
+
+    entry = _entry()
+    entry.add_to_hass(hass)
+    removed = _conversation_subentry(entry)
+    sibling = ConfigSubentry(data={}, subentry_type="conversation", title="Sibling", unique_id=None)
+    hass.config_entries.async_add_subentry(entry, sibling)
+    for subentry in (removed, sibling):
+        ir.async_create_issue(
+            hass, DOMAIN, _issue_id(entry.entry_id, subentry.subentry_id),
+            is_fixable=False, is_persistent=True, severity=ir.IssueSeverity.ERROR,
+            translation_key="retired_model", data={"model": "gpt-4o"},
+        )
+    assert _DATA_FAILURES not in hass.data
+    async_setup_agent_deletion(hass)
+    await async_reconcile_agent_storage(hass)
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert hass.config_entries.async_remove_subentry(entry, removed.subentry_id)
+    await hass.async_block_till_done()
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, _issue_id(entry.entry_id, removed.subentry_id)) is None
+    assert registry.async_get_issue(DOMAIN, _issue_id(entry.entry_id, sibling.subentry_id)) is not None
+
+
+@pytest.mark.parametrize("endpoint", ["unset", "environment", "native", "custom", "azure"])
+async def test_effective_sdk_endpoint_drives_setup_and_request_capabilities(hass, monkeypatch, endpoint):
+    from openai import AsyncAzureOpenAI
+    from custom_components.extended_openai_conversation_responses.config_flow import (
+        _new_agent_options, validate_input,
+    )
+    from custom_components.extended_openai_conversation_responses.const import DEFAULT_CONF_BASE_URL
+    from custom_components.extended_openai_conversation_responses.request import build_provider_request_snapshot
+
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    settings = {"api_key": "test", "skip_authentication": True}
+    if endpoint != "unset":
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://gateway.openai.azure.com/openai/v1/")
+    if endpoint == "native":
+        settings["base_url"] = DEFAULT_CONF_BASE_URL
+    elif endpoint == "custom":
+        settings["base_url"] = "https://explicit-gateway.example/v1"
+    elif endpoint == "azure":
+        settings.update(api_provider="azure", base_url="https://example.openai.azure.com",
+                        api_version="2025-04-01-preview")
+
+    client = await validate_input(hass, settings)
+    assert isinstance(client, AsyncAzureOpenAI) is (endpoint == "azure")
+    native = endpoint in {"unset", "native"}
+    assert (_new_agent_options({}, settings, client=client).get("chat_model") == "gpt-6.1-terra") is native
+    projection = build_provider_request_snapshot(
+        {"chat_model": "unknown-wire-model", "api_mode": "chat_completions"},
+        settings, client=client,
+    ).api_kwargs
+    assert ("max_tokens" in projection) is (endpoint in {"custom", "environment"})
+    if endpoint == "native":
+        assert settings["base_url"] == DEFAULT_CONF_BASE_URL
+        assert str(client.base_url).rstrip("/") == DEFAULT_CONF_BASE_URL
+    elif endpoint == "environment":
+        assert "base_url" not in settings
+        assert client.base_url.host == "gateway.openai.azure.com"
+
+
+async def test_change_config_and_reauth_keep_the_explicit_native_endpoint(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses.const import DEFAULT_CONF_BASE_URL
+    from homeassistant.data_entry_flow import FlowResultType
+
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://environment-gateway.example/v1")
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    assert entry.runtime_data.base_url.host == "environment-gateway.example"
+    await hass.services.async_call(
+        DOMAIN, "change_config", {"config_entry": entry.entry_id, "base_url": DEFAULT_CONF_BASE_URL},
+        blocking=True,
+    )
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.data["base_url"] == DEFAULT_CONF_BASE_URL
+    assert entry.runtime_data.base_url.host == "api.openai.com"
+    flow = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(flow["flow_id"], {"api_key": "replacement"})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data["base_url"] == DEFAULT_CONF_BASE_URL
+    assert entry.runtime_data.base_url.host == "api.openai.com"
+
+
 @pytest.mark.asyncio
 async def test_process_service_success_preserves_direct_request_contract(
     hass: HomeAssistant,

@@ -367,9 +367,9 @@ async def test_change_config_validates_and_saves_provider_settings(
 
     authenticate.assert_awaited_once()
     assert authenticate.await_args.kwargs["api_key"] == "new"
-    assert authenticate.await_args.kwargs["base_url"] is None
+    assert authenticate.await_args.kwargs["base_url"] == DEFAULT_CONF_BASE_URL
     saved = hass.config_entries.async_update_entry.call_args.kwargs["data"]
-    assert saved == {CONF_API_KEY: "new"}
+    assert saved == {CONF_API_KEY: "new", CONF_BASE_URL: DEFAULT_CONF_BASE_URL}
 
 
 async def test_change_config_ignores_empty_update_and_rejects_invalid_entry(

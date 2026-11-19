@@ -50,6 +50,47 @@ def _record_action(message):
     return {"action": "rule_probe.record", "data": {"message": message}}
 
 
+async def test_rule_script_cannot_wait_for_its_own_embedding_rebuild(hass, monkeypatch):
+    from contextlib import asynccontextmanager
+    from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+        get_agent_maintenance_gate,
+    )
+
+    agent = await _agent(hass, title="Embeddings rule")
+    service_data = {"config_entry": agent.entry.entry_id, "agent_id": agent.subentry.subentry_id}
+    await agent._request_rules.async_create(_local(
+        [{"action": f"{DOMAIN}.rebuild_memory_embeddings", "data": service_data}],
+        phrase="rebuild embeddings",
+    ))
+    await agent._request_rules.async_create(_local(
+        [{"variables": {"ok": True}}], phrase="another command", success="Still responsive",
+    ))
+    _provider(monkeypatch, agent, [])
+    gate = get_agent_maintenance_gate(hass, agent.entry.entry_id, agent.subentry.subentry_id)
+    exclusive = gate.exclusive
+    failures = []
+
+    @asynccontextmanager
+    async def observed_exclusive():
+        try:
+            async with exclusive():
+                yield
+        except HomeAssistantError as err:
+            failures.append(str(err))
+            raise
+
+    monkeypatch.setattr(gate, "exclusive", observed_exclusive)
+    result = await asyncio.wait_for(_say(hass, agent, "rebuild embeddings"), timeout=3)
+    assert _speech(result, successful=False) == "Failed safely"
+    assert len(failures) == 1
+    assert "Run it outside the active conversation or Request Rule" in failures[0]
+    assert _speech(await asyncio.wait_for(_say(hass, agent, "another command"), timeout=3)) == "Still responsive"
+    await asyncio.wait_for(
+        hass.services.async_call(DOMAIN, "rebuild_memory_embeddings", service_data, blocking=True),
+        timeout=3,
+    )
+
+
 async def _safe_match_preview(hass, agent):
     from custom_components.extended_openai_conversation_responses.management_ui import (
         async_management_command,

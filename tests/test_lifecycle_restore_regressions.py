@@ -98,10 +98,7 @@ async def test_agent_deletion_erases_only_exact_private_store_prefixes(
     ]
     for name in removed + retained:
         (root / name).write_text("private", encoding="utf-8")
-    monkeypatch.setattr(
-        agent_deletion, "clear_retirement_failure", Mock(), raising=False
-    )
-    monkeypatch.setattr(model_lifecycle, "clear_retirement_failure", Mock())
+    monkeypatch.setattr(model_lifecycle, "remove_retirement_issue", Mock())
     from homeassistant.helpers.storage import Store
 
     async def remove(store):

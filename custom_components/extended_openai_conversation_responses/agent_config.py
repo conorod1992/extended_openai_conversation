@@ -380,6 +380,18 @@ def _agent_model_changed(
     )
 
 
+def legacy_processing_tier_was_omitted(model: Any) -> bool:
+    """Identify the GPT-4o deployments affected by the 6.8.3 tier omission."""
+    return isinstance(model, str) and model in {
+        "gpt-4o",
+        "gpt-4o-2024-05-13",
+        "gpt-4o-2024-08-06",
+        "gpt-4o-2024-11-20",
+        "gpt-4o-mini",
+        "gpt-4o-mini-2024-07-18",
+    }
+
+
 def preserve_agent_model_setting_omissions(
     source: Mapping[str, Any], normalized: dict[str, Any]
 ) -> dict[str, Any]:
@@ -388,9 +400,12 @@ def preserve_agent_model_setting_omissions(
     This is an operation contract, not a list inferred from default values.
     Sampling settings deliberately remain outside this policy.
     """
-    for key in (CONF_REASONING_EFFORT,):
-        if key not in source:
-            normalized.pop(key, None)
+    if CONF_REASONING_EFFORT not in source:
+        normalized.pop(CONF_REASONING_EFFORT, None)
+    if CONF_SERVICE_TIER not in source and legacy_processing_tier_was_omitted(
+        normalized.get(CONF_CHAT_MODEL)
+    ):
+        normalized.pop(CONF_SERVICE_TIER, None)
     return normalized
 
 
@@ -1524,12 +1539,12 @@ def model_capabilities(model: str, *, provider: str | None = None) -> dict[str, 
     return capabilities
 
 
-def agent_config_sampling_repair_snapshot(
+def agent_config_model_repair_snapshot(
     data: dict[str, Any], *, provider: str | None = None
 ) -> dict[str, Any]:
-    """Display legacy sampling booleans without certifying them for a save/run.
+    """Display invalid saved model controls without certifying a save or run.
 
-    Validate every other setting using a private numeric stand-in, then restore
+    Validate every other setting using private stand-ins, then restore
     the exact damaged values for the editor. Never cache this as validated data.
     """
     damaged = {
@@ -1537,6 +1552,14 @@ def agent_config_sampling_repair_snapshot(
         for key in (CONF_TEMPERATURE, CONF_TOP_P)
         if isinstance(data.get(key), bool)
     }
+    tier = data.get(CONF_SERVICE_TIER)
+    if isinstance(tier, str):
+        model, effective_provider, _ = _configuration_reasoning_context(data, provider)
+        tiers = get_model_config(model, provider=effective_provider).get(
+            "service_tier_options", []
+        )
+        if tier != DEFAULT_SERVICE_TIER and tier not in tiers:
+            damaged[CONF_SERVICE_TIER] = tier
     defaults = agent_config_defaults()
     source = {**data, **{key: defaults[key] for key in damaged}}
     return {**agent_config_snapshot(source, provider=provider), **damaged}

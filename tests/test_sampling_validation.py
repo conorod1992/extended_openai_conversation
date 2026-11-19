@@ -130,7 +130,7 @@ def test_sampling_recovery_projection_is_display_only(value):
         "top_p": not value,
     }
     original = deepcopy(raw)
-    display = agent_config.agent_config_sampling_repair_snapshot(raw)
+    display = agent_config.agent_config_model_repair_snapshot(raw)
     assert display["temperature"] is value
     assert display["top_p"] is not value
     assert raw == original
@@ -141,4 +141,4 @@ def test_sampling_recovery_projection_is_display_only(value):
     ):
         build_provider_request_snapshot(display, {})
     with pytest.raises(agent_config.AgentConfigError, match="max_tokens"):
-        agent_config.agent_config_sampling_repair_snapshot({**raw, "max_tokens": 0})
+        agent_config.agent_config_model_repair_snapshot({**raw, "max_tokens": 0})

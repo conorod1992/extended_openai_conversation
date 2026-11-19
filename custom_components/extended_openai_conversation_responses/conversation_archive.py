@@ -153,6 +153,17 @@ def archive_sessions_past_retention(
     }
 
 
+def archive_session_inactive(
+    session: ArchiveSession, now: datetime, inactivity_minutes: int
+) -> bool:
+    """Apply the same inactivity boundary during live turns and restore."""
+    return (
+        _parse_time(session.last_activity_at or session.last_message_at)
+        + timedelta(minutes=max(1, inactivity_minutes))
+        < now
+    )
+
+
 class ArchiveStorage(Protocol):
     """Partitioned persistence boundary."""
 
@@ -310,6 +321,7 @@ class ConversationArchive:
         self._active: dict[str, str] = {}
         self._partitions: set[str] = set()
         self._pending_partitions: set[str] = set()
+        self._durable_metadata: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
         self._initialized = False
         self._repair_required = False
@@ -342,6 +354,7 @@ class ConversationArchive:
             if self._initialized:
                 return
             loaded = await self._storage.async_load_metadata()
+            self._durable_metadata = loaded
             data = loaded if loaded is not None else {}
             repair_required = not isinstance(data, dict)
             if repair_required:
@@ -366,7 +379,7 @@ class ConversationArchive:
                     for key, value in data.items()
                     if key != "pending_partitions"
                 }
-                await self._storage.async_save_metadata(data)
+                await self._async_write_metadata(data)
             staged_sessions: dict[str, ArchiveSession] = {}
             staged_turns: dict[str, list[ArchiveTurn]] = defaultdict(list)
             private_titles = False
@@ -467,7 +480,7 @@ class ConversationArchive:
                     if session.retention_state == "private"
                 }
                 if private_titles:
-                    await self._storage.async_save_metadata(
+                    await self._async_write_metadata(
                         {
                             **data,
                             "sessions": [
@@ -506,7 +519,7 @@ class ConversationArchive:
                     )
                     for partition in sorted(staged_partitions)
                 }
-                await self._storage.async_save_metadata(
+                await self._async_write_metadata(
                     self._metadata_payload_for_state(
                         staged_sessions,
                         staged_active,
@@ -517,7 +530,7 @@ class ConversationArchive:
                 for partition, payload in repaired_partitions.items():
                     await self._storage.async_save_partition(partition, payload)
             if (private_titles or normalized_records) and not repair_required:
-                await self._storage.async_save_metadata(
+                await self._async_write_metadata(
                     self._metadata_payload_for_state(
                         staged_sessions, staged_active, staged_partitions
                     )
@@ -600,32 +613,27 @@ class ConversationArchive:
             current = self._sessions.get(self._active.get(session_key, ""))
             now = dt_util.utcnow()
             may_retain = _scope_retention_allowed(scope, shared_archive_enabled)
-            if current is not None:
-                expired = (
-                    _parse_time(current.last_activity_at or current.last_message_at)
-                    + timedelta(minutes=max(1, inactivity_minutes))
-                    < now
-                )
-                if (
-                    not expired
-                    and current.scope_id == scope.scope_id
-                    and current.home_assistant_conversation_id
-                    == home_assistant_conversation_id
-                    and current.retention_state != "closed"
-                    and (may_retain or current.retention_state != "retained")
-                    and not (may_retain and current.retention_state == "unretained")
-                ):
-                    current = replace(current, last_activity_at=now.isoformat())
-                    if current.retention_state == "private":
-                        # Live activity is authoritative even when this optional
-                        # content-free refresh cannot be persisted.
-                        self._sessions[current.session_id] = current
-                        # Persist only content-free metadata; private activity never
-                        # rewrites transcript partitions or retains message text.
-                        await self._async_publish_session_locked(session_key, current)
-                    else:
-                        self._sessions[current.session_id] = current
-                    return current
+            if (
+                current is not None
+                and not archive_session_inactive(current, now, inactivity_minutes)
+                and current.scope_id == scope.scope_id
+                and current.home_assistant_conversation_id
+                == home_assistant_conversation_id
+                and current.retention_state != "closed"
+                and (may_retain or current.retention_state != "retained")
+                and not (may_retain and current.retention_state == "unretained")
+            ):
+                current = replace(current, last_activity_at=now.isoformat())
+                if current.retention_state == "private":
+                    # Live activity is authoritative even when this optional
+                    # content-free refresh cannot be persisted.
+                    self._sessions[current.session_id] = current
+                    # Persist only content-free metadata; private activity never
+                    # rewrites transcript partitions or retains message text.
+                    await self._async_publish_session_locked(session_key, current)
+                else:
+                    self._sessions[current.session_id] = current
+                return current
 
             timestamp = now.isoformat()
             session = ArchiveSession(
@@ -1450,10 +1458,44 @@ class ConversationArchive:
             set(self._partitions),
             set(self._pending_partitions),
         )
+
+        def publish() -> None:
+            self._sessions[session.session_id] = session
+            if session_key is not None:
+                self._active[session_key] = session.session_id
+
+        await self._async_commit_metadata(metadata, publish)
+
+    async def _async_write_metadata(self, metadata: dict[str, Any]) -> None:
+        """Record the exact durable generation, independently of live activity."""
         await self._storage.async_save_metadata(metadata)
-        self._sessions[session.session_id] = session
-        if session_key is not None:
-            self._active[session_key] = session.session_id
+        self._durable_metadata = metadata
+
+    async def _async_commit_metadata(
+        self,
+        metadata: dict[str, Any],
+        publish: Callable[[], None],
+        *,
+        record_execution: bool = False,
+    ) -> None:
+        previous = self._durable_metadata
+
+        async def reconcile() -> None:
+            persisted = await self._storage.async_load_metadata()
+            if persisted == metadata:
+                self._durable_metadata = metadata
+                publish()
+            elif persisted != previous:
+                raise ValueError("conversation archive metadata cannot be reconciled")
+
+        await _async_settle_transactional_save(
+            self._async_write_metadata(metadata),
+            lambda: None,
+            publish,
+            reconcile,
+            self._invalidate_after_unreadable_metadata,
+            record_execution=record_execution,
+        )
 
     @staticmethod
     def _metadata_payload_for_state(
@@ -1611,33 +1653,7 @@ class ConversationArchive:
             self._partitions = partitions
             self._pending_partitions = set(pending_names)
 
-        async def reconcile_intent() -> None:
-            persisted = await self._storage.async_load_metadata()
-            if persisted == intent:
-                # Exact readback validates the candidate's journal, including all
-                # turn/owner associations. Surface the lost acknowledgement still.
-                publish_intent()
-                return
-            previous = await asyncio.to_thread(
-                self._metadata_with_pending,
-                self._sessions,
-                self._active,
-                self._turns,
-                previous_partitions,
-                previous_pending,
-            )
-            if (
-                persisted or {"sessions": [], "active": {}, "partitions": []}
-            ) != previous:
-                raise ValueError("conversation archive metadata cannot be reconciled")
-
-        await _async_settle_transactional_save(
-            self._storage.async_save_metadata(intent),
-            lambda: None,
-            publish_intent,
-            reconcile_intent,
-            self._invalidate_after_unreadable_metadata,
-        )
+        await self._async_commit_metadata(intent, publish_intent, record_execution=True)
 
         for partition, payload in pending.items():
             await self._storage.async_save_partition(partition, payload)
@@ -1654,10 +1670,12 @@ class ConversationArchive:
                     exc_info=True,
                 )
 
-        await self._storage.async_save_metadata(metadata)
-        self._pending_partitions.clear()
-        if replacing:
-            self._repair_required = False
+        def publish_complete() -> None:
+            self._pending_partitions.clear()
+            if replacing:
+                self._repair_required = False
+
+        await self._async_commit_metadata(metadata, publish_complete)
 
     def _invalidate_after_unreadable_metadata(self) -> None:
         """Prevent stale state from overwriting an unvalidated durable journal."""
@@ -1666,6 +1684,7 @@ class ConversationArchive:
         self._active.clear()
         self._partitions.clear()
         self._pending_partitions.clear()
+        self._durable_metadata = None
         self._initialized = False
 
     def _require_writable(self) -> None:

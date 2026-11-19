@@ -1754,9 +1754,15 @@ async def async_restore_transfer(
     confirm_retention: bool = False,
 ) -> dict[str, Any]:
     """Preserve unselected state and commit under one shielded exclusive lease."""
+    from homeassistant.config_entries import ConfigEntryState
+
     from .agent_maintenance import (
         _async_run_exclusive_operation,
         get_agent_maintenance_gate,
+    )
+    from .provider_credentials import (
+        request_provider_reload_after_update,
+        require_provider_restore_complete,
     )
     from .restore_recovery import (
         async_finish_restore_reload,
@@ -1764,6 +1770,7 @@ async def async_restore_transfer(
     )
 
     async def restore_exclusively_owned() -> dict[str, Any]:
+        require_provider_restore_complete(hass, entry.entry_id)
         if precondition is not None:
             await precondition()
         if (
@@ -1805,35 +1812,16 @@ async def async_restore_transfer(
             ),
         )
         if provider_connection is not None:
-            from .provider_credentials import async_restore_private_provider_connection
-
-            assert expected_provider_data is not None
-            try:
-                await async_restore_private_provider_connection(
-                    hass,
-                    entry,
-                    provider_connection,
-                    expected_provider_data,
-                    confirmed=True,
-                )
-            except backup.BackupError:
-                result["provider_connection_restored"] = False
-                result["provider_connection_message"] = (
-                    "Agent data restored. The provider update could not be verified on disk. "
-                    "Check the shared provider connection before retrying."
-                )
-            except HomeAssistantError:
-                result["provider_connection_restored"] = False
-                result["provider_connection_message"] = (
-                    "Agent data restored; provider connection was not changed. Import and preview again."
-                )
-            else:
-                result["provider_connection_restored"] = True
+            result["provider_connection_restored"] = True
         return {**result, "transfer": preview}
 
     gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
     result = await _async_run_exclusive_operation(gate, restore_exclusively_owned)
     await async_finish_restore_reload(hass, entry, subentry)
+    if provider_connection is not None and entry.state is not ConfigEntryState.LOADED:
+        request_provider_reload_after_update(
+            hass, entry, entry.state, changed=True, retry_unchanged=True
+        )
     return result
 
 

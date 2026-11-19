@@ -35,6 +35,11 @@ _OWNER = "restore-process-owner"
 _TARGET = "restore-target"
 _PREVIOUS = "restore-previous"
 _SIBLING = "unrelated-agent"
+_PROVIDER_TARGET = {
+    "api_key": "test-target-provider",
+    "base_url": "https://recovery-gateway.example/v1",
+    "skip_authentication": True,
+}
 
 
 def _quarantined_configuration():
@@ -170,6 +175,91 @@ def _pause(config_dir: Path, name: str) -> None:
     (config_dir / name).write_text("reached\n", encoding="utf-8")
 
 
+async def _provider_boundary(hass, entry, directory, phase, cut):
+    from custom_components.extended_openai_conversation_responses import (
+        backup, restore_recovery, transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.conversation_archive import async_get_archive
+    from custom_components.extended_openai_conversation_responses.scope import user_scope
+
+    subentry, _, _ = await _state(hass, entry)
+    archive = await async_get_archive(hass, entry.entry_id, subentry.subentry_id)
+    native_id = "restore-private-native-id"
+    key = "conversation:" + native_id
+
+    async def begin():
+        return await archive.async_begin_session(
+            key, user_scope(_OWNER, source="test"), native_id, archive_enabled=True,
+            shared_archive_enabled=False, inactivity_minutes=30,
+        )
+
+    seed_path = directory / "provider-seed.json"
+    if phase == "provider-seed":
+        snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+        if cut == "committed":
+            private = await begin()
+            await archive.async_make_private(private.session_id)
+        original = {"connection": dict(entry.data), "config": dict(subentry.data)}
+        snapshot["provider_connection"] = _PROVIDER_TARGET
+        if cut != "provider-only":
+            snapshot["agent"]["config"]["prompt"] = "Restore the provider and assistant as a pair"
+        seed_path.write_text(json.dumps({
+            "original": original, "config": snapshot["agent"]["config"],
+            "artifact": backup.finalize_backup_snapshot(snapshot)["document"],
+        }), encoding="utf-8")
+        return
+
+    seeded = json.loads(seed_path.read_text(encoding="utf-8"))
+    if phase == "provider-verify":
+        rollback = cut == "applying"
+        assert dict(entry.data) == (seeded["original"]["connection"] if rollback else _PROVIDER_TARGET)
+        assert dict(subentry.data) == (seeded["original"]["config"] if rollback else seeded["config"])
+        assert (entry.runtime_data.base_url.host == "recovery-gateway.example") is not rollback
+        store = restore_recovery._journal_store(hass, entry.entry_id, subentry.subentry_id)
+        assert await store.async_load() is None
+        if cut == "committed":
+            private = await begin()
+            assert private.retention_state == "private"
+            assert await archive.async_record_turn(
+                private.session_id, run_id=None, user_text="Private after cold recovery",
+                assistant_text="Hidden", successful=True,
+            ) is None
+        return
+
+    async def pause():
+        _pause(directory, "provider-restore-paused")
+        await asyncio.Event().wait()
+
+    original_write = restore_recovery._async_write_journal_verified
+    original_persist = restore_recovery.async_persist_config_entries
+
+    async def boundary_journal(store, journal):
+        verified = await original_write(store, journal)
+        if verified and journal["phase"] == cut:
+            await pause()
+        return verified
+
+    async def boundary_config(*args):
+        await original_persist(*args)
+        if cut in {"core-written", "provider-only"}:
+            await pause()
+
+    with (
+        patch.object(restore_recovery, "_async_write_journal_verified", boundary_journal),
+        patch.object(restore_recovery, "async_persist_config_entries", boundary_config),
+    ):
+        sections = [transfer.SECTION_CONFIGURATION]
+        if cut == "committed":
+            sections.append(transfer.SECTION_CONVERSATION_ARCHIVE)
+        await transfer.async_restore_transfer(
+            hass, entry, subentry, seeded["artifact"],
+            sections=sections,
+            provider_connection=_PROVIDER_TARGET,
+            expected_provider_data=seeded["original"]["connection"],
+        )
+    raise AssertionError("provider restore returned before process kill")
+
+
 async def _child(config_dir: Path, phase: str, cut: str) -> None:
     from custom_components.extended_openai_conversation_responses import (
         restore_recovery,
@@ -200,7 +290,9 @@ async def _child(config_dir: Path, phase: str, cut: str) -> None:
         assert hass is not None
         await hass.async_start()
         entry = await _ensure_entry(hass)
-        if phase == "seed":
+        if phase.startswith("provider-"):
+            await _provider_boundary(hass, entry, config_dir, phase, cut)
+        elif phase == "seed":
             await _seed(hass, entry, config_dir)
         elif phase == "verify":
             expected = _TARGET if cut == "committed" else _PREVIOUS
@@ -461,6 +553,19 @@ def test_restore_transaction_converges_after_process_kills(
         # fresh startup reads that configuration before recovery can alter it.
         _run(config_dir, "verify", cut)
     assert config.read_text(encoding="utf-8") == configuration
+
+
+@pytest.mark.parametrize("cut", ["applying", "committed", "core-written", "provider-only"])
+@pytest.mark.usefixtures("socket_enabled")
+def test_provider_restore_pairs_credentials_and_assistant_across_process_kill(tmp_path, cut):
+    source = Path(__file__).resolve().parents[1] / "custom_components" / DOMAIN
+    destination = tmp_path / "custom_components" / DOMAIN
+    destination.parent.mkdir()
+    _stage_component(source, destination)
+    (tmp_path / "configuration.yaml").write_text(_configuration("Provider Pair Recovery"), encoding="utf-8")
+    _run(tmp_path, "provider-seed", cut)
+    _kill_at(tmp_path, "provider-restore", cut, "provider-restore-paused")
+    _run(tmp_path, "provider-verify", cut)
 
 
 if __name__ == "__main__" and os.environ.get(_PHASE):

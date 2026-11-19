@@ -236,6 +236,7 @@ async def async_preview_effective_request(
             options,
             getattr(entry, "data", {}),
             tools_required=bool(custom_tools or loader_tools or integration_tools),
+            client=getattr(entry, "runtime_data", None),
         )
         formatted_custom = format_function_tools(custom_tools, provider.api_mode)
         formatted_loader = format_function_tools(loader_tools, provider.api_mode)

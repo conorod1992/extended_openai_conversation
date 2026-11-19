@@ -126,15 +126,14 @@ async def test_user_flow_canonical_url_and_omitted_values_use_defaults(
     assert result["data"][CONF_NAME] == "ChatGPT"
     assert result["data"][CONF_API_PROVIDER] == DEFAULT_API_PROVIDER
     assert result["data"][CONF_SKIP_AUTHENTICATION] is False
-    # validate_input intentionally avoids persisting the canonical OpenAI endpoint.
-    assert CONF_BASE_URL not in result["data"]
+    assert result["data"][CONF_BASE_URL] == DEFAULT_CONF_BASE_URL
     assert result["result"].version == CONFIG_ENTRY_VERSION
     assert {
         subentry.data["chat_model"] for subentry in result["result"].subentries.values()
     } == {"gpt-6.1-terra"}
 
     authenticate.assert_awaited_once()
-    assert authenticate.await_args.kwargs["base_url"] is None
+    assert authenticate.await_args.kwargs["base_url"] == DEFAULT_CONF_BASE_URL
     assert authenticate.await_args.kwargs["skip_authentication"] is False
 
 

@@ -7,7 +7,7 @@ import logging
 import types
 from typing import Any
 
-from openai import OpenAIError
+from openai import AsyncOpenAI, OpenAIError
 import voluptuous as vol
 import yaml
 
@@ -70,7 +70,6 @@ from .const import (
     DEFAULT_API_MODE,
     DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
-    DEFAULT_CONF_BASE_URL,
     DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_MAX_TOKENS,
@@ -87,6 +86,7 @@ from .ha_schema import schema_for_ha
 from .helpers import (
     effective_api_provider,
     get_authenticated_client,
+    is_native_openai_connection,
     supports_openai_hosted_tools,
 )
 from .model_capabilities import (
@@ -129,7 +129,7 @@ LEGACY_STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_NAME, default="ChatGPT"): str,
         vol.Required(CONF_API_KEY): str,
-        vol.Optional(CONF_BASE_URL, default=DEFAULT_CONF_BASE_URL): str,
+        vol.Optional(CONF_BASE_URL): str,
         vol.Optional(CONF_API_VERSION): str,
         vol.Optional(CONF_ORGANIZATION): str,
         vol.Optional(
@@ -159,7 +159,7 @@ STEP_OPENAI_CREDENTIALS_SCHEMA = vol.Schema(
 STEP_OPENAI_ADVANCED_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_API_KEY): str,
-        vol.Optional(CONF_BASE_URL, default=DEFAULT_CONF_BASE_URL): str,
+        vol.Optional(CONF_BASE_URL): str,
         vol.Optional(CONF_ORGANIZATION): str,
         vol.Optional(
             CONF_SKIP_AUTHENTICATION, default=DEFAULT_SKIP_AUTHENTICATION
@@ -292,14 +292,11 @@ DEFAULT_OPENAI_SETUP_MODEL = "gpt-6.1-terra"
 
 
 def _new_agent_options(
-    defaults: Mapping[str, Any], entry_data: Mapping[str, Any]
+    defaults: Mapping[str, Any], entry_data: Mapping[str, Any], *, client: Any = None
 ) -> dict[str, Any]:
     """Give new direct-OpenAI agents a supported model at creation time."""
     options = dict(defaults)
-    base_url = entry_data.get(CONF_BASE_URL)
-    if supports_openai_hosted_tools(
-        effective_api_provider(entry_data.get(CONF_API_PROVIDER), base_url), base_url
-    ):
+    if is_native_openai_connection(entry_data, client=client):
         options[CONF_CHAT_MODEL] = DEFAULT_OPENAI_SETUP_MODEL
     return options
 
@@ -330,7 +327,7 @@ def _ai_task_display_reasoning_effort(
     return recommended
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
+async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> AsyncOpenAI:
     """Validate a complete provider configuration before creating the entry."""
     api_key = data[CONF_API_KEY]
     base_url = data.get(CONF_BASE_URL)
@@ -341,15 +338,16 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     if api_provider == "azure":
         data[CONF_API_PROVIDER] = api_provider
 
-    if base_url == DEFAULT_CONF_BASE_URL:
-        # Do not set base_url if using OpenAI for case of OpenAI's base_url change
-        base_url = None
+    if base_url == "":
         data.pop(CONF_BASE_URL)
+        base_url = None
 
-    if api_provider == "azure" and not base_url:
+    if api_provider == "azure" and supports_openai_hosted_tools(
+        DEFAULT_API_PROVIDER, base_url
+    ):
         raise HomeAssistantError("Azure OpenAI requires a custom base URL.")
 
-    await get_authenticated_client(
+    return await get_authenticated_client(
         hass=hass,
         api_key=api_key,
         base_url=base_url,
@@ -483,7 +481,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         display_values = dict(data)
         errors: dict[str, str] = {}
         try:
-            await validate_input(self.hass, data)
+            client = await validate_input(self.hass, data)
         except OpenAIError as err:
             log_handled_failure(
                 _LOGGER,
@@ -503,13 +501,17 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                 subentries=[
                     {
                         "subentry_type": "conversation",
-                        "data": _new_agent_options(agent_config_defaults(), data),
+                        "data": _new_agent_options(
+                            agent_config_defaults(), data, client=client
+                        ),
                         "title": DEFAULT_CONVERSATION_NAME,
                         "unique_id": None,
                     },
                     {
                         "subentry_type": "ai_task_data",
-                        "data": _new_agent_options(DEFAULT_AI_TASK_OPTIONS, data),
+                        "data": _new_agent_options(
+                            DEFAULT_AI_TASK_OPTIONS, data, client=client
+                        ),
                         "title": DEFAULT_AI_TASK_NAME,
                         "unique_id": None,
                     },
@@ -550,6 +552,11 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="reauth_failed")
         errors: dict[str, str] = {}
         if user_input is not None:
+            from .provider_credentials import require_provider_restore_complete
+
+            require_provider_restore_complete(
+                self.hass, getattr(self._reauth_entry, "entry_id", "")
+            )
             original_data = dict(self._reauth_entry.data)
             updated = {**original_data, **user_input}
             try:
@@ -624,7 +631,9 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         """Add a subentry."""
         self.options = _new_agent_options(
-            agent_config_defaults(), self._get_entry().data
+            agent_config_defaults(),
+            self._get_entry().data,
+            client=getattr(self._get_entry(), "runtime_data", None),
         )
         return await self.async_step_init()
 
@@ -819,7 +828,9 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         """Add a subentry."""
         self.options = _new_agent_options(
-            DEFAULT_AI_TASK_OPTIONS, self._get_entry().data
+            DEFAULT_AI_TASK_OPTIONS,
+            self._get_entry().data,
+            client=getattr(self._get_entry(), "runtime_data", None),
         )
         return await self.async_step_init()
 

@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
+from .non_streaming import completed_responses_output_events
 from .provider_errors import ProviderStreamError
-from .provider_output_budget import ProviderOutputBudget
+from .provider_output_budget import MAX_OUTPUT_ITEMS, ProviderOutputBudget
 
 _ADDED = "response.output_item.added"
 _DONE = "response.output_item.done"
@@ -32,12 +33,20 @@ def _malformed(reason: str) -> ProviderStreamError:
     )
 
 
+def _item_identity(item: Any) -> tuple[Any, ...]:
+    return tuple(
+        getattr(item, field, None)
+        for field in ("type", "id", "call_id", "name", "arguments")
+    )
+
+
 @dataclass(slots=True)
 class _OutputItem:
     """Own one index's wire identity, completion and deferred presentation."""
 
     item_id: str | None = None
-    signature: tuple[Any, Any] | None = None
+    signature: tuple[Any, ...] | None = None
+    completion: tuple[Any, ...] | None = None
     arguments: str | None = None
     opening: Any = None
     presented: bool = False
@@ -67,7 +76,9 @@ class _OutputItem:
 
         if kind in {_ADDED, _DONE}:
             item = event.item
-            signature = (getattr(item, "call_id", None), getattr(item, "name", None))
+            signature = tuple(
+                getattr(item, field, None) for field in ("type", "call_id", "name")
+            )
             if self.signature is not None and self.signature != signature:
                 raise _malformed("conflicting output item")
             self.signature = signature
@@ -78,6 +89,7 @@ class _OutputItem:
             else:
                 self.check_arguments(getattr(item, "arguments", None))
                 self.done = True
+                self.completion = _item_identity(item)
                 # A done-only provider still needs an opening to select the
                 # correct role and phase before presenting deferred content.
                 if not self.ready:
@@ -128,6 +140,8 @@ async def ordered_output_events(
     legacy = _OutputItem()
     legacy_start = False
     legacy_completions: set[str] = set()
+    legacy_items: list[tuple[Any, ...]] = []
+    legacy_output_seen = False
     try:
         async for event in events:
             index = getattr(event, "output_index", None)
@@ -141,6 +155,62 @@ async def ordered_output_events(
             if kind == "response.completed":
                 if any(index >= next_index for index in items):
                     raise _malformed("unfinished output item")
+                response = getattr(event, "response", None)
+                output = getattr(response, "output", ())
+                if isinstance(output, (list, tuple)) and output:
+                    if len(output) > MAX_OUTPUT_ITEMS:
+                        raise ProviderStreamError(
+                            "Provider output exceeded local safety limits",
+                            error_type="output_limit_exceeded",
+                        )
+                    if items or legacy_output_seen:
+                        completed = [
+                            items[index].completion for index in range(next_index)
+                        ]
+                        completed.extend(legacy_items)
+                        if tuple(completed) != tuple(
+                            _item_identity(item) for item in output
+                        ):
+                            raise _malformed(
+                                "terminal output conflicts with streamed items"
+                            )
+                    else:
+                        # Local tool dispatch requires item lifecycle evidence.
+                        # A terminal-only response can recover assistant text/refusal.
+                        messages = [
+                            item
+                            for item in output
+                            if getattr(item, "type", None) == "message"
+                        ]
+                        if (
+                            getattr(response, "error", None) is not None
+                            or not messages
+                            or any(
+                                getattr(item, "type", None)
+                                not in {"message", "reasoning"}
+                                for item in output
+                            )
+                            or any(
+                                getattr(item, "role", None) != "assistant"
+                                or any(
+                                    getattr(part, "type", None)
+                                    not in {"output_text", "refusal"}
+                                    for part in getattr(item, "content", ())
+                                )
+                                for item in messages
+                            )
+                        ):
+                            raise _malformed("ambiguous terminal-only output")
+                        ids = [
+                            identity
+                            for item in output
+                            if (identity := getattr(item, "id", None))
+                        ]
+                        if len(ids) != len(set(ids)):
+                            raise _malformed("duplicate terminal output item id")
+                        for frame in completed_responses_output_events(response):
+                            budget.responses_event(frame)
+                            yield frame
                 terminal_seen = True
 
             if kind in _RESPONSE_EVENTS or not kind.startswith("response."):
@@ -154,6 +224,7 @@ async def ordered_output_events(
             )
             if index is None:
                 # Older providers and synthetic streams may omit all indices.
+                legacy_output_seen = True
                 if kind == _ADDED:
                     legacy.item_id = item_id
                     legacy_start = True
@@ -162,6 +233,7 @@ async def ordered_output_events(
                         if item_id in legacy_completions:
                             raise _malformed("repeated completed output item")
                         legacy_completions.add(item_id)
+                    legacy_items.append(_item_identity(event.item))
                     legacy = _OutputItem()
                     legacy_start = False
                 else:

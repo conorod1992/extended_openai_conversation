@@ -31,8 +31,8 @@ from .agent_config import (
     MAX_FUNCTION_GROUPS,
     AgentConfigError,
     agent_config_defaults,
+    agent_config_model_repair_snapshot,
     agent_config_options,
-    agent_config_sampling_repair_snapshot,
     agent_config_snapshot,
     function_tool_enabled,
     function_tool_yaml,
@@ -1606,12 +1606,10 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             validation_started = perf_counter()
             state, state_cache_hit = repair_state_for_projection(projection)
             if state is None:
-                if err.field not in {"temperature", "top_p"}:
+                if err.field not in {"temperature", "top_p", "service_tier"}:
                     raise
-                # This is display-only: keep the authoritative booleans visible
-                # and leave the validated projection cache empty. All writers
-                # and request construction retain their strict numeric checks.
-                config = agent_config_sampling_repair_snapshot(
+                # This projection is for repairing saved values in the editor.
+                config = agent_config_model_repair_snapshot(
                     dict(projection.data), provider=provider
                 )
                 snapshot_cache_hit = False
@@ -3359,6 +3357,7 @@ async def _async_management_request(
                 getattr(entry, "data", {}),
                 result,
                 action=configuration_action,
+                client=getattr(entry, "runtime_data", None),
             )
             decoration_ms = _elapsed_ms(decoration_started)
             assert handler_started is not None

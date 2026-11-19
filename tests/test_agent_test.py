@@ -86,6 +86,18 @@ def _usage_attribution(
     return {"provider": provider, "model": model, "api_mode": api_mode}
 
 
+async def test_invalid_saved_tier_does_not_skip_the_connectivity_probe():
+    hass, entry, subentry, client, usage = _objects({"service_tier": "ultrafast"})
+    with patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)):
+        result = await async_test_agent(hass, entry, subentry)
+    checks = {item.name: item for item in result.checks}
+    assert result.status == "Failed"
+    assert checks["Saved request settings"].status == "Failed"
+    assert "processing tier" in checks["Saved request settings"].message
+    client.chat.completions.create.assert_awaited_once()
+    assert "service_tier" not in client.chat.completions.create.await_args.kwargs
+
+
 @pytest.mark.parametrize(
     "content,finish,refusal,passed",
     [
@@ -626,7 +638,7 @@ def _coverage_patch_common(monkeypatch: pytest.MonkeyPatch, usage: _CoverageUsag
     monkeypatch.setattr(agent_test, "configured_function_tools_from_data", lambda _data: [])
     monkeypatch.setattr(agent_test, "get_exposed_entities", lambda _hass: [{"entity_id": "light.kitchen"}])
     monkeypatch.setattr(agent_test, "memory_enabled", lambda _data: False)
-    monkeypatch.setattr(agent_test, "supports_openai_hosted_tools", lambda *_args: False)
+    monkeypatch.setattr(agent_test, "is_native_openai_connection", lambda *_args, **_kwargs: False)
 
     async def get_usage(*_args: Any) -> _CoverageUsage:
         return usage
@@ -854,7 +866,7 @@ async def test_agent_test_non_auth_provider_error_and_web_search_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     usage = _coverage_patch_common(monkeypatch)
-    monkeypatch.setattr(agent_test, "supports_openai_hosted_tools", lambda *_args: True)
+    monkeypatch.setattr(agent_test, "is_native_openai_connection", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(agent_test, "classify_config_provider_error", lambda _err: "rate_limit")
     monkeypatch.setattr(agent_test, "provider_user_message", lambda _err: "Rate limited")
     error = OpenAIError("slow down")
@@ -918,7 +930,7 @@ async def test_agent_test_successful_responses_probe_records_usage_and_web_searc
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     usage = _coverage_patch_common(monkeypatch)
-    monkeypatch.setattr(agent_test, "supports_openai_hosted_tools", lambda *_args: True)
+    monkeypatch.setattr(agent_test, "is_native_openai_connection", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(agent_test, "ensure_successful_responses_result", lambda response: None)
     monkeypatch.setattr(agent_test, "extract_usage", lambda raw: {"input_tokens": 3} if raw == "usage" else {})
     create = _CoverageCreate(result=_responses_reply("usage"))
@@ -972,11 +984,12 @@ async def test_agent_test_usage_attribution_uses_configured_provider_model_and_m
             _coverage_subentry(
                 api_mode=agent_test.API_MODE_CHAT_COMPLETIONS,
                 chat_model="diagnostic-model",
+                azure_model="gpt-4.1",
             ),
         ),
     )
 
-    assert result.status == "Passed"
+    assert result.status == "Passed", result.as_text()
     assert usage.calls == [
         {
             "successful": True,
@@ -1127,7 +1140,7 @@ async def _residual_run_agent(
         lambda _hass: (_ for _ in ()).throw(RuntimeError("registry unavailable")),
     )
     monkeypatch.setattr(agent_test, "memory_enabled", lambda _data: memory_is_enabled)
-    monkeypatch.setattr(agent_test, "supports_openai_hosted_tools", lambda *_args: True)
+    monkeypatch.setattr(agent_test, "is_native_openai_connection", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(agent_test, "ensure_successful_responses_result", lambda _response: None)
     monkeypatch.setattr(agent_test, "extract_usage", lambda _usage: {})
 

@@ -181,7 +181,6 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
 @pytest.mark.parametrize("interrupted", [False, True])
 async def test_cross_provider_private_restore_and_committed_replay(hass, monkeypatch, interrupted):
     from custom_components.extended_openai_conversation_responses import restore_recovery, transfer
-    from custom_components.extended_openai_conversation_responses.provider_credentials import async_restore_private_provider_connection
     from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry as setup
     old_connection = {"api_provider": "azure", "base_url": "https://example.openai.azure.com", "api_version": "2025-04-01-preview", "api_key": "test-azure", "skip_authentication": True}
     new_connection = {"api_provider": "openai", "api_key": "test-openai", "skip_authentication": True}
@@ -194,7 +193,7 @@ async def test_cross_provider_private_restore_and_committed_replay(hass, monkeyp
     source["agent"]["config"] = {**subentry.data, "reasoning_effort": None}
     target_config = deepcopy(source["agent"]["config"])
     artifact = backup.finalize_backup_snapshot(source)["document"]
-    persist = restore_recovery._async_persist_config_entries
+    persist = restore_recovery.async_persist_config_entries
     writes = 0
     async def interrupted_persist(*args):
         nonlocal writes
@@ -203,22 +202,119 @@ async def test_cross_provider_private_restore_and_committed_replay(hass, monkeyp
             raise OSError("configuration publication interrupted")
         await persist(*args)
     if interrupted:
-        monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", interrupted_persist)
+        monkeypatch.setattr(restore_recovery, "async_persist_config_entries", interrupted_persist)
         with pytest.raises(backup.BackupError, match="completion is pending"):
             await transfer.async_restore_transfer(hass, entry, subentry, artifact, sections=[transfer.SECTION_CONFIGURATION], provider_connection=new_connection, expected_provider_data=expected)
         journal = await restore_recovery._journal_store(hass, entry.entry_id, subentry.subentry_id).async_load()
         assert journal["phase"] == "committed"
         assert journal["configuration_providers"] == {"target": "openai", "rollback": "azure"}
-        assert dict(entry.data) == expected
+        assert dict(entry.data) == new_connection
+        assert str(entry.runtime_data.base_url).startswith(old_connection["base_url"])
+        from custom_components.extended_openai_conversation_responses.provider_credentials import (
+            require_provider_restore_complete,
+        )
+        from homeassistant.exceptions import HomeAssistantError
+
+        with pytest.raises(HomeAssistantError, match="shared provider connection is unavailable"):
+            require_provider_restore_complete(hass, entry.entry_id)
         assert await restore_recovery.async_recover_pending_restore(hass, entry, subentry)
-        # Parent credentials remain a separately confirmed operation, even after replay.
-        assert dict(entry.data) == expected
-        await async_restore_private_provider_connection(hass, entry, new_connection, expected, confirmed=True)
+        require_provider_restore_complete(hass, entry.entry_id)
     else:
         result = await transfer.async_restore_transfer(hass, entry, subentry, artifact, sections=[transfer.SECTION_CONFIGURATION], provider_connection=new_connection, expected_provider_data=expected)
         assert result["provider_connection_restored"]
     await hass.async_block_till_done(wait_background_tasks=True)
     assert dict(subentry.data) == target_config
     assert dict(entry.data) == new_connection
+    assert str(entry.runtime_data.base_url).startswith("https://api.openai.com/")
     assert await restore_recovery._journal_store(hass, entry.entry_id, subentry.subentry_id).async_load() is None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("case", ["same", "collision", "expired", "recovery"])
+async def test_archive_restore_keeps_only_active_destination_privacy_markers(
+    hass, monkeypatch, case
+):
+    from datetime import timedelta
+
+    from custom_components.extended_openai_conversation_responses import (
+        conversation_archive, restore_recovery, transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.scope import user_scope
+
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    owner = user_scope("test-owner", source="test")
+    bound = "conversation:native-chat"
+    archive = await conversation_archive.async_get_archive(hass, entry.entry_id, subentry.subentry_id)
+
+    async def begin(manager, scope=owner):
+        return await manager.async_begin_session(
+            bound, scope, "native-chat", archive_enabled=True,
+            shared_archive_enabled=False, inactivity_minutes=30,
+        )
+
+    first = await begin(archive)
+    await archive.async_record_turn(
+        first.session_id, run_id=None, user_text="Portable transcript", assistant_text="OK",
+        successful=True,
+    )
+    opening = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    await archive.async_make_private(first.session_id)
+    if case == "collision":
+        # A portable import may reuse the exact archive ID for another owner.
+        opening["agent"]["source_subentry_id"] = "another-assistant"
+        opening["archive"]["sessions"][0]["scope_id"] = "user:different-owner"
+    elif case == "same":
+        opening = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    elif case == "expired":
+        future = conversation_archive.dt_util.utcnow() + timedelta(minutes=31)
+        monkeypatch.setattr(conversation_archive.dt_util, "utcnow", lambda: future)
+    artifact = backup.finalize_backup_snapshot(opening)["document"]
+
+    async def restore():
+        await transfer.async_restore_transfer(
+            hass, entry, subentry, artifact, sections=[transfer.SECTION_CONVERSATION_ARCHIVE],
+        )
+
+    if case == "recovery":
+        async def interrupt(*_args, **_kwargs):
+            raise OSError("interrupted after commit")
+
+        with monkeypatch.context() as failed:
+            failed.setattr(restore_recovery, "_update_configuration", interrupt)
+            with pytest.raises(backup.BackupError, match="completion is pending"):
+                await restore()
+        assert await restore_recovery.async_recover_pending_restore(hass, entry, subentry)
+    else:
+        await restore()
+
+    # Reload independently of the in-memory Archive and continuity managers.
+    fresh = conversation_archive.ConversationArchive(
+        conversation_archive.HomeAssistantArchiveStorage(hass, entry.entry_id, subentry.subentry_id),
+        subentry.subentry_id,
+    )
+    await fresh.async_initialize()
+    marker = fresh.active_session(bound)
+    if case == "expired":
+        assert marker is None
+        assert (await begin(fresh)).retention_state == "retained"
+    else:
+        assert marker.scope_id == owner.scope_id
+        assert marker.home_assistant_conversation_id == "native-chat"
+        assert marker.retention_state == "private"
+        assert marker.title == "" and marker.turn_count == 0
+        assert (await begin(fresh)).session_id == marker.session_id
+        assert await fresh.async_record_turn(
+            marker.session_id, run_id=None, user_text="Must stay private", assistant_text="Hidden",
+            successful=True,
+        ) is None
+        if case == "collision":
+            assert marker.session_id != first.session_id
+            assert (await fresh.async_backup_data())["turns"][0]["session_id"] == first.session_id
+        resumed = await fresh.async_resume_saving(
+            bound, marker.session_id, owner, shared_archive_enabled=False,
+        )
+        assert resumed.retention_state == "retained"
+        assert resumed.session_id != marker.session_id
     assert await hass.config_entries.async_unload(entry.entry_id)
