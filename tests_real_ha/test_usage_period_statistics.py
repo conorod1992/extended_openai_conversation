@@ -757,3 +757,207 @@ async def test_period_sensors_refresh_and_rearm_after_timezone_change(hass, free
     await hass.config.async_update(time_zone="UTC")
     await hass.async_block_till_done()
     assert all(not observer.called for observer in observers)
+
+
+@pytest.mark.parametrize("transition", ["same-period", "backward", "forward", "midnight"])
+@pytest.mark.parametrize("reload_at", ["never", "before-reentry", "across-reentry"])
+async def test_timezone_changes_do_not_recount_period_sensor_usage(
+    hass, freezer, transition, reload_at
+):
+    from homeassistant.const import EVENT_STATE_CHANGED
+    from homeassistant.core import callback
+
+    start_text, other_zone = {
+        "same-period": ("2026-06-12T12:00:00+00:00", "Europe/Dublin"),
+        "backward": ("2026-06-01T00:00:00+00:00", "America/New_York"),
+        "forward": ("2026-06-30T12:00:00+00:00", "Pacific/Kiritimati"),
+        "midnight": ("2026-06-01T03:35:00+00:00", "America/New_York"),
+    }[transition]
+    start = dt_util.parse_datetime(start_text)
+    await hass.config.async_set_time_zone("UTC")
+    freezer.move_to(start)
+    agent = await _sensor_agent(hass, memory_mode="off")
+    entities = await _enabled_usage_entities(hass, agent)
+    ids = {entities[key].entity_id for key in ("usage_today", "usage_month")}
+    usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
+    await hass.async_start()
+
+    async def compile_window(minutes, state, total):
+        window = start + timedelta(minutes=minutes)
+        await async_wait_recording_done(hass)
+        freezer.move_to(window + timedelta(minutes=5, seconds=1))
+        await async_wait_recording_done(hass)
+        do_adhoc_statistics(hass, start=window)
+        await async_wait_recording_done(hass)
+        rows = await hass.async_add_executor_job(
+            partial(
+                statistics_during_period, hass, start, statistic_ids=ids,
+                period="5minute", types={"state", "sum", "last_reset"},
+            )
+        )
+        assert set(rows) == ids
+        assert {row[-1]["state"] for row in rows.values()} == {state}
+        assert {row[-1]["sum"] for row in rows.values()} == {total}
+
+    def markers():
+        return {key: hass.states.get(key).attributes["last_reset"] for key in ids}
+
+    async def record(tokens):
+        await usage.async_record_request(
+            successful=True, usage=RequestUsage(total_tokens=tokens)
+        )
+
+    await compile_window(0, 0, 0)
+    await record(85)
+    await compile_window(5, 85, 85)
+    original_markers = markers()
+
+    await hass.config.async_update(time_zone=other_zone)
+    await hass.async_block_till_done()
+    same_period = transition == "same-period"
+    assert (markers() == original_markers) is same_period
+    await compile_window(10, 85 if same_period else 0, 85)
+    await record(20)
+    await compile_window(15, 105 if same_period else 20, 105)
+    if reload_at == "before-reentry":
+        detour_markers = markers()
+        assert await hass.config_entries.async_reload(agent.entry.entry_id)
+        await hass.async_block_till_done()
+        usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
+        assert markers() == detour_markers
+    elif reload_at == "across-reentry":
+        assert await hass.config_entries.async_unload(agent.entry.entry_id)
+        await hass.async_block_till_done()
+
+    witnessed = []
+
+    @callback
+    def observe(event):
+        state = event.data["new_state"]
+        if state is not None and state.entity_id in ids and state.state.lstrip("-").isdigit():
+            witnessed.append(int(state.state))
+
+    cancel = hass.bus.async_listen(EVENT_STATE_CHANGED, observe)
+    try:
+        if transition == "midnight":
+            midnight = start + timedelta(minutes=25)
+            freezer.move_to(midnight)
+            async_fire_time_changed(hass, midnight)
+        else:
+            await hass.config.async_update(time_zone="UTC")
+        if reload_at == "across-reentry":
+            assert await hass.config_entries.async_setup(agent.entry.entry_id)
+            usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
+        await hass.async_block_till_done()
+    finally:
+        cancel()
+
+    value = 105 if same_period else 85
+    assert {hass.states.get(key).state for key in ids} == {str(value)}
+    assert witnessed.count(-65) == (0 if same_period else len(ids))
+    segment = 25 if transition == "midnight" else 20
+    await compile_window(segment, value, 105)
+    await compile_window(segment + 5, value, 105)
+    await record(17)
+    await compile_window(segment + 10, value + 17, 122)
+    current_markers = markers()
+    restored_daily = deepcopy(usage.daily)
+    restored_daily[dt_util.now().date().isoformat()]["total_tokens"] -= 7
+    await usage.async_replace_backup(usage.totals, restored_daily, usage.requests, usage.runs)
+    assert markers() == current_markers
+    await compile_window(segment + 15, value + 10, 115)
+
+
+async def test_existing_period_recorder_marker_is_migrated_before_first_write(hass, freezer):
+    """An existing offset-bearing marker survives upgrade and a same-period rebase."""
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    start = dt_util.parse_datetime("2026-06-12T12:00:00+00:00")
+    freezer.move_to(start)
+    agent = await _sensor_agent(hass, memory_mode="off")
+    await hass.async_start()
+    entry, subentry = agent.entry, agent.subentry
+    entity_id = next(
+        row.entity_id
+        for row in _registry_entries(hass, entry)
+        if row.unique_id == f"{subentry.subentry_id}_usage_today"
+    )
+    usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
+    marker = "2026-06-12T00:00:00+01:00"
+    attributes = {
+        "state_class": "total", "unit_of_measurement": "tokens", "last_reset": marker,
+    }
+
+    async def compile_window(minutes):
+        window = start + timedelta(minutes=minutes)
+        await async_wait_recording_done(hass)
+        freezer.move_to(window + timedelta(minutes=5, seconds=1))
+        await async_wait_recording_done(hass)
+        do_adhoc_statistics(hass, start=window)
+        await async_wait_recording_done(hass)
+        rows = await hass.async_add_executor_job(
+            partial(
+                statistics_during_period, hass, start, statistic_ids={entity_id},
+                period="5minute", types={"state", "sum", "last_reset"},
+            )
+        )
+        return rows[entity_id][-1]["sum"]
+
+    # This state represents the old entity, which did not use RestoreEntity.
+    hass.states.async_set(entity_id, 0, attributes)
+    assert await compile_window(0) == 0
+    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
+    hass.states.async_set(entity_id, 85, attributes)
+    assert await compile_window(5) == 85
+    hass.states.async_remove(entity_id)
+    await async_wait_recording_done(hass)
+
+    await hass.config.async_update(time_zone="UTC")
+    er.async_get(hass).async_update_entity(entity_id, disabled_by=None)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    current = hass.states.get(entity_id)
+    assert current.state == "85"
+    assert current.attributes["last_reset"] == marker
+    assert await compile_window(10) == 85
+
+
+@pytest.mark.parametrize("recording", ["excluded", "paused"])
+async def test_unrecorded_period_sensors_publish_no_correction(hass, freezer, recording):
+    from homeassistant.const import EVENT_STATE_CHANGED
+    from homeassistant.core import callback
+    from homeassistant.setup import async_setup_component
+
+    await hass.config.async_set_time_zone("UTC")
+    freezer.move_to("2026-06-01T00:15:00+00:00")
+    if recording == "excluded":
+        assert await async_setup_component(hass, "recorder", {
+            "recorder": {"exclude": {"entity_globs": ["sensor.*_usage_today", "sensor.*_usage_this_month"]}}
+        })
+    agent = await _sensor_agent(hass, memory_mode="off")
+    entities = await _enabled_usage_entities(hass, agent)
+    ids = {entities[key].entity_id for key in ("usage_today", "usage_month")}
+    usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
+    await hass.async_start()
+    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
+    await hass.config.async_update(time_zone="America/New_York")
+    await hass.async_block_till_done()
+    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=20))
+    assert {hass.states.get(key).state for key in ids} == {"20"}
+    if recording == "paused":
+        await hass.services.async_call("recorder", "disable", blocking=True)
+
+    witnessed = []
+
+    @callback
+    def observe(event):
+        state = event.data["new_state"]
+        if state is not None and state.entity_id in ids:
+            witnessed.append(state.state)
+
+    cancel = hass.bus.async_listen(EVENT_STATE_CHANGED, observe)
+    try:
+        await hass.config.async_update(time_zone="UTC")
+        await hass.async_block_till_done()
+    finally:
+        cancel()
+    assert witnessed == ["85"] * len(ids)

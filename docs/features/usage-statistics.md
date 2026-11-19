@@ -41,6 +41,13 @@ correction rather than inventing a new consumption cycle. Today and This month
 retain their explicit calendar reset markers. This change prevents new restore
 inflation; it does not rewrite previously recorded HA statistics.
 
+Changing the timezone keeps the reset marker for the currently selected calendar
+period. When a period change selects a bucket that already contains tokens,
+Usage today or Usage this month can briefly publish a signed correction before
+the actual period total. This keeps Recorder from counting those tokens again.
+State-change automations and raw history can observe the correction, which can
+be negative.
+
 ## Management panel
 
 Open **Extended OpenAI → Usage & Maintenance → Usage** to see daily token charts, input/output/cached/reasoning splits, run counts, recent runs, request details, and provider/model/API-mode breakdowns. There are no costs or prices.

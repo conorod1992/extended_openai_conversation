@@ -3,18 +3,31 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime, time, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta
 import logging
+from math import inf, nextafter
 
 from homeassistant.components import sensor as sensor_component
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.components.recorder import history
+from homeassistant.components.sensor import (
+    ATTR_LAST_RESET,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import EVENT_CORE_CONFIG_UPDATE, EntityCategory
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_point_in_utc_time
+from homeassistant.helpers.recorder import DATA_INSTANCE as DATA_RECORDER_INSTANCE
+from homeassistant.helpers.restore_state import (
+    ExtraStoredData,
+    RestoredExtraData,
+    RestoreEntity,
+)
 from homeassistant.util import dt as dt_util
 
 from . import ExtendedOpenAIConfigEntry
@@ -26,6 +39,7 @@ from .persistence_hardening import StorageRepairRequired
 from .usage import UsageManager, async_get_usage, usage_retention_policy
 
 _LOGGER = logging.getLogger(__name__)
+_RECORDER_WINDOW_SECONDS = 5 * 60
 
 
 async def async_setup_entry(
@@ -184,21 +198,48 @@ class UsageSensor(SensorEntity):
         self._usage = usage
         if subscribed:
             self._usage_listener_remove = usage.async_add_listener(
-                self.async_write_ha_state
+                self._handle_usage_update
             )
-            self.async_write_ha_state()
+            self._handle_usage_update()
         return True
+
+    @callback
+    def _handle_usage_update(self) -> None:
+        self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to persisted usage updates."""
         await super().async_added_to_hass()
         self._usage_listener_remove = self._usage.async_add_listener(
-            self.async_write_ha_state
+            self._handle_usage_update
         )
         self.async_on_remove(self._remove_usage_listener)
 
 
-class _PeriodUsageSensor(UsageSensor):
+@dataclass(frozen=True, slots=True)
+class _PeriodObservation:
+    reset: datetime
+    tokens: int
+    lifetime_tokens: int | None
+
+
+def _period_observation(state: State | None) -> _PeriodObservation | None:
+    if state is None:
+        return None
+    reset = state.attributes.get(ATTR_LAST_RESET)
+    if not isinstance(reset, str):
+        return None
+    marker = dt_util.parse_datetime(reset)
+    try:
+        tokens = int(state.state)
+    except TypeError, ValueError:
+        return None
+    if marker is None or marker.tzinfo is None or tokens < 0:
+        return None
+    return _PeriodObservation(marker, tokens, None)
+
+
+class _PeriodUsageSensor(UsageSensor, RestoreEntity):
     """Common event-driven period sensor behavior."""
 
     _attr_state_class = SensorStateClass.TOTAL
@@ -206,13 +247,37 @@ class _PeriodUsageSensor(UsageSensor):
     def __init__(self, subentry: ConfigSubentry, usage: UsageManager) -> None:
         super().__init__(subentry, usage)
         self._cancel_period_rollover: Callable[[], None] | None = None
+        self._observation: _PeriodObservation | None = None
+        self._recorder_baseline: int | None = None
 
     def _summary(self) -> dict:
         raise NotImplementedError
 
+    def _period_start(self, today: date) -> date:
+        return today
+
     @property
     def native_value(self) -> int:
+        if self._recorder_baseline is not None:
+            return self._recorder_baseline
         return int(self._summary()["total_tokens"])
+
+    @property
+    def last_reset(self) -> datetime | None:
+        if self._recorder_baseline is not None:
+            # A numeric TOTAL sample without last_reset changes the running
+            # baseline without opening a cycle. It also stays neutral if
+            # Recorder sees both equal-time samples as the next start state.
+            return None
+        if self._observation is not None:
+            return self._observation.reset
+        return dt_util.start_of_local_day(self._period_start(dt_util.now().date()))
+
+    @property
+    def extra_restore_state_data(self) -> ExtraStoredData | None:
+        if self._observation is None:
+            return None
+        return RestoredExtraData({"lifetime_tokens": self._observation.lifetime_tokens})
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -231,6 +296,8 @@ class _PeriodUsageSensor(UsageSensor):
     async def async_added_to_hass(self) -> None:
         """Refresh event-driven period state when the local date rolls over."""
         await super().async_added_to_hass()
+        previous_state = await self._async_restore_period()
+        self._publish_period(initial=True, previous_state=previous_state)
         self._reschedule_period_rollover()
         self.async_on_remove(self._remove_period_rollover)
         self.async_on_remove(
@@ -238,6 +305,163 @@ class _PeriodUsageSensor(UsageSensor):
                 EVENT_CORE_CONFIG_UPDATE, self._handle_core_config_update
             )
         )
+
+    async def _async_restore_period(self) -> State | None:
+        restored = (
+            await self.async_get_last_state()
+            if self.registry_entry is not None
+            else None
+        )
+        observation = _period_observation(restored)
+        previous_state = restored if observation is not None else None
+        if observation is not None and (
+            extra := await self.async_get_last_extra_data()
+        ):
+            tokens = extra.as_dict().get("lifetime_tokens")
+            if type(tokens) is int and tokens >= 0:
+                observation = _PeriodObservation(
+                    observation.reset, observation.tokens, tokens
+                )
+        live_state = self.hass.states.get(self.entity_id)
+        if live := _period_observation(live_state):
+            self._observation = (
+                observation
+                if observation is not None
+                and (live.reset, live.tokens) == (observation.reset, observation.tokens)
+                else live
+            )
+            return live_state
+
+        # Before these sensors used RestoreEntity, Recorder held their offset-
+        # bearing marker. Migrate it without minting a new cycle on upgrade.
+        if (recorder := self.hass.data.get(DATA_RECORDER_INSTANCE)) is not None:
+            try:
+                states = await recorder.async_add_executor_job(
+                    history.get_last_state_changes, self.hass, 8, self.entity_id
+                )
+                for state in reversed(states.get(self.entity_id, [])):
+                    if (
+                        observation is not None
+                        and restored is not None
+                        and state.last_updated <= restored.last_updated
+                    ):
+                        break
+                    if recorded := _period_observation(state):
+                        observation = recorded
+                        previous_state = state
+                        break
+            except Exception:
+                _LOGGER.debug(
+                    "Unable to read the previous Usage period from Recorder",
+                    exc_info=True,
+                )
+        self._observation = observation
+        return previous_state
+
+    @callback
+    def _records_period(self) -> bool:
+        recorder = self.hass.data.get(DATA_RECORDER_INSTANCE)
+        return bool(
+            recorder is not None
+            and recorder.recording
+            and recorder.enabled
+            and (
+                recorder.entity_filter is None or recorder.entity_filter(self.entity_id)
+            )
+        )
+
+    @callback
+    def _preserve_period_sample_order(self, previous: State) -> None:
+        if (
+            self.hass is None
+            or (sample := self.hass.states.get(self.entity_id)) is None
+        ):
+            return
+        previous_time, sample_time = (
+            previous.last_updated_timestamp,
+            sample.last_updated_timestamp,
+        )
+        if previous_time < sample_time or (
+            previous_time == sample_time
+            and previous.attributes.get(ATTR_LAST_RESET)
+            == sample.attributes.get(ATTR_LAST_RESET)
+        ):
+            return
+        # Recorder can read all samples tied at the window start. Publish the
+        # real state at the next representable time, within that same window,
+        # so a real old-cycle state at this timestamp is not replayed.
+        timestamp = nextafter(previous_time, inf)
+        if (
+            timestamp // _RECORDER_WINDOW_SECONDS
+            != sample_time // _RECORDER_WINDOW_SECONDS
+        ):
+            return
+        self.hass.states.async_set(
+            self.entity_id,
+            sample.state,
+            sample.attributes,
+            force_update=True,
+            context=sample.context,
+            state_info=sample.state_info,
+            timestamp=timestamp,
+        )
+
+    @callback
+    def _publish_period(
+        self, *, initial: bool = False, previous_state: State | None = None
+    ) -> None:
+        period = self._period_start(dt_util.now().date())
+        tokens = self.native_value
+        lifetime = self._usage.totals.total_tokens
+        previous = self._observation
+        reset = dt_util.start_of_local_day(period)
+        if not initial:
+            previous_state = self.hass.states.get(self.entity_id)
+        recording = self._records_period()
+        if previous is not None:
+            if previous.reset.date() == period:
+                reset = previous.reset
+            else:
+                if reset == previous.reset:
+                    # Opposite sides of the date line may share a UTC midnight.
+                    reset += timedelta(microseconds=1)
+                delta = (
+                    lifetime - previous.lifetime_tokens
+                    if previous.lifetime_tokens is not None
+                    else 0
+                )
+                # Recorder adds the full state on a reset. Close the old cycle
+                # with a correction first when only part of the new bucket is
+                # new usage. The next write displays the actual bucket value.
+                if delta != tokens and recording:
+                    baseline = previous.tokens + delta - tokens
+                    if initial and previous_state is not None:
+                        # The Entity API starts writing only after registration.
+                        attributes = dict(previous_state.attributes)
+                        attributes.pop(ATTR_LAST_RESET, None)
+                        self.hass.states.async_set(
+                            self.entity_id, str(baseline), attributes
+                        )
+                    elif not initial:
+                        self._recorder_baseline = baseline
+                        try:
+                            self.async_write_ha_state()
+                        finally:
+                            self._recorder_baseline = None
+        self._observation = _PeriodObservation(reset, tokens, lifetime)
+        if not initial:
+            self.async_write_ha_state()
+        if previous_state is not None and recording:
+            if initial:
+                self.hass.loop.call_soon(
+                    self._preserve_period_sample_order, previous_state
+                )
+            else:
+                self._preserve_period_sample_order(previous_state)
+
+    @callback
+    def _handle_usage_update(self) -> None:
+        self._publish_period()
 
     @callback
     def _remove_period_rollover(self) -> None:
@@ -260,14 +484,14 @@ class _PeriodUsageSensor(UsageSensor):
         """Rebase the current period and next midnight when HA changes timezone."""
         if "time_zone" in event.data:
             self._reschedule_period_rollover()
-            self.async_write_ha_state()
+            self._publish_period()
 
     @callback
     def _handle_period_rollover(self, _now: datetime) -> None:
         """Publish the new local day/month even when there is no new usage."""
         self._cancel_period_rollover = None
         self._reschedule_period_rollover()
-        self.async_write_ha_state()
+        self._publish_period()
 
 
 class UsageTodaySensor(_PeriodUsageSensor):
@@ -282,11 +506,6 @@ class UsageTodaySensor(_PeriodUsageSensor):
     def _summary(self) -> dict:
         return self._usage.today_summary()
 
-    @property
-    def last_reset(self) -> datetime:
-        """Identify the local accounting day, including across restarts."""
-        return dt_util.start_of_local_day()
-
 
 class UsageMonthSensor(_PeriodUsageSensor):
     """Tokens derived from daily aggregates for the current local month."""
@@ -300,10 +519,8 @@ class UsageMonthSensor(_PeriodUsageSensor):
     def _summary(self) -> dict:
         return self._usage.month_summary()
 
-    @property
-    def last_reset(self) -> datetime:
-        """Identify the local accounting month with its own UTC offset."""
-        return dt_util.start_of_local_day().replace(day=1)
+    def _period_start(self, today: date) -> date:
+        return today.replace(day=1)
 
 
 class LastResponseUsageSensor(UsageSensor):
