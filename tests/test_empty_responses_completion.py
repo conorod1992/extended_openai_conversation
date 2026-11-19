@@ -90,13 +90,11 @@ async def exercise_empty_responses_completion(
     monkeypatch.setattr(owner, "build_provider_request_snapshot", configured)
     shapes = {
         "empty": [],
-        "message": [message("msg", "")],
+        "message": [message("msg", "", phase="final_answer")],
         "reasoning": [reasoning("rs")],
-        "spoken": [message("spoken", "Done")],
+        "spoken": [message("spoken", "Done", phase="final_answer")],
         "commentary": [message("progress", "Working on it")],
     }
-    for shape_name in ("message", "spoken"):
-        shapes[shape_name][0].phase = "final_answer"
     items = shapes[shape]
 
     async def provider(**kwargs):

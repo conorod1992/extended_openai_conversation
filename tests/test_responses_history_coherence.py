@@ -45,13 +45,13 @@ def call(name, call_id, arguments=None):
     )
 
 
-def message(name, text):
+def message(name, text, *, phase="commentary"):
     return ResponseOutputMessage(
         id=name,
         role="assistant",
         type="message",
         status="completed",
-        phase="commentary",
+        phase=phase,
         content=[{"type": "output_text", "text": text, "annotations": []}],
     )
 
@@ -406,7 +406,7 @@ async def test_o3_pro_replays_reasoning_without_adjustable_effort(hass, model, a
                 id="answer",
                 status="completed",
                 usage=None,
-                output=[message("msg_answer", "Done")],
+                output=[message("msg_answer", "Done", phase="final_answer")],
             ),
             events([message("msg_next", "Next")]),
             Response.model_construct(
