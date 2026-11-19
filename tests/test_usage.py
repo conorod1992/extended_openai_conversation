@@ -4,8 +4,9 @@ import asyncio
 from collections.abc import AsyncIterator
 from copy import deepcopy
 from dataclasses import asdict
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -1038,8 +1039,6 @@ def test_merge_day_ignores_date_averages_and_non_integer_scalars() -> None:
 
 
 async def test_cross_midnight_run_attribution(monkeypatch) -> None:
-    from datetime import UTC, datetime
-
     now = datetime(2026, 10, 8, 23, 59, tzinfo=UTC)
     monkeypatch.setattr(dt_util, "utcnow", lambda: now)
     monkeypatch.setattr(
@@ -1061,40 +1060,83 @@ async def test_cross_midnight_run_attribution(monkeypatch) -> None:
     assert manager.month_summary("2026-10")["average_tokens_per_completed_run"] == 250
 
 
-@pytest.mark.parametrize("retain_details", [True, False])
-def test_restore_legacy_run_attribution(retain_details) -> None:
-    document = _coverage_backup()
-    date, day = next(iter(document["daily"].items()))
-    for field in ("run_request_count", "run_total_tokens", "unattributed_run_count"):
-        del day[field]
-    if retain_details:
-        document["runs"][0]["completed_at"] = f"{date}T12:00:00+00:00"
-    else:
-        document["runs"] = []
-    _, days, _, _ = UsageManager.validate_backup_data(document, "target")
-    assert days[date]["average_tokens_per_completed_run"] == (
-        5 if retain_details else None
+@pytest.mark.parametrize("destination_zone", ["UTC", "America/New_York"])
+@pytest.mark.parametrize(
+    "explicit_attribution", [False, True], ids=["legacy", "current"]
+)
+async def test_restore_run_attribution_preserves_only_recorded_counters(
+    monkeypatch, destination_zone, explicit_attribution
+) -> None:
+    monkeypatch.setattr(
+        dt_util, "utcnow", lambda: datetime(2026, 9, 14, 12, tzinfo=UTC)
     )
-    assert days[date]["unattributed_run_count"] == (0 if retain_details else 1)
-
-
-async def test_upgraded_run_averages_survive_detail_pruning_and_restart() -> None:
     document = _coverage_backup()
-    date, day = next(iter(document["daily"].items()))
-    for field in ("run_request_count", "run_total_tokens", "unattributed_run_count"):
-        del day[field]
-    document["runs"][0]["completed_at"] = f"{date}T12:00:00+00:00"
-    daily = CoverageMemoryStorage({"days": document["daily"]}, fail_save=True)
-    details = CoverageMemoryStorage({"runs": document["runs"]})
-    totals = CoverageMemoryStorage(document["totals"])
+    first_day, second_day = "2026-09-13", "2026-09-14"
+    day = document["daily"][first_day]
+    document["daily"][second_day] = {
+        **day,
+        "date": second_day,
+        "input_tokens": 13,
+        "total_tokens": 15,
+        "average_tokens_per_completed_run": 15,
+        "provider_breakdown": {"openai": 15},
+        "model_breakdown": {"gpt-test": 15},
+        "api_mode_breakdown": {"responses": 15},
+    }
+    document["totals"].update(
+        conversation_count=2,
+        api_request_count=2,
+        successful_request_count=2,
+        input_tokens=16,
+        output_tokens=4,
+        total_tokens=20,
+        cached_input_tokens=2,
+        details={"input_cached_tokens": 2},
+    )
+    document["requests"] = []
+    document["runs"] = [
+        _coverage_run(
+            run_id=f"run-{date}",
+            started_at=f"{date}T01:59:59.980000+00:00",
+            completed_at=f"{date}T02:00:00+00:00",
+            input_tokens=tokens - 2,
+            total_tokens=tokens,
+        )
+        for date, tokens in ((first_day, 5), (second_day, 15))
+    ]
+    # Both runs have the same duration, success and request counts, so the
+    # second run could be mistaken for the first in the destination calendar.
+    for day in document["daily"].values():
+        if explicit_attribution:
+            day.update(run_total_tokens=day["total_tokens"], run_request_count=1)
+        else:
+            for field in (
+                "run_request_count",
+                "run_total_tokens",
+                "unattributed_run_count",
+            ):
+                del day[field]
 
-    with pytest.raises(OSError, match="save failed"):
-        await _coverage_manager(totals, daily, details, run_retention_days=0)
-    assert details.data["runs"] == document["runs"]
-    daily.fail_save = False
-    manager = await _coverage_manager(totals, daily, details, run_retention_days=0)
-    await manager.async_prune_details()
-    assert details.data["runs"] == []
-    reloaded = await _coverage_manager(totals, daily, details)
-    assert reloaded.summary_for_date(date)["average_tokens_per_completed_run"] == 5
-    assert reloaded.as_dict() == document["totals"]
+    stores = [CoverageMemoryStorage() for _ in range(3)]
+    manager = await _coverage_manager(*stores)
+    with monkeypatch.context() as timezone:
+        timezone.setattr(dt_util, "DEFAULT_TIME_ZONE", ZoneInfo(destination_zone))
+        restored = UsageManager.validate_backup_data(document, "agent-target")
+        await manager.async_replace_backup(*restored)
+    assert [run.total_tokens for run in manager.runs] == [5, 15]
+    await manager.async_clear_details(confirm=True)
+    reloaded = await _coverage_manager(*stores)
+    assert reloaded.runs == []
+    for current in (manager, reloaded):
+        assert current.as_dict() == document["totals"]
+        for date, tokens in ((first_day, 5), (second_day, 15)):
+            result = current.summary_for_date(date)
+            assert result["run_count"] == 1
+            assert result["total_tokens"] == tokens
+            assert result["unattributed_run_count"] == (0 if explicit_attribution else 1)
+            assert result["average_tokens_per_completed_run"] == (
+                tokens if explicit_attribution else None
+            )
+            assert result["average_requests_per_completed_run"] == (
+                1 if explicit_attribution else None
+            )

@@ -409,12 +409,6 @@ class UsageManager:
                         continue
 
             now = dt_util.utcnow()
-            recovered = _backfill_run_attribution(staged_daily, staged_runs)
-            if recovered and not repair_required and self._daily_storage is not None:
-                # Retention or a manual clear may remove the only supporting detail.
-                await self._daily_storage.async_save(
-                    {**daily_data, "days": staged_daily}
-                )
             loaded_detail_count = len(staged_requests) + len(staged_runs)
             request_cutoff = now - timedelta(days=max(0, self.request_retention_days))
             run_cutoff = now - timedelta(days=max(0, self.run_retention_days))
@@ -966,7 +960,6 @@ class UsageManager:
             raise ValueError("usage request IDs must be unique")
         if len({run.run_id for run in runs}) != len(runs):
             raise ValueError("usage run IDs must be unique")
-        _backfill_run_attribution(daily, runs)
         return totals, daily, requests, runs
 
     async def async_replace_backup(
@@ -1167,6 +1160,7 @@ def _validate_usage_day(
         raise ValueError("daily usage record is invalid")
     attribution = {"run_total_tokens", "run_request_count", "unattributed_run_count"}
     if attribution.isdisjoint(value):
+        # Legacy run details lack the local day assigned at completion.
         value = {
             **value,
             "run_total_tokens": 0,
@@ -1434,35 +1428,6 @@ def _calculate_averages(day: dict[str, Any]) -> None:
         day["average_duration_ms_per_completed_run"] = round(
             day["total_run_duration_ms"] / count, 2
         )
-
-
-def _backfill_run_attribution(
-    days: dict[str, dict[str, Any]], runs: list[UsageRun]
-) -> bool:
-    """Return whether complete historical run details supplied missing counters."""
-    missing = {date for date, day in days.items() if day["unattributed_run_count"]}
-    if not missing:
-        return False
-    recovered = False
-    by_date: dict[str, list[UsageRun]] = {}
-    for run in runs:
-        if run.completed_at is not None:
-            date = _local_day_key(_parse_time(run.completed_at))
-            if date in missing:
-                by_date.setdefault(date, []).append(run)
-    for date, records in by_date.items():
-        day = days[date]
-        if (
-            len(records) == day["run_count"]
-            and sum(run.duration_ms for run in records) == day["total_run_duration_ms"]
-            and sum(run.successful for run in records) == day["successful_run_count"]
-        ):
-            day["run_total_tokens"] = sum(run.total_tokens for run in records)
-            day["run_request_count"] = sum(run.request_count for run in records)
-            day["unattributed_run_count"] = 0
-            _calculate_averages(day)
-            recovered = True
-    return recovered
 
 
 def _local_day_key(timestamp: datetime) -> str:

@@ -24,8 +24,10 @@ from custom_components.extended_openai_conversation_responses.usage import (
 from homeassistant.components.sensor import SensorStateClass
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
+from tests.ha_store_test_helpers import invalidate_store_cache
 from tests_real_ha.test_acceptance_lifecycle import _registry_entries
 from tests_real_ha.test_cross_feature_acceptance import _agent
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
 async def _sensor_agent(hass, **options):
@@ -208,6 +210,87 @@ async def test_usage_counter_and_restored_aggregates_publish_without_polling(
     )
     assert await hass.config_entries.async_unload(agent.entry.entry_id)
     assert not usage._listeners
+
+
+@pytest.mark.parametrize("combined", [False, True], ids=["separate", "combined"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_readable_legacy_usage_starts_durably_during_a_write_outage(
+    hass, freezer, monkeypatch, combined
+):
+    from custom_components.extended_openai_conversation_responses import usage
+    from homeassistant.components import conversation
+    from tests.test_usage import _coverage_backup
+    from tests_real_ha.test_acceptance_lifecycle import (
+        _conversation_subentry,
+        _make_entry,
+        _setup_entry,
+    )
+    from tests_real_ha.test_cross_feature_acceptance import _provider, _say, _speech
+    from tests_real_ha.test_entry_point_contract_matrix import _management
+
+    await hass.config.async_set_time_zone("UTC")
+    freezer.move_to("2026-09-13T12:00:00+00:00")
+    entry = _make_entry(
+        include_ai_task=False,
+        conversation_options={
+            "api_mode": "chat_completions",
+            "chat_model": "gpt-5.6",
+            "reasoning_effort": "none",
+            "functions": [],
+        },
+    )
+    subentry = _conversation_subentry(entry)
+    totals_store, daily_store, detail_store = usage._durable_usage_stores(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    saved = _coverage_backup()
+    date = "2026-09-13"
+    for key in ("run_total_tokens", "run_request_count", "unattributed_run_count"):
+        del saved["daily"][date][key]
+    legacy = {"days": saved["daily"]}
+    if combined:
+        legacy["totals"] = saved["totals"]
+    await totals_store.async_save(saved["totals"])
+    await daily_store.async_save(legacy)
+    await detail_store.async_save({"requests": saved["requests"], "runs": saved["runs"]})
+
+    normal_save = usage._UsageStore.async_save
+    attempted_writes = []
+
+    async def reject_daily_save(store, data):
+        if store.key == daily_store.key:
+            attempted_writes.append(store.key)
+            raise OSError("aggregate store is temporarily write-protected")
+        await normal_save(store, data)
+
+    with monkeypatch.context() as read_only:
+        read_only.setattr(usage._UsageStore, "async_save", reject_daily_save)
+        await _setup_entry(hass, entry)
+        agent = conversation.async_get_agent(hass, entry.entry_id)
+        assert agent._usage.persistence_status()["mode"] == "durable"
+        command = await _management(hass, agent)
+        summary = await command("summary", section="usage")
+        daily = await command("daily", section="usage", start_date=date, end_date=date)
+        assert summary["lifetime"]["total_tokens"] == 5
+        assert summary["lifetime"]["conversation_count"] == 1
+        assert daily["days"][0]["total_tokens"] == 5
+        assert daily["days"][0]["average_tokens_per_completed_run"] is None
+        assert not attempted_writes
+        assert await daily_store.async_load() == legacy
+
+    _provider(monkeypatch, agent, ["The assistant still works."])
+    assert _speech(await _say(hass, agent, "What about the last turn?")) == (
+        "The assistant still works."
+    )
+    await agent._usage.async_shutdown()
+    summary = await command("summary", section="usage")
+    invalidate_store_cache(daily_store)
+    aggregate = await daily_store.async_load()
+    assert summary["lifetime"]["conversation_count"] == 2
+    assert aggregate["totals"]["conversation_count"] == 2
+    assert aggregate["days"][date]["run_count"] == 2
+    assert aggregate["days"][date]["unattributed_run_count"] == 1
+    assert aggregate["days"][date]["average_tokens_per_completed_run"] is None
 
 
 async def test_usage_sensors_rebind_from_volatile_to_durable_without_polling(hass):
