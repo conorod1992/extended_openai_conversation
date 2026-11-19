@@ -131,13 +131,16 @@ async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
   for (const control of panel.shadowRoot?.querySelectorAll?.('input[data-type=number]') || []) {
     if (control.disabled) continue;
+    const {value} = control;
     const key = configKeyForControl(control), timeout = isTimeoutKey(key);
     if (control.validity?.badInput) {
       control.reportValidity();
       return;
     }
-    if (timeout ? !validTimeout(Number(control.value)) : !control.value && panel._eocDirtyConfigKeys?.has(key)) {
-      showErrors(panel, {[key]: control.value ? "Enter a whole number from 1 to 1440." : "Enter a number."});
+    if (timeout
+      ? (value || panel._draft[key] != null) && !validTimeout(Number(value))
+      : !value && panel._eocDirtyConfigKeys?.has(key)) {
+      showErrors(panel, {[key]: value ? "Use 1 to 1440 minutes." : "Enter a number."});
       focusManagementSetting(control);
       return;
     }
