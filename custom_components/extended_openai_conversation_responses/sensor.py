@@ -271,6 +271,9 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         self._observation: _PeriodObservation | None = None
         self._recorded_observation: _PeriodObservation | None = None
         self._recorder_baseline: int | None = None
+        self._initial_recording: (
+            tuple[_PeriodObservation | None, State | None] | None
+        ) = None
 
     def _summary(self) -> dict:
         raise NotImplementedError
@@ -332,8 +335,8 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
 
     async def async_added_to_hass(self) -> None:
         """Refresh event-driven period state when the local date rolls over."""
-        await super().async_added_to_hass()
         previous_state = await self._async_restore_period()
+        await super().async_added_to_hass()
         self._publish_period(initial=True, previous_state=previous_state)
         self._reschedule_period_rollover()
         self.async_on_remove(self._remove_period_rollover)
@@ -342,6 +345,16 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                 EVENT_CORE_CONFIG_UPDATE, self._handle_core_config_update
             )
         )
+
+    @callback
+    def _async_write_ha_state(self) -> None:
+        super()._async_write_ha_state()
+        if self._initial_recording is not None:
+            previous, before = self._initial_recording
+            self._initial_recording = None
+            # Core publishes the initial state just after async_added_to_hass.
+            # Finish accounting in the same write, before queued Usage updates.
+            self._track_recorded_sample(previous, before)
 
     async def _async_restore_period(self) -> State | None:
         restored = (
@@ -542,7 +555,7 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
             self.async_write_ha_state()
         if recording:
             if initial:
-                self.hass.loop.call_soon(self._track_recorded_sample, previous, before)
+                self._initial_recording = previous, before
             else:
                 self._track_recorded_sample(previous, before)
 

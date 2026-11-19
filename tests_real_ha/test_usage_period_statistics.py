@@ -763,8 +763,11 @@ async def test_period_sensors_refresh_and_rearm_after_timezone_change(hass, free
 @pytest.mark.parametrize("reload_at", ["never", "before-reentry", "across-reentry"])
 @pytest.mark.parametrize("paused", [False, True], ids=["recording", "paused"])
 async def test_timezone_changes_do_not_recount_period_sensor_usage(
-    hass, freezer, transition, reload_at, paused
+    hass, freezer, monkeypatch, transition, reload_at, paused
 ):
+    from custom_components.extended_openai_conversation_responses.sensor import (
+        _PeriodUsageSensor,
+    )
     from homeassistant.const import EVENT_STATE_CHANGED
     from homeassistant.core import callback
 
@@ -841,13 +844,34 @@ async def test_timezone_changes_do_not_recount_period_sensor_usage(
         assert await hass.config_entries.async_unload(agent.entry.entry_id)
         await hass.async_block_till_done()
 
-    witnessed = []
+    witnessed = {entity_id: [] for entity_id in ids}
+    queued_updates = set()
+    queue_during_registration = (
+        transition == "forward" and reload_at == "across-reentry" and not paused
+    )
+    if queue_during_registration:
+        publish = _PeriodUsageSensor._publish_period
+
+        def publish_with_queued_update(sensor, *, initial=False, previous_state=None):
+            if initial and sensor.entity_id in ids:
+                # A Usage notification can already be queued when Core writes
+                # the entity's first real state after a timezone re-entry.
+                def notify():
+                    queued_updates.add(sensor.entity_id)
+                    sensor._handle_usage_update()
+
+                hass.loop.call_soon(notify)
+            publish(sensor, initial=initial, previous_state=previous_state)
+
+        monkeypatch.setattr(
+            _PeriodUsageSensor, "_publish_period", publish_with_queued_update
+        )
 
     @callback
     def observe(event):
         state = event.data["new_state"]
         if state is not None and state.entity_id in ids and state.state.lstrip("-").isdigit():
-            witnessed.append(int(state.state))
+            witnessed[state.entity_id].append(int(state.state))
 
     cancel = hass.bus.async_listen(EVENT_STATE_CHANGED, observe)
     try:
@@ -868,7 +892,11 @@ async def test_timezone_changes_do_not_recount_period_sensor_usage(
 
     value = 105 if same_period else 85
     assert {hass.states.get(key).state for key in ids} == {str(value)}
-    assert witnessed.count(-65) == (0 if same_period or paused else len(ids))
+    for samples in witnessed.values():
+        assert samples.count(-65) == (0 if same_period or paused else 1)
+    if queue_during_registration:
+        assert queued_updates == ids
+        assert all(samples == [-65, 85] for samples in witnessed.values())
     segment = 25 if transition == "midnight" else 20
     pause_usage = 0
     if paused:
