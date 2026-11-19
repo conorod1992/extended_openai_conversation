@@ -75,8 +75,23 @@ async def test_browser_bridge_authenticates_on_first_use_without_replay(
 
     auth = AsyncMock(side_effect=authenticate)
     setup = AsyncMock()
-    monkeypatch.setattr(browser, "_entry", Mock(return_value=object()))
+    conversation = SimpleNamespace(
+        subentry_type="conversation", subentry_id="conversation"
+    )
+    entry = SimpleNamespace(
+        entry_id="ordinary", subentries={conversation.subentry_id: conversation}
+    )
+    archive_lookup = AsyncMock(
+        return_value=SimpleNamespace(
+            async_begin_session=AsyncMock(
+                return_value=SimpleNamespace(session_id="session")
+            ),
+            async_record_turn=AsyncMock(),
+        )
+    )
+    monkeypatch.setattr(browser, "_entry", Mock(side_effect=[entry, object()]))
     monkeypatch.setattr(browser, "_setup_entry", setup)
+    monkeypatch.setattr(browser, "async_get_archive", archive_lookup)
     monkeypatch.setattr(browser, "_admin_client", auth)
     monkeypatch.setattr(browser, "_start_ws_bridge", start_bridge)
     monkeypatch.setattr(browser, "_run_playwright", run_browser)
@@ -104,5 +119,11 @@ async def test_browser_bridge_authenticates_on_first_use_without_replay(
     )
     assert len(created) == 1
     auth.assert_awaited_once_with(hass, factory)
+    if entrypoint == "ordinary":
+        archive_lookup.assert_awaited_once_with(
+            hass, entry.entry_id, conversation.subentry_id
+        )
+    else:
+        archive_lookup.assert_not_awaited()
     assert setup.await_count == (2 if entrypoint == "ordinary" else 1)
     runner.cleanup.assert_awaited_once()

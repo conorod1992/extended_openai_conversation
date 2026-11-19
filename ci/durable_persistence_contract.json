@@ -94,11 +94,17 @@
       {
         "module": "conversation_archive.py",
         "constructor": "PropagatingWriteStore",
-        "count": 2
+        "count": 1
+      },
+      {
+        "module": "conversation_archive.py",
+        "constructor": "_ArchiveMetadataStore",
+        "count": 1
       }
     ],
     "evidence": [
       "tests/test_conversation_archive.py::test_partition_write_failure_recovers_private_state_on_restart",
+      "tests_real_ha/test_archive_record_integrity.py::test_archive_v1_migrates_before_an_old_writer_can_open_it",
       "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable",
       "tests_stress/test_archive_living_campaign.py::test_archive_first_intent_failure_cannot_be_erased_by_session_publication"
     ]

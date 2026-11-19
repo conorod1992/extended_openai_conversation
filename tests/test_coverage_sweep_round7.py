@@ -1576,11 +1576,13 @@ async def test_archive_storage_remove_partition_delegates(monkeypatch) -> None:
     storage = conversation_archive.HomeAssistantArchiveStorage.__new__(
         conversation_archive.HomeAssistantArchiveStorage
     )
+    storage._metadata = SimpleNamespace(require_migrated=Mock())
     store = SimpleNamespace(async_remove=AsyncMock())
     monkeypatch.setattr(storage, "_partition_store", Mock(return_value=store))
 
     await storage.async_remove_partition("2026-10")
 
+    storage._metadata.require_migrated.assert_called_once_with()
     storage._partition_store.assert_called_once_with("2026-10")
     store.async_remove.assert_awaited_once()
 

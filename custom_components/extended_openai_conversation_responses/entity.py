@@ -1842,20 +1842,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         for content in round_text
                         if classify_provider_output(content.native) == "answer"
                     ]
-                    if any((content.content or "").strip() for content in answers):
-                        _discard_conditional_drafts(
-                            chat_log,
-                            draft_content_ids,
-                            preserve_native=api_mode == API_MODE_RESPONSES,
-                        )
-                    else:
+                    hidden_ids = draft_content_ids
+                    if not any((content.content or "").strip() for content in answers):
                         # A commentary-only or blank retry cannot replace an
                         # answer. Keep the draft and retain native retry items.
-                        _discard_conditional_drafts(
-                            chat_log,
-                            {id(content) for content in answers},
-                            preserve_native=api_mode == API_MODE_RESPONSES,
-                        )
+                        hidden_ids = {id(content) for content in answers}
                         answers = [
                             content
                             for content in chat_log.content
@@ -1866,10 +1857,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         if not any(
                             (content.content or "").strip() for content in answers
                         ):
-                            raise ProviderStreamError(
-                                "Provider omitted the conversation finalizer "
-                                "and returned no answer"
-                            )
+                            # Completed empty Responses already act as a
+                            # bounded, silent acknowledgement after tools.
+                            hidden_ids.update(draft_content_ids)
+                            answers = []
+                    if hidden_ids:
+                        _discard_conditional_drafts(
+                            chat_log,
+                            hidden_ids,
+                            preserve_native=api_mode == API_MODE_RESPONSES,
+                        )
                     _LOGGER.error(
                         "Conditional response omitted %s after the finalization retry; "
                         "using the assistant text with continuation disabled",
