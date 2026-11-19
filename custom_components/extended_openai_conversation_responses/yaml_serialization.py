@@ -1,5 +1,6 @@
 """Safe, readable YAML that preserves scalar values through parsing."""
 
+from dataclasses import dataclass
 import json
 from typing import Any
 
@@ -24,6 +25,19 @@ class _LosslessSafeDumper(yaml.SafeDumper):
     """Keep the safe tag set without changing PyYAML's global representers."""
 
 
+@dataclass(frozen=True, slots=True)
+class SecretReference:
+    """An unresolved Home Assistant YAML secret reference."""
+
+    key: str
+
+
+def _represent_secret(
+    dumper: _LosslessSafeDumper, value: SecretReference
+) -> ScalarNode:
+    return dumper.represent_scalar("!secret", value.key, style='"')
+
+
 def _represent_string(dumper: yaml.SafeDumper, value: str) -> ScalarNode:
     # YAML normalizes physical line breaks, including NEL. Double quotes make
     # PyYAML emit its reversible \N/\L/\P escapes while ordinary Unicode remains
@@ -33,6 +47,7 @@ def _represent_string(dumper: yaml.SafeDumper, value: str) -> ScalarNode:
 
 
 _LosslessSafeDumper.add_representer(str, _represent_string)
+_LosslessSafeDumper.add_representer(SecretReference, _represent_secret)
 
 
 def dump_yaml(value: Any, *, sort_keys: bool = False) -> str:

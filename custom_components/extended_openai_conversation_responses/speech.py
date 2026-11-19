@@ -292,6 +292,7 @@ class StreamingSpeechSanitizer:
         self._long_url_tail: str | None = None
         self._long_url_brackets = (0, 0)
         self._long_url_closer = ""
+        self._long_url_in_path = False
         self._long_destination: _LongDestination | None = None
         self._strong_open = False
         self._line_start = True
@@ -702,6 +703,25 @@ class StreamingSpeechSanitizer:
         return bool(count % 2)
 
     @staticmethod
+    def _bare_url_token_end(
+        text: str, start: int, in_path: bool = False
+    ) -> tuple[int, bool]:
+        """Stop bare authorities at a prose dash, preserving path and query dashes."""
+        end = start
+        while end < len(text):
+            char = text[end]
+            if (
+                char.isspace()
+                or char in "<>"
+                or (not in_path and char in "\u2014\u2013")
+            ):
+                break
+            if char in "/?#":
+                in_path = True
+            end += 1
+        return end, in_path
+
+    @staticmethod
     def _bare_url_end(
         text: str, start: int, end: int, brackets: tuple[int, int] | None = None
     ) -> int:
@@ -767,6 +787,7 @@ class StreamingSpeechSanitizer:
         self._long_url_tail = None
         self._long_url_brackets = (0, 0)
         self._long_url_closer = ""
+        self._long_url_in_path = False
 
     @staticmethod
     def _is_url_start(text: str, index: int) -> bool:
@@ -1011,14 +1032,13 @@ class StreamingSpeechSanitizer:
                 ):
                     return "incomplete", index
                 continue
-            end = start + len(prefix)
-            while end < len(text) and not text[end].isspace() and text[end] not in "<>":
-                end += 1
+            end, in_path = self._bare_url_token_end(text, start + len(prefix))
             if end == len(text) and not final:
                 if len(text) - index > self.max_buffer_chars and self._is_url_start(
                     text, start
                 ):
                     self._long_url_closer = closer
+                    self._long_url_in_path = in_path
                     return "long", start
                 return "incomplete", index
             end = self._bare_url_end(text, start, end)
@@ -1129,13 +1149,9 @@ class StreamingSpeechSanitizer:
                     break
                 continue
             if self._long_url_tail is not None:
-                end = index
-                while (
-                    end < len(text)
-                    and not text[end].isspace()
-                    and text[end] not in "<>"
-                ):
-                    end += 1
+                end, self._long_url_in_path = self._bare_url_token_end(
+                    text, index, self._long_url_in_path
+                )
                 self._consume_long_url(text[index:end])
                 index = end
                 if end == len(text):
@@ -1479,18 +1495,15 @@ class StreamingSpeechSanitizer:
                 if matching_prefix is not None and not (
                     preceding.isalnum() or preceding == "@"
                 ):
-                    end = index + len(matching_prefix)
-                    while (
-                        end < len(text)
-                        and not text[end].isspace()
-                        and text[end] not in "<>"
-                    ):
-                        end += 1
+                    end, in_path = self._bare_url_token_end(
+                        text, index + len(matching_prefix)
+                    )
                     if end == len(text) and not final:
                         if end - index > self.max_buffer_chars and (
                             matching_prefix != "www." or _WWW_ADDRESS.match(text, index)
                         ):
                             self._hold_preceding_whitespace(output)
+                            self._long_url_in_path = in_path
                             self._consume_long_url(text[index:end])
                             index = end
                             break

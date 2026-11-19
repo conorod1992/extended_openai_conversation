@@ -32,6 +32,59 @@ def test_bare_url_wrappers_at_every_split(opening, closing):
     assert_all_splits(source, "Before after.")
 
 
+@pytest.mark.parametrize("dash", ["—", "–"])
+@pytest.mark.parametrize("wrapper", ["{}", '"{}"', "**{}**"])
+def test_unspaced_dash_ends_bare_url_at_every_split(dash, wrapper):
+    url = wrapper.format("http://router.local:8080")
+    source = f"Router instructions: {url}{dash}never press Reset."
+    assert_all_splits(source, f"Router instructions: {dash}never press Reset.")
+
+
+@pytest.mark.parametrize("wrapper", ["{}", '"{}"', "**{}**"])
+def test_unspaced_dash_ends_overlong_bare_url(wrapper):
+    url = wrapper.format("http://" + "a" * 4200 + ".local:8080")
+    source = f"Router instructions: {url}—never press Reset."
+    expected = "Router instructions: —never press Reset."
+    for width in (1, 71, 4096, len(source)):
+        sanitizer = StreamingSpeechSanitizer()
+        assert (
+            "".join(
+                sanitizer.feed(source[index : index + width])
+                for index in range(0, len(source), width)
+            )
+            + sanitizer.finish()
+            == expected
+        ), width
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://en.wikipedia.org/wiki/Boston–Washington_Corridor",
+        "https://example.invalid/device—red/details",
+        "https://example.invalid?search=Boston–Washington",
+        "https://example.invalid#Boston–Washington",
+    ],
+)
+def test_bare_url_keeps_path_query_and_fragment_dashes_hidden(url):
+    assert_all_splits(f"See {url} for details.", "See for details.")
+
+
+def test_overlong_bare_url_keeps_query_dash_hidden_across_buffers():
+    url = "https://example.invalid?query=" + "a" * 4200 + "–dash"
+    source = f"See {url} for details."
+    for width in (1, 71, 4096, len(source)):
+        sanitizer = StreamingSpeechSanitizer()
+        assert (
+            "".join(
+                sanitizer.feed(source[index : index + width])
+                for index in range(0, len(source), width)
+            )
+            + sanitizer.finish()
+            == "See for details."
+        ), width
+
+
 @pytest.mark.parametrize(
     "wrapper",
     [

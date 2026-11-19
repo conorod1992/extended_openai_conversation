@@ -24,7 +24,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 
 def test_automation_parser_accepts_single_item_list_and_rejects_bad_yaml() -> None:
-    parsed = native_module._parse_automation_config("- alias: Morning\n  actions: []\n")
+    parsed, _ = native_module._parse_automation_config("- alias: Morning\n  actions: []\n")
     assert parsed["alias"] == "Morning"
     assert len(parsed["id"]) == 32
 

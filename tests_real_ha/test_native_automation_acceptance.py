@@ -22,6 +22,7 @@ from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import llm
 from homeassistant.setup import async_setup_component
+from homeassistant.util.yaml import Secrets, load_yaml
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 
 _TOOL = {
@@ -74,9 +75,11 @@ async def _call_tool(hass, agent, user, automation_config: str):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("symlinked", [False, True])
+@pytest.mark.parametrize("use_secret", [False, True])
 async def test_native_add_automation_validates_reloads_and_triggers_once(
     hass: HomeAssistant,
     symlinked: bool,
+    use_secret: bool,
 ) -> None:
     config_dir = hass.config.config_dir
     from pathlib import Path
@@ -95,6 +98,14 @@ async def test_native_add_automation_validates_reloads_and_triggers_once(
     configuration_file.write_text(
         "automation: !include automations.yaml\n", encoding="utf-8"
     )
+    if use_secret:
+        (Path(config_dir) / "secrets.yaml").write_text(
+            "automation_marker: new\n", encoding="utf-8"
+        )
+        if symlinked:
+            (automation_target.parent / "secrets.yaml").write_text(
+                "automation_marker: wrong-resolution-scope\n", encoding="utf-8"
+            )
 
     calls: list[str] = []
 
@@ -121,11 +132,18 @@ async def test_native_add_automation_validates_reloads_and_triggers_once(
     assert calls == ["existing"]
 
     added = _automation("New acceptance", "new_acceptance_event", "new")
-    result = await _call_tool(hass, agent, user, yaml.safe_dump(added))
+    source = yaml.safe_dump(added)
+    if use_secret:
+        source = source.replace("marker: new", "marker: !secret automation_marker")
+    result = await _call_tool(hass, agent, user, source)
     assert result == {"result": "Success"}
     assert automation_file.is_symlink() is symlinked
     assert automation_target.read_bytes() == automation_file.read_bytes()
-    saved = yaml.safe_load(automation_file.read_text(encoding="utf-8"))
+    if use_secret:
+        assert "!secret" in automation_file.read_text(encoding="utf-8")
+    saved = await hass.async_add_executor_job(
+        load_yaml, automation_file, Secrets(Path(config_dir))
+    )
     assert [item["alias"] for item in saved] == [
         "Existing acceptance",
         "New acceptance",
