@@ -173,7 +173,7 @@ STEP_AZURE_CREDENTIALS_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_API_KEY): str,
         vol.Required(CONF_BASE_URL): str,
-        vol.Required(CONF_API_VERSION): str,
+        vol.Optional(CONF_API_VERSION): str,
     }
 )
 

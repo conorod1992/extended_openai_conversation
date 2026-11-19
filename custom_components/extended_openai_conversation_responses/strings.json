@@ -48,7 +48,7 @@
       },
       "azure_credentials": {
         "title": "Connect Azure OpenAI",
-        "description": "Enter the details for your existing Azure OpenAI resource. Azure uses its own endpoint and API version, so these are required here.",
+        "description": "Enter the endpoint and API key for your Azure OpenAI resource.",
         "data": {
           "api_key": "Azure OpenAI API key",
           "base_url": "Azure OpenAI endpoint",
@@ -57,7 +57,7 @@
         "data_description": {
           "api_key": "The API key for your Azure OpenAI resource.",
           "base_url": "Your Azure OpenAI resource endpoint, as shown in your Azure resource.",
-          "api_version": "The Azure OpenAI API version configured for your resource."
+          "api_version": "Required for legacy Azure endpoints. Leave blank for an endpoint ending in /openai/v1/."
         }
       }
     },

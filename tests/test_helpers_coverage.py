@@ -75,12 +75,18 @@ def test_is_azure_url_recognizes_supported_azure_hosts(base_url, expected) -> No
         (helpers.DEFAULT_API_PROVIDER, helpers.DEFAULT_CONF_BASE_URL, True),
         (helpers.DEFAULT_API_PROVIDER, helpers.DEFAULT_CONF_BASE_URL + "/", True),
         (None, "https://API.OPENAI.COM:443/v1/", True),
+        (None, "https://us.api.openai.com/v1", True),
+        (None, "https://EU.API.OPENAI.COM:443/v1/", True),
+        (None, "https://eu.api.openai.com.proxy.example/v1", False),
+        (None, "https://us.api.openai.com/proxy/v1", False),
         (None, "https://api.openai.com:444/v1", False),
         (None, "https://api.openai.com:invalid/v1", False),
         (None, "http://api.openai.com/v1", False),
         (None, "https://api.openai.com/v1/proxy", False),
         (None, "https://api.openai.com/v1?proxy=1", False),
         (None, "https://api.openai.com/v1#proxy", False),
+        (None, "https://api.openai.com/v1\n", False),
+        (None, " https://api.openai.com/v1", False),
         (None, "https://api.openai.com@proxy.example/v1", False),
         ("azure", helpers.DEFAULT_CONF_BASE_URL, False),
         (helpers.DEFAULT_API_PROVIDER, "https://proxy.example/v1", False),
@@ -90,6 +96,32 @@ def test_supports_openai_hosted_tools_requires_native_openai_endpoint(
     provider, base_url, expected
 ) -> None:
     assert helpers.supports_openai_hosted_tools(provider, base_url) is expected
+
+
+@pytest.mark.parametrize("sdk_default", ["relative", "", "https://api.openai.com/v1\r"])
+def test_malformed_sdk_default_does_not_override_an_explicit_endpoint(
+    monkeypatch, sdk_default
+):
+    monkeypatch.setenv("OPENAI_BASE_URL", sdk_default)
+    with pytest.raises(helpers.ProviderEndpointError, match="OPENAI_BASE_URL"):
+        helpers.resolve_provider_endpoint("openai", "", None)
+
+    endpoint = "https://api.openai.com/v1"
+    assert helpers.resolve_provider_endpoint("openai", endpoint, None) == (
+        "openai",
+        endpoint,
+    )
+    assert helpers.is_native_openai_connection({"base_url": endpoint})
+
+
+def test_cleared_endpoint_prefers_the_loaded_client_origin(monkeypatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://compatible.example/v1")
+    configured = {"base_url": ""}
+    assert helpers.resolve_provider_endpoint("openai", "", None) == ("openai", None)
+    assert not helpers.is_native_openai_connection(configured)
+    assert helpers.is_native_openai_connection(
+        configured, client=SimpleNamespace(base_url="https://us.api.openai.com/v1/")
+    )
 
 
 def test_convert_to_template_recurses_through_nested_dicts_and_lists(

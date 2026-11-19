@@ -312,7 +312,8 @@ def test_web_search_defaults_off() -> None:
 
 
 @pytest.mark.parametrize("context_size", ["low", "medium", "high"])
-def test_web_search_tool_schema(context_size: str) -> None:
+@pytest.mark.parametrize("host", ["api.openai.com", "us.api.openai.com", "eu.api.openai.com"])
+def test_web_search_tool_schema(context_size: str, host: str) -> None:
     """Responses receives the native hosted-tool schema and selected context."""
     assert _build_web_search_tool(
         {
@@ -323,7 +324,7 @@ def test_web_search_tool_schema(context_size: str) -> None:
         API_MODE_RESPONSES,
         {
             CONF_API_PROVIDER: "openai",
-            CONF_BASE_URL: "https://api.openai.com/v1",
+            CONF_BASE_URL: f"https://{host}/v1",
         },
     ) == {
         "type": "web_search",

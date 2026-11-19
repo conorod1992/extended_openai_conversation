@@ -243,7 +243,12 @@ async def test_initial_provider_setup_routes_to_simple_provider_specific_forms()
     assert CONF_SKIP_AUTHENTICATION not in azure_keys
 
 
-async def test_setup_endpoint_validation_still_runs_when_authentication_is_skipped():
+@pytest.mark.parametrize(
+    "base_url", ["provider.example/v1", "https://api.openai.com/v1\n"]
+)
+async def test_setup_endpoint_validation_still_runs_when_authentication_is_skipped(
+    base_url,
+):
     flow = SimpleNamespace(
         hass=MagicMock(),
         _setup_data={CONF_API_KEY: "provider-key", CONF_API_PROVIDER: "openai"},
@@ -266,7 +271,7 @@ async def test_setup_endpoint_validation_still_runs_when_authentication_is_skipp
         config_flow, "get_authenticated_client", new_callable=AsyncMock
     ) as authenticate:
         invalid = await ExtendedOpenAIConversationConfigFlow.async_step_openai_advanced(
-            flow, {CONF_BASE_URL: "provider.example/v1", CONF_SKIP_AUTHENTICATION: True}
+            flow, {CONF_BASE_URL: base_url, CONF_SKIP_AUTHENTICATION: True}
         )
         assert invalid["errors"] == {"base": "invalid_provider_endpoint"}
         authenticate.assert_not_awaited()

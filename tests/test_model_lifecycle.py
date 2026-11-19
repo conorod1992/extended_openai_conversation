@@ -31,7 +31,11 @@ def test_structured_deprecation_dates_drive_shutdown_phase() -> None:
 
 @pytest.mark.parametrize(
     ("configured", "native"),
-    [({}, False), ({"base_url": "https://api.openai.com/v1"}, True)],
+    [
+        ({}, False),
+        ({"base_url": ""}, False),
+        ({"base_url": "https://api.openai.com/v1"}, True),
+    ],
 )
 def test_model_lifecycle_resolves_implicit_endpoint_without_a_client(
     monkeypatch, configured, native

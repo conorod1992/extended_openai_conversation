@@ -61,7 +61,7 @@ After Home Assistant restarts:
 3. Search for **Extended OpenAI Conversation (Responses)**.
 4. Choose **OpenAI** or **Azure OpenAI**, then enter the requested credentials.
 5. For direct OpenAI, leave **Show advanced provider settings** off. A compatible third-party endpoint uses the OpenAI option with advanced provider settings enabled.
-6. Set **Base URL** only when your provider requires one. Azure requires its endpoint and API version.
+6. Set **Base URL** only when your provider requires one. For Azure, enter the endpoint. Leave **API version** blank for an endpoint ending in `/openai/v1/`. Enter the API version for a legacy Azure endpoint.
 
 The integration is now installed. Continue with [First setup](setup.md) to select the conversation agent and expose Home Assistant entities.
 

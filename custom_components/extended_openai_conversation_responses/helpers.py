@@ -8,7 +8,7 @@ from inspect import isawaitable
 import logging
 import os
 from typing import Annotated, Any, cast, get_args, get_origin
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from openai import AsyncAzureOpenAI, AsyncClient, AsyncOpenAI
 
@@ -34,6 +34,9 @@ _LOGGER = logging.getLogger(__name__)
 
 AZURE_DOMAINS = ("openai.azure.com", "azure-api.net", "services.ai.azure.com")
 _OPENAI_ENDPOINT = urlsplit(DEFAULT_CONF_BASE_URL)
+_OPENAI_HOSTED_TOOL_HOSTS = frozenset(
+    {_OPENAI_ENDPOINT.hostname, "us.api.openai.com", "eu.api.openai.com"}
+)
 
 
 def get_api_mode(
@@ -119,6 +122,31 @@ def entry_api_provider(entry: Any) -> str:
     return effective_api_provider(data.get("api_provider"), data.get("base_url"))
 
 
+def _is_azure_v1_endpoint(base_url: str | None) -> bool:
+    """Recognize the GA path after the endpoint has been validated."""
+    return bool(base_url and urlsplit(base_url).path.rstrip("/") == "/openai/v1")
+
+
+def _absolute_http_endpoint(base_url: str) -> SplitResult:
+    # urlsplit strips some leading whitespace and embedded controls that the
+    # SDK either rejects or treats as a different, relative URL.
+    if (
+        not isinstance(base_url, str)
+        or base_url.startswith(" ")
+        or any(ord(char) < 32 or ord(char) == 127 for char in base_url)
+    ):
+        raise ValueError
+    endpoint = urlsplit(base_url)
+    _ = endpoint.port
+    if (
+        endpoint.scheme not in {"http", "https"}
+        or not endpoint.hostname
+        or any(char.isspace() for char in endpoint.netloc)
+    ):
+        raise ValueError
+    return endpoint
+
+
 def supports_openai_hosted_tools(
     api_provider: str | None, base_url: str | None
 ) -> bool:
@@ -130,10 +158,10 @@ def supports_openai_hosted_tools(
     if not isinstance(base_url, str):
         return False
     try:
-        endpoint = urlsplit(base_url)
+        endpoint = _absolute_http_endpoint(base_url)
         return (
             endpoint.scheme == _OPENAI_ENDPOINT.scheme
-            and endpoint.hostname == _OPENAI_ENDPOINT.hostname
+            and endpoint.hostname in _OPENAI_HOSTED_TOOL_HOSTS
             and endpoint.port in {None, 443}
             and endpoint.path.rstrip("/") == _OPENAI_ENDPOINT.path
             and endpoint.username is None
@@ -157,15 +185,8 @@ def resolve_provider_endpoint(
         base_url = None
     if base_url is not None:
         try:
-            endpoint = urlsplit(base_url)
-            _ = endpoint.port
-            if (
-                endpoint.scheme not in {"http", "https"}
-                or not endpoint.hostname
-                or any(char.isspace() for char in endpoint.netloc)
-            ):
-                raise ValueError
-        except TypeError, ValueError:
+            _absolute_http_endpoint(base_url)
+        except ValueError:
             raise ProviderEndpointError(
                 "Provider field base_url must be an absolute HTTP or HTTPS URL."
             ) from None
@@ -174,23 +195,37 @@ def resolve_provider_endpoint(
     if provider == "azure":
         if not base_url or supports_openai_hosted_tools(DEFAULT_API_PROVIDER, base_url):
             raise ProviderEndpointError("Azure OpenAI requires a custom base URL.")
-        if not api_version or not api_version.strip():
+        if not _is_azure_v1_endpoint(base_url) and (
+            not isinstance(api_version, str) or not api_version.strip()
+        ):
             raise ProviderEndpointError(
                 "Azure OpenAI requires provider field api_version."
             )
+    elif (
+        base_url is None
+        and (sdk_base_url := os.environ.get("OPENAI_BASE_URL")) is not None
+    ):
+        try:
+            _absolute_http_endpoint(sdk_base_url)
+        except ValueError:
+            raise ProviderEndpointError(
+                "OPENAI_BASE_URL must be an absolute HTTP or HTTPS URL."
+            ) from None
     return provider, base_url
 
 
 def is_native_openai_connection(data: Mapping[str, Any], *, client: Any = None) -> bool:
     """Classify the configured endpoint or the SDK's effective default."""
     base_url = data.get("base_url")
-    if base_url is None:
+    if base_url is None or base_url == "":
         sdk_url = getattr(client, "base_url", None)
         # SDK versions expose their own HTTPX URL types. Both have a string host.
         if isinstance(sdk_url, str) or isinstance(getattr(sdk_url, "host", None), str):
             base_url = str(sdk_url)
         else:
             base_url = os.environ.get("OPENAI_BASE_URL")
+        if base_url == "":
+            return False
     # An inferred Azure connection necessarily has a different endpoint.
     return supports_openai_hosted_tools(data.get("api_provider"), base_url)
 
@@ -285,7 +320,8 @@ async def get_authenticated_client(
     # Match HA core: retain its shared HTTPX client and TLS/connection policy.
     # SDK 3 supports this client at runtime, while typing targets HTTPX2.
     client: AsyncClient
-    if provider == "azure":
+    if provider == "azure" and not _is_azure_v1_endpoint(base_url):
+        assert base_url is not None  # Required by resolve_provider_endpoint.
         client = AsyncAzureOpenAI(
             api_key=api_key,
             azure_endpoint=base_url,

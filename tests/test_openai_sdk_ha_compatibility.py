@@ -17,6 +17,62 @@ from custom_components.extended_openai_conversation_responses.debug import (
 )
 
 
+@pytest.mark.parametrize(
+    ("base_url", "api_version", "expected"),
+    [
+        (
+            "https://resource.openai.azure.com/openai/v1",
+            None,
+            ("/openai/v1/models", "/openai/v1/chat/completions"),
+        ),
+        (
+            "https://resource.services.ai.azure.com/openai/v1/",
+            "2024-10-21",
+            ("/openai/v1/models", "/openai/v1/chat/completions"),
+        ),
+        (
+            "https://resource.openai.azure.com",
+            "2024-10-21",
+            ("/openai/models", "/openai/deployments/home-model/chat/completions"),
+        ),
+    ],
+)
+async def test_azure_endpoint_routes_authentication_and_requests(
+    hass, monkeypatch, base_url, api_version, expected
+):
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"object": "list", "data": []})
+        return httpx.Response(
+            200,
+            json={
+                "id": "chat-1",
+                "model": "home-model",
+                "object": "chat.completion",
+                "created": 0,
+                "choices": [],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as shared:
+        monkeypatch.setattr(helpers, "get_async_client", lambda _hass: shared)
+        client = await helpers.get_authenticated_client(
+            hass, "test-key", base_url, api_version, None, "azure"
+        )
+        await client.chat.completions.create(model="home-model", messages=[])
+
+    assert tuple(request.url.path for request in requests) == expected
+    azure_v1 = "/openai/v1" in base_url
+    for request in requests:
+        assert request.url.params.get("api-version") == (
+            None if azure_v1 else api_version
+        )
+    assert json.loads(requests[-1].content)["model"] == "home-model"
+
+
 @pytest.mark.parametrize("provider", ["openai", "azure"])
 @pytest.mark.parametrize("skip_authentication", [False, True])
 async def test_sdk_resources_prepared_off_loop_before_debug_wrapper(
