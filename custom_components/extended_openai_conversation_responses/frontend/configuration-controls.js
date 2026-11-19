@@ -34,12 +34,12 @@ export function configurationControlValue(control) {
   }
   if (control.dataset?.type === "boolean" || control.type === "checkbox") return Boolean(control.checked);
   if (control.dataset?.type === "number") {
-    if (control.validity?.badInput) return value;
+    if (control.validity?.badInput || (typeof value === "string" && !value.trim())) return value;
     if (value === "true" || value === "false") return value === "true";
     const number = Number(value);
     // Keep malformed recovery text for validation. JSON converts NaN and
     // Infinity to null, and empty recovery text does not specify zero.
-    return Number.isFinite(number) && (control.type !== "text" || value.trim()) ? number : value;
+    return Number.isFinite(number) ? number : value;
   }
   if (key === "skills") return skillNamesFromText(value);
   if (key?.startsWith("guest_readable_") || key?.startsWith("guest_controllable_")) {

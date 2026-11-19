@@ -2208,7 +2208,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
       // Omission asks the backend to start now, independently of browser time.
-      const start = now ? undefined : root.querySelector("#guest-start")?.value;
+      const startInput = root.querySelector("#guest-start");
+      const start = now ? undefined : startInput?.value;
       const endInput = root.querySelector("#guest-end");
       const end = endInput?.value;
       const status = this._result?.status || {};
@@ -2219,6 +2220,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         return value;
       };
       try {
+        if (!now && startInput?.validity?.badInput) {
+          startInput.focus();
+          throw new Error("Complete the start time or leave it empty to start now.");
+        }
         if (!indefinite && (!end || !endInput.checkValidity())) {
           throw new Error("Choose an end time or select Remain active indefinitely.");
         }

@@ -402,7 +402,7 @@ def _prepare_enabled(
         ).persisted
     updates = {CONF_FUNCTION_GROUPS if group else CONF_FUNCTION_TOOLS: selected}
     normalized = merge_agent_config(raw, updates, provider=provider)
-    return project_agent_config_updates(raw, updates, normalized)
+    return project_agent_config_updates(raw, updates, normalized, provider=provider)
 
 
 def prepare_function_tools_enabled(

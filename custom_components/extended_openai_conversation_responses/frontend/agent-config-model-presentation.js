@@ -1,4 +1,4 @@
-import {apiPathSelectable, modelProviderForPanel, parameterControlState} from "./model-catalog.js";
+import {apiPathSelectable, capabilityModelForPanel, modelProviderForPanel, parameterControlState} from "./model-catalog.js";
 
 export function reasoningEffortOptionsForResult(result = {}) {
   const values = result?.model_capabilities?.reasoning_effort_options;
@@ -28,10 +28,10 @@ function toolsRequired(config) {
 
 export function modelCapabilitiesForDraft(panel) {
   const config = panel?._draft || panel?._result?.config || {};
-  const model = String(config.azure_model || config.chat_model || "");
+  const model = capabilityModelForPanel(panel, config);
   const catalog = panel?._modelCatalogData;
   const saved = panel?._result?.config;
-  const fallback = saved && String(saved.azure_model || saved.chat_model || "") !== model
+  const fallback = saved && capabilityModelForPanel(panel, saved) !== model
     ? {} : panel?._result?.model_capabilities || {};
   if (catalog?.requested_model !== model || (catalog.requested_provider && catalog.requested_provider !== modelProviderForPanel(panel))) return fallback;
   if (catalog.model_capabilities) return catalog.model_capabilities;
@@ -45,7 +45,8 @@ export function modelCapabilitiesForDraft(panel) {
 export function modelFieldPresentation(panel, key, value) {
   const config = panel?._draft || panel?._result?.config || {};
   const catalog = panel?._modelCatalogData;
-  const data = catalog?.requested_model === String(config.azure_model || config.chat_model || "") ? catalog : null;
+  const data = catalog?.requested_model === capabilityModelForPanel(panel, config)
+    && (!catalog.requested_provider || catalog.requested_provider === modelProviderForPanel(panel)) ? catalog : null;
   const metadata = modelCapabilitiesForDraft(panel);
   if (key === "chat_model" && data) {
     const note = metadata.status === "deprecated"

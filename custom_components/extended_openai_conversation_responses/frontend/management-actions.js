@@ -5,6 +5,7 @@ import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
 import {SETTING_LOOKUP} from "./management-setting-lookup.js";
 import {focusManagementSetting} from "./frontend-navigation.js";
 import {voiceMappingDraftError} from "./voice-mapping-draft.js";
+import {configKeyForControl} from "./configuration-controls.js";
 import {pendingRetentionFields} from "./management-state-safety.js";
 
 function fieldErrorKey(key) {
@@ -128,14 +129,21 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
-  const badNumber = [...(panel.shadowRoot?.querySelectorAll?.('[data-type="number"]') || [])]
-    .find(control => control.validity?.badInput);
+  const numericControls = [...(panel.shadowRoot?.querySelectorAll?.('input[data-type="number"]') || [])];
+  const badNumber = numericControls.find(control => control.validity?.badInput);
   if (badNumber) {
     badNumber.reportValidity();
     return;
   }
+  const blankNumber = numericControls.find(control => control.value === ""
+    && panel._eocDirtyConfigKeys?.has(configKeyForControl(control)));
+  if (blankNumber) {
+    showErrors(panel, {[configKeyForControl(blankNumber)]: "Enter a number."});
+    focusManagementSetting(blankNumber);
+    return;
+  }
   const mappingError = voiceMappingDraftError(panel);
-  if (mappingError) {
+  if (mappingError && panel._draft.voice_scope_policy === "device_mapping") {
     showErrors(panel, {voice_device_mappings:mappingError});
     panel._toast?.(mappingError, true);
     return;
@@ -171,9 +179,16 @@ async function saveConfiguration(panel, button) {
     voiceDefaultActive:submitted.voice_scope_policy === "default_user" || (submitted.voice_scope_policy === "device_mapping" && submitted.voice_unmapped_policy === "default_user")};
   panel._syncConfigDirty?.();
   const dirty = panel._eocDirtyConfigKeys || new Set();
-  const changed = Object.fromEntries([...dirty].filter(key => key !== "__title" && Object.hasOwn(submitted, key)).map(key => [key, submitted[key]]));
+  // Invalid assignment rows remain an editor draft while another policy is
+  // active. Do not persist the last valid intermediate mapping in their place.
+  const changed = Object.fromEntries([...dirty].filter(key => key !== "__title"
+    && !(mappingError && key === "voice_device_mappings") && Object.hasOwn(submitted, key)).map(key => [key, submitted[key]]));
   submission.fields = Object.keys(changed);
   submission.writesTitle = dirty.has("__title");
+  if (mappingError && !submission.fields.length && !submission.writesTitle) {
+    panel._toast?.("Choose Use a device assignment to finish or remove the unfinished assignment.", true);
+    return;
+  }
   panel._eocConfigurationSubmission = submission;
   panel._configurationSaving = true;
   // Disabling Save can blur it before a network response arrives. Retain that
@@ -214,7 +229,7 @@ async function saveConfiguration(panel, button) {
     requireMutationAcknowledgement(result?.valid === true && result?.config && typeof result.config === "object", "saving configuration");
     panel._eocPendingRetention = null;
     await completeConfigurationAcknowledgement(panel, result, submission, {
-      message:"Changes saved",
+      message:mappingError ? "Changes saved. The unfinished Voice assignment remains a draft." : "Changes saved",
       refresh:() => {
         showErrors(panel, result.errors || {});
         if (panel._viewKey?.() === submission.view) panel._result = panel._configData;

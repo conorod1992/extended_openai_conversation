@@ -10,7 +10,7 @@ const cases = [
   [{dataset:{config:"web_search",type:"boolean"}, checked:false, value:"on"}, false],
   [{dataset:{memoryConfig:"memory_auto_retrieve_limit",type:"number"}, value:"3"}, 3],
   [{dataset:{config:"temperature",type:"number"}, value:"0"}, 0],
-  [{dataset:{config:"temperature",type:"number"}, type:"number", value:""}, 0],
+  [{dataset:{config:"temperature",type:"number"}, type:"number", value:""}, ""],
   [{dataset:{config:"temperature",type:"number"}, type:"number", value:"", validity:{badInput:true}}, ""],
   ...[["true", true], ["false", false], ["0", 0], ["0.25", 0.25], ["", ""],
       ["  ", "  "], ["typo", "typo"], ["1e999", "1e999"]].map(([value, expected]) =>

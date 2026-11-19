@@ -370,13 +370,19 @@ def preserve_legacy_guest_policy(
     return normalized
 
 
-def _agent_model_changed(
-    current: Mapping[str, Any], updates: Mapping[str, Any]
+def _reasoning_model_id(config: Mapping[str, Any], provider: str | None) -> str:
+    return str(
+        (config.get("azure_model") if not provider or provider == "azure" else None)
+        or config.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+    )
+
+
+def _agent_reasoning_model_changed(
+    current: Mapping[str, Any], updates: Mapping[str, Any], provider: str | None
 ) -> bool:
-    """Recognize the same model transition for validation and persistence."""
-    return any(
-        key in updates and updates[key] != current.get(key)
-        for key in (CONF_CHAT_MODEL, "azure_model")
+    """Whether an edit changes the model that determines reasoning options."""
+    return _reasoning_model_id(current, provider) != _reasoning_model_id(
+        {**current, **updates}, provider
     )
 
 
@@ -428,10 +434,12 @@ def project_agent_config_updates(
     current: Mapping[str, Any],
     updates: Mapping[str, Any],
     normalized: Mapping[str, Any],
+    *,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Persist submitted edits, including reasoning reset on a model transition."""
     changed = set(updates)
-    if _agent_model_changed(current, updates):
+    if _agent_reasoning_model_changed(current, updates, provider):
         changed.add(CONF_REASONING_EFFORT)
     return project_agent_config_fields(current, changed, normalized)
 
@@ -998,10 +1006,7 @@ def _configuration_reasoning_context(
     supported by either installed provider contract until a destination is known.
     """
     provider = provider or ("azure" if config.get("azure_model") else None)
-    model = str(
-        (config.get("azure_model") if provider == "azure" else None)
-        or config.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
-    )
+    model = _reasoning_model_id(config, provider)
     options = get_reasoning_effort_options(model, provider=provider)
     if provider is None:
         options = list(
@@ -1141,9 +1146,12 @@ def preserve_unselected_archive_retention(
     retention = normalized_agent_integer(
         current, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
     )
-    if normalized_agent_integer(
-        target, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
-    ) < retention:
+    if (
+        normalized_agent_integer(
+            target, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+        )
+        < retention
+    ):
         return {**target, CONF_ARCHIVE_RETENTION_DAYS: retention}
     return target
 
@@ -1425,7 +1433,7 @@ def merge_agent_config(
         # Untouched fields belong to an existing agent, not a new collection edit.
         # Decode before merging so legacy falsy values and YAML null stay distinct.
         known[CONF_FUNCTION_TOOLS] = parse_configured_function_tools(current) or []
-    model_changed = _agent_model_changed(current, updates)
+    model_changed = _agent_reasoning_model_changed(current, updates, provider)
     if model_changed and CONF_REASONING_EFFORT not in updates:
         # A model change with no explicit effort should use the new model's
         # recommended profile. Retaining the prior model's effort can make a

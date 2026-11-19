@@ -28,6 +28,11 @@ export function modelProviderForPanel(panel) {
     || (panel._draft?.azure_model || panel._configData?.config?.azure_model ? "azure" : "openai");
 }
 
+export function capabilityModelForPanel(panel, config) {
+  const binding = modelProviderForPanel(panel) === "azure" ? config?.azure_model : null;
+  return String(binding || config?.chat_model || "");
+}
+
 export async function lookupModelData(panel, model = "", action = "lookup", isCurrent = () => true) {
   const request={type:"extended_openai_conversation_responses/model_catalog",action,model};
   const provider = modelProviderForPanel(panel);
@@ -162,7 +167,10 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
       const config = panel._draft || panel._result?.config || {};
       const azure = panel.shadowRoot?.querySelector('[data-config="azure_model"]');
       const chat = panel.shadowRoot?.querySelector('[data-config="chat_model"]');
-      return String((azure ? azure.value : config.azure_model) || (chat ? chat.value : config.chat_model) || "");
+      return capabilityModelForPanel(panel, {
+        azure_model: azure ? azure.value : config.azure_model,
+        chat_model: chat ? chat.value : config.chat_model,
+      });
     };
     const model = capabilityModel();
     const ownsControls = () => panel._eocModelDataActionToken === token

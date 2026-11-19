@@ -1406,7 +1406,9 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
             hass, entry, subentry, normalized
         )
         _require_agent_config_revision(subentry, message["revision"])
-    persisted = project_agent_config_updates(subentry.data, updates, normalized)
+    persisted = project_agent_config_updates(
+        subentry.data, updates, normalized, provider=provider
+    )
     saved_title = title.strip() if isinstance(title, str) else subentry.title
     refresh_local_handling = _local_handling_config_changed(
         subentry.data, persisted, updates
@@ -1757,7 +1759,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 hass, entry, subentry, normalized
             )
             _require_agent_config_revision(subentry, message["revision"])
-        normalized = project_agent_config_updates(subentry.data, updates, normalized)
+        normalized = project_agent_config_updates(
+            subentry.data, updates, normalized, provider=provider
+        )
         requested_title = message.get("title")
         saved_title = (
             validate_agent_title(requested_title)

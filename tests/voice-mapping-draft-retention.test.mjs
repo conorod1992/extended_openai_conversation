@@ -5,7 +5,9 @@ import {voiceMappingDraft, updateVoiceMappingRows, voiceMappingDraftError, voice
 const mappings={office:"user:owner",living:"shared:household"};
 function setup() {
   const f=fixture();
-  for(const record of f.state.records.values()) record.config.voice_device_mappings=structuredClone(mappings);
+  for(const record of f.state.records.values()) Object.assign(record.config, {
+    voice_scope_policy:"device_mapping", voice_device_mappings:structuredClone(mappings),
+  });
   return {...f,panel:f.create()};
 }
 for (const failure of ["duplicate","unresolved","pending","empty"]) {
@@ -45,5 +47,17 @@ for (const failure of ["duplicate","unresolved","pending","empty"]) {
   panel._clearConfigDraft();
   assert.equal(voiceMappingDraftDirty(panel),false);
   assert.equal([...panel._unsavedState.scopes.keys()].some(key=>key.startsWith("voice-mapping-rows:")),false);
+}
+{
+  const {state,panel}=setup();
+  const rows=[...voiceMappingDraft(panel).rows,{id:"unfinished",deviceId:"",owner:"unretained",satellite:"",lookup:""}];
+  updateVoiceMappingRows(panel,rows);
+  panel._draft.voice_scope_policy="shared";
+  panel._syncConfigDirty();
+  await saveConfiguration(panel,{});
+  assert.deepEqual(state.writes[0].config,{voice_scope_policy:"shared"});
+  assert.deepEqual(panel._configData.config.voice_device_mappings,mappings);
+  assert.equal(captureVoiceMappingDraft(panel).length,3,"a full response to a different field cannot consume unfinished rows");
+  assert.ok(voiceMappingDraftError(panel));
 }
 console.log("Voice invalid row retention, central save guard, recovery, discard and acknowledgement tests passed");
