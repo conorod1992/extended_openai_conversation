@@ -129,7 +129,7 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
-  for (const control of panel.shadowRoot.querySelectorAll('input[data-type=number]')) {
+  for (const control of panel.shadowRoot?.querySelectorAll?.('input[data-type=number]') || []) {
     if (control.disabled) continue;
     const key = configKeyForControl(control), timeout = isTimeoutKey(key);
     if (control.validity?.badInput) {

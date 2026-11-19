@@ -1,1 +1,0 @@
-import{n as e,r as t,t as n}from"./retention-settings-ui-Ba58O-vL.js";export{n as bindRetentionSettings,e as renderRetentionSettings,t as usageRetentionDeletionNotice};
