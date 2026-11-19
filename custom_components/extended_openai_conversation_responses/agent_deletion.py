@@ -201,9 +201,17 @@ async def _async_delete_discovered_agent(
             "can be read and updated (%s)",
             err,
         )
-        _schedule_cleanup_retry(hass)
-        return False
-    return True
+    except OSError as err:
+        # Preserve the failed store and its owner for the next reconciliation.
+        # An unrelated assistant's private files cannot block startup.
+        _LOGGER.warning(
+            "Private agent data cleanup deferred after a storage error (%s)",
+            type(err).__name__,
+        )
+    else:
+        return True
+    _schedule_cleanup_retry(hass)
+    return False
 
 
 async def async_delete_removed_subentries(hass: Any, entry: Any) -> None:

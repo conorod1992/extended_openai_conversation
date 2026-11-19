@@ -232,7 +232,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     setup_provider_credentials_websocket(hass)
     from .transfer_staging import async_get_transfer_staging
 
-    await async_get_transfer_staging(hass)
+    try:
+        await async_get_transfer_staging(hass)
+    except OSError as err:
+        _LOGGER.warning(
+            "Unable to prepare backup staging (%s). "
+            "Backup transfers will retry when requested",
+            type(err).__name__,
+        )
     setup_backup_transfer_websocket(hass)
     # Request Debug loads lazily from Management; register its asset routes
     # before exposing the panel itself.

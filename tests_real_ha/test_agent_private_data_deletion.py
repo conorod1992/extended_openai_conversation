@@ -10,6 +10,7 @@ from custom_components.extended_openai_conversation_responses import (
     delayed_tools,
     intercom,
     quiet_hours,
+    transfer_staging,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from homeassistant.components.frontend import DATA_PANELS
@@ -187,3 +188,55 @@ async def test_malformed_delayed_queue_defers_orphan_cleanup_without_blocking_st
     assert not Path(orphan.path).exists()
     assert await queue.async_load() == {"calls": [current.as_dict()]}
     assert scheduler._quarantined and not scheduler._tasks
+
+
+async def test_undeletable_orphan_does_not_block_setup(hass, real_store_io, monkeypatch):
+    entry = _entry()
+    entry.add_to_hass(hass)
+    orphan = Path(hass.config.path(
+        ".storage", f"{DOMAIN}.archive.{entry.entry_id}.deleted-assistant.metadata"
+    ))
+
+    def create_directory():
+        orphan.parent.mkdir(exist_ok=True)
+        orphan.mkdir()
+
+    await hass.async_add_executor_job(create_directory)
+    retries = []
+
+    def schedule(_hass, _delay, retry):
+        retries.append(retry)
+        return lambda: None
+
+    monkeypatch.setattr(agent_deletion, "async_call_later", schedule)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert "extended-openai" in hass.data[DATA_PANELS]
+    assert hass.services.has_service(DOMAIN, "broadcast")
+    assert orphan.is_dir() and retries
+
+    await hass.async_add_executor_job(orphan.rmdir)
+    await retries[-1](None)
+    assert "deleted-assistant" not in hass.data[agent_deletion.KNOWN_AGENTS][entry.entry_id]
+
+
+async def test_staging_failure_keeps_assistants_available_and_retries(hass, monkeypatch):
+    entry = _entry()
+    entry.add_to_hass(hass)
+
+    def inaccessible(_root):
+        raise PermissionError("staging is unavailable")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(transfer_staging, "_initialize_owner", inaccessible)
+        assert await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.LOADED
+        assert "extended-openai" in hass.data[DATA_PANELS]
+        assert hass.services.has_service(DOMAIN, "broadcast")
+        assert transfer_staging._OWNER_KEY not in hass.data
+
+    directory = await transfer_staging.async_get_transfer_staging(hass)
+    assert directory.is_dir()
+    await transfer_staging.async_close_transfer_staging(hass)

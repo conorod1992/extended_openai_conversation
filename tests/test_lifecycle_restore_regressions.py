@@ -117,8 +117,7 @@ async def test_removed_subentry_remains_known_until_cleanup_succeeds(hass, monke
     hass.data[agent_deletion.KNOWN_AGENTS] = {"entry": {"kept", "removed"}}
     delete = AsyncMock(side_effect=OSError("storage unavailable"))
     monkeypatch.setattr(agent_deletion, "async_delete_agent_data", delete)
-    with pytest.raises(OSError):
-        await agent_deletion.async_delete_removed_subentries(hass, entry)
+    await agent_deletion.async_delete_removed_subentries(hass, entry)
     assert "removed" in hass.data[agent_deletion.KNOWN_AGENTS]["entry"]
     delete.side_effect = None
     await agent_deletion.async_delete_removed_subentries(hass, entry)
