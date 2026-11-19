@@ -1210,7 +1210,11 @@ async def test_home_assistant_storage_delegates_to_private_atomic_stores(monkeyp
         async def async_save(self, data):
             self.saved.append(data)
 
+        def require_migrated(self):
+            pass
+
     monkeypatch.setattr(archive_module, "PropagatingWriteStore", FakeStore)
+    monkeypatch.setattr(archive_module, "_ArchiveMetadataStore", FakeStore)
     hass = object()
     storage = HomeAssistantArchiveStorage(hass, "entry", "agent")
 
@@ -1226,6 +1230,7 @@ async def test_home_assistant_storage_delegates_to_private_atomic_stores(monkeyp
     await storage.async_save_partition("2026-09", {"turns": []})
 
     assert len(created) == 3
+    assert [version for _, version, _, _ in created] == [2, 1, 1]
     assert created[0][3]["private"] is True
     assert created[0][3]["atomic_writes"] is True
     assert created[0][3]["serialize_in_event_loop"] is False

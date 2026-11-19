@@ -5,19 +5,24 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from heapq import heappush, heapreplace
+import json
 from typing import Any
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .conversation_archive import (
+    MAX_EXCERPT_LENGTH,
+    ArchiveSession,
+    ArchiveTurn,
     ConversationArchive,
-    _excerpt,
+    _excerpt_with_match,
     _local_date_bounds,
     _normalize,
     _parse_time,
     _search_features,
     _tokens,
+    _turn_payload,
 )
 from .management_result_limits import (
     MANAGEMENT_ARCHIVE_LIST_PAGE_MAX,
@@ -29,6 +34,7 @@ from .management_result_limits import (
     page_from_iterable,
     page_metadata,
 )
+from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .usage import UsageRun
 
 MAX_MANAGEMENT_HISTORY_OFFSET = 10_000
@@ -354,6 +360,41 @@ async def archive_list_page(
     )
 
 
+def _archive_search_hit(
+    session: ArchiveSession,
+    turn: ArchiveTurn,
+    turn_index: int,
+    date: str,
+    query: str,
+) -> dict[str, Any]:
+    excerpt, match = _excerpt_with_match(
+        f"{turn.user_text}\n{turn.assistant_text}", query
+    )
+    # Transcript cursors index the concatenated original messages without the
+    # separator the search uses to keep words in different messages distinct.
+    if match > len(turn.user_text):
+        match -= 1
+    text_offset = max(0, match - MAX_EXCERPT_LENGTH // 3)
+    if text_offset:
+        payload = {"session": asdict(session), "turns": [_turn_payload(turn)]}
+        # Keep ordinary turns intact. Include JSON escapes in this estimate
+        # and allow room for the well-bounded pager metadata and tool wrapper.
+        if len(json.dumps(payload, ensure_ascii=False)) <= (
+            MAX_MODEL_TOOL_RESULT_CHARACTERS - 2048
+        ):
+            text_offset = 0
+    return {
+        "session_id": session.session_id,
+        "turn_id": turn.turn_id,
+        "turn_index": turn_index,
+        "text_offset": text_offset,
+        "date": date,
+        "timestamp": turn.timestamp,
+        "title": session.title,
+        "excerpt": excerpt,
+    }
+
+
 def _archive_search_sync(
     sessions: dict[str, Any],
     turns_by_session: dict[str, list[Any]],
@@ -409,15 +450,13 @@ def _archive_search_sync(
     ranked = sorted(heap, key=lambda item: item[:4], reverse=True)
     page = ranked[offset : offset + limit]
     records = [
-        {
-            "session_id": session.session_id,
-            "turn_id": turn.turn_id,
-            "turn_index": turn_index,
-            "date": timestamp.astimezone(time_zone).date().isoformat(),
-            "timestamp": turn.timestamp,
-            "title": session.title,
-            "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
-        }
+        _archive_search_hit(
+            session,
+            turn,
+            turn_index,
+            timestamp.astimezone(time_zone).date().isoformat(),
+            query,
+        )
         for _, timestamp, _, _, session, turn, turn_index in page
     ]
     return {

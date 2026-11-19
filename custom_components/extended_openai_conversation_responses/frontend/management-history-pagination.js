@@ -180,7 +180,9 @@ function appendTurnPager(panel, body, sessionId, data, history, future, current)
   const status = document.createElement("small");
   status.className = "meta";
   status.style.marginRight = "auto";
-  status.textContent = pageLabel(data, "turns");
+  status.textContent = pageLabel(data, "turns")
+    + (integer(data.text_offset) ? " · Starts mid-turn" : "")
+    + (integer(data.next_text_offset) ? " · Turn continues" : "");
   pager.append(status);
 
   const hasEarlier = integer(data.start_turn) > 0 || integer(data.text_offset) > 0;
@@ -238,7 +240,7 @@ export function bindConversationActions(panel) {
   const host = root.querySelector("#archive-query")?.closest(".content-card");
   if (!host || host.__eocHistoryActionsBound) return;
   host.__eocHistoryActionsBound = true;
-  root.querySelectorAll(".open-session, .view-session").forEach(element => panel._activate(element, () => openSession(panel, element.dataset.id, element.dataset.startTurn)));
+  root.querySelectorAll(".open-session, .view-session").forEach(element => panel._activate(element, () => openSession(panel, element.dataset.id, element.dataset.startTurn, element.dataset.textOffset)));
   root.querySelector("#archive-search")?.addEventListener("click", () => searchArchive(panel));
   root.querySelector("#archive-query")?.addEventListener("keydown", event => { if (event.key === "Enter") void searchArchive(panel); });
 }
@@ -327,6 +329,9 @@ export function renderConversations(panel) {
     : panel._eocHistoryPagePending && panel._eocHistoryPendingSessions === result.sessions ? "Loading results…"
       : completedMode === "search" ? "No conversations match this search." : "No retained conversations in this scope.";
   const content = `<div data-eoc-active-conversations>${activeConversationMarkup(panel, result)}</div>
-    <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-start-turn="${integer(item.turn_index)}" data-id="${panel._e(item.session_id)}"><h3>${panel._e(item.title || "Untitled conversation")}</h3><p class="meta">${panel._e(panel._formatDate(item.last_message_at))} · ${panel._e(String(item.turn_count))} turns · ${panel._e(item.scope_source)}</p>${item.excerpt ? `<p class="search-excerpt">${panel._e(item.excerpt)}</p>` : ""}</div><div class="actions"><button type="button" class="secondary view-session" data-start-turn="${integer(item.turn_index)}" data-id="${panel._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${panel._e(item.session_id)}">Delete</button></div></article>`).join("") || panel._empty(emptyMessage)}</div></section>`;
+    <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => {
+      const cursor = `data-start-turn="${integer(item.turn_index)}" data-text-offset="${integer(item.text_offset)}" data-id="${panel._e(item.session_id)}"`;
+      return `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" ${cursor}><h3>${panel._e(item.title || "Untitled conversation")}</h3><p class="meta">${panel._e(panel._formatDate(item.last_message_at))} · ${panel._e(String(item.turn_count))} turns · ${panel._e(item.scope_source)}</p>${item.excerpt ? `<p class="search-excerpt">${panel._e(item.excerpt)}</p>` : ""}</div><div class="actions"><button type="button" class="secondary view-session" ${cursor}>View</button><button type="button" class="danger delete-session" data-id="${panel._e(item.session_id)}">Delete</button></div></article>`;
+    }).join("") || panel._empty(emptyMessage)}</div></section>`;
   return content;
 }

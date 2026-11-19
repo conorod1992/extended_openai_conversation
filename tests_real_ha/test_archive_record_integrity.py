@@ -26,10 +26,105 @@ from custom_components.extended_openai_conversation_responses.persistence_harden
 from custom_components.extended_openai_conversation_responses.storage_recovery_diagnostics import (
     storage_recovery_snapshot,
 )
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 from tests.test_conversation_archive import _session, _turn
 from tests_real_ha.test_cross_feature_acceptance import _agent
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
+
+
+@pytest.mark.parametrize("pending_append", [False, True])
+@pytest.mark.usefixtures("real_store_io")
+async def test_archive_v1_migrates_before_an_old_writer_can_open_it(
+    hass, monkeypatch, pending_append
+):
+    storage = HomeAssistantArchiveStorage(hass, "archive-entry", "archive-agent")
+    old_metadata = Store(hass, 1, storage._metadata.key, private=True, atomic_writes=True)
+    month = "2026-09"
+    session = asdict(_session(turn_count=2 if pending_append else 1))
+    turn = asdict(_turn(sequence=0 if pending_append else None))
+    metadata = {"sessions": [session], "partitions": [month], "active": {}}
+    if pending_append:
+        metadata["pending_append"] = {
+            "turn": asdict(_turn(turn_id="turn-recovered", sequence=1)),
+            "partition_existed": True,
+        }
+    else:
+        session.pop("last_activity_at")
+        turn.pop("sequence")
+    await old_metadata.async_save(metadata)
+    await storage.async_save_partition(month, {"turns": [turn]})
+
+    async def assert_old_writer_refuses():
+        with pytest.raises((HomeAssistantError, NotImplementedError)):
+            await old_metadata.async_load()
+
+    original_save = storage.async_save_partition
+
+    async def save_partition(partition, payload):
+        await assert_old_writer_refuses()
+        await original_save(partition, payload)
+
+    monkeypatch.setattr(storage, "async_save_partition", save_partition)
+    archive = ConversationArchive(storage, "archive-agent")
+    await archive.async_initialize()
+    files = [Path(old_metadata.path), Path(storage._partition_store(month).path)]
+
+    def read_all():
+        return [path.read_bytes() for path in files]
+
+    before = await hass.async_add_executor_job(read_all)
+    await assert_old_writer_refuses()
+    assert await hass.async_add_executor_job(read_all) == before
+
+    reopened = ConversationArchive(
+        HomeAssistantArchiveStorage(hass, "archive-entry", "archive-agent"),
+        "archive-agent",
+    )
+    await reopened.async_initialize()
+    result = await reopened.async_get("user:alice", "session-1")
+    assert [row["turn_id"] for row in result["turns"]] == (
+        ["turn-1", "turn-recovered"] if pending_append else ["turn-1"]
+    )
+    assert "pending_append" not in await storage.async_load_metadata()
+
+
+@pytest.mark.usefixtures("real_store_io")
+async def test_archive_v1_remains_readable_when_migration_write_fails(
+    hass, monkeypatch
+):
+    storage = HomeAssistantArchiveStorage(hass, "archive-entry", "archive-agent")
+    old_metadata = Store(hass, 1, storage._metadata.key, private=True, atomic_writes=True)
+    month = "2026-09"
+    session = asdict(_session())
+    session.pop("last_activity_at")
+    turn = asdict(_turn())
+    turn.pop("sequence")
+    await old_metadata.async_save({"sessions": [session], "partitions": [month]})
+    await storage.async_save_partition(month, {"turns": [turn]})
+    archive = ConversationArchive(storage, "archive-agent")
+
+    async def fail_save(_data):
+        raise OSError("Metadata write unavailable")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(storage._metadata, "_async_save_owned", fail_save)
+        await archive.async_initialize()
+        assert (await archive.async_get("user:alice", "session-1"))["turns"][0][
+            "turn_id"
+        ] == "turn-1"
+        with pytest.raises(OSError, match="metadata must be upgraded"):
+            await storage.async_save_partition(month, {"turns": []})
+        with pytest.raises(OSError, match="Metadata write unavailable"):
+            await archive.async_delete_session("user:alice", "session-1")
+        assert await storage.async_load_partition(month) == {"turns": [turn]}
+        assert (await old_metadata.async_load())["sessions"] == [session]
+
+    await archive.async_delete_session("user:alice", "session-1")
+    with pytest.raises((HomeAssistantError, NotImplementedError)):
+        await old_metadata.async_load()
+    assert archive.stats()["turn_count"] == 0
 
 
 @pytest.mark.usefixtures("real_store_io")

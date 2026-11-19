@@ -41,7 +41,8 @@ from .storage_namespaces import ARCHIVE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
-STORAGE_VERSION = 1
+STORAGE_VERSION = 2
+_PARTITION_STORAGE_VERSION = 1
 
 MAX_SEARCH_LIMIT = 50
 MAX_SEARCH_OFFSET = 10_000
@@ -291,6 +292,54 @@ def _stored_archive_partitions(metadata_path: str, prefix: str) -> set[str]:
     return result
 
 
+class _ArchiveMetadataStore(PropagatingWriteStore):
+    """Guard the archive and its transaction journal against old writers."""
+
+    _migrating_payload: dict[str, Any] | None = None
+    migration_deferred = False
+
+    async def _async_load_data(self) -> Any:
+        try:
+            payload = await super()._async_load_data()
+        except OSError:
+            previous = self._migrating_payload
+            if (
+                previous is None
+                or "pending_append" in previous
+                or "pending_partitions" in previous
+                or self.corruption_unavailable
+            ):
+                raise
+            # A plain v1 snapshot is readable during a write outage. Guard any
+            # partition change until a v2 metadata write actually succeeds.
+            self.migration_deferred = True
+            return previous
+        else:
+            self.migration_deferred = False
+            return payload
+        finally:
+            self._migrating_payload = None
+
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        if old_major_version != 1:
+            raise NotImplementedError
+        # The current decoder already reads both generations of v1 payloads.
+        # Store commits the new version before the archive replays any journal.
+        if isinstance(old_data, dict):
+            self._migrating_payload = old_data
+        return old_data
+
+    async def async_save(self, data: dict[str, Any]) -> None:
+        await super().async_save(data)
+        self.migration_deferred = False
+
+    def require_migrated(self) -> None:
+        if self.migration_deferred:
+            raise OSError("Archive metadata must be upgraded before changing history")
+
+
 class HomeAssistantArchiveStorage:
     """Small metadata store plus independent monthly transcript stores."""
 
@@ -299,7 +348,9 @@ class HomeAssistantArchiveStorage:
         self._hass = hass
         self._prefix = prefix
         self._agent_identity = (entry_id, subentry_id)
-        self._metadata = PropagatingWriteStore(
+        # All production reads and writes enter through this metadata store.
+        # An older reader must stop here before it can replace any partition.
+        self._metadata = _ArchiveMetadataStore(
             hass,
             STORAGE_VERSION,
             f"{prefix}.metadata",
@@ -311,7 +362,7 @@ class HomeAssistantArchiveStorage:
     def _partition_store(self, partition: str) -> Store[dict[str, Any]]:
         return PropagatingWriteStore(
             self._hass,
-            STORAGE_VERSION,
+            _PARTITION_STORAGE_VERSION,
             f"{self._prefix}.turns.{partition}",
             private=True,
             atomic_writes=True,
@@ -328,10 +379,12 @@ class HomeAssistantArchiveStorage:
         return await self._partition_store(partition).async_load()
 
     async def async_save_partition(self, partition: str, data: dict[str, Any]) -> None:
+        self._metadata.require_migrated()
         await self._partition_store(partition).async_save(data)
 
     async def async_remove_partition(self, partition: str) -> None:
         """Remove an obsolete monthly transcript store."""
+        self._metadata.require_migrated()
         await self._partition_store(partition).async_remove()
 
     async def async_stage_journal_recovery(
@@ -2513,16 +2566,37 @@ def _excerpt_match_offset(value: str, query: str) -> int:
     return 0
 
 
-def _excerpt(value: str, query: str) -> str:
-    normalized = _SPACE_PATTERN.sub(" ", unicodedata.normalize("NFC", value)).strip()
+def _excerpt_with_match(value: str, query: str) -> tuple[str, int]:
+    """Build a display excerpt and locate its match in the original text."""
+    normalized = unicodedata.normalize("NFC", value)
     index = _excerpt_match_offset(normalized, query)
-    start = max(0, index - MAX_EXCERPT_LENGTH // 3)
-    excerpt = normalized[start : start + MAX_EXCERPT_LENGTH]
-    return (
+    display = _SPACE_PATTERN.sub(" ", normalized).strip()
+    display_index = len(_SPACE_PATTERN.sub(" ", normalized[:index]).lstrip())
+    start = max(0, display_index - MAX_EXCERPT_LENGTH // 3)
+    excerpt = (
         ("…" if start else "")
-        + excerpt
-        + ("…" if start + MAX_EXCERPT_LENGTH < len(normalized) else "")
+        + display[start : start + MAX_EXCERPT_LENGTH]
+        + ("…" if start + MAX_EXCERPT_LENGTH < len(display) else "")
     )
+    if index and normalized != value:
+        # NFC can compose several original code points into one. Match starts
+        # are token or CJK-character boundaries. Count the equivalent
+        # decomposed code points to recover the original boundary.
+        remaining = len(unicodedata.normalize("NFD", normalized[:index]))
+        for original_index, character in enumerate(value):
+            width = (
+                1
+                if character.isascii()
+                else len(unicodedata.normalize("NFD", character))
+            )
+            if remaining < width:
+                return excerpt, original_index
+            remaining -= width
+    return excerpt, index
+
+
+def _excerpt(value: str, query: str) -> str:
+    return _excerpt_with_match(value, query)[0]
 
 
 def _parse_time(value: str) -> datetime:

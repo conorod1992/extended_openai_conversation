@@ -77,4 +77,6 @@ Normal users can manage only their personal memory/archive scope. Home Assistant
 
 Manage archive retention and model search, and review or delete transcripts, from **Extended OpenAI → Data & Memory → Conversation history**. Configure device ownership under **Assistant → Voice & identity**. Select the intended conversation agent before changing its settings; conversation-agent reconfiguration in **Devices & services** points to this panel.
 
+The Archive upgrades its local storage format when opened. Older releases such as 6.8.3 leave the upgraded history on disk and cannot open it. Restore a pre-upgrade Home Assistant backup if you need access to the history while running the older release. Reinstalling the newer integration can reopen the upgraded Archive.
+
 The integration's completion event now contains metadata only, rather than transcript text. Upgrading does not remove transcripts that older event consumers or Home Assistant Recorder already saved. See [Completion notifications and Recorder](credential-security.md#completion-notifications-and-recorder) for the event fields and upgrade considerations.
