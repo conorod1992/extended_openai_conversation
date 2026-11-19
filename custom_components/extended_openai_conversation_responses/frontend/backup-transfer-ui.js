@@ -2,7 +2,7 @@ import {usageRetentionDeletionNotice} from "./retention-settings-ui.js";
 import {captureAuthentication} from "./authentication-presentation.js";
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
 import {bindExportOptions, TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
-import {backupSummaryLines} from "./backup-summary.js";
+import {backupSummaryLines, unassignedTemporaryMemoryNotice} from "./backup-summary.js";
 import {reviewSharingExport} from "./sharing-review.js";
 import {callMutation, captureConfigurationSubmission, captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft} from "./configuration-acknowledgement.js";
 export {backupSummaryLines};
@@ -313,6 +313,10 @@ export function restorePreviewSummaryLines(preview = {}) {
     ["guest_mode", `Guest Mode schedule ${preview.guest_mode_scheduled ? "included" : "inactive"}`],
   ];
   const summary = lines.filter(([section]) => sections.has(section)).map(([, line]) => line);
+  if (sections.has("temporary_memory")) {
+    const unassigned = unassignedTemporaryMemoryNotice(preview);
+    if (unassigned) summary.push(unassigned);
+  }
   const retentionNotice = restoreRetentionNotice(preview);
   if (retentionNotice) summary.push(retentionNotice);
   return summary;

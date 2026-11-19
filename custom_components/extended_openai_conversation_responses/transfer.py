@@ -70,7 +70,11 @@ from .secret_redaction import (
     restore_redacted_secrets,
 )
 from .sharing import SHARING_VERSION, project_sharing_sections
-from .temporary_memory import TemporaryMemoryRecord, async_get_temporary_memory
+from .temporary_memory import (
+    TemporaryMemoryRecord,
+    async_get_temporary_memory,
+    temporary_memory_record_counts,
+)
 from .usage import (
     UsageRequest,
     UsageRun,
@@ -165,6 +169,9 @@ class PreparedTransfer:
         sections = [
             section for section in SECTION_ORDER if section in self.available_sections
         ]
+        active_temporary, unassigned_temporary = temporary_memory_record_counts(
+            self.temporary_memories or ()
+        )
         return {
             "source_kind": self.source_kind,
             "mode": self.mode,
@@ -179,7 +186,8 @@ class PreparedTransfer:
                 else 0
             ),
             "persistent_memories": len(self.memories or []),
-            "temporary_memories": len(self.temporary_memories or []),
+            "temporary_memories": active_temporary,
+            "unassigned_legacy_temporary_memories": unassigned_temporary,
             "knowledge_sources": len(self.knowledge or []),
             "archive_sessions": len(self.archive_sessions or []),
             "archive_turns": len(self.archive_turns or []),

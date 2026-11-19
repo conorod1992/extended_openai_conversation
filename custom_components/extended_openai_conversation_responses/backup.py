@@ -59,6 +59,7 @@ from .temporary_memory import (
     TemporaryMemory,
     TemporaryMemoryRecord,
     async_get_temporary_memory,
+    temporary_memory_record_counts,
 )
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
 from .yaml_serialization import load_yaml_or_json
@@ -137,10 +138,14 @@ class PreparedRestore:
         return self.journaled_sections is None or section in self.journaled_sections
 
     def summary(self) -> dict[str, Any]:
+        active_temporary, unassigned_temporary = temporary_memory_record_counts(
+            self.temporary_memories
+        )
         return {
             "configuration": True,
             "persistent_memories": len(self.memories),
-            "temporary_memories": len(self.temporary_memories),
+            "temporary_memories": active_temporary,
+            "unassigned_legacy_temporary_memories": unassigned_temporary,
             "knowledge_sources": len(self.knowledge),
             "archive_sessions": len(self.archive_sessions),
             "archive_turns": len(self.archive_turns),

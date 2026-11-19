@@ -258,6 +258,7 @@ from .temporary_memory import (
     TemporaryMemory,
     TemporaryMemoryRecord,
     _owner_from_resolved_scope,
+    async_expire_existing_temporary_memory,
     async_get_temporary_memory,
     temporary_memory_as_dict,
 )
@@ -521,6 +522,12 @@ class ExtendedOpenAIAgentEntity(
 
         async def initialize_temporary_memory() -> None:
             if not temporary_configured:
+                try:
+                    await async_expire_existing_temporary_memory(
+                        self.hass, self.entry.entry_id, self.subentry.subentry_id
+                    )
+                except Exception:
+                    _LOGGER.exception("Unable to expire stored Temporary Memory")
                 return
             await async_ensure_optional_manager(
                 self,

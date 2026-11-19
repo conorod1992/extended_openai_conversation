@@ -55,7 +55,8 @@ def startup(monkeypatch):
     agent.hass = SimpleNamespace(
         async_create_background_task=start_background,
         data={},
-        config=SimpleNamespace(config_dir="/config"),
+        config=SimpleNamespace(config_dir="/config", path=lambda *parts: "/".join(parts)),
+        async_add_executor_job=AsyncMock(return_value=False),
         config_entries=SimpleNamespace(
             async_entries=Mock(return_value=[agent.entry]),
             async_get_entry=Mock(return_value=agent.entry),
@@ -144,7 +145,7 @@ async def test_archive_retention_remains_owned_by_the_configured_assistant(start
     agent = startup.agent
     conversation_archive.async_start_archive_retention(agent.hass)
     conversation_archive.async_start_archive_retention(agent.hass)
-    assert not agent._agent_ready.is_set()
+    assert agent._agent_ready is None
     await startup.background[0]
     startup.getters["archive"].return_value.async_prune.assert_awaited_once()
     startup.getters["archive"].reset_mock()

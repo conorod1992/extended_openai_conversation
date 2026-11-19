@@ -332,7 +332,7 @@ async def _booted_soak(config_dir, seed, scale):
             await callback(now)
             retention_callbacks += 1
 
-        # Exercise the real scheduled callback and entity-owned cancellation.
+        # Exercise the real scheduled callback and integration-owned cancellation.
         # Only the harness interval is accelerated; no claim of 24h elapsed time.
         return original_interval(hass, observed, timedelta(seconds=60))
 

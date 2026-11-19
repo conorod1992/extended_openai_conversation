@@ -25,6 +25,8 @@ before every injection, and are pruned at startup. Selection is local and bounde
 The model can add, supersede, or forget records only in the scope derived from the
 current request; it cannot choose another owner. Personal and Shared owners determine access; conversation and device continuity are metadata and do not grant access to another owner’s records.
 
+After an upgrade or restore, older conversation- or device-scoped records whose owner cannot be established keep their original expiry. They are excluded from prompts and appear as a count in diagnostics and backup previews.
+
 EOAI no longer classifies Temporary Memory content or categories to block secrets,
 credentials, financial information or sensitive personal topics. Current user statements override stored
 temporary facts. The Memories page has Long-term and Short-term views. **+ Add memory** on either tab opens one dialog with Memory, Type, Category and Owner; Short-term also asks for Expires using Home Assistant local date/time. The type defaults to the current tab and is fixed when editing.

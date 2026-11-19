@@ -155,3 +155,19 @@ assert.deepEqual(restorePreviewSummaryLines({
   usage_retention: {expired_runs: 0, expired_requests: 3},
   shortened_usage_retention: {usage_request_retention_days: 0},
 }), ["Agent configuration and Function Tools", "Usage history (1 runs, 0 requests)", "Usage retention removes 0 runs and 3 requests. Usage totals will be kept."]);
+
+
+const legacyTemporaryPreview = {
+  selected_sections: ['temporary_memory'],
+  temporary_memories: 1,
+  unassigned_legacy_temporary_memories: 2,
+};
+const legacyTemporaryLines = restorePreviewSummaryLines(legacyTemporaryPreview);
+assert.equal(legacyTemporaryLines[0], '1 active temporary memories');
+assert.match(legacyTemporaryLines[1], /2 legacy temporary memories have no verified owner/);
+assert.match(legacyTemporaryLines[1], /original expiry/);
+assert.match(legacyTemporaryLines[1], /Assistants cannot access them/);
+assert.deepEqual(restorePreviewSummaryLines({
+  ...legacyTemporaryPreview,
+  selected_sections: ['knowledge'],
+}), ['0 Knowledge sources']);
