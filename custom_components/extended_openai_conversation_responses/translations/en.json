@@ -7,6 +7,7 @@
         "error": {
             "cannot_connect": "Failed to connect",
             "invalid_auth": "Invalid authentication",
+            "invalid_provider_endpoint": "Check the provider Base URL and Azure API version, if applicable. A custom Base URL must be an absolute HTTP or HTTPS URL.",
             "unknown": "Unexpected error",
             "provider_forbidden": "Provider rejected access for these credentials or account permissions.",
             "provider_rate_limited": "Provider rate limit reached. Try again later.",

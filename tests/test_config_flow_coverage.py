@@ -243,6 +243,43 @@ async def test_initial_provider_setup_routes_to_simple_provider_specific_forms()
     assert CONF_SKIP_AUTHENTICATION not in azure_keys
 
 
+async def test_setup_endpoint_validation_still_runs_when_authentication_is_skipped():
+    flow = SimpleNamespace(
+        hass=MagicMock(),
+        _setup_data={CONF_API_KEY: "provider-key", CONF_API_PROVIDER: "openai"},
+        async_show_form=MagicMock(side_effect=_sync_result),
+        async_create_entry=MagicMock(side_effect=_sync_result),
+        add_suggested_values_to_schema=lambda schema, values: (
+            ExtendedOpenAIConversationConfigFlow.add_suggested_values_to_schema(
+                flow, schema, values
+            )
+        ),
+    )
+
+    async def finish(*args):
+        return await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
+            flow, *args
+        )
+
+    flow._async_finish_initial_setup = finish
+    with patch.object(
+        config_flow, "get_authenticated_client", new_callable=AsyncMock
+    ) as authenticate:
+        invalid = await ExtendedOpenAIConversationConfigFlow.async_step_openai_advanced(
+            flow, {CONF_BASE_URL: "provider.example/v1", CONF_SKIP_AUTHENTICATION: True}
+        )
+        assert invalid["errors"] == {"base": "invalid_provider_endpoint"}
+        authenticate.assert_not_awaited()
+        flow.async_create_entry.assert_not_called()
+
+        cleared = await ExtendedOpenAIConversationConfigFlow.async_step_openai_advanced(
+            flow, {CONF_BASE_URL: "", CONF_SKIP_AUTHENTICATION: True}
+        )
+        assert CONF_BASE_URL not in cleared["data"]
+        assert authenticate.await_args.kwargs["base_url"] is None
+        assert authenticate.await_args.kwargs["skip_authentication"] is True
+
+
 async def test_openai_credentials_error_retry_preserves_help_placeholders() -> None:
     """The same translated form description renders before and after errors."""
     flow = SimpleNamespace(

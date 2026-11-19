@@ -68,6 +68,7 @@
     "error": {
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+      "invalid_provider_endpoint": "Check the provider Base URL and Azure API version, if applicable. A custom Base URL must be an absolute HTTP or HTTPS URL.",
       "unknown": "[%key:common::config_flow::error::unknown%]",
       "provider_forbidden": "Provider rejected access for these credentials or account permissions.",
       "provider_rate_limited": "Provider rate limit reached. Try again later.",

@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from copy import deepcopy
 import logging
 from typing import Any
-from urllib.parse import urlsplit
 
 from openai import OpenAIError
 import voluptuous as vol
@@ -29,11 +28,7 @@ from .const import (
     DOMAIN,
 )
 from .ha_schema import websocket_command as ha_websocket_command
-from .helpers import (
-    effective_api_provider,
-    get_authenticated_client,
-    supports_openai_hosted_tools,
-)
+from .helpers import get_authenticated_client, resolve_provider_endpoint
 from .operational_errors import log_handled_failure
 from .provider_errors import classify_config_provider_error
 
@@ -72,30 +67,9 @@ def validate_provider_connection(connection: Any) -> str:
         raise HomeAssistantError(
             "Unsupported API provider (api_provider). Choose 'openai' or 'azure'."
         )
-    base_url = connection.get(CONF_BASE_URL)
-    if base_url is not None:
-        try:
-            endpoint = urlsplit(base_url)
-            _ = endpoint.port
-            if (
-                endpoint.scheme not in {"http", "https"}
-                or not endpoint.hostname
-                or any(char.isspace() for char in endpoint.netloc)
-            ):
-                raise ValueError
-        except ValueError:
-            raise HomeAssistantError(
-                "Provider field base_url must be an absolute HTTP or HTTPS URL."
-            ) from None
-    provider = effective_api_provider(provider, base_url)
-    if provider == "azure":
-        if not base_url or supports_openai_hosted_tools(DEFAULT_API_PROVIDER, base_url):
-            raise HomeAssistantError("Azure OpenAI requires a custom base URL.")
-        if not (connection.get(CONF_API_VERSION) or "").strip():
-            raise HomeAssistantError(
-                "Azure OpenAI requires provider field api_version."
-            )
-    return provider
+    return resolve_provider_endpoint(
+        provider, connection.get(CONF_BASE_URL), connection.get(CONF_API_VERSION)
+    )[0]
 
 
 def validate_agent_provider_request(

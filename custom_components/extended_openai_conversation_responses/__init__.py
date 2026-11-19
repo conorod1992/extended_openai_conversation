@@ -13,7 +13,11 @@ from openai._exceptions import AuthenticationError, OpenAIError
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState, ConfigSubentry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryError,
+    ConfigEntryNotReady,
+)
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.typing import ConfigType
 
@@ -101,6 +105,7 @@ from .delayed_tools import async_setup_delayed_tools
 from .global_runtime import global_runtime_lock, initialize_global_runtime
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import (
+    ProviderEndpointError,
     effective_api_provider,
     entry_api_provider,
     get_authenticated_client,
@@ -278,6 +283,8 @@ async def async_setup_entry(
         )
     except AuthenticationError as err:
         raise ConfigEntryAuthFailed("API credentials are invalid or expired") from err
+    except ProviderEndpointError as err:
+        raise ConfigEntryError(str(err)) from err
     except OpenAIError as err:
         from .provider_errors import log_provider_failure, provider_log_remediation
 

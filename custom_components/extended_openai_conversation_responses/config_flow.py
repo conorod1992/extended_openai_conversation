@@ -85,10 +85,11 @@ from .const import (
 )
 from .ha_schema import schema_for_ha
 from .helpers import (
+    ProviderEndpointError,
     effective_api_provider,
     get_authenticated_client,
     is_native_openai_connection,
-    supports_openai_hosted_tools,
+    resolve_provider_endpoint,
 )
 from .model_capabilities import (
     get_model_capabilities,
@@ -331,22 +332,17 @@ def _ai_task_display_reasoning_effort(
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> AsyncOpenAI:
     """Validate a complete provider configuration before creating the entry."""
     api_key = data[CONF_API_KEY]
-    base_url = data.get(CONF_BASE_URL)
     api_version = data.get(CONF_API_VERSION)
     organization = data.get(CONF_ORGANIZATION)
     skip_authentication = data.get(CONF_SKIP_AUTHENTICATION, False)
-    api_provider = effective_api_provider(data.get(CONF_API_PROVIDER), base_url)
+    api_provider, base_url = resolve_provider_endpoint(
+        data.get(CONF_API_PROVIDER), data.get(CONF_BASE_URL), api_version
+    )
     if api_provider == "azure":
         data[CONF_API_PROVIDER] = api_provider
 
-    if base_url == "":
+    if data.get(CONF_BASE_URL) == "":
         data.pop(CONF_BASE_URL)
-        base_url = None
-
-    if api_provider == "azure" and supports_openai_hosted_tools(
-        DEFAULT_API_PROVIDER, base_url
-    ):
-        raise HomeAssistantError("Azure OpenAI requires a custom base URL.")
 
     return await get_authenticated_client(
         hass=hass,
@@ -489,6 +485,8 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         try:
             client = await validate_input(self.hass, data)
+        except ProviderEndpointError:
+            errors["base"] = "invalid_provider_endpoint"
         except OpenAIError as err:
             log_handled_failure(
                 _LOGGER,
@@ -565,6 +563,8 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             updated = {**original_data, **user_input}
             try:
                 await validate_input(self.hass, updated)
+            except ProviderEndpointError:
+                errors["base"] = "invalid_provider_endpoint"
             except OpenAIError as err:
                 log_handled_failure(
                     _LOGGER,

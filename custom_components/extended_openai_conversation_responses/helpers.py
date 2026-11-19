@@ -15,6 +15,7 @@ from openai import AsyncAzureOpenAI, AsyncClient, AsyncOpenAI
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.template import Template
 
@@ -144,6 +145,42 @@ def supports_openai_hosted_tools(
         return False
 
 
+class ProviderEndpointError(HomeAssistantError):
+    """A locally invalid provider endpoint."""
+
+
+def resolve_provider_endpoint(
+    api_provider: str | None, base_url: str | None, api_version: str | None
+) -> tuple[str, str | None]:
+    """Validate and resolve the endpoint before selecting an SDK transport."""
+    if base_url == "":
+        base_url = None
+    if base_url is not None:
+        try:
+            endpoint = urlsplit(base_url)
+            _ = endpoint.port
+            if (
+                endpoint.scheme not in {"http", "https"}
+                or not endpoint.hostname
+                or any(char.isspace() for char in endpoint.netloc)
+            ):
+                raise ValueError
+        except TypeError, ValueError:
+            raise ProviderEndpointError(
+                "Provider field base_url must be an absolute HTTP or HTTPS URL."
+            ) from None
+
+    provider = effective_api_provider(api_provider, base_url)
+    if provider == "azure":
+        if not base_url or supports_openai_hosted_tools(DEFAULT_API_PROVIDER, base_url):
+            raise ProviderEndpointError("Azure OpenAI requires a custom base URL.")
+        if not api_version or not api_version.strip():
+            raise ProviderEndpointError(
+                "Azure OpenAI requires provider field api_version."
+            )
+    return provider, base_url
+
+
 def is_native_openai_connection(data: Mapping[str, Any], *, client: Any = None) -> bool:
     """Classify the configured endpoint or the SDK's effective default."""
     base_url = data.get("base_url")
@@ -244,10 +281,11 @@ async def get_authenticated_client(
 ) -> AsyncClient:
     """Validate OpenAI authentication."""
 
+    provider, base_url = resolve_provider_endpoint(api_provider, base_url, api_version)
     # Match HA core: retain its shared HTTPX client and TLS/connection policy.
     # SDK 3 supports this client at runtime, while typing targets HTTPX2.
     client: AsyncClient
-    if base_url and effective_api_provider(api_provider, base_url) == "azure":
+    if provider == "azure":
         client = AsyncAzureOpenAI(
             api_key=api_key,
             azure_endpoint=base_url,
