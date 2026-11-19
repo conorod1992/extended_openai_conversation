@@ -46,7 +46,9 @@ _SPOKEN_RESPONSE = "Hello see and docs done."
     (r"*hello \!world*", "hello !world", None),
     (r"**outer _hello \!world_ tail**", "outer hello !world tail", None),
     ("Off now . Next !", "Off now. Next!", "Off now . Next !"),
-], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined", "escaped-punctuation-code", "setext-equals", "literal-spacing", "single-emphasis-spacing", "nested-emphasis-spacing", "punctuation-attachment"])
+    ("Read https://demo\u2013alias@example.invalid/guide first.", "Read first.", None),
+    ("Router: http://router.local:8080\u2014never press Reset.", "Router: \u2014never press Reset.", None),
+], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined", "escaped-punctuation-code", "setext-equals", "literal-spacing", "single-emphasis-spacing", "nested-emphasis-spacing", "punctuation-attachment", "dashed-url-userinfo", "prose-dash-after-port"])
 async def test_assist_speech_regressions_preserve_provider_history(
     hass, hass_ws_client, monkeypatch, raw, expected, progressive_expected
 ):

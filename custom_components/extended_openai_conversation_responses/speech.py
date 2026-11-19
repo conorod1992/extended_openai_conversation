@@ -11,7 +11,7 @@ from functools import partial
 import logging
 import re
 from string import punctuation
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from .const import (
@@ -45,6 +45,8 @@ class _SpeechText(str):
 
 _URL_PREFIXES = ("http://", "https://", "www.")
 _URL_TRAILING_PUNCTUATION = frozenset(".,;:!?")
+_URL_PROSE_DASHES = "\u2014\u2013"
+type _BareUrlPhase = Literal["authority", "long_userinfo", "host", "path"]
 _WWW_ADDRESS = re.compile(
     r"www\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+",
     re.IGNORECASE,
@@ -292,7 +294,7 @@ class StreamingSpeechSanitizer:
         self._long_url_tail: str | None = None
         self._long_url_brackets = (0, 0)
         self._long_url_closer = ""
-        self._long_url_in_path = False
+        self._long_url_phase: _BareUrlPhase = "authority"
         self._long_destination: _LongDestination | None = None
         self._strong_open = False
         self._line_start = True
@@ -702,24 +704,50 @@ class StreamingSpeechSanitizer:
             count += preceding_backslashes
         return bool(count % 2)
 
-    @staticmethod
     def _bare_url_token_end(
-        text: str, start: int, in_path: bool = False
-    ) -> tuple[int, bool]:
-        """Stop bare authorities at a prose dash, preserving path and query dashes."""
+        self, text: str, start: int, phase: _BareUrlPhase, *, final: bool
+    ) -> tuple[int, _BareUrlPhase, bool]:
+        """Return the URL boundary and whether a possible userinfo dash needs more input."""
         end = start
         while end < len(text):
             char = text[end]
-            if (
-                char.isspace()
-                or char in "<>"
-                or (not in_path and char in "\u2014\u2013")
-            ):
+            if char.isspace() or char in "<>":
                 break
             if char in "/?#":
-                in_path = True
+                phase = "path"
+            elif phase in ("authority", "long_userinfo") and char == "@":
+                phase = "host"
+            elif char in _URL_PROSE_DASHES:
+                if phase == "host":
+                    break
+                if phase == "authority":
+                    # A raw @ before the path ends userinfo. Until this can be
+                    # checked, releasing the dash and suffix could expose it.
+                    limit = min(len(text), end + self.max_buffer_chars + 1)
+                    cursor = end + 1
+                    while (
+                        cursor < limit
+                        and not text[cursor].isspace()
+                        and text[cursor] not in "<>/?#@"
+                    ):
+                        cursor += 1
+                    if cursor < limit:
+                        if text[cursor] != "@":
+                            break
+                        phase = "host"
+                        end = cursor
+                    elif limit - end > self.max_buffer_chars:
+                        # An exceptionally long ambiguous token must stay
+                        # suppressed. Look for @ in later chunks without
+                        # retaining the ambiguous suffix.
+                        phase = "long_userinfo"
+                        end = limit - 1
+                    elif not final:
+                        return end, phase, True
+                    else:
+                        break
             end += 1
-        return end, in_path
+        return end, phase, False
 
     @staticmethod
     def _bare_url_end(
@@ -787,7 +815,7 @@ class StreamingSpeechSanitizer:
         self._long_url_tail = None
         self._long_url_brackets = (0, 0)
         self._long_url_closer = ""
-        self._long_url_in_path = False
+        self._long_url_phase = "authority"
 
     @staticmethod
     def _is_url_start(text: str, index: int) -> bool:
@@ -1032,14 +1060,20 @@ class StreamingSpeechSanitizer:
                 ):
                     return "incomplete", index
                 continue
-            end, in_path = self._bare_url_token_end(text, start + len(prefix))
-            if end == len(text) and not final:
+            end, phase, pending = self._bare_url_token_end(
+                text,
+                start + len(prefix),
+                "host" if prefix == "www." else "authority",
+                final=final,
+            )
+            if pending or (end == len(text) and not final):
                 if len(text) - index > self.max_buffer_chars and self._is_url_start(
                     text, start
                 ):
                     self._long_url_closer = closer
-                    self._long_url_in_path = in_path
-                    return "long", start
+                    self._long_url_phase = phase
+                    self._consume_long_url(text[start:end])
+                    return "long", end
                 return "incomplete", index
             end = self._bare_url_end(text, start, end)
             if (
@@ -1149,12 +1183,12 @@ class StreamingSpeechSanitizer:
                     break
                 continue
             if self._long_url_tail is not None:
-                end, self._long_url_in_path = self._bare_url_token_end(
-                    text, index, self._long_url_in_path
+                end, self._long_url_phase, pending = self._bare_url_token_end(
+                    text, index, self._long_url_phase, final=final
                 )
                 self._consume_long_url(text[index:end])
                 index = end
-                if end == len(text):
+                if pending or end == len(text):
                     break
                 self._finish_long_url(output, end)
                 continue
@@ -1307,8 +1341,7 @@ class StreamingSpeechSanitizer:
                 status, end = self._wrapped_bare_url(text, index, final)
                 if status == "long":
                     self._hold_preceding_whitespace(output)
-                    self._consume_long_url(text[end:])
-                    index = len(text)
+                    index = end
                     break
                 if status == "incomplete":
                     held_whitespace = self._hold_preceding_whitespace(output)
@@ -1495,15 +1528,18 @@ class StreamingSpeechSanitizer:
                 if matching_prefix is not None and not (
                     preceding.isalnum() or preceding == "@"
                 ):
-                    end, in_path = self._bare_url_token_end(
-                        text, index + len(matching_prefix)
+                    end, phase, pending = self._bare_url_token_end(
+                        text,
+                        index + len(matching_prefix),
+                        "host" if matching_prefix == "www." else "authority",
+                        final=final,
                     )
-                    if end == len(text) and not final:
-                        if end - index > self.max_buffer_chars and (
+                    if pending or (end == len(text) and not final):
+                        if len(text) - index > self.max_buffer_chars and (
                             matching_prefix != "www." or _WWW_ADDRESS.match(text, index)
                         ):
                             self._hold_preceding_whitespace(output)
-                            self._long_url_in_path = in_path
+                            self._long_url_phase = phase
                             self._consume_long_url(text[index:end])
                             index = end
                             break

@@ -40,6 +40,44 @@ def test_unspaced_dash_ends_bare_url_at_every_split(dash, wrapper):
     assert_all_splits(source, f"Router instructions: {dash}never press Reset.")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://demo\u2013alias@example.invalid/guide",
+        "https://demo:sample\u2014label@example.invalid",
+        "https://demo\u2014alias:sample\u2013label@example.invalid",
+    ],
+)
+@pytest.mark.parametrize("wrapper", ["{}", '"{}"', "**{}**"])
+def test_bare_url_keeps_userinfo_dashes_hidden_at_every_split(url, wrapper):
+    assert_all_splits(f"Read {wrapper.format(url)} first.", "Read first.")
+
+
+def test_bare_url_resumes_prose_after_the_host_following_userinfo():
+    assert_all_splits(
+        "Router: https://demo\u2013alias@router.local:8080\u2014never press Reset.",
+        "Router: \u2014never press Reset.",
+    )
+
+
+@pytest.mark.parametrize("wrapper", ["{}", '"{}"', "**{}**"])
+@pytest.mark.parametrize("left,right", [(96, 5), (4, 96), (96, 96), (4, 64), (4, 63)])
+def test_long_bare_url_keeps_userinfo_dashes_hidden_with_bounded_buffers(
+    wrapper, left, right
+):
+    url = wrapper.format(f"https://{'a' * left}\u2013{'b' * right}@example.invalid")
+    source = f"Read {url}\u2014then continue."
+    expected = "Read \u2014then continue."
+    assert StreamingSpeechSanitizer(max_buffer_chars=64).process_complete(source) == expected
+    for width in (1, 13, 64, len(source)):
+        sanitizer = StreamingSpeechSanitizer(max_buffer_chars=64)
+        chunks = []
+        for start in range(0, len(source), width):
+            chunks.append(sanitizer.feed(source[start : start + width]))
+            assert sanitizer.buffered_chars <= sanitizer.max_buffer_chars + 256
+        assert "".join(chunks) + sanitizer.finish() == expected, width
+
+
 @pytest.mark.parametrize("wrapper", ["{}", '"{}"', "**{}**"])
 def test_unspaced_dash_ends_overlong_bare_url(wrapper):
     url = wrapper.format("http://" + "a" * 4200 + ".local:8080")
