@@ -283,6 +283,17 @@ def _delayed_store_lock(hass: HomeAssistant) -> asyncio.Lock:
     return lock
 
 
+async def _async_load_delayed_queue_store(
+    store: PropagatingWriteStore,
+) -> dict[str, Any] | None:
+    try:
+        return await _async_settle_store_io(store.async_load())
+    except (KeyError, NotImplementedError) as err:
+        # HA's Store can reject an invalid outer version or data envelope
+        # before the queue has a chance to validate its own payload.
+        raise ValueError("Persisted delayed Function Tool Store is malformed") from err
+
+
 async def _async_remove_stored_agent_calls_locked(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> None:
@@ -294,8 +305,8 @@ async def _async_remove_stored_agent_calls_locked(
         private=True,
         atomic_writes=True,
     )
-    data = await _async_settle_store_io(store.async_load())
-    if data is None:
+    data = await _async_load_delayed_queue_store(store)
+    if data is None or data == {}:
         return
     if not isinstance(data, dict) or not isinstance(data.get("calls"), list):
         raise ValueError("persisted delayed Function Tools are malformed")
@@ -389,7 +400,7 @@ class DelayedToolManager:
 
     async def _async_load_locked(self) -> None:
         """Publish startup recovery without overlapping another store owner."""
-        raw_data = await _async_settle_store_io(self._store.async_load())
+        raw_data = await _async_load_delayed_queue_store(self._store)
         if raw_data is None or raw_data == {}:
             raw_calls = []
         elif not isinstance(raw_data, dict) or not isinstance(

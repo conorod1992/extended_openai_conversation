@@ -1,17 +1,24 @@
 """Real HA deletion removes private stores and global device effects."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    agent_deletion,
+    delayed_tools,
     intercom,
     quiet_hours,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
-from homeassistant.config_entries import ConfigEntryDisabler
+from homeassistant.components.frontend import DATA_PANELS
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
+from homeassistant.setup import async_setup_component
+from tests.ha_store_test_helpers import invalidate_store_cache
+from tests.test_delayed_tools import _record
 from tests_real_ha.test_live_subentry_removal import (
     _entry,
     _setup_entry,
@@ -92,8 +99,6 @@ async def test_subentry_removal_purges_private_stores_then_last_entry_stops_glob
 async def test_provider_erasure_failure_is_rediscovered_without_provider_or_tracking(
     hass, real_store_io, monkeypatch
 ):
-    from custom_components.extended_openai_conversation_responses import agent_deletion
-
     entry = _entry()
     await _setup_entry(hass, entry)
     owner = _subentry_by_title(entry, "Conversation A")
@@ -121,3 +126,64 @@ async def test_provider_erasure_failure_is_rediscovered_without_provider_or_trac
     hass.data.pop(agent_deletion.KNOWN_AGENTS, None)
     await agent_deletion.async_reconcile_agent_storage(hass)
     assert not path.exists()
+
+
+@pytest.mark.parametrize("parent_removed", [False, True])
+@pytest.mark.parametrize("corrupt_envelope", [False, True])
+async def test_malformed_delayed_queue_defers_orphan_cleanup_without_blocking_startup(
+    hass, real_store_io, monkeypatch, parent_removed, corrupt_envelope
+):
+    entry = _entry()
+    entry.add_to_hass(hass)
+    orphan_parent = "removed-provider" if parent_removed else entry.entry_id
+    orphan_id = "deleted-assistant"
+    orphan = Store(
+        hass, 1, f"{DOMAIN}.usage.{orphan_parent}.{orphan_id}.daily", private=True
+    )
+    queue = Store(
+        hass,
+        delayed_tools.DELAYED_TOOL_STORAGE_VERSION,
+        delayed_tools.DELAYED_TOOL_STORAGE_KEY,
+        private=True,
+        atomic_writes=True,
+    )
+    await orphan.async_save({"days": {}})
+    await queue.async_save({"calls": {"malformed": []}})
+    queue_file = Path(queue.path)
+    if corrupt_envelope:
+        await hass.async_add_executor_job(queue_file.write_bytes, b'{"data":{"calls":[]}}')
+        invalidate_store_cache(queue)
+    original = await hass.async_add_executor_job(queue_file.read_bytes)
+    retry_callbacks = []
+
+    def schedule_retry(_hass, _delay, retry):
+        retry_callbacks.append(retry)
+        return lambda: None
+
+    monkeypatch.setattr(agent_deletion, "async_call_later", schedule_retry)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert "extended-openai" in hass.data[DATA_PANELS]
+    assert hass.services.has_service(DOMAIN, "broadcast")
+    scheduler = hass.data[DOMAIN][delayed_tools.DATA_DELAYED_TOOL_MANAGER]
+    assert scheduler._quarantined and not scheduler._tasks
+    assert Path(orphan.path).exists()
+    assert retry_callbacks
+    await retry_callbacks[-1](None)
+    assert Path(orphan.path).exists()
+    assert await hass.async_add_executor_job(queue_file.read_bytes) == original
+
+    # A later repaired queue can be cleaned using the retry without rearming it.
+    retired = replace(_record(), entry_id=orphan_parent, subentry_id=orphan_id)
+    current = replace(
+        retired,
+        call_id="current",
+        entry_id=entry.entry_id,
+        subentry_id=_subentry_by_title(entry, "Conversation A").subentry_id,
+    )
+    await queue.async_save({"calls": [retired.as_dict(), current.as_dict()]})
+    await retry_callbacks[-1](None)
+    assert not Path(orphan.path).exists()
+    assert await queue.async_load() == {"calls": [current.as_dict()]}
+    assert scheduler._quarantined and not scheduler._tasks
