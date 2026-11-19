@@ -13,9 +13,8 @@ export async function loadQuietHours(panel, silent = false) {
     const result = await panel._call("quiet_hours", "get");
     if (!current() || generation !== panel._cacheGeneration) return;
     panel._result = result;
-    if (!panel._unsavedState?.scopes.get(VIEW)?.isCurrent?.()) panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
-    panel._error = null;
     acceptPageRead(panel, result, read);
+    panel._error = null;
   } catch (err) {
     if (current() && generation === panel._cacheGeneration) panel._error = err.message || String(err);
   } finally {
@@ -170,7 +169,7 @@ export function renderQuietHours(panel) {
         <label><span>Start</span><input id="qh-start" type="time" value="${panel._e(config.start || "22:00")}"></label>
         <label><span>End</span><input id="qh-end" type="time" value="${panel._e(config.end || "07:00")}"></label>
         <label><span>Starting volume limit</span><div class="qh-volume"><input id="qh-volume" type="range" min="0" max="100" step="1" value="${maxPercent}"><output id="qh-volume-value">${maxPercent}%</output></div><small>At startup, louder satellites are lowered to this level. The quieter ones stay unchanged. Satellites appearing later may also be adjusted. Later volume changes by you or automations are respected. Volume is restored only if it was not independently changed. Changing this limit mid-period may briefly restore previous volumes. Other audio played on the satellite is affected too.</small></label>
-        <label><span>Wake-word sound</span><select id="qh-wake"><option value="off" ${config.wake_sound === "off" ? "selected" : ""}>Off during Quiet Hours</option><option value="on" ${config.wake_sound === "on" ? "selected" : ""}>On during Quiet Hours</option><option value="unchanged" ${config.wake_sound === "unchanged" ? "selected" : ""}>Don't change it</option></select><small>The chime played when a satellite hears its wake word. Requires a compatible switch.</small></label>
+        <label><span>Wake-word sound</span><select id="qh-wake">${[["off","Off during Quiet Hours"],["on","On during Quiet Hours"],["unchanged","Don't change it"]].map(([value,label]) => `<option value="${value}" ${value === config.wake_sound ? "selected" : ""}>${label}</option>`).join("")}</select><small>The chime played when a satellite hears its wake word. Requires a compatible switch.</small></label>
       </div>
       <div class="qh-entity-note"><strong>Use Quiet Hours in automations</strong><code>${panel._e(result.state_entity_id || "binary_sensor.extended_openai_quiet_hours")}</code><small>This entity stays on throughout Quiet Hours. Use these actions to change the schedule <code>enable_quiet_hours</code> and <code>disable_quiet_hours</code>.</small></div>
     </section>

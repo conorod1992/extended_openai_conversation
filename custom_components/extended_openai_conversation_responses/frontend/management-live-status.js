@@ -123,7 +123,8 @@ export function watchTimedFeatureStatus(panel, feature) {
       const remount = feature?.timedStructure
         ? !same(feature.timedStructure(previous), feature.timedStructure(result))
         : !same(before, panel[draft]) || previous?.legacy_policy !== result.legacy_policy;
-      if (remount) {
+      if (remount && result.available === false) panel._render();
+      else if (remount) {
         refreshEditor(panel, () => current() && panel._loadToken === read.visit
           && panel._cacheGeneration === read.generation);
       }

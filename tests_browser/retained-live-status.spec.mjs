@@ -191,6 +191,68 @@ test("Quiet Hours reconciles both satellite selectors in place and preserves the
   await expectHarnessClean(page,errors);
 });
 
+test("Quiet Hours displays recovery guidance and retains an authored draft through unavailability", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  await page.clock.install();
+  await panel.evaluate(async host => {
+    const call = host._hass.callWS;
+    host._testQuietProjection = 0;
+    host._hass = {...host._hass, callWS:async message => {
+      if (message.section === "quiet_hours" && message.action === "update") {
+        return {available:false, config:message.config, revision:"unverified"};
+      }
+      if (message.section !== "quiet_hours" || message.action !== "get") return call(message);
+      const v = host._testQuietProjection;
+      if (v % 2 === 0) return {available:false, error:"Restore the Quiet Hours storage file and restart."};
+      const result = await call(message);
+      return {...result, revision:String(v), period_ends_at:new Date(Date.now()+1000).toISOString(),
+        config:{...result.config, start:v === 1 ? "21:00" : "23:00"}};
+    }};
+    await host._navigate("capabilities", "quiet-hours");
+  });
+  const guidance = panel.getByRole("alert").filter({hasText:"Restore the Quiet Hours storage file"});
+  await expect(guidance).toBeVisible();
+  await expect(panel.locator("#qh-start")).toHaveCount(0);
+  expect(await panel.evaluate(host => !!host._unsavedState?.scopes.get(host._viewKey()))).toBe(false);
+
+  const advance = async version => {
+    await panel.evaluate((host, v) => {host._testQuietProjection = v;}, version);
+    await page.clock.fastForward(62000);
+  };
+  const start = panel.locator("#qh-start");
+  await advance(1);
+  await expect(start).toHaveValue("21:00");
+  await start.fill("20:15");
+  await advance(2);
+  await expect(guidance).toBeVisible();
+  expect(await panel.evaluate(host => {
+    const scope = host._unsavedState.scopes.get(host._viewKey());
+    return [scope.revision, scope.read().start, scope.dirty()];
+  })).toEqual(["1", "20:15", true]);
+  await advance(3);
+  await expect(start).toHaveValue("20:15");
+  expect(await panel.evaluate(host => {
+    const scope = host._unsavedState.scopes.get(host._viewKey());
+    return [scope.revision, scope.result.revision];
+  })).toEqual(["1", "3"]);
+  expect(await panel.evaluate(async host => {
+    const scope = host._unsavedState.scopes.get(host._viewKey());
+    try { await scope.save(); }
+    catch (error) { return error.mutationOutcome; }
+    return "accepted";
+  })).toBe("uncertain");
+  await advance(4);
+  await expect(guidance).toBeVisible();
+  expect(await panel.evaluate(host => {
+    const scope = host._unsavedState.scopes.get(host._viewKey());
+    return [scope.result.revision, scope.uncertainSubmission?.start, scope.read().start];
+  })).toEqual(["3", "20:15", "20:15"]);
+  await expectHarnessClean(page, errors);
+});
+
 test("Broadcast pending history settles without device refresh or draft replacement",async({page})=>{
   const errors=trackPageErrors(page);
   await page.goto(fixtureUrl("overview"));
