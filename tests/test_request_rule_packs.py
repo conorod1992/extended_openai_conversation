@@ -61,16 +61,27 @@ def test_captured_ai_input_requires_every_variant_and_branch() -> None:
         validate_rule(rule)
 
 
-async def test_captured_ai_handoff_and_preview_share_resolved_input(hass) -> None:
-    stored = RequestRules(MemoryStore({"rules": [captured_routing_rule()]}))
+@pytest.mark.parametrize(
+    ("pattern", "text", "provider_input"),
+    [
+        ("deep think {question}", "deep think why is the sky blue?", "why is the sky blue?"),
+        ("deep think {question} then sky", "deep think sky then sky?", "sky"),
+        ("deep think sky then {question}", "deep think sky then sky？", "sky？"),
+    ],
+)
+async def test_captured_ai_handoff_and_preview_share_resolved_input(
+    hass, pattern, text, provider_input
+) -> None:
+    rule = captured_routing_rule()
+    rule["phrases"] = [pattern]
+    stored = RequestRules(MemoryStore({"rules": [rule]}))
     await stored.async_initialize()
-    text = "deep think why is the sky blue?"
     evaluated = await async_evaluate_rule(
         hass, stored, RequestRuleRuntime(), text, "session"
     )
     preview = await async_request_rule_match_preview(hass, stored, text)
     assert evaluated is not None and not evaluated.consume
-    assert evaluated.provider_input == "why is the sky blue?"
+    assert evaluated.provider_input == provider_input
     assert preview["matched_rules"][0]["ai_input"] == {
         "mode": "capture",
         "capture": "question",

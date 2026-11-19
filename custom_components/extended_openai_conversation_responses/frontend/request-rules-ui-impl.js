@@ -354,7 +354,7 @@ function refreshEditor(panel) {
   const continueToAi=q("#rule-continue-to-ai").checked;
   syncResultAliasMode(root);
   q("#rule-routing-config").hidden=local;
-  q("#rule-local-responses").hidden=!local || q("#rule-local-continue-to-ai").checked;
+  q("#rule-local-responses").hidden=!local;
   q("#rule-routing-response").hidden=local||continueToAi;
   q("#rule-routing-ai-response").hidden=local ? !q("#rule-local-continue-to-ai").checked : !continueToAi;
   q("#sentence-pattern-help").hidden=!grammar;
@@ -367,7 +367,7 @@ function refreshEditor(panel) {
   q("#rule-matching-behavior").disabled=grammar;
   q("#rule-matching-controls").hidden=grammar||q("#rule-matching-behavior").value!=="custom";
   const handoff=local ? q("#rule-local-continue-to-ai").checked : continueToAi;
-  q("#rule-response-reference").hidden=handoff;
+  q("#rule-response-reference").hidden=!local && handoff;
   const aiSettings=q("#rule-ai-input-settings"), mode=q("#rule-ai-input-mode"), capture=q("#rule-ai-input-capture"), label=q("#rule-ai-capture-label"), help=q("#rule-ai-input-help");
   aiSettings.hidden=!handoff && mode.value!=="capture";
   const common=q("#rule-match").value==="sentence_pattern" ? commonCapturedSlotNames(q("#rule-phrases").value) : [];

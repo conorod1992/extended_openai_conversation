@@ -71,6 +71,7 @@ from .request_rule_patterns import (
     RESERVED_CAPTURE_NAMES,
     CompiledSentencePattern,
     MatchBudget,
+    PatternMatch,
     PreparedSentenceText,
     SentenceMatchLimitError,
     SentencePatternError,
@@ -191,6 +192,7 @@ class RuleMatch:
     fuzzy: bool
     score: float
     slots: dict[str, str] = field(default_factory=dict)
+    slot_spans: dict[str, tuple[int, int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,12 +219,11 @@ def _match_compiled_sentence(
     compiled: CompiledPhrase,
     prepared: PreparedSentenceText,
     budget: MatchBudget,
-) -> dict[str, str] | None:
+) -> PatternMatch | None:
     """Match one compiled sentence pattern with the shared request budget."""
     if compiled.sentence_pattern is None:
         return None
-    result = compiled.sentence_pattern.match_prepared(prepared, budget)
-    return None if result is None else dict(result.captures)
+    return compiled.sentence_pattern.match_prepared(prepared, budget)
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,12 +274,19 @@ class _MatchCursor:
             if compiled.sentence_pattern is not None:
                 if self.sentence_text is None:
                     self.sentence_text = prepare_match_text(self.text)
-                slots = _match_compiled_sentence(
+                match = _match_compiled_sentence(
                     compiled, self.sentence_text, self.budget
                 )
-                if slots is not None:
+                if match is not None:
                     self.seen.add(rule["id"])
-                    return RuleMatch(rule, compiled.original, False, 100.0, slots)
+                    return RuleMatch(
+                        rule,
+                        compiled.original,
+                        False,
+                        100.0,
+                        match.captures,
+                        match.capture_spans,
+                    )
             elif _deterministic_match(
                 self._candidate(settings),
                 cast(str, compiled.normalized),
@@ -1028,11 +1036,18 @@ class RequestRules:
             if compiled.sentence_pattern is not None:
                 if sentence_text is None:
                     sentence_text = prepare_match_text(text)
-                slots = _match_compiled_sentence(
+                match = _match_compiled_sentence(
                     compiled, sentence_text, sentence_budget
                 )
-                if slots is not None:
-                    return RuleMatch(rule, compiled.original, False, 100.0, slots)
+                if match is not None:
+                    return RuleMatch(
+                        rule,
+                        compiled.original,
+                        False,
+                        100.0,
+                        match.captures,
+                        match.capture_spans,
+                    )
             elif _deterministic_match(
                 candidate(settings), cast(str, compiled.normalized), rule["match_type"]
             ):
@@ -3435,6 +3450,9 @@ def rule_provider_input(match: RuleMatch, original_text: str) -> str | None:
         raise HomeAssistantError("Captured AI input is unavailable for this request")
     # Sentence-ending punctuation is optional matcher syntax, so the capture
     # omits it. Keep it in the provider text when the capture ends the request.
+    span = match.slot_spans.get(capture)
+    if span is None:
+        return value
     tail = original_text.rstrip()
     end = len(tail)
     while end and all(
@@ -3443,7 +3461,7 @@ def rule_provider_input(match: RuleMatch, original_text: str) -> str | None:
         end -= 1
         while end and tail[end - 1].isspace():
             end -= 1
-    if end < len(tail) and prepare_match_text(tail[:end]).display.endswith(value):
+    if end < len(tail) and span[1] == len(prepare_match_text(tail[:end]).display):
         return value + original_text[end:]
     return value
 
@@ -4044,10 +4062,10 @@ async def _async_evaluate_matched_rule(
     )
 
 
-# Keep signed numbers and decimal fractions together for whole-token matching.
+# Keep signed numbers and decimal fractions together, including attached units.
 # A hyphen after a word character is still a separator.
 _TEXT_PUNCTUATION = re.compile(
-    r"(?<!\w)([\u2212-]?(?:\d+\.\d+|\.\d+)|[\u2212-]\d+)(?!\w)|[^\w\s']"
+    r"(?<!\w)([\u2212-]?(?:\d+\.\d+|\.\d+)|[\u2212-]\d+)|[^\w\s']"
 )
 
 
