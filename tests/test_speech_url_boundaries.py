@@ -60,6 +60,68 @@ def test_bare_url_resumes_prose_after_the_host_following_userinfo():
     )
 
 
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ('Open "{}"', "Open "),
+        ("Open \u201c{}\u201d", "Open "),
+        ("Open **{}**", "Open "),
+        ("**Open {}**", "Open"),
+        ("\u201cOpen {}\u201d", "\u201cOpen\u201d"),
+    ],
+)
+@pytest.mark.parametrize(
+    "url", ["https://example.invalid", "https://example.invalid/guide?x=1"]
+)
+def test_wrapper_closer_ends_url_before_prose_with_an_email(source, expected, url):
+    suffix = "\u2014contact@example.invalid can help."
+    assert_all_splits(source.format(url) + suffix, expected + suffix)
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            'Open "https://demo\u2013alias@example.invalid"\u2014contact@example.invalid can help.',
+            "Open \u2014contact@example.invalid can help.",
+        ),
+        (
+            "Open **https://demo:sample**\u2013label@example.invalid**\u2014then continue.",
+            "Open \u2014then continue.",
+        ),
+        (
+            "Open **https://demo:sample\\**\u2013label@example.invalid** first.",
+            "Open first.",
+        ),
+        (
+            "Open https://demo**\u2013label@example.invalid first.",
+            "Open first.",
+        ),
+    ],
+)
+def test_wrapper_before_dash_respects_enclosing_and_escaped_markers(source, expected):
+    assert_all_splits(source, expected)
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [('Open "{}"', "Open "), ("Open **{}**", "Open "), ("**Open {}**", "Open")],
+)
+def test_overlong_wrapped_url_ends_before_prose_with_an_email(source, expected):
+    url = "https://example.invalid/" + "a" * 280
+    suffix = "\u2014contact@example.invalid can help."
+    raw = source.format(url) + suffix
+    expected += suffix
+    assert StreamingSpeechSanitizer(max_buffer_chars=64).process_complete(raw) == expected
+    for width in (1, 13, 64, len(raw)):
+        sanitizer = StreamingSpeechSanitizer(max_buffer_chars=64)
+        chunks = []
+        for start in range(0, len(raw), width):
+            chunks.append(sanitizer.feed(raw[start : start + width]))
+            assert sanitizer.buffered_chars <= sanitizer.max_buffer_chars + 256
+        assert "".join(chunks) + sanitizer.finish() == expected, width
+
+
 @pytest.mark.parametrize("wrapper", ["{}", '"{}"', "**{}**"])
 @pytest.mark.parametrize("left,right", [(96, 5), (4, 96), (96, 96), (4, 64), (4, 63)])
 def test_long_bare_url_keeps_userinfo_dashes_hidden_with_bounded_buffers(

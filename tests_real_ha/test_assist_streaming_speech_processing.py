@@ -48,7 +48,9 @@ _SPOKEN_RESPONSE = "Hello see and docs done."
     ("Off now . Next !", "Off now. Next!", "Off now . Next !"),
     ("Read https://demo\u2013alias@example.invalid/guide first.", "Read first.", None),
     ("Router: http://router.local:8080\u2014never press Reset.", "Router: \u2014never press Reset.", None),
-], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined", "escaped-punctuation-code", "setext-equals", "literal-spacing", "single-emphasis-spacing", "nested-emphasis-spacing", "punctuation-attachment", "dashed-url-userinfo", "prose-dash-after-port"])
+    ('Open "https://example.invalid"\u2014contact@example.invalid can help.', "Open \u2014contact@example.invalid can help.", None),
+    ("**Open https://example.invalid**\u2014contact@example.invalid can help.", "Open\u2014contact@example.invalid can help.", None),
+], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined", "escaped-punctuation-code", "setext-equals", "literal-spacing", "single-emphasis-spacing", "nested-emphasis-spacing", "punctuation-attachment", "dashed-url-userinfo", "prose-dash-after-port", "dashed-prose-after-quoted-url", "dashed-prose-after-emphasized-phrase"])
 async def test_assist_speech_regressions_preserve_provider_history(
     hass, hass_ws_client, monkeypatch, raw, expected, progressive_expected
 ):
