@@ -6,6 +6,8 @@ export const USAGE_WINDOW_OPTIONS = [
   {id: "all", label: "All available"},
 ];
 export const DEFAULT_USAGE_WINDOW = "30";
+export const FIRST_USAGE_DATE = "0000-01-01";
+export const LAST_USAGE_DATE = "9999-12-31";
 const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const usageDateKeyFormatters = new Map();
 const usageDisplayFormatters = new Map();
@@ -69,9 +71,9 @@ export function localUsageDateKey(value = new Date(), timeZone = undefined) {
 
 export function usageWindowBounds(window, today) {
   const id = normalizeUsageWindow(window);
-  const validToday = dateParts(today) ? today : localUsageDateKey();
   const label = USAGE_WINDOW_OPTIONS.find((item) => item.id === id)?.label || "30 days";
-  if (id === "all") return {id, label, startDate: null, endDate: validToday};
+  if (id === "all") return {id, label, startDate: FIRST_USAGE_DATE, endDate: LAST_USAGE_DATE};
+  const validToday = dateParts(today) ? today : localUsageDateKey();
   if (id === "year") return {id, label, startDate: `${validToday.slice(0, 4)}-01-01`, endDate: validToday};
   const days = Number(id);
   return {id, label, startDate: addUsageCalendarDays(validToday, -(days - 1)), endDate: validToday};

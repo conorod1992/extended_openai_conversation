@@ -38,7 +38,7 @@ assert.deepEqual(usageWindowBounds("year", today), {
   id:"year", label:"Year to date", startDate:"2026-01-01", endDate:today,
 });
 assert.deepEqual(usageWindowBounds("all", today), {
-  id:"all", label:"All available", startDate:null, endDate:today,
+  id:"all", label:"All available", startDate:"0000-01-01", endDate:"9999-12-31",
 });
 
 // Calendar-date arithmetic is deliberately timezone-free once HA's local date key
@@ -86,6 +86,16 @@ assert.equal(partial.availableStart, "2026-09-03");
 assert.equal(partial.availableEnd, today);
 
 const allHistory = selectUsageHistory(days, "all", today);
+const laterDay = makeDay("2026-09-08", 25);
+const allWithLaterDay = selectUsageHistory([...days, laterDay], "all", today);
+assert.equal(allWithLaterDay.availableEnd, laterDay.date);
+assert.equal(allWithLaterDay.summary.total_tokens, 1225);
+assert.equal(allWithLaterDay.partialStart, false);
+for (const window of ["7", "30", "90", "year"]) {
+  const selected = selectUsageHistory([...days, laterDay], window, today);
+  assert.equal(selected.availableEnd, today);
+  assert.equal(selected.days.at(-1).date, today);
+}
 const matchingLifetime = {
   conversation_count:120, api_request_count:120, successful_request_count:120,
   failed_request_count:0, input_tokens:960, output_tokens:240, total_tokens:1200,
@@ -104,13 +114,19 @@ assert.equal(monthBuckets.reduce((sum, bucket) => sum + bucket.total_tokens, 0),
 
 // All-available history is transferred in ordered, non-overlapping bounded pages.
 const pagedDays = ["2026-09-01","2026-09-02","2026-09-03","2026-09-04","2026-09-05"].map((date) => makeDay(date));
-const starts = [];
-const paged = await loadAllUsageDays(async (startDate) => {
-  starts.push(startDate);
-  return {days:pagedDays.filter((day) => day.date >= startDate).slice(0, 2)};
+const pages = [];
+const paged = await loadAllUsageDays(async (startDate, endDate) => {
+  pages.push([startDate, endDate]);
+  return {
+    days:pagedDays.filter((day) => day.date >= startDate).slice(0, 2),
+    local_run_summary:pages.length > 1 ? {count:1, start_date:startDate, end_date:endDate} : null,
+  };
 }, {pageSize:2,maxPages:4});
 assert.deepEqual(paged.days.map((day) => day.date), pagedDays.map((day) => day.date));
-assert.deepEqual(starts, ["0000-01-01","2026-09-03","2026-09-05"]);
+assert.deepEqual(pages, [
+  ["0000-01-01", "9999-12-31"], ["2026-09-03", "9999-12-31"], ["2026-09-05", "9999-12-31"],
+]);
+assert.equal(paged.local_run_summary, undefined, "later pages cannot supply a full-range summary");
 
 const usageDataImplementation = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-data.js", import.meta.url),
@@ -160,6 +176,12 @@ assert.equal((Date.parse(sevenDayEnd) - Date.parse(sevenDayStart)) / 86_400_000,
 const defaultWindow = await loadUsageWindow(usagePanel, undefined, "2026-09-07");
 assert.equal(defaultWindow.requested_window, "30");
 assert.equal(usageCalls.at(-1).start_date, "2026-08-09");
+const fullWindow = await loadUsageWindow(usagePanel, "all", "2026-09-07");
+assert.equal(fullWindow.complete_history, true);
+assert.deepEqual(usageCalls.at(-1), {
+  entry_id:"entry-a", subentry_id:"agent-a",
+  start_date:"0000-01-01", end_date:"9999-12-31",
+});
 
 const windowSelector = {value: "90", disabled: false};
 const freshDays = {days: [makeDay(localUsageDateKey(new Date(), "UTC"), 25)]};

@@ -33,7 +33,7 @@ test("nightly Usage history windows load lazily, revalidate selections, page all
     if (message.action === "retention") return {request_days:30,run_days:30};
     if (message.action === "runs") return {runs:[]};
     if (message.action !== "daily") return undefined;
-    if (message.start_date === "0000-01-01") {
+    if (["0000-01-01", "2026-08-27"].includes(message.start_date)) {
       const start = new Date("2025-08-26T00:00:00Z");
       const firstIndex = message.start_date === "0000-01-01" ? 0 : 366;
       const count = firstIndex === 0 ? 366 : 34;
@@ -86,8 +86,8 @@ test("nightly Usage history windows load lazily, revalidate selections, page all
   await expect(panel.locator(".chart-column")).toHaveCount(14);
   const allCalls = await page.evaluate(() => usageNightly.calls.filter((call) => call.action === "daily").slice(-2));
   expect(allCalls.map(({start_date,end_date}) => [start_date,end_date])).toEqual([
-    ["0000-01-01","2026-09-29"],
-    ["2026-08-27","2026-09-29"],
+    ["0000-01-01","9999-12-31"],
+    ["2026-08-27","9999-12-31"],
   ]);
   await page.setViewportSize({width:390,height:844});
   await expect(panel.locator(".usage-range-card")).toHaveCSS("display","grid");
@@ -132,8 +132,8 @@ test("multi-year Usage history reuses fresh pages and revalidates after expiry",
     const first = Date.UTC(2020, 8, 29);
     const day = 86_400_000;
     const start = message.start_date === "0000-01-01" ? first : Date.parse(message.start_date);
-    const end = Date.parse(message.end_date);
-    const length = Math.min(366, Math.floor((end - start) / day) + 1);
+    const end = Math.min(Date.parse(message.end_date), Date.parse("2026-09-29"));
+    const length = Math.max(0, Math.min(366, Math.floor((end - start) / day) + 1));
     const days = Array.from({length}, (_, i) => ({
       date: new Date(start + i * day).toISOString().slice(0, 10),
       total_tokens: window.usageTokens || 11,

@@ -55,9 +55,8 @@ export function selectUsageHistory(days = [], window = DEFAULT_USAGE_WINDOW, tod
     byDate.set(date, day);
   }
   const availableDays = [...byDate.values()].sort((left, right) => String(left.date).localeCompare(String(right.date)));
-  const selectedDays = bounds.startDate
-    ? availableDays.filter((day) => day.date >= bounds.startDate && day.date <= bounds.endDate)
-    : availableDays;
+  const all = bounds.id === "all";
+  const selectedDays = all ? availableDays : availableDays.filter((day) => day.date >= bounds.startDate);
   return {
     ...bounds,
     days: selectedDays,
@@ -65,7 +64,7 @@ export function selectUsageHistory(days = [], window = DEFAULT_USAGE_WINDOW, tod
     allSummary: summarizeUsageDiagnostics(availableDays),
     availableStart: availableDays[0]?.date || null,
     availableEnd: availableDays.at(-1)?.date || null,
-    partialStart: Boolean(bounds.startDate && availableDays[0]?.date && availableDays[0].date > bounds.startDate),
+    partialStart: Boolean(!all && availableDays[0]?.date && availableDays[0].date > bounds.startDate),
   };
 }
 
@@ -175,8 +174,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
   const recentRuns = result.runs?.runs || [];
   const failedRuns = recentRuns.filter((run) => run.successful === false).slice(0, 5);
   const localRuns = result.days?.local_run_summary;
-  const localRunCount = localRuns && localRuns.end_date === history.endDate
-    && (localRuns.start_date === history.startDate || (!history.startDate && localRuns.start_date === "0000-01-01"))
+  const localRunCount = localRuns && localRuns.end_date === history.endDate && localRuns.start_date === history.startDate
     ? formatUsageNumber(localRuns.count) : "Unavailable";
   const cacheDetail = summary.input_tokens
     ? `${formatUsageNumber(summary.cached_input_tokens)} of ${formatUsageNumber(summary.input_tokens)} input tokens`
@@ -352,16 +350,15 @@ export function bindUsageDiagnostics(panel) {
     const generation = panel._usageWindowGeneration = (panel._usageWindowGeneration || 0) + 1;
     event.target.disabled = true;
     try {
-      const today = usageCalendarToday(panel);
       // Only All can require multiple WebSocket pages. Its short-lived snapshot
-      // uses the route cache and the same agent/restore invalidation as Usage.
+      // uses the route cache and is independent of today's local date.
       const allDaysKey = next === "all" && panel._sectionCache
         ? `${agentId}|usage-maintenance/usage|all-days` : null;
       const cached = allDaysKey ? readSectionCache(panel, "usage-maintenance/usage", allDaysKey) : null;
-      const reuse = cached?.fresh && cached.result?.today === today;
-      const days = reuse ? cached.result.days : await loadUsageWindow(panel, next, today);
+      const reuse = cached?.fresh;
+      const days = reuse ? cached.result : await loadUsageWindow(panel, next);
       if (generation !== panel._usageWindowGeneration || panel._agentId !== agentId || panel._viewKey?.() !== "usage-maintenance/usage") return;
-      if (allDaysKey && !reuse) writeSectionCache(panel, allDaysKey, {days, today});
+      if (allDaysKey && !reuse) writeSectionCache(panel, allDaysKey, days);
       panel._usageHistoryWindow = next;
       panel._result = {
         ...(panel._result || {}),

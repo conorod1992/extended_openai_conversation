@@ -1,5 +1,6 @@
 import {
-  DEFAULT_USAGE_WINDOW, addUsageCalendarDays, usageCalendarToday, usageWindowBounds,
+  DEFAULT_USAGE_WINDOW, FIRST_USAGE_DATE, LAST_USAGE_DATE,
+  addUsageCalendarDays, usageCalendarToday, usageWindowBounds,
 } from "./usage-calendar.js";
 
 const DAILY_PAGE_SIZE = 366;
@@ -12,7 +13,7 @@ function usageAgentIdentity(panel) {
 
 export async function loadAllUsageDays(
   callPage,
-  {pageSize = DAILY_PAGE_SIZE, maxPages = MAX_DAILY_PAGES, startDate = "0000-01-01", endDate = "9999-12-31"} = {},
+  {pageSize = DAILY_PAGE_SIZE, maxPages = MAX_DAILY_PAGES, startDate = FIRST_USAGE_DATE, endDate = LAST_USAGE_DATE} = {},
 ) {
   const rows = [];
   let localRunSummary;
@@ -20,7 +21,8 @@ export async function loadAllUsageDays(
   for (let page = 0; page < maxPages; page += 1) {
     const response = await callPage(cursor, endDate);
     const current = Array.isArray(response?.days) ? response.days : [];
-    localRunSummary ||= response?.local_run_summary;
+    // Only the first page covers the whole requested range.
+    if (page === 0) localRunSummary = response?.local_run_summary;
     rows.push(...current);
     if (response?.has_more === false || current.length < pageSize) return {days: rows, ...(localRunSummary ? {local_run_summary: localRunSummary} : {})};
     const lastDate = String(current.at(-1)?.date || "");
@@ -39,10 +41,8 @@ export async function loadUsageWindow(
   today = usageCalendarToday(panel),
 ) {
   const identity = usageAgentIdentity(panel);
-  const bounds = usageWindowBounds(window, today);
-  const endDate = bounds.endDate;
-  const startDate = bounds.startDate ?? "0000-01-01";
-  const pending = window === "all"
+  const {id, startDate, endDate} = usageWindowBounds(window, today);
+  const pending = id === "all"
     ? loadAllUsageDays((pageStart, pageEnd) => panel._call("usage", "daily", {
         ...identity,
         start_date: pageStart,
@@ -57,8 +57,8 @@ export async function loadUsageWindow(
   const response = await pending;
   return {
     ...response,
-    requested_window: String(window || DEFAULT_USAGE_WINDOW),
-    complete_history: window === "all",
+    requested_window: id,
+    complete_history: id === "all",
   };
 }
 
