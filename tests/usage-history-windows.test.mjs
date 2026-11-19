@@ -130,7 +130,6 @@ const usageDataSource = await readFile(new URL("../custom_components/extended_op
 assert.match(usageDataSource, /const agent = panel\._selectedAgent\?\.\(\)/);
 assert.match(usageDataSource, /entry_id: agent\.entry_id, subentry_id: agent\.subentry_id/);
 assert.match(usageSource, /await loadUsageWindow\(panel, next/);
-assert.match(usageDataSource, /const DEFAULT_USAGE_WINDOW = "30"/);
 assert.doesNotMatch(usageDataSource, /panel\._call\("usage", "footprint"\)/);
 
 const usageCalls = [];
@@ -157,6 +156,10 @@ const sevenDayStart = usageCalls.at(-1).start_date;
 const sevenDayEnd = usageCalls.at(-1).end_date;
 assert.equal((Date.parse(sevenDayEnd) - Date.parse(sevenDayStart)) / 86_400_000, 6,
   "initial route read uses the selected seven-day window");
+
+const defaultWindow = await loadUsageWindow(usagePanel, undefined, "2026-09-07");
+assert.equal(defaultWindow.requested_window, "30");
+assert.equal(usageCalls.at(-1).start_date, "2026-08-09");
 
 const windowSelector = {value: "90", disabled: false};
 const freshDays = {days: [makeDay(localUsageDateKey(new Date(), "UTC"), 25)]};
