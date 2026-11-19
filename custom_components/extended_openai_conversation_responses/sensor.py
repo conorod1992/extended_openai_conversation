@@ -253,7 +253,7 @@ def _saved_recorder_observation(data: object) -> _PeriodObservation | None:
         or type(tokens) is not int
         or tokens < 0
         or (lifetime is not None and (type(lifetime) is not int or lifetime < 0))
-        or type(timestamp) not in (int, float)
+        or type(timestamp) is not float
         or not isfinite(timestamp)
     ):
         return None

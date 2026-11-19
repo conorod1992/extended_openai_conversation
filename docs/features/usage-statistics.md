@@ -46,7 +46,8 @@ period. When a period change selects a bucket that already contains tokens,
 Usage today or Usage this month can briefly publish a signed correction before
 the actual period total. This keeps Recorder from counting those tokens again.
 State-change automations and raw history can observe the correction, which can
-be negative.
+be negative. If Recorder was paused during the period change, the first recorded
+update reconciles with the last recorded period.
 
 ## Management panel
 
