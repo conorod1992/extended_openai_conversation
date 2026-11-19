@@ -29,6 +29,9 @@ for (const kind of ["knowledge", "persistent"]) {
       await beginDataMeasure(page);
       await panel.locator(`#${editor(kind)}-save`).click();
       await expect(list(panel, kind).getByText("Changed one record", {exact: true})).toBeVisible();
+      if (kind === "persistent") {
+        await expect(list(panel, kind).locator(".list-card").first()).toContainText("Changed one record");
+      }
       expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 79, initialCards: 80, mainChildReplacements: 0, inputRetained: true});
       await card(panel, kind, 20).locator(action(kind, "delete")).click();
       await beginDataMeasure(page); await acceptConfirmation(panel);
@@ -49,6 +52,9 @@ for (const kind of ["knowledge", "persistent"]) {
       await beginDataMeasure(page);
       await panel.locator(`#${editor(kind)}-save`).click();
       await expect(list(panel, kind).getByText("Brand new record", {exact: true})).toBeVisible();
+      if (kind === "persistent") {
+        await expect(list(panel, kind).locator(".list-card").first()).toContainText("Brand new record");
+      }
       if (kind === "knowledge") await expect(panel.locator("[data-source-count]")).toHaveText("80 sources");
       else expect(await panel.evaluate(host => host._data.scopes.find(scope => scope.scope_id === host._scopeId).memory_count)).toBe(80);
       expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 79, initialCards: 79, mainChildReplacements: 0});

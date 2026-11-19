@@ -59,6 +59,34 @@ async def _memory(cache=None) -> PersistentMemory:
     return memory
 
 
+async def test_category_scopes_hybrid_cold_preparation_and_alias_refill():
+    memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea.", "preferences", "explicit")
+    await memory.async_add("alice", "Alice rides a bike.", "hobbies", "explicit")
+    await memory.async_add("bob", "Bob likes coffee.", "preferences", "explicit")
+    calls = []
+    backend = "before"
+
+    async def provider(texts):
+        calls.extend(texts)
+        return EmbeddingBatch([[1.0, 0.0] for _ in texts], backend)
+
+    memory.set_embedding_provider(provider, "alias")
+    assert await memory.async_prepare_hybrid(
+        ["alice"], "tea", category=" Preferences "
+    ) == [1.0, 0.0]
+    assert calls == ["preferences | Alice likes tea.", "tea"]
+
+    # Populate the unrelated category as well, then repoint the same alias.
+    assert await memory.async_prepare_hybrid(["alice"], "catch up")
+    calls.clear()
+    backend = "after"
+    assert await memory.async_prepare_hybrid(
+        ["alice"], "tea", category="preferences"
+    ) == [1.0, 0.0]
+    assert calls == ["tea", "preferences | Alice likes tea."]
+
+
 @pytest.mark.parametrize("previous_model", ["backend-a", None])
 async def test_repointed_alias_refreshes_only_readable_vectors_after_restart(
     previous_model,

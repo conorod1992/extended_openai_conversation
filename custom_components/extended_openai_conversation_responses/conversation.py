@@ -1887,7 +1887,8 @@ class ExtendedOpenAIAgentEntity(
             await self._memory.async_prepare_hybrid(
                 readable_scope_ids,
                 query,
-                **({"automatic_recall": True} if automatic_recall else {}),
+                category=category,
+                automatic_recall=automatic_recall,
             )
             if hybrid
             else None

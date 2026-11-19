@@ -746,9 +746,15 @@ class PersistentMemory:
             ]
 
     async def async_prepare_hybrid(
-        self, scope_ids: Sequence[str], query: str, *, automatic_recall: bool = False
+        self,
+        scope_ids: Sequence[str],
+        query: str,
+        *,
+        category: str | None = None,
+        automatic_recall: bool = False,
     ) -> list[float] | None:
-        """Prepare embeddings only for searched scopes and return the query vector."""
+        """Prepare embeddings for the search corpus and return the query vector."""
+        category_filter = _clean_category(category) if category else None
         if self._embedding_provider is None:
             self._set_hybrid_status("lexical_fallback", "provider_not_configured")
             return None
@@ -762,7 +768,7 @@ class PersistentMemory:
         )
         try:
             if not await self._async_refresh_missing_embeddings(
-                scope_ids, batch_budget=batch_budget
+                scope_ids, category_filter=category_filter, batch_budget=batch_budget
             ):
                 self._set_hybrid_status(
                     "lexical_fallback",
@@ -798,6 +804,7 @@ class PersistentMemory:
                 and entry.space_id == space_id
                 and (memory := self._memories.get(memory_id)) is not None
                 and memory.user_id in allowed_scopes
+                and (category_filter is None or memory.category == category_filter)
             ]
             if (
                 batch.provider_model is None
@@ -835,6 +842,7 @@ class PersistentMemory:
                 for entry in readable
             ) and not await self._async_refresh_missing_embeddings(
                 scope_ids,
+                category_filter=category_filter,
                 dimensions=width,
                 provider_model=batch.provider_model,
                 batch_budget=batch_budget,
@@ -1549,6 +1557,7 @@ class PersistentMemory:
         self,
         scope_ids: Sequence[str],
         *,
+        category_filter: str | None = None,
         dimensions: int | None = None,
         provider_model: str | None = None,
         batch_budget: Iterator[int] | None = None,
@@ -1566,6 +1575,7 @@ class PersistentMemory:
                 memory
                 for memory in self._memories.values()
                 if memory.user_id in allowed_scopes
+                and (category_filter is None or memory.category == category_filter)
                 and self._cached_embedding(
                     memory, dimensions=dimensions, provider_model=provider_model
                 )

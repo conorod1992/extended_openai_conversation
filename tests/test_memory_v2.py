@@ -824,7 +824,7 @@ async def test_explicit_memory_search_uses_configured_hybrid_semantics() -> None
 
     assert result == expected
     entity._memory.async_prepare_hybrid.assert_awaited_once_with(
-        ["alice"], "Oscar breed"
+        ["alice"], "Oscar breed", category="pets", automatic_recall=False
     )
     entity._memory.async_search.assert_awaited_once_with(
         ["alice"],

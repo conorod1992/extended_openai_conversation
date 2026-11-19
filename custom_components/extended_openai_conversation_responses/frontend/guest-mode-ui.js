@@ -58,6 +58,15 @@ function indexMemories(panel) {
   browserState(panel).projections = new Map([...collectionState(panel).items].map(([id, memory]) => [id, memorySearchProjection(memory)]));
 }
 
+function orderedMemoryItems(panel, collection = collectionState(panel)) {
+  const page = panel._result?.memories || [];
+  const pageIds = new Set(page.map(memory => String(memory.memory_id)));
+  let pageIndex = 0;
+  // Fill the visible slots in page order. Filtering a list that is already
+  // ordered then only changes visibility and does not move keyed DOM nodes.
+  return [...collection.items].map(([id, memory]) => pageIds.has(id) ? page[pageIndex++] : memory);
+}
+
 export function findPersistentMemory(panel, id) {
   return collectionState(panel).items.get(String(id));
 }
@@ -228,7 +237,7 @@ const memoryStatusMarkup = panel => {
 };
 
 export function renderPersistentMemories(panel) {
-  const items = [...collectionState(panel).items.values()];
+  const items = orderedMemoryItems(panel);
   return `<section class="content-card" data-persistent-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}"><div class="section-heading"><div><h2>Long-term memories</h2><p>Long-term facts the assistant can reuse in future conversations. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><button type="button" id="add-memory">+ Add memory</button></div><div data-memory-feature-status>${memoryStatusMarkup(panel)}</div><nav class="config-jumps memory-kind-nav" aria-label="Memory view"><button type="button" class="secondary memory-kind" data-kind="persistent" aria-current="page">Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary">Short-term</button></nav><input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Search memories" aria-label="Search memories"><p class="help" role="status" data-memory-search-status></p><button type="button" class="secondary" id="retry-memory-search" hidden>Retry search</button><div class="list memory-list">${items.map(memory => memoryCard(panel, memory)).join("")}<div data-memory-empty>${panel._empty(panel._query.trim() ? "No memories match this search." : "No long-term memories yet.")}</div></div><div class="section-actions" data-memory-pagination ${panel._result?.has_more ? "" : "hidden"}><button type="button" class="secondary" id="load-more-memories">Load more ${browserState(panel).memoryQuery ? "matches" : "memories"}</button></div></section>`;
 }
 
@@ -267,7 +276,7 @@ export function hasPersistentMemoryCollection(panel) {
 export function reconcilePersistentMemories(panel) {
   const collection = collectionState(panel);
   if (!collection.host || collection.host !== panel.shadowRoot.querySelector("[data-persistent-memories]")) return false;
-  const items = [...collection.items.values()];
+  const items = orderedMemoryItems(panel, collection);
   indexMemories(panel);
   reconcileKeyedChildren(collection.list, collection.cards, items, memory => memory.memory_id,
     memory => JSON.stringify([memory.content, memory.category, memory.source, memory.updated_at, panel._data?.is_admin]),
