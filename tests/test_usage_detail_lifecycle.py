@@ -6,16 +6,17 @@ from datetime import timedelta
 import logging
 
 import pytest
-from homeassistant.util import dt as dt_util
 
-from custom_components.extended_openai_conversation_responses import usage as usage_module
+from custom_components.extended_openai_conversation_responses import (
+    usage as usage_module,
+)
 from custom_components.extended_openai_conversation_responses.usage import (
     RequestUsage,
     UsageManager,
     UsageRequest,
     UsageRun,
 )
-
+from homeassistant.util import dt as dt_util
 
 
 class DetailStorage:
@@ -264,7 +265,11 @@ async def test_routine_usage_persistence_is_owned_and_coalesced_by_manager() -> 
     manager.requests.clear()
     detail_payload = details.delayed[-1][0]()
     assert detail_payload["requests"] == []
-    assert len(detail_payload["runs"]) == 1
+    (stored_run,) = detail_payload["runs"]
+    assert "accounting_date" not in stored_run
+    assert detail_payload["run_accounting_dates"] == {
+        stored_run["run_id"]: manager.runs[0].accounting_date,
+    }
 
 
 async def test_usage_schedule_failure_falls_back_to_immediate_save(

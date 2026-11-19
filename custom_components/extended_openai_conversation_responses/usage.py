@@ -48,6 +48,7 @@ _USAGE_GETTER_LOCKS = f"{DOMAIN}.usage_getter_locks"
 _USAGE_SAVE_DELAY_SECONDS = 5.0
 _USAGE_PRUNE_RETRY_SECONDS = 300.0
 _USAGE_PRUNE_MAX_ATTEMPTS_PER_DAY = 2
+_RUN_ACCOUNTING_DATES = "run_accounting_dates"
 MAX_RECENT_LIMIT = 200
 _LOGGER = logging.getLogger(__name__)
 _EXPLICIT_USAGE_SAVE: ContextVar[bool] = ContextVar(
@@ -374,6 +375,7 @@ class UsageManager:
             staged_runs: list[UsageRun] = []
             request_ids: set[str] = set()
             run_ids: set[str] = set()
+            inline_run_dates = False
             if self._detail_storage is not None:
                 loaded_details = await self._detail_storage.async_load()
                 detail_data = loaded_details if loaded_details is not None else {}
@@ -403,11 +405,15 @@ class UsageManager:
                         if record_run.run_id not in run_ids:
                             staged_runs.append(record_run)
                             run_ids.add(record_run.run_id)
+                            inline_run_dates |= "accounting_date" in raw
                         else:
                             repair_required = True
                     except TypeError, ValueError:
                         repair_required = True
                         continue
+                repair_required |= not _restore_stored_run_dates(
+                    staged_runs, run_ids, detail_data.get(_RUN_ACCOUNTING_DATES, {})
+                )
 
             now = dt_util.utcnow()
             loaded_detail_count = len(staged_requests) + len(staged_runs)
@@ -430,7 +436,8 @@ class UsageManager:
             self.daily = staged_daily
             self.requests = staged_requests
             self.runs = staged_runs
-            self._detail_retention_dirty = loaded_detail_count != (
+            # The next normal detail write also normalizes older inline dates.
+            self._detail_retention_dirty = inline_run_dates or loaded_detail_count != (
                 len(staged_requests) + len(staged_runs)
             )
             self._repair_required = repair_required
@@ -708,7 +715,7 @@ class UsageManager:
         self._require_writable()
         if self._detail_storage is None:
             return
-        details = await asyncio.to_thread(_serialize_usage_details, requests, runs)
+        details = await asyncio.to_thread(_serialize_usage_detail_store, requests, runs)
         await self._detail_storage.async_save(details)
 
     async def async_prune_details(self, *, save: bool = True) -> dict[str, int]:
@@ -1026,7 +1033,7 @@ class UsageManager:
             self._require_writable()
         if self._detail_storage is not None:
             details = await asyncio.to_thread(
-                _serialize_usage_details, list(self.requests), list(self.runs)
+                _serialize_usage_detail_store, list(self.requests), list(self.runs)
             )
             await self._detail_storage.async_save(details)
 
@@ -1040,10 +1047,7 @@ class UsageManager:
                 "days": deepcopy(self.daily),
             }
         if category == "details":
-            return {
-                "requests": [asdict(request) for request in self.requests],
-                "runs": [asdict(run) for run in self.runs],
-            }
+            return _serialize_usage_detail_store(self.requests, self.runs)
         raise ValueError(f"Unknown usage persistence category: {category}")
 
     @staticmethod
@@ -1325,20 +1329,46 @@ def _usage_run_from_record(raw: Any) -> UsageRun:
     ):
         raise ValueError("usage run metadata is invalid")
     if run.accounting_date is not None:
-        if run.completed_at is None:
-            raise ValueError("usage run accounting date requires a completed timestamp")
-        try:
-            recorded_day = calendar_date.fromisoformat(run.accounting_date)
-            utc_day = dt_util.as_utc(_parse_time(run.completed_at)).date()
-        except (OverflowError, TypeError, ValueError) as err:
-            raise ValueError("usage run accounting date is invalid") from err
-        if (
-            recorded_day.isoformat() != run.accounting_date
-            or abs((recorded_day - utc_day).days) > 1
-        ):
-            raise ValueError("usage run accounting date is invalid")
+        _validate_run_accounting_date(run.accounting_date, run.completed_at)
     _validate_counter_mapping(asdict(run), counter_keys)
     return run
+
+
+def _validate_run_accounting_date(day: str, completed_at: str | None) -> None:
+    if completed_at is None:
+        raise ValueError("usage run accounting date requires a completed timestamp")
+    try:
+        recorded_day = calendar_date.fromisoformat(day)
+        utc_day = dt_util.as_utc(_parse_time(completed_at)).date()
+    except (OverflowError, TypeError, ValueError) as err:
+        raise ValueError("usage run accounting date is invalid") from err
+    if recorded_day.isoformat() != day or abs((recorded_day - utc_day).days) > 1:
+        raise ValueError("usage run accounting date is invalid")
+
+
+def _restore_stored_run_dates(
+    runs: list[UsageRun], run_ids: set[str], stored_dates: Any
+) -> bool:
+    """Apply valid metadata while keeping readable runs when metadata needs repair."""
+    if not isinstance(stored_dates, dict):
+        return False
+    if not stored_dates:
+        return True
+    valid = stored_dates.keys() <= run_ids
+    for run in runs:
+        if run.run_id not in stored_dates:
+            continue
+        day = stored_dates[run.run_id]
+        if run.accounting_date not in (None, day):
+            valid = False
+            continue
+        try:
+            _validate_run_accounting_date(day, run.completed_at)
+        except ValueError:
+            valid = False
+            continue
+        run.accounting_date = day
+    return valid
 
 
 def _empty_day(date: str) -> dict[str, Any]:
@@ -1610,7 +1640,7 @@ async def async_stage_usage_journal_recovery(
         return (
             totals_payload,
             {"totals": totals_payload, "days": valid_daily},
-            _serialize_usage_details(valid_requests, valid_runs),
+            _serialize_usage_detail_store(valid_requests, valid_runs),
         )
 
     totals_payload, aggregate, details = await asyncio.to_thread(prepare)
@@ -1734,3 +1764,18 @@ def _serialize_usage_details(
         "requests": [asdict(request) for request in requests],
         "runs": [asdict(run) for run in runs],
     }
+
+
+def _serialize_usage_detail_store(
+    requests: list[UsageRequest], runs: list[UsageRun]
+) -> dict[str, Any]:
+    """Keep on-disk run rows readable by releases that reject extra run fields."""
+    details = _serialize_usage_details(requests, runs)
+    dates = {}
+    for row in details["runs"]:
+        day = row.pop("accounting_date")
+        if day is not None:
+            dates[row["run_id"]] = day
+    if dates:
+        details[_RUN_ACCOUNTING_DATES] = dates
+    return details

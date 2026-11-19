@@ -20,6 +20,7 @@ from custom_components.extended_openai_conversation_responses import (
 from custom_components.extended_openai_conversation_responses.agent_maintenance import (
     get_agent_maintenance_gate,
 )
+from homeassistant.util import dt as dt_util
 from tests.restore_participants import participants
 from tests.test_request_rules import local_rule
 from tests.test_restore_initialization_recovery import _prepare
@@ -275,6 +276,47 @@ async def test_invalid_category_candidate_cannot_reach_any_native_save(
         finally:
             gate.recovery_required = False
     save.assert_not_awaited()
+
+
+async def test_usage_journal_stages_legacy_readable_run_records(hass):
+    completed = dt_util.utcnow()
+    stamp = completed.isoformat()
+    day = completed.date().isoformat()
+    run = usage.UsageRun(
+        run_id="recovered",
+        started_at=stamp,
+        completed_at=stamp,
+        duration_ms=1,
+        agent_subentry_id="guard-agent",
+        home_assistant_conversation_id=None,
+        source_device_id=None,
+        accounting_date=day,
+    )
+    gate = get_agent_maintenance_gate(hass, "guard-entry", "guard-agent")
+    async with gate.exclusive():
+        gate.recovery_required = True
+        try:
+            with gate.recovery_work():
+                await usage.async_stage_usage_journal_recovery(
+                    hass,
+                    "guard-entry",
+                    "guard-agent",
+                    usage.UsageTotals(),
+                    {},
+                    [],
+                    [run],
+                )
+        finally:
+            gate.recovery_required = False
+
+    stores = usage._durable_usage_stores(hass, "guard-entry", "guard-agent")
+    stored = await stores[2].async_load()
+    (stored_run,) = stored["runs"]
+    assert "accounting_date" not in stored_run
+    assert stored["run_accounting_dates"] == {"recovered": day}
+    reloaded = usage.UsageManager(*stores)
+    await reloaded.async_initialize()
+    assert reloaded.runs == [run]
 
 
 @pytest.mark.parametrize("category", ["memory", "guest_mode", "request_rules", "usage"])
