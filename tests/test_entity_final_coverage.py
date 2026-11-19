@@ -85,10 +85,10 @@ def provider_loop_entity(monkeypatch):
     monkeypatch.setattr(
         entity_module,
         "build_provider_request_snapshot",
-        lambda _options, _entry_data, **_kwargs: SimpleNamespace(
+        lambda _options, _entry_data, **_kwargs: entity_module.ProviderRequestSnapshot(
             api_kwargs={"model": "test-model"},
             api_mode="chat_completions",
-            provider_tools=[],
+            provider_tools=(),
         ),
     )
     monkeypatch.setattr(entity_module, "_convert_content_to_param", lambda *_args: [])

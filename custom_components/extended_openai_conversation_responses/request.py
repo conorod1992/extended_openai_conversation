@@ -70,6 +70,28 @@ from .temporary_memory import TEMPORARY_MEMORY_TOOL_NAMES, temporary_memory_tool
 
 _LOGGER = logging.getLogger(__name__)
 _LEGACY_TOKEN_MIGRATION_LOGGED: set[str] = set()
+# OpenAI models predating all-turn reasoning default to current-turn context.
+# Keep this selection exact so a new model or compatible endpoint stays conservative.
+_CURRENT_TURN_REASONING_MODELS = frozenset(
+    {
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano",
+        "gpt-5-pro",
+        "gpt-5.1",
+        "gpt-5.2",
+        "gpt-5.2-pro",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-5.4-pro",
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "o3",
+        "o3-pro",
+        "o3-pro-2025-06-10",
+    }
+)
 
 CONTINUE_CONVERSATION_TOOL_NAME = "set_continue_conversation"
 CONTINUE_CONVERSATION_TOOL = {
@@ -168,6 +190,7 @@ class ProviderRequestSnapshot:
     provider_tools: tuple[dict[str, Any], ...]
     structured_outputs: bool = False
     reasoning_items_supported: bool = False
+    reasoning_current_turn_only: bool = False
 
 
 def canonical_json(value: Any) -> str:
@@ -716,15 +739,30 @@ def build_provider_request_snapshot(
     provider_tool = build_web_search_tool(
         options, api_mode, entry_data, capabilities, client=client
     )
+    reasoning_items_supported = bool(
+        capabilities.get(
+            "uses_reasoning_tokens", capabilities["reasoning"]["supported"]
+        )
+    )
+    # A validated catalogue snapshot can explicitly inherit a supported
+    # model's contract. Similar-looking but unregistered IDs must stay unknown.
+    reasoning_context_model = (
+        capabilities.get("alias_of")
+        if capabilities.get("kind") == "snapshot" and capabilities.get("alias_of")
+        else capabilities.get("id", model)
+    )
     return ProviderRequestSnapshot(
         api_mode,
         api_kwargs,
         (provider_tool,) if provider_tool is not None else (),
         capabilities["structured_outputs"],
-        reasoning_items_supported=bool(
-            capabilities.get(
-                "uses_reasoning_tokens", capabilities["reasoning"]["supported"]
-            )
+        reasoning_items_supported=reasoning_items_supported,
+        reasoning_current_turn_only=(
+            api_mode == API_MODE_RESPONSES
+            and capabilities.get("status", "unknown") != "unknown"
+            and reasoning_items_supported
+            and reasoning_context_model in _CURRENT_TURN_REASONING_MODELS
+            and is_native_openai_connection(entry_data, client=client)
         ),
     )
 

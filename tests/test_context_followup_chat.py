@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
+    CONF_CHAT_MODEL,
     CONF_CONTEXT_THRESHOLD,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONF_SHORTEN_TOOL_CALL_ID,
@@ -64,6 +65,46 @@ async def test_chat_followup_evicts_old_history_and_keeps_call_result_pair(
     assert chat_log.content[-1].content == "done"
 
 
+async def test_current_turn_reasoning_keeps_older_text_and_wire_replay(hass):
+    from openai.types.responses import ResponseReasoningItem
+
+    from tests.test_tool_exchange_protocol import (
+        _entity as responses_entity,
+        _final_stream as responses_final,
+    )
+
+    entity = responses_entity(hass, [responses_final("Olive Meadow")])
+    entity.subentry.data.update(
+        {
+            CONF_CHAT_MODEL: "gpt-5-mini",
+            CONF_CONTEXT_THRESHOLD: 3000,
+            CONF_CONTEXT_TRUNCATE_STRATEGY: CONTEXT_TRUNCATE_KEEP_RECENT,
+        }
+    )
+    log = _chat_log(hass)
+    older = conversation.UserContent(content="The paint is called Olive Meadow.")
+    ciphertext = "opaque" * 2000
+    log.content[1:1] = [
+        older,
+        conversation.AssistantContent(
+            agent_id=entity.entity_id,
+            native=ResponseReasoningItem(
+                id="rs_old",
+                type="reasoning",
+                summary=[],
+                encrypted_content=ciphertext,
+            ),
+        ),
+        conversation.AssistantContent(agent_id=entity.entity_id, content="Remembered."),
+    ]
+    await entity._async_handle_chat_log(log, [], [])
+
+    outgoing = entity._client.responses.create.await_args.kwargs["input"]
+    assert any(item.get("content") == older.content for item in outgoing)
+    assert any(item.get("encrypted_content") == ciphertext for item in outgoing)
+    assert older in log.content
+
+
 @pytest.mark.parametrize(
     "kind", ["chat_image", "responses_image", "responses_reasoning"]
 )
@@ -71,9 +112,13 @@ async def test_chat_followup_evicts_old_history_and_keeps_call_result_pair(
 async def test_prepared_eviction_preserves_newer_turns(hass, kind, strategy):
     """Removing one costly old turn must not evict cheap newer exchanges."""
     import asyncio
+
     from openai.types.responses import ResponseReasoningItem
-    from tests.test_tool_exchange_protocol import _entity as responses_entity
-    from tests.test_tool_exchange_protocol import _final_stream as responses_final
+
+    from tests.test_tool_exchange_protocol import (
+        _entity as responses_entity,
+        _final_stream as responses_final,
+    )
 
     responses = kind.startswith("responses")
     entity = (

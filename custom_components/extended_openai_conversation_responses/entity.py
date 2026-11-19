@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, aclosing, suppress
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from hashlib import sha256
 import json
 import logging
@@ -126,7 +126,7 @@ from .helpers import entry_api_provider, get_api_mode
 from .model_tool_results import async_prepare_tool_results, serialize_model_tool_result
 from .non_streaming import completed_chat_chunks, completed_responses_events
 from .operational_errors import log_handled_failure
-from .provider_content import answer_text
+from .provider_content import RoutedReasoning, answer_text
 from .provider_errors import (
     ProviderStreamError,
     ensure_successful_responses_result,
@@ -627,13 +627,6 @@ def _discard_conditional_drafts(
     chat_log.content[:] = retained
 
 
-@dataclass(frozen=True, slots=True)
-class _RoutedReasoning:
-    route: str
-    item: Any
-    type = "reasoning"
-
-
 def _responses_reasoning_route(
     entry: Any, client: Any, options: Mapping[str, Any]
 ) -> str:
@@ -657,7 +650,7 @@ def _responses_reasoning_route(
 
 def _serialize_response_item(item: Any) -> dict[str, Any]:
     """Serialize an SDK Responses item for use as a subsequent input item."""
-    if isinstance(item, _RoutedReasoning):
+    if isinstance(item, RoutedReasoning):
         item = item.item
     if hasattr(item, "model_dump"):
         serialized = cast(dict[str, Any], item.model_dump(exclude_none=True))
@@ -704,7 +697,7 @@ def _convert_content_to_responses_param(
         if isinstance(content, conversation.AssistantContent):
             native = content.native
             native_type = getattr(native, "type", "") if native is not None else ""
-            origin = native.route if isinstance(native, _RoutedReasoning) else None
+            origin = native.route if isinstance(native, RoutedReasoning) else None
             replay_reasoning = include_reasoning and origin == reasoning_route
             if (replay_reasoning or native_type != "reasoning") and native_type in {
                 "reasoning",
@@ -1006,7 +999,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # double-counting live conversation runs.
                     await self._usage.async_record_conversation()
             options = request_options or self.subentry.data
-            from .context_usage_hardening import estimate_provider_input_tokens
+            from .context_usage_hardening import (
+                estimate_provider_input_tokens,
+                omit_prior_reasoning_ciphertext,
+            )
 
             threshold = int(
                 options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
@@ -1138,6 +1134,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     include_reasoning=provider_snapshot.reasoning_items_supported,
                     reasoning_route=reasoning_route,
                 )
+
+            def estimate_input(
+                prepared: Sequence[Mapping[str, Any]], tools: Any
+            ) -> int:
+                if provider_snapshot.reasoning_current_turn_only:
+                    prepared = omit_prior_reasoning_ciphertext(prepared)
+                return estimate_provider_input_tokens(prepared, tools)
 
             # Initial attachment preparation precedes the final capability snapshot.
             # Rebuild only the wire projection, retaining the encoded attachments and
@@ -1351,10 +1354,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             content, shorten_tool_call_id, prepared_user_content
                         )
                     )
-                    return estimate_provider_input_tokens(prepared, tools)
+                    return estimate_input(prepared, tools)
 
                 round_estimate = await asyncio.to_thread(
-                    estimate_provider_input_tokens, messages, tool_kwargs.get("tools")
+                    estimate_input, messages, tool_kwargs.get("tools")
                 )
                 if (
                     round_estimate > threshold
@@ -1382,7 +1385,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                     )
                     immediate_estimate = await asyncio.to_thread(
-                        estimate_provider_input_tokens,
+                        estimate_input,
                         messages,
                         tool_kwargs.get("tools"),
                     )
@@ -1406,7 +1409,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             )
                         )
                         round_estimate = await asyncio.to_thread(
-                            estimate_provider_input_tokens,
+                            estimate_input,
                             messages,
                             tool_kwargs.get("tools"),
                         )
@@ -1880,7 +1883,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                     )
                     observed_input_tokens = await asyncio.to_thread(
-                        estimate_provider_input_tokens,
+                        estimate_input,
                         prepared_current,
                         tool_kwargs.get("tools"),
                     )
@@ -2630,7 +2633,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         # Preserve native hosted-tool and reasoning output so stateless
                         # chained function calls retain the complete Responses context.
                         yield {
-                            "native": _RoutedReasoning(reasoning_route, item)
+                            "native": RoutedReasoning(reasoning_route, item)
                             if item_type == "reasoning" and reasoning_route is not None
                             else item
                         }

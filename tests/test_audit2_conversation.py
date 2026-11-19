@@ -4,6 +4,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses import (
     conversation as pipeline,
 )
@@ -24,6 +26,9 @@ from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
     _convert_content_to_responses_param,
 )
+from custom_components.extended_openai_conversation_responses.provider_content import (
+    RoutedReasoning,
+)
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_context_management import _normal_history
@@ -40,20 +45,29 @@ from tests.test_responses_api import _function_call
 from tests.test_usage import _manager
 
 
-def test_summary_excludes_encrypted_reasoning_but_replay_preserves_it():
+@pytest.mark.parametrize("route", [None, "azure-origin"])
+def test_summary_excludes_encrypted_reasoning_but_replay_preserves_it(route):
     payload = {
         "type": "reasoning",
         "id": "rs_1",
         "encrypted_content": "opaque-secret",
-        "summary": [],
+        "summary": [{"type": "summary_text", "text": "Keep the important detail"}],
     }
     native = SimpleNamespace(type="reasoning", model_dump=lambda **_: dict(payload))
+    if route is not None:
+        native = RoutedReasoning(route, native)
     item = conversation.AssistantContent(agent_id="agent", native=native)
-    assert "opaque-secret" not in history_as_summary_text([item])
+    summary = history_as_summary_text([item])
+    assert "opaque-secret" not in summary
+    assert "Keep the important detail" in summary
     assert (
-        _convert_content_to_responses_param([item])[0]["encrypted_content"]
+        _convert_content_to_responses_param([item], reasoning_route=route)[0][
+            "encrypted_content"
+        ]
         == "opaque-secret"
     )
+    if route is not None:
+        assert not _convert_content_to_responses_param([item], reasoning_route="other")
     assert payload["encrypted_content"] == "opaque-secret"
 
 

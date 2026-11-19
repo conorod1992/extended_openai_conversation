@@ -1,7 +1,17 @@
-"""Extract answer text without exposing provider reasoning or object representations."""
+"""Interpret provider text and reasoning records."""
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass(frozen=True, slots=True)
+class RoutedReasoning:
+    """Keep a provider reasoning item bound to the route that produced it."""
+
+    route: str
+    item: Any
+    type = "reasoning"
 
 
 def answer_text(content: Any) -> str:
