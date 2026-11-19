@@ -585,7 +585,7 @@ async def _archive_with_failed_turn():
         )
 
     assert archive._pending_partitions
-    assert "pending_partitions" in storage.metadata
+    assert "pending_append" in storage.metadata
     return archive, storage, session
 
 
@@ -603,6 +603,7 @@ async def test_loaded_archive_converges_after_partition_failure_without_restart(
     assert second is not None
     assert archive._pending_partitions == set()
     assert "pending_partitions" not in storage.metadata
+    assert "pending_append" not in storage.metadata
 
     restarted = ConversationArchive(storage, "agent-1")
     await restarted.async_initialize()
@@ -618,6 +619,7 @@ async def test_later_session_publish_preserves_pending_transaction_for_restart()
     """Unrelated metadata writes cannot erase an unfinished partition journal."""
     archive, storage, failed_session = await _archive_with_failed_turn()
 
+    intent = deepcopy(storage.metadata["pending_append"])
     later_session = await archive.async_begin_session(
         "kitchen",
         user_scope("bob", source="test"),
@@ -628,7 +630,7 @@ async def test_later_session_publish_preserves_pending_transaction_for_restart()
     )
 
     assert later_session is not None
-    assert "pending_partitions" in storage.metadata
+    assert storage.metadata["pending_append"] == intent
     persisted_ids = {item["session_id"] for item in storage.metadata["sessions"]}
     assert failed_session.session_id in persisted_ids
     assert later_session.session_id in persisted_ids
@@ -643,6 +645,22 @@ async def test_later_session_publish_preserves_pending_transaction_for_restart()
         later_session.session_id
     ]
     assert "pending_partitions" not in storage.metadata
+    assert "pending_append" not in storage.metadata
+
+
+async def test_making_session_private_discards_failed_append_intent() -> None:
+    archive, storage, failed_session = await _archive_with_failed_turn()
+
+    await archive.async_make_private(failed_session.session_id)
+
+    assert "pending_append" not in storage.metadata
+    assert "pending_partitions" not in storage.metadata
+    assert "first turn" not in str((storage.metadata, storage.partitions))
+    restarted = ConversationArchive(storage, "agent-1")
+    await restarted.async_initialize()
+    assert restarted.stats()["turn_count"] == 0
+    with pytest.raises(ValueError, match="not found"):
+        await restarted.async_get("user:alice", failed_session.session_id)
 
 
 class CoverageArchiveStorage:
@@ -705,6 +723,7 @@ def _turn(
     timestamp: str = "2026-09-01T10:01:00+00:00",
     user_text: str = "Remember the running shoes",
     assistant_text: str = "You chose the blue pair",
+    sequence: int | None = None,
 ) -> ArchiveTurn:
     return ArchiveTurn(
         turn_id=turn_id,
@@ -714,6 +733,7 @@ def _turn(
         user_text=user_text,
         assistant_text=assistant_text,
         successful=True,
+        sequence=sequence,
     )
 
 

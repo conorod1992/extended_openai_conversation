@@ -446,7 +446,15 @@ class ConversationArchive:
             if repair_required:
                 data = {}
             pending = data.get("pending_partitions")
-            if pending is not None:
+            if "pending_append" in data:
+                if "pending_partitions" in data:
+                    raise ValueError("conversation archive transaction is corrupted")
+                await self._async_replay_pending_append(data)
+                data = {
+                    key: value for key, value in data.items() if key != "pending_append"
+                }
+                await self._async_write_metadata(data)
+            elif pending is not None:
                 # Metadata is the transaction marker. Complete any interrupted
                 # cross-store write before exposing archive state after restart.
                 if not isinstance(pending, dict) or any(
@@ -628,8 +636,73 @@ class ConversationArchive:
             self._pending_partitions.clear()
             self._initialized = True
 
+    async def _async_replay_pending_append(self, data: dict[str, Any]) -> None:
+        """Replay a single planned turn over its validated monthly base."""
+        intent = data["pending_append"]
+        try:
+            if (
+                not isinstance(intent, dict)
+                or set(intent) != {"turn", "partition_existed"}
+                or not isinstance(intent["partition_existed"], bool)
+            ):
+                raise ValueError
+            turn = _validated_turn(intent["turn"])
+            month = turn.timestamp[:7]
+            if (
+                turn.sequence is None
+                or not isinstance(data.get("partitions"), list)
+                or month not in data["partitions"]
+            ):
+                raise ValueError
+        except ValueError as err:
+            raise ValueError("conversation archive transaction is corrupted") from err
+
+        existing = await self._storage.async_load_partition(month)
+
+        def merge() -> tuple[dict[str, Any], bool]:
+            # Only a newly indexed month may be absent. An already-applied append
+            # may be the only record in that newly indexed month.
+            if existing is None and not intent["partition_existed"]:
+                return {"turns": [intent["turn"]]}, True
+            turns = existing.get("turns") if isinstance(existing, dict) else None
+            if not isinstance(turns, list):
+                raise ValueError("archive append base partition is invalid")
+            matching_turns = [
+                raw
+                for raw in turns
+                if isinstance(raw, dict) and raw.get("turn_id") == turn.turn_id
+            ]
+            if (
+                len(matching_turns) > 1
+                or (matching_turns and _validated_turn(matching_turns[0]) != turn)
+                or (
+                    not intent["partition_existed"]
+                    and len(turns) != len(matching_turns)
+                )
+            ):
+                raise ValueError("archive append conflicts with the base partition")
+            if matching_turns:
+                return {"turns": turns}, False
+            return {"turns": [*turns, intent["turn"]]}, True
+
+        try:
+            payload, needs_write = await asyncio.to_thread(merge)
+        except ValueError as err:
+            raise ValueError("conversation archive transaction is corrupted") from err
+        # The delta cannot repair a damaged base. Validate the complete result,
+        # including counts, private associations and unchanged months, before any write.
+        await self._async_validate_pending_transaction(
+            data, {month: payload}, appended_turn=turn
+        )
+        if needs_write:
+            await self._storage.async_save_partition(month, payload)
+
     async def _async_validate_pending_transaction(
-        self, data: dict[str, Any], pending: dict[str, Any]
+        self,
+        data: dict[str, Any],
+        pending: dict[str, Any],
+        *,
+        appended_turn: ArchiveTurn | None = None,
     ) -> None:
         """Validate the complete candidate before the first replay write.
 
@@ -669,11 +742,26 @@ class ConversationArchive:
                     if turn.timestamp[:7] != name:
                         raise ValueError("archive turn partition is invalid")
                     turns.append(raw)
-            sessions, _ = self.validate_backup_data(
+            sessions, checked_turns = self.validate_backup_data(
                 {"sessions": data.get("sessions", []), "turns": turns},
                 self._agent_subentry_id,
                 local_recovery=True,
             )
+            if appended_turn is not None:
+                previous_max = max(
+                    (
+                        turn.sequence
+                        for turn in checked_turns
+                        if turn.session_id == appended_turn.session_id
+                        and turn.turn_id != appended_turn.turn_id
+                        and turn.sequence is not None
+                    ),
+                    default=-1,
+                )
+                if appended_turn.sequence != previous_max + 1:
+                    raise ValueError(
+                        "archive append sequence does not follow stored turns"
+                    )
             self.validate_recovery_bindings(data.get("active", {}), sessions)
 
         try:
@@ -807,17 +895,22 @@ class ConversationArchive:
             )
             turns = dict(self._turns)
             turns[session_id] = [*previous_turns, turn]
-            await self._async_commit_state_locked(
-                sessions=sessions,
-                turns=turns,
-                active=dict(self._active),
-                changed_partitions={timestamp[:7]}
-                | (
-                    self._changed_partitions(previous_turns)
-                    if upgraded_legacy
-                    else set()
-                ),
-            )
+            if upgraded_legacy or self._pending_partitions:
+                # Legacy sequence upgrades and unfinished writes may affect multiple
+                # months. The existing replacement journal can carry their full state.
+                await self._async_commit_state_locked(
+                    sessions=sessions,
+                    turns=turns,
+                    active=dict(self._active),
+                    changed_partitions={timestamp[:7]}
+                    | (
+                        self._changed_partitions(previous_turns)
+                        if upgraded_legacy
+                        else set()
+                    ),
+                )
+            else:
+                await self._async_commit_append_locked(sessions, turns, turn)
             return turn
 
     async def async_make_private(self, session_id: str) -> dict[str, Any]:
@@ -1645,6 +1738,15 @@ class ConversationArchive:
         partitions: set[str],
         pending_names: set[str],
     ) -> dict[str, Any]:
+        if (
+            pending_names
+            and self._durable_metadata is not None
+            and "pending_append" in self._durable_metadata
+        ):
+            return {
+                **self._metadata_payload_for_state(sessions, active, partitions),
+                "pending_append": self._durable_metadata["pending_append"],
+            }
         pending = (
             {
                 name: self._partition_payload_for_state(name, turns)
@@ -1698,6 +1800,45 @@ class ConversationArchive:
         remove = getattr(store, "async_remove", None)
         if callable(remove):
             await remove()
+
+    async def _async_commit_append_locked(
+        self,
+        sessions: dict[str, ArchiveSession],
+        turns: dict[str, list[ArchiveTurn]],
+        turn: ArchiveTurn,
+    ) -> None:
+        """Journal one turn, then write its full monthly partition only once."""
+        self._require_writable()
+        month = turn.timestamp[:7]
+        partitions = self._partitions | {month}
+
+        def prepare() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+            metadata = self._metadata_payload_for_state(
+                sessions, self._active, partitions
+            )
+            payload = self._partition_payload_for_state(month, self._turns)
+            appended = _turn_payload(turn)
+            payload["turns"].append(appended)
+            intent = {
+                **metadata,
+                "pending_append": {
+                    "turn": appended,
+                    "partition_existed": month in self._partitions,
+                },
+            }
+            return metadata, intent, payload
+
+        metadata, intent, payload = await asyncio.to_thread(prepare)
+
+        def publish_intent() -> None:
+            self._sessions = sessions
+            self._turns = defaultdict(list, turns)
+            self._partitions = partitions
+            self._pending_partitions = {month}
+
+        await self._async_commit_metadata(intent, publish_intent, record_execution=True)
+        await self._storage.async_save_partition(month, payload)
+        await self._async_commit_metadata(metadata, self._pending_partitions.clear)
 
     async def _async_commit_state_locked(
         self,
