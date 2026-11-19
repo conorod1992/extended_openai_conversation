@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from heapq import heappush, heapreplace
 from typing import Any
 
@@ -29,6 +29,7 @@ from .management_result_limits import (
     page_from_iterable,
     page_metadata,
 )
+from .usage import UsageRun
 
 MAX_MANAGEMENT_HISTORY_OFFSET = 10_000
 
@@ -99,6 +100,44 @@ def usage_summary(manager: Any) -> dict[str, Any]:
     }
 
 
+def _legacy_run_in_period(run: UsageRun, start_date: str, end_date: str) -> bool | None:
+    """Determine membership only if every possible original local day agrees."""
+    if run.completed_at is None:
+        return None
+    try:
+        utc_day = dt_util.as_utc(_parse_time(run.completed_at)).date()
+        # UTC offsets are less than 24 hours in either direction.
+        earliest = (utc_day - timedelta(days=1)).isoformat()
+        latest = (utc_day + timedelta(days=1)).isoformat()
+    except OverflowError:
+        return None
+    if end_date < earliest or start_date > latest:
+        return False
+    return True if start_date <= earliest and latest <= end_date else None
+
+
+def _local_run_summary(
+    manager: Any, start_date: str, end_date: str
+) -> dict[str, Any] | None:
+    count = 0
+    for run in manager.runs:
+        if run.request_count != 0 or not manager.detail_is_current(run.started_at):
+            continue
+        if run.accounting_date is not None:
+            count += start_date <= run.accounting_date <= end_date
+            continue
+        in_period = _legacy_run_in_period(run, start_date, end_date)
+        if in_period is None:
+            return None
+        count += in_period
+    return {
+        "count": count,
+        "start_date": start_date,
+        "end_date": end_date,
+        "retention_days": manager.run_retention_days,
+    }
+
+
 def usage_daily_page(
     manager: Any,
     *,
@@ -119,22 +158,7 @@ def usage_daily_page(
     days = [_bounded_usage_day(manager.daily[date]) for date in page]
     return {
         "days": days,
-        "local_run_summary": {
-            "count": sum(
-                1
-                for run in manager.runs
-                if manager.detail_is_current(run.started_at)
-                and run.request_count == 0
-                and start_date
-                <= dt_util.as_local(_parse_time(run.completed_at or run.started_at))
-                .date()
-                .isoformat()
-                <= end_date
-            ),
-            "start_date": start_date,
-            "end_date": end_date,
-            "retention_days": manager.run_retention_days,
-        },
+        "local_run_summary": _local_run_summary(manager, start_date, end_date),
         **page_metadata(
             offset=safe_offset,
             limit=safe_limit,

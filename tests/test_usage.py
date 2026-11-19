@@ -690,6 +690,18 @@ def test_validate_backup_rebinds_agent_and_accepts_valid_state() -> None:
         ("request", {"duration_ms": -1}, "counter duration_ms"),
         ("request", {"details": {"bad": True}}, "request details"),
         ("run", {"started_at": "bad"}, "run metadata"),
+        ("run", {"accounting_date": "2026-02-30"}, "accounting date"),
+        ("run", {"accounting_date": "2026-W01-1"}, "accounting date"),
+        ("run", {"accounting_date": 20260913}, "accounting date"),
+        ("run", {"accounting_date": "2026-09-13", "completed_at": None}, "accounting date"),
+        (
+            "run",
+            {
+                "accounting_date": "2026-09-13",
+                "completed_at": "2026-09-15T00:00:00+00:00",
+            },
+            "accounting date",
+        ),
         ("run", {"models": "gpt-test"}, "run metadata"),
         ("run", {"models": [1]}, "run metadata"),
         ("run", {"request_count": -1}, "counter request_count"),
@@ -1053,6 +1065,7 @@ async def test_cross_midnight_run_attribution(monkeypatch) -> None:
     await manager.async_record_request(
         successful=True, usage=RequestUsage(total_tokens=600)
     )
+    assert manager.runs[0].accounting_date == "2026-10-09"
     day = manager.summary_for_date("2026-10-09")
     assert day["total_tokens"] == 600
     assert day["average_tokens_per_completed_run"] == 250

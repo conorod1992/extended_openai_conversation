@@ -57,6 +57,8 @@ Run averages count requests and tokens from runs that finished during the select
 
 Recent failed runs are called out separately. Recent-run and provider-request detail stays within its configured retention periods. Use **Requests** on a recent run to see its individual provider calls, or **Browse retained requests** to include calls whose run detail has expired and calls recorded independently of a run. The detail includes stage, provider, model, API mode, token counts, cache and reasoning metadata, duration, requested tool-call count, web-search use, and success or error state.
 
+**Retained runs without provider requests** uses the same recorded completion day as the daily totals, including after a Home Assistant timezone change or restore. If a legacy run could fall on either side of the selected period’s boundary, this count displays **Unavailable**. Clearing or expiring run details leaves the aggregate totals available.
+
 Recent-run timestamps are displayed in Home Assistant's configured timezone using the browser's locale, while the exact provider timestamp remains available on the semantic time element. **Cached input** is request content the provider has seen before and can reuse. It remains part of total tokens rather than additional usage, and may cost less than uncached input when the provider supports discounted caching.
 
 Detailed request and run records are content-free. They never contain prompts, replies, tool arguments, tool results, memories, knowledge text, attachments, provider payloads, web-search bodies, or hidden reasoning.

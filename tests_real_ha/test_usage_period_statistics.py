@@ -293,6 +293,85 @@ async def test_readable_legacy_usage_starts_durably_during_a_write_outage(
     assert aggregate["days"][date]["average_tokens_per_completed_run"] is None
 
 
+@pytest.mark.parametrize("restore", ["none", "dated", "legacy"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_local_run_counts_use_recorded_days_after_timezone_change(
+    hass, freezer, monkeypatch, restore
+):
+    from custom_components.extended_openai_conversation_responses import transfer
+    from tests_real_ha.test_cross_feature_acceptance import (
+        _action,
+        _provider,
+        _rule,
+        _say,
+        _speech,
+    )
+    from tests_real_ha.test_entry_point_contract_matrix import _management
+
+    freezer.move_to("2026-09-13T02:00:00+00:00")
+    await hass.config.async_set_time_zone("America/New_York")
+    agent = await _sensor_agent(hass, memory_mode="off")
+    command = await _management(hass, agent)
+
+    async def turn_off(_call):
+        pass
+
+    hass.services.async_register("light", "turn_off", turn_off)
+    hass.states.async_set("light.usage_calendar", "on")
+    await agent._request_rules.async_create(
+        _rule(
+            "local_action",
+            {
+                "actions": [_action("light.usage_calendar")],
+                "success_response": "Turned it off.",
+                "failure_response": "Failed.",
+            },
+        )
+    )
+    calls = _provider(monkeypatch, agent, [])
+    assert _speech(await _say(hass, agent, "good night")) == "Turned it off."
+    assert not calls
+
+    async def report(start, end):
+        return await command("daily", section="usage", start_date=start, end_date=end)
+
+    before = await report("2026-09-12", "2026-09-12")
+    assert before["days"][0]["run_count"] == before["local_run_summary"]["count"] == 1
+    saved = await agent._usage.async_backup_data()
+    assert saved["runs"][0]["accounting_date"] == "2026-09-12"
+    if restore == "legacy":
+        del saved["runs"][0]["accounting_date"]
+        for key in ("run_total_tokens", "run_request_count", "unattributed_run_count"):
+            del saved["daily"]["2026-09-12"][key]
+
+    freezer.move_to("2026-09-19T12:00:00+00:00")
+    await hass.config.async_set_time_zone("UTC")
+    if restore != "none":
+        entry, subentry = agent.entry, agent.subentry
+        document = transfer._new_transfer_document(entry, subentry, "custom")
+        document["sections"][transfer.SECTION_USAGE] = saved
+        result = await transfer.async_restore_transfer(hass, entry, subentry, document)
+        assert result["status"] == "restored"
+
+    selected = await report("2026-09-13", "2026-09-19")
+    original_day = await report("2026-09-12", "2026-09-12")
+    assert selected["days"] == []
+    assert original_day["days"][0]["run_count"] == 1
+    if restore == "legacy":
+        assert selected["local_run_summary"] is None
+        assert original_day["local_run_summary"] is None
+    else:
+        assert selected["local_run_summary"]["count"] == 0
+        assert original_day["local_run_summary"]["count"] == 1
+    whole_period = await report("2026-09-12", "2026-09-19")
+    assert whole_period["local_run_summary"]["count"] == 1
+
+    await command("clear_details", section="usage", confirm=True)
+    after_clear = await report("2026-09-12", "2026-09-12")
+    assert after_clear["days"][0]["run_count"] == 1
+    assert after_clear["local_run_summary"]["count"] == 0
+
+
 async def test_usage_sensors_rebind_from_volatile_to_durable_without_polling(hass):
     from custom_components.extended_openai_conversation_responses.sensor import (
         rebind_usage_sensors,

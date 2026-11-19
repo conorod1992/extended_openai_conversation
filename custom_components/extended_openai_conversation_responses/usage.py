@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
-from datetime import datetime, timedelta
+from datetime import date as calendar_date, datetime, timedelta
 from functools import wraps
 import logging
 import time
@@ -186,6 +186,7 @@ class UsageRun:
     api_modes: list[str] = field(default_factory=list)
     web_search_used: bool = False
     error_type: str | None = None
+    accounting_date: str | None = None
 
 
 def _integer(value: Any) -> int:
@@ -658,7 +659,9 @@ class UsageManager:
         async with async_storage_lock(self._storage, self._lock):
             if run.completed_at is None:
                 completed_at = dt_util.utcnow()
+                day_key = _local_day_key(completed_at)
                 run.completed_at = completed_at.isoformat()
+                run.accounting_date = day_key
                 run.duration_ms = max(
                     0,
                     int(
@@ -672,7 +675,6 @@ class UsageManager:
                 self.totals.conversation_count += 1
                 if self.run_retention_days > 0:
                     self.runs.append(run)
-                day_key = _local_day_key(completed_at)
                 day = self.daily.setdefault(day_key, _empty_day(day_key))
                 _add_run_to_day(day, run)
                 await self._async_save_safely(
@@ -1322,6 +1324,19 @@ def _usage_run_from_record(raw: Any) -> UsageRun:
         )
     ):
         raise ValueError("usage run metadata is invalid")
+    if run.accounting_date is not None:
+        if run.completed_at is None:
+            raise ValueError("usage run accounting date requires a completed timestamp")
+        try:
+            recorded_day = calendar_date.fromisoformat(run.accounting_date)
+            utc_day = dt_util.as_utc(_parse_time(run.completed_at)).date()
+        except (OverflowError, TypeError, ValueError) as err:
+            raise ValueError("usage run accounting date is invalid") from err
+        if (
+            recorded_day.isoformat() != run.accounting_date
+            or abs((recorded_day - utc_day).days) > 1
+        ):
+            raise ValueError("usage run accounting date is invalid")
     _validate_counter_mapping(asdict(run), counter_keys)
     return run
 
