@@ -1065,10 +1065,15 @@ def _ensure_complete_image_result(response: Any, api_mode: str) -> None:
             == "max_output_tokens"
         )
     else:
-        exhausted = any(
-            field(choice, "finish_reason") == "length"
+        finish_reasons = tuple(
+            field(choice, "finish_reason")
             for choice in field(response, "choices") or []
         )
+        if "content_filter" in finish_reasons:
+            raise HomeAssistantError(
+                "Image query was blocked by the provider content filter"
+            )
+        exhausted = "length" in finish_reasons
         if not exhausted:
             return
     if exhausted:

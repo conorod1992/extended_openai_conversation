@@ -26,7 +26,8 @@ from homeassistant.helpers.template import Template
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .provider_errors import provider_error_metadata
+from .exceptions import TokenLengthExceededError
+from .provider_errors import provider_error_metadata, responses_incomplete_reason
 from .request_diagnostics import (
     first_text_latency,
     provider_diagnostics,
@@ -259,6 +260,16 @@ class DebugProviderRequest:
             self.first_action_ms = now_ms
         if usage := _extract_usage(serialized):
             self.usage = usage
+        if self.api_surface == "responses" and isinstance(serialized, dict):
+            terminal = (
+                serialized.get("response")
+                if serialized.get("type") == "response.incomplete"
+                else serialized
+                if serialized.get("status") == "incomplete"
+                else None
+            )
+            if responses_incomplete_reason(terminal) == "max_output_tokens":
+                self.finish(successful=False, error=TokenLengthExceededError(None))
         if self.response_events_truncated:
             return
         event_size = len(
@@ -273,6 +284,9 @@ class DebugProviderRequest:
         self._event_bytes += event_size
 
     def finish(self, *, successful: bool, error: BaseException | None = None) -> None:
+        # A normal EOF/close cannot undo a token-limit terminal event.
+        if successful and self.error_type == TokenLengthExceededError.__name__:
+            return
         if self.duration_ms is None:
             self.duration_ms = int((time.monotonic() - self._started_monotonic) * 1000)
         self.successful = successful

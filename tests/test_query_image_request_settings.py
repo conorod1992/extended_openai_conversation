@@ -133,6 +133,38 @@ def test_other_incomplete_status_has_clear_error():
         )
 
 
+async def test_chat_image_query_rejects_provider_filtered_answer(hass):
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(finish_reason="content_filter")],
+        model_dump=Mock(),
+    )
+    create = AsyncMock(return_value=response)
+    hass.config_entries.async_get_entry.return_value = SimpleNamespace(
+        domain=services.DOMAIN,
+        state=ConfigEntryState.LOADED,
+        data={},
+        runtime_data=SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+        ),
+    )
+
+    handler = (await _handlers(hass))["query_image"]
+    with pytest.raises(HomeAssistantError, match="provider content filter"):
+        await handler(
+            _call(
+                {
+                    "config_entry": "entry",
+                    "model": "gpt-4.1",
+                    "api_mode": "chat_completions",
+                    "prompt": "Describe",
+                    "images": [{"url": "https://example.test/image.png"}],
+                }
+            )
+        )
+    create.assert_awaited_once()
+    response.model_dump.assert_not_called()
+
+
 @pytest.mark.parametrize("mode", ["responses", "chat_completions"])
 def test_defaults_respect_model_ceiling_and_api_effort_support(monkeypatch, mode):
     caps = deepcopy(request.get_model_capabilities("gpt-5"))

@@ -123,9 +123,10 @@ async def test_responses_output_group_converts_to_one_chat_call_batch(
 
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])
-@pytest.mark.parametrize("provider", ["azure", "azure_inferred", "openai"])
+@pytest.mark.parametrize("provider", ["azure", "azure_inferred", "openai", "custom"])
+@pytest.mark.parametrize("attached_api", [False, True])
 async def test_public_bounded_number_task_uses_provider_schema_and_caller_validation(
-    hass, mode, provider
+    hass, mode, provider, attached_api
 ):
     """Capture the actual task request, then validate against the original selector."""
 
@@ -140,10 +141,12 @@ async def test_public_bounded_number_task_uses_provider_schema_and_caller_valida
     entry = SimpleNamespace(
         entry_id="entry",
         data={
-            "api_provider": "openai" if provider == "azure_inferred" else provider,
+            "api_provider": "azure" if provider == "azure" else "openai",
             **(
                 {"base_url": "https://schema.openai.azure.com"}
                 if provider == "azure_inferred"
+                else {"base_url": "https://provider.example/v1"}
+                if provider == "custom"
                 else {}
             ),
         },
@@ -162,7 +165,10 @@ async def test_public_bounded_number_task_uses_provider_schema_and_caller_valida
     entity.hass = hass
     entity.entity_id = "ai_task.audit"
     fields = {
-        "score": {"required": True, "selector": {"number": {"min": 0, "max": 10}}}
+        "score": {"required": True, "selector": {"number": {"min": 0, "max": 10}}},
+        "due_date": {"selector": {"date": {}}},
+        "starts_at": {"selector": {"datetime": {}}},
+        "local_time": {"selector": {"time": {}}},
     }
     services = (
         ai_task
@@ -181,6 +187,20 @@ async def test_public_bounded_number_task_uses_provider_schema_and_caller_valida
             conversation.UserContent(content="Choose five"),
         ],
     )
+    if attached_api:
+        log.llm_api = llm.APIInstance(
+            api=SimpleNamespace(id="task-caller", name="Task caller"),
+            api_prompt="",
+            llm_context=llm.LLMContext(
+                platform="ai_task",
+                context=None,
+                language=None,
+                assistant="ai_task",
+                device_id=None,
+            ),
+            tools=[],
+            custom_serializer=None,
+        )
     with pytest.raises(CapturedRequest):
         await entity._async_generate_data(
             SimpleNamespace(name="score", structure=structure), log
@@ -196,6 +216,14 @@ async def test_public_bounded_number_task_uses_provider_schema_and_caller_valida
     if not provider.startswith("azure"):
         expected.update(minimum=0.0, maximum=10.0)
     assert output["schema"]["properties"]["score"] == expected
+    properties = output["schema"]["properties"]
+    assert properties["due_date"].get("format") == (
+        "date" if provider == "openai" else None
+    )
+    assert properties["starts_at"].get("format") == (
+        "date-time" if provider == "openai" else None
+    )
+    assert "format" not in properties["local_time"]
     assert parse_ai_task_structured_response('{"score": 5}', structure) == {"score": 5}
     with pytest.raises(HomeAssistantError, match="requested structure"):
         parse_ai_task_structured_response('{"score": 11}', structure)

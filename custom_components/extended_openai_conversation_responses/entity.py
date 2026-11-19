@@ -122,7 +122,7 @@ from .ha_tool_result_compat import (
     is_tool_result_content,
     make_tool_result_content,
 )
-from .helpers import entry_api_provider, get_api_mode
+from .helpers import entry_api_provider, get_api_mode, is_native_openai_connection
 from .model_tool_results import async_prepare_tool_results, serialize_model_tool_result
 from .non_streaming import completed_chat_chunks, completed_responses_events
 from .operational_errors import log_handled_failure
@@ -132,6 +132,7 @@ from .provider_errors import (
     ensure_successful_responses_result,
     provider_stream_error,
     provider_transport_error,
+    responses_incomplete_reason,
 )
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
 from .provider_output_budget import ProviderOutputBudget
@@ -379,11 +380,16 @@ def _disjoint_schema_alternatives(variants: list[Any]) -> bool:
 
 
 def _adjust_schema(
-    schema: dict[str, Any], *, root: bool = False, azure: bool = False
+    schema: dict[str, Any],
+    *,
+    root: bool = False,
+    azure: bool = False,
+    preserve_date_formats: bool = False,
 ) -> None:
     """Adjust the schema to be compatible with OpenAI API."""
-    # HA selectors emit domain-specific annotations outside strict provider schemas.
-    schema.pop("format", None)
+    # The HA time selector accepts timezone-free clock times, unlike RFC 3339.
+    if not preserve_date_formats or schema.get("format") not in ("date", "date-time"):
+        schema.pop("format", None)
     schema.pop("uniqueItems", None)
     schema.pop("default", None)
     if azure:
@@ -445,14 +451,22 @@ def _adjust_schema(
         if isinstance(variants, list):
             for variant in variants:
                 if isinstance(variant, dict):
-                    _adjust_schema(variant, azure=azure)
+                    _adjust_schema(
+                        variant,
+                        azure=azure,
+                        preserve_date_formats=preserve_date_formats,
+                    )
 
     for keyword in ("$defs", "definitions"):
         definitions = schema.get(keyword)
         if isinstance(definitions, dict):
             for definition in definitions.values():
                 if isinstance(definition, dict):
-                    _adjust_schema(definition, azure=azure)
+                    _adjust_schema(
+                        definition,
+                        azure=azure,
+                        preserve_date_formats=preserve_date_formats,
+                    )
 
     schema_type = schema.get("type")
     schema_types = (
@@ -479,7 +493,9 @@ def _adjust_schema(
             for prop, prop_info in properties.items():
                 if not isinstance(prop_info, dict):
                     continue
-                _adjust_schema(prop_info, azure=azure)
+                _adjust_schema(
+                    prop_info, azure=azure, preserve_date_formats=preserve_date_formats
+                )
                 if prop not in required:
                     _make_schema_nullable(prop_info)
                     required.append(prop)
@@ -487,7 +503,9 @@ def _adjust_schema(
     if "array" in schema_types:
         items = schema.get("items")
         if isinstance(items, dict):
-            _adjust_schema(items, azure=azure)
+            _adjust_schema(
+                items, azure=azure, preserve_date_formats=preserve_date_formats
+            )
 
 
 def _serialize_structured_output(
@@ -496,10 +514,11 @@ def _serialize_structured_output(
     """Serialize the caller contract without provider adaptation."""
     from .ha_llm_tools import compatible_to_openapi
 
+    serializer = llm_api.custom_serializer if llm_api is not None else None
     result: dict[str, Any] = compatible_to_openapi(
         schema,
         custom_serializer=(
-            llm_api.custom_serializer if llm_api else llm.selector_serializer
+            serializer if serializer is not None else llm.selector_serializer
         ),
     )
 
@@ -507,11 +526,17 @@ def _serialize_structured_output(
 
 
 def _format_structured_output(
-    schema: SchemaValidator, llm_api: llm.APIInstance | None, *, azure: bool = False
+    schema: SchemaValidator,
+    llm_api: llm.APIInstance | None,
+    *,
+    azure: bool = False,
+    preserve_date_formats: bool = False,
 ) -> dict[str, Any]:
     """Adapt a fresh caller schema to the provider's strict contract."""
     result = _serialize_structured_output(schema, llm_api)
-    _adjust_schema(result, root=True, azure=azure)
+    _adjust_schema(
+        result, root=True, azure=azure, preserve_date_formats=preserve_date_formats
+    )
     return result
 
 
@@ -1198,13 +1223,28 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         f"{model} does not support native Structured Outputs."
                     )
                 azure = entry_api_provider(self.entry) == "azure"
+                preserve_date_formats = (
+                    not azure
+                    and not model.startswith("ft:")
+                    and is_native_openai_connection(
+                        provider_entry_data, client=provider_client
+                    )
+                )
                 if structure_schema is None:
                     structured_schema = _format_structured_output(
-                        structure, chat_log.llm_api, azure=azure
+                        structure,
+                        chat_log.llm_api,
+                        azure=azure,
+                        preserve_date_formats=preserve_date_formats,
                     )
                 else:
                     structured_schema = deepcopy(structure_schema)
-                    _adjust_schema(structured_schema, root=True, azure=azure)
+                    _adjust_schema(
+                        structured_schema,
+                        root=True,
+                        azure=azure,
+                        preserve_date_formats=preserve_date_formats,
+                    )
                 output_format = {
                     "type": "json_schema",
                     "name": _provider_schema_name(structure_name),
@@ -2730,11 +2770,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         _trace_provider_usage(chat_log, extract_usage(response.usage))
 
                     if event_type == "response.incomplete":
-                        details = response.incomplete_details
                         reason = (
-                            details.reason
-                            if details and details.reason
-                            else "unknown reason"
+                            responses_incomplete_reason(response) or "unknown reason"
                         )
                         if reason == "max_output_tokens":
                             raise TokenLengthExceededError(effective_output_limit)
@@ -3066,15 +3103,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if output is not None
                     else getattr(response, "output_text", None)
                 )
-                details = getattr(response, "incomplete_details", None)
-                reason = (
-                    details.get("reason")
-                    if isinstance(details, dict)
-                    else getattr(details, "reason", None)
-                )
                 exhausted = (
                     getattr(response, "status", None) == "incomplete"
-                    and reason == "max_output_tokens"
+                    and responses_incomplete_reason(response) == "max_output_tokens"
                 )
             else:
                 kwargs: dict[str, Any] = {

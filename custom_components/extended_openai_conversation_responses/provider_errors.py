@@ -136,6 +136,11 @@ def provider_stream_error(
     )
 
 
+def responses_incomplete_reason(response: object | None) -> str | None:
+    """Read the reason supplied by a Responses terminal or completed object."""
+    return _text(_value(_value(response, "incomplete_details"), "reason"))
+
+
 def ensure_successful_responses_result(response: object) -> None:
     """Reject explicit failed/incomplete non-stream Responses API results."""
     response_id = _value(response, "id")
@@ -147,8 +152,7 @@ def ensure_successful_responses_result(response: object) -> None:
 
     status = _text(_value(response, "status"))
     if status == "incomplete":
-        details = _value(response, "incomplete_details")
-        reason = _text(_value(details, "reason")) or "unknown reason"
+        reason = responses_incomplete_reason(response) or "unknown reason"
         raise ProviderStreamError(
             f"OpenAI response incomplete: {reason}",
             code=reason,
