@@ -111,7 +111,11 @@ from .live_subentry_updates import is_live_subentry_update
 from .management_function_repair import async_prewarm_persisted_config_projection
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
-from .model_catalog_manager import async_setup_model_catalog
+from .model_catalog_manager import (
+    async_setup_model_catalog,
+    async_start_model_catalog_refresh,
+    async_stop_model_catalog_refresh,
+)
 from .model_lifecycle import sync_entry_model_lifecycle
 from .native_function_schema_migration import (
     migrate_legacy_stock_native_function_tools_yaml,
@@ -211,6 +215,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_setup_delayed_tools(hass)
     # Resolve any interrupted cross-store restore before conversation agents load.
     await async_recover_pending_restores(hass)
+    if hass.config_entries.async_entries(DOMAIN):
+        from .conversation_archive import async_start_archive_retention
+
+        async_start_archive_retention(hass)
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
     await async_setup_intercom_services(hass)
@@ -244,9 +252,12 @@ async def async_setup_entry(
     """Set up Extended OpenAI Conversation (Responses) from a config entry."""
 
     from .agent_deletion import KNOWN_AGENTS, async_delete_removed_subentries
+    from .conversation_archive import async_start_archive_retention
     from .provider_errors import provider_authentication_snapshot
 
     initialize_global_runtime(hass)
+    async_start_archive_retention(hass)
+    async_start_model_catalog_refresh(hass)
     authentication_snapshot = provider_authentication_snapshot(entry)
 
     # Re-enable can follow subentry deletion while the parent was unloaded.
@@ -452,6 +463,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def _async_remove_global_effects(hass: HomeAssistant) -> None:
     """Release integration-global effects even when private erasure must retry."""
+    from .conversation_archive import async_stop_archive_retention
     from .intercom import DATA_KEY
     from .intercom_services import SERVICE_BROADCAST
     from .quiet_hours import (
@@ -461,6 +473,8 @@ async def _async_remove_global_effects(hass: HomeAssistant) -> None:
     )
 
     hass.data[f"{DOMAIN}.removed"] = True
+    async_stop_archive_retention(hass)
+    async_stop_model_catalog_refresh(hass)
     quiet_hours = hass.data.get(DOMAIN, {}).get("quiet_hours_manager")
     try:
         if quiet_hours is not None:

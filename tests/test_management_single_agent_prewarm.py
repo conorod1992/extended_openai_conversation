@@ -80,6 +80,9 @@ def _hass(*entries):
 
 
 def _stub_setup(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import conversation_archive
+
+    monkeypatch.setattr(conversation_archive, "async_start_archive_retention", lambda *_: None)
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.agent_deletion.async_delete_removed_subentries",
         AsyncMock(),

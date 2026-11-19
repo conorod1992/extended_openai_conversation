@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-
 from inspect import unwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -99,11 +98,6 @@ async def test_startup_resolves_an_absolute_skills_directory(
         conversation_module.ConversationEntity, "async_added_to_hass", AsyncMock()
     )
     monkeypatch.setattr(conversation_module.conversation, "async_set_agent", Mock())
-    monkeypatch.setattr(
-        conversation_module,
-        "async_track_time_interval",
-        Mock(return_value=lambda: None),
-    )
     absolute_dir = tmp_path / "absolute-agent-data"
     monkeypatch.setattr(
         conversation_module, "DEFAULT_WORKING_DIRECTORY", str(absolute_dir)

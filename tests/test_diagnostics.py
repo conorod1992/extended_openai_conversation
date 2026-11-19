@@ -193,11 +193,6 @@ def _patch_startup_dependencies(
         "async_get_instance",
         AsyncMock(return_value=dependencies.skill_manager),
     )
-    monkeypatch.setattr(
-        conversation_module,
-        "async_track_time_interval",
-        MagicMock(return_value=lambda: None),
-    )
     for name, value in patches.items():
         monkeypatch.setattr(conversation_module, name, value)
     return dependencies

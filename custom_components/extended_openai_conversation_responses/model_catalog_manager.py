@@ -57,6 +57,7 @@ CATALOG_URL = (
 )
 UPDATE_INTERVAL = 24 * 60 * 60
 DATA_MANAGER = f"{DOMAIN}.model_catalog"
+_DATA_REFRESH = f"{DOMAIN}.model_catalog_refresh"
 WS_CATALOG = f"{DOMAIN}/model_catalog"
 _LOGGER = logging.getLogger(__name__)
 
@@ -841,15 +842,35 @@ async def async_setup_model_catalog(hass: HomeAssistant) -> None:
     hass.data[DATA_MANAGER] = manager
     await manager.async_load()
     websocket_api.async_register_command(hass, websocket_catalog)
-
-    async def check(_now: Any) -> None:
-        await manager.async_check()
-
-    cancel = async_track_time_interval(hass, check, timedelta(hours=1))
+    async_start_model_catalog_refresh(hass)
 
     @callback
     def stop(_event: Any) -> None:
-        cancel()
+        async_stop_model_catalog_refresh(hass)
         activate_catalog(None)
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
+
+
+@callback
+def async_start_model_catalog_refresh(hass: HomeAssistant) -> None:
+    """Resume the existing catalogue's hourly refresh after provider re-addition."""
+    manager = hass.data.get(DATA_MANAGER)
+    if manager is None or _DATA_REFRESH in hass.data:
+        return
+    token = object()
+
+    async def check(_now: Any) -> None:
+        owner = hass.data.get(_DATA_REFRESH)
+        if owner is not None and owner[0] is token:
+            await manager.async_check()
+
+    cancel = async_track_time_interval(hass, check, timedelta(hours=1))
+    hass.data[_DATA_REFRESH] = (token, cancel)
+
+
+@callback
+def async_stop_model_catalog_refresh(hass: HomeAssistant) -> None:
+    """Stop periodic refresh while keeping the manager available for the UI."""
+    if (owner := hass.data.pop(_DATA_REFRESH, None)) is not None:
+        owner[1]()

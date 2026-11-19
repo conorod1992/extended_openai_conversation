@@ -1363,7 +1363,9 @@ def _apply_archive_restore_retention(target: backup.PreparedRestore) -> dict[str
     days = normalized_agent_integer(
         target.config, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
     )
-    expired = archive_sessions_past_retention(target.archive_sessions, days)
+    expired = archive_sessions_past_retention(
+        target.archive_sessions, target.archive_turns, days
+    )
     original_turns = len(target.archive_turns)
     if expired:
         target.archive_sessions = [

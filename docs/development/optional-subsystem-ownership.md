@@ -84,7 +84,7 @@ retry semantics. This boundary adds no work to ordinary conversation requests.
 | Persistent Memory | Agent; conversational manager when enabled, management getter otherwise | Authoritative Store and regenerable embedding cache; existing recovery and embedding-provider boundaries |
 | Temporary Memory | Agent; enabled mode or explicit management access | Expiry/prune persistence is drained before permanent deletion |
 | Knowledge | Agent; existing startup preload, including disabled conversational access | Live enablement still gates model access; management data remains available |
-| Archive | Agent metadata and transient partition handles | Registration-owned retention remains necessary for older data even when collection is disabled |
+| Archive | Agent metadata and transient partition handles | Startup and daily maintenance cover configured assistants, including those with a disabled conversation entity |
 | Usage | Agent; durable or existing volatile fallback | Retention tasks, final flush and permanent-erasure preparation have distinct policies |
 | Guest Mode and Request Rules | Agent; policy state is established before request processing | An unreadable policy must not silently become an unrestricted request; Rule condition listeners retain explicit unload |
 | Skills | Shared manager and working directory | Existing discovery, recovery and activation policy remain separate from agent-private Store erasure |

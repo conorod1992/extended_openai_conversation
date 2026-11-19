@@ -18,7 +18,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     SUBSYSTEM_STATUS_KEY,
 )
 
-
 Agent = conversation_module.ExtendedOpenAIAgentEntity
 
 
@@ -217,7 +216,6 @@ async def test_optional_storage_startup_failure_is_isolated(
         AsyncMock(),
     )
     monkeypatch.setattr(conversation_module.conversation, "async_set_agent", Mock())
-    monkeypatch.setattr(conversation_module, "async_track_time_interval", Mock(return_value=lambda: None))
     monkeypatch.setattr(
         conversation_module.SkillManager,
         "async_get_instance",

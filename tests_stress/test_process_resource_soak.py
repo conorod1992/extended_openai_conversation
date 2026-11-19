@@ -285,7 +285,7 @@ async def _booted_soak(config_dir, seed, scale):
 
     const = importlib.import_module(f"custom_components.{DOMAIN}.const")
     helpers = importlib.import_module(f"custom_components.{DOMAIN}.helpers")
-    agent_module = importlib.import_module(f"custom_components.{DOMAIN}.conversation")
+    archive_module = importlib.import_module(f"custom_components.{DOMAIN}.conversation_archive")
     transfers = importlib.import_module(f"custom_components.{DOMAIN}.backup_transfer")
     long_lifetime = os.environ.get("STRESS_CAMPAIGN") == "long-lifetime"
     uninterrupted = os.environ.get("EOAI_UNINTERRUPTED_SOAK") == "1"
@@ -318,7 +318,7 @@ async def _booted_soak(config_dir, seed, scale):
 
     failure_logs = BackgroundFailures(level=logging.ERROR)
     logging.getLogger().addHandler(failure_logs)
-    original_interval = agent_module.async_track_time_interval
+    original_interval = archive_module.async_track_time_interval
 
     def timed_retention(hass, callback, interval):
         if not long_lifetime or callback.__name__ != "_async_prune_archive_retention":
@@ -502,7 +502,7 @@ async def _booted_soak(config_dir, seed, scale):
     try:
         with (
             patch.object(helpers, "get_async_client", return_value=client),
-            patch.object(agent_module, "async_track_time_interval", timed_retention),
+            patch.object(archive_module, "async_track_time_interval", timed_retention),
             patch.object(
                 config_flow,
                 "get_authenticated_client",

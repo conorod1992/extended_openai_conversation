@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timedelta, tzinfo
 from heapq import heappush, heapreplace
+from itertools import chain
 import json
 import logging
 from pathlib import Path
@@ -20,13 +21,15 @@ import unicodedata
 from uuid import uuid4
 import weakref
 
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .agent_maintenance import get_agent_maintenance_gate
-from .const import DOMAIN
+from .const import CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS, DOMAIN
 from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
@@ -52,6 +55,7 @@ MAX_TEXT_LENGTH = 40_000
 MAX_TITLE_LENGTH = 80
 MAX_EXCERPT_LENGTH = 500
 _ARCHIVE_MANAGERS = f"{DOMAIN}.archive_managers"
+_ARCHIVE_RETENTION = f"{DOMAIN}.archive_retention"
 _TOKEN_PATTERN = re.compile(r"\w+(?:[+#]+|(?:['\u2019-]\w+)*)", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
 
@@ -137,17 +141,25 @@ class ArchiveTurn:
 
 
 def archive_sessions_past_retention(
-    sessions: Iterable[ArchiveSession], retention_days: int
+    sessions: Iterable[ArchiveSession],
+    turns: Iterable[ArchiveTurn],
+    retention_days: int,
 ) -> set[str]:
     """Use the same expiry rule in retention maintenance and restore preview."""
     cutoff = dt_util.utcnow() - timedelta(days=max(1, retention_days))
+    latest: dict[str, datetime] = {}
+    for turn in turns:
+        stamp = _parse_time(turn.timestamp)
+        previous = latest.get(turn.session_id)
+        if previous is None or stamp > previous:
+            latest[turn.session_id] = stamp
     return {
         session.session_id
         for session in sessions
-        if _parse_time(
-            (session.last_activity_at or session.last_message_at)
+        if (
+            _parse_time(session.last_activity_at or session.last_message_at)
             if session.retention_state == "private"
-            else session.last_message_at
+            else latest.get(session.session_id) or _parse_time(session.last_message_at)
         )
         < cutoff
     }
@@ -162,6 +174,80 @@ def archive_session_inactive(
         + timedelta(minutes=max(1, inactivity_minutes))
         < now
     )
+
+
+@callback
+def async_start_archive_retention(hass: HomeAssistant) -> None:
+    """Own one expiry timer for the configured assistants, including disabled entities."""
+    if _ARCHIVE_RETENTION in hass.data:
+        return
+    token = object()
+
+    async def _async_prune_archive_retention(_now: datetime) -> None:
+        from .agent_config import normalized_agent_integer
+
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            for subentry in tuple(entry.subentries.values()):
+                owner = hass.data.get(_ARCHIVE_RETENTION)
+                if owner is None or owner[0] is not token:
+                    return
+                if subentry.subentry_type != "conversation":
+                    continue
+                entry_id, subentry_id = entry.entry_id, subentry.subentry_id
+                try:
+                    gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
+                    async with gate.shared(maintenance=True):
+                        owner = hass.data.get(_ARCHIVE_RETENTION)
+                        if owner is None or owner[0] is not token:
+                            return
+                        current = hass.config_entries.async_get_entry(entry_id)
+                        agent = current.subentries.get(subentry_id) if current else None
+                        if agent is None or agent.subentry_type != "conversation":
+                            continue
+                        archive = await async_get_archive(hass, entry_id, subentry_id)
+                        await archive.async_prune(
+                            normalized_agent_integer(
+                                agent.data,
+                                CONF_ARCHIVE_RETENTION_DAYS,
+                                DEFAULT_ARCHIVE_RETENTION_DAYS,
+                            )
+                        )
+                except Exception:
+                    _LOGGER.exception(
+                        "Background conversation archive retention failed for %s/%s",
+                        entry_id,
+                        subentry_id,
+                    )
+
+    cancel = async_track_time_interval(
+        hass, _async_prune_archive_retention, timedelta(days=1)
+    )
+    startup = hass.async_create_background_task(
+        _async_prune_archive_retention(dt_util.utcnow()),
+        "EOAI startup archive retention",
+        eager_start=False,
+    )
+
+    @callback
+    def stop(_event: Any) -> None:
+        owner = hass.data.get(_ARCHIVE_RETENTION)
+        if owner is not None and owner[0] is token:
+            hass.data.pop(_ARCHIVE_RETENTION)
+            cancel()
+            if not startup.done():
+                startup.cancel()
+
+    remove_stop = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
+    hass.data[_ARCHIVE_RETENTION] = (token, stop, remove_stop)
+
+
+@callback
+def async_stop_archive_retention(hass: HomeAssistant) -> None:
+    """Retire the timer when the final provider is permanently removed."""
+    if (owner := hass.data.get(_ARCHIVE_RETENTION)) is not None:
+        _, stop, remove_stop = owner
+        stop(None)
+        remove_stop()
 
 
 class ArchiveStorage(Protocol):
@@ -1223,6 +1309,7 @@ class ConversationArchive:
             targets = await asyncio.to_thread(
                 archive_sessions_past_retention,
                 tuple(self._sessions.values()),
+                chain.from_iterable(tuple(self._turns.values())),
                 retention_days,
             )
             if not targets:

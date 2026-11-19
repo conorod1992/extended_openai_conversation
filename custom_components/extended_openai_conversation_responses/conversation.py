@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from contextlib import nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 from pathlib import Path
 import time
@@ -32,7 +32,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import intent, llm
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.event import async_track_time_interval
 
 from . import ExtendedOpenAIConfigEntry, ha_actions
 from .agent_config import (
@@ -443,7 +442,6 @@ class ExtendedOpenAIAgentEntity(
                     return
                 # Shared managers can retain a provider bound to the previous entity.
                 sync_memory_embedding_provider(self)
-                self._schedule_archive_retention()
                 register_legacy_agent(self.hass, self.entry, self)
         except BaseException:
             if self._agent_ready is ready:
@@ -594,14 +592,6 @@ class ExtendedOpenAIAgentEntity(
             with suppress(BaseException):
                 group.result()
             raise
-
-    def _schedule_archive_retention(self) -> None:
-        """Tie daily retention to this entity's HA registration lifetime."""
-        self.async_on_remove(
-            async_track_time_interval(
-                self.hass, self._async_prune_archive_retention, timedelta(days=1)
-            )
-        )
 
     async def _async_prune_archive_retention(
         self, _now: datetime | None = None

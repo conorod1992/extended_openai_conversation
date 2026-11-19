@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import conversation
+from custom_components.extended_openai_conversation_responses import (
+    conversation,
+    conversation_archive,
+)
 from tests.test_agent_configuration_lifecycle import startup as startup
 
 
@@ -52,6 +55,12 @@ async def test_removed_initialization_cannot_publish_resources(startup, stage):
 async def test_old_initialization_cannot_settle_new_registration(
     startup, monkeypatch, old_outcome
 ):
+    hass = startup.agent.hass
+    conversation_archive.async_start_archive_retention(hass)
+    await startup.background[0]
+    assert len(startup.scheduled) == 1
+    _, prune, _, cancel = startup.scheduled[0]
+
     entered = [asyncio.Event(), asyncio.Event()]
     release = [asyncio.Event(), asyncio.Event()]
     calls = 0
@@ -97,17 +106,28 @@ async def test_old_initialization_cannot_settle_new_registration(
             callback()
         assert not startup.agent._agent_initialization_failed
         assert not new_ready.is_set()
-        assert startup.scheduled == []
+        conversation.conversation.async_set_agent.assert_not_called()
+        assert len(startup.scheduled) == 1
+        cancel.assert_not_called()
     finally:
         release[1].set()
         await new
     try:
         assert new_ready.is_set()
         assert not startup.agent._agent_initialization_failed
+        conversation.conversation.async_set_agent.assert_called_once()
         assert len(startup.scheduled) == 1
     finally:
         _remove(startup)
-    startup.scheduled[0][3].assert_called_once_with()
+        try:
+            cancel.assert_not_called()
+            archive = startup.getters["archive"].return_value
+            archive.async_prune.reset_mock()
+            await prune(None)
+            archive.async_prune.assert_awaited_once()
+        finally:
+            conversation_archive.async_stop_archive_retention(hass)
+    cancel.assert_called_once_with()
 
 
 @pytest.mark.parametrize("replacements", [1, 2])

@@ -3,7 +3,7 @@
 import asyncio
 from copy import deepcopy
 from dataclasses import asdict, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import get_ident
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -460,7 +460,7 @@ async def test_partition_write_failure_recovers_private_state_on_restart() -> No
     "operation", ["delete", "clear", "selected", "date_range", "prune"]
 )
 async def test_interrupted_deletion_commits_recover_deterministically(
-    operation: str,
+    operation: str, monkeypatch,
 ) -> None:
     storage = FakeArchiveStorage()
     archive = ConversationArchive(storage, "agent-1")
@@ -481,9 +481,8 @@ async def test_interrupted_deletion_commits_recover_deterministically(
         successful=True,
     )
     if operation == "prune":
-        archive._sessions[session.session_id] = replace(
-            archive._sessions[session.session_id], last_message_at="2000-01-01T00:00:00+00:00"
-        )
+        now = dt_util.utcnow() + timedelta(days=2)
+        monkeypatch.setattr(dt_util, "utcnow", lambda: now)
     storage.fail_metadata_on = storage.metadata_save_count + 2
     with pytest.raises(OSError, match="metadata write failed"):
         if operation == "delete":
