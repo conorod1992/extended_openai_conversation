@@ -69,6 +69,8 @@ Compact lifetime totals and daily aggregates are persisted as one authoritative 
 
 The daily records remain readable after rolling back to 6.8.3. Saving Usage in 6.8.3 removes newer run attribution from the snapshot. After upgrading again, affected average tokens and requests per completed run show **Unavailable** until the selected period contains only runs with recorded attribution. Daily totals, lifetime totals, and retained run records remain readable.
 
+After a completed save by the current version, re-upgrading can recover 6.8.3 standalone requests such as **Test assistant** when the compatibility mirror identifies the same saved aggregate. These requests count toward lifetime Usage because 6.8.3 recorded no daily entry for them. For older snapshots without that identifier, the combined aggregate remains authoritative because an interrupted save or restore can leave the mirror with different totals. The identifier may appear in 6.8.3's diagnostic details. Current diagnostics and backups omit it.
+
 - request details: 30 days by default
 - run details: 90 days by default
 - daily aggregates: indefinite

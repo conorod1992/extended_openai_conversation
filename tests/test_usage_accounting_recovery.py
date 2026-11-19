@@ -9,8 +9,6 @@ from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
-from homeassistant.core import HomeAssistant
-from homeassistant.util import dt as dt_util
 
 import custom_components.extended_openai_conversation_responses.usage as usage_module
 from custom_components.extended_openai_conversation_responses.usage import (
@@ -23,6 +21,9 @@ from custom_components.extended_openai_conversation_responses.usage import (
     _usage_run_from_backup,
     async_get_usage,
 )
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 
 class FakeStorage:
@@ -146,14 +147,15 @@ async def test_initialization_failure_is_transactional_and_retryable() -> None:
     assert detail.load_calls == 2
 
 
-async def test_combined_aggregate_snapshot_is_authoritative_over_legacy_mirror() -> None:
-    """A committed aggregate snapshot survives a stale legacy totals mirror."""
+@pytest.mark.parametrize(("count", "tokens"), [(1, 5), (3, 30)])
+async def test_unmarked_aggregate_remains_authoritative(count, tokens) -> None:
+    """An unmarked pair cannot establish which generation wrote its mirror."""
     primary = FakeStorage(
         asdict(
             UsageTotals(
-                api_request_count=1,
-                successful_request_count=1,
-                total_tokens=5,
+                api_request_count=count,
+                successful_request_count=count,
+                total_tokens=tokens,
             )
         )
     )
@@ -176,6 +178,170 @@ async def test_combined_aggregate_snapshot_is_authoritative_over_legacy_mirror()
     assert manager.totals.api_request_count == 2
     assert manager.totals.total_tokens == 17
     assert primary.load_calls == 0
+
+
+def _write_legacy_totals(primary, **changes):
+    """Match the 6.8.3 writer's flat dataclass projection."""
+    primary.data = {
+        **{key: primary.data[key] for key in asdict(UsageTotals())},
+        **changes,
+    }
+
+
+async def test_matching_legacy_mirror_recovers_standalone_usage_once():
+    primary, daily = FakeStorage(), FakeStorage()
+    manager = UsageManager(primary, daily)
+    await manager.async_initialize()
+    await manager.async_record_request(
+        successful=True, usage=RequestUsage(total_tokens=23, details={"input_audio": 2})
+    )
+    revision = daily.data["totals_revision"]
+    marker = f"{usage_module._MIRROR_DETAIL_PREFIX}{revision}"
+    assert primary.data["details"][marker] == 1
+    assert marker not in daily.data["totals"]["details"]
+    _write_legacy_totals(
+        primary,
+        api_request_count=3,
+        successful_request_count=2,
+        failed_request_count=1,
+        total_tokens=42,
+        details={**primary.data["details"], "input_audio": 4},
+    )
+    saved = deepcopy(daily.data)
+    for _ in range(2):
+        current = UsageManager(primary, daily)
+        await current.async_initialize()
+        assert current.as_dict() == asdict(
+            UsageTotals(
+                api_request_count=3,
+                successful_request_count=2,
+                failed_request_count=1,
+                total_tokens=42,
+                details={"input_audio": 4},
+            )
+        )
+        assert sum(day["total_tokens"] for day in current.daily.values()) == 23
+        assert daily.data == saved
+        backup = await current.async_backup_data()
+        assert backup["totals"]["details"] == {"input_audio": 4}
+
+    older_backup = {**backup, "totals": deepcopy(primary.data)}
+    totals, *_ = UsageManager.validate_backup_data(older_backup, "target")
+    assert totals.details == {"input_audio": 4}
+    await current.async_shutdown()
+    assert daily.data["totals_revision"] != revision
+    assert daily.data["totals"]["total_tokens"] == 42
+    assert primary.data["totals_revision"] == daily.data["totals_revision"]
+
+
+async def test_failed_mirror_after_decrease_keeps_restored_totals(monkeypatch):
+    primary, daily = FakeStorage(), FakeStorage()
+    manager = UsageManager(primary, daily)
+    await manager.async_initialize()
+    await manager.async_record_request(
+        successful=True, usage=RequestUsage(total_tokens=100)
+    )
+
+    async def fail_save(_data):
+        raise OSError("legacy mirror write failed")
+
+    monkeypatch.setattr(primary, "async_save", fail_save)
+    await manager.async_replace_backup(UsageTotals(), {}, [], [])
+    assert daily.data["totals_revision"] != primary.data["totals_revision"]
+    _write_legacy_totals(primary, api_request_count=2, successful_request_count=2,
+                        total_tokens=119)
+
+    current = UsageManager(primary, daily)
+    await current.async_initialize()
+    assert current.totals == UsageTotals()
+    assert current.persistence_status()["mode"] == "durable"
+
+
+@pytest.mark.parametrize("written_store", ["daily", "mirror"])
+async def test_partial_delayed_save_cannot_reconcile_against_wrong_revision(
+    written_store,
+):
+    class DelayedStorage(FakeStorage):
+        def async_delay_save(self, callback, _delay):
+            self.callback = callback
+
+    primary, daily = DelayedStorage(), DelayedStorage()
+    manager = UsageManager(primary, daily)
+    await manager.async_initialize()
+    await manager.async_record_request(
+        successful=True, usage=RequestUsage(total_tokens=5)
+    )
+    await primary.async_save(primary.callback())
+    await daily.async_save(daily.callback())
+    await manager.async_record_request(
+        successful=True, usage=RequestUsage(total_tokens=12)
+    )
+    store = daily if written_store == "daily" else primary
+    await store.async_save(store.callback())
+    _write_legacy_totals(
+        primary,
+        api_request_count=primary.data["api_request_count"] + 1,
+        successful_request_count=primary.data["successful_request_count"] + 1,
+        total_tokens=primary.data["total_tokens"] + 19,
+    )
+
+    current = UsageManager(primary, daily)
+    await current.async_initialize()
+    assert current.totals.total_tokens == (17 if written_store == "daily" else 5)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"conversation_count": 1},
+        {"failed_request_count": 1},
+        {"total_tokens": 4},
+        {"details": {"input_audio": 1}},
+    ],
+)
+async def test_legacy_totals_require_monotonic_standalone_delta(changes):
+    primary, daily = FakeStorage(), FakeStorage()
+    manager = UsageManager(primary, daily)
+    await manager.async_initialize()
+    await manager.async_record_request(
+        successful=True, usage=RequestUsage(total_tokens=5, details={"input_audio": 2})
+    )
+    delta = {"api_request_count": 2, "successful_request_count": 2, "total_tokens": 9}
+    delta.update(changes)
+    if "details" in changes:
+        delta["details"] = {**primary.data["details"], **changes["details"]}
+    _write_legacy_totals(primary, **delta)
+    current = UsageManager(primary, daily)
+    await current.async_initialize()
+    assert current.totals == manager.totals
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        HomeAssistantError("Unsupported lifetime Store version"),
+        KeyError("version"),
+        OSError("Temporary read failure"),
+        TypeError("Malformed lifetime Store version"),
+    ],
+)
+async def test_unreadable_optional_mirror_preserves_authoritative_snapshot(
+    monkeypatch, error
+):
+    primary, daily = FakeStorage(), FakeStorage()
+    manager = UsageManager(primary, daily)
+    await manager.async_initialize()
+    await manager.async_record_request(
+        successful=True, usage=RequestUsage(total_tokens=5)
+    )
+    async def fail_read():
+        raise error
+
+    monkeypatch.setattr(primary, "async_load", fail_read)
+    current = UsageManager(primary, daily)
+    await current.async_initialize()
+    assert current.totals == manager.totals
+    assert current.persistence_status()["mode"] == "durable"
 
 
 async def test_request_daily_accounting_is_durable_before_run_finalizes() -> None:

@@ -259,6 +259,9 @@ async def test_routine_usage_persistence_is_owned_and_coalesced_by_manager() -> 
 
     # Aggregate callbacks retain the point-in-time snapshot they were scheduled for.
     assert totals.delayed[-1][0]()["total_tokens"] == 6
+    assert totals.delayed[-1][0]()["totals_revision"] == daily.delayed[-1][0]()[
+        "totals_revision"
+    ]
 
     # Detail serialization remains lazy: the delayed callback reads the latest
     # coherent retained state rather than serializing history on the request path.

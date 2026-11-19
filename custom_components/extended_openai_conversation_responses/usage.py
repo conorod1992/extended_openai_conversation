@@ -50,6 +50,8 @@ _USAGE_PRUNE_RETRY_SECONDS = 300.0
 _USAGE_PRUNE_MAX_ATTEMPTS_PER_DAY = 2
 _RUN_ACCOUNTING_DATES = "run_accounting_dates"
 _DAILY_RUN_ATTRIBUTION = "run_attribution"
+_TOTALS_REVISION = "totals_revision"
+_MIRROR_DETAIL_PREFIX = "__eoai_usage_mirror_revision_v1:"
 _RUN_ATTRIBUTION_COUNTERS = frozenset(
     {"run_total_tokens", "run_request_count", "unattributed_run_count"}
 )
@@ -223,7 +225,8 @@ def _totals_from_storage(stored: dict[str, Any] | None) -> UsageTotals:
         values["details"] = {
             str(key): amount
             for key, value in values_source["details"].items()
-            if (amount := _integer(value))
+            if not str(key).startswith(_MIRROR_DETAIL_PREFIX)
+            and (amount := _integer(value))
         }
     return UsageTotals(**values)
 
@@ -245,6 +248,41 @@ def _stored_totals_need_repair(stored: Any) -> bool:
     except ValueError:
         return True
     return False
+
+
+def _reconcile_legacy_usage_totals(
+    totals: UsageTotals, revision: str, mirror: Any
+) -> UsageTotals:
+    """Accept standalone legacy accounting only from this exact snapshot."""
+    stored = asdict(totals)
+    if not isinstance(mirror, dict) or mirror.keys() != stored.keys():
+        return totals
+    if _stored_totals_need_repair(mirror):
+        return totals
+    # Modern writers also persist a top-level revision. The old writer preserves
+    # the nested marker while rewriting only the flat UsageTotals fields.
+    markers = {
+        key: value
+        for key, value in mirror["details"].items()
+        if key.startswith(_MIRROR_DETAIL_PREFIX)
+    }
+    if markers != {f"{_MIRROR_DETAIL_PREFIX}{revision}": 1}:
+        return totals
+    if mirror["conversation_count"] != totals.conversation_count:
+        return totals
+    changes = {key: mirror[key] - stored[key] for key in stored.keys() - {"details"}}
+    if (
+        any(amount < 0 for amount in changes.values())
+        or changes["api_request_count"] <= 0
+        or changes["api_request_count"]
+        != changes["successful_request_count"] + changes["failed_request_count"]
+        or any(
+            mirror["details"].get(key, 0) < value
+            for key, value in totals.details.items()
+        )
+    ):
+        return totals
+    return _totals_from_storage(mirror)
 
 
 def extract_usage(usage: Any) -> RequestUsage:
@@ -359,7 +397,36 @@ class UsageManager:
             else:
                 totals_data = await self._storage.async_load()
                 staged_totals = _totals_from_storage(totals_data)
-            repair_required |= _stored_totals_need_repair(totals_data)
+            totals_need_repair = _stored_totals_need_repair(totals_data)
+            repair_required |= totals_need_repair
+            revision = daily_data.get(_TOTALS_REVISION)
+            # Unmarked snapshots predate provenance. The flat mirror alone
+            # cannot distinguish a legacy write from an incomplete modern write.
+            if (
+                "totals" in daily_data
+                and isinstance(revision, str)
+                and not totals_need_repair
+            ):
+                try:
+                    mirror = await self._storage.async_load()
+                except (
+                    HomeAssistantError,
+                    KeyError,
+                    NotImplementedError,
+                    OSError,
+                    StorageRepairRequired,
+                    TypeError,
+                ) as error:
+                    log_handled_failure(
+                        _LOGGER,
+                        "Unable to check legacy Usage totals mirror",
+                        error,
+                        level=logging.DEBUG,
+                    )
+                else:
+                    staged_totals = _reconcile_legacy_usage_totals(
+                        staged_totals, revision, mirror
+                    )
 
             staged_daily, daily_needs_repair = _load_stored_usage_days(daily_data)
             repair_required |= daily_needs_repair
@@ -941,7 +1008,13 @@ class UsageManager:
         if not isinstance(totals_raw, dict) or set(totals_raw) != allowed_totals:
             raise ValueError("usage totals are invalid")
         _validate_counter_mapping(totals_raw, allowed_totals - {"details"})
-        details = _validate_breakdown(totals_raw["details"], "usage total details")
+        details = {
+            key: value
+            for key, value in _validate_breakdown(
+                totals_raw["details"], "usage total details"
+            ).items()
+            if not key.startswith(_MIRROR_DETAIL_PREFIX)
+        }
         totals = UsageTotals(**{**totals_raw, "details": details})
 
         daily_raw = data["daily"]
@@ -1009,12 +1082,12 @@ class UsageManager:
         if self._daily_storage is None:
             await self._async_save_totals(replacing=replacing)
             return
-        daily_payload = await asyncio.to_thread(
-            _serialize_usage_aggregate_store, self.as_dict(), self.daily
+        mirror, daily_payload = await asyncio.to_thread(
+            _serialize_usage_aggregate_snapshots, self.as_dict(), self.daily
         )
         await self._daily_storage.async_save(daily_payload)
         try:
-            await self._async_save_totals(replacing=replacing)
+            await self._storage.async_save(mirror)
         except Exception:
             _LOGGER.exception(
                 "Unable to update legacy usage totals mirror; aggregate snapshot "
@@ -1034,8 +1107,6 @@ class UsageManager:
         """Capture the current Usage state for one persistence category."""
         if category == "totals":
             return self.as_dict()
-        if category == "daily":
-            return _serialize_usage_aggregate_store(self.as_dict(), self.daily)
         if category == "details":
             return _serialize_usage_detail_store(self.requests, self.runs)
         raise ValueError(f"Unknown usage persistence category: {category}")
@@ -1062,10 +1133,12 @@ class UsageManager:
         if not callable(totals_delay_save) or not callable(daily_delay_save):
             return False
 
-        daily_snapshot = self._usage_snapshot("daily")
+        mirror, daily_snapshot = _serialize_usage_aggregate_snapshots(
+            totals_snapshot, self.daily
+        )
         # Schedule the compatibility mirror first. If the authoritative daily
         # schedule then fails, immediate persistence below leaves daily state current.
-        self._schedule_store_snapshot(self._storage, lambda: totals_snapshot)
+        self._schedule_store_snapshot(self._storage, lambda: mirror)
         self._schedule_store_snapshot(self._daily_storage, lambda: daily_snapshot)
         return True
 
@@ -1081,26 +1154,15 @@ class UsageManager:
             if label in {"request aggregates", "run aggregates"}:
                 if self._schedule_aggregate_snapshots():
                     return
-            else:
-                category = {
-                    "request totals": "totals",
-                    "run totals": "totals",
-                    "daily run totals": "daily",
-                    "request details": "details",
-                    "run details": "details",
-                }.get(label)
-                if category is not None:
-                    store = {
-                        "totals": self._storage,
-                        "daily": self._daily_storage,
-                        "details": self._detail_storage,
-                    }[category]
-                    if store is not None and self._schedule_store_snapshot(
-                        store, lambda: self._usage_snapshot(category)
-                    ):
-                        # Details are intentionally serialized only when the delayed
-                        # save is due, avoiding O(N) history serialization on the turn.
-                        return
+            elif (
+                label in {"request details", "run details"}
+                and self._detail_storage is not None
+                and self._schedule_store_snapshot(
+                    self._detail_storage, lambda: self._usage_snapshot("details")
+                )
+            ):
+                # Serialize details when the delayed save is due, off the turn path.
+                return
         except Exception:
             _LOGGER.exception(
                 "Unable to schedule usage %s; falling back to immediate persistence",
@@ -1670,21 +1732,23 @@ async def async_stage_usage_journal_recovery(
                 subentry_id,
             )
         )
-        totals_payload = asdict(valid_totals)
+        mirror, aggregate = _serialize_usage_aggregate_snapshots(
+            asdict(valid_totals), valid_daily
+        )
         return (
-            totals_payload,
-            _serialize_usage_aggregate_store(totals_payload, valid_daily),
+            mirror,
+            aggregate,
             _serialize_usage_detail_store(valid_requests, valid_runs),
         )
 
-    totals_payload, aggregate, details = await asyncio.to_thread(prepare)
+    mirror, aggregate, details = await asyncio.to_thread(prepare)
     totals_store, daily_store, detail_store = _durable_usage_stores(
         hass, entry_id, subentry_id
     )
     # The full-agent journal retains authority until every native write and the
     # ordinary reload succeed. Unlike the legacy mirror path, none may be ignored.
     await daily_store.async_save(aggregate)
-    await totals_store.async_save(totals_payload)
+    await totals_store.async_save(mirror)
     await detail_store.async_save(details)
     # Canonical daily aggregates can bypass a previously rejected legacy mirror
     # during normal initialization. Heal that handle only through a real read.
@@ -1790,10 +1854,18 @@ async def async_get_usage(
                 return manager
 
 
-def _serialize_usage_aggregate_store(
+def _serialize_usage_aggregate_snapshots(
     totals: dict[str, Any], daily: dict[str, dict[str, Any]]
-) -> dict[str, Any]:
-    """Keep day rows readable by 6.8.3 while saving attribution atomically."""
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Keep compatible rows and identify the shared baseline of both stores."""
+    revision = uuid4().hex
+    # 6.8.3 preserves positive token-detail counters on read and write. Its
+    # diagnostics may show this marker inside details; current readers remove it.
+    mirror = {
+        **totals,
+        _TOTALS_REVISION: revision,
+        "details": {**totals["details"], f"{_MIRROR_DETAIL_PREFIX}{revision}": 1},
+    }
     days = {}
     attribution = {}
     for date, daily_record in daily.items():
@@ -1809,10 +1881,10 @@ def _serialize_usage_aggregate_store(
                 day["api_request_count"] / count, 2
             )
         days[date] = day
-    payload = {"totals": totals, "days": days}
+    payload = {"totals": totals, "days": days, _TOTALS_REVISION: revision}
     if attribution:
         payload[_DAILY_RUN_ATTRIBUTION] = attribution
-    return payload
+    return mirror, payload
 
 
 def _serialize_usage_details(

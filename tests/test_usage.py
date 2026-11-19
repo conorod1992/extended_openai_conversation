@@ -1094,7 +1094,8 @@ async def test_daily_store_keeps_compatible_rows_and_exact_attribution(monkeypat
         "run_request_count": 1,
         "unattributed_run_count": 0,
     }
-    assert daily.data == manager._usage_snapshot("daily")
+    assert daily.data["totals_revision"] == totals.data["totals_revision"]
+    assert daily.data["totals"] == manager.as_dict()
     assert daily.data["run_attribution"] == {date: counters}
     assert counters.keys().isdisjoint(daily.data["days"][date])
     assert daily.data["days"][date]["total_tokens"] == 25
