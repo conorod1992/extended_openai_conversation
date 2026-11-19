@@ -43,6 +43,7 @@ from .agent_config import (
     normalized_agent_integer,
     parse_configured_function_tools,
     preserve_agent_model_setting_omissions,
+    preserve_unselected_archive_retention,
     project_agent_config_transfer,
     project_agent_config_updates,
     shortened_usage_retention,
@@ -1857,6 +1858,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         )
         _validated_model_request(parsed["config"], entry.data)
         if message.get("mode", "current") == "current":
+            parsed["config"] = preserve_unselected_archive_retention(
+                subentry.data, parsed["config"]
+            )
             await _async_validate_configuration_dependencies(
                 hass, entry, subentry, parsed["config"]
             )
@@ -1896,6 +1900,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         _validated_model_request(parsed["config"], entry.data)
         mode = message.get("mode", "current")
         if mode == "current":
+            parsed["config"] = preserve_unselected_archive_retention(
+                subentry.data, parsed["config"]
+            )
             await _async_validate_configuration_dependencies(
                 hass, entry, subentry, parsed["config"]
             )

@@ -448,9 +448,17 @@ async def test_private_active_conversation_survives_selective_restore_and_rollba
         await continuity.async_release(resolution.key, resolution.claim_token)
 
 
-@pytest.mark.parametrize("full_restore", [False, True])
+@pytest.mark.parametrize("restore_kind", ["knowledge", "knowledge_rollback", "full"])
 @pytest.mark.parametrize("retention", ["private", "retained"])
-async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeypatch, full_restore, retention):
+async def test_knowledge_only_restore_preserves_retained_user_continuity(
+    monkeypatch, restore_kind, retention
+):
+    from custom_components.extended_openai_conversation_responses import (
+        function_groups,
+        request_rules,
+        sensor,
+        usage,
+    )
     from custom_components.extended_openai_conversation_responses.const import (
         CONVERSATION_CONTINUITY_USER,
     )
@@ -463,6 +471,7 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeyp
     from homeassistant.components import conversation
 
     reset = restore_recovery.reset_restored_runtime
+    full_restore = restore_kind == "full"
     tx = RestoreHarness(monkeypatch)
     manager = ConversationContinuity(tx.subentry.subentry_id)
     scope = user_scope("alice", source="authenticated_user")
@@ -483,16 +492,60 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeyp
     monkeypatch.setattr(restore_recovery, "_durable_managers", AsyncMock(return_value=tx.managers))
     history = [conversation.SystemContent(content="Retained context witness")]
     await manager.async_record_success(before.key, before.claim_token, history)
-    monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: SimpleNamespace(_continuity=manager))
+    bundle_key = f"continuity:{before.key}"
+    bundle = [("alice", "opening-fact")]
+    await manager.async_set_memory_bundle(bundle_key, bundle, 30)
+    state_key = request_rules.request_rule_session_id(before.key, before.conversation_id)
+    rules = request_rules.RequestRuleRuntime()
+    override = {"model": "gpt-5.4"}
+    rules.set(state_key, override)
+    groups = function_groups.FunctionGroupRuntime()
+    groups.begin(state_key, 30).loaded_group_ids.add("calendar")
+    groups.begin("conversation:unverified", 30).loaded_group_ids.add("other")
+    rules.set("conversation:unverified", override)
+    fallback = SimpleNamespace(totals=usage.UsageTotals(total_tokens=321))
+    key = (tx.entry.entry_id, tx.subentry.subentry_id)
+    fallbacks = {key: fallback}
+    tx.hass.data[usage._VOLATILE_USAGE_MANAGERS] = fallbacks
+    rebind_sensors = MagicMock()
+    monkeypatch.setattr(sensor, "rebind_usage_sensors", rebind_sensors)
+    active = SimpleNamespace(
+        _continuity=manager,
+        _request_rule_runtime=rules,
+        _function_groups_runtime=groups,
+        _usage=fallback,
+    )
+    monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: active)
     monkeypatch.setattr(restore_recovery, "reset_restored_runtime", reset)
     if full_restore:
         await restore_recovery.async_restore_backup_recoverably(tx.hass, tx.entry, tx.subentry, tx.state)
+    elif restore_kind == "knowledge_rollback":
+        tx.fail_knowledge_writes = 1
+        with pytest.raises(backup.BackupError, match="previous agent state was recovered"):
+            await tx.restore()
     else:
         await tx.restore()
     after = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, before.conversation_id, 30)
     try:
         assert (after.conversation_id == before.conversation_id) == (not full_restore or retention == "private")
         assert after.history == (history if not full_restore and retention == "retained" else [])
+        retained = not full_restore and retention == "retained"
+        assert await manager.async_get_memory_bundle(bundle_key, 30) == (
+            bundle if retained else None
+        )
+        assert rules.get(state_key, 30) == (override if retained else {})
+        assert groups.begin(state_key, 30).loaded_group_ids == (
+            {"calendar"} if retained else set()
+        )
+        assert rules.get("conversation:unverified", 30) == {}
+        assert not groups.begin("conversation:unverified", 30).loaded_group_ids
+        if full_restore:
+            assert key not in fallbacks and active._usage is tx.managers.usage
+            rebind_sensors.assert_called_once()
+        else:
+            assert fallbacks[key] is fallback and active._usage is fallback
+            assert active._usage.totals.total_tokens == 321
+            rebind_sensors.assert_not_called()
         other = await manager.async_resolve(
             CONVERSATION_CONTINUITY_USER, user_scope("bob", source="authenticated_user"),
             None, before.conversation_id, 30,
@@ -500,7 +553,7 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeyp
         assert other.conversation_id != before.conversation_id
         assert other.history == []
         await manager.async_release(other.key, other.claim_token)
-        if not full_restore:
+        if restore_kind == "knowledge":
             assert tx.state.knowledge == []
         assert tx.journal.data is None
     finally:

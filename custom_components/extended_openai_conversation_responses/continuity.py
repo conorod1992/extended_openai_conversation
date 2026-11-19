@@ -278,7 +278,7 @@ class ConversationContinuity:
         *,
         private_bindings: dict[str, str] | None = None,
         retained_bindings: dict[str, str] | None = None,
-    ) -> None:
+    ) -> dict[str, str]:
         """Discard transient context under the caller's exclusive restore lease.
 
         Retain diagnostics and HA-default lock ownership, as restoration did
@@ -306,8 +306,14 @@ class ConversationContinuity:
             and key not in self._pending_ends
         }
         self._sessions.update(retained)
-        self._memory_bundles.clear()
+        retained_bundles = {f"continuity:{key}" for key in retained}
+        self._memory_bundles = {
+            key: bundle
+            for key, bundle in self._memory_bundles.items()
+            if key in retained_bundles
+        }
         self._pending_ends.clear()
+        return {key: active.conversation_id for key, active in retained.items()}
 
     @staticmethod
     def identity_key(

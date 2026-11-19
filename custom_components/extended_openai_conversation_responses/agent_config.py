@@ -1134,6 +1134,20 @@ def shortened_usage_retention(
     return result
 
 
+def preserve_unselected_archive_retention(
+    current: Mapping[str, Any], target: dict[str, Any]
+) -> dict[str, Any]:
+    """Keep the destination's retention floor when replacing configuration alone."""
+    retention = normalized_agent_integer(
+        current, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+    )
+    if normalized_agent_integer(
+        target, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+    ) < retention:
+        return {**target, CONF_ARCHIVE_RETENTION_DAYS: retention}
+    return target
+
+
 def normalize_agent_config(
     data: dict[str, Any],
     *,

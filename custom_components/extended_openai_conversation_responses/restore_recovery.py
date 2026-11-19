@@ -685,6 +685,7 @@ def reset_restored_runtime(
     subentry_id: str,
     managers: backup.AgentDataParticipants | None = None,
     preserve_continuity: bool = False,
+    replace_usage: bool = True,
 ) -> None:
     """Reset transient state without splitting live agents from manager registries."""
     from . import continuity, function_groups, request_rules, usage
@@ -703,16 +704,22 @@ def reset_restored_runtime(
     continuity_managers = hass.data.setdefault(continuity._MANAGERS, {})
     continuity_manager = continuity_managers.get(key)
     agent_continuity = getattr(agent, "_continuity", None)
+    retained_sessions: frozenset[str] = frozenset()
     for current in {
         id(item): item
         for item in (continuity_manager, agent_continuity)
         if item is not None
     }.values():
         if preserve_continuity and isinstance(archive, backup.ConversationArchive):
-            current.reset_all(
+            retained = current.reset_all(
                 private_bindings=private_bindings,
                 retained_bindings=archive.retained_continuity_bindings(),
             )
+            if current is (agent_continuity or continuity_manager):
+                retained_sessions = frozenset(
+                    request_rules.request_rule_session_id(key, conversation_id)
+                    for key, conversation_id in retained.items()
+                )
         else:
             current.reset_all(private_bindings=private_bindings)
     if agent_continuity is not None:
@@ -726,7 +733,10 @@ def reset_restored_runtime(
         for item in (rule_runtime, agent_rule_runtime)
         if item is not None
     }.values():
-        current.reset_all()
+        if retained_sessions and current is (agent_rule_runtime or rule_runtime):
+            current.reset_all(retained_sessions)
+        else:
+            current.reset_all()
     if agent_rule_runtime is not None:
         rule_runtimes[key] = agent_rule_runtime
 
@@ -738,14 +748,21 @@ def reset_restored_runtime(
         for item in (group_runtime, agent_group_runtime)
         if item is not None
     }.values():
-        current.reset_all()
+        if retained_sessions and current is (agent_group_runtime or group_runtime):
+            current.reset_all(retained_sessions)
+        else:
+            current.reset_all()
     if agent_group_runtime is not None:
         group_runtimes[key] = agent_group_runtime
 
     # A previous Store startup failure may have left the active entity using a
     # volatile Usage manager. Replace that exact stale pointer with the restored
     # durable manager rather than merely deleting the fallback registry entry.
-    fallback = hass.data.get(usage._VOLATILE_USAGE_MANAGERS, {}).pop(key, None)
+    fallback = (
+        hass.data.get(usage._VOLATILE_USAGE_MANAGERS, {}).pop(key, None)
+        if replace_usage and managers is not None
+        else None
+    )
     if fallback is not None and managers is not None:
         durable_usage = managers.usage
         if agent is not None and getattr(agent, "_usage", None) is fallback:
@@ -753,6 +770,8 @@ def reset_restored_runtime(
         from .sensor import rebind_usage_sensors
 
         rebind_usage_sensors(hass, subentry_id, fallback, durable_usage)
+        if isinstance(fallback, usage.UsageManager):
+            fallback.dispose_maintenance()
 
     statuses = hass.data.get(SUBSYSTEM_STATUS_KEY)
     if isinstance(statuses, dict):
@@ -986,7 +1005,7 @@ async def _rollback_transaction(
     # Retain only live identities verified by those restored bindings; portable
     # target replacement must still use its separate reset policy.
     reset_restored_runtime(
-        hass, entry.entry_id, subentry.subentry_id, managers, preserve_continuity=True
+        hass, entry.entry_id, subentry.subentry_id, managers, True, False
     )
     await _update_configuration(hass, entry, subentry, rollback)
     await store.async_remove()
@@ -1252,6 +1271,7 @@ async def _async_restore_backup_recoverably(
                 subentry_id,
                 managers,
                 prepared.preserve_retained_continuity,
+                prepared.replaces_usage and prepared.restores("usage"),
             )
             context: dict[str, Any] = {}
             if target_provider != rollback_provider:
@@ -1333,7 +1353,8 @@ async def _async_recover_pending_restore(
                 entry_id,
                 subentry_id,
                 managers,
-                preserve_continuity=journal["phase"] != _PHASE_COMMITTED,
+                journal["phase"] != _PHASE_COMMITTED,
+                journal["phase"] == _PHASE_COMMITTED and selected.restores("usage"),
             )
             context: dict[str, Any] = {}
             if any(value != entry_api_provider(entry) for value in providers.values()):

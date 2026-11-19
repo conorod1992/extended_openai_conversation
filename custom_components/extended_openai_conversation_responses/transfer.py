@@ -23,6 +23,7 @@ from .agent_config import (
     agent_retention_snapshot,
     configured_function_tools_from_data,
     normalized_agent_integer,
+    preserve_unselected_archive_retention,
     shortened_usage_retention,
     validate_agent_title,
 )
@@ -1449,20 +1450,7 @@ def _prepared_restore_from_selection(
         else:
             raise backup.BackupError("Transferred configuration is unavailable")
         if SECTION_CONVERSATION_ARCHIVE not in selected:
-            retention = normalized_agent_integer(
-                current.config,
-                CONF_ARCHIVE_RETENTION_DAYS,
-                DEFAULT_ARCHIVE_RETENTION_DAYS,
-            )
-            if (
-                normalized_agent_integer(
-                    config, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
-                )
-                < retention
-            ):
-                # Agent startup prunes using the restored policy. A configuration
-                # restore cannot shorten retention for unselected Archive data.
-                config[CONF_ARCHIVE_RETENTION_DAYS] = retention
+            config = preserve_unselected_archive_retention(current.config, config)
     else:
         # Unselected configuration is authoritative private source. Validate a
         # separate projection without rewriting credentials, YAML or omissions.
@@ -1713,6 +1701,7 @@ async def async_materialize_restore(
     target.preserve_retained_continuity = (
         selected == {SECTION_KNOWLEDGE} and provider_connection is None
     )
+    target.replaces_usage = SECTION_USAGE in selected
     data_sections = {
         key
         for key, transfer_section in (

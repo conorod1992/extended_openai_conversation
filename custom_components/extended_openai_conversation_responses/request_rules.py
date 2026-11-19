@@ -1559,10 +1559,14 @@ class RequestRuleRuntime:
         self._conversation_overrides.pop(session_id, None)
         self._requests.invalidate(session_id, ended=False)
 
-    def reset_all(self) -> None:
+    def reset_all(self, retain: frozenset[str] = frozenset()) -> None:
         """Discard overrides and end all outstanding request ownership."""
         self._requests.clear()
-        self._conversation_overrides.clear()
+        self._conversation_overrides = {
+            key: override
+            for key, override in self._conversation_overrides.items()
+            if key in retain
+        }
 
     def reset_continuity(self, continuity_key: str) -> None:
         """Invalidate every conversation generation owned by an ended continuity."""

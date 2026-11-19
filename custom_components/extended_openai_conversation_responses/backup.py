@@ -128,6 +128,8 @@ class PreparedRestore:
     # Live Knowledge-only commits may retain untouched conversation state.
     # Deliberately absent from journal/portable documents: recovery resets safely.
     preserve_retained_continuity: bool = False
+    # A retention-only rewrite of durable Usage does not replace live accounting.
+    replaces_usage: bool = True
     # None preserves the full-replacement semantics of legacy journals.
     journaled_sections: frozenset[str] | None = None
 
