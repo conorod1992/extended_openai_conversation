@@ -29,7 +29,7 @@ _ACTIVE_OWNER_SCOPE_ID: ContextVar[str | None] = ContextVar(
     "extended_openai_temporary_memory_owner_scope_id", default=None
 )
 
-STORAGE_VERSION = 1
+STORAGE_VERSION = 2
 
 MAX_ACTIVE_RECORDS = 100
 MAX_UNASSIGNED_LEGACY_RECORDS = 100  # Ceiling used by the pre-owner store.
@@ -93,6 +93,33 @@ class _InvalidStoredMetadata(ValueError):
 
 class TemporaryMemoryStore(PropagatingWriteStore):
     """Versioned private Home Assistant storage."""
+
+    needs_format_upgrade = False
+    _migration_payload: tuple[dict[str, Any]] | None = None
+
+    async def _async_load_data(self) -> Any:
+        self.needs_format_upgrade = False
+        try:
+            return await super()._async_load_data()
+        finally:
+            self._migration_payload = None
+
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        if old_major_version != 1:
+            raise NotImplementedError
+        # Inspect v1 in place. A manager validates and commits it as v2;
+        # a read-only snapshot must leave the old file untouched.
+        self.needs_format_upgrade = True
+        self._migration_payload = (old_data,)
+        return old_data
+
+    async def _async_save_owned(self, data: dict[str, Any]) -> None:
+        if self._migration_payload is not None and data is self._migration_payload[0]:
+            return  # Skip Store's automatic save of the unvalidated v1 payload.
+        await super()._async_save_owned(data)
+        self.needs_format_upgrade = False
 
 
 class TemporaryMemory:
@@ -165,6 +192,12 @@ class TemporaryMemory:
                     damaged = True
             if damaged:
                 raise StorageRepairRequired("Temporary Memory")
+            if (
+                raw_records
+                and isinstance(self._store, TemporaryMemoryStore)
+                and self._store.needs_format_upgrade
+            ):
+                self._normalization_pending = True
             self._initialized = True
             if self.expired_pruned:
                 await self._async_save_locked(reconcile_failure=False)
