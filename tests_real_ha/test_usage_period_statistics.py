@@ -977,6 +977,96 @@ async def test_existing_period_recorder_marker_is_migrated_before_first_write(ha
     assert await compile_window(10) == 85
 
 
+@pytest.mark.parametrize("next_day", [False, True])
+async def test_release_period_samples_without_reset_are_migrated(hass, freezer, next_day):
+    """6.8.3 TOTAL sensors had no last_reset, even for existing Recorder sums."""
+    await hass.config.async_set_time_zone("UTC")
+    start = dt_util.parse_datetime(
+        "2026-06-12T23:45:00+00:00" if next_day else "2026-06-12T12:00:00+00:00"
+    )
+    freezer.move_to(start)
+    agent = await _sensor_agent(hass, memory_mode="off")
+    ids = {
+        suffix: next(
+            row.entity_id for row in _registry_entries(hass, agent.entry)
+            if row.unique_id == f"{agent.subentry.subentry_id}_{suffix}"
+        )
+        for suffix in ("usage_today", "usage_month")
+    }
+    usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
+    await hass.async_start()
+
+    def publish_release_state(value):
+        for entity_id in ids.values():
+            hass.states.async_set(
+                entity_id, str(value), {"state_class": "total", "unit_of_measurement": "tokens"}
+            )
+
+    async def compile_at(minutes):
+        window = start + timedelta(minutes=minutes)
+        await async_wait_recording_done(hass)
+        freezer.move_to(window + timedelta(minutes=5, seconds=1))
+        await async_wait_recording_done(hass)
+        do_adhoc_statistics(hass, start=window)
+        await async_wait_recording_done(hass)
+        rows = await hass.async_add_executor_job(
+            partial(
+                statistics_during_period, hass, start, statistic_ids=set(ids.values()),
+                period="5minute", types={"state", "sum", "last_reset"},
+            )
+        )
+        return {suffix: rows[entity_id][-1] for suffix, entity_id in ids.items()}
+
+    publish_release_state(0)
+    assert {item["sum"] for item in (await compile_at(0)).values()} == {0}
+    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
+    publish_release_state(85)
+    last = await compile_at(5)
+    assert {item["sum"] for item in last.values()} == {85}
+    assert {item["last_reset"] for item in last.values()} == {None}
+
+    for entity_id in ids.values():
+        hass.states.async_remove(entity_id)
+    await hass.async_block_till_done()
+    if next_day:
+        freezer.move_to(start + timedelta(minutes=15, seconds=1))
+    await _enabled_usage_entities(hass, agent)
+    segment = 15 if next_day else 10
+    upgraded = await compile_at(segment)
+    assert upgraded["usage_today"]["state"] == (0 if next_day else 85)
+    assert upgraded["usage_month"]["state"] == 85
+    assert {item["sum"] for item in upgraded.values()} == {85}
+    assert all(item["last_reset"] is not None for item in upgraded.values())
+
+    usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
+    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=17))
+    assert {item["sum"] for item in (await compile_at(segment + 5)).values()} == {102}
+
+    # A real rollback can leave an older explicit reset in both Recorder and
+    # RestoreEntity, followed by newer markerless samples from the release.
+    assert await hass.config_entries.async_unload(agent.entry.entry_id)
+    await hass.async_block_till_done()
+    usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
+    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=11))
+    for suffix, entity_id in ids.items():
+        value = 28 if next_day and suffix == "usage_today" else 113
+        hass.states.async_set(
+            entity_id, str(value), {"state_class": "total", "unit_of_measurement": "tokens"}
+        )
+    rolled_back = await compile_at(segment + 10)
+    assert {item["sum"] for item in rolled_back.values()} == {113}
+    assert {item["last_reset"] for item in rolled_back.values()} == {None}
+    for entity_id in ids.values():
+        hass.states.async_remove(entity_id)
+    await hass.async_block_till_done()
+    assert await hass.config_entries.async_setup(agent.entry.entry_id)
+    await hass.async_block_till_done()
+    reupgraded = await compile_at(segment + 15)
+    assert {item["sum"] for item in reupgraded.values()} == {113}
+    assert reupgraded["usage_today"]["state"] == (28 if next_day else 113)
+    assert reupgraded["usage_month"]["state"] == 113
+
+
 @pytest.mark.parametrize("recording", ["excluded", "paused"])
 async def test_unrecorded_period_sensors_publish_no_correction(hass, freezer, recording):
     from homeassistant.const import EVENT_STATE_CHANGED

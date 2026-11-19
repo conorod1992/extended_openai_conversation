@@ -240,6 +240,17 @@ def _period_observation(state: State | None) -> _PeriodObservation | None:
     return _PeriodObservation(marker, tokens, None, state.last_updated_timestamp)
 
 
+def _legacy_period_state(state: State) -> bool:
+    """Recognize a numeric period sample written before explicit resets."""
+    return (
+        state.attributes.get(ATTR_LAST_RESET) is None
+        and state.attributes.get("state_class") == SensorStateClass.TOTAL
+        and state.attributes.get("unit_of_measurement") == "tokens"
+        and state.state.isascii()
+        and state.state.isdecimal()
+    )
+
+
 def _saved_recorder_observation(data: object) -> _PeriodObservation | None:
     if not isinstance(data, dict) or not isinstance(reset := data.get("reset"), str):
         return None
@@ -270,6 +281,7 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         self._cancel_period_rollover: Callable[[], None] | None = None
         self._observation: _PeriodObservation | None = None
         self._recorded_observation: _PeriodObservation | None = None
+        self._legacy_recorded_state: State | None = None
         self._recorder_baseline: int | None = None
         self._initial_recording: (
             tuple[_PeriodObservation | None, State | None] | None
@@ -385,6 +397,7 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         # bearing marker. It also distinguishes a saved visible state published
         # during a pause from the last state accepted by Recorder.
         historical = None
+        legacy_state = None
         if (recorder := self.hass.data.get(DATA_RECORDER_INSTANCE)) is not None:
             try:
                 states = await recorder.async_add_executor_job(
@@ -398,6 +411,8 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                         ):
                             observation, previous_state = historical, state
                         break
+                    if legacy_state is None and _legacy_period_state(state):
+                        legacy_state = state
             except Exception:
                 _LOGGER.debug(
                     "Unable to read the previous Usage period from Recorder",
@@ -415,9 +430,18 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
             recorded = historical
         elif recorded is None and "recorded" not in data and self._records_period():
             recorded = observation
+        if legacy_state is not None and (
+            recorded is None
+            or legacy_state.last_updated_timestamp > (recorded.timestamp or 0)
+        ):
+            # A rollback can leave a newer markerless Recorder sample alongside
+            # the prior release's saved explicit marker. Keep that marker for
+            # display, but reconcile against the sample Recorder actually saw.
+            self._legacy_recorded_state = legacy_state
+            recorded = None
         self._observation = observation
         self._recorded_observation = recorded
-        return previous_state
+        return self._legacy_recorded_state or previous_state
 
     @callback
     def _records_period(self) -> bool:
@@ -433,17 +457,14 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
 
     @callback
     def _preserve_period_sample_order(
-        self, previous: _PeriodObservation, sample: State
+        self, previous_time: float | None, previous_reset: str | None, sample: State
     ) -> None:
-        if previous.timestamp is None:
+        if previous_time is None:
             return
-        previous_time, sample_time = (
-            previous.timestamp,
-            sample.last_updated_timestamp,
-        )
+        sample_time = sample.last_updated_timestamp
         if previous_time < sample_time or (
             previous_time == sample_time
-            and previous.reset.isoformat() == sample.attributes.get(ATTR_LAST_RESET)
+            and previous_reset == sample.attributes.get(ATTR_LAST_RESET)
         ):
             return
         # Recorder can read all samples tied at the window start. Publish the
@@ -498,8 +519,15 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
             self._write_recorded_sample(sample)
             sample = self.hass.states.get(self.entity_id) or sample
         if previous is not None:
-            self._preserve_period_sample_order(previous, sample)
-            sample = self.hass.states.get(self.entity_id) or sample
+            self._preserve_period_sample_order(
+                previous.timestamp, previous.reset.isoformat(), sample
+            )
+        elif self._legacy_recorded_state is not None:
+            self._preserve_period_sample_order(
+                self._legacy_recorded_state.last_updated_timestamp, None, sample
+            )
+            self._legacy_recorded_state = None
+        sample = self.hass.states.get(self.entity_id) or sample
         self._recorded_observation = replace(
             self._observation, timestamp=sample.last_updated_timestamp
         )
@@ -516,6 +544,7 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         before = self.hass.states.get(self.entity_id)
         reset = dt_util.start_of_local_day(period)
         recording = self._records_period()
+        baseline = None
         if visible is not None and visible.reset.date() == period:
             reset = visible.reset
         if recording and previous is not None:
@@ -537,19 +566,28 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                 # new usage. The next write displays the actual bucket value.
                 if delta != tokens:
                     baseline = previous.tokens + delta - tokens
-                    if initial and previous_state is not None:
-                        # The Entity API starts writing only after registration.
-                        attributes = dict(previous_state.attributes)
-                        attributes.pop(ATTR_LAST_RESET, None)
-                        self.hass.states.async_set(
-                            self.entity_id, str(baseline), attributes
-                        )
-                    elif not initial:
-                        self._recorder_baseline = baseline
-                        try:
-                            self.async_write_ha_state()
-                        finally:
-                            self._recorder_baseline = None
+        elif (
+            recording
+            and (legacy := self._legacy_recorded_state) is not None
+            and int(legacy.state) > 0
+            and self._period_start(dt_util.as_local(legacy.last_updated).date())
+            == period
+        ):
+            # Close the still-current markerless cycle before introducing a
+            # reset. Recorder then adds only the change since the old sample.
+            baseline = 0
+        if baseline is not None:
+            if initial and previous_state is not None:
+                # The Entity API starts writing only after registration.
+                attributes = dict(previous_state.attributes)
+                attributes.pop(ATTR_LAST_RESET, None)
+                self.hass.states.async_set(self.entity_id, str(baseline), attributes)
+            elif not initial:
+                self._recorder_baseline = baseline
+                try:
+                    self.async_write_ha_state()
+                finally:
+                    self._recorder_baseline = None
         self._observation = _PeriodObservation(reset, tokens, lifetime)
         if not initial:
             self.async_write_ha_state()
