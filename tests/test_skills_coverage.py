@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+import tracemalloc
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -25,6 +26,40 @@ from tests.skill_transaction_fixtures import stage_legacy_removal
 
 def _skill_text(description: str = "A useful skill", body: str = "Body") -> str:
     return f"---\ndescription: {description}\n---\n{body}\n"
+
+
+def test_discovery_releases_unicode_bodies_before_reading_the_next(hass, tmp_path):
+    manager = SkillManager(hass)
+    for number in range(18):
+        _write_skill(
+            tmp_path / f"skill-{number:02}", description=f"Skill {number}",
+            body="🛰" * 90_000,
+        )
+    (tmp_path / "invalid").mkdir()
+    (tmp_path / "invalid" / "SKILL.md").write_text("missing frontmatter", encoding="utf-8")
+    (tmp_path / "oversized").mkdir()
+    (tmp_path / "oversized" / "SKILL.md").write_bytes(b"x" * (1024 * 1024 + 1))
+
+    def measure(scan):
+        tracemalloc.start()
+        try:
+            result = scan()
+            return result, tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+
+    def previous_scan():
+        bodies = list(manager._iter_skill_texts_sync(tmp_path))
+        return {
+            skill.name: skill for file, body in bodies
+            if (skill := SkillMdParser.parse(body, file, tmp_path)) is not None
+        }
+
+    previous, previous_peak = measure(previous_scan)
+    current, peak = measure(lambda: manager._discover_skills_sync(tmp_path))
+    assert current == previous
+    assert len(current) == 18
+    assert peak < previous_peak / 2
 
 
 def _write_skill(directory: Path, *, description: str = "A useful skill", body: str = "Body") -> Path:
@@ -244,8 +279,8 @@ async def test_discovery_isolates_one_unexpected_parser_failure(hass, tmp_path: 
     second = manager.user_skills_dir / "second" / "SKILL.md"
     monkeypatch.setattr(
         manager,
-        "_load_skills_from_dir_sync",
-        lambda _root: [(first, _skill_text()), (second, _skill_text("Second"))],
+        "_iter_skill_texts_sync",
+        lambda _root: iter([(first, _skill_text()), (second, _skill_text("Second"))]),
     )
 
     original_parse = SkillMdParser.parse
@@ -395,18 +430,18 @@ def test_discovery_handles_missing_non_directory_and_ignored_entries(hass, tmp_p
     """Discovery safely skips roots and entries that cannot contain published Skills."""
     manager = SkillManager(hass)
     missing = tmp_path / "missing"
-    assert manager._load_skills_from_dir_sync(missing) == []
+    assert list(manager._iter_skill_texts_sync(missing)) == []
 
     not_dir = tmp_path / "not-dir"
     not_dir.write_text("x", encoding="utf-8")
-    assert manager._load_skills_from_dir_sync(not_dir) == []
+    assert list(manager._iter_skill_texts_sync(not_dir)) == []
 
     root = tmp_path / "skills"
     root.mkdir()
     (root / "plain-file").write_text("x", encoding="utf-8")
     _write_skill(root / ".hidden")
     (root / "no-skill-file").mkdir()
-    assert manager._load_skills_from_dir_sync(root) == []
+    assert list(manager._iter_skill_texts_sync(root)) == []
 
 
 def test_discovery_handles_read_errors_and_both_resource_limits(hass, tmp_path: Path, monkeypatch) -> None:
@@ -420,17 +455,17 @@ def test_discovery_handles_read_errors_and_both_resource_limits(hass, tmp_path: 
         raise HomeAssistantError("too large")
 
     monkeypatch.setattr(skills_module, "read_bounded_skill_text", fail_read)
-    assert manager._load_skills_from_dir_sync(read_error_root) == []
+    assert list(manager._iter_skill_texts_sync(read_error_root)) == []
 
     entry_limit_root = tmp_path / "entry-limit"
     _write_skill(entry_limit_root / "alpha")
     monkeypatch.setattr(skills_module, "MAX_SKILL_DISCOVERY_ENTRIES", 0)
-    assert manager._load_skills_from_dir_sync(entry_limit_root) == []
+    assert list(manager._iter_skill_texts_sync(entry_limit_root)) == []
 
     # Restore the entry limit and force the independent discovered-Skill limit.
     monkeypatch.setattr(skills_module, "MAX_SKILL_DISCOVERY_ENTRIES", 100)
     monkeypatch.setattr(skills_module, "MAX_DISCOVERED_SKILLS", 0)
-    assert manager._load_skills_from_dir_sync(entry_limit_root) == []
+    assert list(manager._iter_skill_texts_sync(entry_limit_root)) == []
 
 
 @pytest.mark.asyncio
@@ -449,12 +484,10 @@ async def test_skill_load_publishes_complete_result_and_skips_bad_skill(
     class FakeManager(skills_module.SkillManager):
         _instance = None
 
-        def _load_skills_from_dir_sync(self, _directory):
-            return [
-                (Path("/skills/good/SKILL.md"), "good"),
-                (Path("/skills/bad/SKILL.md"), "bad"),
-                (Path("/skills/ignored/SKILL.md"), "ignore"),
-            ]
+        def _iter_skill_texts_sync(self, _directory):
+            yield Path("/skills/good/SKILL.md"), "good"
+            yield Path("/skills/bad/SKILL.md"), "bad"
+            yield Path("/skills/ignored/SKILL.md"), "ignore"
 
     hass = SimpleNamespace(
         config=SimpleNamespace(config_dir="/config"),
