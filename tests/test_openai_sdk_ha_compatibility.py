@@ -17,29 +17,40 @@ from custom_components.extended_openai_conversation_responses.debug import (
 )
 
 
+@pytest.mark.parametrize("api_provider", ["azure", None])
 @pytest.mark.parametrize(
-    ("base_url", "api_version", "expected"),
+    ("base_url", "api_version", "expected_api_version", "expected"),
     [
         (
             "https://resource.openai.azure.com/openai/v1",
+            None,
             None,
             ("/openai/v1/models", "/openai/v1/chat/completions"),
         ),
         (
             "https://resource.services.ai.azure.com/openai/v1/",
             "2024-10-21",
+            None,
             ("/openai/v1/models", "/openai/v1/chat/completions"),
         ),
         (
             "https://resource.openai.azure.com",
             "2024-10-21",
+            "2024-10-21",
+            ("/openai/models", "/openai/deployments/home-model/chat/completions"),
+        ),
+        (
+            "https://resource.openai.azure.com",
+            None,
+            "2025-04-01-preview",
             ("/openai/models", "/openai/deployments/home-model/chat/completions"),
         ),
     ],
 )
 async def test_azure_endpoint_routes_authentication_and_requests(
-    hass, monkeypatch, base_url, api_version, expected
+    hass, monkeypatch, api_provider, base_url, api_version, expected_api_version, expected
 ):
+    monkeypatch.setenv("OPENAI_API_VERSION", "2025-04-01-preview")
     requests = []
 
     def respond(request):
@@ -60,17 +71,31 @@ async def test_azure_endpoint_routes_authentication_and_requests(
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as shared:
         monkeypatch.setattr(helpers, "get_async_client", lambda _hass: shared)
         client = await helpers.get_authenticated_client(
-            hass, "test-key", base_url, api_version, None, "azure"
+            hass, "test-key", base_url, api_version, None, api_provider
         )
         await client.chat.completions.create(model="home-model", messages=[])
 
     assert tuple(request.url.path for request in requests) == expected
-    azure_v1 = "/openai/v1" in base_url
     for request in requests:
-        assert request.url.params.get("api-version") == (
-            None if azure_v1 else api_version
-        )
+        assert request.url.params.get("api-version") == expected_api_version
     assert json.loads(requests[-1].content)["model"] == "home-model"
+
+
+@pytest.mark.parametrize(
+    ("api_version", "environment_version"), [(None, None), ("", "2024-10-21")]
+)
+def test_legacy_azure_requires_an_effective_api_version(
+    monkeypatch, api_version, environment_version
+):
+    if environment_version is None:
+        monkeypatch.delenv("OPENAI_API_VERSION", raising=False)
+    else:
+        monkeypatch.setenv("OPENAI_API_VERSION", environment_version)
+
+    with pytest.raises(helpers.ProviderEndpointError, match=r"requires.*api_version"):
+        helpers.resolve_provider_endpoint(
+            None, "https://resource.openai.azure.com", api_version
+        )
 
 
 @pytest.mark.parametrize("provider", ["openai", "azure"])

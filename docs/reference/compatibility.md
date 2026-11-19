@@ -32,7 +32,7 @@ Unknown and custom IDs are retained as entered, but use conservative capabilitie
 
 For Azure, enter the deployment name as **Chat model**. When that is not a catalogued model ID, set **Azure underlying model** under **Assistant → Basics → Advanced request settings** to the actual model ID. This selects capability metadata without replacing the deployment name sent to Azure. Leave this field blank for other providers.
 
-Azure resource URLs ending in `/openai/v1/` use the Azure GA API and can leave **API version** blank. Legacy Azure resource endpoints still require a dated API version.
+Azure resource URLs ending in `/openai/v1/` use the Azure GA API. Leave **API version** blank for these URLs. For legacy Azure resource endpoints, enter a dated **API version** or omit the field if `OPENAI_API_VERSION` is set in the Home Assistant process environment.
 
 See [Model data](../features/model-data.md) for catalogue updates and [Responses API](../features/responses-api.md) for API selection. Auto chooses a supported path before sending; it does not probe a provider or retry an error through the other API.
 

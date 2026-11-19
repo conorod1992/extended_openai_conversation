@@ -195,12 +195,15 @@ def resolve_provider_endpoint(
     if provider == "azure":
         if not base_url or supports_openai_hosted_tools(DEFAULT_API_PROVIDER, base_url):
             raise ProviderEndpointError("Azure OpenAI requires a custom base URL.")
-        if not _is_azure_v1_endpoint(base_url) and (
-            not isinstance(api_version, str) or not api_version.strip()
-        ):
-            raise ProviderEndpointError(
-                "Azure OpenAI requires provider field api_version."
-            )
+        if not _is_azure_v1_endpoint(base_url):
+            # AsyncAzureOpenAI uses this default for existing entries that omit
+            # the field. An explicit version takes precedence over it.
+            if api_version is None:
+                api_version = os.environ.get("OPENAI_API_VERSION")
+            if not isinstance(api_version, str) or not api_version.strip():
+                raise ProviderEndpointError(
+                    "Azure OpenAI requires provider field api_version."
+                )
     elif (
         base_url is None
         and (sdk_base_url := os.environ.get("OPENAI_BASE_URL")) is not None
