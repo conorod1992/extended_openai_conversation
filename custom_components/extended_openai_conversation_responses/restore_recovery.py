@@ -734,7 +734,9 @@ def reset_restored_runtime(
             )
             if current is (agent_continuity or continuity_manager):
                 retained_sessions = frozenset(
-                    request_rules.request_rule_session_id(continuity_key, conversation_id)
+                    request_rules.request_rule_session_id(
+                        continuity_key, conversation_id
+                    )
                     for continuity_key, conversation_id in retained
                 )
         else:
