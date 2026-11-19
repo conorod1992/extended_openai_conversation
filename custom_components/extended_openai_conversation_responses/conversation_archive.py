@@ -187,11 +187,6 @@ def async_start_archive_retention(hass: HomeAssistant) -> None:
         _now: datetime, *, startup: bool = False
     ) -> None:
         from .agent_config import normalized_agent_integer
-        from .const import (
-            CONF_TEMPORARY_MEMORY,
-            DEFAULT_TEMPORARY_MEMORY,
-            TEMPORARY_MEMORY_OFF,
-        )
         from .temporary_memory import async_expire_existing_temporary_memory
 
         for entry in hass.config_entries.async_entries(DOMAIN):
@@ -212,13 +207,8 @@ def async_start_archive_retention(hass: HomeAssistant) -> None:
                         agent = current.subentries.get(subentry_id) if current else None
                         if agent is None or agent.subentry_type != "conversation":
                             continue
-                        if (
-                            startup
-                            and agent.data.get(
-                                CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY
-                            )
-                            == TEMPORARY_MEMORY_OFF
-                        ):
+                        if startup:
+                            # Expiry applies to all configured assistants.
                             try:
                                 await async_expire_existing_temporary_memory(
                                     hass, entry_id, subentry_id

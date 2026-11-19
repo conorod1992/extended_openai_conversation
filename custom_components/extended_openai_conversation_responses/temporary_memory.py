@@ -1014,7 +1014,7 @@ async def async_get_temporary_memory(
 async def async_expire_existing_temporary_memory(
     hass: Any, entry_id: str, subentry_id: str
 ) -> None:
-    """Run startup expiry with Automatic Off for an existing store only."""
+    """Run startup expiry for an existing store without creating one."""
     manager = get_loaded_temporary_memory(hass, entry_id, subentry_id)
     if manager is None:
         path = hass.config.path(

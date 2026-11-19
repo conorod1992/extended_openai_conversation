@@ -24,6 +24,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONVERSATION_CONTINUITY_USER,
     DOMAIN,
     TEMPORARY_MEMORY_BALANCED,
+    TEMPORARY_MEMORY_EAGER,
     TEMPORARY_MEMORY_OFF,
 )
 from homeassistant.components import conversation
@@ -261,14 +262,18 @@ async def test_temporary_memory_created_by_model_is_owned_injected_pruned_and_re
 
 
 @pytest.mark.parametrize("has_store", [False, True], ids=["missing", "existing"])
+@pytest.mark.parametrize(
+    "automatic",
+    [TEMPORARY_MEMORY_OFF, TEMPORARY_MEMORY_BALANCED, TEMPORARY_MEMORY_EAGER],
+)
 @pytest.mark.usefixtures("real_store_io")
-async def test_disabled_conversation_prunes_temporary_memory_off_at_startup(
-    hass, has_store
+async def test_disabled_conversation_prunes_temporary_memory_at_startup(
+    hass, has_store, automatic
 ):
     entry = _make_entry(
         "Disabled Temporary Memory startup",
         include_ai_task=False,
-        conversation_options={CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_OFF},
+        conversation_options={CONF_TEMPORARY_MEMORY: automatic},
     )
     subentry = _conversation_subentry(entry)
     entry.add_to_hass(hass)
@@ -287,12 +292,18 @@ async def test_disabled_conversation_prunes_temporary_memory_off_at_startup(
     if has_store:
         legacy = stored_record(1, scope_id="device:satellite", owner_scope_id=None)
         legacy.pop("owner_scope_id")
-        expired = {
-            **legacy,
-            "memory_id": "expired",
-            "expires_at": (dt_util.utcnow() - timedelta(days=1)).isoformat(),
-        }
-        await store.async_save({"records": [expired, legacy]})
+        owned = stored_record(2, scope_id=_OWNER_SCOPE, owner_scope_id=_OWNER_SCOPE)
+        expired = (dt_util.utcnow() - timedelta(days=1)).isoformat()
+        await store.async_save(
+            {
+                "records": [
+                    {**legacy, "memory_id": "expired-legacy", "expires_at": expired},
+                    {**owned, "memory_id": "expired-owned", "expires_at": expired},
+                    legacy,
+                    owned,
+                ]
+            }
+        )
         archive = conversation_archive.HomeAssistantArchiveStorage(
             hass, entry.entry_id, subentry.subentry_id
         )
@@ -306,7 +317,7 @@ async def test_disabled_conversation_prunes_temporary_memory_off_at_startup(
     )
     if has_store:
         assert await fresh.async_load() == {
-            "records": [{**legacy, "owner_scope_id": None}]
+            "records": [{**legacy, "owner_scope_id": None}, owned]
         }
     else:
         assert not Path(fresh.path).exists()
