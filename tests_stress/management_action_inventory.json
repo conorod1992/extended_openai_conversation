@@ -537,6 +537,7 @@
       "actions": [
         "discover",
         "get",
+        "rebind",
         "update"
       ],
       "evidence": [
@@ -545,19 +546,27 @@
       "semantic_classes": {
         "discover": "read_only",
         "get": "read_only",
+        "rebind": "durable_mutation",
         "update": "durable_mutation"
       },
       "authorization_classes": {
         "discover": "admin_only",
         "get": "admin_only",
+        "rebind": "admin_only",
         "update": "admin_only"
       },
       "behavioral_evidence": {
         "discover": "tests/test_management_permissions.py::test_quiet_hours_read_actions_return_manager_snapshot",
         "get": "tests/test_management_permissions.py::test_quiet_hours_global_command_needs_no_agent_selection",
+        "rebind": "tests/test_quiet_hours_selection_identity.py::test_replacement_binding_requires_an_explicit_reviewed_transaction",
         "update": "tests/test_management_permissions.py::test_quiet_hours_update_validates_config_and_translates_value_error"
       },
       "durability_evidence": {
+        "rebind": {
+          "boundary": "fresh_manager",
+          "evidence": "tests/test_quiet_hours_selection_identity.py::test_replacement_binding_requires_an_explicit_reviewed_transaction",
+          "outcome": "Replacement registry identity survives a fresh manager load."
+        },
         "update": {
           "boundary": "fresh_page",
           "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser saves Guest and Quiet Hours policy payloads through HA",

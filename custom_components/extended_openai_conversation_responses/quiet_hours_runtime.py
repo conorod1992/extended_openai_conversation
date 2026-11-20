@@ -2130,7 +2130,10 @@ class QuietHoursManager:
                 self._active["pending_controls"] = {}
             else:
                 self._active = None
-        if self._active != getattr(self, "_persisted_active", None):
+        if (
+            not hasattr(self, "_persisted_active")
+            or self._active != self._persisted_active
+        ):
             await self._async_save_locked()
 
     async def _async_retry_pending_restores_locked(self) -> None:

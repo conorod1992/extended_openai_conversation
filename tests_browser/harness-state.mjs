@@ -52,7 +52,7 @@ function load() {
   const state = freshState(); localStorage.setItem(KEY, JSON.stringify(state)); return state;
 }
 
-export function createStateBackend({partialOverview = false, failConfigurationOnce = false, seedConversations = false, seedUsageBoundary = false} = {}) {
+export function createStateBackend({partialOverview = false, failConfigurationOnce = false, seedConversations = false, seedUsageBoundary = false, seedQuietReplacement = false} = {}) {
   let state = load();
   const pendingToolYamls = new Map();
   const save = () => localStorage.setItem(KEY, JSON.stringify(state));
@@ -63,6 +63,14 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     };
     state.scopes[0].conversation_count = 1;
     save();
+  }
+  if (seedQuietReplacement) {
+    state.quiet.revision = "replacement-review";
+    state.quiet.config.overrides = {"assist_satellite.orphaned": {media_player_entity_id:"media_player.reviewed", wake_sound_entity_id:null}};
+    state.quiet.selection_issues = {
+      "assist_satellite.orphaned": {status:"replaced", review_token:"replacement-candidate"},
+      "media_player.reviewed": {status:"missing"},
+    };
   }
   const counts = () => {
     state.agent.function_count = state.configuration.config.functions?.length || 0;

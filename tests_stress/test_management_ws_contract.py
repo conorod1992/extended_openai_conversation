@@ -70,7 +70,7 @@ REVIEWED_FRONTEND_MUTATIONS = {
     ("knowledge", "delete"), ("knowledge", "set_enabled"),
     ("memories", "delete"), ("memories", "reassign_legacy"),
     ("memories", "temporary_clear"), ("memories", "temporary_delete"),
-    ("memories", "temporary_update"), ("request_rules", "delete"),
+    ("memories", "temporary_update"), ("quiet_hours", "rebind"), ("request_rules", "delete"),
     ("request_rules", "duplicate"), ("request_rules", "groups"),
     ("request_rules", "move"), ("request_rules", "rule_pack_import"),
     ("request_rules", "settings"), ("request_rules", "update"),
@@ -79,7 +79,9 @@ REVIEWED_FRONTEND_MUTATIONS = {
     ("tools", "save_group"), ("tools", "set_enabled"),
     ("usage", "clear_details"),
 }
-OPEN_FRONTEND_CONTRACT_GAPS: set[tuple[str, str]] = set()
+# Replacement has service-boundary, fresh-manager and browser fixture evidence.
+# Genuine-HA browser coverage still needs a hardware identity replacement fixture.
+OPEN_FRONTEND_CONTRACT_GAPS = {("quiet_hours", "rebind")}
 
 
 def _frontend_literal_actions(text: str) -> set[tuple[str, str]]:

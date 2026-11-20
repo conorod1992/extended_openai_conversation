@@ -176,14 +176,20 @@ async def test_replacement_binding_requires_an_explicit_reviewed_transaction(has
     assert manager.snapshot()["selection_issues"][entity_id] == issue
 
     if domain == "assist_satellite":
-        manager._active = {"controls": {"media_player.selected": {
+        manager._active = {"period_started_at":"2026-11-20T22:00:00+00:00", "period_ends_at":"2026-11-21T07:00:00+00:00", "applied_at":"2026-11-20T22:00:00+00:00", "controls": {"media_player.selected": {
             "satellite_entity_id": entity_id, "kind": "volume",
             "satellite_registry_identity": initial[entity_id],
             "registry_identity": initial["media_player.selected"], "original_value": 0.8,
+            "quiet_value":0.2, "application_state":"applied",
         }}}
     with pytest.raises(ValueError, match="reviewed replacement changed"):
         await manager.async_rebind_selection(entity_id, expected_revision=manager.revision(), review_token="stale")
-    await manager.async_rebind_selection(entity_id, expected_revision=manager.revision(), review_token=issue["review_token"])
+    from custom_components.extended_openai_conversation_responses import management_permissions
+    monkeypatch.setattr(management_permissions, "async_get_quiet_hours", AsyncMock(return_value=manager))
+    message = {"action":"rebind", "selection":entity_id, "revision":manager.revision(), "review_token":issue["review_token"]}
+    with pytest.raises(HomeAssistantError, match="Administrator permission"):
+        await management_permissions.async_quiet_hours_command(hass, False, message)
+    await management_permissions.async_quiet_hours_command(hass, True, message)
     saved = manager._store.async_save.await_args.args[0]
     assert saved["selection_identities"][entity_id] == [domain, "test", "replacement"]
     assert entity_id not in manager.snapshot()["selection_issues"]
@@ -191,6 +197,11 @@ async def test_replacement_binding_requires_an_explicit_reviewed_transaction(has
         control = saved["active"]["controls"]["media_player.selected"]
         assert control["satellite_registry_identity"] == initial[entity_id]
         assert control["restore_before_apply"] and control["restoration_pending"]
+
+    fresh = runtime.QuietHoursManager(hass)
+    fresh._store = SimpleNamespace(async_load=AsyncMock(return_value=deepcopy(saved)))
+    assert await fresh._async_load_initial_state_locked()
+    assert fresh._selection_identities[entity_id] == [domain, "test", "replacement"]
 
     config = manager.config.as_dict()
     config["overrides"] = {}

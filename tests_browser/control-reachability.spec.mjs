@@ -30,6 +30,7 @@ const CONTROL_SELECTOR = [
 ].join(",");
 
 const ROUTE_EXTRAS = {
+  "capabilities/quiet-hours": "&quiet_replacement=1",
   "data-memory/conversations": "&seed_conversations=1",
   "usage-maintenance/usage": "&usage_boundary=1",
 };
@@ -347,6 +348,11 @@ test.describe("all rendered controls remain reachable across shipped routes and 
             () => panel.evaluate((host) => host._viewKey?.()),
             {message: `${viewport.name}/${route}: route did not settle`},
           ).toBe(route);
+
+          if (route === "capabilities/quiet-hours") {
+            await expect(panel.getByRole("button", {name:"Use replacement satellite"})).toBeVisible();
+            await expect(panel.getByRole("button", {name:"Clear saved override"})).toBeVisible();
+          }
 
           const record = {
             viewport: viewport.name, width: viewport.width, height: viewport.height,
