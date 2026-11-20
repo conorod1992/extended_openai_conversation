@@ -1577,13 +1577,16 @@ async def test_punctuation_only_triggers_are_rejected_or_retained_inactive(hass)
     rules = await manager(
         local_rule("Legacy punctuation", phrases=["!!!"]),
         local_rule("Legacy emoji", phrases=["☀️"], order=1),
-        local_rule("Good night", phrases=["???", "good night"], order=2),
+        local_rule("Legacy apostrophe", phrases=["'!!!"], order=2),
+        local_rule("Good night", phrases=["???", "good night"], order=3),
     )
     before = rules.snapshot()
-    assert set(before["diagnostics"]) == {"legacy-punctuation", "legacy-emoji"}
-    assert len(before["rules"]) == 3
+    assert set(before["diagnostics"]) == {
+        "legacy-punctuation", "legacy-emoji", "legacy-apostrophe",
+    }
+    assert len(before["rules"]) == 4
 
-    for phrase in ("!!!", "???", "❤️"):
+    for phrase in ("!!!", "???", "❤️", "'???", "__"):
         assert rules.match(phrase) is None
         assert await rules.async_match(hass, phrase) is None
         with pytest.raises(ValueError, match="Enter a trigger with words or numbers"):

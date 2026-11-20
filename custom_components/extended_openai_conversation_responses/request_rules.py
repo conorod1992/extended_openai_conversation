@@ -848,7 +848,10 @@ class RequestRules:
         previous = self._rules[self._index(rule_id)]
         if rule_id not in self._diagnostics and (
             previous["match_type"] == "sentence_pattern"
-            or all(_basic_normalize(phrase) for phrase in previous["phrases"])
+            or all(
+                _has_trigger_word(_basic_normalize(phrase))
+                for phrase in previous["phrases"]
+            )
         ):
             return False
         try:
@@ -1342,7 +1345,7 @@ class RequestRules:
                 phrases = []
                 for item in rule["phrases"]:
                     normalized = normalize_text(item, settings, self._wording_groups)
-                    if normalized:
+                    if _has_trigger_word(normalized):
                         phrases.append(CompiledPhrase(item, normalized))
                 if not phrases:
                     diagnostics[rule["id"]] = _EMPTY_NORMALIZED_PHRASE
@@ -1797,7 +1800,7 @@ def validate_rule(
         if any(SLOT_REFERENCE.search(phrase) for phrase in phrases):
             raise ValueError("variable values require Sentence pattern matching")
         if not allow_empty_normalized_phrases and any(
-            not _basic_normalize(phrase) for phrase in phrases
+            not _has_trigger_word(_basic_normalize(phrase)) for phrase in phrases
         ):
             raise ValueError(_EMPTY_NORMALIZED_PHRASE)
 
@@ -4087,6 +4090,11 @@ _EMPTY_NORMALIZED_PHRASE = (
     "Enter a trigger with words or numbers, or use Sentence pattern matching "
     "for literal symbols."
 )
+
+
+def _has_trigger_word(normalized: str) -> bool:
+    """Require a letter or number in a non-literal trigger."""
+    return any(char.isalnum() for char in normalized)
 
 
 def _basic_normalize(text: str) -> str:
