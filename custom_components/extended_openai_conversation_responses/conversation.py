@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from contextlib import nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 from pathlib import Path
 import time
@@ -32,13 +32,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import intent, llm
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.event import async_track_time_interval
 
 from . import ExtendedOpenAIConfigEntry, ha_actions
 from .agent_config import (
     AgentConfigError,
     async_prepare_runtime_function_tools,
-    function_tool_enabled,
     normalized_agent_integer,
 )
 from .agent_configuration import (
@@ -178,7 +176,6 @@ from .ha_llm_tools import (
     ToolSnapshot,
     async_discover,
     current_snapshot,
-    is_ha_tool,
     tool_snapshot_scope,
 )
 from .ha_permissions import bind_active_ha_context
@@ -188,6 +185,7 @@ from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_d
 from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
 from .memory import (
+    EmbeddingBatch,
     MemoryRecord,
     PersistentMemory,
     async_get_memory,
@@ -212,7 +210,7 @@ from .regex_execution import async_process_speech_text
 from .request import (
     assemble_integration_function_tools,
     build_provider_request_snapshot,
-    function_call_budget_available,
+    ha_tool_discovery_references,
     provider_tool_limit,
 )
 from .request_context import (
@@ -258,6 +256,7 @@ from .temporary_memory import (
     TemporaryMemory,
     TemporaryMemoryRecord,
     _owner_from_resolved_scope,
+    async_expire_existing_temporary_memory,
     async_get_temporary_memory,
     temporary_memory_as_dict,
 )
@@ -364,7 +363,7 @@ class ExtendedOpenAIAgentEntity(
 
     _attr_supports_streaming = True
     _attr_supported_features = ConversationEntityFeature.CONTROL
-    skill_manager: SkillManager
+    skill_manager: SkillManager | None = None
     _memory: PersistentMemory | None = None
     _temporary_memory: TemporaryMemory | None = None
     _continuity: ConversationContinuity | None = None
@@ -442,7 +441,6 @@ class ExtendedOpenAIAgentEntity(
                     return
                 # Shared managers can retain a provider bound to the previous entity.
                 sync_memory_embedding_provider(self)
-                self._schedule_archive_retention()
                 register_legacy_agent(self.hass, self.entry, self)
         except BaseException:
             if self._agent_ready is ready:
@@ -460,9 +458,19 @@ class ExtendedOpenAIAgentEntity(
         else:
             skills_dir = Path(self.hass.config.config_dir) / working_dir / "skills"
 
-        self.skill_manager = await SkillManager.async_get_instance(
-            self.hass, user_skills_dir=str(skills_dir)
-        )
+        self.skill_manager = None
+        try:
+            self.skill_manager = await SkillManager.async_get_instance(
+                self.hass, user_skills_dir=str(skills_dir)
+            )
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER,
+                "Skills could not be initialized. Check the Skills recovery files "
+                "and reload Skills after resolving the problem. The assistant will "
+                "continue without Skills.",
+                err,
+            )
 
         self._usage = await async_get_usage(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
@@ -512,6 +520,12 @@ class ExtendedOpenAIAgentEntity(
 
         async def initialize_temporary_memory() -> None:
             if not temporary_configured:
+                try:
+                    await async_expire_existing_temporary_memory(
+                        self.hass, self.entry.entry_id, self.subentry.subentry_id
+                    )
+                except Exception:
+                    _LOGGER.exception("Unable to expire stored Temporary Memory")
                 return
             await async_ensure_optional_manager(
                 self,
@@ -583,14 +597,6 @@ class ExtendedOpenAIAgentEntity(
             with suppress(BaseException):
                 group.result()
             raise
-
-    def _schedule_archive_retention(self) -> None:
-        """Tie daily retention to this entity's HA registration lifetime."""
-        self.async_on_remove(
-            async_track_time_interval(
-                self.hass, self._async_prune_archive_retention, timedelta(days=1)
-            )
-        )
 
     async def _async_prune_archive_retention(
         self, _now: datetime | None = None
@@ -1308,27 +1314,11 @@ class ExtendedOpenAIAgentEntity(
             config_data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
             configured,
         )
-        disabled_members = {
-            name
-            for group in groups
-            if group.get("enabled", True) is not True
-            for name in group["functions"]
-        }
-        references = [
-            tool["function"]
-            for tool in configured
-            if is_ha_tool(tool)
-            and function_tool_enabled(tool)
-            and tool["spec"]["name"] not in disabled_members
-        ]
+        references = ha_tool_discovery_references(
+            configured, groups, {**config_data, **(request_options or {})}
+        )
         snapshot = ToolSnapshot()
-        if (
-            references
-            and function_call_budget_available(
-                {**config_data, **(request_options or {})}
-            )
-            and not self._effective_guest_policy().guest_active
-        ):
+        if references and not self._effective_guest_policy().guest_active:
             snapshot = await async_discover(self.hass, llm_context, references)
         if self.subentry.data is not config_data:
             raise HomeAssistantError(
@@ -1876,7 +1866,12 @@ class ExtendedOpenAIAgentEntity(
             == MEMORY_RETRIEVAL_HYBRID
         )
         query_embedding = (
-            await self._memory.async_prepare_hybrid(readable_scope_ids, query)
+            await self._memory.async_prepare_hybrid(
+                readable_scope_ids,
+                query,
+                category=category,
+                automatic_recall=automatic_recall,
+            )
             if hybrid
             else None
         )
@@ -1904,7 +1899,7 @@ class ExtendedOpenAIAgentEntity(
 
     async def _async_create_embeddings(
         self, inputs: list[str], *, model: str | None = None
-    ) -> list[list[float]]:
+    ) -> EmbeddingBatch:
         """Create embedding vectors without an LLM/classifier retrieval call."""
         selected_model = (
             model
@@ -1938,7 +1933,13 @@ class ExtendedOpenAIAgentEntity(
                     )
                 ordered[index] = list(item.embedding)
             successful = True
-            return [ordered[index] for index in range(len(inputs))]
+            returned_model = getattr(response, "model", None)
+            return EmbeddingBatch(
+                [ordered[index] for index in range(len(inputs))],
+                returned_model.strip() or None
+                if isinstance(returned_model, str)
+                else None,
+            )
         except BaseException as err:
             error_type = type(err).__name__
             raise
@@ -2044,9 +2045,15 @@ class ExtendedOpenAIAgentEntity(
         enabled_skill_names = self.skills
         if not enabled_skill_names:
             return []
-        all_skills = self.skill_manager.get_all_skills()
+        manager = self.skill_manager or SkillManager.get_loaded_instance()
+        if manager is None:
+            return []
 
-        return [s for s in all_skills if s.name in enabled_skill_names]
+        return [
+            skill
+            for skill in manager.get_all_skills()
+            if skill.name in enabled_skill_names
+        ]
 
     def _get_exposed_entities(self) -> list[dict[str, Any]]:
         started = time.monotonic()
@@ -3317,11 +3324,16 @@ class ExtendedOpenAIAgentEntity(
                 end_date = arguments.get("end_date")
                 if not isinstance(start_date, str) or not isinstance(end_date, str):
                     raise ValueError("start_date and end_date are required")
+                if arguments.get("confirm") is False:
+                    return await self._archive.async_preview_delete_date_range(
+                        scope.scope_id, start_date, end_date
+                    )
                 return await self._archive.async_delete_date_range(
                     scope.scope_id,
                     start_date,
                     end_date,
                     confirm=arguments.get("confirm") is True,
+                    allow_outside_range=False,
                 )
             raise ValueError("unknown archive operation")
         except RuntimeError, ValueError:

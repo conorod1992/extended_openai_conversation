@@ -134,9 +134,21 @@ async def test_cross_category_quarantine_recovery_keeps_selected_generation(
             # that intentional lack of bindings as the canonical empty mapping.
             expected = {}
         assert getattr(snapshot, name) == expected, name
-    fresh_totals, _, _ = usage._durable_usage_stores(hass, entry_id, subentry_id)
-    assert (await fresh_totals.async_load()) == asdict(selected.usage_totals)
     fresh_stores = usage._durable_usage_stores(hass, entry_id, subentry_id)
+    mirror = await fresh_stores[0].async_load()
+    aggregate = await fresh_stores[1].async_load()
+    expected_totals = asdict(selected.usage_totals)
+    revision = aggregate["totals_revision"]
+    assert isinstance(revision, str) and revision
+    assert aggregate["totals"] == expected_totals
+    assert mirror == {
+        **expected_totals,
+        "totals_revision": revision,
+        "details": {
+            **expected_totals["details"],
+            f"{usage._MIRROR_DETAIL_PREFIX}{revision}": 1,
+        },
+    }
     fresh_usage = usage.UsageManager(
         *fresh_stores,
         agent_subentry_id=subentry_id,
@@ -144,6 +156,7 @@ async def test_cross_category_quarantine_recovery_keeps_selected_generation(
     )
     await fresh_usage.async_initialize()
     usage_snapshot = await fresh_usage.async_backup_data()
+    assert usage_snapshot["totals"] == expected_totals
     assert usage_snapshot["requests"] == [
         asdict(item) for item in selected.usage_requests
     ]

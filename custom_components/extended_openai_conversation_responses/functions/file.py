@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import stat
 import tempfile
-from typing import Any, cast
+from typing import Any
 from weakref import WeakValueDictionary
 
 import voluptuous as vol
@@ -42,37 +42,12 @@ from ..operation_settlement import (
 from ..operational_errors import log_handled_failure
 from ..skills import SkillManager
 from .base import Function
+from .exact_text import exact_text_template, render_exact_text
 from .workspace import async_ensure_workspace
 
 _LOGGER = logging.getLogger(__name__)
 _FILE_EDIT_LOCKS = f"{DOMAIN}.file_edit_locks"
 type _FileFingerprint = tuple[int, int, int, int, int]
-
-
-class _ExactTextTemplate(Template):
-    """A template whose source was protected before HA strips whitespace."""
-
-
-def _exact_text_template(value: Any) -> Template:
-    validated = cv.template(value)
-    if isinstance(validated, _ExactTextTemplate):
-        return validated
-    source = value if isinstance(value, str) else validated.template
-    return _ExactTextTemplate("\u2063" + source + "\u2063", validated.hass)
-
-
-def _render_exact_text(template: Template, arguments: dict[str, Any]) -> str:
-    """Protect boundary whitespace from HA's render-result stripping.
-
-    Non-whitespace sentinels surround the template source, so HA and Jinja retain
-    both boundary newlines and whitespace-only results. Remove only our sentinels.
-    """
-    protected = (
-        template
-        if isinstance(template, _ExactTextTemplate)
-        else Template("\u2063" + template.template + "\u2063", template.hass)
-    )
-    return cast(str, protected.async_render(arguments, parse_result=False))[1:-1]
 
 
 def _fingerprint(stat_result: os.stat_result) -> _FileFingerprint:
@@ -438,7 +413,7 @@ class WriteFileFunction(FileFunction):
         schema = vol.Schema(
             {
                 vol.Required("path"): cv.template,
-                vol.Required("content"): _exact_text_template,
+                vol.Required("content"): exact_text_template,
                 vol.Optional("allow_dir"): vol.All(cv.ensure_list, [cv.template]),
             }
         )
@@ -457,7 +432,7 @@ class WriteFileFunction(FileFunction):
         path_template = function_config.get("path")
         path_str = path_template.async_render(arguments, parse_result=False)
         content_template = function_config.get("content")
-        content = _render_exact_text(content_template, arguments)
+        content = render_exact_text(content_template, arguments, hass=hass)
         allow_dirs = self._render_allow_dirs(
             hass, function_config.get("allow_dir", []), arguments
         )
@@ -506,8 +481,8 @@ class EditFileFunction(FileFunction):
         schema = vol.Schema(
             {
                 vol.Required("path"): cv.template,
-                vol.Required("old_text"): _exact_text_template,
-                vol.Required("new_text"): _exact_text_template,
+                vol.Required("old_text"): exact_text_template,
+                vol.Required("new_text"): exact_text_template,
                 vol.Optional("allow_dir"): vol.All(cv.ensure_list, [cv.template]),
             }
         )
@@ -526,11 +501,11 @@ class EditFileFunction(FileFunction):
         path_template = function_config.get("path")
         path_str = path_template.async_render(arguments, parse_result=False)
         old_text_template = function_config.get("old_text")
-        old_text = _render_exact_text(old_text_template, arguments)
+        old_text = render_exact_text(old_text_template, arguments, hass=hass)
         if not old_text:
             return backend_failure("Search text must not be empty")
         new_text_template = function_config.get("new_text")
-        new_text = _render_exact_text(new_text_template, arguments)
+        new_text = render_exact_text(new_text_template, arguments, hass=hass)
         allow_dirs = self._render_allow_dirs(
             hass, function_config.get("allow_dir", []), arguments
         )

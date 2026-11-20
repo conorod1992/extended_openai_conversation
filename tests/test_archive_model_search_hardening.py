@@ -131,6 +131,10 @@ async def test_scope_counts_excludes_sessions_made_private() -> None:
         inactivity_minutes=30,
     )
     assert session is not None
+    await archive.async_record_turn(
+        session.session_id, run_id=None, user_text="Question",
+        assistant_text="Reply", successful=True,
+    )
     assert archive.scope_counts() == {"user:alice": 1}
 
     await archive.async_make_private(session.session_id)

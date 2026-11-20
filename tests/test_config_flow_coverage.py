@@ -118,10 +118,10 @@ async def test_options_flow_covers_menu_guidance_and_agent_test() -> None:
     assert await ExtendedOpenAIOptionsFlow.async_step_test_result(flow, {}) == menu
 
 
-async def test_validate_input_normalizes_openai_and_forwards_provider_settings() -> (
+async def test_validate_input_preserves_explicit_openai_and_forwards_provider_settings() -> (
     None
 ):
-    """Canonical OpenAI URLs are omitted while custom provider settings are forwarded."""
+    """An explicit canonical URL still pins the SDK endpoint."""
     hass = MagicMock()
     authenticate = AsyncMock()
     canonical = {
@@ -142,8 +142,8 @@ async def test_validate_input_normalizes_openai_and_forwards_provider_settings()
         await config_flow.validate_input(hass, canonical)
         await config_flow.validate_input(hass, custom)
 
-    assert CONF_BASE_URL not in canonical
-    assert authenticate.await_args_list[0].kwargs["base_url"] is None
+    assert canonical[CONF_BASE_URL] == DEFAULT_CONF_BASE_URL
+    assert authenticate.await_args_list[0].kwargs["base_url"] == DEFAULT_CONF_BASE_URL
     assert authenticate.await_args_list[0].kwargs["skip_authentication"] is False
     assert authenticate.await_args_list[1].kwargs == {
         "hass": hass,
@@ -238,9 +238,50 @@ async def test_initial_provider_setup_routes_to_simple_provider_specific_forms()
     azure = await step_user({CONF_NAME: "Azure", CONF_API_PROVIDER: "azure"})
     assert azure["step_id"] == "azure_credentials"
     azure_keys = {str(key) for key in azure["data_schema"].schema}
-    assert azure_keys == {CONF_API_KEY, CONF_BASE_URL, CONF_API_VERSION}
+    assert azure_keys == {CONF_API_KEY, CONF_BASE_URL, CONF_API_VERSION, CONF_SKIP_AUTHENTICATION}
     assert CONF_ORGANIZATION not in azure_keys
-    assert CONF_SKIP_AUTHENTICATION not in azure_keys
+
+
+@pytest.mark.parametrize(
+    "base_url", ["provider.example/v1", "https://api.openai.com/v1\n"]
+)
+async def test_setup_endpoint_validation_still_runs_when_authentication_is_skipped(
+    base_url,
+):
+    flow = SimpleNamespace(
+        hass=MagicMock(),
+        _setup_data={CONF_API_KEY: "provider-key", CONF_API_PROVIDER: "openai"},
+        async_show_form=MagicMock(side_effect=_sync_result),
+        async_create_entry=MagicMock(side_effect=_sync_result),
+        add_suggested_values_to_schema=lambda schema, values: (
+            ExtendedOpenAIConversationConfigFlow.add_suggested_values_to_schema(
+                flow, schema, values
+            )
+        ),
+    )
+
+    async def finish(*args):
+        return await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
+            flow, *args
+        )
+
+    flow._async_finish_initial_setup = finish
+    with patch.object(
+        config_flow, "get_authenticated_client", new_callable=AsyncMock
+    ) as authenticate:
+        invalid = await ExtendedOpenAIConversationConfigFlow.async_step_openai_advanced(
+            flow, {CONF_BASE_URL: base_url, CONF_SKIP_AUTHENTICATION: True}
+        )
+        assert invalid["errors"] == {"base": "invalid_provider_endpoint"}
+        authenticate.assert_not_awaited()
+        flow.async_create_entry.assert_not_called()
+
+        cleared = await ExtendedOpenAIConversationConfigFlow.async_step_openai_advanced(
+            flow, {CONF_BASE_URL: "", CONF_SKIP_AUTHENTICATION: True}
+        )
+        assert CONF_BASE_URL not in cleared["data"]
+        assert authenticate.await_args.kwargs["base_url"] is None
+        assert authenticate.await_args.kwargs["skip_authentication"] is True
 
 
 async def test_openai_credentials_error_retry_preserves_help_placeholders() -> None:
@@ -286,7 +327,10 @@ async def test_openai_credentials_error_retry_preserves_help_placeholders() -> N
             "openai_advanced",
             config_flow.STEP_OPENAI_ADVANCED_SCHEMA,
         )
-    assert advanced["description_placeholders"] is None
+    initial_advanced = await ExtendedOpenAIConversationConfigFlow.async_step_openai_advanced(flow)
+    assert advanced["description_placeholders"] == initial_advanced["description_placeholders"] == {
+        "openai_base_url": DEFAULT_CONF_BASE_URL,
+    }
 
 
 async def test_config_flow_success_errors_reauth_and_type_registration() -> None:
@@ -426,13 +470,18 @@ async def test_conversation_subentry_handler_covers_all_lifecycle_paths() -> Non
     )
     defaults = {"prompt": "default"}
     flow = SimpleNamespace(
-        options={}, async_step_init=AsyncMock(return_value={"step": "init"})
+        options={},
+        _get_entry=lambda: SimpleNamespace(data={}),
+        async_step_init=AsyncMock(return_value={"step": "init"}),
     )
     with patch.object(config_flow, "agent_config_defaults", return_value=defaults):
         assert await ExtendedOpenAISubentryFlowHandler.async_step_user(flow) == {
             "step": "init"
         }
-    assert flow.options == defaults
+    assert flow.options == {
+        **defaults,
+        CONF_CHAT_MODEL: config_flow.DEFAULT_OPENAI_SETUP_MODEL,
+    }
 
     existing = SimpleNamespace(data={"legacy": "value"})
     flow._get_reconfigure_subentry = MagicMock(return_value=existing)
@@ -470,6 +519,23 @@ async def test_conversation_subentry_handler_covers_all_lifecycle_paths() -> Non
         )
     assert created["title"] == "Named Agent"
 
+    handler._async_get_skills = lambda: ExtendedOpenAISubentryFlowHandler._async_get_skills(
+        SimpleNamespace(hass=MagicMock())
+    )
+    with (
+        patch.object(
+            config_flow.SkillManager,
+            "async_get_instance",
+            AsyncMock(side_effect=HomeAssistantError("manual Skills recovery required")),
+        ),
+        patch.object(config_flow, "normalize_agent_config", side_effect=dict),
+    ):
+        created = await ExtendedOpenAISubentryFlowHandler.async_step_init(
+            handler, {CONF_NAME: "Without Skills"}
+        )
+    assert created["title"] == "Without Skills"
+    assert created["data"][CONF_SKILLS] == []
+
     handler._is_new = False
     shown = await ExtendedOpenAISubentryFlowHandler.async_step_init(handler)
     assert shown["data_schema"]({})["management_panel"].startswith("Open Extended")
@@ -504,12 +570,17 @@ async def test_ai_task_handler_covers_basic_and_advanced_lifecycle_paths() -> No
         is False
     )
     flow = SimpleNamespace(
-        options={}, async_step_init=AsyncMock(return_value={"step": "init"})
+        options={},
+        _get_entry=lambda: SimpleNamespace(data={}),
+        async_step_init=AsyncMock(return_value={"step": "init"}),
     )
     assert await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_user(flow) == {
         "step": "init"
     }
-    assert flow.options == dict(DEFAULT_AI_TASK_OPTIONS)
+    assert flow.options == {
+        **DEFAULT_AI_TASK_OPTIONS,
+        CONF_CHAT_MODEL: config_flow.DEFAULT_OPENAI_SETUP_MODEL,
+    }
 
     existing = SimpleNamespace(data={CONF_CHAT_MODEL: "saved-model"})
     flow._get_reconfigure_subentry = MagicMock(return_value=existing)

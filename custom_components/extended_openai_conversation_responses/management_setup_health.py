@@ -48,6 +48,7 @@ def build_setup_health_facts(
     *,
     memory_available: bool,
     knowledge_source_count: int,
+    knowledge_total_source_count: int | None = None,
     knowledge_available: bool,
     is_admin: bool,
     function_tools_health: dict[str, Any] | None = None,
@@ -70,9 +71,15 @@ def build_setup_health_facts(
         with suppress(Exception):
             exposed_entity_count = _exposed_entity_count(hass)
 
-    guidance = configuration_guidance_snapshot(entry.data, options)
-    lifecycle = configured_lifecycle(subentry)
-    lifecycle["confirmed_unavailable"] = confirmed_retirement_failure(
+    guidance = configuration_guidance_snapshot(
+        entry.data, options, client=getattr(entry, "runtime_data", None)
+    )
+    lifecycle = configured_lifecycle(
+        subentry, entry_data=entry.data, client=getattr(entry, "runtime_data", None)
+    )
+    lifecycle["confirmed_unavailable"] = lifecycle[
+        "shutdown_reached"
+    ] and confirmed_retirement_failure(
         hass, entry.entry_id, subentry.subentry_id, lifecycle["model"]
     )
     return {
@@ -101,6 +108,11 @@ def build_setup_health_facts(
         "knowledge": {
             "enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
             "source_count": knowledge_source_count,
+            **(
+                {"total_source_count": knowledge_total_source_count}
+                if knowledge_total_source_count is not None
+                else {}
+            ),
             "available": knowledge_available,
         },
         "web_search": {
@@ -135,7 +147,12 @@ def add_setup_health(
             entry,
             subentry,
             memory_available="memories" not in failed_keys,
-            knowledge_source_count=int(agent.get("knowledge_source_count", 0)),
+            knowledge_source_count=int(agent.get("knowledge_source_count") or 0),
+            **(
+                {"knowledge_total_source_count": agent["knowledge_total_source_count"]}
+                if "knowledge_total_source_count" in agent
+                else {}
+            ),
             knowledge_available="knowledge" not in failed_keys,
             is_admin=is_admin,
             function_tools_health=function_tools_health,

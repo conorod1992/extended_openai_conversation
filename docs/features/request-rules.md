@@ -78,7 +78,7 @@ Reasoning effort is validated against the model that will actually receive it, i
 
 ### Text matching
 
-**Equals**, **Starts with**, **Ends with**, and **Contains** are case-insensitive and normalize punctuation and whitespace. Rules can inherit the defaults or customize:
+**Equals**, **Starts with**, **Ends with**, and **Contains** are case-insensitive and normalize punctuation and whitespace. Trigger text must still contain searchable text after normalization. Use **Sentence pattern** to match literal symbols. Existing triggers that normalize to empty are skipped. Rules can inherit the defaults or customize:
 
 - **Normalize word forms** handles conservative English forms such as `light/lights`.
 - **Wording alternatives** map different ways of saying the same thing to a main phrase. The seeded alternatives preserve the previous built-in behavior, such as `switch on` to `turn on` and `television` to `tv`. Alternatives can be added, edited, and removed. Ambiguous duplicate phrases are rejected.

@@ -185,7 +185,8 @@ export function discardVoiceMappingDraft(panel, savedMapping = baselineMapping(p
 }
 
 export function acknowledgeVoiceMappingDraft(panel, saved, submission, fields) {
-  if ((fields && !fields.includes("voice_device_mappings")) || !Object.hasOwn(saved.config || {}, "voice_device_mappings")) return;
+  const written = fields ?? submission.fields;
+  if ((written && !written.includes("voice_device_mappings")) || !Object.hasOwn(saved.config || {}, "voice_device_mappings")) return;
   const state = existing(panel);
   if (!state) return;
   const savedRows = fromMapping(saved.config.voice_device_mappings);

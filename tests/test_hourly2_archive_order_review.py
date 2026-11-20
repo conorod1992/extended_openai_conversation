@@ -12,6 +12,7 @@ from custom_components.extended_openai_conversation_responses.agent_maintenance 
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
     HomeAssistantArchiveStorage,
+    archive_sessions_past_retention,
 )
 from custom_components.extended_openai_conversation_responses.scope import user_scope
 from homeassistant.util import dt as dt_util
@@ -201,3 +202,36 @@ async def test_malformed_or_ambiguous_sequence_preserves_store_and_rejects_repla
     with pytest.raises(ValueError, match="transaction is corrupted"):
         await ConversationArchive(storage, "agent").async_initialize()
     assert (storage.metadata, storage.partitions) == pending
+
+
+async def test_retention_uses_newest_turn_without_reordering_legacy_archive(
+    monkeypatch,
+):
+    now = datetime(2026, 11, 19, 8, tzinfo=UTC)
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    storage = FakeArchiveStorage()
+    turns = [
+        _turn(turn_id="first", timestamp="2026-11-18T00:00:00+00:00"),
+        _turn(turn_id="second", timestamp="2026-10-09T00:00:00+00:00"),
+    ]
+    session = replace(
+        _session(turn_count=2),
+        last_message_at=turns[-1].timestamp,
+        last_activity_at=turns[-1].timestamp,
+    )
+    manager = ConversationArchive(storage, "agent")
+    await manager.async_initialize()
+    await manager.async_replace_backup([session], turns)
+    manager = ConversationArchive(storage, "agent")
+    await manager.async_initialize()
+
+    assert archive_sessions_past_retention([session], turns, 30) == set()
+    await manager.async_prune(30)
+    result = await manager.async_get("user:alice", "session-1")
+    assert [turn["turn_id"] for turn in result["turns"]] == ["first", "second"]
+
+    now = datetime(2026, 12, 19, 8, tzinfo=UTC)
+    assert archive_sessions_past_retention([session], turns, 30) == {"session-1"}
+    await manager.async_prune(30)
+    with pytest.raises(ValueError, match="session not found"):
+        await manager.async_get("user:alice", "session-1")

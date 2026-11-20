@@ -478,7 +478,7 @@ def test_sync_entry_model_lifecycle_restores_inactive_persisted_repair(
     monkeypatch.setattr(
         model_lifecycle,
         "configured_lifecycle",
-        lambda _subentry: {
+        lambda _subentry, **_connection: {
             "model": "gpt-old",
             "status": "deprecated",
             "shutdown_reached": True,
@@ -524,7 +524,7 @@ def test_sync_entry_model_lifecycle_clears_stale_configured_failure(
     monkeypatch.setattr(
         model_lifecycle,
         "configured_lifecycle",
-        lambda _subentry: {
+        lambda _subentry, **_connection: {
             "model": "gpt-new",
             "status": "current",
             "shutdown_reached": False,

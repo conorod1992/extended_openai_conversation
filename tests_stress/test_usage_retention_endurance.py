@@ -216,11 +216,15 @@ async def test_mixed_foreground_failure_detached_summary_accounting_survives_pru
         await asyncio.wait_for(state["task"], 10)
         assert usage.totals.api_request_count == 5
         assert usage.totals.successful_request_count == 4
-        # Current policy records detached summaries in aggregates only. Detail
-        # records belong to active user runs; do not invent a new detached run.
-        assert len(usage.requests) == 4
+        # A detached summary has its own request detail and no conversation run.
+        assert len(usage.requests) == 5
+        summary = usage.requests[-1]
+        assert summary.request_stage == "context_summary"
+        assert summary.successful
+        assert summary.total_tokens == 10
+        assert summary.run_id is None
         assert usage.totals.total_tokens == supplied_before + 10
-        assert {request.run_id for request in usage.requests} == {
+        assert {request.run_id for request in usage.requests[:-1]} == {
             run.run_id for run in usage.runs
         }
         assert [asdict(run) for run in usage.runs[:3]] == completed_runs

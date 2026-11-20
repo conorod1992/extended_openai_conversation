@@ -32,7 +32,7 @@ async def test_valid_journal_replaces_quarantined_memory(hass, monkeypatch, phas
     evidence = path.with_name(path.name + ".corrupt.review")
     path.rename(evidence)
 
-    async def managers(hass, entry_id, subentry_id):
+    async def managers(hass, entry_id, subentry_id, *, include_usage=True):
         return participants(
             memory=await memory.async_get_memory(hass, entry_id, subentry_id)
         )

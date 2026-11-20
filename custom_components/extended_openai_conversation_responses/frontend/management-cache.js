@@ -3,12 +3,17 @@ export const SECTION_CACHE_TTL_MS = 30_000;
 export const SCOPE_CACHE_TTL_MS = 30_000;
 export const CLEAN_CONFIG_TTL_MS = 30_000;
 
-export function readSectionCache(panel, view) {
-  const key = panel._sectionCacheKey(view);
-  if (!key || !panel._sectionCache.has(key)) return {key, fresh:false};
+export function cacheTimestampIsFresh(loadedAt, ttl) {
+  if (typeof loadedAt !== "number") return false;
+  const age = Date.now() - loadedAt;
+  return age >= 0 && age <= ttl;
+}
+
+export function readSectionCache(panel, view, key = panel._sectionCacheKey?.(view)) {
+  if (!key || !panel._sectionCache?.has(key)) return {key, fresh:false};
   const result = panel._sectionCache.get(key);
-  const loadedAt = panel._eocSectionCacheTimes.get(key);
-  const fresh = Boolean(loadedAt && Date.now() - loadedAt <= SECTION_CACHE_TTL_MS);
+  const loadedAt = panel._eocSectionCacheTimes?.get(key);
+  const fresh = cacheTimestampIsFresh(loadedAt, SECTION_CACHE_TTL_MS);
   return {key, result, fresh};
 }
 

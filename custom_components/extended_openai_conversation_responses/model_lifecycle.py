@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, date, datetime
 import logging
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 from homeassistant.helpers import issue_registry as ir
 
 from .const import CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL, DOMAIN
+from .helpers import is_native_openai_connection
 from .model_catalog import model_metadata
 from .provider_errors import log_provider_failure, provider_error_metadata
 
@@ -43,9 +45,24 @@ def lifecycle_snapshot(model: str, *, today: date | None = None) -> dict[str, An
     }
 
 
-def configured_lifecycle(subentry: Any, *, today: date | None = None) -> dict[str, Any]:
+def configured_lifecycle(
+    subentry: Any,
+    *,
+    today: date | None = None,
+    entry_data: Mapping[str, Any] | None = None,
+    client: Any = None,
+) -> dict[str, Any]:
     """Return lifecycle facts for one conversation subentry."""
     model = str(subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip()
+    if not is_native_openai_connection(entry_data or {}, client=client):
+        return {
+            "model": model,
+            "status": "unknown",
+            "deprecated_at": None,
+            "shutdown_at": None,
+            "lifecycle_note": None,
+            "shutdown_reached": False,
+        }
     return lifecycle_snapshot(model, today=today)
 
 
@@ -123,8 +140,12 @@ def record_retirement_failure(
     error: BaseException,
     configured_model: str | None = None,
     logger: logging.Logger | None = None,
+    entry_data: Mapping[str, Any] | None = None,
+    client: Any = None,
 ) -> str | None:
     """Record a provider-confirmed retirement and create an actionable HA Repair."""
+    if not is_native_openai_connection(entry_data or {}, client=client):
+        return None
     lifecycle = lifecycle_snapshot(model)
     if (
         lifecycle["status"] != "deprecated"
@@ -188,7 +209,12 @@ def clear_retirement_failure(
         and failure.get("model") != model
     ):
         return
-    failures.pop(key, None)
+    remove_retirement_issue(hass, entry_id=entry_id, subentry_id=subentry_id)
+
+
+def remove_retirement_issue(hass: Any, *, entry_id: str, subentry_id: str) -> None:
+    """Remove this exact assistant's Repair, including an unloaded registry issue."""
+    hass.data.get(_DATA_FAILURES, {}).pop(_failure_key(entry_id, subentry_id), None)
     ir.async_delete_issue(hass, DOMAIN, _issue_id(entry_id, subentry_id))
 
 
@@ -247,11 +273,22 @@ def _override_model_is_still_configured(
 def sync_entry_model_lifecycle(hass: Any, entry: Any) -> None:
     """Refresh one entry's deprecation logging and stale retirement Repairs."""
     active_subentries: set[str] = set()
+    entry_data = getattr(entry, "data", {})
+    client = getattr(entry, "runtime_data", None)
+    native_openai = is_native_openai_connection(entry_data, client=client)
     for subentry in entry.subentries.values():
         if subentry.subentry_type not in {"conversation", "ai_task_data"}:
             continue
         active_subentries.add(subentry.subentry_id)
-        lifecycle = configured_lifecycle(subentry)
+        if not native_openai:
+            key = _failure_key(entry.entry_id, subentry.subentry_id)
+            failures = hass.data.setdefault(_DATA_FAILURES, {})
+            issue_id = _issue_id(entry.entry_id, subentry.subentry_id)
+            failures.pop(key, None)
+            if ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None:
+                ir.async_delete_issue(hass, DOMAIN, issue_id)
+            continue
+        lifecycle = configured_lifecycle(subentry, entry_data=entry_data, client=client)
         log_deprecation_once(
             hass,
             entry_id=entry.entry_id,
@@ -347,6 +384,8 @@ def record_entity_retirement_failure(
             subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
         ).strip(),
         logger=logger,
+        entry_data=getattr(entry, "data", {}),
+        client=getattr(entity, "_client", None),
     )
 
 

@@ -81,3 +81,36 @@ async def test_genuine_configuration_changes_invalidate_old_space(change):
     assert memory._cached_embedding(next(iter(memory._memories.values()))) is None
     await memory.async_prepare_hybrid(["alice"], "query")
     assert len(entity.embedding_calls) == 4
+
+
+async def test_same_alias_dimension_change_refills_only_searched_scope():
+    facts, embeddings = FakeStorage(), FakeStorage()
+    memory = PersistentMemory(facts, embeddings)
+    await memory.async_initialize()
+    await memory.async_add("alice", "Likes tea.", "preferences", "explicit")
+    await memory.async_add("bob", "Likes coffee.", "preferences", "explicit")
+    width = 2
+    calls = []
+
+    async def provider(texts):
+        calls.append(texts)
+        return [[1.0] * width for _ in texts]
+
+    memory.set_embedding_provider(provider, "deployment")
+    await memory.async_prepare_hybrid(["alice", "bob"], "warm up")
+    width = 3
+    calls.clear()
+    query = "beverage"
+    vector = await memory.async_prepare_hybrid(["alice"], query)
+    matches = await memory.async_search("alice", query, query_embedding=vector, hybrid=True)
+    assert [match.content for match in matches] == ["Likes tea."]
+    assert calls[0] == [query]
+    assert len(calls) == 2 and len(calls[1]) == 1 and "tea" in calls[1][0]
+    assert memory.hybrid_status()["status"] == "active"
+
+    restarted = PersistentMemory(facts, embeddings)
+    await restarted.async_initialize()
+    restarted.set_embedding_provider(provider, "deployment")
+    calls.clear()
+    await restarted.async_prepare_hybrid(["alice"], query)
+    assert calls == [[query]]

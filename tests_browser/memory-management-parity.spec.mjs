@@ -14,7 +14,7 @@ for (const bundled of [false, true]) {
       browserHarness.panel._bindActions(); browserHarness.panel._bindActions();
     });
     await panel.locator("#list-search").fill("Memory");
-    await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "memory");
+    await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "Memory");
     await panel.locator('[data-memory-id="memory-3"] .memory-edit-button').click();
     await expect(panel.locator("#memory-subject")).toHaveValue("Bins");
     await expect(panel.locator("#memory-key")).toHaveValue("bins.day");

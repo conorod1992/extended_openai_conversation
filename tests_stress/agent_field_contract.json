@@ -884,6 +884,7 @@
       "gpt-6-luna",
       "gpt-6-sol",
       "gpt-6.1-sol",
+      "gpt-6.1-terra",
       "o3",
       "o3-pro"
     ],
@@ -1119,5 +1120,5 @@
       240
     ]
   },
-  "catalogue_capability_digest": "4a4a007d8fdbc15a933630917fc30ff891ac582f4d4a6e126ac1a5964953b760"
+  "catalogue_capability_digest": "0203f214f5c442a70ec766e54151ced825d2ae6cb1cce6f07ef0c3984880eae1"
 }

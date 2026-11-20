@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 import logging
 
 from homeassistant.components import sensor as sensor_component
@@ -164,6 +164,11 @@ class UsageSensor(SensorEntity):
         return self._usage.totals.total_tokens
 
     @property
+    def available(self) -> bool:
+        """Keep incomplete lifetime counters out of Recorder."""
+        return self.state_class is None or self._usage.lifetime_available
+
+    @property
     def extra_state_attributes(self) -> dict:
         """Expose the distinct conversation, request, and token counters."""
         return self._usage.as_dict()
@@ -184,24 +189,28 @@ class UsageSensor(SensorEntity):
         self._usage = usage
         if subscribed:
             self._usage_listener_remove = usage.async_add_listener(
-                self.async_write_ha_state
+                self._handle_usage_update
             )
-            self.async_write_ha_state()
+            self._handle_usage_update()
         return True
+
+    @callback
+    def _handle_usage_update(self) -> None:
+        self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to persisted usage updates."""
         await super().async_added_to_hass()
         self._usage_listener_remove = self._usage.async_add_listener(
-            self.async_write_ha_state
+            self._handle_usage_update
         )
         self.async_on_remove(self._remove_usage_listener)
 
 
 class _PeriodUsageSensor(UsageSensor):
-    """Common event-driven period sensor behavior."""
+    """Display a calendar bucket from Usage accounting."""
 
-    _attr_state_class = SensorStateClass.TOTAL
+    _attr_state_class = None
 
     def __init__(self, subentry: ConfigSubentry, usage: UsageManager) -> None:
         super().__init__(subentry, usage)
@@ -209,6 +218,14 @@ class _PeriodUsageSensor(UsageSensor):
 
     def _summary(self) -> dict:
         raise NotImplementedError
+
+    def _period_start(self, today: date) -> date:
+        return today
+
+    @property
+    def available(self) -> bool:
+        """Display the period only when its stored aggregates are trustworthy."""
+        return self._usage.daily_available
 
     @property
     def native_value(self) -> int:
@@ -218,6 +235,7 @@ class _PeriodUsageSensor(UsageSensor):
     def extra_state_attributes(self) -> dict:
         summary = self._summary()
         return {
+            "period_start": self._period_start(dt_util.now().date()).isoformat(),
             "input": summary["input_tokens"],
             "output": summary["output_tokens"],
             "cached_input": summary["cached_input_tokens"],
@@ -282,11 +300,6 @@ class UsageTodaySensor(_PeriodUsageSensor):
     def _summary(self) -> dict:
         return self._usage.today_summary()
 
-    @property
-    def last_reset(self) -> datetime:
-        """Identify the local accounting day, including across restarts."""
-        return dt_util.start_of_local_day()
-
 
 class UsageMonthSensor(_PeriodUsageSensor):
     """Tokens derived from daily aggregates for the current local month."""
@@ -300,10 +313,8 @@ class UsageMonthSensor(_PeriodUsageSensor):
     def _summary(self) -> dict:
         return self._usage.month_summary()
 
-    @property
-    def last_reset(self) -> datetime:
-        """Identify the local accounting month with its own UTC offset."""
-        return dt_util.start_of_local_day().replace(day=1)
+    def _period_start(self, today: date) -> date:
+        return today.replace(day=1)
 
 
 class LastResponseUsageSensor(UsageSensor):

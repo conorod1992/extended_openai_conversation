@@ -22,6 +22,7 @@ from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
     _raw_client,
     _response_object,
+    _response_text_item,
     _responses_sse_text,
 )
 
@@ -79,7 +80,8 @@ async def test_agent_probe_does_not_reject_working_supported_configuration(
             )
         if api_mode == "responses":
             return httpx.Response(
-                200, json=_response_object("audit-probe", []), request=request
+                200, json=_response_object("audit-probe", [_response_text_item("OK.")]),
+                request=request,
             )
         return httpx.Response(
             200,

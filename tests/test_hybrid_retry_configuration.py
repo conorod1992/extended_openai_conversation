@@ -4,12 +4,38 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from openai import AsyncOpenAI
 import pytest
 
 from custom_components.extended_openai_conversation_responses.agent_configuration import (
     sync_memory_embedding_provider,
 )
 from tests.test_hybrid_memory_cold_path import _memory
+
+
+async def test_embedding_space_tracks_sdk_environment_endpoint(monkeypatch):
+    memory = await _memory()
+    entity = SimpleNamespace(
+        _memory=memory,
+        subentry=SimpleNamespace(data={"memory_retrieval_mode": "hybrid"}),
+        entry=SimpleNamespace(data={"api_key": "test-key"}),
+        _async_create_embeddings=AsyncMock(),
+    )
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://first.example/v1/")
+    async with AsyncOpenAI(api_key="test-key") as first:
+        entity.entry.runtime_data = first
+        sync_memory_embedding_provider(entity)
+        first_space = memory._embedding_space_id
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://second.example/v1/")
+    async with AsyncOpenAI(api_key="test-key") as second:
+        entity.entry.runtime_data = second
+        sync_memory_embedding_provider(entity)
+        assert memory._embedding_space_id != first_space
+        second_space = memory._embedding_space_id
+    async with AsyncOpenAI(api_key="different-key") as reused:
+        entity.entry.runtime_data = reused
+        sync_memory_embedding_provider(entity)
+        assert memory._embedding_space_id == second_space
 
 
 async def test_configuration_sync_preserves_backoff_until_credentials_or_client_change():

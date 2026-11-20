@@ -28,6 +28,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
     CONF_ORGANIZATION,
+    CONF_REASONING_EFFORT,
     CONF_SHORTEN_TOOL_CALL_ID,
     CONF_SKIP_AUTHENTICATION,
     CONF_SKILLS,
@@ -55,10 +56,60 @@ def _suggested_values(schema):
     }
 
 
+async def test_openai_flow_creates_an_apim_unified_model_connection(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import helpers
+
+    endpoint = "https://gateway.azure-api.net/llm/v1?tenant=kitchen"
+    sent = []
+
+    def respond(request):
+        sent.append(request)
+        assert request.url.params.get("tenant") == "kitchen"
+        assert request.headers["Authorization"] == "Bearer test-key"
+        assert "api-version" not in request.url.params
+        if request.method == "GET":
+            assert request.url.path == "/llm/v1/models"
+            return httpx.Response(200, json={"object": "list", "data": []})
+        assert request.url.path == "/llm/v1/chat/completions"
+        return httpx.Response(
+            200,
+            json={"object": "chat.completion", "id": "chat-1", "choices": []},
+        )
+
+    monkeypatch.delenv("OPENAI_API_VERSION", raising=False)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as shared:
+        monkeypatch.setattr(helpers, "get_async_client", lambda _hass: shared)
+        first = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        flow_id = first["flow_id"]
+        await hass.config_entries.flow.async_configure(
+            flow_id, {CONF_API_PROVIDER: "openai"}
+        )
+        advanced = await hass.config_entries.flow.async_configure(
+            flow_id, {CONF_API_KEY: "test-key", "advanced_provider_settings": True}
+        )
+        assert advanced["step_id"] == "openai_advanced"
+        result = await hass.config_entries.flow.async_configure(
+            flow_id, {CONF_BASE_URL: endpoint}
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+        entry = result["result"]
+        assert entry.state is ConfigEntryState.LOADED
+        assert entry.data[CONF_API_PROVIDER] == "openai"
+        assert entry.data[CONF_BASE_URL] == endpoint
+        assert not helpers.is_native_openai_connection(entry.data)
+        await entry.runtime_data.chat.completions.create(model="home-model", messages=[])
+
+    assert any(request.method == "GET" for request in sent)
+    assert sent[-1].method == "POST"
+
+
 @pytest.mark.parametrize("provider,step,submitted,corrected", [
     ("azure", "azure_credentials",
-     {CONF_API_KEY: "bad", CONF_BASE_URL: "https://azure.example/", CONF_API_VERSION: "2026-01-01"},
-     {CONF_API_KEY: "fixed", CONF_BASE_URL: "https://azure.example/", CONF_API_VERSION: "2026-01-01"}),
+     {CONF_API_KEY: "bad", CONF_BASE_URL: "https://azure.example/", CONF_API_VERSION: "2026-01-01", CONF_SKIP_AUTHENTICATION: False},
+     {CONF_API_KEY: "fixed", CONF_BASE_URL: "https://azure.example/", CONF_API_VERSION: "2026-01-01", CONF_SKIP_AUTHENTICATION: True}),
     ("openai", "openai_credentials",
      {CONF_API_KEY: "bad", "advanced_provider_settings": False},
      {CONF_API_KEY: "fixed", "advanced_provider_settings": False}),
@@ -112,11 +163,13 @@ async def test_provider_retry_suggests_original_display_values_without_persistin
             assert result["data"][key] == corrected[key]
         elif key == CONF_ORGANIZATION:
             assert key not in result["data"]
-    if corrected.get(CONF_BASE_URL, DEFAULT_CONF_BASE_URL) == DEFAULT_CONF_BASE_URL:
-        assert CONF_BASE_URL not in result["data"]
-        assert authenticate.await_args.kwargs["base_url"] is None
-    else:
-        assert result["data"][CONF_BASE_URL] == corrected[CONF_BASE_URL]
+    expected_url = corrected.get(CONF_BASE_URL) or None
+    assert result["data"].get(CONF_BASE_URL) == expected_url
+    assert (CONF_BASE_URL in result["data"]) is (expected_url is not None)
+    assert authenticate.await_args.kwargs["base_url"] == expected_url
+    assert authenticate.await_args.kwargs["skip_authentication"] is corrected.get(
+        CONF_SKIP_AUTHENTICATION, False
+    )
     assert config_flow.STEP_USER_DATA_SCHEMA.extra == vol.ALLOW_EXTRA
 
 
@@ -125,7 +178,7 @@ async def test_provider_retry_suggests_original_display_values_without_persistin
     ({CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_SKIP_AUTHENTICATION: True},
      {CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "new-org", CONF_SKIP_AUTHENTICATION: False}),
     ({CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_API_VERSION: "old", CONF_SKIP_AUTHENTICATION: True},
-     {CONF_BASE_URL: DEFAULT_CONF_BASE_URL, CONF_ORGANIZATION: "", CONF_SKIP_AUTHENTICATION: False}),
+     {CONF_BASE_URL: "", CONF_ORGANIZATION: "", CONF_SKIP_AUTHENTICATION: False}),
     ({CONF_BASE_URL: "https://compatible.example/v1", CONF_ORGANIZATION: "org", CONF_API_VERSION: "old", CONF_SKIP_AUTHENTICATION: True}, {}),
     ({CONF_API_PROVIDER: "azure", CONF_BASE_URL: "https://unit.openai.azure.com/", CONF_API_VERSION: "2026-01-01"},
      {CONF_API_PROVIDER: "azure", CONF_BASE_URL: "https://unit.openai.azure.com/", CONF_API_VERSION: "2026-02-01"}),
@@ -171,12 +224,10 @@ async def test_legacy_retry_renders_full_credentials_and_corrects_submission(
         else:
             assert key not in result["data"]
     assert result["data"][CONF_SKIP_AUTHENTICATION] == corrected.get(CONF_SKIP_AUTHENTICATION, False)
-    if corrected.get(CONF_BASE_URL, DEFAULT_CONF_BASE_URL) == DEFAULT_CONF_BASE_URL:
-        assert CONF_BASE_URL not in result["data"]
-        assert authenticate.await_args.kwargs["base_url"] is None
-    else:
-        assert result["data"][CONF_BASE_URL] == corrected[CONF_BASE_URL]
-        assert authenticate.await_args.kwargs["base_url"] == corrected[CONF_BASE_URL]
+    expected_url = corrected.get(CONF_BASE_URL) or None
+    assert result["data"].get(CONF_BASE_URL) == expected_url
+    assert (CONF_BASE_URL in result["data"]) is (expected_url is not None)
+    assert authenticate.await_args.kwargs["base_url"] == expected_url
     expected_provider = "azure" if ".openai.azure.com" in corrected.get(CONF_BASE_URL, "") else "openai"
     assert authenticate.await_args.kwargs["api_provider"] == expected_provider
 
@@ -235,6 +286,43 @@ async def _settle_entry(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     """Wait for HA-triggered reload work after a subentry mutation."""
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.LOADED
+
+
+@pytest.mark.parametrize(
+    "next_model,keeps_sampling", [("gpt-5-mini", False), ("gpt-4o", True)]
+)
+async def test_basic_ai_task_model_round_trip_cleans_incompatible_sampling(
+    hass, next_model, keeps_sampling
+):
+    baseline = {
+        **DEFAULT_AI_TASK_OPTIONS,
+        CONF_CHAT_MODEL: "gpt-4.1",
+        CONF_TEMPERATURE: 0.3,
+        CONF_TOP_P: 0.7,
+    }
+    entry = _make_entry(ai_task_data=baseline)
+    await _setup_entry(hass, entry)
+    try:
+        subentry_id = _subentry_id(entry, "ai_task_data")
+        for model, should_keep in (
+            ("gpt-4.1", True),
+            (next_model, keeps_sampling),
+            ("gpt-4.1", keeps_sampling),
+        ):
+            form = await entry.start_subentry_reconfigure_flow(hass, subentry_id)
+            result = await hass.config_entries.subentries.async_configure(
+                form["flow_id"], {CONF_CHAT_MODEL: model}
+            )
+            assert result["type"] is FlowResultType.ABORT
+            assert result["reason"] == "reconfigure_successful"
+            await _settle_entry(hass, entry)
+            saved = entry.subentries[subentry_id].data
+            assert saved[CONF_CHAT_MODEL] == model
+            assert (CONF_TEMPERATURE in saved) == (CONF_TOP_P in saved) == should_keep
+            if should_keep:
+                assert (saved[CONF_TEMPERATURE], saved[CONF_TOP_P]) == (0.3, 0.7)
+    finally:
+        await _unload_entry(hass, entry)
 
 
 async def _unload_entry(hass: HomeAssistant, entry: MockConfigEntry) -> None:
@@ -548,6 +636,40 @@ async def test_ai_task_subentry_add_advanced_path(hass: HomeAssistant) -> None:
         await _unload_entry(hass, entry)
 
 
+async def test_ai_task_advanced_reasoning_efforts_follow_chat_completions(hass):
+    entry = _make_entry()
+    await _setup_entry(hass, entry)
+    try:
+        first = await hass.config_entries.subentries.async_init(
+            (entry.entry_id, "ai_task_data"), context={"source": SOURCE_USER}
+        )
+        advanced = await hass.config_entries.subentries.async_configure(
+            first["flow_id"],
+            {
+                CONF_NAME: "Chat Task",
+                CONF_CHAT_MODEL: "gpt-6.1-terra",
+                CONF_API_MODE: "chat_completions",
+                CONF_ADVANCED_OPTIONS: True,
+            },
+        )
+        assert advanced["step_id"] == "advanced"
+        schema = advanced["data_schema"]
+        selector = next(
+            value for key, value in schema.schema.items()
+            if str(key) == CONF_REASONING_EFFORT
+        )
+        options = {option["value"] for option in selector.config["options"]}
+        assert "xhigh" in options
+        assert "max" not in options
+        assert _suggested_values(schema)[CONF_REASONING_EFFORT] in options
+        result = await hass.config_entries.subentries.async_configure(
+            first["flow_id"], {CONF_REASONING_EFFORT: "xhigh"}
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+    finally:
+        await _unload_entry(hass, entry)
+
+
 @pytest.mark.asyncio
 async def test_ai_task_reconfigure_basic_updates_real_subentry(
     hass: HomeAssistant,
@@ -747,7 +869,15 @@ async def test_text_only_agent_diagnostic_accepts_provider_without_functions(has
     async def text_provider(**kwargs):
         assert "tools" not in kwargs
         assert "tool_choice" not in kwargs
-        return SimpleNamespace(status="completed", usage=None)
+        if api_mode == "chat_completions":
+            return SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="OK"))
+            ], usage=None)
+        return SimpleNamespace(status="completed", output=[
+            SimpleNamespace(type="message", role="assistant", content=[
+                SimpleNamespace(type="output_text", text="OK")
+            ])
+        ], usage=None)
     create = AsyncMock(side_effect=text_provider)
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)), responses=SimpleNamespace(create=create))
     monkeypatch.setattr(entry, "runtime_data", client)

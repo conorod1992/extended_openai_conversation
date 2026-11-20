@@ -178,7 +178,8 @@ async def _assert_edits_restore_keep_receipts(
     ]
     journal = MemoryJournalStore()
 
-    async def durable(*_args):
+    async def durable(*_args, include_usage=True):
+        assert include_usage
         return participants
 
     async def verify_config(_hass, _entry_id, _subentry_id, prepared):

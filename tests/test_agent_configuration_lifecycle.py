@@ -12,6 +12,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     agent_configuration as configuration,
     conversation,
+    conversation_archive,
     knowledge,
     memory,
 )
@@ -41,7 +42,27 @@ def startup(monkeypatch):
         SimpleNamespace(entry_id="entry"),
         SimpleNamespace(subentry_id="agent", title="Agent", data=options),
     )
-    agent.hass = SimpleNamespace(data={}, config=SimpleNamespace(config_dir="/config"))
+    agent.entry.subentries = {"agent": agent.subentry}
+    agent.subentry.subentry_type = "conversation"
+    background = []
+
+    def start_background(coro, _name, *, eager_start):
+        assert not eager_start
+        task = asyncio.create_task(coro)
+        background.append(task)
+        return task
+
+    agent.hass = SimpleNamespace(
+        async_create_background_task=start_background,
+        data={},
+        config=SimpleNamespace(config_dir="/config", path=lambda *parts: "/".join(parts)),
+        async_add_executor_job=AsyncMock(return_value=False),
+        config_entries=SimpleNamespace(
+            async_entries=Mock(return_value=[agent.entry]),
+            async_get_entry=Mock(return_value=agent.entry),
+        ),
+        bus=SimpleNamespace(async_listen_once=Mock(return_value=Mock())),
+    )
     monkeypatch.setattr(
         conversation.ConversationEntity, "async_added_to_hass", AsyncMock()
     )
@@ -77,7 +98,8 @@ def startup(monkeypatch):
         scheduled.append((hass, callback, interval, cancel))
         return cancel
 
-    monkeypatch.setattr(conversation, "async_track_time_interval", track)
+    monkeypatch.setattr(conversation_archive, "async_track_time_interval", track)
+    monkeypatch.setattr(conversation_archive, "async_get_archive", getters["archive"])
     monkeypatch.setattr(agent, "async_on_remove", removals.append)
 
     def remove():
@@ -90,6 +112,7 @@ def startup(monkeypatch):
         agent=agent,
         getters=getters,
         scheduled=scheduled,
+        background=background,
         removals=removals,
         remove=remove,
         memory=persistent,
@@ -118,32 +141,42 @@ async def test_startup_publishes_agent_only_after_required_state_is_ready(startu
     assert startup.agent._continuity is not None
 
 
-async def test_startup_registers_one_retention_callback_using_live_settings(startup):
-    await startup.agent.async_added_to_hass()
+async def test_archive_retention_remains_owned_by_the_configured_assistant(startup):
+    agent = startup.agent
+    conversation_archive.async_start_archive_retention(agent.hass)
+    conversation_archive.async_start_archive_retention(agent.hass)
+    assert agent._agent_ready is None
+    await startup.background[0]
+    startup.getters["archive"].return_value.async_prune.assert_awaited_once()
+    startup.getters["archive"].reset_mock()
+    await agent.async_added_to_hass()
     for getter in startup.getters.values():
         getter.assert_awaited_once()
-    assert (
-        startup.memory._embedding_provider.create
-        == startup.agent._async_create_embeddings
-    )
+    assert startup.memory._embedding_provider.create == agent._async_create_embeddings
     assert len(startup.scheduled) == 1
-    hass, callback, interval, cancel = startup.scheduled[0]
-    assert hass is startup.agent.hass
+    hass, prune, interval, cancel = startup.scheduled[0]
+    assert hass is agent.hass
     assert interval == timedelta(days=1)
-    assert len(startup.removals) == 2
-    assert startup.removals[-1] is cancel
-    archive = startup.agent._archive
+    assert len(startup.removals) == 1
+    archive = agent._archive
     archive.async_prune.reset_mock()
-    startup.agent.subentry.data = {
-        **startup.agent.subentry.data,
+    agent.subentry.data = {
+        **agent.subentry.data,
         "archive_retention_days": 7,
+        "archive_enabled": False,
     }
-    await callback(None)
-    archive.async_prune.assert_awaited_once_with(7)
     startup.remove()
-    cancel.assert_called_once_with()
+    cancel.assert_not_called()
+    await prune(None)
+    archive.async_prune.assert_awaited_once_with(7)
     assert startup.removals == []
-    assert startup.agent._agent_initialization_failed
+    assert agent._agent_initialization_failed
+
+    conversation_archive.async_stop_archive_retention(hass)
+    cancel.assert_called_once_with()
+    archive.async_prune.reset_mock()
+    await prune(None)
+    archive.async_prune.assert_not_awaited()
 
 
 async def test_reload_rebinds_shared_provider_and_clears_lexical_state(
@@ -159,8 +192,8 @@ async def test_reload_rebinds_shared_provider_and_clears_lexical_state(
         startup.memory._embedding_provider.create
         == replacement._async_create_embeddings
     )
-    assert startup.scheduled[0][3].call_count == 1
-    assert len(startup.removals) == 2
+    assert startup.scheduled == []
+    assert len(startup.removals) == 1
     replacement.subentry.data = {
         **replacement.subentry.data,
         "memory_retrieval_mode": "lexical",
@@ -168,9 +201,9 @@ async def test_reload_rebinds_shared_provider_and_clears_lexical_state(
     startup.remove()
     await replacement.async_added_to_hass()
     assert startup.memory._embedding_provider is None
-    assert len(startup.removals) == 2
+    assert len(startup.removals) == 1
     startup.remove()
-    assert all(scheduled[3].call_count == 1 for scheduled in startup.scheduled)
+    assert startup.scheduled == []
 
 
 @pytest.mark.parametrize(
@@ -334,6 +367,8 @@ async def test_disabled_archive_prunes_without_enabling_collection_and_search_on
 
 
 async def test_retention_cancellation_is_not_swallowed(startup):
+    conversation_archive.async_start_archive_retention(startup.agent.hass)
+    await startup.background[0]
     await startup.agent.async_added_to_hass()
     startup.agent._archive.async_prune.side_effect = asyncio.CancelledError
     with pytest.raises(asyncio.CancelledError):

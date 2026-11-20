@@ -64,7 +64,7 @@ async def _prepare(hass, monkeypatch, phase, damaged):
     native = getattr(storage, "_store", storage)
     path = Path(native.path)
 
-    async def managers(hass, entry_id, subentry_id):
+    async def managers(hass, entry_id, subentry_id, *, include_usage=True):
         temporary = await temporary_memory.async_get_temporary_memory(
             hass, entry_id, subentry_id
         )

@@ -150,10 +150,12 @@ class FunctionGroupRuntime:
             ):
                 self.end(session_id)
 
-    def reset_all(self) -> None:
+    def reset_all(self, retain: frozenset[str] = frozenset()) -> None:
         """Discard transient state and invalidate all outstanding completions."""
         self._requests.clear()
-        self._sessions.clear()
+        self._sessions = {
+            key: session for key, session in self._sessions.items() if key in retain
+        }
         self._last_request.clear()
 
     def stats(self) -> dict[str, Any]:

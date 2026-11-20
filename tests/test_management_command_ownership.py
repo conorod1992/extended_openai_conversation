@@ -153,7 +153,7 @@ async def test_pipeline_order_and_immutable_selected_context(
             request.subentry_id = "other"
         return {"config": {"marker": True}}
 
-    def project(_hass, entry_data, result, *, action):
+    def project(_hass, entry_data, result, *, action, client=None):
         events.append("project")
         assert entry_data is entry.data
         assert action == "validate"

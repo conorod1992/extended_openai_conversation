@@ -3,21 +3,26 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from heapq import heappush, heapreplace
+import json
 from typing import Any
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .conversation_archive import (
+    MAX_EXCERPT_LENGTH,
+    ArchiveSession,
+    ArchiveTurn,
     ConversationArchive,
-    _excerpt,
+    _excerpt_with_match,
     _local_date_bounds,
     _normalize,
     _parse_time,
     _search_features,
     _tokens,
+    _turn_payload,
 )
 from .management_result_limits import (
     MANAGEMENT_ARCHIVE_LIST_PAGE_MAX,
@@ -29,6 +34,8 @@ from .management_result_limits import (
     page_from_iterable,
     page_metadata,
 )
+from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
+from .usage import UsageRun
 
 MAX_MANAGEMENT_HISTORY_OFFSET = 10_000
 
@@ -90,12 +97,56 @@ def usage_summary(manager: Any) -> dict[str, Any]:
     )
     lifetime["details"] = details
     lifetime["details_meta"] = details_meta
-    latest = asdict(manager.latest_run) if manager.latest_run is not None else None
+    latest = manager.latest_run
     return {
         "lifetime": lifetime,
         "today": _bounded_usage_day(manager.today_summary()),
         "month": _bounded_usage_day(manager.month_summary()),
-        "latest": latest,
+        "latest": asdict(latest) if latest is not None else None,
+        **_usage_storage_warning(manager),
+    }
+
+
+def _usage_storage_warning(manager: Any) -> dict[str, str]:
+    warning = getattr(manager, "dashboard_storage_warning", None)
+    return {"storage_warning": warning} if isinstance(warning, str) else {}
+
+
+def _legacy_run_in_period(run: UsageRun, start_date: str, end_date: str) -> bool | None:
+    """Determine membership only if every possible original local day agrees."""
+    if run.completed_at is None:
+        return None
+    try:
+        utc_day = dt_util.as_utc(_parse_time(run.completed_at)).date()
+        # UTC offsets are less than 24 hours in either direction.
+        earliest = (utc_day - timedelta(days=1)).isoformat()
+        latest = (utc_day + timedelta(days=1)).isoformat()
+    except OverflowError:
+        return None
+    if end_date < earliest or start_date > latest:
+        return False
+    return True if start_date <= earliest and latest <= end_date else None
+
+
+def _local_run_summary(
+    manager: Any, start_date: str, end_date: str
+) -> dict[str, Any] | None:
+    count = 0
+    for run in manager.runs:
+        if run.request_count != 0 or not manager.detail_is_current(run.started_at):
+            continue
+        if run.accounting_date is not None:
+            count += start_date <= run.accounting_date <= end_date
+            continue
+        in_period = _legacy_run_in_period(run, start_date, end_date)
+        if in_period is None:
+            return None
+        count += in_period
+    return {
+        "count": count,
+        "start_date": start_date,
+        "end_date": end_date,
+        "retention_days": manager.run_retention_days,
     }
 
 
@@ -119,22 +170,8 @@ def usage_daily_page(
     days = [_bounded_usage_day(manager.daily[date]) for date in page]
     return {
         "days": days,
-        "local_run_summary": {
-            "count": sum(
-                1
-                for run in manager.runs
-                if manager.detail_is_current(run.started_at)
-                and run.request_count == 0
-                and start_date
-                <= dt_util.as_local(_parse_time(run.completed_at or run.started_at))
-                .date()
-                .isoformat()
-                <= end_date
-            ),
-            "start_date": start_date,
-            "end_date": end_date,
-            "retention_days": manager.run_retention_days,
-        },
+        "local_run_summary": _local_run_summary(manager, start_date, end_date),
+        **_usage_storage_warning(manager),
         **page_metadata(
             offset=safe_offset,
             limit=safe_limit,
@@ -298,7 +335,7 @@ def _archive_list_sync(
     heap: list[tuple[datetime, str, Any]] = []
     total = 0
     for session in sessions.values():
-        if session.scope_id != scope_id or session.retention_state != "retained":
+        if session.scope_id != scope_id or not session.has_saved_history:
             continue
         total += 1
         candidate = (_parse_time(session.last_message_at), session.session_id, session)
@@ -328,6 +365,41 @@ async def archive_list_page(
         safe_offset,
         safe_limit,
     )
+
+
+def _archive_search_hit(
+    session: ArchiveSession,
+    turn: ArchiveTurn,
+    turn_index: int,
+    date: str,
+    query: str,
+) -> dict[str, Any]:
+    excerpt, match = _excerpt_with_match(
+        f"{turn.user_text}\n{turn.assistant_text}", query
+    )
+    # Transcript cursors index the concatenated original messages without the
+    # separator the search uses to keep words in different messages distinct.
+    if match > len(turn.user_text):
+        match -= 1
+    text_offset = max(0, match - MAX_EXCERPT_LENGTH // 3)
+    if text_offset:
+        payload = {"session": asdict(session), "turns": [_turn_payload(turn)]}
+        # Keep ordinary turns intact. Include JSON escapes in this estimate
+        # and allow room for the well-bounded pager metadata and tool wrapper.
+        if len(json.dumps(payload, ensure_ascii=False)) <= (
+            MAX_MODEL_TOOL_RESULT_CHARACTERS - 2048
+        ):
+            text_offset = 0
+    return {
+        "session_id": session.session_id,
+        "turn_id": turn.turn_id,
+        "turn_index": turn_index,
+        "text_offset": text_offset,
+        "date": date,
+        "timestamp": turn.timestamp,
+        "title": session.title,
+        "excerpt": excerpt,
+    }
 
 
 def _archive_search_sync(
@@ -385,15 +457,13 @@ def _archive_search_sync(
     ranked = sorted(heap, key=lambda item: item[:4], reverse=True)
     page = ranked[offset : offset + limit]
     records = [
-        {
-            "session_id": session.session_id,
-            "turn_id": turn.turn_id,
-            "turn_index": turn_index,
-            "date": timestamp.astimezone(time_zone).date().isoformat(),
-            "timestamp": turn.timestamp,
-            "title": session.title,
-            "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
-        }
+        _archive_search_hit(
+            session,
+            turn,
+            turn_index,
+            timestamp.astimezone(time_zone).date().isoformat(),
+            query,
+        )
         for _, timestamp, _, _, session, turn, turn_index in page
     ]
     return {

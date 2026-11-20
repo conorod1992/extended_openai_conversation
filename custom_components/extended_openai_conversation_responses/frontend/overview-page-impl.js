@@ -80,7 +80,8 @@ export function renderOverview(panel, agent) {
   for (const issue of new Map([...(result.load_errors || []), ...(agent.metadata_errors || [])].map((item) => [item.key, item])).values()) warnings.push(`${issue.label} could not be loaded. Other overview information is still available.`);
   const loading = result.loading || {};
   const memoryCount = agent.memory_count == null ? "Unknown" : Number(agent.memory_count).toLocaleString();
-  const knowledgeCount = agent.knowledge_source_count == null ? "Unknown" : Number(agent.knowledge_source_count).toLocaleString();
+  const sources = agent.knowledge_total_source_count ?? agent.knowledge_source_count;
+  const knowledgeCount = sources == null ? "Unknown" : Number(sources).toLocaleString();
   const archiveTone = agent.archive_enabled ? "positive" : "neutral";
   const guestTone = ["active", "active_indefinitely", "scheduled"].includes(guest.state) ? "warning" : "neutral";
   return `<style>

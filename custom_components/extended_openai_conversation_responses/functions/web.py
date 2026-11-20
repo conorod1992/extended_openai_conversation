@@ -6,7 +6,6 @@ import asyncio
 from contextlib import suppress
 import logging
 from typing import Any, cast
-from uuid import uuid4
 from xml.parsers.expat import ExpatError
 import zlib
 
@@ -50,6 +49,7 @@ from ..public_errors import SanitizedRequestError
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
 from ..template_diagnostics import private_template_diagnostics
 from .base import Function
+from .exact_text import exact_text_template, render_exact_text
 
 _ZSTD_COMPAT: Any = None
 try:
@@ -303,15 +303,11 @@ class _BoundedResponse:
         selected_encoding = encoding or self._response.charset or "utf-8"
         try:
             return body.decode(selected_encoding, errors=errors)
-        except UnicodeDecodeError as err:
+        except (UnicodeError, LookupError) as err:
             if encoding is None:
                 # RestData retries the same cached body with its configured
                 # encoding when the server's advertised charset is incorrect.
                 raise
-            raise HomeAssistantError(
-                "Remote response cannot be decoded with the configured encoding"
-            ) from err
-        except (UnicodeError, LookupError) as err:
             raise HomeAssistantError(
                 "Remote response cannot be decoded with the configured encoding"
             ) from err
@@ -360,15 +356,6 @@ def _install_bounded_session(
     rest_data._session = cast(
         Any, _BoundedClientSession(session, MAX_REMOTE_RESPONSE_BYTES)
     )
-
-
-def _payload_template(value: Any) -> Template:
-    """Validate Jinja while retaining source whitespace stripped by HA's constructor."""
-    result = cv.template(value)
-    if isinstance(value, str):
-        result.template = value
-        result._hash_cache = hash(value)
-    return result
 
 
 async def _private_rest_update(data: rest.data.RestData) -> None:
@@ -445,7 +432,7 @@ async def _private_rest_update(data: rest.data.RestData) -> None:
             if not data._force_use_set_encoding and response.charset:
                 try:
                     data.data = await response.text()
-                except UnicodeDecodeError:
+                except UnicodeError, LookupError:
                     data._force_use_set_encoding = True
             if data._force_use_set_encoding or not response.charset:
                 data.data = await response.text(encoding=data._encoding)
@@ -461,19 +448,6 @@ async def _private_rest_update(data: rest.data.RestData) -> None:
         data.last_exception = error
         data.data = None
         data.headers = None
-
-
-def _render_payload(
-    template: Template, arguments: dict[str, Any], hass: HomeAssistant
-) -> str:
-    """Keep boundary whitespace inside non-whitespace sentinels during HA rendering."""
-    marker = f"__eoai_payload_{uuid4().hex}__"
-    rendered: str = Template(marker + template.template + marker, hass).async_render(
-        arguments, parse_result=False
-    )
-    if not rendered.startswith(marker) or not rendered.endswith(marker):
-        raise HomeAssistantError("Payload template could not be rendered as exact text")
-    return rendered[len(marker) : -len(marker)]
 
 
 def get_rest_data(
@@ -499,8 +473,8 @@ def get_rest_data(
     payload_template: Template | None = rendered_config.get(CONF_PAYLOAD_TEMPLATE)
     if payload_template is not None:
         rendered_config.pop(CONF_PAYLOAD_TEMPLATE)
-        rendered_config[CONF_PAYLOAD] = _render_payload(
-            payload_template, arguments, hass
+        rendered_config[CONF_PAYLOAD] = render_exact_text(
+            payload_template, arguments, hass=hass
         )
 
     for key in (CONF_HEADERS, CONF_PARAMS):
@@ -563,7 +537,7 @@ class RestFunction(Function):
             vol.Schema(rest.RESOURCE_SCHEMA).extend(
                 {
                     vol.Optional("value_template"): cv.template,
-                    vol.Optional("payload_template"): _payload_template,
+                    vol.Optional("payload_template"): exact_text_template,
                 }
             )
         )
@@ -625,7 +599,7 @@ class ScrapeFunction(Function):
             scrape.COMBINED_SCHEMA.extend(
                 {
                     vol.Optional("value_template"): cv.template,
-                    vol.Optional("payload_template"): _payload_template,
+                    vol.Optional("payload_template"): exact_text_template,
                 }
             )
         )

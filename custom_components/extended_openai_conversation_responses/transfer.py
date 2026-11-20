@@ -22,6 +22,8 @@ from . import backup
 from .agent_config import (
     agent_retention_snapshot,
     configured_function_tools_from_data,
+    normalized_agent_integer,
+    preserve_unselected_archive_retention,
     shortened_usage_retention,
     validate_agent_title,
 )
@@ -33,10 +35,17 @@ from .bounded_json import (
 )
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
+    CONF_ARCHIVE_RETENTION_DAYS,
     CONF_VOICE_DEFAULT_USER_ID,
     CONF_VOICE_DEVICE_MAPPINGS,
+    DEFAULT_ARCHIVE_RETENTION_DAYS,
 )
-from .conversation_archive import ArchiveSession, ArchiveTurn, async_get_archive
+from .conversation_archive import (
+    ArchiveSession,
+    ArchiveTurn,
+    archive_sessions_past_retention,
+    async_get_archive,
+)
 from .function_dependency_integrity import async_validate_request_rule_functions
 from .function_yaml import decoded_function_fields
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
@@ -61,8 +70,19 @@ from .secret_redaction import (
     restore_redacted_secrets,
 )
 from .sharing import SHARING_VERSION, project_sharing_sections
-from .temporary_memory import TemporaryMemoryRecord, async_get_temporary_memory
-from .usage import UsageRequest, UsageRun, UsageTotals, async_get_usage
+from .temporary_memory import (
+    TemporaryMemoryRecord,
+    async_get_temporary_memory,
+    temporary_memory_record_counts,
+)
+from .usage import (
+    UsageRequest,
+    UsageRun,
+    UsageTotals,
+    async_get_usage,
+    retained_usage_details,
+    usage_retention_policy,
+)
 
 TRANSFER_FORMAT = "extended_openai_conversation_transfer"
 TRANSFER_VERSION = 1
@@ -149,6 +169,9 @@ class PreparedTransfer:
         sections = [
             section for section in SECTION_ORDER if section in self.available_sections
         ]
+        active_temporary, unassigned_temporary = temporary_memory_record_counts(
+            self.temporary_memories or ()
+        )
         return {
             "source_kind": self.source_kind,
             "mode": self.mode,
@@ -163,7 +186,8 @@ class PreparedTransfer:
                 else 0
             ),
             "persistent_memories": len(self.memories or []),
-            "temporary_memories": len(self.temporary_memories or []),
+            "temporary_memories": active_temporary,
+            "unassigned_legacy_temporary_memories": unassigned_temporary,
             "knowledge_sources": len(self.knowledge or []),
             "archive_sessions": len(self.archive_sessions or []),
             "archive_turns": len(self.archive_turns or []),
@@ -1342,6 +1366,60 @@ def _copy_transfer_categories(prepared: PreparedTransfer) -> PreparedTransfer:
     return replace(prepared, **dict(zip(fields, copied, strict=True)))
 
 
+def _apply_archive_restore_retention(target: backup.PreparedRestore) -> dict[str, Any]:
+    """Filter only the incoming archive and count the state the restore will write."""
+    days = normalized_agent_integer(
+        target.config, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+    )
+    expired = archive_sessions_past_retention(
+        target.archive_sessions, target.archive_turns, days
+    )
+    original_turns = len(target.archive_turns)
+    if expired:
+        target.archive_sessions = [
+            session
+            for session in target.archive_sessions
+            if session.session_id not in expired
+        ]
+        target.archive_turns = [
+            turn for turn in target.archive_turns if turn.session_id not in expired
+        ]
+        if target.archive_active is not None:
+            target.archive_active = {
+                key: session_id
+                for key, session_id in target.archive_active.items()
+                if session_id not in expired
+            }
+    result: dict[str, Any] = {
+        "archive_sessions": len(target.archive_sessions),
+        "archive_turns": len(target.archive_turns),
+    }
+    if expired:
+        result["archive_retention"] = {
+            "days": days,
+            "expired_sessions": len(expired),
+            "expired_turns": original_turns - len(target.archive_turns),
+        }
+    return result
+
+
+def _usage_restore_preview(target: backup.PreparedRestore) -> dict[str, Any]:
+    retention = usage_retention_policy(target.config)
+    requests, runs, expired = retained_usage_details(
+        target.usage_requests,
+        target.usage_runs,
+        request_days=retention["request_retention_days"],
+        run_days=retention["run_retention_days"],
+    )
+    counts: dict[str, Any] = {"usage_requests": len(requests), "usage_runs": len(runs)}
+    if any(expired.values()):
+        counts["usage_retention"] = {
+            "expired_requests": expired["deleted_requests"],
+            "expired_runs": expired["deleted_runs"],
+        }
+    return counts
+
+
 def _prepared_restore_from_selection(
     current: backup.PreparedRestore,
     imported: PreparedTransfer,
@@ -1381,6 +1459,8 @@ def _prepared_restore_from_selection(
             config = deepcopy(imported.config)
         else:
             raise backup.BackupError("Transferred configuration is unavailable")
+        if SECTION_CONVERSATION_ARCHIVE not in selected:
+            config = preserve_unselected_archive_retention(current.config, config)
     else:
         # Unselected configuration is authoritative private source. Validate a
         # separate projection without rewriting credentials, YAML or omissions.
@@ -1483,19 +1563,27 @@ def _prepared_restore_from_selection(
 
 
 async def _current_snapshot(
-    hass: HomeAssistant, entry: Any, subentry: Any
+    hass: HomeAssistant, entry: Any, subentry: Any, *, include_usage: bool = True
 ) -> backup.PreparedRestore:
     """Read durable current state for selective planning without mutating it."""
     try:
         from .restore_recovery import _durable_managers
 
-        managers = await _durable_managers(hass, entry.entry_id, subentry.subentry_id)
+        managers = await _durable_managers(
+            hass,
+            entry.entry_id,
+            subentry.subentry_id,
+            include_usage=include_usage,
+        )
     except ImportError:
         managers = await backup._managers(hass, entry.entry_id, subentry.subentry_id)
     from .helpers import entry_api_provider
 
     return await backup._snapshot_for_restore(
-        managers, subentry, provider=entry_api_provider(entry)
+        managers,
+        subentry,
+        provider=entry_api_provider(entry),
+        include_usage=include_usage,
     )
 
 
@@ -1533,7 +1621,9 @@ async def async_materialize_restore(
     current = (
         current_snapshot
         if current_snapshot is not None
-        else await _current_snapshot(hass, entry, subentry)
+        else await _current_snapshot(
+            hass, entry, subentry, include_usage=SECTION_USAGE in selected
+        )
     )
     prepared = await asyncio.to_thread(_copy_transfer_categories, prepared)
     from .helpers import effective_api_provider, entry_api_provider
@@ -1624,9 +1714,14 @@ async def async_materialize_restore(
             "target_title": target.title,
         }
     )
+    if SECTION_CONVERSATION_ARCHIVE in selected:
+        preview.update(
+            await asyncio.to_thread(_apply_archive_restore_retention, target)
+        )
     target.preserve_retained_continuity = (
         selected == {SECTION_KNOWLEDGE} and provider_connection is None
     )
+    target.replaces_usage = SECTION_USAGE in selected
     data_sections = {
         key
         for key, transfer_section in (
@@ -1649,6 +1744,26 @@ async def async_materialize_restore(
         shortened = shortened_usage_retention(current.config, target.config)
         if shortened:
             preview["shortened_usage_retention"] = shortened
+    if "usage" in data_sections:
+        if not current.usage_snapshotted:
+            # A configuration-only restore can still change Usage retention.
+            # At that point it needs the same intact rollback data as an import.
+            from .usage import UsageManager, async_get_durable_usage
+
+            usage = await async_get_durable_usage(
+                hass, entry.entry_id, subentry.subentry_id
+            )
+            usage_data = await usage.async_backup_data()
+            if SECTION_USAGE not in selected:
+                (
+                    target.usage_totals,
+                    target.usage_daily,
+                    target.usage_requests,
+                    target.usage_runs,
+                ) = await asyncio.to_thread(
+                    UsageManager.validate_backup_data, usage_data, subentry.subentry_id
+                )
+        preview.update(await asyncio.to_thread(_usage_restore_preview, target))
     target.journaled_sections = frozenset(data_sections)
     return target, preview
 
@@ -1666,9 +1781,15 @@ async def async_restore_transfer(
     confirm_retention: bool = False,
 ) -> dict[str, Any]:
     """Preserve unselected state and commit under one shielded exclusive lease."""
+    from homeassistant.config_entries import ConfigEntryState
+
     from .agent_maintenance import (
         _async_run_exclusive_operation,
         get_agent_maintenance_gate,
+    )
+    from .provider_credentials import (
+        request_provider_reload_after_update,
+        require_provider_restore_complete,
     )
     from .restore_recovery import (
         async_finish_restore_reload,
@@ -1676,6 +1797,7 @@ async def async_restore_transfer(
     )
 
     async def restore_exclusively_owned() -> dict[str, Any]:
+        require_provider_restore_complete(hass, entry.entry_id)
         if precondition is not None:
             await precondition()
         if (
@@ -1717,35 +1839,16 @@ async def async_restore_transfer(
             ),
         )
         if provider_connection is not None:
-            from .provider_credentials import async_restore_private_provider_connection
-
-            assert expected_provider_data is not None
-            try:
-                await async_restore_private_provider_connection(
-                    hass,
-                    entry,
-                    provider_connection,
-                    expected_provider_data,
-                    confirmed=True,
-                )
-            except backup.BackupError:
-                result["provider_connection_restored"] = False
-                result["provider_connection_message"] = (
-                    "Agent data restored. The provider update could not be verified on disk. "
-                    "Check the shared provider connection before retrying."
-                )
-            except HomeAssistantError:
-                result["provider_connection_restored"] = False
-                result["provider_connection_message"] = (
-                    "Agent data restored; provider connection was not changed. Import and preview again."
-                )
-            else:
-                result["provider_connection_restored"] = True
+            result["provider_connection_restored"] = True
         return {**result, "transfer": preview}
 
     gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
     result = await _async_run_exclusive_operation(gate, restore_exclusively_owned)
     await async_finish_restore_reload(hass, entry, subentry)
+    if provider_connection is not None and entry.state is not ConfigEntryState.LOADED:
+        request_provider_reload_after_update(
+            hass, entry, entry.state, changed=True, retry_unchanged=True
+        )
     return result
 
 

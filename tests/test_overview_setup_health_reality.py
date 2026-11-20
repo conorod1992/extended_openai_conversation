@@ -39,7 +39,7 @@ def test_setup_health_recomputes_live_state_instead_of_reusing_stale_facts(
     monkeypatch.setattr(
         management_setup_health,
         "configuration_guidance_snapshot",
-        lambda _entry, options: {
+        lambda _entry, options, *, client=None: {
             "effective_api_mode": options.get(CONF_API_MODE, "auto"),
             "web_search": {
                 "available": bool(options.get(CONF_WEB_SEARCH, False)),
@@ -50,7 +50,7 @@ def test_setup_health_recomputes_live_state_instead_of_reusing_stale_facts(
     monkeypatch.setattr(
         management_setup_health,
         "configured_lifecycle",
-        lambda subentry: {
+        lambda subentry, *, entry_data, client: {
             "model": subentry.data.get(CONF_CHAT_MODEL, "gpt-test"),
             "status": "supported",
             "shutdown_at": None,

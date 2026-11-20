@@ -2,7 +2,7 @@ import {usageRetentionDeletionNotice} from "./retention-settings-ui.js";
 import {captureAuthentication} from "./authentication-presentation.js";
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
 import {bindExportOptions, TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
-import {backupSummaryLines} from "./backup-summary.js";
+import {backupSummaryLines, unassignedTemporaryMemoryNotice} from "./backup-summary.js";
 import {reviewSharingExport} from "./sharing-review.js";
 import {callMutation, captureConfigurationSubmission, captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft} from "./configuration-acknowledgement.js";
 export {backupSummaryLines};
@@ -272,7 +272,7 @@ export function renderRestoreTransferDialog(panel) {
   const dirtyWarning = panel?._configDirty
     ? '<p class="inline-error">Your unsaved configuration changes will be discarded if configuration is one of the restored sections.</p>'
     : "";
-  return `<dialog id="restore-dialog" class="editor-dialog" aria-labelledby="restore-dialog-title"><div class="dialog-header"><h2 id="restore-dialog-title">Import / Restore</h2></div><div class="dialog-body">${restoreScopeMarkup(panel)}<div><strong id="restore-backup-name"></strong><p id="restore-backup-meta" class="meta"></p></div><ul id="restore-summary" class="restore-summary"></ul><label id="restore-provider-choice" hidden><input type="checkbox" id="restore-provider-connection"> Also restore the provider connection, including credentials, for ALL agents sharing it. This separate connection update runs after agent restoration.</label><fieldset class="setting-group"><legend><strong>Sections to replace</strong></legend><p class="help">Only sections contained in this file are shown. Shorter Usage retention can also delete existing detail. The preview shows when this applies.</p><div id="${RESTORE_SECTIONS_ID}" class="group-function-choices"></div></fieldset><fieldset class="setting-group" id="${RESTORE_USER_MAPPINGS_ID}" hidden><legend><strong>Map Home Assistant users</strong></legend><p class="help">This backup contains personal data owned by users that do not exist on this Home Assistant installation. Choose the destination owner for each source user before restoring.</p><div data-user-scope-mapping-list></div></fieldset><div id="${RESTORE_STATUS_ID}" class="validation" role="status" aria-live="polite"></div><div class="notice"><strong>Replacement, not merge</strong><p>Every selected section replaces that section on the current agent. The combined target is validated first, including Request Rule references to Function Tools. A final confirmation is required before applying it.</p></div>${dirtyWarning}</div><div class="dialog-actions"><button type="button" class="secondary" id="${CANCEL_ID}">Cancel</button><button type="button" class="danger" id="${APPLY_ID}" disabled>Restore selected sections</button></div></dialog>`;
+  return `<dialog id="restore-dialog" class="editor-dialog" aria-labelledby="restore-dialog-title"><div class="dialog-header"><h2 id="restore-dialog-title">Import / Restore</h2></div><div class="dialog-body">${restoreScopeMarkup(panel)}<div><strong id="restore-backup-name"></strong><p id="restore-backup-meta" class="meta"></p></div><ul id="restore-summary" class="restore-summary"></ul><label id="restore-provider-choice" hidden><input type="checkbox" id="restore-provider-connection"> Also restore the provider connection, including credentials, for ALL agents sharing it. This separate connection update runs after agent restoration.</label><fieldset class="setting-group"><legend><strong>Sections to replace</strong></legend><p class="help">Only sections in this file are shown.</p><div id="${RESTORE_SECTIONS_ID}" class="group-function-choices"></div></fieldset><fieldset class="setting-group" id="${RESTORE_USER_MAPPINGS_ID}" hidden><legend><strong>Map Home Assistant users</strong></legend><p class="help">This backup contains personal data owned by users that do not exist on this Home Assistant installation. Choose the destination owner for each source user before restoring.</p><div data-user-scope-mapping-list></div></fieldset><div id="${RESTORE_STATUS_ID}" class="validation" role="status" aria-live="polite"></div><div class="notice"><strong>Replacement</strong><p>Selected sections replace existing data on this agent. The preview validates the combined result and shows data that will expire.</p></div>${dirtyWarning}</div><div class="dialog-actions"><button type="button" class="secondary" id="${CANCEL_ID}">Cancel</button><button type="button" class="danger" id="${APPLY_ID}" disabled>Restore selected sections</button></div></dialog>`;
 }
 
 function selectedValues(root, selector) {
@@ -288,9 +288,20 @@ function formatSourceKind(value) {
   }[value] || "Extended OpenAI transfer";
 }
 
+function restoreRetentionNotice(preview) {
+  const archive = preview?.archive_retention;
+  const usage = preview?.usage_retention;
+  return [
+    archive && `Archive retention (${archive.days} days) removes ${archive.expired_sessions} conversations and ${archive.expired_turns} turns from the backup.`,
+    usage ? `Usage retention removes ${usage.expired_runs} runs and ${usage.expired_requests} requests. Usage totals will be kept.`
+      : usageRetentionDeletionNotice(preview?.shortened_usage_retention),
+  ].filter(Boolean).join(" ");
+}
+
 export function restorePreviewSummaryLines(preview = {}) {
   const count = (key) => Number(preview[key] || 0);
   const sections = new Set(preview.selected_sections || []);
+  if (preview.usage_retention) sections.add("usage");
   const lines = [
     ["configuration", "Agent configuration and Function Tools"],
     ["request_rules", `${count("request_rules")} Request Rules`],
@@ -302,7 +313,11 @@ export function restorePreviewSummaryLines(preview = {}) {
     ["guest_mode", `Guest Mode schedule ${preview.guest_mode_scheduled ? "included" : "inactive"}`],
   ];
   const summary = lines.filter(([section]) => sections.has(section)).map(([, line]) => line);
-  const retentionNotice = usageRetentionDeletionNotice(preview.shortened_usage_retention);
+  if (sections.has("temporary_memory")) {
+    const unassigned = unassignedTemporaryMemoryNotice(preview);
+    if (unassigned) summary.push(unassigned);
+  }
+  const retentionNotice = restoreRetentionNotice(preview);
   if (retentionNotice) summary.push(retentionNotice);
   return summary;
 }
@@ -623,13 +638,13 @@ export function bindBackupTransfer(panel) {
     const serverPreviewToken = panel._backupTransferPreviewToken;
     if (!serverPreviewToken) return;
     const restoredDraft = captureConfigurationSubmission(panel);
-    const retentionNotice = usageRetentionDeletionNotice(panel._backupTransferPreview?.shortened_usage_retention);
+    const retentionNotice = restoreRetentionNotice(panel._backupTransferPreview);
     if (typeof panel._confirm === "function") {
       const losesDraft = panel._configDirty && panel._draftAgentId === panel._agentId && sections.includes("configuration");
       const confirmed = await panel._confirm(
         "Restore selected sections?",
-        `This will replace, not merge, the following sections on the current agent: ${labels}.${restoreProvider ? " The shared provider connection and credentials for ALL its agents will also be replaced." : ""}${losesDraft ? " Your unsaved configuration changes will be replaced and lost." : ""}${retentionNotice ? ` ${retentionNotice}` : ""}`,
-        retentionNotice ? "Restore and delete details" : "Restore",
+        `Replace ${labels} for this agent.${restoreProvider ? " This replaces the provider connection and credentials for all its agents." : ""}${losesDraft ? " Unsaved configuration changes will be lost." : ""}${retentionNotice ? ` ${retentionNotice}` : ""}`,
+        retentionNotice ? "Restore and delete" : "Restore",
       );
       if (!confirmed) return;
     }

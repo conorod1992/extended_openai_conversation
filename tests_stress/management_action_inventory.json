@@ -452,7 +452,7 @@
         "list": "tests_real_ha/test_user_ownership_privacy.py::test_management_websocket_lists_only_the_authenticated_users_personal_data",
         "reassign_legacy": "tests/test_management_ui.py::test_conversation_memory_and_knowledge_dispatch",
         "search": "tests/test_management_browser.py::test_search_routes_trimmed_query_with_bounded_paging",
-        "temporary_clear": "tests/test_memory_management_parity.py::test_temporary_clear_requires_confirmation_and_batches_authorized_owner",
+        "temporary_clear": "tests/test_memory_management_parity.py::test_temporary_clear_is_atomic_for_more_than_fifty_records",
         "temporary_delete": "tests_real_ha/test_user_ownership_privacy.py::test_known_cross_user_record_ids_cannot_be_read_or_modified",
         "temporary_list": "tests_real_ha/test_user_ownership_privacy.py::test_management_websocket_rejects_explicit_cross_user_scope",
         "temporary_update": "tests_real_ha/test_user_ownership_privacy.py::test_known_cross_user_record_ids_cannot_be_read_or_modified",

@@ -1576,16 +1576,18 @@ async def test_archive_storage_remove_partition_delegates(monkeypatch) -> None:
     storage = conversation_archive.HomeAssistantArchiveStorage.__new__(
         conversation_archive.HomeAssistantArchiveStorage
     )
+    storage._metadata = SimpleNamespace(require_migrated=Mock())
     store = SimpleNamespace(async_remove=AsyncMock())
     monkeypatch.setattr(storage, "_partition_store", Mock(return_value=store))
 
     await storage.async_remove_partition("2026-10")
 
+    storage._metadata.require_migrated.assert_called_once_with()
     storage._partition_store.assert_called_once_with("2026-10")
     store.async_remove.assert_awaited_once()
 
 
-def test_archive_metadata_and_partition_payload_wrappers(monkeypatch) -> None:
+def test_archive_metadata_includes_pending_partition_payloads(monkeypatch) -> None:
     from custom_components.extended_openai_conversation_responses import conversation_archive
 
     archive = conversation_archive.ConversationArchive(SimpleNamespace(), "agent")
@@ -1599,12 +1601,15 @@ def test_archive_metadata_and_partition_payload_wrappers(monkeypatch) -> None:
     monkeypatch.setattr(archive, "_metadata_payload_for_state", metadata)
     monkeypatch.setattr(archive, "_partition_payload_for_state", partition)
 
-    assert archive._metadata_payload_locked({"2026-10": {"turns": []}}) == {
+    assert archive._metadata_with_pending(
+        archive._sessions, archive._active, archive._turns, archive._partitions, {"2026-10"}
+    ) == {
         "metadata": True
     }
-    assert archive._partition_payload_locked("2026-10") == {"partition": True}
-    metadata.assert_called_once()
-    partition.assert_called_once()
+    metadata.assert_called_once_with(
+        archive._sessions, archive._active, archive._partitions, {"2026-10": {"partition": True}}
+    )
+    partition.assert_called_once_with("2026-10", archive._turns)
 
 
 def test_model_tool_results_sparse_and_cursor_helpers() -> None:

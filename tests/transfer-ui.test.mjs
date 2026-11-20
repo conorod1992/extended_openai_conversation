@@ -86,7 +86,7 @@ await assert.rejects(
 {
   const dialog = renderRestoreTransferDialog({_configDirty:true});
   assert.match(dialog, /Import \/ Restore/);
-  assert.match(dialog, /Replacement, not merge/);
+  assert.match(dialog, /Selected sections replace existing data on this agent/);
   assert.match(dialog, /Sections to replace/);
   assert.match(dialog, /unsaved configuration changes/i);
   assert.match(dialog, /restore-transfer-sections/);

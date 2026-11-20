@@ -172,6 +172,7 @@ def test_url_citation_annotation_accepts_object_and_mapping() -> None:
 
 async def test_responses_annotation_event_after_cited_text_is_observed(caplog) -> None:
     """Real event shape may deliver structured metadata after its text delta."""
+    cited_text = "Answer. ([example.com](https://example.com/article))"
     annotation = {
         "type": "url_citation",
         "start_index": 8,
@@ -179,6 +180,11 @@ async def test_responses_annotation_event_after_cited_text_is_observed(caplog) -
         "title": "Example",
         "url": "https://example.com/article",
     }
+    item = SimpleNamespace(
+        type="message",
+        id="msg_1",
+        content=[SimpleNamespace(type="output_text", text=cited_text)],
+    )
     stream = FakeStream(
         [
             _event("response.output_item.added", item=SimpleNamespace(type="message")),
@@ -186,7 +192,7 @@ async def test_responses_annotation_event_after_cited_text_is_observed(caplog) -
                 "response.output_text.delta",
                 output_index=0,
                 content_index=0,
-                delta="Answer. ([example.com](https://example.com/article))",
+                delta=cited_text,
             ),
             ResponseOutputTextAnnotationAddedEvent(
                 type="response.output_text.annotation.added",
@@ -197,6 +203,7 @@ async def test_responses_annotation_event_after_cited_text_is_observed(caplog) -
                 sequence_number=3,
                 annotation=annotation,
             ),
+            _event("response.output_item.done", output_index=0, item=item),
             _event("response.completed", response=SimpleNamespace(usage=None)),
         ]
     )
@@ -210,7 +217,8 @@ async def test_responses_annotation_event_after_cited_text_is_observed(caplog) -
             )
         ]
 
-    assert deltas[-1]["content"].startswith("Answer.")
+    assert deltas[-2]["content"].startswith("Answer.")
+    assert deltas[-1]["native"] is item
     assert "structured URL citation after cited text" in caplog.text
 
 
@@ -304,7 +312,8 @@ def test_web_search_defaults_off() -> None:
 
 
 @pytest.mark.parametrize("context_size", ["low", "medium", "high"])
-def test_web_search_tool_schema(context_size: str) -> None:
+@pytest.mark.parametrize("host", ["api.openai.com", "us.api.openai.com", "eu.api.openai.com"])
+def test_web_search_tool_schema(context_size: str, host: str) -> None:
     """Responses receives the native hosted-tool schema and selected context."""
     assert _build_web_search_tool(
         {
@@ -315,7 +324,7 @@ def test_web_search_tool_schema(context_size: str) -> None:
         API_MODE_RESPONSES,
         {
             CONF_API_PROVIDER: "openai",
-            CONF_BASE_URL: "https://api.openai.com/v1",
+            CONF_BASE_URL: f"https://{host}/v1",
         },
     ) == {
         "type": "web_search",

@@ -46,6 +46,7 @@ from .request import (
     build_provider_request_snapshot,
     canonical_json,
     format_function_tools,
+    ha_tool_discovery_references,
 )
 from .skill_runtime_availability import effective_tool_runtime_scope
 from .skills import SkillManager
@@ -79,27 +80,6 @@ async def async_preview_effective_request(
         hass, entry.entry_id, subentry.subentry_id
     )
     guest_policy = resolve_guest_policy(hass, options, guest_manager, configured_tools)
-    references = [
-        tool["function"]
-        for tool in configured_tools
-        if is_ha_tool(tool) and function_tool_enabled(tool)
-    ]
-    ha_snapshot = ToolSnapshot()
-    if references and not guest_policy.guest_active:
-        from homeassistant.helpers import llm
-
-        ha_snapshot = await async_discover(
-            hass,
-            llm.LLMContext(
-                platform=DOMAIN,
-                context=Context(user_id=user_id),
-                language=hass.config.language,
-                assistant="conversation",
-                device_id=None,
-            ),
-            references,
-        )
-    configured_tools = ha_snapshot.project(configured_tools)
     temporary_memories = []
     notes = [
         "User input and conversation history are excluded.",
@@ -159,6 +139,27 @@ async def async_preview_effective_request(
             "Knowledge Library is unavailable; its tools and instructions are excluded until storage recovery."
         )
     try:
+        groups = validate_function_groups(
+            options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
+            configured_tools,
+        )
+        references = ha_tool_discovery_references(configured_tools, groups, options)
+        ha_snapshot = ToolSnapshot()
+        if references and not guest_policy.guest_active:
+            from homeassistant.helpers import llm
+
+            ha_snapshot = await async_discover(
+                hass,
+                llm.LLMContext(
+                    platform=DOMAIN,
+                    context=Context(user_id=user_id),
+                    language=hass.config.language,
+                    assistant="conversation",
+                    device_id=None,
+                ),
+                references,
+            )
+        configured_tools = ha_snapshot.project(configured_tools)
         exposed_entities = get_exposed_entities(hass)
         if guest_policy.guest_active:
             exposed_entities = [
@@ -177,10 +178,6 @@ async def async_preview_effective_request(
             temporary_memories=temporary_memories,
             knowledge_available=knowledge_available,
             guest_policy=guest_policy,
-        )
-        groups = validate_function_groups(
-            options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
-            configured_tools,
         )
         availability_groups = groups
         availability_tools = configured_tools
@@ -236,6 +233,7 @@ async def async_preview_effective_request(
             options,
             getattr(entry, "data", {}),
             tools_required=bool(custom_tools or loader_tools or integration_tools),
+            client=getattr(entry, "runtime_data", None),
         )
         formatted_custom = format_function_tools(custom_tools, provider.api_mode)
         formatted_loader = format_function_tools(loader_tools, provider.api_mode)

@@ -21,6 +21,8 @@ class FakeUsage:
 
     def __init__(self) -> None:
         self.totals = SimpleNamespace(total_tokens=0)
+        self.lifetime_available = True
+        self.daily_available = True
         self.remove_listener = Mock()
 
     def async_add_listener(self, _listener):
@@ -32,7 +34,7 @@ class FakeUsage:
     def today_summary(self) -> dict:
         return self._summary()
 
-    def month_summary(self) -> dict:
+    def month_summary(self, month=None) -> dict:
         return self._summary()
 
     @staticmethod

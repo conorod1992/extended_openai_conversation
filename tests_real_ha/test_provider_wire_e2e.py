@@ -164,8 +164,8 @@ def _responses_sse_tool_call(
     return "".join(f"data: {json.dumps(event)}\n\n" for event in events).encode()
 
 
-def _responses_sse_text(text: str) -> bytes:
-    item = {
+def _response_text_item(text: str) -> dict[str, Any]:
+    return {
         "id": "msg-provider-wire",
         "type": "message",
         "role": "assistant",
@@ -179,6 +179,10 @@ def _responses_sse_text(text: str) -> bytes:
             }
         ],
     }
+
+
+def _responses_sse_text(text: str) -> bytes:
+    item = _response_text_item(text)
     events = [
         {
             "type": "response.output_item.added",

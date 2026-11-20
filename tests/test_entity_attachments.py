@@ -7,6 +7,8 @@ import pytest
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import entity
+from homeassistant.components import conversation
+from tests.test_responses_api import _control_entity
 
 
 class _FakeHass:
@@ -18,6 +20,55 @@ class _FakeHass:
     async def async_add_executor_job(self, target, *args):
         self.executor_calls += 1
         return target(*args)
+
+
+@pytest.mark.parametrize(
+    "case,expected_responses",
+    [("recent", True), ("historical", True), ("missing", False),
+     ("budget", False), ("unavailable_endpoint", False), ("forced_chat", False)],
+)
+async def test_auto_routes_for_replayable_pdf_only_when_endpoint_is_usable(
+    hass, tmp_path, case, expected_responses
+):
+    class RequestCaptured(Exception):
+        pass
+
+    mode = "chat_completions" if case == "forced_chat" else "auto"
+    agent, log, create = _control_entity(hass, mode, RequestCaptured)
+    agent.subentry.data["chat_model"] = "gpt-5-mini"
+    pdf = tmp_path / "document.pdf"
+    if case != "missing":
+        pdf.write_bytes(b"%PDF-1.4")
+    attachment = conversation.Attachment("original", "application/pdf", pdf)
+    if case == "recent":
+        log.content[-1] = conversation.UserContent("Read file", [attachment])
+    else:
+        log.content.insert(1, conversation.UserContent("Read file", [attachment]))
+        log.content.insert(2, conversation.AssistantContent(agent_id=agent.entity_id, content="First page"))
+    if case == "budget":
+        image = tmp_path / "current.png"
+        image.write_bytes(b"image")
+        images = [
+            conversation.Attachment(str(index), "image/png", image)
+            for index in range(entity.MAX_ATTACHMENT_COUNT)
+        ]
+        log.content[-1] = conversation.UserContent("Now these images", images)
+    if case == "unavailable_endpoint":
+        agent.subentry.data["max_tokens"] = 12  # Valid in Chat only.
+
+    with pytest.raises(RequestCaptured):
+        await agent._async_handle_chat_log(log, [], [])
+    sent = create.await_args.kwargs
+    assert ("input" in sent) is expected_responses
+    if expected_responses:
+        assert any(
+            part["type"] == "input_file"
+            for message in sent["input"]
+            if isinstance(message.get("content"), list)
+            for part in message["content"]
+        )
+    else:
+        assert "Earlier attachment omitted" in str(sent["messages"])
 
 
 class _FakeUserContent:

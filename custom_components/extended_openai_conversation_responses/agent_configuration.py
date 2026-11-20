@@ -33,12 +33,14 @@ from .const import (
     MEMORY_RETRIEVAL_HYBRID,
     TEMPORARY_MEMORY_OFF,
 )
-from .memory import memory_enabled
+from .helpers import effective_api_provider
+from .memory import EmbeddingResult, memory_enabled
 from .speech import has_custom_speech_replacements
 from .usage import usage_retention_policy
 
 _LOGGER = logging.getLogger(__name__)
 _RUNTIME_CONFIG_DATA = "_extended_openai_runtime_config_data"
+_RUNTIME_CONFIG_CLIENT = "_extended_openai_runtime_config_client"
 _RUNTIME_CONFIG_RETRY = "_extended_openai_runtime_config_retry"
 _RUNTIME_CONFIG_LOCK = "_extended_openai_runtime_config_lock"
 
@@ -47,10 +49,10 @@ _RUNTIME_CONFIG_LOCK = "_extended_openai_runtime_config_lock"
 class MemoryEmbeddingProvider:
     """Bind a model to its agent callback, with stable configuration equality."""
 
-    create: Callable[..., Awaitable[list[list[float]]]]
+    create: Callable[..., Awaitable[EmbeddingResult]]
     model: str
 
-    async def __call__(self, inputs: list[str]) -> list[list[float]]:
+    async def __call__(self, inputs: list[str]) -> EmbeddingResult:
         return await self.create(inputs, model=self.model)
 
 
@@ -74,12 +76,25 @@ def sync_memory_embedding_provider(entity: Any) -> None:
         == MEMORY_RETRIEVAL_HYBRID
     ):
         entry_data = getattr(entity.entry, "data", {})
+        client = getattr(entity.entry, "runtime_data", None)
+        base_url = getattr(client, "base_url", None)
+        endpoint = (
+            str(base_url)
+            if isinstance(base_url, str)
+            or isinstance(getattr(base_url, "host", None), str)
+            else entry_data.get(CONF_BASE_URL, DEFAULT_CONF_BASE_URL)
+        )
+        query = getattr(client, "default_query", None)
         # Persist only an opaque identity, never credentials or endpoint text.
         space_id = hashlib.sha256(
             json.dumps(
                 {
-                    "provider": entry_data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
-                    "endpoint": entry_data.get(CONF_BASE_URL, DEFAULT_CONF_BASE_URL),
+                    "provider": effective_api_provider(
+                        entry_data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+                        entry_data.get(CONF_BASE_URL),
+                    ),
+                    "endpoint": endpoint,
+                    "query": query if isinstance(query, dict) else {},
                     "api_version": entry_data.get(CONF_API_VERSION),
                     "model": model,
                 },
@@ -94,7 +109,7 @@ def sync_memory_embedding_provider(entity: Any) -> None:
             # but replacing credentials or the runtime client permits retry.
             retry_identity=(
                 space_id,
-                id(getattr(entity.entry, "runtime_data", None)),
+                id(client),
                 hashlib.sha256(str(entry_data.get(CONF_API_KEY, "")).encode()).digest(),
             ),
         )
@@ -227,9 +242,12 @@ async def async_reconcile_runtime_configuration(
     an entity reload. Required Guest state retains its own fail-closed boundary.
     """
     options = entity.subentry.data
+    entry = getattr(entity, "entry", None)
     if (
         not force
         and getattr(entity, _RUNTIME_CONFIG_DATA, None) is options
+        and getattr(entity, _RUNTIME_CONFIG_CLIENT, None)
+        is getattr(entry, "runtime_data", None)
         and not getattr(entity, _RUNTIME_CONFIG_RETRY, False)
         and not _runtime_needs_recovery(entity)
     ):
@@ -240,7 +258,7 @@ async def async_reconcile_runtime_configuration(
     # sense once Home Assistant has supplied the real entry identity.
     if (
         getattr(entity, "hass", None) is None
-        or getattr(entity, "entry", None) is None
+        or entry is None
         or getattr(entity.subentry, "subentry_id", None) is None
     ):
         return
@@ -257,6 +275,8 @@ async def async_reconcile_runtime_configuration(
         if (
             not force
             and getattr(entity, _RUNTIME_CONFIG_DATA, None) is options
+            and getattr(entity, _RUNTIME_CONFIG_CLIENT, None)
+            is getattr(entry, "runtime_data", None)
             and not getattr(entity, _RUNTIME_CONFIG_RETRY, False)
             and not _runtime_needs_recovery(entity)
         ):
@@ -379,4 +399,5 @@ async def async_reconcile_runtime_configuration(
 
         sync_memory_embedding_provider(entity)
         setattr(entity, _RUNTIME_CONFIG_DATA, options)
+        setattr(entity, _RUNTIME_CONFIG_CLIENT, getattr(entry, "runtime_data", None))
         setattr(entity, _RUNTIME_CONFIG_RETRY, retry)

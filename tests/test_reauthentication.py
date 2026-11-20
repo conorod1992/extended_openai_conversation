@@ -27,7 +27,7 @@ def _authentication_error() -> AuthenticationError:
     )
 
 
-async def test_setup_invalid_credentials_requests_reauthentication(monkeypatch) -> None:
+async def test_setup_invalid_credentials_requests_reauthentication(hass, monkeypatch) -> None:
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.agent_deletion.async_delete_removed_subentries",
         AsyncMock(),
@@ -42,10 +42,10 @@ async def test_setup_invalid_credentials_requests_reauthentication(monkeypatch) 
         ),
         pytest.raises(ConfigEntryAuthFailed),
     ):
-        await async_setup_entry(MagicMock(), entry)
+        await async_setup_entry(hass, entry)
 
 
-async def test_setup_transient_connection_failure_remains_not_ready(monkeypatch) -> None:
+async def test_setup_transient_connection_failure_remains_not_ready(hass, monkeypatch) -> None:
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.agent_deletion.async_delete_removed_subentries",
         AsyncMock(),
@@ -60,7 +60,7 @@ async def test_setup_transient_connection_failure_remains_not_ready(monkeypatch)
         ),
         pytest.raises(ConfigEntryNotReady),
     ):
-        await async_setup_entry(MagicMock(), entry)
+        await async_setup_entry(hass, entry)
 
 
 @pytest.mark.parametrize(

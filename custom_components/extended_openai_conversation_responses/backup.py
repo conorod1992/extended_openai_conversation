@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import json
 import logging
 from pathlib import Path
@@ -59,6 +59,7 @@ from .temporary_memory import (
     TemporaryMemory,
     TemporaryMemoryRecord,
     async_get_temporary_memory,
+    temporary_memory_record_counts,
 )
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
 from .yaml_serialization import load_yaml_or_json
@@ -89,15 +90,15 @@ class BackupError(HomeAssistantError):
 class AgentDataParticipants:
     """Named agent data sources or targets, selected by their acquisition path.
 
-    Ordinary backups may read volatile Usage state. Restore's separate durable
-    factory must supply the durable Usage manager; this record does not choose it.
+    Backup uses the effective Usage manager. Restore loads the durable manager
+    when its transaction includes Usage.
     """
 
     memory: PersistentMemory
     temporary: TemporaryMemory
     knowledge: KnowledgeLibrary
     archive: ConversationArchive
-    usage: UsageManager
+    usage: UsageManager | None
     guest_mode: GuestModeManager
     request_rules: RequestRules
 
@@ -128,17 +129,25 @@ class PreparedRestore:
     # Live Knowledge-only commits may retain untouched conversation state.
     # Deliberately absent from journal/portable documents: recovery resets safely.
     preserve_retained_continuity: bool = False
+    # A retention-only rewrite of durable Usage does not replace live accounting.
+    replaces_usage: bool = True
     # None preserves the full-replacement semantics of legacy journals.
     journaled_sections: frozenset[str] | None = None
+    # Selective planning may omit Usage until configuration changes require it.
+    usage_snapshotted: bool = True
 
     def restores(self, section: str) -> bool:
         return self.journaled_sections is None or section in self.journaled_sections
 
     def summary(self) -> dict[str, Any]:
+        active_temporary, unassigned_temporary = temporary_memory_record_counts(
+            self.temporary_memories
+        )
         return {
             "configuration": True,
             "persistent_memories": len(self.memories),
-            "temporary_memories": len(self.temporary_memories),
+            "temporary_memories": active_temporary,
+            "unassigned_legacy_temporary_memories": unassigned_temporary,
             "knowledge_sources": len(self.knowledge),
             "archive_sessions": len(self.archive_sessions),
             "archive_turns": len(self.archive_turns),
@@ -277,6 +286,7 @@ async def async_collect_backup_snapshot(
     ).require_available()
 
     participants = await _managers(hass, entry.entry_id, subentry.subentry_id)
+    assert participants.usage is not None
     config_snapshot = deepcopy(dict(subentry.data))
     return DecodedPrivateDocument(
         {
@@ -687,11 +697,27 @@ async def _managers(
 
 
 async def _snapshot_for_restore(
-    participants: AgentDataParticipants, subentry: Any, *, provider: str | None = None
+    participants: AgentDataParticipants,
+    subentry: Any,
+    *,
+    provider: str | None = None,
+    include_usage: bool = True,
 ) -> PreparedRestore:
+    usage = participants.usage
+    if include_usage and usage is None:
+        raise RuntimeError("Usage rollback requires a durable manager")
     raw_categories = {
         "archive": await participants.archive.async_recovery_data(),
-        "usage": await participants.usage.async_backup_data(),
+        "usage": (
+            await usage.async_backup_data()
+            if include_usage and usage is not None
+            else {
+                "totals": asdict(UsageTotals()),
+                "daily": {},
+                "requests": [],
+                "runs": [],
+            }
+        ),
         "memories": await participants.memory.async_backup_data(),
         "temporary_memories": await participants.temporary.async_backup_data(),
         "knowledge": await participants.knowledge.async_backup_data(),
@@ -731,4 +757,5 @@ async def _snapshot_for_restore(
         _integration_version(),
         archive_active=archive_active,
         authoritative_config=True,
+        usage_snapshotted=include_usage,
     )

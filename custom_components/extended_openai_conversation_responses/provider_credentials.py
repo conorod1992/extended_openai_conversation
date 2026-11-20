@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from copy import deepcopy
 import logging
 from typing import Any
-from urllib.parse import urlsplit
 
 from openai import OpenAIError
 import voluptuous as vol
@@ -25,16 +24,16 @@ from .const import (
     CONF_ORGANIZATION,
     CONF_SKIP_AUTHENTICATION,
     DEFAULT_API_PROVIDER,
-    DEFAULT_CONF_BASE_URL,
     DEFAULT_SKIP_AUTHENTICATION,
     DOMAIN,
 )
 from .ha_schema import websocket_command as ha_websocket_command
-from .helpers import effective_api_provider, get_authenticated_client
+from .helpers import get_authenticated_client, resolve_provider_endpoint
 from .operational_errors import log_handled_failure
 from .provider_errors import classify_config_provider_error
 
 WS_UPDATE_API_KEY = f"{DOMAIN}/management/update_api_key"
+PROVIDER_RESTORE_OWNERS = f"{DOMAIN}.provider_restore_owners"
 _WS_SETUP = f"{DOMAIN}.provider_credentials_ws_setup"
 _VALIDATION_MESSAGES = {
     "invalid_auth": "The provider rejected the new API key.",
@@ -68,30 +67,9 @@ def validate_provider_connection(connection: Any) -> str:
         raise HomeAssistantError(
             "Unsupported API provider (api_provider). Choose 'openai' or 'azure'."
         )
-    base_url = connection.get(CONF_BASE_URL)
-    if base_url is not None:
-        try:
-            endpoint = urlsplit(base_url)
-            _ = endpoint.port
-            if (
-                endpoint.scheme not in {"http", "https"}
-                or not endpoint.hostname
-                or any(char.isspace() for char in endpoint.netloc)
-            ):
-                raise ValueError
-        except ValueError:
-            raise HomeAssistantError(
-                "Provider field base_url must be an absolute HTTP or HTTPS URL."
-            ) from None
-    provider = effective_api_provider(provider, base_url)
-    if provider == "azure":
-        if not base_url or base_url.rstrip("/") == DEFAULT_CONF_BASE_URL.rstrip("/"):
-            raise HomeAssistantError("Azure OpenAI requires a custom base URL.")
-        if not (connection.get(CONF_API_VERSION) or "").strip():
-            raise HomeAssistantError(
-                "Azure OpenAI requires provider field api_version."
-            )
-    return provider
+    return resolve_provider_endpoint(
+        provider, connection.get(CONF_BASE_URL), connection.get(CONF_API_VERSION)
+    )[0]
 
 
 def validate_agent_provider_request(
@@ -116,6 +94,14 @@ def incompatible_provider_agent(
     )
 
 
+def require_provider_restore_complete(hass: HomeAssistant, entry_id: str) -> None:
+    """Refuse provider requests while the shared connection is being recovered."""
+    if entry_id in getattr(hass, "data", {}).get(PROVIDER_RESTORE_OWNERS, {}):
+        raise HomeAssistantError(
+            "The shared provider connection is unavailable until backup restore recovery completes."
+        )
+
+
 async def async_restore_private_provider_connection(
     hass: HomeAssistant,
     entry: Any,
@@ -124,11 +110,7 @@ async def async_restore_private_provider_connection(
     *,
     confirmed: bool,
 ) -> None:
-    """Restore captured credentials only after explicit shared-scope consent.
-
-    This is a separate connection update after agent restoration. A concurrent
-    connection edit must never be overwritten, even when agent restore succeeded.
-    """
+    """Restore credentials as a standalone, confirmed shared connection update."""
     if not confirmed:
         raise HomeAssistantError(
             "Confirm restoring the provider connection shared by other agents"
@@ -207,6 +189,7 @@ async def async_replace_api_key(
     if not isinstance(api_key, str) or not api_key.strip():
         raise HomeAssistantError("Enter a new API key.")
 
+    require_provider_restore_complete(hass, entry.entry_id)
     original_data = dict(entry.data)
     candidate = dict(original_data)
     candidate[CONF_API_KEY] = api_key
@@ -222,7 +205,7 @@ async def async_replace_api_key(
             api_version=candidate.get(CONF_API_VERSION),
             organization=candidate.get(CONF_ORGANIZATION),
             skip_authentication=skip_authentication,
-            api_provider=candidate.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+            api_provider=candidate.get(CONF_API_PROVIDER),
         )
     except OpenAIError as err:
         log_handled_failure(

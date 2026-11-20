@@ -285,6 +285,7 @@ def test_rule_provider_input_preserves_trailing_sentence_punctuation() -> None:
         False,
         100,
         {"query": "weather tomorrow"},
+        {"query": (4, len("ask weather tomorrow"))},
     )
 
     assert request_rules.rule_provider_input(match, "ask weather tomorrow?!  ") == (

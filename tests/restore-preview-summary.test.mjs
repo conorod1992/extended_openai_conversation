@@ -136,3 +136,38 @@ assert.deepEqual(restorePreviewSummaryLines({
   selected_sections: ["configuration"],
   shortened_usage_retention: {usage_request_retention_days: 0, usage_run_retention_days: 7},
 }), ["Agent configuration and Function Tools", "Shorter Usage retention will delete all request details and run details older than 7 days. Usage totals will be kept."]);
+assert.deepEqual(restorePreviewSummaryLines({
+  selected_sections: ["conversation_archive"],
+  archive_sessions: 0,
+  archive_turns: 0,
+  archive_retention: {days: 7, expired_sessions: 2, expired_turns: 4},
+}), ["0 archived conversations (0 turns)", "Archive retention (7 days) removes 2 conversations and 4 turns from the backup."]);
+assert.deepEqual(restorePreviewSummaryLines({
+  selected_sections: ["usage"],
+  usage_runs: 1,
+  usage_requests: 0,
+  usage_retention: {expired_runs: 0, expired_requests: 3},
+}), ["Usage history (1 runs, 0 requests)", "Usage retention removes 0 runs and 3 requests. Usage totals will be kept."]);
+assert.deepEqual(restorePreviewSummaryLines({
+  selected_sections: ["configuration"],
+  usage_runs: 1,
+  usage_requests: 0,
+  usage_retention: {expired_runs: 0, expired_requests: 3},
+  shortened_usage_retention: {usage_request_retention_days: 0},
+}), ["Agent configuration and Function Tools", "Usage history (1 runs, 0 requests)", "Usage retention removes 0 runs and 3 requests. Usage totals will be kept."]);
+
+
+const legacyTemporaryPreview = {
+  selected_sections: ['temporary_memory'],
+  temporary_memories: 1,
+  unassigned_legacy_temporary_memories: 2,
+};
+const legacyTemporaryLines = restorePreviewSummaryLines(legacyTemporaryPreview);
+assert.equal(legacyTemporaryLines[0], '1 active temporary memories');
+assert.match(legacyTemporaryLines[1], /2 legacy temporary memories have no verified owner/);
+assert.match(legacyTemporaryLines[1], /original expiry/);
+assert.match(legacyTemporaryLines[1], /Assistants cannot access them/);
+assert.deepEqual(restorePreviewSummaryLines({
+  ...legacyTemporaryPreview,
+  selected_sections: ['knowledge'],
+}), ['0 Knowledge sources']);

@@ -1558,9 +1558,60 @@ def test_unicode_normalization_distinguishes_dotless_i_from_ascii_i() -> None:
     assert normalize_text("I", settings) == "i"
     assert normalize_text("ı", settings) == "ı"
     assert normalize_text("I", settings) != normalize_text("ı", settings)
-    # Punctuation filtering turns an internal combining dot into a boundary.
-    assert normalize_text("\u0130STANBUL", settings) == "i stanbul"
+    assert normalize_text("\u0130STANBUL", settings) == "i\u0307stanbul"
     assert normalize_text("\u0130STANBUL", settings) != normalize_text("istanbul", settings)
+
+
+async def test_request_rules_distinguish_commands_with_combining_marks() -> None:
+    rules = await manager(
+        local_rule("Open", phrases=["खोलो"]),
+        local_rule("Play", phrases=["खेलो"], order=1),
+        defaults={**DEFAULT_MATCHING, "word_forms": False, "wording_alternatives": False},
+    )
+    assert rules.match("खोलो!").phrase == "खोलो"
+    assert rules.match("  खेलो।  ").phrase == "खेलो"
+    assert rules.match("ख ल") is None
+
+
+async def test_punctuation_only_triggers_are_rejected_or_retained_inactive(hass) -> None:
+    rules = await manager(
+        local_rule("Legacy punctuation", phrases=["!!!"]),
+        local_rule("Legacy emoji", phrases=["☀️"], order=1),
+        local_rule("Legacy apostrophe", phrases=["'!!!"], order=2),
+        local_rule("Good night", phrases=["???", "good night"], order=3),
+    )
+    before = rules.snapshot()
+    assert set(before["diagnostics"]) == {
+        "legacy-punctuation", "legacy-emoji", "legacy-apostrophe",
+    }
+    assert len(before["rules"]) == 4
+
+    for phrase in ("!!!", "???", "❤️", "'???", "__"):
+        assert rules.match(phrase) is None
+        assert await rules.async_match(hass, phrase) is None
+        with pytest.raises(ValueError, match="Enter a trigger with words or numbers"):
+            await rules.async_create(local_rule("New rule", phrases=[phrase]))
+    assert rules.snapshot() == before
+    assert rules.match("good night ❤️").phrase == "good night"
+
+    restarted = await manager()
+    await restarted.async_replace_backup(await rules.async_backup_data())
+    assert restarted.match("???") is None
+    assert restarted.match("good night").phrase == "good night"
+    mixed = restarted.rule_snapshot("good-night")
+    await restarted.async_update(mixed["id"], {**mixed, "enabled": False})
+    assert restarted.match("good night") is None
+    with pytest.raises(ValueError, match="Enter a trigger with words or numbers"):
+        await restarted.async_update(mixed["id"], mixed)
+    legacy = restarted.rule_snapshot("legacy-emoji")
+    await restarted.async_update(legacy["id"], {**legacy, "enabled": False})
+    await restarted.async_update(legacy["id"], {**legacy, "phrases": ["hello"]})
+    assert restarted.match("hello").rule["id"] == "legacy-emoji"
+
+    literal = local_rule("Literal heart", phrases=["❤️"], match_type="sentence_pattern")
+    await restarted.async_create(literal)
+    assert restarted.match("❤️").rule["id"] == literal["id"]
+    assert restarted.match("☀️") is None
 
 
 def test_session_identity_uses_continuity_or_actual_chat_log_id() -> None:
@@ -2907,3 +2958,54 @@ async def test_sentence_apostrophes_match_preview_and_local_evaluation(hass, pat
     assert outcome is not None and outcome.consume
     assert outcome.response == "Done"
     assert len(hass.services.calls) == 1
+
+@pytest.mark.parametrize("captured", [False, True])
+@pytest.mark.parametrize("request_reset", [False, True])
+@pytest.mark.parametrize(
+    ("entry_data", "model", "underlying", "accepted"),
+    [
+        ({}, "gpt-4o", None, False),
+        ({}, "gpt-5.6", None, True),
+        ({"api_provider": "azure"}, "office", "gpt-4o", False),
+        ({"api_provider": "azure"}, "office", "gpt-5.6", True),
+    ],
+    ids=["openai-reject", "openai-accept", "azure-reject", "azure-accept"],
+)
+async def test_conversation_effort_validates_unmasked_next_turn(
+    captured, request_reset, entry_data, model, underlying, accepted
+):
+    runtime = RequestRuleRuntime()
+    before = {CONF_CHAT_MODEL: model, **({"azure_model": underlying} if underlying else {})}
+    runtime.set("kitchen", before)
+    temporary = routing_rule(reset=request_reset)
+    temporary["continue_matching"] = True
+    temporary["action"].update(
+        model=None if request_reset else "temporary" if underlying else "gpt-5.6",
+        reasoning_effort=None,
+        continue_to_ai=False,
+        **({"azure_model": "gpt-5.6"} if underlying and not request_reset else {}),
+    )
+    retained = routing_rule(
+        scope="conversation", match_type="sentence_pattern" if captured else "starts_with"
+    )
+    retained["order"] = 1
+    retained["action"].update(model=None, reasoning_effort="{effort}" if captured else "high")
+    if captured:
+        retained["phrases"] = ["think carefully {effort}"]
+    rules = await manager(temporary, retained)
+    settings = dict(before)
+    if request_reset:
+        settings = {CONF_CHAT_MODEL: "gpt-5.6"} if not underlying else {CONF_CHAT_MODEL: "configured", "azure_model": "gpt-5.6"}
+    pending = async_evaluate_rule(
+        SimpleNamespace(), rules, runtime, "think carefully high", "kitchen",
+        configured_model=settings[CONF_CHAT_MODEL], request_options=settings, entry_data=entry_data,
+    )
+    if accepted:
+        await pending
+        assert runtime.peek("kitchen") == {**before, CONF_REASONING_EFFORT: "high"}
+    else:
+        state = dict(runtime._conversation_overrides)
+        with pytest.raises(HomeAssistantError, match="reasoning"):
+            await pending
+        assert runtime.peek("kitchen") == before
+        assert runtime._conversation_overrides == state

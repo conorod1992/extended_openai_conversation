@@ -16,16 +16,18 @@ from custom_components.extended_openai_conversation_responses.const import (
     TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
-    ExtendedOpenAIAgentEntity,
     _ACTIVE_TURN,
+    ExtendedOpenAIAgentEntity,
 )
-from custom_components.extended_openai_conversation_responses.scope import unretained_scope
+from custom_components.extended_openai_conversation_responses.scope import (
+    unretained_scope,
+)
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     MAX_ACTIVE_RECORDS,
     MAX_CONTENT_LENGTH,
+    MAX_DELETE_RECORDS,
     MAX_INJECT_CHARACTERS,
     MAX_INJECT_RECORDS,
-    MAX_DELETE_RECORDS,
     TemporaryMemory,
     TemporaryMemoryRecord,
     temporary_memory_tools,
@@ -230,7 +232,7 @@ async def test_canonical_legacy_scope_gains_matching_owner_on_load(
     assert active[0].owner_scope_id == expected_owner
 
 
-async def test_legacy_device_scope_and_invalid_explicit_owner_are_removed() -> None:
+async def test_legacy_device_scope_is_isolated_and_invalid_explicit_owner_is_removed() -> None:
     legacy_device = stored_record(1, owner_scope_id=None)
     invalid_owner = stored_record(
         2, scope_id="user:alice", owner_scope_id="device:kitchen"
@@ -240,8 +242,9 @@ async def test_legacy_device_scope_and_invalid_explicit_owner_are_removed() -> N
     await memory.async_initialize()
 
     assert await memory.async_list_owned("user:alice") == []
-    assert storage.data == {"records": []}
-    assert memory.stats()["invalid_owner_records_pruned"] == 2
+    assert storage.data == {"records": [legacy_device]}
+    assert memory.stats()["invalid_owner_records_pruned"] == 1
+    assert memory.stats()["unassigned_legacy_temporary_memory_count"] == 1
 
 
 async def test_expiry_pruned_at_startup_and_before_injection() -> None:
@@ -309,18 +312,19 @@ async def test_startup_enforces_existing_record_ceiling_with_diagnostics() -> No
     assert "memory-000" not in {record.memory_id for record in managed}
 
 
-async def test_backup_restore_drops_unprovable_legacy_owner() -> None:
-    good = stored_record(1, scope_id="shared:household", owner_scope_id=None)
-    bad = stored_record(2, owner_scope_id=None)
-    validated = TemporaryMemory.validate_backup_data({"records": [good, bad]})
+async def test_backup_restore_keeps_device_memory_separate_from_inferred_owner() -> None:
+    personal = stored_record(1, scope_id="shared:household", owner_scope_id=None)
+    device = stored_record(2, owner_scope_id=None)
+    validated = TemporaryMemory.validate_backup_data({"records": [personal, device]})
 
-    assert len(validated) == 1
-    assert validated[0].owner_scope_id == "shared:household"
+    assert [record.owner_scope_id for record in validated] == ["shared:household", None]
+    assert validated[1].is_unassigned_legacy
 
     memory = TemporaryMemory(Storage())
     await memory.async_initialize()
     await memory.async_replace_backup(validated)
     assert len(await memory.async_list_owned("shared:household")) == 1
+    assert memory.stats()["unassigned_legacy_temporary_memory_count"] == 1
 
 
 def test_balanced_prompt_infers_weekend_expiry_without_clarification() -> None:
@@ -890,3 +894,97 @@ async def test_long_opaque_scope_round_trips_live_restart_and_backup(scope_id):
     restored = TemporaryMemory(Storage())
     await restored.async_replace_backup(records)
     assert await restored.async_backup_data() == backup
+
+
+@pytest.mark.parametrize("scope_id", ["conversation:assist-session", "device:kitchen"])
+async def test_legacy_memory_stays_isolated_until_original_expiry(
+    monkeypatch, caplog, scope_id
+):
+    now = dt_util.utcnow()
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    legacy = stored_record(1, scope_id=scope_id, owner_scope_id=None)
+    legacy.pop("owner_scope_id")
+    invalid = stored_record(2, scope_id="device:", owner_scope_id=None)
+    invalid.pop("owner_scope_id")
+    storage = Storage({"records": [legacy, invalid]})
+
+    from custom_components.extended_openai_conversation_responses.transfer import (
+        SECTION_TEMPORARY_MEMORY,
+        PreparedTransfer,
+    )
+
+    validated = TemporaryMemory.validate_backup_data({"records": [legacy, invalid]})
+    preview = PreparedTransfer(
+        source_kind="full_backup",
+        mode="full",
+        title="Assistant",
+        created_at=now.isoformat(),
+        integration_version="6.8.3",
+        available_sections=frozenset({SECTION_TEMPORARY_MEMORY}),
+        temporary_memories=validated,
+    ).summary()
+    assert preview["temporary_memories"] == 0
+    assert preview["unassigned_legacy_temporary_memories"] == 1
+
+    memory = TemporaryMemory(storage)
+    await memory.async_initialize()
+    stats = memory.stats()
+    assert stats["active_temporary_memory_count"] == 0
+    assert stats["invalid_owner_records_pruned"] == 1
+    assert stats["unassigned_legacy_temporary_memory_count"] == 1
+    assert "Retained 1 legacy Temporary Memory" in caplog.text
+    assert "unavailable to assistants" in caplog.text
+    assert await memory.async_active(scope_id) == []
+    assert await memory.async_active(scope_id, "user:alice") == []
+    assert await memory.async_active_snapshot(scope_id, "shared:household") == []
+    assert memory.owner_counts() == memory.scope_counts() == {}
+    assert await memory.async_delete_owned("user:alice", [legacy["memory_id"]]) == 0
+
+    await memory.async_replace_backup(validated)
+    backup = await memory.async_backup_data()
+    assert backup["records"] == [{**legacy, "owner_scope_id": None}]
+    assert TemporaryMemory.validate_backup_data(backup) == validated
+
+    now += timedelta(days=2)
+    await memory.async_expire()
+    assert storage.data == {"records": []}
+    assert memory.stats()["unassigned_legacy_temporary_memory_count"] == 0
+    assert memory.expired_pruned == 1
+    assert TemporaryMemory.validate_backup_data(backup) == []
+
+
+async def test_isolated_legacy_memories_leave_active_capacity_available():
+    legacy = [
+        stored_record(index, scope_id="conversation:session", owner_scope_id=None)
+        for index in range(MAX_ACTIVE_RECORDS)
+    ]
+    memory = TemporaryMemory(Storage({"records": legacy}))
+    await memory.async_initialize()
+    result = await memory.async_add_owned("user:alice", "Active fact", future())
+    assert result["status"] == "created"
+    backup = await memory.async_backup_data()
+    assert len(TemporaryMemory.validate_backup_data(backup)) == MAX_ACTIVE_RECORDS + 1
+    assert memory.stats()["active_temporary_memory_count"] == 1
+
+
+async def test_existing_temporary_memory_expired_when_automatic_mode_is_off(hass):
+    from unittest.mock import patch
+
+    from tests.test_diagnostics import _startup_entity
+
+    store = temporary_memory._temporary_memory_store(hass, "entry", "agent")
+    expired = stored_record(1, scope_id="conversation:expired", owner_scope_id=None)
+    expired["expires_at"] = (dt_util.utcnow() - timedelta(days=1)).isoformat()
+    await store.async_save({"records": [expired]})
+
+    agent = _startup_entity(hass, {})
+    agent.entry.entry_id = "entry"
+    agent.subentry.subentry_id = "agent"
+    with patch.object(agent, "_async_initialize_archive", AsyncMock()), patch(
+        "custom_components.extended_openai_conversation_responses.conversation.async_get_knowledge",
+        new_callable=AsyncMock,
+    ):
+        await agent._async_initialize_optional_managers()
+    assert agent._temporary_memory is None
+    read_back = temporary_memory._temporary_memory_store(hass, "entry", "agent")
+    assert await read_back.async_load() == {"records": []}

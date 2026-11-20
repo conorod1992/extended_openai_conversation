@@ -8,8 +8,6 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     model_catalog as data,
-)
-from custom_components.extended_openai_conversation_responses import (
     model_catalog_manager as runtime,
 )
 from custom_components.extended_openai_conversation_responses.request import (
@@ -26,6 +24,57 @@ def isolate_catalog():
     data.activate_catalog(None)
     yield
     data.activate_catalog(None)
+
+
+@pytest.mark.parametrize(
+    ("model", "current_turn"),
+    [
+        ("o3-pro", True),
+        ("o3-pro-2025-06-10", True),
+        ("gpt-5.6", False),
+        ("o3-pro-unclassified", False),
+    ],
+)
+def test_responses_estimation_uses_verified_current_turn_reasoning(model, current_turn):
+    request = build_provider_request_snapshot(
+        {"chat_model": model, "api_mode": "responses"},
+        {"base_url": "https://api.openai.com/v1"},
+        tools_required=False,
+    )
+    assert request.reasoning_current_turn_only is current_turn
+    if current_turn:
+        assert request.reasoning_items_supported
+
+
+@pytest.mark.parametrize(
+    ("base_url", "current_turn"),
+    [
+        ("https://api.openai.com/v1", True),
+        ("https://compatible.example/v1", False),
+    ],
+)
+def test_verified_catalogue_snapshot_inherits_current_turn_reasoning(
+    base_url, current_turn
+):
+    model = "gpt-5.4-2026-03-05"
+    candidate = deepcopy(data.BUNDLED_CATALOG)
+    candidate["catalog_version"] += 1
+    candidate["models"].append(
+        {
+            "id": model,
+            "display_name": model,
+            "kind": "snapshot",
+            "alias_of": "gpt-5.4",
+        }
+    )
+    data.activate_catalog(data.validate_catalog(candidate))
+    request = build_provider_request_snapshot(
+        {"chat_model": model, "api_mode": "responses"},
+        {"base_url": base_url},
+        tools_required=False,
+    )
+    assert request.reasoning_items_supported
+    assert request.reasoning_current_turn_only is current_turn
 
 
 def setup_manager(hass, monkeypatch, identity, effort):

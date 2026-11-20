@@ -1,4 +1,4 @@
-"""Bounded lexical terms for continuous East Asian text."""
+"""Shared Unicode word boundaries and lexical terms."""
 
 from collections.abc import Iterable, Sequence
 import re
@@ -155,6 +155,31 @@ def _stem(token: str) -> str:
 _CJK_RUN = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+")
 
 
+def word_character_projection(value: str) -> str:
+    """Match combining marks attached to letters or digits at their original offsets."""
+    if value.isascii():
+        return value
+    projected = []
+    has_base = False
+    for char in value:
+        if unicodedata.category(char).startswith("M"):
+            # An emoji presentation selector after a symbol is no more a word
+            # character than the symbol itself. Keep the full span for offsets.
+            projected.append("x" if has_base else char)
+        else:
+            projected.append(char)
+            has_base = char.isalnum()
+    return "".join(projected)
+
+
+def word_tokens(value: str, pattern: re.Pattern[str]) -> list[str]:
+    """Match a word pattern and return the original text of each match."""
+    projected = word_character_projection(value)
+    if projected == value:
+        return pattern.findall(value)
+    return [value[match.start() : match.end()] for match in pattern.finditer(projected)]
+
+
 def bounded_phrase(phrase: str, text: str) -> bool:
     """Match normalized phrases at word edges, allowing continuous CJK text.
 
@@ -165,7 +190,11 @@ def bounded_phrase(phrase: str, text: str) -> bool:
         return False
 
     def word_edge(char: str) -> bool:
-        return bool(char) and (char.isalnum() or char in "_'-+#")
+        return (
+            char.isalnum()
+            or char in "_'-+#"
+            or unicodedata.category(char).startswith("M")
+        )
 
     start = text.find(phrase)
     while start >= 0:
@@ -208,7 +237,7 @@ _LEXICAL_TOKEN = re.compile(r"\w+(?:[+#]+|(?:['-]\w+)*)", re.UNICODE)
 def lexical_tokens(value: str) -> list[str]:
     """Preserve meaningful token punctuation before compound expansion."""
     normalized = unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
-    return _LEXICAL_TOKEN.findall(normalized)
+    return word_tokens(normalized, _LEXICAL_TOKEN)
 
 
 def lexical_terms(value: str, *, include_spelling_aliases: bool = True) -> list[str]:

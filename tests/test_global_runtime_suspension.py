@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -100,8 +100,11 @@ async def test_cold_setup_with_only_disabled_entries_never_starts_effects(
     )
 
     hass.config_entries.async_entries.return_value = [
-        SimpleNamespace(disabled_by="user")
+        SimpleNamespace(disabled_by="user", subentries={})
     ]
+    hass.async_create_background_task = Mock(
+        side_effect=lambda coro, _name, **_kwargs: asyncio.create_task(coro)
+    )
     for name in [
         "async_setup_model_catalog",
         "async_migrate_integration",
@@ -468,9 +471,14 @@ async def test_component_startup_restores_before_failed_provider_auth(
         "get_authenticated_client",
         AsyncMock(side_effect=_authentication_error()),
     )
+    entry = _Entry("failed", 0)
+    hass.config_entries.async_entries.return_value = [entry]
+    hass.async_create_background_task = Mock(
+        side_effect=lambda coro, _name, **_kwargs: asyncio.create_task(coro)
+    )
     assert await integration.async_setup(hass, {})
     with pytest.raises(ConfigEntryAuthFailed):
-        await integration.async_setup_entry(hass, _Entry("failed", 0))
+        await integration.async_setup_entry(hass, entry)
     assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.8
     assert hass.data[OWNERS] == set()
     assert "quiet_hours_manager" not in hass.data.get(DOMAIN, {})

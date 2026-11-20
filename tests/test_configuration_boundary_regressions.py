@@ -224,7 +224,7 @@ async def test_specialized_save_seeds_the_actual_provider_context(
     monkeypatch.setattr(
         ui,
         "async_get_knowledge",
-        AsyncMock(return_value=SimpleNamespace(total_source_count=0)),
+        AsyncMock(return_value=SimpleNamespace(source_count=0, total_source_count=0)),
     )
 
     async def command(section, action, **fields):

@@ -19,7 +19,12 @@ from custom_components.extended_openai_conversation_responses.const import (
 from homeassistant.components import conversation
 from homeassistant.core import Context
 from homeassistant.util import dt as dt_util
-from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _speech
+from tests_real_ha.test_cross_feature_acceptance import (
+    _agent,
+    _provider,
+    _rule,
+    _speech,
+)
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
@@ -558,3 +563,133 @@ async def test_private_followup_after_knowledge_restore(
     assert "Before restore content" not in json.dumps(sent[-1])
     assert len(sent) == 4
     assert (await agent._knowledge.async_backup_data())["sources"] == []
+
+
+@pytest.mark.parametrize("rollback", [False, True], ids=["restore", "rollback"])
+@pytest.mark.parametrize(
+    "witness", ["retained", "private", "unverified", "foreign", "expired", "retired"]
+)
+async def test_ha_default_knowledge_restore_keeps_only_verified_runtime(
+    hass, monkeypatch, rollback, witness
+):
+    from custom_components.extended_openai_conversation_responses.conversation_id_ownership import (
+        release_conversation_id_claim,
+    )
+    from custom_components.extended_openai_conversation_responses.scope import (
+        user_scope,
+    )
+    from homeassistant.helpers.chat_session import DATA_CHAT_SESSION
+
+    user = MockUser(id="ha-default-restore-owner")
+    user.add_to_hass(hass)
+    agent = await _agent(
+        hass,
+        max_function_calls_per_conversation=0,
+        **{
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_HA_DEFAULT,
+        },
+    )
+    await agent._request_rules.async_create(
+        _rule(
+            "model_routing",
+            {
+                "model": "gpt-5.4",
+                "reasoning_effort": "none",
+                "scope": "conversation",
+                "reset": False,
+                "continue_to_ai": True,
+            },
+            match_type="starts_with",
+            phrase="switch models",
+        )
+    )
+    sent = _provider(monkeypatch, agent, ["Routed reply", "Follow-up reply"])
+
+    async def say(text, conversation_id=None):
+        return await conversation.async_converse(
+            hass=hass,
+            text=text,
+            conversation_id=conversation_id,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=agent.entry.entry_id,
+        )
+
+    first = await say("Switch models and remember this turn")
+    assert _speech(first) == "Routed reply"
+    assert sent[0]["model"] == "gpt-5.4"
+    chat_id = first.conversation_id
+    runtime_key = f"conversation:{chat_id}"
+    archive = agent._archive
+    binding = archive.active_session(runtime_key)
+    assert binding.retention_state == "retained"
+    bundle = [("opening-memory", "revision")]
+    await agent._continuity.async_set_memory_bundle(runtime_key, bundle, 5)
+    groups = agent._function_groups_runtime
+    groups.begin(runtime_key, 5).loaded_group_ids.add("reminders")
+    native = hass.data[DATA_CHAT_SESSION][chat_id]
+
+    if witness == "private":
+        await archive.async_make_private(binding.session_id)
+    elif witness == "unverified":
+        release_conversation_id_claim(
+            hass, chat_id, (agent.subentry.subentry_id, binding.scope_id)
+        )
+    elif witness == "foreign":
+        await archive.async_begin_session(
+            runtime_key,
+            user_scope("different-owner", source="authenticated_user"),
+            chat_id,
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
+    elif witness == "expired":
+        native.last_updated -= timedelta(minutes=6)
+    elif witness == "retired":
+        await agent._continuity.async_retire_chat_session(native)
+
+    document = transfer._new_transfer_document(agent.entry, agent.subentry, "custom")
+    document["sections"][transfer.SECTION_KNOWLEDGE] = {"sources": []}
+    before = await archive.async_recovery_data()
+    if rollback:
+        replace = agent._knowledge.async_replace_backup
+        calls = 0
+
+        async def fail_first(records):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("injected Knowledge write failure")
+            await replace(records)
+
+        monkeypatch.setattr(agent._knowledge, "async_replace_backup", fail_first)
+        with pytest.raises(
+            backup.BackupError, match="previous agent state was recovered"
+        ):
+            await transfer.async_restore_transfer(
+                hass, agent.entry, agent.subentry, document
+            )
+        assert calls == 2
+    else:
+        await transfer.async_restore_transfer(
+            hass, agent.entry, agent.subentry, document
+        )
+
+    assert conversation.async_get_agent(hass, agent.entry.entry_id) is agent
+    assert await archive.async_recovery_data() == before
+    retained = witness == "retained"
+    assert await agent._continuity.async_get_memory_bundle(runtime_key, 5) == (
+        bundle if retained else None
+    )
+    assert groups.begin(runtime_key, 5).loaded_group_ids == (
+        {"reminders"} if retained else set()
+    )
+
+    followup = await say("Ordinary follow-up", chat_id)
+    assert _speech(followup) == "Follow-up reply"
+    assert sent[1]["model"] == ("gpt-5.4" if retained else "gpt-5.6")
+    if retained:
+        assert followup.conversation_id == chat_id
+        assert "Switch models and remember this turn" in json.dumps(sent[1]["messages"])

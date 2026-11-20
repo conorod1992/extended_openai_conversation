@@ -40,13 +40,13 @@ These commands use backend tools; they are not a promise made only in generated 
 >
 > Delete our conversation about the medical appointment.
 >
-> Forget everything we discussed today.
+> Preview the conversations whose last saved turn was today.
 
 Private mode applies only to the exact active session. Enabling it deletes already retained turns and the conversation-derived title for that session, returns the exact turn count, and prevents future turns in that session from being archived. Existing private-session titles are removed when loaded; importing an older backup also removes those titles. Other browser or satellite sessions are unaffected. Resuming saving creates a new retained session for future turns; private messages are not restored or saved retroactively. A request that makes the conversation private is never archived, even if it also resumes saving later in the same turn. This applies when saving was already active and is resumed before making the conversation private.
 
 Archive privacy controls only this integration's transcript retention. It does not stop the active conversation from being sent to the configured provider, disable separate memory features or opt-in Request debugging, or erase copies already exported or recorded elsewhere. Review those settings separately when you do not want information retained.
 
-Single-session deletion is exact. Semantic deletion begins with bounded search and requires selected session IDs. Date-range and whole-scope deletion require explicit confirmation and return exact session and turn counts. Deleting transcript text never changes token aggregates. You can verify the result under **Extended OpenAI → Data & Memory → Conversation history**.
+Single-session deletion is exact. Semantic deletion begins with bounded search and requires selected session IDs. Date-range deletion selects whole sessions by their last retained turn in Home Assistant's timezone. The preview shows affected sessions and counts turns outside the selected dates. If the preview includes turns outside the requested range, open **Extended OpenAI → Data & Memory → Conversation history**. Review each affected conversation and confirm its deletion there to remove all of its turns. Date-range and whole-scope deletion return exact session and turn counts after confirmation. Deleting transcript text never changes token aggregates.
 
 ## Voice satellite ownership
 
@@ -76,5 +76,7 @@ Existing `__anonymous__` records are preserved as **Legacy anonymous**. They are
 Normal users can manage only their personal memory/archive scope. Home Assistant administrators can select personal, shared, and legacy scopes and manage integration-wide retention and voice mappings. Administrator panel selection never changes the scope available to model-facing tools.
 
 Manage archive retention and model search, and review or delete transcripts, from **Extended OpenAI → Data & Memory → Conversation history**. Configure device ownership under **Assistant → Voice & identity**. Select the intended conversation agent before changing its settings; conversation-agent reconfiguration in **Devices & services** points to this panel.
+
+The Archive upgrades its local storage format when opened. Older releases such as 6.8.3 leave the upgraded history on disk and cannot open it. Restore a pre-upgrade Home Assistant backup if you need access to the history while running the older release. Reinstalling the newer integration can reopen the upgraded Archive.
 
 The integration's completion event now contains metadata only, rather than transcript text. Upgrading does not remove transcripts that older event consumers or Home Assistant Recorder already saved. See [Completion notifications and Recorder](credential-security.md#completion-notifications-and-recorder) for the event fields and upgrade considerations.

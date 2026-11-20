@@ -20,16 +20,18 @@
   {
     "owner": "memory_embedding_cache",
     "classification": "best_effort_or_coalesced",
-    "guarantee": "Vectors can be discarded and regenerated without losing durable facts.",
+    "guarantee": "Routine vector saves are best effort. An explicit rebuild removes the saved cache before it reports success. Durable facts are preserved.",
     "stores": [
       {
         "module": "memory.py",
-        "constructor": "Store",
+        "constructor": "_EmbeddingCacheStore",
         "count": 1
       }
     ],
     "evidence": [
-      "tests/test_memory_mutation_integrity.py::test_durable_save_failure_rolls_back_live_manager"
+      "tests/test_memory_mutation_integrity.py::test_durable_save_failure_rolls_back_live_manager",
+      "tests/test_memory_cache_best_effort.py::test_failure_finishes_all_batches_and_retries_only_after_cooldown",
+      "tests_real_ha/test_persistent_memory_runtime_recovery.py::test_rebuild_embeddings_requires_durable_removal"
     ]
   },
   {
@@ -92,11 +94,17 @@
       {
         "module": "conversation_archive.py",
         "constructor": "PropagatingWriteStore",
-        "count": 2
+        "count": 1
+      },
+      {
+        "module": "conversation_archive.py",
+        "constructor": "_ArchiveMetadataStore",
+        "count": 1
       }
     ],
     "evidence": [
       "tests/test_conversation_archive.py::test_partition_write_failure_recovers_private_state_on_restart",
+      "tests_real_ha/test_archive_record_integrity.py::test_archive_v1_migrates_before_an_old_writer_can_open_it",
       "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable",
       "tests_stress/test_archive_living_campaign.py::test_archive_first_intent_failure_cannot_be_erased_by_session_publication"
     ]

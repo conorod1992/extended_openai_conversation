@@ -340,6 +340,39 @@ async def test_client_proxy_redacts_explicit_auth_headers() -> None:
     assert headers["X-Test"] == "visible"
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_token_limit_marks_the_exact_responses_debug_request(streaming):
+    incomplete = {
+        "status": "incomplete",
+        "incomplete_details": {"reason": "max_output_tokens"},
+        "usage": {"input_tokens": 100, "output_tokens": 15, "total_tokens": 115},
+    }
+    delegate = _FakeClient([{"type": "response.incomplete", "response": incomplete}])
+    if not streaming:
+        delegate.responses.result = incomplete
+    proxy = DebugOpenAIClientProxy(delegate)
+    manager = DebugManager()
+    manager.configure(enabled=True)
+    trace = _trace(manager)
+    token = _ACTIVE_DEBUG_TRACE.set(trace)
+    try:
+        result = await proxy.responses.create(stream=streaming, input=[])
+        delegate.responses.result = {"status": "completed"}
+        await proxy.responses.create(stream=False, input=[])
+        if streaming:
+            assert (await anext(result))["type"] == "response.incomplete"
+            await result.close()
+    finally:
+        _ACTIVE_DEBUG_TRACE.reset(token)
+
+    failed, successful = trace.provider_requests
+    assert failed.successful is False
+    assert failed.error_type == "TokenLengthExceededError"
+    assert failed.usage["total_tokens"] == 115
+    assert successful.successful is True
+    assert successful.error_type is None
+
+
 @pytest.mark.parametrize("surface,event", [
     ("chat_completions", {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"effect"}}]}}]}),
     ("responses", {"type":"response.output_item.added", "item":{"type":"function_call"}}),

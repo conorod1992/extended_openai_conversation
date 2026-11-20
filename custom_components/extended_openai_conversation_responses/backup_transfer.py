@@ -1279,8 +1279,9 @@ async def _inspect_import_owned(
             selected,
             data.get("user_scope_mappings"),
         )
-        current = await transfer._current_snapshot(hass, entry, subentry)
-
+        current = await transfer._current_snapshot(
+            hass, entry, subentry, include_usage=transfer.SECTION_USAGE in selected
+        )
         if mapping_plan["missing_source_user_ids"]:
             preview = {
                 **prepared.summary(),
@@ -1424,7 +1425,12 @@ async def _restore_import(
                 != (session.session_id, token)
             ):
                 raise backup.BackupError("The backup preview is stale; preview again")
-        current = await transfer._current_snapshot(hass, entry, subentry)
+        current = await transfer._current_snapshot(
+            hass,
+            entry,
+            subentry,
+            include_usage=transfer.SECTION_USAGE in (session.preview_sections or ()),
+        )
         revision = await asyncio.to_thread(
             _snapshot_revision,
             current,

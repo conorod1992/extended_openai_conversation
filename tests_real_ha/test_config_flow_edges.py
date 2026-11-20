@@ -108,7 +108,7 @@ async def test_user_flow_rejects_azure_without_custom_endpoint_before_authentica
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
-    assert result["errors"] == {"base": "unknown"}
+    assert result["errors"] == {"base": "invalid_provider_endpoint"}
     authenticate.assert_not_awaited()
 
 

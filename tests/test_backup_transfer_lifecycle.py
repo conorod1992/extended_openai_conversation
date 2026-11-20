@@ -130,7 +130,7 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert target_subentry_id == "agent-1"
         return prepared
 
-    async def current_snapshot(*_args):
+    async def current_snapshot(*_args, include_usage=True):
         return object()
 
     async def materialize(

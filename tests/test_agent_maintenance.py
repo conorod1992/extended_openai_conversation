@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from contextvars import Context
 from types import SimpleNamespace
 
 import pytest
@@ -108,7 +109,7 @@ async def test_same_task_reader_can_reenter_while_writer_is_waiting() -> None:
     writer_entered = asyncio.Event()
 
     async with gate.shared():
-        writer = asyncio.create_task(_enter_writer(gate, writer_entered))
+        writer = asyncio.create_task(_enter_writer(gate, writer_entered), context=Context())
         await asyncio.sleep(0)
         async with gate.shared():
             pass
@@ -125,7 +126,7 @@ async def test_child_task_reader_reenters_parent_lease_while_writer_waits() -> N
     child_entered = asyncio.Event()
 
     async with gate.shared():
-        writer = asyncio.create_task(_enter_writer(gate, writer_entered))
+        writer = asyncio.create_task(_enter_writer(gate, writer_entered), context=Context())
         await asyncio.sleep(0)
 
         async def child_reader() -> None:
@@ -363,7 +364,7 @@ async def test_conversation_lease_bypasses_partial_entities_and_gates_real_ident
     async with agent_maintenance.conversation_request_lease(SimpleNamespace()):
         assert gate.shared_entries == 0
     complete = SimpleNamespace(
-        hass=object(),
+        hass=SimpleNamespace(data={}),
         entry=SimpleNamespace(entry_id="entry"),
         subentry=SimpleNamespace(subentry_id="agent"),
     )
@@ -502,3 +503,24 @@ async def test_recovery_store_access_requires_current_exclusive_owner():
     assert not gate.owns_exclusive()
     with pytest.raises(RuntimeError, match="exclusive"), gate.recovery_work():
         pytest.fail("unowned recovery was admitted")
+
+
+async def test_shared_owner_cannot_upgrade_from_a_child_task():
+    """Reject inherited reader ownership without stranding later requests."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    gate = AgentMaintenanceGate()
+    entered = asyncio.Event()
+
+    async def rebuild():
+        async with gate.exclusive():
+            entered.set()
+
+    async with gate.shared():
+        with pytest.raises(HomeAssistantError, match="outside the active conversation"):
+            await asyncio.wait_for(asyncio.create_task(rebuild()), timeout=1)
+        assert not entered.is_set()
+        assert gate._waiting_writers == 0
+    await asyncio.wait_for(rebuild(), timeout=1)
+    async with asyncio.timeout(1), gate.shared():
+        assert entered.is_set()

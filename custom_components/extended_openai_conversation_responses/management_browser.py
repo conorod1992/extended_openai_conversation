@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from typing import Any
+
+from homeassistant.util import dt as dt_util
 
 from .memory import MAX_LIST_LIMIT, memory_as_dict, memory_revision
 
@@ -79,6 +82,12 @@ async def async_browse_memories(
 
 def management_memory_dict(record: Any, *, include_scope: bool) -> dict[str, Any]:
     """Expose the edit token only on the Management projection."""
-    return memory_as_dict(record, include_scope=include_scope) | {
-        "revision": memory_revision(record)
-    }
+    result = memory_as_dict(record, include_scope=include_scope)
+    # Sorting already interprets legacy naive timestamps as UTC. Send explicit
+    # offsets so the browser displays the same instants in Home Assistant time.
+    for field in ("created_at", "updated_at"):
+        timestamp = dt_util.parse_datetime(result[field])
+        if timestamp is not None and timestamp.tzinfo is None:
+            result[field] = timestamp.replace(tzinfo=UTC).isoformat()
+    result["revision"] = memory_revision(record)
+    return result

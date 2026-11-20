@@ -230,6 +230,38 @@ test("Request Rule editor round-trips local and routing forms through reopen and
 
 
 for (const bundled of [false, true]) {
+  test(`inherited reasoning effort survives editing with a nonreasoning default (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+    const panel = panelFor(page);
+    await panel.evaluate(node => {
+      node._result.effective_model = "gpt-4.1-mini";
+      const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+      browserHarness.hass.callWS = async message => {
+        const result = await original(message);
+        return message.type.endsWith("/model_catalog")
+          ? {...result, reasoning_effort_options: message.model ? [] : ["low", "high"]}
+          : result;
+      };
+    });
+    await panel.getByRole("button", {name: "Create rule", exact: true}).first().click();
+    await panel.locator("#rule-name").fill("Think hard");
+    await panel.locator("#rule-phrases").fill("think hard");
+    await panel.locator("#rule-action-type").selectOption("model_routing");
+    await panel.locator("#rule-continue-to-ai").check();
+    await panel.locator("#rule-advanced summary").click();
+    await panel.locator("#rule-reasoning").selectOption("high");
+    await panel.locator("#rule-save").click();
+    await panel.locator(".request-rule-card").filter({hasText:"Think hard"}).locator(".rule-edit").click();
+    await expect(panel.locator("#rule-reasoning")).toHaveValue("high");
+    await panel.locator("#rule-name").fill("Think harder");
+    await panel.locator("#rule-save").click();
+    await expect.poll(() => page.evaluate(() =>
+      browserHarness.getState().requestRules.rules.find(rule => rule.name === "Think harder")?.action.reasoning_effort
+    )).toBe("high");
+    await expectHarnessClean(page, errors);
+  });
+
   test(`mounted Rule editor shares routing scope and reasoning controls (${bundled})`, async ({page}) => {
     const errors = trackPageErrors(page);
     await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
@@ -373,7 +405,9 @@ for (const bundled of [false, true]) {
         if (message.type.endsWith("/model_catalog")) {
           host._azureRuleLookups ||= [];
           host._azureRuleLookups.push(message.model);
-          return {...result, reasoning_effort_options: message.model === "gpt-5.6" ? ["low", "high"] : []};
+          const efforts = !message.model ? ["low", "high", "minimal"]
+            : message.model === "gpt-5.6" ? ["low", "high"] : [];
+          return {...result, reasoning_effort_options: efforts};
         }
         return result;
       };
@@ -396,10 +430,18 @@ for (const bundled of [false, true]) {
     await panel.locator("#rule-model").fill("another-deployment");
     await expect.poll(() => panel.evaluate(host => host._azureRuleLookups.length)).toBeGreaterThan(2);
     await expect(panel.locator("#rule-reasoning")).toHaveValue("high");
-    expect(await panel.evaluate(host => host._azureRuleLookups.every(model => model === "gpt-5.6"))).toBe(true);
+    expect(await panel.evaluate(host => host._azureRuleLookups.filter(Boolean).every(model => model === "gpt-5.6"))).toBe(true);
+    await panel.locator("#rule-match").selectOption("sentence_pattern");
+    await panel.locator("#rule-phrases").fill("switch to {deployment}");
+    const lookups = await panel.evaluate(host => host._azureRuleLookups.length);
+    await panel.locator("#rule-model").fill("{deployment}");
+    await expect.poll(() => panel.evaluate(host => host._azureRuleLookups.length)).toBeGreaterThan(lookups);
+    await expect.poll(() => panel.evaluate(host => host._azureRuleLookups.at(-1))).toBe("gpt-5.6");
+    await expect(panel.locator('#rule-reasoning option[value="minimal"]')).toHaveCount(0);
+    await expect(panel.locator("#rule-reasoning")).toHaveValue("high");
     await panel.locator("#rule-save").click();
     const saved = await page.evaluate(() => browserHarness.getState().requestRules.rules.find(rule => rule.name === "Azure preserved route"));
-    expect(saved.action.model).toBe("another-deployment");
+    expect(saved.action.model).toBe("{deployment}");
     expect(saved.action.azure_model).toBe("gpt-5.6");
     expect(saved.action.reasoning_effort).toBe("high");
     await expectHarnessClean(page, errors);

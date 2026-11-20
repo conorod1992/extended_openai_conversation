@@ -245,7 +245,7 @@ async def test_archive_list_search_and_turn_reads_return_real_pages() -> None:
     archive = ConversationArchive(_Storage(), "agent")
     await archive.async_initialize()
     archive._sessions = {
-        _session(index).session_id: _session(index) for index in range(70)
+        item.session_id: item for item in (_session(index, turn_count=1) for index in range(70))
     }
 
     listed = await archive_list_page(archive, "user:alice", offset=40, limit=20)
@@ -572,14 +572,15 @@ async def test_archive_list_filters_scope_and_retention_without_displacing_newes
     """Bounded ranking ignores inaccessible sessions and does not admit older tail rows."""
     archive = ConversationArchive(_Storage(), "agent")
     await archive.async_initialize()
-    newest = _edge_session(30)
-    second = _edge_session(20)
-    older = _edge_session(10)
-    foreign = _edge_session(40, scope_id="user:bob")
-    expired = _edge_session(50, retention_state="expired")
+    newest = _edge_session(30, turn_count=1)
+    second = _edge_session(20, turn_count=1)
+    older = _edge_session(10, turn_count=1)
+    foreign = _edge_session(40, scope_id="user:bob", turn_count=1)
+    expired = _edge_session(50, retention_state="expired", turn_count=1)
+    empty = _edge_session(60)
     archive._sessions = {
         item.session_id: item
-        for item in (newest, second, older, foreign, expired)
+        for item in (newest, second, older, foreign, expired, empty)
     }
 
     result = await archive_list_page(archive, "user:alice", limit=2)
@@ -813,12 +814,15 @@ def test_local_run_summary_counts_selected_period_beyond_latest_thirty(monkeypat
     with monkeypatch.context() as clock_patch:
         clock_patch.setattr(dt_util, "utcnow", lambda: now)
         clock_patch.setattr(dt_util, "DEFAULT_TIME_ZONE", ZoneInfo("Europe/Dublin"))
-        def run(i, stamp, **extra):
-            return replace(_run(i), started_at=stamp, completed_at=stamp, **extra)
+        def run(i, stamp, *, accounting_date=None, **extra):
+            return replace(
+                _run(i), started_at=stamp, completed_at=stamp,
+                accounting_date=accounting_date or stamp[:10], **extra,
+            )
         runs = [run(i, "2026-10-09T12:00:00Z") for i in range(45)]
         runs += [run(100, "2026-09-20T12:00:00Z"), run(101, "2026-08-01T12:00:00Z"),
                  run(102, "2026-10-09T12:00:00Z", request_count=1),
-                 run(103, "2026-10-08T23:30:00Z")]
+                 run(103, "2026-10-08T23:30:00Z", accounting_date="2026-10-09")]
         manager = _Usage(runs=runs)
         selected = usage_daily_page(manager, start_date="2026-10-09", end_date="2026-10-09")
         assert selected["local_run_summary"]["count"] == 46  # includes local midnight crossover
@@ -827,6 +831,45 @@ def test_local_run_summary_counts_selected_period_beyond_latest_thirty(monkeypat
         assert wider["local_run_summary"]["retention_days"] == 30
         manager.run_retention_days = 0
         assert usage_daily_page(manager, start_date="0000-01-01", end_date="9999-12-31")["local_run_summary"]["count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("start_date", "end_date", "count"),
+    [
+        ("2026-10-09", "2026-10-09", None),
+        ("2026-10-08", "2026-10-10", 1),
+        ("2026-10-14", "2026-10-16", 1),
+        ("0000-01-01", "2026-10-16", 2),
+    ],
+)
+def test_local_run_summary_only_uses_legacy_details_with_known_period_membership(
+    monkeypatch, start_date, end_date, count
+):
+    from dataclasses import replace
+
+    now = datetime(2026, 10, 16, 12, tzinfo=UTC)
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    old = "2026-10-09T02:00:00Z"
+    new = "2026-10-15T02:00:00Z"
+    runs = [
+        replace(_run(1), started_at=old, completed_at=old),
+        replace(_run(2), started_at=new, completed_at=new, request_count=1),
+        replace(
+            _run(3), started_at=new, completed_at=new, accounting_date="2026-10-15"
+        ),
+    ]
+    summary = usage_daily_page(
+        _Usage(runs=runs), start_date=start_date, end_date=end_date,
+    )["local_run_summary"]
+    if count is None:
+        assert summary is None
+    else:
+        assert summary == {
+            "count": count,
+            "start_date": start_date,
+            "end_date": end_date,
+            "retention_days": 30,
+        }
 
 
 async def test_restored_archive_lists_and_searches_by_instant():

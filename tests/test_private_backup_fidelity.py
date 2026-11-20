@@ -295,7 +295,7 @@ async def test_private_provider_restore_precedes_reload_and_preserves_exact_data
 
     tx = RestoreHarness(monkeypatch)
     tx.entry.data = {"api_key": "old-provider"}
-    tx.entry.state = ConfigEntryState.LOADED
+    tx.entry.state = ConfigEntryState.NOT_LOADED
     tx.entry.disabled_by = None
     expected = deepcopy(tx.entry.data)
     document = private_document()
@@ -309,7 +309,8 @@ async def test_private_provider_restore_precedes_reload_and_preserves_exact_data
     events = []
 
     def update(entry, *, data):
-        assert tx.journal.data is None  # Agent commit is durable first.
+        assert tx.journal.data["phase"] == "committed"
+        assert tx.subentry.data == document["agent"]["config"]
         entry.data = deepcopy(data)
         events.append("provider")
         return True
@@ -322,7 +323,15 @@ async def test_private_provider_restore_precedes_reload_and_preserves_exact_data
     )
     tx.hass.config_entries._data_to_save = lambda: {
         "entries": [
-            {"entry_id": tx.entry.entry_id, "data": dict(tx.entry.data)},
+            {
+                "entry_id": tx.entry.entry_id,
+                "data": dict(tx.entry.data),
+                "subentries": [{
+                    "subentry_id": tx.subentry.subentry_id,
+                    "data": dict(tx.subentry.data),
+                    "title": tx.subentry.title,
+                }],
+            },
         ]
     }
     readback = AsyncMock(
@@ -352,21 +361,33 @@ async def test_private_provider_restore_precedes_reload_and_preserves_exact_data
     tx.hass.config_entries.async_update_entry = update
     tx.hass.config_entries.async_schedule_reload = MagicMock()
     monkeypatch.setattr(restore_recovery, "async_finish_restore_reload", reload)
-    result = await transfer.async_restore_transfer(
-        tx.hass,
-        tx.entry,
-        tx.subentry,
-        backup.finalize_backup_snapshot(document)["document"],
-        sections=[transfer.SECTION_CONFIGURATION],
-        provider_connection=document["provider_connection"],
-        expected_provider_data=expected,
-    )
-    assert result["provider_connection_restored"] is durable
-    if not durable:
-        assert "could not be verified on disk" in result["provider_connection_message"]
-    assert events == ["provider", "persist", "reload"]
+    async def restore():
+        return await transfer.async_restore_transfer(
+            tx.hass,
+            tx.entry,
+            tx.subentry,
+            backup.finalize_backup_snapshot(document)["document"],
+            sections=[transfer.SECTION_CONFIGURATION],
+            provider_connection=document["provider_connection"],
+            expected_provider_data=expected,
+        )
+    if durable:
+        assert (await restore())["provider_connection_restored"]
+        assert events == ["provider", "persist", "reload"]
+        assert tx.journal.data is None
+    else:
+        from custom_components.extended_openai_conversation_responses.provider_credentials import (
+            require_provider_restore_complete,
+        )
+
+        with pytest.raises(backup.BackupError, match="completion is pending"):
+            await restore()
+        assert events == ["provider", "persist"]
+        assert tx.journal.data["phase"] == "committed"
+        with pytest.raises(HomeAssistantError, match="shared provider connection is unavailable"):
+            require_provider_restore_complete(tx.hass, tx.entry.entry_id)
     readback.assert_awaited_once()
-    tx.hass.config_entries.async_schedule_reload.assert_not_called()
+    assert tx.hass.config_entries.async_schedule_reload.call_count == int(durable)
     assert tx.subentry.data == document["agent"]["config"]
 
 

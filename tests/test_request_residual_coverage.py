@@ -89,7 +89,7 @@ def test_provider_snapshot_covers_token_migration_reasoning_and_chat_paths(
     )
     monkeypatch.setattr(request, "validate_reasoning_effort", lambda *_args: "high")
     monkeypatch.setattr(request, "sampling_value_is_configured", lambda *_args: False)
-    monkeypatch.setattr(request, "build_web_search_tool", lambda *_args: None)
+    monkeypatch.setattr(request, "build_web_search_tool", lambda *_args, **_kwargs: None)
 
     snapshot = request.build_provider_request_snapshot(
         {CONF_MAX_TOKENS: 123}, {}, tools_required=False
@@ -127,7 +127,7 @@ def test_provider_snapshot_ignores_stale_effort_for_non_reasoning_model(
     )
     monkeypatch.setattr(request, "normalize_output_token_limit", lambda *_args: None)
     monkeypatch.setattr(request, "sampling_value_is_configured", lambda *_args: False)
-    monkeypatch.setattr(request, "build_web_search_tool", lambda *_args: None)
+    monkeypatch.setattr(request, "build_web_search_tool", lambda *_args, **_kwargs: None)
 
     snapshot = request.build_provider_request_snapshot(
         {CONF_REASONING_EFFORT: "high"}, {}, tools_required=False

@@ -25,6 +25,24 @@ from custom_components.extended_openai_conversation_responses.functions.sqlite i
         ("  {{ value }}  ", {"value": "padded"}, "  padded  "),
         ("{{ value }}", {"value": "  padded  "}, "  padded  "),
         ("{{ value }}", {"value": "None"}, "None"),
+        (
+            "\r\nFirst: {{ value }}\nSecond\r\n",
+            {"value": "a\nb\r\nc"},
+            "\r\nFirst: a\nb\r\nc\nSecond\r\n",
+        ),
+        (
+            "{% raw %}{{ verbatim }}\r\n{% endraw %}"
+            "{% for i in range(2) -%}\r\n{{ value }}\r\n{% endfor %}\n",
+            {"value": "word"},
+            "{{ verbatim }}\r\nword\r\nword\r\n\n",
+        ),
+        (
+            "Header\r\n{# comment\n continues #}\r\n"
+            "{% macro row(x) -%}\n  {{ x }}\r\n{%- endmacro %}\n"
+            "Markup {{ row(value) }}\r\n",
+            {"value": "a\nb"},
+            "Header\r\n\r\n\nMarkup a\nb\r\n",
+        ),
     ],
 )
 @pytest.mark.parametrize("hydrate", [False, True])

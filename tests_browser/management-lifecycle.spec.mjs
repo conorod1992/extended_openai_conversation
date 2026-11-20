@@ -43,26 +43,28 @@ test(`saved sampling booleans remain visible until explicitly repaired (${suppor
   await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(1);
   expect(await page.evaluate(() => browserHarness.panel._draft.top_p)).toBe(false);
   expect(await page.evaluate(() => window.samplingSubmissions[0].config)).toEqual({temperature:0.25});
-  for (const [index, value] of ["typo", ""].entries()) {
-    await topP.fill(value);
-    if (index === 0) {
-      await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
-      await panel.evaluate(host => host._navigate("assistant", "model-responses"));
-      await expect(topP).toHaveAttribute("type", "text");
-      await expect(topP).toBeEnabled();
-      await expect(topP).toHaveValue(value);
-    }
-    await panel.locator("#save-config").click();
-    await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(index + 2);
-    expect(await page.evaluate((i) => window.samplingSubmissions[i].config, index + 1)).toEqual({temperature:0.25, top_p:value});
-    await expect(topP).toHaveValue(value);
-    await expect(panel.locator('[data-error="top_p"]')).toContainText("must be a int or float");
-    await expect(panel.locator("#save-config")).toBeEnabled();
-  }
+  await topP.fill("typo");
+  await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
+  await panel.evaluate(host => host._navigate("assistant", "model-responses"));
+  await expect(topP).toHaveAttribute("type", "text");
+  await expect(topP).toBeEnabled();
+  await expect(topP).toHaveValue("typo");
+  await panel.locator("#save-config").click();
+  await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(2);
+  expect(await page.evaluate(() => window.samplingSubmissions[1].config)).toEqual({temperature:0.25, top_p:"typo"});
+  await expect(topP).toHaveValue("typo");
+  await expect(panel.locator('[data-error="top_p"]')).toContainText("must be a int or float");
+
+  await topP.fill("");
+  await panel.locator("#save-config").click();
+  await expect(panel.locator('[data-error="top_p"]')).toHaveText("Enter a number.");
+  await expect(topP).toBeFocused();
+  expect(await page.evaluate(() => window.samplingSubmissions.length)).toBe(2);
+  await expect(panel.locator("#save-config")).toBeEnabled();
   await topP.fill("0.75");
   await panel.locator("#save-config").click();
-  await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(4);
-  expect(await page.evaluate(() => window.samplingSubmissions[3].config)).toEqual({temperature:0.25, top_p:0.75});
+  await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(3);
+  expect(await page.evaluate(() => window.samplingSubmissions[2].config)).toEqual({temperature:0.25, top_p:0.75});
   await expect(panel.locator("#save-config")).toHaveCount(0);
   expect(await page.evaluate(() => browserHarness.getState().configuration.config.top_p)).toBe(0.75);
   await expectHarnessClean(page, errors);

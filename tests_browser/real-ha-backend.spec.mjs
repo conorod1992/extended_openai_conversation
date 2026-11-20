@@ -71,6 +71,42 @@ test("shipped frontend keeps hostile stored text literal across mutation and fre
   await assertSafe("capabilities/request-rules");
   await rule.locator(".rule-delete").click();
   await acceptConfirmation(panel);
+
+  await page.goto(url("data-memory/conversations"));
+  panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#archive-query").fill("café magnetometer");
+  await panel.locator("#archive-search").click();
+  const match = panel.locator(".list-card").filter({hasText:"Café magnetometer"});
+  await expect(match.locator(".search-excerpt")).toContainText("Café magnetometer");
+  const body = panel.locator("#session-body");
+  const pager = body.locator(".eoc-turn-pager");
+  const fragment = body.locator(".message.assistant p");
+  const originalMatch = "Cafe\u0301 \t magnetometer <report>";
+  const getOffsets = () => page.evaluate(() => browserHarness.calls
+    .filter(call => call.section === "conversations" && call.action === "get")
+    .map(call => call.text_offset));
+  const originalOffset = "Describe the report".length + 6 * 4100 - Math.floor(500 / 3);
+  await match.getByRole("button", {name:"View", exact:true}).click();
+  await expect(fragment).toContainText("magnetometer <report>");
+  expect((await fragment.textContent()).endsWith(originalMatch)).toBe(true);
+  expect(await getOffsets()).toEqual([originalOffset]);
+  await expect(pager.locator("small")).toHaveText("1–1 of 1 turns · Starts mid-turn");
+  await pager.getByRole("button", {name:"Previous turns", exact:true}).click();
+  await expect(pager.locator("small")).toContainText("Turn continues");
+  await expect(fragment).not.toContainText("magnetometer");
+  await pager.getByRole("button", {name:"Next turns", exact:true}).click();
+  await expect(fragment).toContainText("magnetometer");
+  await page.keyboard.press("Escape");
+  await expect(panel.locator("#session-dialog")).toHaveJSProperty("open", false);
+  await match.locator(".open-session").press("Enter");
+  await expect(fragment).toContainText("magnetometer");
+  expect(await getOffsets()).toEqual([originalOffset, originalOffset, originalOffset]);
+  await pager.getByRole("button", {name:"Start of conversation", exact:true}).click();
+  await expect(body.locator(".message.user")).toContainText("Describe the report");
+  await expect(fragment).not.toContainText("magnetometer");
+  await expect(pager.locator("small")).toHaveText("1–1 of 1 turns · Turn continues");
+  expect(await getOffsets()).toEqual([originalOffset, originalOffset, originalOffset, 0]);
+  await assertSafe("data-memory/conversations");
   await expectHarnessClean(page, pageErrors);
 });
 

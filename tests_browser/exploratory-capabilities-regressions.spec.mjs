@@ -29,7 +29,9 @@ test("Knowledge reconciles disabled, source added, enabled and source availabili
   await panel.locator(".source-edit-button").click();
   await panel.locator("#knowledge-source-enabled").uncheck();
   await panel.locator("#knowledge-save").click();
-  await expect(status).toHaveText("Needs sources");
+  await expect(status).toHaveText("No enabled sources");
+  await expect(panel.locator("[data-source-count]")).toHaveText("1 source");
+  await expect(panel.locator("#knowledge-status")).toContainText("Enable a source");
   await panel.locator(".source-edit-button").click();
   await panel.locator("#knowledge-source-enabled").check();
   await panel.locator("#knowledge-save").click();

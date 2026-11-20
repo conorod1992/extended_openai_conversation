@@ -52,8 +52,8 @@ const panel = {
   },
 };
 const markup = module.renderConversations(panel);
-links = [...markup.matchAll(/data-start-turn="(\d+)" data-id="([^"]+)"/g)]
-  .map(match => ({dataset: {startTurn: match[1], id: match[2]}}));
+links = [...markup.matchAll(/data-start-turn="(\d+)" data-text-offset="(\d+)" data-id="([^"]+)"/g)]
+  .map(match => ({dataset: {startTurn: match[1], textOffset: match[2], id: match[3]}}));
 module.bindConversationActions(panel);
 const bodies = [];
 for (const link of links) { await link.activate(); bodies.push(body.html); }
@@ -158,6 +158,45 @@ async def test_search_card_and_view_open_matching_size_limited_turn(
             "text_offset": page["next_text_offset"],
         }
     assert len(recovered) == len(set(recovered)) == count
+
+
+@pytest.mark.parametrize("speaker", ["user", "assistant"])
+async def test_search_fragment_cursor_uses_original_code_points(speaker):
+    """Normalization and JSON escaping must stay separate from text offsets."""
+    archive = ConversationArchive(FakeArchiveStorage(), "agent")
+    await archive.async_initialize()
+    scope = user_scope("alice", source="authenticated_user")
+    session = await archive.async_begin_session(
+        "browser", scope, "conversation",
+        archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30,
+    )
+    assert session is not None
+    prefix = '🙂e\u0301\t"\\' * 4100
+    match = "Cafe\u0301 \t magnetometer"
+    matched_text = prefix + match
+    user_text, assistant_text = (
+        (matched_text, "Report complete")
+        if speaker == "user"
+        else ("Describe the report", matched_text)
+    )
+    await archive.async_record_turn(
+        session.session_id, run_id=None, user_text=user_text,
+        assistant_text=assistant_text, successful=True,
+    )
+    result = (await archive_search_page(archive, scope.scope_id, "café magnetometer"))[
+        "results"
+    ][0]
+    assert "Café magnetometer" in result["excerpt"]
+    match_start = len(prefix) + (len(user_text) if speaker == "assistant" else 0)
+    assert result["text_offset"] == match_start - 500 // 3
+    first = await archive_get_page(archive, scope.scope_id, session.session_id)
+    assert first["has_more"]
+    assert match not in first["turns"][0][f"{speaker}_text"]
+    found = await archive_get_page(
+        archive, scope.scope_id, result["session_id"], start_turn=result["turn_index"],
+        text_offset=result["text_offset"],
+    )
+    assert found["turns"][0][f"{speaker}_text"] == prefix[-(500 // 3):] + match
 
 
 @pytest.mark.parametrize("count", [1, 2, 27, 85])

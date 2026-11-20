@@ -191,7 +191,7 @@ async def test_download_cancellation_settles_writer_before_staging_cleanup(
                 raise OSError("write failed")
             if failure == "executor-cancelled":
                 raise asyncio.CancelledError()
-        if function.__name__ == "_cleanup_path":
+        if function.__name__ == "close":
             assert settled.is_set(), "cleanup must not race an unfinished native writer"
         return function(*args)
 
@@ -210,7 +210,7 @@ async def test_download_cancellation_settles_writer_before_staging_cleanup(
     )
     with pytest.raises(expected):
         await task
-    assert not (tmp_path / "staging" / "demo.download-fixed").exists()
+    assert not list(manager.staging_dir.iterdir())
     manager.async_publish_staged_skill.assert_not_awaited()
 
 
@@ -239,7 +239,12 @@ async def test_skill_download_skips_non_file_directory_entries(
             "file": _Response(200, body=b"# Demo\n"),
         },
     )
+    async def publish(_name, staged, *, download):
+        assert not (staged / "link").exists()
+        assert download.record.exists()
+
+    manager.async_publish_staged_skill.side_effect = publish
     result = await handler(_call({"skill_name": "demo"}))
     assert result["downloaded_files"] == ["SKILL.md"]
-    assert not (tmp_path / "staging" / "demo.download-fixed" / "link").exists()
+    assert not list(manager.staging_dir.iterdir())
     manager.async_publish_staged_skill.assert_awaited_once()

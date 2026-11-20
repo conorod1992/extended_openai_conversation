@@ -13,7 +13,11 @@ from openai._exceptions import AuthenticationError, OpenAIError
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState, ConfigSubentry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryError,
+    ConfigEntryNotReady,
+)
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.typing import ConfigType
 
@@ -67,7 +71,6 @@ from .const import (
     CONFIG_ENTRY_VERSION,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_AI_TASK_OPTIONS,
-    DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
@@ -101,17 +104,22 @@ from .delayed_tools import async_setup_delayed_tools
 from .global_runtime import global_runtime_lock, initialize_global_runtime
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import (
+    ProviderEndpointError,
     effective_api_provider,
+    entry_api_provider,
     get_authenticated_client,
     get_model_config,
-    supports_openai_hosted_tools,
 )
 from .intercom_services import async_setup_intercom_services
 from .live_subentry_updates import is_live_subentry_update
 from .management_function_repair import async_prewarm_persisted_config_projection
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
-from .model_catalog_manager import async_setup_model_catalog
+from .model_catalog_manager import (
+    async_setup_model_catalog,
+    async_start_model_catalog_refresh,
+    async_stop_model_catalog_refresh,
+)
 from .model_lifecycle import sync_entry_model_lifecycle
 from .native_function_schema_migration import (
     migrate_legacy_stock_native_function_tools_yaml,
@@ -211,6 +219,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_setup_delayed_tools(hass)
     # Resolve any interrupted cross-store restore before conversation agents load.
     await async_recover_pending_restores(hass)
+    if hass.config_entries.async_entries(DOMAIN):
+        from .conversation_archive import async_start_archive_retention
+
+        async_start_archive_retention(hass)
     await async_setup_ha_permissions(hass)
     await async_setup_services(hass, config)
     await async_setup_intercom_services(hass)
@@ -219,7 +231,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     setup_provider_credentials_websocket(hass)
     from .transfer_staging import async_get_transfer_staging
 
-    await async_get_transfer_staging(hass)
+    try:
+        await async_get_transfer_staging(hass)
+    except OSError as err:
+        _LOGGER.warning(
+            "Unable to prepare backup staging (%s). "
+            "Backup transfers will retry when requested",
+            type(err).__name__,
+        )
     setup_backup_transfer_websocket(hass)
     # Request Debug loads lazily from Management; register its asset routes
     # before exposing the panel itself.
@@ -228,21 +247,34 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+def _wrap_provider_client(client, entry, authentication):
+    """Use the same provider instrumentation on initial setup and restore."""
+    from .helpers import is_native_openai_connection
+
+    return PerformanceOpenAIClientProxy(
+        DebugOpenAIClientProxy(client, authentication_snapshot=authentication),
+        direct_openai=is_native_openai_connection(entry.data, client=client),
+    )
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ExtendedOpenAIConfigEntry
 ) -> bool:
     """Set up Extended OpenAI Conversation (Responses) from a config entry."""
 
     from .agent_deletion import KNOWN_AGENTS, async_delete_removed_subentries
+    from .conversation_archive import async_start_archive_retention
     from .provider_errors import provider_authentication_snapshot
+    from .usage import async_retry_unused_volatile_usage
 
     initialize_global_runtime(hass)
-    authentication_snapshot = provider_authentication_snapshot(entry)
-
+    async_start_archive_retention(hass)
+    async_start_model_catalog_refresh(hass)
     # Re-enable can follow subentry deletion while the parent was unloaded.
     # Cleanup must not depend on successful provider authentication.
     await async_delete_removed_subentries(hass, entry)
 
+    authentication_snapshot = provider_authentication_snapshot(entry)
     try:
         client = await get_authenticated_client(
             hass=hass,
@@ -253,10 +285,12 @@ async def async_setup_entry(
             skip_authentication=entry.data.get(
                 CONF_SKIP_AUTHENTICATION, DEFAULT_SKIP_AUTHENTICATION
             ),
-            api_provider=entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+            api_provider=entry.data.get(CONF_API_PROVIDER),
         )
     except AuthenticationError as err:
         raise ConfigEntryAuthFailed("API credentials are invalid or expired") from err
+    except ProviderEndpointError as err:
+        raise ConfigEntryError(str(err)) from err
     except OpenAIError as err:
         from .provider_errors import log_provider_failure, provider_log_remediation
 
@@ -271,16 +305,8 @@ async def async_setup_entry(
         entry.subentries
     )
 
-    debug_client = DebugOpenAIClientProxy(
-        client, authentication_snapshot=authentication_snapshot
-    )
-    entry.runtime_data = PerformanceOpenAIClientProxy(  # type: ignore[assignment]
-        debug_client,
-        direct_openai=supports_openai_hosted_tools(
-            entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
-            entry.data.get(CONF_BASE_URL),
-        ),
-    )
+    entry.runtime_data = _wrap_provider_client(client, entry, authentication_snapshot)
+    await async_retry_unused_volatile_usage(hass, entry.entry_id)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     sync_entry_model_lifecycle(hass, entry)
@@ -451,6 +477,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def _async_remove_global_effects(hass: HomeAssistant) -> None:
     """Release integration-global effects even when private erasure must retry."""
+    from .conversation_archive import async_stop_archive_retention
     from .intercom import DATA_KEY
     from .intercom_services import SERVICE_BROADCAST
     from .quiet_hours import (
@@ -460,6 +487,8 @@ async def _async_remove_global_effects(hass: HomeAssistant) -> None:
     )
 
     hass.data[f"{DOMAIN}.removed"] = True
+    async_stop_archive_retention(hass)
+    async_stop_model_catalog_refresh(hass)
     quiet_hours = hass.data.get(DOMAIN, {}).get("quiet_hours_manager")
     try:
         if quiet_hours is not None:
@@ -493,14 +522,30 @@ def _migrate_saved_default_prompt(data: dict) -> bool:
     return True
 
 
-def _migrate_saved_service_tier(data: dict) -> bool:
-    """Repair the historical gpt-5-mini/Flex default before reads or requests.
+def _migrate_saved_service_tier(data: dict, provider: str | None = None) -> bool:
+    """Repair known historical stock or unused processing tiers.
 
     Releases through 6.7.0 persisted this pair on agent creation. The current
     catalogue rejects Flex for that model, including on configuration reads.
     Keep this compatibility repair separate from strict validation of new edits.
     """
     model = data.get("azure_model") or data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+    from .agent_config import legacy_processing_tier_was_omitted
+
+    if (
+        not data.get("azure_model")
+        and legacy_processing_tier_was_omitted(model)
+        and data.get(CONF_SERVICE_TIER) in ("auto", "flex", "priority")
+        and data[CONF_SERVICE_TIER]
+        not in get_model_config(model, provider=provider).get(
+            "service_tier_options", []
+        )
+    ):
+        data.pop(CONF_SERVICE_TIER)
+        _LOGGER.warning(
+            "Removing a legacy processing tier previously ignored for %s", model
+        )
+        return True
     if (
         model != "gpt-5-mini"
         or data.get(CONF_SERVICE_TIER) != "flex"
@@ -525,9 +570,11 @@ def _migrate_saved_native_function_schemas(data: dict) -> bool:
     return changed
 
 
-def _migrate_saved_agent_defaults(data: dict, subentry_type: str) -> bool:
+def _migrate_saved_agent_defaults(
+    data: dict, subentry_type: str, provider: str | None = None
+) -> bool:
     """Repair shared model defaults without adding conversation fields to tasks."""
-    changed = _migrate_saved_service_tier(data)
+    changed = _migrate_saved_service_tier(data, provider)
     if subentry_type == "conversation":
         changed = _migrate_saved_native_function_schemas(data) or changed
         changed = _migrate_saved_default_prompt(data) or changed
@@ -563,7 +610,10 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             source = subentry.data
             data = dict(source)
             changed = await asyncio.to_thread(
-                _migrate_saved_agent_defaults, data, subentry.subentry_type
+                _migrate_saved_agent_defaults,
+                data,
+                subentry.subentry_type,
+                entry_api_provider(entry),
             )
             # Preparation yields: preserve any newer save or agent/entry removal.
             if (
@@ -620,7 +670,10 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             source = subentry.data
             data = dict(source)
             changed = await asyncio.to_thread(
-                _migrate_saved_agent_defaults, data, subentry.subentry_type
+                _migrate_saved_agent_defaults,
+                data,
+                subentry.subentry_type,
+                entry_api_provider(entry),
             )
             # Preparation yields: preserve any newer save or agent/entry removal.
             if (

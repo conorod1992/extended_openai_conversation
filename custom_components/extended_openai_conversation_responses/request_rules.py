@@ -71,6 +71,7 @@ from .request_rule_patterns import (
     RESERVED_CAPTURE_NAMES,
     CompiledSentencePattern,
     MatchBudget,
+    PatternMatch,
     PreparedSentenceText,
     SentenceMatchLimitError,
     SentencePatternError,
@@ -79,6 +80,7 @@ from .request_rule_patterns import (
     sentence_capture_names,
     validate_match_input,
 )
+from .retrieval_text import word_character_projection
 from .script_lifecycle import async_cleanup_script, async_run_script
 from .script_payload import (
     effective_service_payload,
@@ -191,6 +193,7 @@ class RuleMatch:
     fuzzy: bool
     score: float
     slots: dict[str, str] = field(default_factory=dict)
+    slot_spans: dict[str, tuple[int, int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,12 +220,11 @@ def _match_compiled_sentence(
     compiled: CompiledPhrase,
     prepared: PreparedSentenceText,
     budget: MatchBudget,
-) -> dict[str, str] | None:
+) -> PatternMatch | None:
     """Match one compiled sentence pattern with the shared request budget."""
     if compiled.sentence_pattern is None:
         return None
-    result = compiled.sentence_pattern.match_prepared(prepared, budget)
-    return None if result is None else dict(result.captures)
+    return compiled.sentence_pattern.match_prepared(prepared, budget)
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,12 +275,19 @@ class _MatchCursor:
             if compiled.sentence_pattern is not None:
                 if self.sentence_text is None:
                     self.sentence_text = prepare_match_text(self.text)
-                slots = _match_compiled_sentence(
+                match = _match_compiled_sentence(
                     compiled, self.sentence_text, self.budget
                 )
-                if slots is not None:
+                if match is not None:
                     self.seen.add(rule["id"])
-                    return RuleMatch(rule, compiled.original, False, 100.0, slots)
+                    return RuleMatch(
+                        rule,
+                        compiled.original,
+                        False,
+                        100.0,
+                        match.captures,
+                        match.capture_spans,
+                    )
             elif _deterministic_match(
                 self._candidate(settings),
                 cast(str, compiled.normalized),
@@ -550,6 +559,7 @@ class RequestRules:
                             candidate,
                             validate_sentence_pattern=False,
                             validate_script_schema=False,
+                            allow_empty_normalized_phrases=True,
                         )
                         if validated["id"] in seen_ids:
                             _LOGGER.warning(
@@ -711,6 +721,7 @@ class RequestRules:
                     candidate,
                     validate_sentence_pattern=False,
                     validate_script_schema=False,
+                    allow_empty_normalized_phrases=True,
                 )
             )
         if len({rule["id"] for rule in rules}) != len(rules):
@@ -741,6 +752,7 @@ class RequestRules:
                     _assign_missing_result_step_ids(rule),
                     validate_sentence_pattern=False,
                     validate_script_schema=False,
+                    allow_empty_normalized_phrases=True,
                 )
                 for rule in prepared["rules"]
             ]
@@ -830,10 +842,18 @@ class RequestRules:
     def preserves_inactive_pattern(
         self, rule_id: str, value: Mapping[str, Any]
     ) -> bool:
-        """Allow disabling an unchanged retained invalid pattern, never activation."""
-        if rule_id not in self._diagnostics:
+        """Allow disabling an unchanged rule with retained invalid triggers."""
+        if value.get("enabled") is not False:
             return False
         previous = self._rules[self._index(rule_id)]
+        if rule_id not in self._diagnostics and (
+            previous["match_type"] == "sentence_pattern"
+            or all(
+                _has_trigger_word(_basic_normalize(phrase))
+                for phrase in previous["phrases"]
+            )
+        ):
+            return False
         try:
             action = _validate_action(
                 previous["action_type"],
@@ -845,7 +865,6 @@ class RequestRules:
         return (
             value.get("phrases") == previous["phrases"]
             and value.get("match_type", "equals") == previous["match_type"]
-            and value.get("enabled") is False
             and action == previous["action"]
             and all(
                 value.get(key, previous.get(key)) == previous.get(key)
@@ -884,6 +903,7 @@ class RequestRules:
                 _assign_missing_result_step_ids(raw),
                 validate_sentence_pattern=not preserve_inactive,
                 validate_script_schema=not preserve_inactive,
+                allow_empty_normalized_phrases=preserve_inactive,
             )
             self._require_group(rule)
             prospective = deepcopy(self._rules)
@@ -1028,11 +1048,18 @@ class RequestRules:
             if compiled.sentence_pattern is not None:
                 if sentence_text is None:
                     sentence_text = prepare_match_text(text)
-                slots = _match_compiled_sentence(
+                match = _match_compiled_sentence(
                     compiled, sentence_text, sentence_budget
                 )
-                if slots is not None:
-                    return RuleMatch(rule, compiled.original, False, 100.0, slots)
+                if match is not None:
+                    return RuleMatch(
+                        rule,
+                        compiled.original,
+                        False,
+                        100.0,
+                        match.captures,
+                        match.capture_spans,
+                    )
             elif _deterministic_match(
                 candidate(settings), cast(str, compiled.normalized), rule["match_type"]
             ):
@@ -1315,12 +1342,14 @@ class RequestRules:
                     )
                     continue
             else:
-                phrases = [
-                    CompiledPhrase(
-                        item, normalize_text(item, settings, self._wording_groups)
-                    )
-                    for item in rule["phrases"]
-                ]
+                phrases = []
+                for item in rule["phrases"]:
+                    normalized = normalize_text(item, settings, self._wording_groups)
+                    if _has_trigger_word(normalized):
+                        phrases.append(CompiledPhrase(item, normalized))
+                if not phrases:
+                    diagnostics[rule["id"]] = _EMPTY_NORMALIZED_PHRASE
+                    continue
 
             try:
                 _validate_action(
@@ -1514,6 +1543,19 @@ class RequestRuleRuntime:
         self.get(session_id, timeout_minutes)
         return self._requests.begin(session_id, session_id)
 
+    def peek(self, session_id: str) -> dict[str, str]:
+        """Read live overrides without refreshing their retention."""
+        entry = self._conversation_overrides.get(session_id)
+        if entry is None:
+            return {}
+        values, last_used, timeout = entry
+        if (
+            not self._requests.active(session_id)
+            and monotonic() - last_used >= timeout * 60
+        ):
+            return {}
+        return dict(values)
+
     def request_ownership(
         self, session_id: str
     ) -> tuple[ConversationRequestToken[str], ...]:
@@ -1546,10 +1588,14 @@ class RequestRuleRuntime:
         self._conversation_overrides.pop(session_id, None)
         self._requests.invalidate(session_id, ended=False)
 
-    def reset_all(self) -> None:
+    def reset_all(self, retain: frozenset[str] = frozenset()) -> None:
         """Discard overrides and end all outstanding request ownership."""
         self._requests.clear()
-        self._conversation_overrides.clear()
+        self._conversation_overrides = {
+            key: override
+            for key, override in self._conversation_overrides.items()
+            if key in retain
+        }
 
     def reset_continuity(self, continuity_key: str) -> None:
         """Invalidate every conversation generation owned by an ended continuity."""
@@ -1687,6 +1733,7 @@ def validate_rule(
     *,
     validate_sentence_pattern: bool = True,
     validate_script_schema: bool = True,
+    allow_empty_normalized_phrases: bool = False,
 ) -> dict[str, Any]:
     """Validate and normalize the persisted rule contract."""
     if not isinstance(value, Mapping):
@@ -1752,6 +1799,10 @@ def validate_rule(
         slot_names = []
         if any(SLOT_REFERENCE.search(phrase) for phrase in phrases):
             raise ValueError("variable values require Sentence pattern matching")
+        if not allow_empty_normalized_phrases and any(
+            not _has_trigger_word(_basic_normalize(phrase)) for phrase in phrases
+        ):
+            raise ValueError(_EMPTY_NORMALIZED_PHRASE)
 
     action_type = value.get("action_type", "local_action")
     if action_type not in ACTION_TYPES:
@@ -3287,13 +3338,26 @@ def validate_rule_model_request(
     from .model_routing import routed_model_override
 
     model = action.get("model")
-    if isinstance(model, str) and SLOT_REFERENCE.search(model):
-        return  # A captured model is validated once resolved, before storing state.
     underlying_model = action.get("azure_model")
     if isinstance(underlying_model, str) and SLOT_REFERENCE.search(underlying_model):
         return  # The complete deployment/binding pair is checked after capture resolution.
+    if isinstance(model, str) and SLOT_REFERENCE.search(model):
+        # Previously saved routes remain repairable and can always be disabled.
+        if not (
+            underlying_model
+            and check_captured_effort_support
+            and rule.get("enabled", True)
+        ):
+            return
+        # A fixed Azure binding already supplies the capabilities. The
+        # captured deployment name can be checked when the rule runs.
+        model = None
     values = routed_model_override(options, model, underlying_model, entry_data)
     effort = action.get("reasoning_effort")
+    if effort and not model and not underlying_model:
+        # Effort syntax has already been validated. A conversation override
+        # can supply a different model, so validate the pair at execution.
+        return
     candidate = {
         **options,
         **values,
@@ -3405,6 +3469,9 @@ def rule_provider_input(match: RuleMatch, original_text: str) -> str | None:
         raise HomeAssistantError("Captured AI input is unavailable for this request")
     # Sentence-ending punctuation is optional matcher syntax, so the capture
     # omits it. Keep it in the provider text when the capture ends the request.
+    span = match.slot_spans.get(capture)
+    if span is None:
+        return value
     tail = original_text.rstrip()
     end = len(tail)
     while end and all(
@@ -3413,7 +3480,7 @@ def rule_provider_input(match: RuleMatch, original_text: str) -> str | None:
         end -= 1
         while end and tail[end - 1].isspace():
             end -= 1
-    if end < len(tail) and prepare_match_text(tail[:end]).display.endswith(value):
+    if end < len(tail) and span[1] == len(prepare_match_text(tail[:end]).display):
         return value + original_text[end:]
     return value
 
@@ -3908,10 +3975,9 @@ async def _async_evaluate_matched_rule(
         else None
     )
     prior = dict(prior_request_override or {})
+    retained_before = runtime.peek(session_id)
     conversation_override = (
-        {}
-        if _REQUEST_RESET_SENTINEL in prior
-        else runtime.get(session_id, timeout_minutes)
+        {} if _REQUEST_RESET_SENTINEL in prior else dict(retained_before)
     )
     conversation_override.update(prior)
     selected_model = (
@@ -3976,17 +4042,26 @@ async def _async_evaluate_matched_rule(
     ):
         # A request reset/override can mask an incompatible retained sibling.
         # Validate what the next turn will inherit before mutating runtime state.
-        retained = {**runtime.get(session_id, timeout_minutes), **override}
-        if request_options is not None:
-            validate_routed_request_options(
-                {**request_options, **retained}, entry_data or {}
-            )
-        elif retained.get(CONF_REASONING_EFFORT):
+        defaults = request_options or {CONF_CHAT_MODEL: configured_model}
+        retained_override = routed_model_override(
+            defaults, model, underlying_model, entry_data or {}, retained_before
+        )
+        if effort:
+            retained_override[CONF_REASONING_EFFORT] = effort
+        retained = {**retained_before, **retained_override}
+        next_turn = {**defaults, **retained}
+        if retained.get(CONF_REASONING_EFFORT):
             _validate_effective_reasoning(
-                retained.get(CONF_CHAT_MODEL, configured_model),
+                capability_model_identity(next_turn, entry_data or {}),
                 retained[CONF_REASONING_EFFORT],
+                provider=effective_api_provider(
+                    (entry_data or {}).get("api_provider"),
+                    (entry_data or {}).get("base_url"),
+                ),
             )
-        runtime.set(session_id, override, timeout_minutes)
+        if request_options is not None:
+            validate_routed_request_options(next_turn, entry_data or {})
+        runtime.set(session_id, retained_override, timeout_minutes)
         request_override = None
     else:
         request_override = override
@@ -4006,20 +4081,33 @@ async def _async_evaluate_matched_rule(
     )
 
 
-# Keep signed numbers and decimal fractions together for whole-token matching.
+# Keep signed numbers and decimal fractions together, including attached units.
 # A hyphen after a word character is still a separator.
 _TEXT_PUNCTUATION = re.compile(
-    r"(?<!\w)([\u2212-]?(?:\d+\.\d+|\.\d+)|[\u2212-]\d+)(?!\w)|[^\w\s']"
+    r"(?<!\w)([\u2212-]?(?:\d+\.\d+|\.\d+)|[\u2212-]\d+)|[^\w\s']"
+)
+_EMPTY_NORMALIZED_PHRASE = (
+    "Enter a trigger with words or numbers, or use Sentence pattern matching "
+    "for literal symbols."
 )
 
 
+def _has_trigger_word(normalized: str) -> bool:
+    """Require a letter or number in a non-literal trigger."""
+    return any(char.isalnum() for char in normalized)
+
+
 def _basic_normalize(text: str) -> str:
-    """Normalize punctuation and spacing while preserving numeric values."""
+    """Normalize punctuation and spacing while preserving words and numbers."""
     value = unicodedata.normalize("NFKC", str(text)).casefold().replace("\u2019", "'")
-    value = _TEXT_PUNCTUATION.sub(
-        lambda match: match[1].replace("\u2212", "-") if match[1] else " ", value
-    )
-    return " ".join(value.split())
+    parts = []
+    start = 0
+    for match in _TEXT_PUNCTUATION.finditer(word_character_projection(value)):
+        parts.append(value[start : match.start()])
+        parts.append(match[1].replace("\u2212", "-") if match[1] else " ")
+        start = match.end()
+    parts.append(value[start:])
+    return " ".join("".join(parts).split())
 
 
 @lru_cache(maxsize=16)

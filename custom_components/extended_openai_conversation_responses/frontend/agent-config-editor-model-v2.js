@@ -1,7 +1,7 @@
 import {bindConfigurationInputs} from "./configuration-inputs.js";
 import {applyTargetedConfigDirty} from "./management-state-safety.js";
 import {bindConfiguration as bindBaseConfiguration} from "./agent-config-editor-base.js";
-import {lookupModelData} from "./model-catalog.js";
+import {capabilityModelForPanel, lookupModelData, modelProviderForPanel} from "./model-catalog.js";
 import {refreshApiModePresentation, refreshReasoningEffortPresentation} from "./agent-config-model-presentation.js";
 
 function currentConfig(panel) {
@@ -10,7 +10,8 @@ function currentConfig(panel) {
 
 function currentCatalogData(panel, model) {
   const data = panel?._modelCatalogData;
-  return data?.requested_model === String(model || "") ? data : null;
+  return data?.requested_model === model
+    && (!data.requested_provider || data.requested_provider === modelProviderForPanel(panel)) ? data : null;
 }
 
 const protectedModelElement = (element) => element?.matches?.("input,textarea,select,button,a[href],summary,[tabindex],[contenteditable='true']");
@@ -70,7 +71,7 @@ function deferModelRender(panel, isCurrent) {
 
 async function ensureCatalogData(panel) {
   const config = currentConfig(panel);
-  const model = String(config.azure_model || config.chat_model || "");
+  const model = capabilityModelForPanel(panel, config);
   if (currentCatalogData(panel, model)) { refreshApiModePresentation(panel); return; }
   const searchTarget = panel._pendingSettingFocus;
   const agent = panel._agentId;
@@ -78,7 +79,7 @@ async function ensureCatalogData(panel) {
   const loadToken = panel._loadToken;
   const current = () => panel._agentId === agent && panel._viewKey?.() === view
     && panel._loadToken === loadToken
-    && String(currentConfig(panel).azure_model || currentConfig(panel).chat_model || "") === model;
+    && capabilityModelForPanel(panel, currentConfig(panel)) === model;
   try {
     await lookupModelData(panel, model, "lookup", current);
     if (!current()) return;
@@ -106,11 +107,11 @@ function applyModelDefaults(panel, data) {
 
 function createModelIntent(panel, field, model) {
   const agent = panel._agentId, entry = panel._selectedAgent?.()?.entry_id, user = panel.hass?.user?.id;
-  const capabilityModel = String(panel._draft.azure_model || panel._draft.chat_model || "");
+  const capabilityModel = capabilityModelForPanel(panel, panel._draft);
   const owns = target => target._agentId === agent && target._selectedAgent?.()?.entry_id === entry && target.hass?.user?.id === user;
-  const matchesModel = config => config?.[field] === model && String(config?.azure_model || config?.chat_model || "") === capabilityModel;
+  const matchesModel = config => config?.[field] === model && capabilityModelForPanel(panel, config) === capabilityModel;
   const sameModel = (left, right) => left?.chat_model === right?.chat_model
-    && String(left?.azure_model || left?.chat_model || "") === String(right?.azure_model || right?.chat_model || "");
+    && capabilityModelForPanel(panel, left) === capabilityModelForPanel(panel, right);
   let derived;
   let acceptedModel;
   const intent = {
@@ -142,7 +143,7 @@ function createModelIntent(panel, field, model) {
       }
       // Adopt reasoning only for the model that the normal read merge will
       // actually retain, including local Azure overrides and pending writes.
-      if (String(prospective.azure_model || prospective.chat_model || "") !== String(savedConfig.azure_model || savedConfig.chat_model || "")) return false;
+      if (capabilityModelForPanel(target, prospective) !== capabilityModelForPanel(target, savedConfig)) return false;
       if (Object.hasOwn(savedConfig, "reasoning_effort")) current.reasoning_effort = savedConfig.reasoning_effort;
       else delete current.reasoning_effort;
       derived = null;
@@ -200,7 +201,7 @@ function createModelIntent(panel, field, model) {
 
 function ownModelPreparation(panel, field, model, token, preserveReasoning, intent) {
   const agent = panel._agentId, entry = panel._selectedAgent?.()?.entry_id, user = panel.hass?.user?.id;
-  const capabilityModel = String(panel._draft.azure_model || panel._draft.chat_model || "");
+  const capabilityModel = capabilityModelForPanel(panel, panel._draft);
   const owns = target => target._agentId === agent && target._selectedAgent?.()?.entry_id === entry && target.hass?.user?.id === user;
   const preparation = {
     draft:panel._draft, reasoningRevision:panel._eocReasoningChoiceRevision || 0,
@@ -208,14 +209,14 @@ function ownModelPreparation(panel, field, model, token, preserveReasoning, inte
     intentCurrent:() => owns(panel)
       && panel._eocModelChangeToken === token && panel._eocModelIntent === intent && panel._draft === preparation.draft
       && panel._draft?.[field] === model
-      && String(panel._draft?.azure_model || panel._draft?.chat_model || "") === capabilityModel,
+      && capabilityModelForPanel(panel, panel._draft) === capabilityModel,
     current:() => panel.isConnected !== false && preparation.intentCurrent(),
     rebindDraft(previous, next, {savedConfig} = {}) {
       if (panel._eocPendingModelPreparation === preparation && preparation.intentCurrent() && preparation.draft === previous && next?.[field] === model
-          && String(next.azure_model || next.chat_model || "") === capabilityModel) {
+          && capabilityModelForPanel(panel, next) === capabilityModel) {
         if (savedConfig && Object.hasOwn(savedConfig, "chat_model") && Object.hasOwn(savedConfig, field)
             && savedConfig[field] === model
-            && String(savedConfig.azure_model || savedConfig.chat_model || "") === capabilityModel) {
+            && capabilityModelForPanel(panel, savedConfig) === capabilityModel) {
           // An authoritative read already contains this model choice. Its
           // accepted settings must not be rewritten by a delayed default.
           panel._eocPendingModelPreparation = null;
@@ -228,7 +229,7 @@ function ownModelPreparation(panel, field, model, token, preserveReasoning, inte
     transferTo(destination) {
       if (panel._eocPendingModelPreparation !== preparation || !preparation.intentCurrent() || !owns(destination) || destination.isConnected === false
           || destination._draft?.[field] !== model
-          || String(destination._draft?.azure_model || destination._draft?.chat_model || "") !== capabilityModel
+          || capabilityModelForPanel(destination, destination._draft) !== capabilityModel
           || (destination !== panel && destination._eocPendingModelPreparation)) return false;
       const keepReasoning = preserveReasoning || (panel._eocReasoningChoiceRevision || 0) !== preparation.reasoningRevision;
       if (intent.transferTo && !intent.transferTo(panel, destination)) return false;
@@ -272,7 +273,13 @@ export function bindConfiguration(panel) {
   }
 
   bindConfigurationInputs(panel, {
-    modelChanged: (control) => changeConfigurationModel(panel, control),
+    modelChanged: (control) => {
+      // With an explicit Azure binding, changing the deployment name leaves
+      // capabilities and any preparation for the underlying model in place.
+      const azure = modelProviderForPanel(panel) === "azure";
+      if (control.dataset.config === "chat_model" ? azure && panel._draft.azure_model : !azure) return;
+      return changeConfigurationModel(panel, control);
+    },
     reasoningChanged: () => {
       panel._configRestoreFocus = '[data-config="reasoning_effort"]';
       panel._render();
@@ -297,7 +304,7 @@ export async function changeConfigurationModel(panel, control, {preserveReasonin
   const preparation = ownModelPreparation(panel, field, model, token, preserveReasoning, panel._eocModelIntent);
   const current = preparation.current;
   try {
-    const data = await lookupModelData(panel, String(draft.azure_model || draft.chat_model || ""), "lookup", current);
+    const data = await lookupModelData(panel, capabilityModelForPanel(panel, draft), "lookup", current);
     if (!current()) return;
     // A later explicit effort choice (including a reset) belongs to the user,
     // even when navigation initiated another lookup for this same model.

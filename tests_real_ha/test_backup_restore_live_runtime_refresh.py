@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 import json
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses.private_backup import encode_document
-from custom_components.extended_openai_conversation_responses import backup
+from custom_components.extended_openai_conversation_responses import (
+    backup,
+    management_ui,
+    transfer,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     CONF_API_MODE,
+    CONF_ARCHIVE_ENABLED,
+    CONF_ARCHIVE_RETENTION_DAYS,
     CONF_CHAT_MODEL,
     CONF_CONVERSATION_CONTINUITY,
     CONF_KNOWLEDGE_ENABLED,
@@ -22,17 +30,26 @@ from custom_components.extended_openai_conversation_responses.const import (
     MEMORY_MODE_MANUAL,
     TEMPORARY_MEMORY_BALANCED,
 )
+from custom_components.extended_openai_conversation_responses.conversation_archive import (
+    async_get_archive,
+)
 from custom_components.extended_openai_conversation_responses.knowledge import (
     async_get_knowledge,
 )
 from custom_components.extended_openai_conversation_responses.memory import async_get_memory
+from custom_components.extended_openai_conversation_responses.scope import user_scope
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     async_get_temporary_memory,
 )
+from custom_components.extended_openai_conversation_responses.usage import (
+    async_get_durable_usage,
+)
+from custom_components.extended_openai_conversation_responses import usage as usage_module
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockUser
+from tests.test_usage import _coverage_request, _coverage_run
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_knowledge_provider_wire_e2e import (
     _chat_sse_text,
@@ -49,6 +66,198 @@ _CURRENT_TEMPORARY = "Current temporary marker is stale-copper."
 _TARGET_KNOWLEDGE = "restored-orbit-cobalt"
 _CURRENT_KNOWLEDGE = "stale-orbit-amber"
 _SEARCH_CALL_ID = "call-restored-knowledge-search"
+
+
+@pytest.mark.parametrize(
+    "include_config,include_archive", [(True, False), (True, True), (False, True)]
+)
+async def test_shorter_archive_retention_requires_selecting_the_archive(
+    hass, include_config, include_archive
+):
+    entry = _make_entry(
+        "Archive retention restore",
+        include_ai_task=False,
+        conversation_options={
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_ARCHIVE_RETENTION_DAYS: 90 if include_config else 7,
+        },
+    )
+    await _setup_entry(hass, entry)
+    subentry = next(iter(entry.subentries.values()))
+    archive = await async_get_archive(hass, entry.entry_id, subentry.subentry_id)
+    session = await archive.async_begin_session(
+        "session",
+        user_scope(_USER_ID, source="authenticated_user"),
+        "chat",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    turn = await archive.async_record_turn(
+        session.session_id,
+        run_id=None,
+        user_text="Previous transcript",
+        assistant_text="Archived reply",
+        successful=True,
+    )
+    timestamp = (dt_util.utcnow() - timedelta(days=20)).isoformat()
+    await archive.async_replace_backup(
+        [
+            replace(
+                session,
+                started_at=timestamp,
+                last_message_at=timestamp,
+                last_activity_at=timestamp,
+                turn_count=1,
+                title="Previous transcript",
+            )
+        ],
+        [replace(turn, timestamp=timestamp)],
+    )
+    snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    snapshot["agent"]["config"][CONF_ARCHIVE_RETENTION_DAYS] = (
+        7 if include_config else 90
+    )
+    document = backup.finalize_backup_snapshot(snapshot)["document"]
+    sections = [transfer.SECTION_CONFIGURATION] if include_config else []
+    if include_archive:
+        sections.append(transfer.SECTION_CONVERSATION_ARCHIVE)
+    result = await transfer.async_restore_transfer(
+        hass, entry, subentry, document, sections=sections
+    )
+    assert result["status"] == "restored"
+    saved = entry.subentries[subentry.subentry_id].data
+    assert saved[CONF_ARCHIVE_RETENTION_DAYS] == (7 if include_archive else 90)
+    archive = await async_get_archive(hass, entry.entry_id, subentry.subentry_id)
+    assert len((await archive.async_backup_data())["turns"]) == (
+        0 if include_archive else 1
+    )
+    results = await archive.async_search(_OWNER_SCOPE, "Previous transcript")
+    assert bool(results["results"]) is not include_archive
+
+
+@pytest.mark.parametrize("selection", ["usage", "both", "configuration", "full_backup"])
+async def test_usage_restore_projects_retention_and_keeps_aggregate_totals(
+    hass, selection, monkeypatch
+):
+    request_days, run_days = "usage_request_retention_days", "usage_run_retention_days"
+    entry = _make_entry(
+        "Usage retention restore",
+        include_ai_task=False,
+        conversation_options={request_days: 0, run_days: 30},
+    )
+    await _setup_entry(hass, entry)
+    subentry = next(iter(entry.subentries.values()))
+    snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    original = snapshot["usage"]
+    now = dt_util.utcnow().isoformat()
+    original["requests"] = [_coverage_request(timestamp=now)]
+    original["runs"] = [_coverage_run(started_at=now, completed_at=now)]
+    original["totals"]["api_request_count"] = 1
+    snapshot["agent"]["config"].update({request_days: 30, run_days: 0})
+    usage = await async_get_durable_usage(hass, entry.entry_id, subentry.subentry_id)
+    async with usage.async_run():
+        await usage.async_record_request(successful=True, usage=None)
+    before = await usage.async_backup_data()
+    original["daily"] = before["daily"]
+    document = backup.finalize_backup_snapshot(snapshot)["document"]
+    if selection == "full_backup":
+        prune = AsyncMock()
+        monkeypatch.setattr(usage_module, "async_apply_usage_retention", prune)
+        result = await management_ui.async_management_command(
+            hass,
+            _USER_ID,
+            True,
+            {
+                "entry_id": entry.entry_id,
+                "subentry_id": subentry.subentry_id,
+                "section": "backup",
+                "action": "restore",
+                "document": document,
+                "confirm": True,
+            },
+        )
+        assert result["status"] == "restored"
+        prune.assert_not_awaited()
+    else:
+        sections = []
+        if selection != "configuration":
+            sections.append(transfer.SECTION_USAGE)
+        if selection != "usage":
+            sections.append(transfer.SECTION_CONFIGURATION)
+        result = await transfer.async_restore_transfer(
+            hass, entry, subentry, document, sections=sections, confirm_retention=True
+        )
+    actual_usage = await async_get_durable_usage(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    actual = await actual_usage.async_backup_data()
+    if selection == "full_backup":
+        assert len(actual["requests"]) == 1
+        assert actual["runs"] == []
+    else:
+        projected = result["transfer"]
+        assert projected["usage_requests"] == len(actual["requests"])
+        assert projected["usage_runs"] == len(actual["runs"])
+    if selection == "usage":
+        assert projected["usage_retention"] == {
+            "expired_requests": 1,
+            "expired_runs": 0,
+        }
+    if selection == "both":
+        assert projected["usage_retention"] == {
+            "expired_requests": 0,
+            "expired_runs": 1,
+        }
+    if selection == "configuration":
+        assert projected["usage_retention"] == {
+            "expired_requests": 0,
+            "expired_runs": 1,
+        }
+    assert (
+        actual["totals"]["api_request_count"]
+        == before["totals"]["api_request_count"]
+        == 1
+    )
+    assert actual["daily"] == before["daily"]
+
+
+async def test_configuration_restore_prunes_unloaded_volatile_usage(hass, monkeypatch):
+    days = {"usage_request_retention_days": 30, "usage_run_retention_days": 30}
+    entry = _make_entry("Fallback retention restore", include_ai_task=False, conversation_options=days)
+    await _setup_entry(hass, entry)
+    subentry = next(iter(entry.subentries.values()))
+    snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    snapshot["agent"]["config"].update(dict.fromkeys(days, 0))
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+    async def unavailable(*_):
+        raise OSError("Usage storage temporarily unavailable")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(usage_module, "async_get_durable_usage", unavailable)
+        fallback = await usage_module.async_get_usage(hass, entry.entry_id, subentry.subentry_id)
+    async with fallback.async_run():
+        await fallback.async_record_request(
+            successful=True, usage=usage_module.RequestUsage(total_tokens=23)
+        )
+    runs = fallback.recent_runs()["runs"]
+    assert len(runs) == 1
+    run_id = runs[0]["run_id"]
+    assert len(fallback.requests_for_run(run_id)["requests"]) == 1
+    totals, daily = fallback.as_dict(), fallback.today_summary()
+
+    result = await transfer.async_restore_transfer(
+        hass, entry, subentry, backup.finalize_backup_snapshot(snapshot)["document"],
+        sections=[transfer.SECTION_CONFIGURATION], confirm_retention=True,
+    )
+    assert result["status"] == "restored"
+    effective = await usage_module.async_get_usage(hass, entry.entry_id, subentry.subentry_id)
+    assert effective is fallback
+    assert effective.recent_runs()["runs"] == []
+    assert effective.requests_for_run(run_id)["requests"] == []
+    assert effective.as_dict() == totals
+    assert effective.today_summary() == daily
 
 
 def _system_prompt(body: dict[str, Any]) -> str:
@@ -236,7 +445,11 @@ async def test_successful_loaded_restore_refreshes_live_subsystem_objects_and_tu
         await live_agent._knowledge.async_get(current_knowledge.source_id)
     # Compound components can legitimately match the restored source via "orbit".
     old_query_results = await live_agent._knowledge.async_search(_CURRENT_KNOWLEDGE)
-    assert all(item.source_id != current_knowledge.source_id and _CURRENT_KNOWLEDGE not in item.excerpt for item in old_query_results)
+    assert all(
+        item.source_id != current_knowledge.source_id
+        and _CURRENT_KNOWLEDGE not in item.excerpt
+        for item in old_query_results
+    )
 
     # Finally exercise the restored objects through the actual loaded conversation
     # entity. Temporary Memory must already be injected into the next provider prompt,

@@ -40,13 +40,13 @@ A successful update retries setup for an enabled entry whose previous setup fail
 
 ## Request image analysis
 
-`query_image` takes a `config_entry`, `prompt`, and an `images` array of objects with a `url` field. It calls that provider connection directly; it does not run a conversation agent's Request Rules, memory, or custom Function Tools. Set `model` explicitly: its default is `gpt-4.1-mini`, independent of the model saved on a conversation agent. The optional `api_mode` defaults to `auto`. Omit `max_tokens` to use a model-aware output budget: 300 for non-reasoning models, or up to 8192 (bounded by the model limit) for reasoning models. Explicit limits, including 300 or lower values, are respected. Supported reasoning-effort defaults come from the model catalogue for the selected provider and API. Reasoning shares the output budget with the visible answer.
+`query_image` takes a `config_entry`, `prompt`, and an `images` array of objects with a `url` field. It calls that provider connection directly; it does not run a conversation agent's Request Rules, memory, or custom Function Tools. With `model` omitted, the native OpenAI connection uses `gpt-6-luna`. Other connections retain `gpt-4.1-mini` as the fallback. Set `model` to the provider model ID or Azure deployment name when needed. The optional `api_mode` defaults to `auto`. Omit `max_tokens` to use a model-aware output budget: 300 for non-reasoning models, or up to 8192 (bounded by the model limit) for reasoning models. Explicit limits, including 300 or lower values, are respected. Supported reasoning-effort defaults come from the model catalogue for the selected provider and API. Reasoning shares the output budget with the visible answer.
 
 ```yaml
 action: extended_openai_conversation_responses.query_image
 data:
   config_entry: YOUR_CONFIG_ENTRY_ID
-  model: gpt-4.1-mini
+  model: gpt-6-luna
   prompt: "Describe this camera image."
   images:
     - url: /config/www/camera.jpg

@@ -483,6 +483,9 @@ async def test_chat_content_filter_with_refusal_preserves_refusal() -> None:
 
 async def test_responses_stream_surfaces_refusal_delta() -> None:
     """Responses refusal deltas become assistant-visible content."""
+    item = SimpleNamespace(
+        type="message", content=[SimpleNamespace(type="refusal", refusal="I can't help with that.")]
+    )
     stream = FakeStream(
         [
             _event(
@@ -501,6 +504,7 @@ async def test_responses_stream_surfaces_refusal_delta() -> None:
                 content_index=0,
                 refusal="I can't help with that.",
             ),
+            _event("response.output_item.done", output_index=0, item=item),
             _event(
                 "response.completed",
                 response=SimpleNamespace(usage=None),
@@ -518,11 +522,15 @@ async def test_responses_stream_surfaces_refusal_delta() -> None:
     assert deltas == [
         {"role": "assistant"},
         {"content": "I can't help with that."},
+        {"native": item},
     ]
 
 
 async def test_responses_refusal_done_fills_missing_delta_tail() -> None:
     """The finalized refusal fills any text not delivered as deltas."""
+    item = SimpleNamespace(
+        type="message", content=[SimpleNamespace(type="refusal", refusal="I can't help with that.")]
+    )
     stream = FakeStream(
         [
             _event(
@@ -537,6 +545,7 @@ async def test_responses_refusal_done_fills_missing_delta_tail() -> None:
                 content_index=0,
                 refusal="I can't help with that.",
             ),
+            _event("response.output_item.done", output_index=0, item=item),
             _event(
                 "response.completed",
                 response=SimpleNamespace(usage=None),
@@ -551,9 +560,11 @@ async def test_responses_refusal_done_fills_missing_delta_tail() -> None:
         )
     ]
 
-    assert [delta["content"] for delta in deltas] == [
-        "I can't",
-        " help with that.",
+    assert deltas == [
+        {"role": "assistant"},
+        {"content": "I can't"},
+        {"content": " help with that."},
+        {"native": item},
     ]
 
 
@@ -589,6 +600,9 @@ async def test_responses_premature_eof_is_error() -> None:
 
 async def test_responses_completed_terminal_is_accepted() -> None:
     """A normal completed Responses stream still succeeds."""
+    item = SimpleNamespace(
+        type="message", content=[SimpleNamespace(type="output_text", text='Done')]
+    )
     stream = FakeStream(
         [
             _event(
@@ -597,6 +611,7 @@ async def test_responses_completed_terminal_is_accepted() -> None:
                 content_index=0,
                 delta="Done",
             ),
+            _event("response.output_item.done", output_index=0, item=item),
             _event(
                 "response.completed",
                 response=SimpleNamespace(usage=None),
@@ -611,7 +626,7 @@ async def test_responses_completed_terminal_is_accepted() -> None:
         )
     ]
 
-    assert deltas == [{"content": "Done"}]
+    assert deltas == [{"role": "assistant"}, {"content": "Done"}, {"native": item}]
 
 
 async def test_responses_incomplete_terminal_is_error() -> None:

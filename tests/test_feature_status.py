@@ -120,10 +120,11 @@ def test_snapshot_enriches_from_loaded_knowledge(hass, management_agent, monkeyp
     monkeypatch.setattr(
         management_loading_performance,
         "get_loaded_knowledge",
-        lambda *_: SimpleNamespace(source_count=3, initialized=True),
+        lambda *_: SimpleNamespace(source_count=3, total_source_count=5, initialized=True),
     )
     result = management_loading_performance._agent_snapshot(hass, entry, subentry)
     assert result["knowledge_source_count"] == 3
+    assert result["knowledge_total_source_count"] == 5
     assert result["feature_status"]["memory"]["label"] == "Manual"
     assert result["feature_status"]["knowledge"]["state"] == "available"
     assert result["feature_status"]["knowledge"]["source_count"] == 3
@@ -146,16 +147,18 @@ async def test_knowledge_get_does_not_add_list_feature_status(
 
 
 @pytest.mark.parametrize(
-    ("stats", "expected_count"),
-    [({"source_count": "4"}, 4), ({"source_count": "invalid"}, 2)],
+    ("enabled_count", "total", "label"),
+    [(0, 0, "Needs sources"), (0, 2, "No enabled sources"), (1, 2, "Available")],
 )
-async def test_knowledge_list_uses_safe_source_count(
-    hass, management_agent, management_message, monkeypatch, stats, expected_count
+async def test_knowledge_list_reports_enabled_and_total_source_counts(
+    hass, management_agent, management_message, monkeypatch, enabled_count, total, label
 ):
     management_agent[1].data[CONF_KNOWLEDGE_ENABLED] = True
     library = SimpleNamespace(
-        async_list=AsyncMock(return_value=[{"id": "a"}, {"id": "b"}]),
-        stats=lambda: stats,
+        async_list=AsyncMock(return_value=[{"enabled": index < enabled_count} for index in range(total)]),
+        stats=lambda: {"knowledge_source_count": total, "knowledge_enabled_source_count": enabled_count},
+        source_count=enabled_count,
+        total_source_count=total,
     )
     monkeypatch.setattr(
         management_ui, "async_get_knowledge", AsyncMock(return_value=library)
@@ -164,6 +167,8 @@ async def test_knowledge_list_uses_safe_source_count(
     result = await management_ui.async_management_command(
         hass, "admin", True, management_message("knowledge", "list")
     )
-    assert result["feature_status"]["state"] == "available"
-    assert result["feature_status"]["source_count"] == expected_count
-    assert result["feature_status"]["available"] is True
+    assert result["feature_status"]["label"] == label
+    assert result["feature_status"]["source_count"] == enabled_count
+    assert result["feature_status"]["total_source_count"] == total
+    assert result["stats"]["knowledge_source_count"] == total
+    assert result["feature_status"]["available"] is bool(enabled_count)

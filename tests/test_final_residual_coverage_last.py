@@ -232,11 +232,15 @@ async def test_agent_test_generic_probe_failure_reports_web_search(
             agent_test.CONF_API_MODE: agent_test.API_MODE_RESPONSES,
         },
     )
-    monkeypatch.setattr(agent_test, "model_metadata", Mock(return_value={"reasoning": {"supported": False}}))
+    monkeypatch.setattr(
+        agent_test,
+        "request_model_capabilities",
+        Mock(return_value={"reasoning": {"supported": False}}),
+    )
     monkeypatch.setattr(agent_test, "model_capability_snapshot", snapshot)
     monkeypatch.setattr(agent_test, "get_api_mode", Mock(return_value=agent_test.API_MODE_RESPONSES))
     monkeypatch.setattr(agent_test, "capability_allowed", Mock(return_value=True))
-    monkeypatch.setattr(agent_test, "supports_openai_hosted_tools", Mock(return_value=True))
+    monkeypatch.setattr(agent_test, "is_native_openai_connection", Mock(return_value=True))
     monkeypatch.setattr(agent_test, "_validate_function_schema", Mock(return_value=0))
     monkeypatch.setattr(agent_test, "get_loaded_guest_mode", Mock(return_value=None))
     monkeypatch.setattr(agent_test, "configured_function_tools_from_data", Mock(return_value=[]))

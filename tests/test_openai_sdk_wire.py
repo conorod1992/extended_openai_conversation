@@ -287,7 +287,7 @@ def _client(wire: _Wire) -> AsyncOpenAI:
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(wire))
     return AsyncOpenAI(
         api_key="sk-wire-test",
-        base_url="https://openai-wire.invalid/v1",
+        base_url="https://api.openai.com/v1",
         http_client=http_client,
         max_retries=0,
     )

@@ -24,6 +24,7 @@ from homeassistant.helpers.template import Template
 
 from ..execution_outcomes import owns_read_only_execution_receipts
 from .base import Function
+from .exact_text import ExactTextTemplate, render_exact_text
 
 _LOGGER = logging.getLogger(__name__)
 _DEFAULT_MAX_ROWS = 1000
@@ -418,8 +419,6 @@ class SqliteFunction(Function):
         parameters = {}
         for name, raw in function_config.get("parameters", {}).items():
             if name in string_parameters:
-                # HA strips template output before returning it. Non-whitespace
-                # guards preserve whitespace that belongs to the string value.
                 source = (
                     raw.source
                     if isinstance(raw, _ParameterTemplate)
@@ -427,10 +426,9 @@ class SqliteFunction(Function):
                     if isinstance(raw, Template)
                     else str(raw)
                 )
-                value = Template(f".{source}.", hass)
-                rendered = value.async_render(template_arguments, parse_result=False)[
-                    1:-1
-                ]
+                rendered = render_exact_text(
+                    ExactTextTemplate(source, hass), template_arguments
+                )
             else:
                 value = raw if isinstance(raw, Template) else Template(str(raw), hass)
                 rendered = value.async_render(template_arguments)

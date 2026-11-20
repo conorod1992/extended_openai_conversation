@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {readSectionCache} from "../custom_components/extended_openai_conversation_responses/frontend/management-cache.js";
 import {bindBroadcast} from "../custom_components/extended_openai_conversation_responses/frontend/overview-broadcast.js";
 
 globalThis.window = {
@@ -112,6 +113,55 @@ const initialScopes = [{scope_id:"user:current", scope_type:"user", display_name
   assert.equal(prefetchIntentRead(panel, "usage-maintenance/retention"), null,
     "a fresh retention projection does not trigger speculative backend work");
   assert.equal(calls.length, 1);
+}
+
+// Cache reads, intent prefetch and scope loads agree at the boundary and
+// refresh a timestamp from the future after a backwards clock adjustment.
+for (const [age, fresh] of [[-1, false], [0, true], [30_000, true], [30_001, false]]) {
+  const originalNow = Date.now;
+  Date.now = () => 100_000;
+  try {
+    const panel = panelFor("assistant", "basics");
+    const view = "overview";
+    const key = panel._sectionCacheKey(view);
+    const cached = {usage: {today: {total_tokens: 5}}};
+    panel._sectionCache.set(key, cached);
+    panel._eocSectionCacheTimes.set(key, Date.now() - age);
+    const calls = [];
+    const freshScopes = [{scope_id: "user:new", is_current_user: true}];
+    panel._call = async (section, action) => {
+      calls.push([section, action]);
+      return section === "scopes" ? {scopes: freshScopes} : {};
+    };
+    assert.deepEqual(readSectionCache(panel, view), {key, result: cached, fresh}, `section age ${age}`);
+    await prefetchIntentRead(panel, view);
+
+    const scopeKey = panel._prepareScopeCatalogVisit("data-memory/memories");
+    panel._scopeCatalogCache.set(scopeKey, initialScopes);
+    panel._eocScopeCatalogTimes.set(scopeKey, Date.now() - age);
+    await panel._loadScopes(scopeKey, panel._scopeCatalogKind("data-memory/memories"));
+    assert.deepEqual(calls, fresh ? [] : [["overview", "primary"], ["scopes", "catalog"]], `cache reads at age ${age}`);
+    assert.deepEqual(panel._data.scopes, fresh ? initialScopes : freshScopes);
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
+{
+  const originalNow = Date.now;
+  let now = 100_000;
+  Date.now = () => now;
+  try {
+    const panel = panelFor("assistant", "basics");
+    let reads = 0;
+    panel._call = async () => ++reads;
+    await prefetchIntentRead(panel, "overview");
+    now--;
+    assert.equal(await consumeIntentRead(panel, "overview", "overview", "primary"), 2,
+      "navigation refreshes an intent read started before the clock moved backwards");
+  } finally {
+    Date.now = originalNow;
+  }
 }
 
 function panelFor(page = "assistant", subsection = "basics") {
@@ -1138,12 +1188,8 @@ for (const failedKind of ["usage", "memory", "knowledge", "guest_mode", "setup_h
   panel._usageHistoryWindow = "90";
   assert.notEqual(panel._sectionCacheKey(), key30);
   panel._sectionCache.set(key30, {days:{requested_window:"30"}});
-  const oldCache = new Map([["agent-a|7|2026-10-09", {days:["old"]}]]);
-  panel._eocUsageWindowCache = oldCache;
   panel._invalidateAfterMutation("agent-a", "backup", "restore");
   assert.equal(panel._sectionCache.has(key30), false);
-  assert.notEqual(panel._eocUsageWindowCache, oldCache);
-  assert.equal(panel._eocUsageWindowCache.size, 0);
 }
 
 // Audit: deleting from a full first page must not skip the final survivor.

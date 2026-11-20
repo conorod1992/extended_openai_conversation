@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from types import SimpleNamespace
 
+import pytest
+
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
+)
 from custom_components.extended_openai_conversation_responses.memory import (
     EMBEDDING_CACHE_BATCH_SIZE,
+    EmbeddingBatch,
     PersistentMemory,
 )
 
@@ -22,6 +29,9 @@ class FakeStorage:
 
     async def async_save(self, data):
         self.data = deepcopy(data)
+
+    async def async_remove(self):
+        self.data = None
 
 
 class CountingCacheStorage(FakeStorage):
@@ -47,6 +57,118 @@ async def _memory(cache=None) -> PersistentMemory:
     memory = PersistentMemory(FakeStorage(), cache or FakeStorage())
     await memory.async_initialize()
     return memory
+
+
+async def test_category_scopes_hybrid_cold_preparation_and_alias_refill():
+    memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea.", "preferences", "explicit")
+    await memory.async_add("alice", "Alice rides a bike.", "hobbies", "explicit")
+    await memory.async_add("bob", "Bob likes coffee.", "preferences", "explicit")
+    calls = []
+    backend = "before"
+
+    async def provider(texts):
+        calls.extend(texts)
+        return EmbeddingBatch([[1.0, 0.0] for _ in texts], backend)
+
+    memory.set_embedding_provider(provider, "alias")
+    assert await memory.async_prepare_hybrid(
+        ["alice"], "tea", category=" Preferences "
+    ) == [1.0, 0.0]
+    assert calls == ["preferences | Alice likes tea.", "tea"]
+
+    # Populate the unrelated category as well, then repoint the same alias.
+    assert await memory.async_prepare_hybrid(["alice"], "catch up")
+    calls.clear()
+    backend = "after"
+    assert await memory.async_prepare_hybrid(
+        ["alice"], "tea", category="preferences"
+    ) == [1.0, 0.0]
+    assert calls == ["tea", "preferences | Alice likes tea."]
+
+
+@pytest.mark.parametrize("previous_model", ["backend-a", None])
+async def test_repointed_alias_refreshes_only_readable_vectors_after_restart(
+    previous_model,
+):
+    facts, cache = FakeStorage(), FakeStorage()
+    memory = PersistentMemory(facts, cache)
+    await memory.async_initialize()
+    await memory.async_add("alice", "Alice likes tea.", "preferences", "explicit")
+    await memory.async_add("bob", "Bob likes bread.", "preferences", "explicit")
+    backend, vector = previous_model, [1.0, 0.0]
+    calls = []
+
+    async def create(*, model, input):
+        assert model == "alias"
+        calls.extend(input)
+        return SimpleNamespace(
+            model=backend,
+            data=[
+                SimpleNamespace(index=index, embedding=vector)
+                for index in range(len(input))
+            ],
+        )
+
+    entity = SimpleNamespace(
+        _client=SimpleNamespace(embeddings=SimpleNamespace(create=create)), _usage=None
+    )
+
+    async def provider(texts):
+        return await ExtendedOpenAIAgentEntity._async_create_embeddings(
+            entity, texts, model="alias"
+        )
+
+    memory.set_embedding_provider(provider, "alias", space_id="same")
+    assert await memory.async_prepare_hybrid(["alice", "bob"], "first")
+    if previous_model is None:
+        for entry in cache.data["embeddings"].values():
+            entry.pop("provider_model")
+    memory = PersistentMemory(facts, cache)
+    await memory.async_initialize()
+    memory.set_embedding_provider(provider, "alias", space_id="same")
+    backend, vector = "backend-b", [0.0, 1.0]
+    calls.clear()
+    assert await memory.async_prepare_hybrid(["alice"], "second") == vector
+    assert calls == ["second", "preferences | Alice likes tea."]
+    assert {entry.provider_model for entry in memory._embedding_cache.values()} == {
+        previous_model,
+        "backend-b",
+    }
+    saved_facts = deepcopy(facts.data)
+    await memory.async_rebuild_embedding_cache()
+    assert cache.data is None
+    assert facts.data == saved_facts
+    calls.clear()
+    assert await memory.async_prepare_hybrid(["alice"], "third") == vector
+    assert calls == ["preferences | Alice likes tea.", "third"]
+
+
+async def test_inconsistent_model_during_alias_refresh_uses_lexical_fallback(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.memory.EMBEDDING_CACHE_BATCH_SIZE",
+        1,
+    )
+    memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea.", "preferences", "explicit")
+    await memory.async_add("alice", "Alice has a bicycle.", "hobbies", "explicit")
+
+    async def initial(texts):
+        return EmbeddingBatch([[1.0, 0.0] for _ in texts], "before")
+
+    memory.set_embedding_provider(initial, "alias")
+    assert await memory.async_prepare_hybrid(["alice"], "first")
+    results = iter(["after", "after", "another-backend"])
+
+    async def changed(texts):
+        return EmbeddingBatch([[0.0, 1.0] for _ in texts], next(results))
+
+    memory.set_embedding_provider(changed, "alias")
+    assert await memory.async_prepare_hybrid(["alice"], "tea") is None
+    assert memory.hybrid_status()["status"] == "lexical_fallback"
+    assert (await memory.async_search("alice", "tea"))[0].content == "Alice likes tea."
 
 
 async def test_provider_configuration_does_not_prewarm_existing_memories() -> None:
@@ -339,3 +461,66 @@ async def test_local_cache_write_failure_does_not_backoff_remote_provider():
     assert await memory.async_prepare_hybrid(["alice"], "query") == [1.0, 0.0]
     assert provider.await_count == 3
     assert memory._embedding_cache_dirty
+
+async def test_oscillating_embedding_alias_limits_rebuilds_and_recovers(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import memory as module
+
+    memory = await _memory()
+    await memory.async_add("alice", "Alice prefers green tea.", "preferences", "explicit")
+    await memory.async_add("bob", "Bob prefers black tea.", "preferences", "explicit")
+    now, backend = 10.0, "a"
+    monkeypatch.setattr(module, "monotonic", lambda: now)
+    document_calls = []
+
+    async def provider(texts):
+        nonlocal now
+        if texts != ["tea"]:
+            document_calls.append(texts)
+            now += 45  # A rebuild can outlast the stability window.
+        vector = [1.0, 0.0] if backend == "a" else [0.0, 1.0]
+        return EmbeddingBatch([vector for _ in texts], backend)
+
+    memory.set_embedding_provider(provider, "alias")
+    assert await memory.async_prepare_hybrid(["alice"], "tea") == [1.0, 0.0]
+    backend = "b"
+    assert await memory.async_prepare_hybrid(["alice"], "tea") == [0.0, 1.0]
+    assert await memory.async_prepare_hybrid(["alice"], "tea") == [0.0, 1.0]
+    backend = "a"
+    assert await memory.async_prepare_hybrid(["alice"], "tea") is None
+    assert memory.hybrid_status()["reason"] == "embedding_model_unstable"
+    backend = "b"
+    assert await memory.async_prepare_hybrid(["alice"], "tea") is None
+    assert len(document_calls) == 2
+    assert all("Bob" not in text for batch in document_calls for text in batch)
+    now += 31
+    backend = "a"
+    assert await memory.async_prepare_hybrid(["alice"], "tea") == [1.0, 0.0]
+    assert len(document_calls) == 3
+
+
+async def test_automatic_embedding_preparation_saves_batches_and_resumes(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import memory as module
+
+    monkeypatch.setattr(module, "EMBEDDING_CACHE_BATCH_SIZE", 1)
+    cache = CountingCacheStorage()
+    memory = await _memory(cache)
+    for name in ("green", "black", "herbal"):
+        await memory.async_add("alice", f"Alice likes {name} tea.", "preferences", "explicit")
+    await memory.async_add("bob", "Bob likes coffee.", "preferences", "explicit")
+    calls = []
+
+    async def provider(texts):
+        calls.extend(texts)
+        return EmbeddingBatch([[1.0, 0.0] for _ in texts], "a")
+
+    memory.set_embedding_provider(provider, "alias")
+    assert await memory.async_prepare_hybrid(["alice"], "tea", automatic_recall=True) is None
+    assert memory.hybrid_status()["reason"] == "embedding_preparation_budget_exhausted"
+    assert len(cache.data["embeddings"]) == 2
+    assert len(calls) == 2
+    assert await memory.async_search("alice", "tea")
+    assert await memory.async_prepare_hybrid(["alice"], "tea", automatic_recall=True) == [1.0, 0.0]
+    assert len(cache.data["embeddings"]) == 3
+    assert len(calls) == 4
+    assert calls[-1] == "tea"
+    assert not any("Bob" in text for text in calls)

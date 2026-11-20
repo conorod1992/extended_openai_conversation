@@ -7,6 +7,7 @@
         "error": {
             "cannot_connect": "Failed to connect",
             "invalid_auth": "Invalid authentication",
+            "invalid_provider_endpoint": "Check the provider Base URL and Azure API version, if applicable. A custom Base URL must be an absolute HTTP or HTTPS URL.",
             "unknown": "Unexpected error",
             "provider_forbidden": "Provider rejected access for these credentials or account permissions.",
             "provider_rate_limited": "Provider rate limit reached. Try again later.",
@@ -48,30 +49,32 @@
             },
             "openai_advanced": {
                 "title": "Advanced provider settings",
-                "description": "Most OpenAI users do not need to change anything here. Leave the Base URL unchanged and Organization blank unless you know your provider requires different settings.",
+                "description": "Most OpenAI users do not need to change anything here. Leave Base URL and Organization blank to use the SDK defaults.",
                 "data": {
                     "base_url": "Base URL",
                     "organization": "Organization",
                     "skip_authentication": "Skip authentication"
                 },
                 "data_description": {
-                    "base_url": "Leave this unchanged for OpenAI. Change it only for a compatible custom endpoint.",
+          "base_url": "Leave blank to use the SDK default, including OPENAI_BASE_URL if set. Enter {openai_base_url} to select OpenAI explicitly, or enter a compatible gateway URL.",
                     "organization": "Optional. Most users should leave this blank.",
                     "skip_authentication": "Leave this off for OpenAI. Use it only for a compatible endpoint that does not require authentication."
                 }
             },
             "azure_credentials": {
                 "title": "Connect Azure OpenAI",
-                "description": "Enter the details for your existing Azure OpenAI resource. Azure uses its own endpoint and API version, so these are required here.",
+                "description": "Enter the endpoint and API key for your Azure OpenAI resource.",
                 "data": {
                     "api_key": "Azure OpenAI API key",
                     "base_url": "Azure OpenAI endpoint",
-                    "api_version": "API version"
+                    "api_version": "API version",
+                    "skip_authentication": "Skip authentication"
                 },
                 "data_description": {
                     "api_key": "The API key for your Azure OpenAI resource.",
                     "base_url": "Your Azure OpenAI resource endpoint, as shown in your Azure resource.",
-                    "api_version": "The Azure OpenAI API version configured for your resource."
+                    "api_version": "For legacy Azure endpoints, enter a dated version or omit this field if OPENAI_API_VERSION is configured. Leave blank for an endpoint ending in /openai/v1/.",
+                    "skip_authentication": "Skip the model-list check for a gateway that only exposes deployments. Requests still use the supplied API key."
                 }
             }
         }
@@ -367,6 +370,20 @@
         }
       }
     },
+    "rebuild_memory_embeddings": {
+      "name": "Rebuild memory embeddings",
+      "description": "Clear the agent's derived Hybrid Memory vectors. Searches regenerate vectors for readable memories as needed. The memories themselves are retained.",
+      "fields": {
+        "config_entry": {
+          "name": "Provider connection",
+          "description": "Connection that owns the conversation agent."
+        },
+        "agent_id": {
+          "name": "Conversation agent",
+          "description": "Agent whose derived memory vectors should be cleared."
+        }
+      }
+    },
     "memory_clear": {
       "name": "Clear memories",
       "description": "Permanently clear all memories, or one category, for the calling Home Assistant user.",
@@ -491,8 +508,8 @@
                 },
                 "model": {
                     "name": "Model",
-                    "description": "The model",
-                    "example": "gpt-4.1-mini"
+                    "description": "Omit to use gpt-6-luna on native OpenAI or gpt-4.1-mini on other connections. Azure accepts a deployment name.",
+                    "example": "gpt-6-luna"
                 },
                 "api_mode": {
                     "name": "API mode",

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     conversation as product_conversation,
+    conversation_archive as product_archive,
 )
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
@@ -16,6 +17,21 @@ from homeassistant.core import Context
 from homeassistant.helpers import entity_registry as er
 from tests_real_ha.test_cross_feature_acceptance import _agent
 from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
+
+
+@pytest.fixture
+def archive_cancellations(monkeypatch):
+    """Track actual Archive timers and cancellations from integration setup."""
+    original = product_archive.async_track_time_interval
+    cancellations = []
+
+    def track(hass, action, interval):
+        cancel = Mock(wraps=original(hass, action, interval))
+        cancellations.append(cancel)
+        return cancel
+
+    monkeypatch.setattr(product_archive, "async_track_time_interval", track)
+    return cancellations
 
 
 async def _converse(hass, entry_id):
@@ -30,17 +46,17 @@ async def _converse(hass, entry_id):
 
 
 async def test_unload_during_rename_initialization_cannot_publish_after_removal(
-    hass, monkeypatch
+    hass, monkeypatch, archive_cancellations
 ):
     agent = await _agent(hass, title="Registration ownership")
     entry = agent.entry
+    assert len(archive_cancellations) == 1
+    cancel = archive_cancellations[0]
     entered, release = asyncio.Event(), asyncio.Event()
     removing = asyncio.Event()
     original_initialize = agent._async_initialize_optional_managers
     original_remove = agent.async_will_remove_from_hass
-    original_track = product_conversation.async_track_time_interval
     original_register = product_conversation.register_legacy_agent
-    intervals: list[dict[str, Any]] = []
     publications = []
     unload = None
 
@@ -57,25 +73,12 @@ async def test_unload_during_rename_initialization_cannot_publish_after_removal(
             removing.set()
         await original_remove()
 
-    def track(hass, action, interval):
-        cancel = original_track(hass, action, interval)
-        record = {"owner": action.__self__, "cancelled": False}
-
-        def dispose():
-            cancel()
-            record["cancelled"] = True
-
-        record["dispose"] = dispose
-        intervals.append(record)
-        return dispose
-
     def register(hass, entry, owner):
         publications.append(owner)
         return original_register(hass, entry, owner)
 
     monkeypatch.setattr(agent, "_async_initialize_optional_managers", held_initialize)
     monkeypatch.setattr(agent, "async_will_remove_from_hass", observed_remove)
-    monkeypatch.setattr(product_conversation, "async_track_time_interval", track)
     monkeypatch.setattr(product_conversation, "register_legacy_agent", register)
 
     try:
@@ -88,18 +91,21 @@ async def test_unload_during_rename_initialization_cannot_publish_after_removal(
         unload = asyncio.create_task(hass.config_entries.async_unload(entry.entry_id))
         await asyncio.wait_for(removing.wait(), timeout=10)
         assert not unload.done(), "Removal released ownership before startup settled"
-        assert intervals == []
+        assert archive_cancellations == [cancel]
+        cancel.assert_not_called()
         assert publications == []
 
         release.set()
         assert await asyncio.wait_for(unload, timeout=10)
         assert entry.state is ConfigEntryState.NOT_LOADED
         assert conversation.async_get_agent(hass, entry.entry_id) is None
-        assert intervals == []
+        assert archive_cancellations == [cancel]
+        cancel.assert_not_called()
         assert publications == []
 
         await asyncio.wait_for(hass.async_block_till_done(), timeout=10)
-        assert intervals == [], "A removed registration installed a retention interval"
+        assert archive_cancellations == [cancel]
+        cancel.assert_not_called()
         assert publications == [], "A removed registration reclaimed the entry alias"
         assert conversation.async_get_agent(hass, entry.entry_id) is None
 
@@ -109,9 +115,8 @@ async def test_unload_during_rename_initialization_cannot_publish_after_removal(
         current = conversation.async_get_agent(hass, entry.entry_id)
         assert current is not None and current is not agent
         assert publications == [current]
-        assert len(intervals) == 1
-        assert intervals[0]["owner"] is current
-        assert not intervals[0]["cancelled"]
+        assert archive_cancellations == [cancel]
+        cancel.assert_not_called()
         wire = _install_wire(
             monkeypatch, current, [_chat_sse_text("The current registration is ready")]
         )
@@ -121,18 +126,18 @@ async def test_unload_during_rename_initialization_cannot_publish_after_removal(
 
         assert await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
-        assert all(record["cancelled"] for record in intervals)
         assert conversation.async_get_agent(hass, entry.entry_id) is None
+        assert archive_cancellations == [cancel]
+        cancel.assert_not_called()
+
+        await hass.config_entries.async_remove(entry.entry_id)
+        await hass.async_block_till_done()
+        cancel.assert_called_once_with()
     finally:
         release.set()
         if unload is not None:
             await asyncio.gather(unload, return_exceptions=True)
         await hass.async_block_till_done()
-        # Preserve a failed leak assertion while keeping genuine timer handles
-        # from contaminating unrelated fixture teardown or later tests.
-        for record in intervals:
-            if not record["cancelled"]:
-                record["dispose"]()
         product_conversation.unregister_legacy_agent(hass, entry, agent)
 
 
@@ -183,7 +188,7 @@ async def test_request_waiting_on_retired_readiness_cannot_enter_new_registratio
 
 @pytest.mark.parametrize("mode", ["restore", "listener"])
 async def test_owned_reload_settles_after_cancellation_and_keeps_new_registration(
-    hass, monkeypatch, mode
+    hass, monkeypatch, mode, archive_cancellations
 ):
     import custom_components.extended_openai_conversation_responses as integration
     from custom_components.extended_openai_conversation_responses.const import DOMAIN
@@ -193,6 +198,8 @@ async def test_owned_reload_settles_after_cancellation_and_keeps_new_registratio
 
     agent = await _agent(hass, title=f"Owned {mode} reload")
     entry = agent.entry
+    assert len(archive_cancellations) == 1
+    cancel = archive_cancellations[0]
     entered, release, removing = (
         asyncio.Event(),
         asyncio.Event(),
@@ -200,9 +207,7 @@ async def test_owned_reload_settles_after_cancellation_and_keeps_new_registratio
     )
     initialize = agent._async_initialize_optional_managers
     remove = agent.async_will_remove_from_hass
-    original_track = product_conversation.async_track_time_interval
     original_register = product_conversation.register_legacy_agent
-    intervals = []
     publications = []
     owned = None
     pending = hass.data.setdefault(f"{DOMAIN}.restore_reload_pending", set())
@@ -217,25 +222,12 @@ async def test_owned_reload_settles_after_cancellation_and_keeps_new_registratio
             removing.set()
         await remove()
 
-    def track(hass, action, interval):
-        cancel = original_track(hass, action, interval)
-        record = {"owner": action.__self__, "cancelled": False}
-
-        def dispose():
-            cancel()
-            record["cancelled"] = True
-
-        record["dispose"] = dispose
-        intervals.append(record)
-        return dispose
-
     def register(hass, entry, current):
         publications.append(current)
         return original_register(hass, entry, current)
 
     monkeypatch.setattr(agent, "_async_initialize_optional_managers", hold_registration)
     monkeypatch.setattr(agent, "async_will_remove_from_hass", observe_removal)
-    monkeypatch.setattr(product_conversation, "async_track_time_interval", track)
     monkeypatch.setattr(product_conversation, "register_legacy_agent", register)
 
     try:
@@ -258,7 +250,8 @@ async def test_owned_reload_settles_after_cancellation_and_keeps_new_registratio
             await checkpoint.wait()
             assert not owned.done(), "Cancellation abandoned unfinished reload work"
         assert publications == []
-        assert intervals == []
+        assert archive_cancellations == [cancel]
+        cancel.assert_not_called()
 
         release.set()
         outcome = (
@@ -276,9 +269,8 @@ async def test_owned_reload_settles_after_cancellation_and_keeps_new_registratio
         assert current._agent_ready.is_set()
         assert not current._agent_initialization_failed
         assert publications == [current]
-        assert len(intervals) == 1
-        assert intervals[0]["owner"] is current
-        assert not intervals[0]["cancelled"]
+        assert archive_cancellations == [cancel]
+        cancel.assert_not_called()
         current_state = hass.states.get(renamed)
         assert current_state is not None
         assert not current_state.attributes.get("restored", False)
@@ -291,14 +283,16 @@ async def test_owned_reload_settles_after_cancellation_and_keeps_new_registratio
         assert len(wire.requests) == 1
         assert await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
-        assert all(record["cancelled"] for record in intervals)
         assert conversation.async_get_agent(hass, entry.entry_id) is None
+        assert archive_cancellations == [cancel]
+        cancel.assert_not_called()
+
+        await hass.config_entries.async_remove(entry.entry_id)
+        await hass.async_block_till_done()
+        cancel.assert_called_once_with()
     finally:
         release.set()
         if owned is not None:
             await asyncio.gather(owned, return_exceptions=True)
         await hass.async_block_till_done()
-        for record in intervals:
-            if not record["cancelled"]:
-                record["dispose"]()
         product_conversation.unregister_legacy_agent(hass, entry, agent)

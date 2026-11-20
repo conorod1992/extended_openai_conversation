@@ -193,7 +193,7 @@ async def test_memory_search_preserves_lexical_and_hybrid_semantics(
 
     assert result == ["result"]
     if mode == MEMORY_RETRIEVAL_HYBRID:
-        prepare.assert_awaited_once_with(scopes, "boiler pressure")
+        prepare.assert_awaited_once_with(scopes, "boiler pressure", category="fact", automatic_recall=False)
     else:
         prepare.assert_not_awaited()
     search.assert_awaited_once_with(
@@ -246,15 +246,8 @@ def test_mid_request_guest_activation_is_pinned_for_remainder_of_turn() -> None:
     assert pinned is live_policy
 
 
-def test_guest_tool_group_filter_removes_disallowed_and_orphaned_members(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_guest_tool_group_filter_removes_disallowed_and_orphaned_members() -> None:
     """Guest filtering must keep only permitted tools and valid group membership."""
-    monkeypatch.setattr(
-        conversation_module,
-        "is_ha_tool",
-        lambda tool: tool.get("function", {}).get("type") == "ha_llm",
-    )
     tools = [
         {"spec": {"name": "allowed"}, "function": {"type": "script"}},
         {"spec": {"name": "policy_blocked"}, "function": {"type": "script"}},
@@ -371,7 +364,7 @@ async def test_embedding_results_are_count_checked_and_sorted_by_provider_index(
         )
     ))
 
-    assert await agent._async_create_embeddings(["first", "second"]) == [
+    assert (await agent._async_create_embeddings(["first", "second"])).vectors == [
         [1.0],
         [2.0],
     ]

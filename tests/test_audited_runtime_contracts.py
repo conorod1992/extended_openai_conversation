@@ -379,10 +379,11 @@ async def test_failed_provider_cleanup_is_discovered_after_restart(
         Path(store.path).unlink(missing_ok=True)
 
     monkeypatch.setattr(Store, "async_remove", remove)
-    with pytest.raises(OSError):
-        await agent_deletion.async_delete_entry_data(
-            hass, SimpleNamespace(entry_id="gone", subentries={"agent": object()})
-        )
+    await agent_deletion.async_delete_entry_data(
+        hass, SimpleNamespace(entry_id="gone", subentries={"agent": object()})
+    )
+    assert orphan.exists()
+    assert hass.data[agent_deletion.KNOWN_AGENTS]["gone"] == {"agent"}
     hass.data.clear()  # A fresh process has neither known agents nor old managers.
     failure = False
     await agent_deletion.async_reconcile_agent_storage(hass)

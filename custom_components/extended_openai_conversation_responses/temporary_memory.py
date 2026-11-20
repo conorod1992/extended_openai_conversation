@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
 import logging
+from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
@@ -28,9 +29,10 @@ _ACTIVE_OWNER_SCOPE_ID: ContextVar[str | None] = ContextVar(
     "extended_openai_temporary_memory_owner_scope_id", default=None
 )
 
-STORAGE_VERSION = 1
+STORAGE_VERSION = 2
 
 MAX_ACTIVE_RECORDS = 100
+MAX_UNASSIGNED_LEGACY_RECORDS = 100  # Ceiling used by the pre-owner store.
 MAX_CONTENT_LENGTH = 500
 MAX_CATEGORY_LENGTH = 64
 MAX_DELETE_RECORDS = 50
@@ -58,6 +60,32 @@ class TemporaryMemoryRecord:
     updated_at: str
     owner_scope_id: str | None = None
 
+    @property
+    def is_unassigned_legacy(self) -> bool:
+        """Legacy conversation and device IDs carry no retained owner."""
+        namespace, _, identity = self.scope_id.partition(":")
+        return (
+            self.owner_scope_id is None
+            and namespace in {"conversation", "device"}
+            and bool(identity)
+        )
+
+
+def temporary_memory_record_counts(
+    records: Iterable[TemporaryMemoryRecord],
+) -> tuple[int, int]:
+    """Count unexpired owned and unassigned legacy records separately."""
+    now = dt_util.utcnow()
+    active = unassigned = 0
+    for record in records:
+        if _parse_expiry(record.expires_at) <= now:
+            continue
+        if record.is_unassigned_legacy:
+            unassigned += 1
+        elif _valid_owner_scope_id(record.owner_scope_id) is not None:
+            active += 1
+    return active, unassigned
+
 
 class _InvalidStoredMetadata(ValueError):
     """Invalid metadata must not trigger lossy startup cleanup."""
@@ -65,6 +93,33 @@ class _InvalidStoredMetadata(ValueError):
 
 class TemporaryMemoryStore(PropagatingWriteStore):
     """Versioned private Home Assistant storage."""
+
+    needs_format_upgrade = False
+    _migration_payload: tuple[dict[str, Any]] | None = None
+
+    async def _async_load_data(self) -> Any:
+        self.needs_format_upgrade = False
+        try:
+            return await super()._async_load_data()
+        finally:
+            self._migration_payload = None
+
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        if old_major_version != 1:
+            raise NotImplementedError
+        # Inspect v1 in place. A manager validates and commits it as v2;
+        # a read-only snapshot must leave the old file untouched.
+        self.needs_format_upgrade = True
+        self._migration_payload = (old_data,)
+        return old_data
+
+    async def _async_save_owned(self, data: dict[str, Any]) -> None:
+        if self._migration_payload is not None and data is self._migration_payload[0]:
+            return  # Skip Store's automatic save of the unvalidated v1 payload.
+        await super()._async_save_owned(data)
+        self.needs_format_upgrade = False
 
 
 class TemporaryMemory:
@@ -137,6 +192,12 @@ class TemporaryMemory:
                     damaged = True
             if damaged:
                 raise StorageRepairRequired("Temporary Memory")
+            if (
+                raw_records
+                and isinstance(self._store, TemporaryMemoryStore)
+                and self._store.needs_format_upgrade
+            ):
+                self._normalization_pending = True
             self._initialized = True
             if self.expired_pruned:
                 await self._async_save_locked(reconcile_failure=False)
@@ -149,6 +210,19 @@ class TemporaryMemory:
             raise
         self._remember_committed_state()
         await self._async_normalize_loaded_records_locked()
+        _, unassigned = temporary_memory_record_counts(self._records.values())
+        if unassigned:
+            _LOGGER.warning(
+                "Retained %s legacy Temporary Memory record(s) without a verified "
+                "owner until their original expiry. They are unavailable to assistants",
+                unassigned,
+            )
+
+    async def async_expire(self) -> None:
+        """Expire persisted records without enabling automatic Temporary Memory."""
+        async with async_storage_lock(self, self._lock):
+            await self._async_initialize_locked()
+            await self._async_prune_locked()
 
     async def async_active(
         self, scope_id: str, owner_scope_id: str | None = None
@@ -264,7 +338,10 @@ class TemporaryMemory:
                         "status": "updated",
                         "memory": temporary_memory_as_dict(updated),
                     }
-            if len(self._records) >= MAX_ACTIVE_RECORDS:
+            owned_count = sum(
+                record.owner_scope_id is not None for record in self._records.values()
+            )
+            if owned_count >= MAX_ACTIVE_RECORDS:
                 raise ValueError("temporary memory limit reached")
             record = TemporaryMemoryRecord(
                 uuid4().hex,
@@ -392,8 +469,10 @@ class TemporaryMemory:
 
     def stats(self) -> dict[str, int]:
         """Return non-sensitive diagnostics."""
+        active, unassigned = temporary_memory_record_counts(self._records.values())
         return {
-            "active_temporary_memory_count": len(self._records),
+            "active_temporary_memory_count": active,
+            "unassigned_legacy_temporary_memory_count": unassigned,
             "expired_temporary_memories_pruned": self.expired_pruned,
             "invalid_owner_records_pruned": self.invalid_owners_pruned,
             "startup_overflow_records_pruned": self.overflow_pruned,
@@ -402,7 +481,8 @@ class TemporaryMemory:
     def scope_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
         for record in self._records.values():
-            counts[record.scope_id] = counts.get(record.scope_id, 0) + 1
+            if not record.is_unassigned_legacy:
+                counts[record.scope_id] = counts.get(record.scope_id, 0) + 1
         return counts
 
     async def async_backup_data(self) -> dict[str, Any]:
@@ -418,7 +498,10 @@ class TemporaryMemory:
         if not isinstance(data, Mapping) or set(data) != {"records"}:
             raise ValueError("temporary memories are incomplete or corrupted")
         raw_records = data["records"]
-        if not isinstance(raw_records, list) or len(raw_records) > MAX_ACTIVE_RECORDS:
+        if (
+            not isinstance(raw_records, list)
+            or len(raw_records) > MAX_ACTIVE_RECORDS + MAX_UNASSIGNED_LEGACY_RECORDS
+        ):
             raise ValueError("temporary memory count is invalid")
         records: list[TemporaryMemoryRecord] = []
         seen: set[str] = set()
@@ -448,6 +531,12 @@ class TemporaryMemory:
                 and (normalized := _normalize_record_owner(record)) is not None
             ):
                 records.append(normalized)
+        active = sum(not record.is_unassigned_legacy for record in records)
+        if (
+            active > MAX_ACTIVE_RECORDS
+            or len(records) - active > MAX_UNASSIGNED_LEGACY_RECORDS
+        ):
+            raise ValueError("temporary memory count is invalid")
         return records
 
     async def async_replace_backup(self, records: list[TemporaryMemoryRecord]) -> None:
@@ -457,10 +546,7 @@ class TemporaryMemory:
             for record in records
             if (migrated := _normalize_record_owner(record)) is not None
         ]
-        if len(normalized) > MAX_ACTIVE_RECORDS:
-            normalized = sorted(normalized, key=_owner_record_sort_key, reverse=True)[
-                :MAX_ACTIVE_RECORDS
-            ]
+        normalized = _bounded_records(normalized)
         async with async_storage_lock(self, self._lock):
             await self._async_initialize_locked()
             self._records = {record.memory_id: record for record in normalized}
@@ -520,12 +606,9 @@ class TemporaryMemory:
                 continue
             normalized_owners += normalized != record or asdict(record) != raw
             records.append(normalized)
-        overflow = max(0, len(records) - MAX_ACTIVE_RECORDS)
-        if overflow:
-            records = sorted(records, key=_owner_record_sort_key, reverse=True)[
-                :MAX_ACTIVE_RECORDS
-            ]
-        self._records = {record.memory_id: record for record in records}
+        bounded = _bounded_records(records)
+        overflow = len(records) - len(bounded)
+        self._records = {record.memory_id: record for record in bounded}
         self.expired_pruned = 0
         self.invalid_owners_pruned = invalid_owners
         self.overflow_pruned = overflow
@@ -554,24 +637,19 @@ class TemporaryMemory:
                 continue
             normalized.append(migrated)
 
-        overflow = max(0, len(normalized) - MAX_ACTIVE_RECORDS)
-        if overflow:
-            normalized = sorted(normalized, key=_owner_record_sort_key, reverse=True)[
-                :MAX_ACTIVE_RECORDS
-            ]
-
-        replacement = {record.memory_id: record for record in normalized}
+        bounded = _bounded_records(normalized)
+        overflow = len(normalized) - len(bounded)
+        replacement = {record.memory_id: record for record in bounded}
         if replacement == original and not self._normalization_pending:
             return
 
-        already_counted = self._normalization_pending
         self._records = replacement
         await self._async_save_locked()
         self._normalization_pending = False
 
-        if not already_counted:
-            self.invalid_owners_pruned += invalid
-            self.overflow_pruned += overflow
+        # Reconciliation has already removed any counted rows from _records.
+        self.invalid_owners_pruned += invalid
+        self.overflow_pruned += overflow
         if invalid:
             _LOGGER.warning(
                 "Removed %s Temporary Memory record(s) without a valid retained owner",
@@ -579,10 +657,8 @@ class TemporaryMemory:
             )
         if overflow:
             _LOGGER.warning(
-                "Temporary Memory exceeded the %s-record ceiling at startup; "
-                "kept the newest %s records and removed %s",
-                MAX_ACTIVE_RECORDS,
-                MAX_ACTIVE_RECORDS,
+                "Temporary Memory exceeded its record ceilings at startup; "
+                "removed %s excess record(s)",
                 overflow,
             )
 
@@ -635,6 +711,23 @@ class TemporaryMemory:
     ) -> int:
         owner = _require_owner_scope_id(owner_scope_id)
         return await self.async_delete(owner, memory_ids, owner_scope_id=owner)
+
+    async def async_clear_owned(self, owner_scope_id: str) -> int:
+        """Clear one owner's active records in a single storage write."""
+        owner = _require_owner_scope_id(owner_scope_id)
+        async with async_storage_lock(self, self._lock):
+            await self._async_initialize_locked()
+            pruned = self._prune_expired_locked()
+            owned = [
+                memory_id
+                for memory_id, record in self._records.items()
+                if record.owner_scope_id == owner
+            ]
+            for memory_id in owned:
+                del self._records[memory_id]
+            if owned or pruned:
+                await self._async_save_locked()
+            return len(owned)
 
     def owner_counts(self) -> dict[str, int]:
         now = dt_util.utcnow()
@@ -951,6 +1044,21 @@ async def async_get_temporary_memory(
     return cast(TemporaryMemory, manager)
 
 
+async def async_expire_existing_temporary_memory(
+    hass: Any, entry_id: str, subentry_id: str
+) -> None:
+    """Run startup expiry for an existing store without creating one."""
+    manager = get_loaded_temporary_memory(hass, entry_id, subentry_id)
+    if manager is None:
+        path = hass.config.path(
+            ".storage", f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
+        )
+        if not await hass.async_add_executor_job(Path(path).is_file):
+            return
+        manager = await async_get_temporary_memory(hass, entry_id, subentry_id)
+    await manager.async_expire()
+
+
 def _valid_owner_scope_id(value: object) -> str | None:
     """Return one canonical retained owner, or None when it is not valid."""
     if not isinstance(value, str):
@@ -1002,12 +1110,33 @@ def _normalize_record_owner(
             else replace(record, owner_scope_id=owner)
         )
 
-    # Pre-owner records whose scope itself was a canonical retained scope are safe
-    # to migrate. Device/conversation continuity keys cannot establish ownership.
+    # A previous release used conversation and device keys without a retained
+    # owner. Keep those records isolated for their remaining lifetime.
+    if record.is_unassigned_legacy:
+        return record
+
+    # A canonical retained scope can establish ownership for other legacy data.
     inferred = _valid_owner_scope_id(record.scope_id)
     if inferred is None:
         return None
     return replace(record, owner_scope_id=inferred)
+
+
+def _bounded_records(
+    records: list[TemporaryMemoryRecord],
+) -> list[TemporaryMemoryRecord]:
+    """Keep legacy isolation separate from the normal active-memory ceiling."""
+    owned = [record for record in records if not record.is_unassigned_legacy]
+    unassigned = [record for record in records if record.is_unassigned_legacy]
+    discarded: set[str] = set()
+    for group, limit in (
+        (owned, MAX_ACTIVE_RECORDS),
+        (unassigned, MAX_UNASSIGNED_LEGACY_RECORDS),
+    ):
+        if len(group) > limit:
+            oldest = sorted(group, key=_owner_record_sort_key, reverse=True)[limit:]
+            discarded.update(record.memory_id for record in oldest)
+    return [record for record in records if record.memory_id not in discarded]
 
 
 def _owner_record_sort_key(record: TemporaryMemoryRecord) -> tuple[Any, ...]:

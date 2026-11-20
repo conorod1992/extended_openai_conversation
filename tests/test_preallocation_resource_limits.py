@@ -139,7 +139,7 @@ def test_local_skill_discovery_caps_count_and_metadata_size(
             f"---\ndescription: Skill {index}\n---\nbody\n", encoding="utf-8"
         )
 
-    discovered = manager._load_skills_from_dir_sync(tmp_path)
+    discovered = list(manager._iter_skill_texts_sync(tmp_path))
     assert len(discovered) == 2
 
     oversized_root = tmp_path / "oversized-root"
@@ -149,7 +149,7 @@ def test_local_skill_discovery_caps_count_and_metadata_size(
     (oversized_dir / "SKILL.md").write_bytes(b"x" * 33)
     monkeypatch.setattr(skill_limits, "MAX_SKILL_METADATA_BYTES", 32)
 
-    assert manager._load_skills_from_dir_sync(oversized_root) == []
+    assert list(manager._iter_skill_texts_sync(oversized_root)) == []
 
 
 async def test_chat_attachment_aggregates_bytes_from_bounded_read(

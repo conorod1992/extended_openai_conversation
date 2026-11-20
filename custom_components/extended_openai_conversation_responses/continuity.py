@@ -278,7 +278,8 @@ class ConversationContinuity:
         *,
         private_bindings: dict[str, str] | None = None,
         retained_bindings: dict[str, str] | None = None,
-    ) -> None:
+        retained_ha_default_ids: frozenset[str] = frozenset(),
+    ) -> frozenset[tuple[str | None, str]]:
         """Discard transient context under the caller's exclusive restore lease.
 
         Retain diagnostics and HA-default lock ownership, as restoration did
@@ -306,8 +307,19 @@ class ConversationContinuity:
             and key not in self._pending_ends
         }
         self._sessions.update(retained)
-        self._memory_bundles.clear()
+        retained_defaults = retained_ha_default_ids - self._retired_chat_sessions.keys()
+        retained_bundles = {f"continuity:{key}" for key in retained} | {
+            f"conversation:{conversation_id}" for conversation_id in retained_defaults
+        }
+        self._memory_bundles = {
+            key: bundle
+            for key, bundle in self._memory_bundles.items()
+            if key in retained_bundles
+        }
         self._pending_ends.clear()
+        return frozenset(
+            (key, active.conversation_id) for key, active in retained.items()
+        ) | frozenset((None, conversation_id) for conversation_id in retained_defaults)
 
     @staticmethod
     def identity_key(

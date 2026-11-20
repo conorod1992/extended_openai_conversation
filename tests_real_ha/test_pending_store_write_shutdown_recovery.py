@@ -54,7 +54,7 @@ def _raw_record_contents(config_dir: Path) -> list[str]:
     """Parse the real Store envelope and return persisted record contents."""
     payload = json.loads(_storage_path(config_dir).read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
-    assert payload.get("version") == 1
+    assert payload.get("version") == 2
     data = payload.get("data")
     assert isinstance(data, dict)
     records = data.get("records")

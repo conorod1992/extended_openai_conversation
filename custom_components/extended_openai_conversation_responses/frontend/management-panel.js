@@ -3,7 +3,6 @@ import {clearRequestRuleUncertainty, requestRuleUncertainty, requireRequestRuleA
 import {mutationEffects} from "./management-mutation-effects.js";
 import {clearVoiceMappingDraft} from "./voice-mapping-draft.js";
 import {observeCatalogGeneration} from "./model-catalog.js";
-import {invalidateUsageWindows} from "./usage-cache.js";
 import {scheduleWallTime} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
 import {updateAuthenticationPresentation} from "./authentication-presentation.js";
@@ -18,7 +17,7 @@ import {
   refreshPageSaveBar,
   savePageChanges,
 } from "./management-page-drafts.js";
-import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
+import {cacheTimestampIsFresh, readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors} from "./management-actions.js";
@@ -327,12 +326,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._eocOverviewBroadcastPromise = null;
       pauseLiveStatus(this);
       stopDraftRecovery(this);
+      getRouteFeature("status")?.retireDiagnostics(this);
       getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     }
     const wasBlocked = this._eocPresentationBlocked;
     this._hass = value;
     updateAuthenticationPresentation(this, previousUser);
-    if (wasBlocked && !this._eocPresentationBlocked) resumeLiveStatus(this);
+    if (wasBlocked && !this._eocPresentationBlocked) {
+      resumeLiveStatus(this);
+      getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
+    }
     this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     this.shadowRoot?.querySelectorAll("ha-selector, ha-entity-picker, ha-user-picker, ha-yaml-editor").forEach(element => { element.hass = value; });
     this._loadInitialAgents();
@@ -420,6 +423,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._onHistoryNavigation = null;
     }
     stopLiveStatus(this);
+    getRouteFeature("status")?.retireDiagnostics(this);
     getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     cleanupStateSafety(this);
   }
@@ -571,10 +575,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _freshCleanConfiguration(agentId, projection) {
     const key = this._configurationSnapshotKey(agentId, projection);
     const cached = key ? this._cleanConfigSnapshots.get(key) : null;
-    const age = cached ? Date.now() - cached.loadedAt : -1;
     return cached?.result?.config && cached.result.revision != null
       && (cached.result.projection === "retention" ? "retention" : "full") === projection
-      && cached.generation === this._cacheGeneration && age >= 0 && age <= CLEAN_CONFIG_TTL_MS
+      && cached.generation === this._cacheGeneration && cacheTimestampIsFresh(cached.loadedAt, CLEAN_CONFIG_TTL_MS)
       && (this._eocCatalogGeneration == null || cached.catalogGeneration === this._eocCatalogGeneration)
       && (this._eocCatalogVersion == null || cached.catalogVersion === this._eocCatalogVersion)
       ? cached.result : null;
@@ -1084,7 +1087,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._invalidateCleanConfiguration(agentId);
     }
     if (agentId && effects?.usageWindows) {
-      invalidateUsageWindows(this, agentId);
       if (agentId === this._agentId) this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
       for (const key of this._sectionCache.keys()) {
         if (!key.startsWith(`${agentId}|usage-maintenance/usage`)) continue;
@@ -1110,11 +1112,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     if (agentId && effects?.restore) {
       if (currentAgent) this._cacheGeneration += 1;
-      // Replacing the map also isolates reads started before the restore.
-      if (currentAgent) {
-        this._eocUsageWindowCache = new Map();
-        this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
-      } else invalidateUsageWindows(this, agentId);
+      if (currentAgent) this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
       const prefix = `${agentId}|`;
       for (const key of this._sectionCache.keys()) if (key.startsWith(prefix)) this._sectionCache.delete(key);
       for (const key of this._eocSectionCacheTimes.keys()) if (key.startsWith(prefix)) this._eocSectionCacheTimes.delete(key);
@@ -1222,7 +1220,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!this._selectedAgent() || !scopeCatalogKey || !scopeKind) return;
     const agentId = this._agentId;
     const loadedAt = this._eocScopeCatalogTimes.get(scopeCatalogKey);
-    if (!loadedAt || Date.now() - loadedAt > SCOPE_CACHE_TTL_MS) {
+    if (!cacheTimestampIsFresh(loadedAt, SCOPE_CACHE_TTL_MS)) {
       this._scopeCatalogCache.delete(scopeCatalogKey);
       this._eocScopeCatalogTimes.delete(scopeCatalogKey);
     }
@@ -1323,7 +1321,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         ? this._loadConfigDraft() : Promise.resolve();
       const initialScopeId = needsScopes ? this._scopeId : null;
       const cachedScopeLoadedAt = scopeCatalogKey ? this._eocScopeCatalogTimes.get(scopeCatalogKey) : null;
-      const cachedScopes = cachedScopeLoadedAt && Date.now() - cachedScopeLoadedAt <= SCOPE_CACHE_TTL_MS
+      const cachedScopes = cacheTimestampIsFresh(cachedScopeLoadedAt, SCOPE_CACHE_TTL_MS)
         ? this._scopeCatalogCache.get(scopeCatalogKey) : null;
       const knownScopes = cachedScopes || this._data?.scopes || this._baseScopes || [];
       const canPrefetchScopedCollection = Boolean(
@@ -2214,7 +2212,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
       // Omission asks the backend to start now, independently of browser time.
-      const start = now ? undefined : root.querySelector("#guest-start")?.value;
+      const startInput = root.querySelector("#guest-start");
+      const start = now ? undefined : startInput?.value;
       const endInput = root.querySelector("#guest-end");
       const end = endInput?.value;
       const status = this._result?.status || {};
@@ -2225,6 +2224,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         return value;
       };
       try {
+        if (!now && startInput?.validity?.badInput) {
+          startInput.focus();
+          throw new Error("Complete the start time or leave it empty to start now.");
+        }
         if (!indefinite && (!end || !endInput.checkValidity())) {
           throw new Error("Choose an end time or select Remain active indefinitely.");
         }
@@ -2355,9 +2358,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "capabilities/guest-mode") {
       getRouteFeature("capabilities/guest-mode")?.bindGuestInterval(this);
       q("#guest-indefinite")?.addEventListener("change", (event) => { const end = q("#guest-end"); if (end) end.disabled = event.target.checked; });
-      q("#guest-update")?.addEventListener("click", () => this._updateGuestMode(false));
-      q("#guest-now")?.addEventListener("click", () => this._updateGuestMode(true));
-      q("#guest-disable")?.addEventListener("click", () => this._disableGuestMode());
       q("#guest-review-converted")?.addEventListener("click", () => { this._guestMigrationReview = true; this._render(); });
       q("#guest-start-fresh")?.addEventListener("click", () => this._startFreshGuestPolicy());
       q("#guest-separate-control")?.addEventListener("change", (event) => { this._guestDraft.guest_separate_control_restrictions = event.target.checked; this._render(); });
@@ -2388,7 +2388,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     if (view === "assistant/voice") getRouteFeature(view)?.bindVoiceIdentityCore(this);
     if (view === "capabilities/quiet-hours") getRouteFeature(view)?.bindQuietHours(this);
-    watchTimedFeatureStatus(this);
+    const timed = getRouteFeature(view);
+    if (timed?.refreshTimedStatus) watchTimedFeatureStatus(this, timed);
     if (view === "usage-maintenance/usage") {
       getRouteFeature(view)?.bindUsageDiagnostics(this);
     }
@@ -2658,8 +2659,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         // The editor owns its acknowledgement across a refresh, but only the
         // original visit owns collection data. A newer read must remain intact.
         if (ownsList) writeSectionCache(this, this._sectionCacheKey(), this._result);
-        const agent = this._selectedAgent();
-        if (ownsList && agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
         this._render();
         if (returnFocus && !dialog.open) getRouteFeature("data-memory/knowledge")?.restoreCollectionFocus(this.shadowRoot, `.source-edit-button[data-id="${CSS.escape(response.source.source_id)}"]`, "#add-source");
         if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
@@ -2790,8 +2789,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (!getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response, sourceId)) throw new Error("The deleted source could not be removed from the display.");
         if (fromDialog) this.shadowRoot.querySelector("#knowledge-dialog").close();
         writeSectionCache(this, this._sectionCacheKey(), this._result);
-        const agent = this._selectedAgent();
-        if (agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
         this._render();
       }, response);
     } catch (err) { this._toast(`Unable to delete source: ${err.message || String(err)}`, true); }
@@ -2912,7 +2909,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _clearUsageDetails(button = null) {
     const owner = this._retainedMutationOwner();
     const submission = captureConfigurationOwner(this);
-    if (!await this._confirm("Clear recent usage details?", "Request and run details will be removed. Daily, monthly, and lifetime totals remain.", "Clear details")) return;
+    if (!await this._confirm("Clear recent usage details?", "Remove recent runs and requests. Usage totals are kept.", "Clear details")) return;
     if (!configurationSubmissionIsCurrent(this, submission) || !this._ownsRetainedMutation(owner)) return;
     this._setSaving(button, true, "Clearing…");
     try {
@@ -2921,15 +2918,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       requireMutationAcknowledgement([response?.deleted_requests, response?.deleted_runs].every(value => Number.isInteger(value) && value >= 0), "clearing usage details");
       return await presentAcknowledgedMutation(this, submission, "Recent usage details cleared", () => {
         this._usageDetailGeneration = (this._usageDetailGeneration || 0) + 1;
-        this._result = {...this._result, summary: {...this._result.summary, latest: null},
-          days: {...this._result.days, ...(this._result.days?.local_run_summary ? {
-            local_run_summary: {...this._result.days.local_run_summary, count: 0},
-          } : {})},
+        const {summary, days, load_errors = []} = this._result;
+        const failed = key => load_errors.some(issue => issue.key === key);
+        this._result = {...this._result, summary: summary && {...summary, latest: null},
+          days: days?.local_run_summary
+            ? {...days, local_run_summary: {...days.local_run_summary, count: 0}} : days,
           runs: {...this._result.runs, runs: [], total: 0},
+          load_errors: load_errors.filter(issue => issue.key !== "runs"),
           loading: {...this._result.loading, runs: false}};
         writeSectionCache(this, this._sectionCacheKey(), {
-          summary: this._result.summary,
-          days: this._result.days,
+          summary: failed("summary") ? undefined : this._result.summary,
+          days: failed("days") ? undefined : this._result.days,
         });
         this.shadowRoot.querySelector("#usage-request-dialog")?.close();
         this._render();
