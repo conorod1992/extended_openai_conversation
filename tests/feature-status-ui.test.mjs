@@ -4,9 +4,9 @@ import {knowledgeAvailabilityMarkup} from "../custom_components/extended_openai_
 import {
   diagnosticResultMarkup,
   diagnosticStatusMeta,
-  featureStatusMarkup,
-  overviewAgentFeatureProjection,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-feature-status.js";
+import {embeddedFeatureStatusMarkup} from "../custom_components/extended_openai_conversation_responses/frontend/management-feature-status-core.js";
+import {renderOverviewSnapshot} from "../custom_components/extended_openai_conversation_responses/frontend/overview-page.js";
 
 const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({
   "&": "&amp;",
@@ -21,7 +21,7 @@ const panel = {
   _e: escape,
 };
 
-const markup = featureStatusMarkup(panel, "Persistent memory", {
+const markup = embeddedFeatureStatusMarkup(panel, "Persistent memory", {
   state: "enabled",
   label: "Manual",
   detail: "Automatic inclusion is off; memory search tools remain available.",
@@ -37,7 +37,7 @@ assert.match(markup, /data-page="data-memory"/);
 assert.match(markup, /data-subsection="memory-settings"/);
 assert.match(markup, /status-value on/);
 
-const disabledMarkup = featureStatusMarkup(panel, "Knowledge Library", {
+const disabledMarkup = embeddedFeatureStatusMarkup(panel, "Knowledge Library", {
   state: "empty",
   label: "Needs sources",
   detail: "Knowledge tools remain unavailable until at least one source exists.",
@@ -56,17 +56,15 @@ assert.match(knowledgeAvailabilityMarkup(knowledgePanel), /knowledge-enabled-tog
 knowledgePanel._result.feature_status = {state: "disabled", enabled: false, source_count: 2};
 assert.doesNotMatch(knowledgeAvailabilityMarkup(knowledgePanel), /knowledge-enabled-toggle[^>]*checked/);
 
-const projected = overviewAgentFeatureProjection({
+const overview = renderOverviewSnapshot(panel, {
   memory_mode: "automatic",
   feature_status: {
     memory: {label: "Automatic"},
     knowledge: {label: "Available"},
   },
 });
-assert.equal(projected.memory_mode, "Automatic · Knowledge Available");
-
-const original = {memory_mode: "manual"};
-assert.equal(overviewAgentFeatureProjection(original), original);
+assert.match(overview, /Automatic · Knowledge Available/);
+assert.match(renderOverviewSnapshot(panel, {memory_mode: "manual"}), /manual/);
 
 assert.deepEqual(diagnosticStatusMeta("Passed"), {label: "Passed", icon: "✓", className: "passed"});
 assert.deepEqual(diagnosticStatusMeta("Warning"), {label: "Warning", icon: "!", className: "warning"});

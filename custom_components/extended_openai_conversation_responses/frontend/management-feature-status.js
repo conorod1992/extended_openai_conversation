@@ -1,23 +1,5 @@
-export {embeddedFeatureStatusMarkup, selectedFeatureStatus} from "./management-feature-status-core.js";
-
-export function featureStatusMarkup(panel, title, status, configureTarget = null) {
-  if (!status) return "";
-  const positive = ["enabled", "available"].includes(status.state);
-  const configure = panel._data?.is_admin && configureTarget
-    ? `<button type="button" class="secondary inline-route" data-page="${panel._e(configureTarget.page)}" data-subsection="${panel._e(configureTarget.subsection)}">${panel._e(configureTarget.label)}</button>`
-    : "";
-  return `<section class="content-card feature-status-card"><div class="compact-status"><span><strong>${panel._e(title)}</strong><small>${panel._e(status.detail || status.summary || "")}</small></span><strong class="status-value ${positive ? "on" : ""}">${panel._e(status.label || "Unknown")}</strong></div>${configure}</section>`;
-}
-
-export function overviewAgentFeatureProjection(agent) {
-  const memory = agent?.feature_status?.memory;
-  const knowledge = agent?.feature_status?.knowledge;
-  if (!memory && !knowledge) return agent;
-  const memoryLabel = memory?.label || agent.memory_mode || "Unknown";
-  const labels = [memoryLabel];
-  if (knowledge?.label) labels.push(`Knowledge ${knowledge.label}`);
-  return {...agent, memory_mode: labels.join(" · ")};
-}
+import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 
 export function diagnosticStatusMeta(status) {
   const normalized = String(status || "").toLowerCase();
@@ -42,27 +24,55 @@ export function diagnosticsMarkup(panel, agent) {
   return `<style>${FEATURE_STATUS_STYLES}</style><section class="page-intro"><h1>Diagnostics</h1><p>Check this assistant's current setup and test its provider connection.</p></section><section class="metric-grid">${panel._metric("Agent", agent.title)}${panel._metric("Provider", agent.provider)}${panel._metric("Model", agent.model)}${panel._metric("Conversation archive", agent.archive_enabled ? "Enabled" : "Disabled")}${panel._metric("Guest Mode", panel._titleCase(String(agent.guest_mode?.state || "inactive").replaceAll("_", " ")))}</section><section class="content-card"><div class="card-heading"><div><h2>Test assistant</h2><p>Checks the assistant configuration and sends one minimal request to verify the selected provider and model. It does not run Home Assistant actions.</p></div></div><button type="button" id="test-agent">Run diagnostics</button><div id="test-result" class="diagnostic-result" aria-live="polite"></div><small>If a check fails, its result below will show what needs attention.</small></section>`;
 }
 
+const DIAGNOSTICS_VIEW = "usage-maintenance/diagnostics";
+
+export function retireDiagnostics(panel) {
+  invalidateOperation(panel, "diagnostics");
+  const root = panel.shadowRoot;
+  const output = root?.querySelector("#test-result");
+  if (!output?.querySelector(".diagnostic-loading")) return;
+  output.replaceChildren();
+  const button = root.querySelector("#test-agent");
+  if (button) button.disabled = false;
+}
+
 export async function testAgent(panel) {
-  const output = panel.shadowRoot?.querySelector("#test-result");
-  const button = panel.shadowRoot?.querySelector("#test-agent");
-  if (!output) return;
+  const root = panel.shadowRoot;
+  const output = root?.querySelector("#test-result");
+  const button = root?.querySelector("#test-agent");
+  if (!output || panel._viewKey() !== DIAGNOSTICS_VIEW
+      || panel._eocPresentationBlocked || panel.isConnected === false) return;
+  const owner = captureConfigurationOwner(panel);
+  const visit = panel._eocViewAssetToken;
+  const latest = beginOperation(panel, "diagnostics");
+  const ownsControls = () => latest() && panel.shadowRoot === root
+    && root.querySelector("#test-result") === output;
+  const ownsPage = () => panel.isConnected !== false && !panel._eocPresentationBlocked
+    && panel._viewKey() === DIAGNOSTICS_VIEW && panel._eocViewAssetToken === visit
+    && configurationSubmissionIsCurrent(panel, owner);
+  const publish = (result) => root.dispatchEvent(new CustomEvent("eoc-diagnostics-result", {detail: {result}}));
   if (button) button.disabled = true;
-  panel.shadowRoot?.dispatchEvent(new CustomEvent("eoc-diagnostics-result", {detail: {result: null}}));
+  publish(null);
   output.innerHTML = '<div class="diagnostic-loading"><span class="spinner" aria-hidden="true"></span><span>Running diagnostic checks…</span></div>';
   try {
     const result = await panel._call("diagnostics", "test_agent");
-    panel.shadowRoot?.dispatchEvent(new CustomEvent("eoc-diagnostics-result", {detail: {result}}));
+    if (!ownsControls() || !ownsPage()) return;
     output.innerHTML = diagnosticResultMarkup(panel, result);
+    publish(result);
   } catch (err) {
-    panel.shadowRoot?.dispatchEvent(new CustomEvent("eoc-diagnostics-result", {detail: {result: null}}));
+    if (!ownsControls() || !ownsPage()) return;
     const message = err?.message || String(err);
     output.innerHTML = `<div class="diagnostic-summary failed" role="alert"><span class="diagnostic-icon" aria-hidden="true">×</span><span><strong>Unable to run diagnostics</strong><small>${panel._e(message)}</small></span></div>`;
+    publish(null);
   } finally {
-    if (button) button.disabled = false;
+    if (ownsControls()) {
+      if (!ownsPage()) output.replaceChildren();
+      if (button) button.disabled = false;
+    }
   }
 }
 
-export const FEATURE_STATUS_STYLES = `
+const FEATURE_STATUS_STYLES = `
     .diagnostic-result{display:grid;gap:16px;margin:20px 0 14px}
     .diagnostic-loading{display:flex;align-items:center;gap:10px;min-height:52px;color:var(--secondary-text-color)}
     .diagnostic-summary,.diagnostic-check{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;border:1px solid var(--divider-color);border-radius:11px;padding:14px 16px}

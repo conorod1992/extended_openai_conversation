@@ -2,7 +2,7 @@ import {updateRequestRuleEmptyState} from "./request-rule-empty-state.js";
 import {ensureGuideModule} from "./guide-page.js";
 import {ensureOverviewModule, startOverviewDetailReads} from "./overview-page.js";
 import {readOptionalStorage, writeOptionalStorage} from "./browser-storage.js";
-import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
+import {cacheTimestampIsFresh, readSectionCache} from "./management-cache.js";
 import {captureCatalogLoad, catalogMayPublish, catalogMaySelect, catalogIntentIsCurrent, catalogHasAuthoredWork, captureCatalogContinuation, catalogContinuationIsCurrent, retireAssistantDraft} from "./management-catalog-ownership.js";
 import {updateAgentPicker} from "./management-renderer.js";
 import {ensureNativePicker} from "./native-picker-loader.js";
@@ -222,14 +222,11 @@ export function prefetchIntentRead(panel, view) {
         && active.projection !== "retention") return null;
     if (panel._freshCleanConfiguration?.(agent.subentry_id, "retention")) return null;
   }
-  const cacheKey = panel._sectionCacheKey?.(view);
-  const loadedAt = panel._eocSectionCacheTimes?.get(cacheKey);
-  if (loadedAt && Date.now() - loadedAt < SECTION_CACHE_TTL_MS
-      && panel._sectionCache?.has(cacheKey)) return null;
+  if (readSectionCache(panel, view).fresh) return null;
   const key = `${agent.entry_id}|${agent.subentry_id}|${panel._cacheGeneration || 0}|${view}`;
   panel._eocPendingRouteReads ||= new Map();
   const pending = panel._eocPendingRouteReads.get(key);
-  if (pending && Date.now() - pending.started < INTENT_READ_TTL_MS) return pending.promise;
+  if (pending && cacheTimestampIsFresh(pending.started, INTENT_READ_TTL_MS)) return pending.promise;
   const record = {started: Date.now(), promise: null};
   record.promise = panel._call(...operation).catch((error) => {
     if (panel._eocPendingRouteReads.get(key) === record) panel._eocPendingRouteReads.delete(key);
@@ -249,7 +246,7 @@ export function consumeIntentRead(panel, view, section, action) {
   }
   const key = `${agent.entry_id}|${agent.subentry_id}|${panel._cacheGeneration || 0}|${view}`;
   const pending = panel._eocPendingRouteReads?.get(key);
-  if (!pending || Date.now() - pending.started >= INTENT_READ_TTL_MS) {
+  if (!pending || !cacheTimestampIsFresh(pending.started, INTENT_READ_TTL_MS)) {
     panel._eocPendingRouteReads?.delete(key);
     return panel._call(section, action);
   }

@@ -17,7 +17,7 @@ import {
   refreshPageSaveBar,
   savePageChanges,
 } from "./management-page-drafts.js";
-import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
+import {cacheTimestampIsFresh, readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors} from "./management-actions.js";
@@ -326,12 +326,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._eocOverviewBroadcastPromise = null;
       pauseLiveStatus(this);
       stopDraftRecovery(this);
+      getRouteFeature("status")?.retireDiagnostics(this);
       getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     }
     const wasBlocked = this._eocPresentationBlocked;
     this._hass = value;
     updateAuthenticationPresentation(this, previousUser);
-    if (wasBlocked && !this._eocPresentationBlocked) resumeLiveStatus(this);
+    if (wasBlocked && !this._eocPresentationBlocked) {
+      resumeLiveStatus(this);
+      getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
+    }
     this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     this.shadowRoot?.querySelectorAll("ha-selector, ha-entity-picker, ha-user-picker, ha-yaml-editor").forEach(element => { element.hass = value; });
     this._loadInitialAgents();
@@ -419,6 +423,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._onHistoryNavigation = null;
     }
     stopLiveStatus(this);
+    getRouteFeature("status")?.retireDiagnostics(this);
     getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     cleanupStateSafety(this);
   }
@@ -570,10 +575,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _freshCleanConfiguration(agentId, projection) {
     const key = this._configurationSnapshotKey(agentId, projection);
     const cached = key ? this._cleanConfigSnapshots.get(key) : null;
-    const age = cached ? Date.now() - cached.loadedAt : -1;
     return cached?.result?.config && cached.result.revision != null
       && (cached.result.projection === "retention" ? "retention" : "full") === projection
-      && cached.generation === this._cacheGeneration && age >= 0 && age <= CLEAN_CONFIG_TTL_MS
+      && cached.generation === this._cacheGeneration && cacheTimestampIsFresh(cached.loadedAt, CLEAN_CONFIG_TTL_MS)
       && (this._eocCatalogGeneration == null || cached.catalogGeneration === this._eocCatalogGeneration)
       && (this._eocCatalogVersion == null || cached.catalogVersion === this._eocCatalogVersion)
       ? cached.result : null;
@@ -1216,7 +1220,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!this._selectedAgent() || !scopeCatalogKey || !scopeKind) return;
     const agentId = this._agentId;
     const loadedAt = this._eocScopeCatalogTimes.get(scopeCatalogKey);
-    if (!loadedAt || Date.now() - loadedAt > SCOPE_CACHE_TTL_MS) {
+    if (!cacheTimestampIsFresh(loadedAt, SCOPE_CACHE_TTL_MS)) {
       this._scopeCatalogCache.delete(scopeCatalogKey);
       this._eocScopeCatalogTimes.delete(scopeCatalogKey);
     }
@@ -1317,7 +1321,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         ? this._loadConfigDraft() : Promise.resolve();
       const initialScopeId = needsScopes ? this._scopeId : null;
       const cachedScopeLoadedAt = scopeCatalogKey ? this._eocScopeCatalogTimes.get(scopeCatalogKey) : null;
-      const cachedScopes = cachedScopeLoadedAt && Date.now() - cachedScopeLoadedAt <= SCOPE_CACHE_TTL_MS
+      const cachedScopes = cacheTimestampIsFresh(cachedScopeLoadedAt, SCOPE_CACHE_TTL_MS)
         ? this._scopeCatalogCache.get(scopeCatalogKey) : null;
       const knownScopes = cachedScopes || this._data?.scopes || this._baseScopes || [];
       const canPrefetchScopedCollection = Boolean(

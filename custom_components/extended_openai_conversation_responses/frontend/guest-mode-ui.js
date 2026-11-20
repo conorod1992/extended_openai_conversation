@@ -1,5 +1,5 @@
 import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
-import {embeddedFeatureStatusMarkup, selectedFeatureStatus} from "./management-feature-status.js";
+import {embeddedFeatureStatusMarkup, selectedFeatureStatus} from "./management-feature-status-core.js";
 import {formatManagementTimestamp, browserState, memoryCollectionIdentity} from "./management-data-state.js";
 export {prepareMemoryBrowser} from "./management-data-state.js";
 export {formatManagementTimestamp} from "./management-data-state.js";

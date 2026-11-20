@@ -1,7 +1,7 @@
 import {getRouteFeature} from "./management-route.js";
 import {pageCoordinator, currentPageScope} from "./management-page-drafts.js";
 import {same, clone} from "./unsaved-state.js";
-import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
+import {cacheTimestampIsFresh, SECTION_CACHE_TTL_MS} from "./management-cache.js";
 import {configurationDraftBaseline, configurationSubmissionIsCurrent, captureConfigurationOwner} from "./configuration-acknowledgement.js";
 import {editorControls, dialogState, setDialogBaseline, showRecoveredDraftCopy} from "./management-dialogs.js";
 export {showRecoveredDraftCopy, reviewRecoveredScope, scopeNeedsRecoveryReview} from "./management-dialogs.js";
@@ -406,7 +406,7 @@ function ensureWindowGuards(panel) {
       const key = panel._sectionCacheKey?.(view);
       const loadedAt = key ? panel._eocSectionCacheTimes?.get(key) : null;
       if (pageCoordinator(panel).hasChanges() || modifiedOpenDialog(panel)) return;
-      if (loadedAt && Date.now() - loadedAt > SECTION_CACHE_TTL_MS) void panel._loadSection(true);
+      if (loadedAt != null && !cacheTimestampIsFresh(loadedAt, SECTION_CACHE_TTL_MS)) void panel._loadSection(true);
     };
     window.addEventListener("focus", panel._eocStateFocus);
   }

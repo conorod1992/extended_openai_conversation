@@ -549,6 +549,52 @@ async def test_dynamic_group_growth_is_checked_at_real_runtime_boundary(
         conversation._ACTIVE_TURN.reset(token)
 
 
+@pytest.mark.parametrize("explicit", [False, True], ids=["inferred", "explicit"])
+@pytest.mark.parametrize(
+    ("api_mode", "live_count", "accepted"),
+    [
+        ("chat_completions", 128, True),
+        ("chat_completions", 129, False),
+        ("responses", 129, True),
+    ],
+)
+async def test_live_azure_tool_limit_uses_the_effective_provider(
+    hass, explicit, api_mode, live_count, accepted
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+        tool_snapshot_scope,
+    )
+    from tests.test_ha_llm_tools import TestAPI, context, register
+
+    register(hass, TestAPI(hass))
+    snapshot = await async_discover(hass, context())
+    live_tool = new_reference_tool(next(iter(snapshot.tools.values())).reference, set())
+    provider_data = {"base_url": "https://demo.openai.azure.com"}
+    if explicit:
+        provider_data["api_provider"] = "azure"
+    # One lifecycle tool and one discovered HA tool complete the live catalogue.
+    options = _options(
+        functions=[*[_tool(f"test_{i}") for i in range(live_count - 2)], live_tool],
+        azure_model="gpt-4o",
+        api_mode=api_mode,
+    )
+    request.validate_runtime_readiness(options, provider_data)
+    entry = SimpleNamespace(data=provider_data, entry_id="entry")
+    agent = _agent(hass, entry, SimpleNamespace(data=options))
+    with tool_snapshot_scope(snapshot):
+        if not accepted:
+            with pytest.raises(HomeAssistantError, match="128-tool limit"):
+                await _dispatch(agent)
+            entry.runtime_data.chat.completions.create.assert_not_called()
+        else:
+            payload = await _dispatch(agent)
+            names = [item.get("function", item)["name"] for item in payload["tools"]]
+            assert len(names) == live_count
+            assert live_tool["spec"]["name"] in names
+
+
 async def test_undiscovered_ha_tools_and_skills_do_not_reject_safe_save(
     hass, management_agent, rules, monkeypatch
 ):
