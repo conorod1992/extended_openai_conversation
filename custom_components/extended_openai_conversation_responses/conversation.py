@@ -111,6 +111,7 @@ from .conversation_id_ownership import (
     ProvisionalConversationIDClaim,
     bind_parent_conversation_id,
     claim_conversation_id,
+    has_live_conversation_owner,
     register_conversation_id_cleanup,
     resolve_parent_conversation_id,
 )
@@ -678,6 +679,8 @@ class ExtendedOpenAIAgentEntity(
         scope: ResolvedDataScope,
         home_assistant_conversation_id: str | None,
         request_policy: GuestCapabilityPolicy,
+        *,
+        live_logical_conversation: bool = False,
     ) -> ArchiveSession | None:
         """Begin optional archive retention without taking down the conversation."""
         if self._archive is None or not request_policy.archive_retention:
@@ -691,6 +694,11 @@ class ExtendedOpenAIAgentEntity(
                 scope,
                 home_assistant_conversation_id,
                 archive_enabled=configured,
+                **(
+                    {"live_logical_conversation": True}
+                    if live_logical_conversation
+                    else {}
+                ),
                 shared_archive_enabled=bool(
                     self.subentry.data.get(
                         CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED
@@ -931,12 +939,22 @@ class ExtendedOpenAIAgentEntity(
         assist_chat_log = current_chat_log.get()
         incoming_conversation_id = user_input.conversation_id
         user_input.conversation_id = resolution.conversation_id
+        subentry_id = getattr(getattr(self, "subentry", None), "subentry_id", None)
+        live_managed = resolution.key is not None and resolution.resumed
+        live_native = (
+            resolution.key is None
+            and not request_policy.guest_active
+            and isinstance(subentry_id, str)
+            and isinstance(resolution.conversation_id, str)
+            and has_live_conversation_owner(
+                self.hass, subentry_id, resolution.conversation_id, scope.scope_id
+            )
+        )
         with async_get_chat_session(
             self.hass, resolution.conversation_id, context=user_input.context
         ) as session:
             # Native admission has authorized this session. Protect its actual
             # ID before ChatLog admission or later context entry can fail.
-            subentry_id = getattr(getattr(self, "subentry", None), "subentry_id", None)
             claimed_id = session.conversation_id
             if claimed_id is not None and isinstance(subentry_id, str):
                 claim_conversation_id(
@@ -1002,6 +1020,8 @@ class ExtendedOpenAIAgentEntity(
                     scope,
                     chat_log.conversation_id,
                     request_policy,
+                    live_logical_conversation=(live_managed or live_native)
+                    and chat_log.conversation_id == resolution.conversation_id,
                 )
                 rule_session_key = request_rule_session_id(
                     resolution.key, chat_log.conversation_id

@@ -26,13 +26,17 @@ from .agent_maintenance import (
 )
 from .const import (
     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    CONF_CONVERSATION_CONTINUITY,
+    CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    DEFAULT_CONVERSATION_CONTINUITY,
+    DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DOMAIN,
     SUBSYSTEM_STATUS_KEY,
 )
-from .conversation_archive import archive_session_inactive
+from .conversation_archive import ArchiveSession, archive_session_inactive
 from .live_subentry_updates import (
     configuration_supports_live_update,
     live_subentry_update,
@@ -41,6 +45,7 @@ from .live_subentry_updates import (
 from .mutation_outcomes import mark_mutation_failure, mutation_failure
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
+from .scope import ResolvedDataScope
 from .storage_namespaces import RESTORE_JOURNAL_PREFIX as RESTORE_JOURNAL_PREFIX
 from .strict_store import PropagatingWriteStore
 
@@ -1159,6 +1164,8 @@ def _with_destination_archive_privacy(
     prepared: backup.PreparedRestore,
     current: backup.PreparedRestore,
     subentry_id: str,
+    *,
+    verified_live: frozenset[str] = frozenset(),
 ) -> backup.PreparedRestore:
     """Carry live destination privacy boundaries into the journaled target."""
     if not prepared.restores("archive") or prepared.preserve_retained_continuity:
@@ -1188,7 +1195,10 @@ def _with_destination_archive_privacy(
                 key == f"conversation:{conversation_id}"
                 or key.startswith("continuity:")
             )
-            or archive_session_inactive(session, now, timeout)
+            or (
+                key not in verified_live
+                and archive_session_inactive(session, now, timeout)
+            )
         ):
             continue
         collision = sessions.get(session_id)
@@ -1209,6 +1219,82 @@ def _with_destination_archive_privacy(
         archive_sessions=list(sessions.values()),
         archive_active=bindings or None,
     )
+
+
+async def _async_destination_archive_liveness(
+    hass: HomeAssistant,
+    entry_id: str,
+    subentry_id: str,
+    current: backup.PreparedRestore,
+    target: backup.PreparedRestore,
+) -> frozenset[str]:
+    """Verify existing destination sessions under both continuity configurations."""
+    from .continuity import _MANAGERS, ConversationContinuity
+    from .conversation_id_ownership import has_live_conversation_owner
+
+    if not current.archive_active:
+        return frozenset()
+
+    def private_sessions() -> list[tuple[str, ArchiveSession]]:
+        keys = {
+            session_id: key
+            for key, session_id in (current.archive_active or {}).items()
+        }
+        return [
+            (keys[session.session_id], session)
+            for session in current.archive_sessions
+            if session.retention_state == "private" and session.session_id in keys
+        ]
+
+    candidates = await asyncio.to_thread(private_sessions)
+    agent = _active_agent(hass, entry_id, subentry_id)
+    manager = getattr(agent, "_continuity", None) or hass.data.get(_MANAGERS, {}).get(
+        (entry_id, subentry_id)
+    )
+    configs = (current.config, target.config)
+    timeout = min(
+        normalized_agent_integer(
+            config,
+            CONF_CONVERSATION_TIMEOUT_MINUTES,
+            DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+        )
+        for config in configs
+    )
+    live = set()
+    for key, session in candidates:
+        conversation_id = session.home_assistant_conversation_id
+        if not conversation_id:
+            continue
+        scope = ResolvedDataScope(
+            session.scope_id,
+            session.scope_type,
+            session.scope_source,
+            device_id=session.source_device_id,
+        )
+        keys = [
+            ConversationContinuity.identity_key(
+                config.get(
+                    CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY
+                ),
+                scope,
+                scope.device_id,
+            )[0]
+            for config in configs
+        ]
+        if key == f"conversation:{conversation_id}":
+            if keys == [None, None] and has_live_conversation_owner(
+                hass, subentry_id, conversation_id, scope.scope_id
+            ):
+                live.add(key)
+        elif (
+            isinstance(manager, ConversationContinuity)
+            and keys[0] is not None
+            and keys[0] == keys[1]
+            and key == f"continuity:{keys[0]}"
+            and manager.has_live_managed_conversation(keys[0], conversation_id, timeout)
+        ):
+            live.add(key)
+    return frozenset(live)
 
 
 async def _async_restore_backup_recoverably(
@@ -1275,8 +1361,20 @@ async def _async_restore_backup_recoverably(
             )
         if prepared.journaled_sections is not None:
             rollback = replace(rollback, journaled_sections=prepared.journaled_sections)
+        verified_live = (
+            await _async_destination_archive_liveness(
+                hass, entry_id, subentry_id, rollback, prepared
+            )
+            if prepared.restores("archive")
+            and not prepared.preserve_retained_continuity
+            else frozenset()
+        )
         prepared = await asyncio.to_thread(
-            _with_destination_archive_privacy, prepared, rollback, subentry_id
+            _with_destination_archive_privacy,
+            prepared,
+            rollback,
+            subentry_id,
+            verified_live=verified_live,
         )
         from .request import validate_runtime_readiness
 

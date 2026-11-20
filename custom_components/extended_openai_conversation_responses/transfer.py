@@ -1760,7 +1760,9 @@ async def async_materialize_restore(
             )
         )
     target.preserve_retained_continuity = (
-        selected == {SECTION_KNOWLEDGE} and provider_connection is None
+        bool(selected)
+        and selected <= {SECTION_KNOWLEDGE, SECTION_USAGE}
+        and provider_connection is None
     )
     target.replaces_usage = SECTION_USAGE in selected
     data_sections = {

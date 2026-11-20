@@ -869,6 +869,7 @@ class ConversationArchive:
         archive_enabled: bool,
         shared_archive_enabled: bool,
         inactivity_minutes: int,
+        live_logical_conversation: bool = False,
     ) -> ArchiveSession | None:
         """Resolve the stable scope once and return the exact active session."""
         if not archive_enabled:
@@ -880,7 +881,13 @@ class ConversationArchive:
             may_retain = _scope_retention_allowed(scope, shared_archive_enabled)
             if (
                 current is not None
-                and not archive_session_inactive(current, now, inactivity_minutes)
+                and (
+                    not archive_session_inactive(current, now, inactivity_minutes)
+                    or (
+                        live_logical_conversation
+                        and current.retention_state == "private"
+                    )
+                )
                 and current.scope_id == scope.scope_id
                 and current.home_assistant_conversation_id
                 == home_assistant_conversation_id

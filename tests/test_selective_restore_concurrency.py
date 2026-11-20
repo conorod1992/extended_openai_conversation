@@ -448,9 +448,9 @@ async def test_private_active_conversation_survives_selective_restore_and_rollba
         await continuity.async_release(resolution.key, resolution.claim_token)
 
 
-@pytest.mark.parametrize("restore_kind", ["knowledge", "knowledge_rollback", "full"])
+@pytest.mark.parametrize("restore_kind", ["knowledge", "knowledge_rollback", "usage", "combined", "combined_rollback", "full"])
 @pytest.mark.parametrize("retention", ["private", "retained"])
-async def test_knowledge_only_restore_preserves_retained_user_continuity(
+async def test_data_only_restore_preserves_eligible_retained_user_continuity(
     monkeypatch, restore_kind, retention
 ):
     from custom_components.extended_openai_conversation_responses import (
@@ -472,6 +472,7 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(
 
     reset = restore_recovery.reset_restored_runtime
     full_restore = restore_kind == "full"
+    usage_restore = restore_kind in {"usage", "combined", "combined_rollback"}
     tx = RestoreHarness(monkeypatch)
     manager = ConversationContinuity(tx.subentry.subentry_id)
     scope = user_scope("alice", source="authenticated_user")
@@ -517,14 +518,24 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(
     )
     monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: active)
     monkeypatch.setattr(restore_recovery, "reset_restored_runtime", reset)
+    async def restore_selected():
+        if not usage_restore:
+            return await tx.restore()
+        sections = {transfer.SECTION_USAGE}
+        if restore_kind != "usage":
+            sections.add(transfer.SECTION_KNOWLEDGE)
+        imported = replace(tx.imported, available_sections=frozenset(sections),
+            usage_totals=usage.UsageTotals(total_tokens=87), usage_daily={}, usage_requests=[], usage_runs=[])
+        return await transfer.async_restore_transfer(tx.hass, tx.entry, tx.subentry, imported, sections=tuple(sections))
+
     if full_restore:
         await restore_recovery.async_restore_backup_recoverably(tx.hass, tx.entry, tx.subentry, tx.state)
-    elif restore_kind == "knowledge_rollback":
+    elif restore_kind.endswith("_rollback"):
         tx.fail_knowledge_writes = 1
         with pytest.raises(backup.BackupError, match="previous agent state was recovered"):
-            await tx.restore()
+            await restore_selected()
     else:
-        await tx.restore()
+        await restore_selected()
     after = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, before.conversation_id, 30)
     try:
         assert (after.conversation_id == before.conversation_id) == (not full_restore or retention == "private")
@@ -539,9 +550,11 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(
         )
         assert rules.get("conversation:unverified", 30) == {}
         assert not groups.begin("conversation:unverified", 30).loaded_group_ids
-        if full_restore:
+        if full_restore or (usage_restore and not restore_kind.endswith("_rollback")):
             assert key not in fallbacks and active._usage is tx.managers.usage
             rebind_sensors.assert_called_once()
+            if usage_restore:
+                assert tx.state.usage_totals.total_tokens == 87
         else:
             assert fallbacks[key] is fallback and active._usage is fallback
             assert active._usage.totals.total_tokens == 321
@@ -558,3 +571,71 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(
         assert tx.journal.data is None
     finally:
         await manager.async_release(after.key, after.claim_token)
+
+
+@pytest.mark.parametrize("managed", [True, False])
+@pytest.mark.parametrize("still_live", [True, False])
+async def test_archive_restore_only_extends_privacy_for_verified_destination_session(monkeypatch, managed, still_live):
+    from datetime import timedelta
+    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
+    from homeassistant.helpers.chat_session import DATA_CHAT_SESSION
+    from homeassistant.util import dt as dt_util
+    from custom_components.extended_openai_conversation_responses import conversation_id_ownership
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_CONVERSATION_CONTINUITY, CONF_CONVERSATION_TIMEOUT_MINUTES,
+        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES, CONVERSATION_CONTINUITY_HA_DEFAULT,
+        CONVERSATION_CONTINUITY_USER,
+    )
+    from custom_components.extended_openai_conversation_responses.continuity import ConversationContinuity
+    from custom_components.extended_openai_conversation_responses.conversation_archive import ConversationArchive
+    from custom_components.extended_openai_conversation_responses.scope import user_scope
+    from tests.test_conversation_archive import FakeArchiveStorage
+
+    tx = RestoreHarness(monkeypatch)
+    agent_id = tx.subentry.subentry_id
+    now = dt_util.utcnow()
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    config = {
+        CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_USER if managed else CONVERSATION_CONTINUITY_HA_DEFAULT,
+        CONF_CONVERSATION_TIMEOUT_MINUTES: 30,
+        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: 1,
+    }
+    tx.subentry.data.update(config)
+    manager = ConversationContinuity(agent_id)
+    monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: SimpleNamespace(_continuity=manager))
+    scope = user_scope("alice", source="authenticated_user")
+    if managed:
+        resolution = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, None, 30)
+        conversation_id = resolution.conversation_id
+        key = f"continuity:{resolution.key}"
+        await manager.async_record_success(resolution.key, resolution.claim_token, [])
+        await manager.async_release(resolution.key, resolution.claim_token)
+    else:
+        conversation_id = "native-caller-id"
+        key = f"conversation:{conversation_id}"
+        conversation_id_ownership.claim_conversation_id(tx.hass, agent_id, scope, conversation_id, guest_active=False)
+        native = SimpleNamespace(last_updated=now, async_on_cleanup=lambda callback: None)
+        tx.hass.data[DATA_CHAT_SESSION] = {conversation_id: native}
+        tx.hass.data[DATA_CHAT_LOGS] = {conversation_id: object()}
+        conversation_id_ownership.register_conversation_id_cleanup(native, tx.hass, conversation_id, (agent_id, scope.scope_id))
+        if not still_live:
+            tx.hass.data[DATA_CHAT_SESSION][conversation_id] = SimpleNamespace(last_updated=now)
+    archive = ConversationArchive(FakeArchiveStorage(), agent_id)
+    await archive.async_initialize()
+    session = await archive.async_begin_session(key, scope, conversation_id,
+        archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=1)
+    await archive.async_make_private(session.session_id)
+    tx.state.archive_sessions = list(archive._sessions.values())
+    tx.state.archive_active = dict(archive._active)
+    # Only the live destination can supply a marker. The imported archive is empty.
+    target = replace(tx.state, config={**tx.subentry.data, **config}, archive_sessions=[], archive_active=None)
+    if managed and not still_live:
+        target.config[CONF_CONVERSATION_TIMEOUT_MINUTES] = 1
+    now += timedelta(minutes=2)
+    verified = await restore_recovery._async_destination_archive_liveness(tx.hass, tx.entry.entry_id, agent_id,
+        replace(tx.state, config=tx.subentry.data), target)
+    prepared = restore_recovery._with_destination_archive_privacy(
+        target, replace(tx.state, config=tx.subentry.data), agent_id, verified_live=verified)
+    assert bool(prepared.archive_active) is still_live
+    if still_live:
+        assert prepared.archive_sessions[0].retention_state == "private"

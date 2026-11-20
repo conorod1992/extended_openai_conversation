@@ -321,6 +321,19 @@ class ConversationContinuity:
             (key, active.conversation_id) for key, active in retained.items()
         ) | frozenset((None, conversation_id) for conversation_id in retained_defaults)
 
+    def has_live_managed_conversation(
+        self, key: str, conversation_id: str, timeout_minutes: int
+    ) -> bool:
+        """Check an existing managed session under the exclusive restore lease."""
+        active = self._sessions.get(key)
+        return (
+            active is not None
+            and active.conversation_id == conversation_id
+            and key not in self._pending_ends
+            and active.last_active
+            >= dt_util.utcnow() - timedelta(minutes=timeout_minutes)
+        )
+
     @staticmethod
     def identity_key(
         mode: str,
