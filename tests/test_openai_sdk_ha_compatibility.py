@@ -34,6 +34,12 @@ from custom_components.extended_openai_conversation_responses.debug import (
             ("/openai/v1/models", "/openai/v1/chat/completions"),
         ),
         (
+            "https://resource.openai.azure.com/team/openai/v1/",
+            None,
+            None,
+            ("/team/openai/v1/models", "/team/openai/v1/chat/completions"),
+        ),
+        (
             "https://resource.openai.azure.com",
             "2024-10-21",
             "2024-10-21",

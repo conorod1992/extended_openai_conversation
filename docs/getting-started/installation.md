@@ -62,6 +62,7 @@ After Home Assistant restarts:
 4. Choose **OpenAI** or **Azure OpenAI**, then enter the requested credentials.
 5. For direct OpenAI, leave **Show advanced provider settings** off. A compatible third-party endpoint uses the OpenAI option with advanced provider settings enabled.
 6. Set **Base URL** only when your provider requires one. For Azure, enter the endpoint. Leave **API version** blank for an endpoint ending in `/openai/v1/`. For a legacy Azure endpoint, set the dated version here or in the Home Assistant process environment with `OPENAI_API_VERSION`.
+7. If your Azure gateway only exposes model deployments, enable **Skip authentication** to skip the model-list check. Requests still use the supplied API key.
 
 The integration is now installed. Continue with [First setup](setup.md) to select the conversation agent and expose Home Assistant entities.
 

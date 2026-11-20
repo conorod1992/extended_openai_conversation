@@ -238,9 +238,8 @@ async def test_initial_provider_setup_routes_to_simple_provider_specific_forms()
     azure = await step_user({CONF_NAME: "Azure", CONF_API_PROVIDER: "azure"})
     assert azure["step_id"] == "azure_credentials"
     azure_keys = {str(key) for key in azure["data_schema"].schema}
-    assert azure_keys == {CONF_API_KEY, CONF_BASE_URL, CONF_API_VERSION}
+    assert azure_keys == {CONF_API_KEY, CONF_BASE_URL, CONF_API_VERSION, CONF_SKIP_AUTHENTICATION}
     assert CONF_ORGANIZATION not in azure_keys
-    assert CONF_SKIP_AUTHENTICATION not in azure_keys
 
 
 @pytest.mark.parametrize(

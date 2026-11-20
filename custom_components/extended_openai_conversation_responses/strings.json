@@ -52,12 +52,14 @@
         "data": {
           "api_key": "Azure OpenAI API key",
           "base_url": "Azure OpenAI endpoint",
-          "api_version": "API version"
+          "api_version": "API version",
+          "skip_authentication": "Skip authentication"
         },
         "data_description": {
           "api_key": "The API key for your Azure OpenAI resource.",
           "base_url": "Your Azure OpenAI resource endpoint, as shown in your Azure resource.",
-          "api_version": "For legacy Azure endpoints, enter a dated version or omit this field if OPENAI_API_VERSION is configured. Leave blank for an endpoint ending in /openai/v1/."
+          "api_version": "For legacy Azure endpoints, enter a dated version or omit this field if OPENAI_API_VERSION is configured. Leave blank for an endpoint ending in /openai/v1/.",
+          "skip_authentication": "Skip the model-list check for a gateway that only exposes deployments. Requests still use the supplied API key."
         }
       }
     },

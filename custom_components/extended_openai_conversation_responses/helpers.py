@@ -124,7 +124,7 @@ def entry_api_provider(entry: Any) -> str:
 
 def _is_azure_v1_endpoint(base_url: str | None) -> bool:
     """Recognize the GA path after the endpoint has been validated."""
-    return bool(base_url and urlsplit(base_url).path.rstrip("/") == "/openai/v1")
+    return bool(base_url and urlsplit(base_url).path.rstrip("/").endswith("/openai/v1"))
 
 
 def _absolute_http_endpoint(base_url: str) -> SplitResult:

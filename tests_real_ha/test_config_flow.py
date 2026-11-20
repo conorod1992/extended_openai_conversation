@@ -57,8 +57,8 @@ def _suggested_values(schema):
 
 @pytest.mark.parametrize("provider,step,submitted,corrected", [
     ("azure", "azure_credentials",
-     {CONF_API_KEY: "bad", CONF_BASE_URL: "https://azure.example/", CONF_API_VERSION: "2026-01-01"},
-     {CONF_API_KEY: "fixed", CONF_BASE_URL: "https://azure.example/", CONF_API_VERSION: "2026-01-01"}),
+     {CONF_API_KEY: "bad", CONF_BASE_URL: "https://azure.example/", CONF_API_VERSION: "2026-01-01", CONF_SKIP_AUTHENTICATION: False},
+     {CONF_API_KEY: "fixed", CONF_BASE_URL: "https://azure.example/", CONF_API_VERSION: "2026-01-01", CONF_SKIP_AUTHENTICATION: True}),
     ("openai", "openai_credentials",
      {CONF_API_KEY: "bad", "advanced_provider_settings": False},
      {CONF_API_KEY: "fixed", "advanced_provider_settings": False}),
@@ -116,6 +116,9 @@ async def test_provider_retry_suggests_original_display_values_without_persistin
     assert result["data"].get(CONF_BASE_URL) == expected_url
     assert (CONF_BASE_URL in result["data"]) is (expected_url is not None)
     assert authenticate.await_args.kwargs["base_url"] == expected_url
+    assert authenticate.await_args.kwargs["skip_authentication"] is corrected.get(
+        CONF_SKIP_AUTHENTICATION, False
+    )
     assert config_flow.STEP_USER_DATA_SCHEMA.extra == vol.ALLOW_EXTRA
 
 
