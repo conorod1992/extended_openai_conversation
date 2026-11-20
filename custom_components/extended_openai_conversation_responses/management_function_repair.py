@@ -37,8 +37,6 @@ from .const import (
     CONF_FUNCTION_TOOLS,
     CONF_GUEST_ALLOWED_GROUP_IDS,
     CONF_SKILLS,
-    CONF_USAGE_REQUEST_RETENTION_DAYS,
-    CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_FUNCTION_GROUPS,
 )
 from .function_configuration_repair import (
@@ -57,6 +55,7 @@ from .model_catalog import catalog_generation
 from .mutation_outcomes import mark_mutation_failure
 from .request import canonical_json
 from .skill_availability import preserves_skill_loader_availability, skill_loader_status
+from .usage import async_finish_usage_retention_write
 from .yaml_serialization import dump_yaml, load_yaml_or_json
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,7 +66,6 @@ _STALE_CONFIGURATION_ERROR = (
 _health_cache: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
 _HEALTH_CACHE_LIMIT = 128
 _PROJECTION_CACHE_LIMIT = 128
-_RETENTION_FIELDS = (CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS)
 _MISSING = object()
 
 
@@ -1066,6 +1064,9 @@ async def async_function_repair(
             _saved_agent_metadata(
                 hass, entry, subentry, config=persisted, title=saved_title
             )
+        )
+        await async_finish_usage_retention_write(
+            hass, entry_id, subentry_id, updated_fields=filtered
         )
         return response
 

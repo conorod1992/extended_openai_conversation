@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Iterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -73,8 +72,6 @@ from .const import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_SHARED_MEMORY_MODE,
-    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-    DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DOMAIN,
     GUEST_POLICY_VERSION,
     MANAGEMENT_PANEL_TITLE,
@@ -190,7 +187,7 @@ from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .script_payload import is_function_service_action, set_effective_service_field
 from .secret_redaction import is_redacted_secret, redact_secrets
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
-from .usage import async_get_usage
+from .usage import async_finish_usage_retention_write, async_get_usage
 from .yaml_serialization import dump_yaml
 
 _LOGGER = logging.getLogger(__name__)
@@ -1538,6 +1535,9 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         _LOGGER.warning("Committed configuration could not seed its optional cache")
     timings["projection_seed_ms"] = _elapsed_ms(phase)
     timings["total_ms"] = _elapsed_ms(started)
+    await async_finish_usage_retention_write(
+        hass, request.entry_id, request.subentry_id, updated_fields=updates
+    )
     return result
 
 
@@ -1828,6 +1828,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             _LOGGER.warning(
                 "Committed configuration update could not seed its optional cache"
             )
+        await async_finish_usage_retention_write(
+            hass, entry_id, subentry_id, updated_fields=updates
+        )
         return result
     if action == "duplicate":
         _require_admin(is_admin)
@@ -1957,6 +1960,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 subentry, parsed["config"], parsed["title"]
             )
             seed_persisted_config_projection(entry, subentry, snapshot, revision)
+            await async_finish_usage_retention_write(
+                hass, entry_id, subentry_id, updated_fields=None
+            )
             return {
                 "status": "updated",
                 "subentry_id": subentry.subentry_id,
@@ -3153,12 +3159,16 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
         await _async_validate_configuration_request(hass, entry, subentry, candidate)
         _require_agent_config_revision(subentry, message["revision"])
         update_configuration_subentry(hass, entry, subentry, data=candidate)
-        return {
+        result = {
             "settings": settings_snapshot(candidate),
             "revision": saved_agent_config_revision(
                 subentry, candidate, subentry.title
             ),
         }
+        await async_finish_usage_retention_write(
+            hass, request.entry_id, request.subentry_id, updated_fields=normalized
+        )
+        return result
 
     return _unknown_management_action(request)
 
@@ -3316,61 +3326,7 @@ async def _async_management_request(
         else None
     )
     dispatch_ms = _elapsed_ms(dispatch_started)
-    retention_fields = {
-        CONF_USAGE_REQUEST_RETENTION_DAYS: DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-        CONF_USAGE_RUN_RETENTION_DAYS: DEFAULT_USAGE_RUN_RETENTION_DAYS,
-    }
-    previous_retention = tuple(
-        subentry.data.get(key, default) for key, default in retention_fields.items()
-    )
     result = await handler(request)
-    retention_changed = previous_retention != tuple(
-        subentry.data.get(key, default) for key, default in retention_fields.items()
-    )
-    retention_updates = message.get("settings" if section == "settings" else "config")
-    # A failed prune can leave the policy committed. Reapplying that policy is
-    # still meaningful even when the explicit retry makes no configuration delta.
-    # Imports apply the saved destination policy, not a flat config payload; a
-    # newly created assistant must never prune the originally selected assistant.
-    current_import = (
-        (section, action) == ("configuration", "import")
-        and message.get("mode", "current") == "current"
-        and result.get("status") == "updated"
-        and result.get("subentry_id") == subentry_id
-    )
-    if (
-        retention_changed
-        or current_import
-        or (
-            (section, action)
-            in {
-                ("configuration", "save"),
-                ("configuration", "update"),
-                ("function_repair", "configuration_save"),
-                ("settings", "update"),
-            }
-            and result.get("valid") is not False
-            and isinstance(retention_updates, dict)
-            and {CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS}
-            & retention_updates.keys()
-        )
-    ):
-        from .mutation_outcomes import mark_mutation_failure
-        from .operation_settlement import async_settle_owned_operation
-        from .usage import async_apply_usage_retention
-
-        async def apply_retention() -> None:
-            await async_apply_usage_retention(hass, entry_id, subentry_id)
-
-        try:
-            await async_settle_owned_operation(asyncio.create_task(apply_retention()))
-        except Exception as err:
-            raise mark_mutation_failure(
-                HomeAssistantError(
-                    "Configuration saved, but Usage retention could not be applied; retry saving retention to finish deletion."
-                ),
-                "committed",
-            ) from err
     handler_ms = _elapsed_ms(handler_started) if handler_started is not None else None
 
     committed_result = result
