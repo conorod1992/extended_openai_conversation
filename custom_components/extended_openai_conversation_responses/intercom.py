@@ -567,6 +567,10 @@ class IntercomManager:
         text = message.strip()
         if not text:
             raise HomeAssistantError("Broadcast message cannot be empty")
+        if not any(character.isalnum() for character in text):
+            raise HomeAssistantError(
+                "Broadcast message must contain a letter or number"
+            )
         authorized = await async_authorized_broadcast_targets(
             self.hass,
             self,
