@@ -136,7 +136,7 @@ function routeFeatureKeys(view) {
   // Configuration guidance is additive and never blocks route readiness.
   if (["data-memory/memories", "capabilities/guest-mode"].includes(view)) keys.push("memory-browser");
   if (["capabilities/home-assistant", "capabilities/web-skills"].includes(view)) keys.push("capabilities");
-  if (["data-memory/memories", "usage-maintenance/diagnostics"].includes(view)) keys.push("status");
+  if (view === "usage-maintenance/diagnostics") keys.push("status");
   return keys;
 }
 
