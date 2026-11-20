@@ -9,7 +9,8 @@ import logging
 from math import inf, isfinite, nextafter
 
 from homeassistant.components import sensor as sensor_component
-from homeassistant.components.recorder import history
+from homeassistant.components.recorder import history, statistics
+from homeassistant.components.recorder.core import Recorder
 from homeassistant.components.sensor import (
     ATTR_LAST_RESET,
     SensorEntity,
@@ -40,6 +41,7 @@ from .usage import UsageManager, async_get_usage, usage_retention_policy
 
 _LOGGER = logging.getLogger(__name__)
 _RECORDER_WINDOW_SECONDS = 5 * 60
+_TIMEZONE_OVERLAP = timedelta(hours=26)  # UTC-12 through UTC+14.
 
 
 async def async_setup_entry(
@@ -179,8 +181,8 @@ class UsageSensor(SensorEntity):
 
     @property
     def available(self) -> bool:
-        """Keep incomplete counters out of Recorder during a storage outage."""
-        return self.state_class is None or not self._usage.is_volatile
+        """Keep incomplete lifetime counters out of Recorder."""
+        return self.state_class is None or self._usage.lifetime_available
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -227,6 +229,13 @@ class _PeriodObservation:
     tokens: int
     daily_total_tokens: int | None
     timestamp: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _MarkerlessObservation:
+    tokens: int
+    last_updated: datetime
+    prior_daily_total_tokens: int | None
 
 
 def _period_observation(state: State | None) -> _PeriodObservation | None:
@@ -279,6 +288,49 @@ def _saved_recorder_observation(data: object) -> _PeriodObservation | None:
     return _PeriodObservation(marker, tokens, daily_total, timestamp)
 
 
+def _saved_markerless_observation(data: object) -> _MarkerlessObservation | None:
+    if not isinstance(data, dict) or not isinstance(
+        raw_time := data.get("last_updated"), str
+    ):
+        return None
+    time = dt_util.parse_datetime(raw_time)
+    tokens = data.get("tokens")
+    prior_total = data.get("prior_daily_total_tokens")
+    if (
+        time is None
+        or time.tzinfo is None
+        or type(tokens) is not int
+        or tokens < 0
+        or (
+            prior_total is not None
+            and (type(prior_total) is not int or prior_total < 0)
+        )
+    ):
+        return None
+    return _MarkerlessObservation(tokens, time, prior_total)
+
+
+def _prior_timezone_buckets(
+    hass: HomeAssistant, entity_id: str, before: datetime, previous_period: date
+) -> dict[date, int]:
+    """Find forward buckets that could have been recorded before a timezone rewind."""
+    rows = history.get_significant_states(
+        hass,
+        before - _TIMEZONE_OVERLAP,
+        before,
+        [entity_id],
+        include_start_time_state=False,
+        significant_changes_only=False,
+    ).get(entity_id, [])
+    values: dict[date, int] = {}
+    for row in rows:
+        if not isinstance(row, dict) and (sample := _period_observation(row)):
+            period = sample.reset.date()
+            if period > previous_period:
+                values[period] = sample.tokens
+    return values
+
+
 class _PeriodUsageSensor(UsageSensor, RestoreEntity):
     """Common event-driven period sensor behavior."""
 
@@ -289,8 +341,7 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         self._cancel_period_rollover: Callable[[], None] | None = None
         self._observation: _PeriodObservation | None = None
         self._recorded_observation: _PeriodObservation | None = None
-        self._legacy_recorded_state: State | None = None
-        self._legacy_prior_daily_total: int | None = None
+        self._markerless_observation: _MarkerlessObservation | None = None
         self._recent_period_values: dict[date, int] = {}
         self._recorder_baseline: int | None = None
         self._initial_recording: (
@@ -302,6 +353,11 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
 
     def _period_start(self, today: date) -> date:
         return today
+
+    @property
+    def available(self) -> bool:
+        """Keep incomplete daily aggregates out of Recorder."""
+        return self._usage.daily_available
 
     @property
     def native_value(self) -> int:
@@ -324,7 +380,8 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
     def extra_restore_state_data(self) -> ExtraStoredData | None:
         visible = self._observation
         recorded = self._recorded_observation
-        if visible is None and recorded is None:
+        markerless = self._markerless_observation
+        if visible is None and recorded is None and markerless is None:
             return None
         return RestoredExtraData(
             {
@@ -337,6 +394,15 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                         "timestamp": recorded.timestamp,
                     }
                     if recorded is not None
+                    else None
+                ),
+                "markerless": (
+                    {
+                        "tokens": markerless.tokens,
+                        "last_updated": markerless.last_updated.isoformat(),
+                        "prior_daily_total_tokens": markerless.prior_daily_total_tokens,
+                    }
+                    if markerless is not None
                     else None
                 ),
             }
@@ -451,21 +517,98 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
             recorded = historical
         elif recorded is None and "recorded" not in data and self._records_period():
             recorded = observation
+        saved_markerless = _saved_markerless_observation(data.get("markerless"))
         if legacy_state is not None and (
             recorded is None
             or legacy_state.last_updated_timestamp > (recorded.timestamp or 0)
         ):
-            # A rollback can leave a newer markerless Recorder sample alongside
-            # the prior release's saved explicit marker. Keep that marker for
-            # display, but reconcile against the sample Recorder actually saw.
-            self._legacy_recorded_state = legacy_state
-            self._legacy_prior_daily_total = (
-                recorded.daily_total_tokens if recorded is not None else None
+            prior_total = recorded.daily_total_tokens if recorded is not None else None
+            tokens = int(legacy_state.state)
+            updated = legacy_state.last_updated
+            if (
+                prior_total is None
+                and saved_markerless is not None
+                and (
+                    saved_markerless.tokens == tokens
+                    and saved_markerless.last_updated == updated
+                )
+            ):
+                prior_total = saved_markerless.prior_daily_total_tokens
+            self._markerless_observation = _MarkerlessObservation(
+                tokens, updated, prior_total
             )
             recorded = None
+            previous_state = legacy_state
+        elif (
+            saved_markerless is not None
+            and (
+                recorded is None
+                or saved_markerless.last_updated.timestamp() > (recorded.timestamp or 0)
+            )
+            and recorder is not None
+            and await self._async_has_markerless_statistics(recorder, saved_markerless)
+        ):
+            # Here the raw state is gone but Recorder can still accumulate
+            # from its compiled markerless sample.
+            self._markerless_observation = saved_markerless
+            recorded = None
+        if (
+            recorder is not None
+            and recorded is not None
+            and recorded.daily_total_tokens is None
+        ):
+            await self._async_find_prior_timezone_buckets(recorder, recorded)
         self._observation = observation
         self._recorded_observation = recorded
-        return self._legacy_recorded_state or previous_state
+        return previous_state
+
+    async def _async_has_markerless_statistics(
+        self, recorder: Recorder, markerless: _MarkerlessObservation
+    ) -> bool:
+        try:
+            rows = await recorder.async_add_executor_job(
+                statistics.get_last_short_term_statistics,
+                self.hass,
+                1,
+                self.entity_id,
+                False,
+                {"state", "last_reset"},
+            )
+        except Exception:
+            _LOGGER.debug(
+                "Unable to verify a saved markerless Usage sample", exc_info=True
+            )
+            return False
+        if not (samples := rows.get(self.entity_id)):
+            return False
+        latest = samples[-1]
+        return (
+            latest.get("last_reset") is None
+            and latest.get("state") == markerless.tokens
+            and latest["start"] + _RECORDER_WINDOW_SECONDS
+            > markerless.last_updated.timestamp()
+        )
+
+    async def _async_find_prior_timezone_buckets(
+        self, recorder: Recorder, recorded: _PeriodObservation
+    ) -> None:
+        if recorded.timestamp is None:
+            return
+        try:
+            values = await recorder.async_add_executor_job(
+                _prior_timezone_buckets,
+                self.hass,
+                self.entity_id,
+                dt_util.utc_from_timestamp(recorded.timestamp),
+                recorded.reset.date(),
+            )
+        except Exception:
+            _LOGGER.debug(
+                "Unable to read earlier Usage timezone buckets", exc_info=True
+            )
+            return
+        for period, tokens in values.items():
+            self._recent_period_values.setdefault(period, tokens)
 
     @callback
     def _records_period(self) -> bool:
@@ -544,26 +687,27 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
             self._preserve_period_sample_order(
                 previous.timestamp, previous.reset.isoformat(), sample
             )
-        elif self._legacy_recorded_state is not None:
+        elif self._markerless_observation is not None:
             self._preserve_period_sample_order(
-                self._legacy_recorded_state.last_updated_timestamp, None, sample
+                self._markerless_observation.last_updated.timestamp(), None, sample
             )
-            self._legacy_recorded_state = None
-            self._legacy_prior_daily_total = None
+            self._markerless_observation = None
         sample = self.hass.states.get(self.entity_id) or sample
         self._recorded_observation = replace(
             self._observation, timestamp=sample.last_updated_timestamp
         )
         self._recent_period_values.clear()
 
-    def _legacy_sample_overlaps_period(self, state: State, period: date) -> bool:
+    def _legacy_sample_overlaps_period(
+        self, observation: _MarkerlessObservation, period: date
+    ) -> bool:
         """Whether previously recorded tokens can overlap the current bucket."""
-        tokens = int(state.state)
+        tokens = observation.tokens
         if tokens == 0:
             return False
         # 6.8.3 stores the state timestamp in UTC, without its accounting date.
         # Check all calendar buckets allowed by local offsets (UTC-12 to UTC+14).
-        utc = dt_util.as_utc(state.last_updated)
+        utc = dt_util.as_utc(observation.last_updated)
         candidates = {
             self._period_start((utc + timedelta(hours=offset)).date())
             for offset in (-12, 0, 14)
@@ -575,7 +719,7 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         current = self._summary(period)["total_tokens"]
         if current < tokens:
             return False
-        prior_total = self._legacy_prior_daily_total
+        prior_total = observation.prior_daily_total_tokens
         if prior_total is None:
             return True
         # A preceding durable checkpoint can rule out overlap if the current
@@ -628,19 +772,26 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                     baseline = previous.tokens + delta - tokens
         elif (
             recording
-            and (legacy := self._legacy_recorded_state) is not None
+            and (legacy := self._markerless_observation) is not None
             and self._legacy_sample_overlaps_period(legacy, period)
         ):
             # Close the markerless cycle before resetting. If its calendar
             # bucket is ambiguous, credit only the increase above the old sample.
             baseline = 0
         if baseline is not None:
-            if initial and previous_state is not None:
+            if initial:
                 # The Entity API starts writing only after registration.
-                attributes = dict(previous_state.attributes)
+                attributes = (
+                    dict(previous_state.attributes)
+                    if previous_state is not None
+                    else {
+                        "state_class": SensorStateClass.TOTAL,
+                        "unit_of_measurement": "tokens",
+                    }
+                )
                 attributes.pop(ATTR_LAST_RESET, None)
                 self.hass.states.async_set(self.entity_id, str(baseline), attributes)
-            elif not initial:
+            else:
                 self._recorder_baseline = baseline
                 try:
                     self.async_write_ha_state()

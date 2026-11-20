@@ -357,6 +357,8 @@ class UsageManager:
         self._initialize_lock = asyncio.Lock()
         self._initialized = False
         self._repair_required = False
+        self._totals_need_repair = False
+        self._daily_needs_repair = False
         self._detail_retention_dirty = False
         self._current_run: ContextVar[UsageRun | None] = ContextVar(
             f"usage_run_{id(self)}", default=None
@@ -383,13 +385,14 @@ class UsageManager:
                 return
 
             repair_required = False
+            daily_needs_repair = False
             totals_data: dict[str, Any] | None
             daily_data: dict[str, Any] = {}
             if self._daily_storage is not None:
                 loaded_daily = await self._daily_storage.async_load()
                 daily_data = loaded_daily if loaded_daily is not None else {}
                 if not isinstance(daily_data, dict):
-                    repair_required = True
+                    daily_needs_repair = True
                     daily_data = {}
 
             if "totals" in daily_data:
@@ -429,7 +432,8 @@ class UsageManager:
                         staged_totals, revision, mirror
                     )
 
-            staged_daily, daily_needs_repair = _load_stored_usage_days(daily_data)
+            staged_daily, invalid_days = _load_stored_usage_days(daily_data)
+            daily_needs_repair |= invalid_days
             repair_required |= daily_needs_repair
             staged_requests: list[UsageRequest] = []
             staged_runs: list[UsageRun] = []
@@ -504,6 +508,8 @@ class UsageManager:
                 len(staged_requests) + len(staged_runs)
             )
             self._repair_required = repair_required
+            self._totals_need_repair = totals_need_repair
+            self._daily_needs_repair = daily_needs_repair
             if repair_required:
                 _LOGGER.warning(
                     "Usage storage needs repair; original stores preserved and persistence disabled"
@@ -970,6 +976,16 @@ class UsageManager:
         """Whether this manager accounts for requests only in memory."""
         return isinstance(self._storage, _VolatileUsageStorage)
 
+    @property
+    def lifetime_available(self) -> bool:
+        """Whether lifetime counters can be published as numeric sensor states."""
+        return not self.is_volatile and not self._totals_need_repair
+
+    @property
+    def daily_available(self) -> bool:
+        """Whether the daily aggregates can safely advance Recorder."""
+        return not self.is_volatile and not self._daily_needs_repair
+
     def persistence_status(self) -> dict[str, Any]:
         """Expose only persistence state, without request or conversation details."""
         volatile = self.is_volatile
@@ -1064,6 +1080,8 @@ class UsageManager:
             if self._detail_storage is not None:
                 await self._async_save_details(replacing=True)
             self._repair_required = False
+            self._totals_need_repair = False
+            self._daily_needs_repair = False
         await self.async_prune_details()
 
     @staticmethod

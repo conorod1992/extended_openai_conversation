@@ -22,7 +22,8 @@ class FakeUsage:
     def __init__(self) -> None:
         self.totals = SimpleNamespace(total_tokens=0)
         self.daily_total_tokens = 0
-        self.is_volatile = False
+        self.lifetime_available = True
+        self.daily_available = True
         self.remove_listener = Mock()
 
     def async_add_listener(self, _listener):

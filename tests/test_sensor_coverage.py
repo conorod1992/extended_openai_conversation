@@ -45,7 +45,8 @@ class FakeUsage:
     def __init__(self) -> None:
         self.totals = SimpleNamespace(total_tokens=777)
         self.daily_total_tokens = 777
-        self.is_volatile = False
+        self.lifetime_available = True
+        self.daily_available = True
         self.latest_run = None
         self.request_retention_days = None
         self.run_retention_days = None

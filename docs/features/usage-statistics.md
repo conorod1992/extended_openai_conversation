@@ -53,12 +53,17 @@ During a Usage storage outage, the lifetime and period sensors are unavailable
 while the assistant continues with in-memory accounting. Their Recorder baselines
 are preserved until durable Usage is available again. **Last response usage**
 can still show a retained response from the current session.
+The period sensors also become unavailable if the daily aggregates need repair.
+Lifetime usage stays available when its own counters are valid.
 
 Rollover corrections use tokens attributed to stored calendar days. Upgrading
 from 6.8.3 may require a correction for a sample recorded without a reset marker.
 If the stored data allows the sample to overlap more than one calendar bucket,
 the migration preserves the previously recorded total and credits only the
 increase above the potentially overlapping sample.
+If Usage is unavailable during migration, the integration saves the markerless
+baseline across reloads. It can reuse that baseline after Recorder purges the raw
+sample if Recorder still has matching compiled statistics.
 
 ## Management panel
 
