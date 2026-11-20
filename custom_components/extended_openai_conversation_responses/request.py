@@ -50,6 +50,7 @@ from .const import (
 from .conversation_archive import archive_tools
 from .conversation_lifecycle import conversation_lifecycle_active
 from .guest_mode import GuestCapabilityPolicy, guest_mode_restrict_tool
+from .ha_llm_tools import is_ha_tool
 from .helpers import effective_api_provider, is_native_openai_connection
 from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
 from .memory import MEMORY_TOOL_NAMES, memory_tools
@@ -391,6 +392,30 @@ def function_call_budget_available(options: Mapping[str, Any]) -> bool:
         )
         > 0
     )
+
+
+def ha_tool_discovery_references(
+    tools: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+    options: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    """Select enabled HA references, including members of enabled on-demand groups."""
+    from .agent_config import function_tool_enabled
+
+    disabled_members = {
+        name
+        for group in groups
+        if group.get("enabled", True) is not True
+        for name in group["functions"]
+    }
+    references = [
+        tool["function"]
+        for tool in tools
+        if is_ha_tool(tool)
+        and function_tool_enabled(tool)
+        and tool["spec"]["name"] not in disabled_members
+    ]
+    return references if references and function_call_budget_available(options) else []
 
 
 def conversation_tools_required(options: Mapping[str, Any]) -> bool:

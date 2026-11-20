@@ -37,7 +37,6 @@ from . import ExtendedOpenAIConfigEntry, ha_actions
 from .agent_config import (
     AgentConfigError,
     async_prepare_runtime_function_tools,
-    function_tool_enabled,
     normalized_agent_integer,
 )
 from .agent_configuration import (
@@ -177,7 +176,6 @@ from .ha_llm_tools import (
     ToolSnapshot,
     async_discover,
     current_snapshot,
-    is_ha_tool,
     tool_snapshot_scope,
 )
 from .ha_permissions import bind_active_ha_context
@@ -212,7 +210,7 @@ from .regex_execution import async_process_speech_text
 from .request import (
     assemble_integration_function_tools,
     build_provider_request_snapshot,
-    function_call_budget_available,
+    ha_tool_discovery_references,
     provider_tool_limit,
 )
 from .request_context import (
@@ -1316,27 +1314,11 @@ class ExtendedOpenAIAgentEntity(
             config_data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
             configured,
         )
-        disabled_members = {
-            name
-            for group in groups
-            if group.get("enabled", True) is not True
-            for name in group["functions"]
-        }
-        references = [
-            tool["function"]
-            for tool in configured
-            if is_ha_tool(tool)
-            and function_tool_enabled(tool)
-            and tool["spec"]["name"] not in disabled_members
-        ]
+        references = ha_tool_discovery_references(
+            configured, groups, {**config_data, **(request_options or {})}
+        )
         snapshot = ToolSnapshot()
-        if (
-            references
-            and function_call_budget_available(
-                {**config_data, **(request_options or {})}
-            )
-            and not self._effective_guest_policy().guest_active
-        ):
+        if references and not self._effective_guest_policy().guest_active:
             snapshot = await async_discover(self.hass, llm_context, references)
         if self.subentry.data is not config_data:
             raise HomeAssistantError(
