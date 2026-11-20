@@ -221,6 +221,10 @@ class ProviderOutputBudget:
                 key, content=output_weight(event.annotation, MAX_OUTPUT_CHARACTERS)
             )
 
+    def reserve_response_item(self, index: int) -> None:
+        """Count indexed items even when their first event is only metadata."""
+        self._account(("responses", index))
+
     def buffer(self, event: Any) -> int:
         weight = output_weight(event, MAX_BUFFERED_CHARACTERS - self.buffered_weight)
         if self.buffered_events >= MAX_BUFFERED_EVENTS:

@@ -6,6 +6,8 @@ Extended OpenAI records provider-reported token usage. It does not contain a pri
 
 A **provider request** is one API call. A **conversation run** is one complete user turn, from the start of processing until the final response or error. Tool loops and context summarisation can cause one run to contain several provider requests. Foreground requests, including a preflight context summary needed by the current turn, share that run’s ID. Deferred summaries after a reply remain detached from finalized runs and contribute to aggregate usage. Hybrid Memory embedding calls also count as provider requests, including failed attempts; provider-reported embedding input tokens are included.
 
+Usage is scoped to the conversation assistant. **Test assistant** counts toward that assistant's totals. AI Task entities and the provider-level `query_image` service have no conversation-assistant totals.
+
 Provider-request counters and tokens are committed when each real provider request finishes; the conversation-run counter is committed once when the complete user turn finishes. This keeps one user turn distinct from any additional provider rounds it triggers and preserves completed request usage even if the run is interrupted before its normal final response.
 
 Missing provider metadata is handled safely: the request and run are still counted, while unavailable token fields remain zero. Failed, cancelled, interrupted-stream, and exception paths finalize their run once.
@@ -36,10 +38,41 @@ to the normal sensor polling interval. The selectable management-panel history
 period does not change the Today or This month sensor periods.
 
 Lifetime usage uses Home Assistant's `total` state class without `last_reset`.
-Restoring an older backup can reduce the lifetime counter; HA records that as a
-correction rather than inventing a new consumption cycle. Today and This month
-retain their explicit calendar reset markers. This change prevents new restore
-inflation; it does not rewrite previously recorded HA statistics.
+Restoring an older backup can reduce its value, which Recorder treats as a correction.
+Today and This month show the current calendar bucket directly. Their
+`period_start` attribute is the local calendar date the bucket starts on, in
+`YYYY-MM-DD` format.
+
+### Upgrading period sensors
+
+Today and This month keep their entity IDs and continue to provide live values
+and ordinary state history when included in Recorder. Recorder stops creating
+new statistics for these two entities. Existing hourly statistics remain in
+Recorder, and Home Assistant may flag the discontinued series in Statistics.
+For new cumulative statistics, enable and record **Lifetime usage** and select
+it in affected statistics cards or queries. Its accounting can include tokens
+outside the daily history. For automations that use `last_reset`, switch to the
+`period_start` date attribute. The integration's Usage dashboard continues to
+show totals from stored calendar buckets.
+
+Before rolling back to 6.8.3, disable **Usage today** and **Usage this month**,
+or exclude both from Recorder for the duration of the rollback. If a day or
+month boundary passed while a sensor was display-only, 6.8.3 can interpret the
+first value it records as a downward correction to that sensor's existing
+statistics. Restoring a Home Assistant backup that includes Recorder also
+restores the recorded statistics to the state in that backup.
+
+During a Usage storage outage, the lifetime and period sensors are unavailable
+while the assistant continues with in-memory accounting. **Last response usage**
+can still show a retained response from the current session. Reloading the
+integration retries saved storage if the fallback has recorded no usage. An
+active fallback stays in place for the session, and the Usage page warns that
+its counts are temporary. If an aggregate
+needs repair, its sensors are unavailable and the Usage page labels readable
+figures as potentially incomplete. Damage confined to request or run details
+leaves aggregate recording active. **Last response usage** has no value during
+repair because the newest saved run may predate the latest response. Damaged
+details are preserved for repair.
 
 ## Management panel
 
@@ -53,7 +86,11 @@ The selected period drives the aggregate token totals, chart, model/provider/API
 
 The **Usage diagnostics** section summarizes the same selected daily-aggregate period as the chart. It highlights cache reuse, run and provider-request success rates, average provider requests per run, average run duration, token mix, tool-call and web-search activity, and token distribution by model, provider, and API mode. This makes it easier to spot repeated provider calls, unexpectedly slow turns, poor cache reuse, or a model/API route accounting for most token use.
 
+Run averages count requests and tokens from runs that finished during the selected period. A run that crosses local midnight contributes to its completion day. Standalone provider calls contribute to request and token totals only. Older Usage data may carry timestamps for individual runs without their original Home Assistant calendar dates. A period that includes runs without recorded attribution displays **Unavailable** for average tokens and requests per run. Daily and lifetime totals remain available.
+
 Recent failed runs are called out separately. Recent-run and provider-request detail stays within its configured retention periods. Use **Requests** on a recent run to see its individual provider calls, or **Browse retained requests** to include calls whose run detail has expired and calls recorded independently of a run. The detail includes stage, provider, model, API mode, token counts, cache and reasoning metadata, duration, requested tool-call count, web-search use, and success or error state.
+
+**Retained runs without provider requests** uses the same recorded completion day as the daily totals, including after a Home Assistant timezone change or restore. If a legacy run could fall on either side of the selected period’s boundary, this count displays **Unavailable**. Clearing or expiring run details leaves the aggregate totals available.
 
 Recent-run timestamps are displayed in Home Assistant's configured timezone using the browser's locale, while the exact provider timestamp remains available on the semantic time element. **Cached input** is request content the provider has seen before and can reuse. It remains part of total tokens rather than additional usage, and may cost less than uncached input when the provider supports discounted caching.
 
@@ -61,7 +98,11 @@ Detailed request and run records are content-free. They never contain prompts, r
 
 ## Storage and retention
 
-Compact lifetime totals and daily aggregates are persisted as one authoritative aggregate snapshot when daily Usage storage is available; the existing lifetime-totals store is retained as a compatibility mirror. Bounded request/run detail remains separate, so missing, expired, or pruned detail never reconstructs or changes aggregate counters.
+Compact lifetime totals and daily aggregates are persisted as one authoritative aggregate snapshot when daily Usage storage is available; the existing lifetime-totals store is retained as a compatibility mirror. Request and run details have their own retention policy. Recorded completed-run averages survive clearing or expiring those details.
+
+The daily records remain readable after rolling back to 6.8.3. Saving Usage in 6.8.3 removes newer run attribution from the snapshot. After upgrading again, affected average tokens and requests per completed run show **Unavailable** until the selected period contains only runs with recorded attribution. Daily totals, lifetime totals, and retained run records remain readable.
+
+After a completed save by the current version, re-upgrading can recover 6.8.3 standalone requests such as **Test assistant** when the compatibility mirror identifies the same saved aggregate. These requests count toward lifetime Usage because 6.8.3 recorded no daily entry for them. For older snapshots without that identifier, the combined aggregate remains authoritative because an interrupted save or restore can leave the mirror with different totals. The identifier may appear in 6.8.3's diagnostic details. Current diagnostics and backups omit it.
 
 - request details: 30 days by default
 - run details: 90 days by default

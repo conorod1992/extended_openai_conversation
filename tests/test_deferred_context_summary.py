@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import context_summary as subject
+from custom_components.extended_openai_conversation_responses import (
+    context_summary as subject,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -178,6 +180,46 @@ async def test_manager_summary_failure_uses_existing_keep_recent_fallback() -> N
     assert len(partition_history(content[:-1]).turns) == 1
     assert "User turn 4" in content[-3].content
     assert content[-1].content == "Newest question"
+
+
+async def test_summary_deadline_releases_successive_followups(monkeypatch):
+    monkeypatch.setattr(subject, "DEFERRED_CONTEXT_SUMMARY_TIMEOUT", 0.05)
+    manager = DeferredContextSummaryManager()
+    retry_started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def summarize(_older, _model, _api_mode):
+        # The deadline includes the retry within the same provider operation.
+        await asyncio.sleep(0)
+        retry_started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+
+    content = _history()
+    assert manager.schedule(
+        "conversation:test",
+        content,
+        observed_input_tokens=1000,
+        target_tokens=100,
+        model="gpt-5.6-luna",
+        api_mode=API_MODE_RESPONSES,
+        summarize=summarize,
+        scheduler=asyncio.create_task,
+    )
+    await asyncio.wait_for(retry_started.wait(), timeout=1)
+    first = conversation.UserContent(content="First follow-up")
+    content.append(first)
+    assert await asyncio.wait_for(manager.async_apply("conversation:test", content), 1)
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    assert content[-1] is first
+    assert "User turn 4" in content[-3].content
+
+    second = conversation.UserContent(content="Second follow-up")
+    content.append(second)
+    assert not await asyncio.wait_for(manager.async_apply("conversation:test", content), 1)
+    assert content[-2:] == [first, second]
 
 
 async def test_manager_does_not_overwrite_changed_history() -> None:

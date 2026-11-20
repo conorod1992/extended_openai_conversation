@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field as dataclass_field, replace
 from hashlib import sha256
 import json
@@ -224,6 +224,28 @@ def _serialized_characters(value: Any) -> tuple[int, int]:
 # Provider-reported usage remains authoritative; model/image/PDF costs vary.
 _IMAGE_INPUT_TOKEN_BUDGET = 2048
 _FILE_INPUT_TOKEN_BUDGET = 4096
+
+
+def omit_prior_reasoning_ciphertext(
+    input_items: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    """Estimate current-turn-only reasoning without changing provider replay."""
+    last_user = next(
+        (
+            index
+            for index in range(len(input_items) - 1, -1, -1)
+            if input_items[index].get("role") == "user"
+        ),
+        0,
+    )
+    return [
+        {key: value for key, value in item.items() if key != "encrypted_content"}
+        if index < last_user
+        and item.get("type") == "reasoning"
+        and "encrypted_content" in item
+        else item
+        for index, item in enumerate(input_items)
+    ]
 
 
 def _attachment_aware_input(input_value: Any) -> tuple[Any, int]:

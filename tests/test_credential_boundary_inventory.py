@@ -10,6 +10,8 @@ REPO = Path(__file__).resolve().parents[1]
 SOURCE = REPO / "custom_components/extended_openai_conversation_responses"
 INVENTORY = REPO / "docs/development/credential-boundaries.json"
 PARSERS = {
+    "_AutomationLoader",
+    "homeassistant.util.yaml.parse_yaml",
     "yaml.safe_load",
     "yaml.safe_load_all",
     "yaml.load",
@@ -205,6 +207,18 @@ def test_inventory_detects_aliased_new_parsers():
         )
     )
     assert visitor.parsers == {"future.py:read:yaml.safe_load": 1}
+
+    native = BoundaryVisitor("functions/native.py")
+    native.visit(ast.parse(
+        "from homeassistant.util.yaml import parse_yaml as resolve\n"
+        "def validate(raw, secrets):\n"
+        " loader = _AutomationLoader(raw)\n"
+        " return resolve(raw, secrets)"
+    ))
+    assert native.parsers == {
+        "functions/native.py:validate:_AutomationLoader": 1,
+        "functions/native.py:validate:homeassistant.util.yaml.parse_yaml": 1,
+    }
 
 
 @pytest.mark.parametrize(

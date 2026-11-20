@@ -381,14 +381,18 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
     timings["obligation_witness_search_seconds"] = perf_counter() - phase_started
     phase_started = perf_counter()
     # Diverse valid candidates make the cover small without removing a single
-    # obligation.  These are candidate solutions, not padded executed cases.
+    # obligation. Give each model a share of the pool, including models whose
+    # valid API or reasoning combinations are rare under uniform sampling.
+    capability_by_model = tuple(capability_index[("chat_model",)].values())
     diverse = 0
-    for _ in range(6000):
+    for attempt in range(6000):
         if diverse >= 1200:
             break
-        state = {key: rng.choice(values) for key, values in DIMENSIONS.items()}
-        if state["function_groups"] != "none" and state["function_tools"] == "none":
-            state["function_tools"] = "direct"
+        capability = rng.choice(capability_by_model[attempt % len(capability_by_model)])
+        state = {
+            key: capability[key] if key in capability else rng.choice(values)
+            for key, values in DIMENSIONS.items()
+        }
         if not _valid(state)[0]:
             continue
         fingerprint = json.dumps(state, sort_keys=True)

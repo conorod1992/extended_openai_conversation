@@ -344,7 +344,7 @@ async def test_shared_configuration_response_contract_covers_normal_and_repair_a
     monkeypatch.setattr(
         guidance,
         "configuration_guidance_snapshot",
-        lambda entry_data, config, *, decoded_functions: {
+        lambda entry_data, config, *, decoded_functions, client=None: {
             "entry": entry_data,
             "config": config,
             "decoded_functions": decoded_functions,

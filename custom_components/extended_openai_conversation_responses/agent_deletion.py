@@ -9,6 +9,7 @@ from typing import Any
 
 from homeassistant.config_entries import SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntryChange
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_call_later
 
@@ -85,26 +86,44 @@ def _stored_provider_ids(hass: Any) -> set[str]:
     return result
 
 
+class _DelayedQueueCleanupDeferred(Exception):
+    """The shared queue could not confirm that it erased a removed agent."""
+
+
+class _ProviderCleanupDeferred(Exception):
+    """Shared provider recovery must finish before the owner's journal is erased."""
+
+
+async def _async_reconcile_with_retry(hass: Any) -> None:
+    hass.data.pop(_RETRY, lambda: None)()
+    try:
+        await async_reconcile_agent_storage(hass)
+    except Exception:
+        _LOGGER.exception("Private agent data cleanup failed; retrying")
+        _schedule_cleanup_retry(hass)
+
+
+def _schedule_cleanup_retry(hass: Any) -> None:
+    if _RETRY in hass.data:
+        return
+
+    async def retry(_: Any) -> None:
+        await _async_reconcile_with_retry(hass)
+
+    hass.data[_RETRY] = async_call_later(hass, 60, retry)
+
+
 def async_setup_agent_deletion(hass: Any) -> None:
     """Observe native assistant deletion for the integration's whole lifetime."""
     if _LISTENER in hass.data:
         return
-
-    async def reconcile(*_: Any) -> None:
-        hass.data.pop(_RETRY, lambda: None)()
-        try:
-            await async_reconcile_agent_storage(hass)
-        except Exception:
-            _LOGGER.exception("Private agent data cleanup failed; retrying")
-            if _RETRY not in hass.data:
-                hass.data[_RETRY] = async_call_later(hass, 60, reconcile)
 
     async def changed(change: ConfigEntryChange, entry: Any) -> None:
         if entry.domain == DOMAIN and change in {
             ConfigEntryChange.UPDATED,
             ConfigEntryChange.REMOVED,
         }:
-            await reconcile()
+            await _async_reconcile_with_retry(hass)
 
     unsubscribe = async_dispatcher_connect(hass, SIGNAL_CONFIG_ENTRY_CHANGED, changed)
     hass.data[_LISTENER] = unsubscribe
@@ -133,13 +152,33 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                 DATA_DELAYED_TOOL_MANAGER,
                 async_remove_stored_agent_calls,
             )
-            from .model_lifecycle import clear_retirement_failure
+            from .model_lifecycle import remove_retirement_issue
+            from .provider_credentials import PROVIDER_RESTORE_OWNERS
+            from .restore_recovery import async_settle_deleted_agent_provider
+
+            get_entry = getattr(
+                getattr(hass, "config_entries", None), "async_get_entry", None
+            )
+            entry = get_entry(entry_id) if get_entry is not None else None
+            if entry is not None:
+                try:
+                    await async_settle_deleted_agent_provider(hass, entry, subentry_id)
+                except (HomeAssistantError, OSError, ValueError, TypeError) as err:
+                    raise _ProviderCleanupDeferred(type(err).__name__) from err
+            owners = hass.data.get(PROVIDER_RESTORE_OWNERS, {})
+            if entry is not None and owners.get(entry_id) == subentry_id:
+                owners.pop(entry_id)
 
             delayed = hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
-            if delayed is not None:
-                await delayed.async_remove_agent(entry_id, subentry_id)
-            else:
-                await async_remove_stored_agent_calls(hass, entry_id, subentry_id)
+            try:
+                if delayed is not None:
+                    await delayed.async_remove_agent(entry_id, subentry_id)
+                else:
+                    await async_remove_stored_agent_calls(hass, entry_id, subentry_id)
+            except (HomeAssistantError, OSError, ValueError, TypeError) as err:
+                # Keep the private files for orphan discovery on retry or restart.
+                # The queue's loader owns quarantine, including the saved jobs.
+                raise _DelayedQueueCleanupDeferred(type(err).__name__) from err
             await async_remove_agent_transfers(hass, entry_id, subentry_id)
             key = (entry_id, subentry_id)
             for suffix in _MANAGER_KEYS:
@@ -164,10 +203,41 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                 await PropagatingWriteStore(hass, 1, name).async_remove()
             for suffix in _MANAGER_KEYS:
                 hass.data.get(f"{DOMAIN}.{suffix}", {}).pop(key, None)
-            clear_retirement_failure(hass, entry_id=entry_id, subentry_id=subentry_id)
+            if owners.get(entry_id) == subentry_id:
+                owners.pop(entry_id)
+            remove_retirement_issue(hass, entry_id=entry_id, subentry_id=subentry_id)
             gate.deleted = True
 
     await _async_run_exclusive_operation(gate, remove)
+
+
+async def _async_delete_discovered_agent(
+    hass: Any, entry_id: str, subentry_id: str
+) -> bool:
+    try:
+        await async_delete_agent_data(hass, entry_id, subentry_id)
+    except _DelayedQueueCleanupDeferred as err:
+        _LOGGER.warning(
+            "Private agent data cleanup deferred until the delayed tool queue "
+            "can be read and updated (%s)",
+            err,
+        )
+    except _ProviderCleanupDeferred as err:
+        _LOGGER.warning(
+            "Private agent data cleanup deferred until shared provider recovery completes (%s)",
+            err,
+        )
+    except OSError as err:
+        # Preserve the failed store and its owner for the next reconciliation.
+        # An unrelated assistant's private files cannot block startup.
+        _LOGGER.warning(
+            "Private agent data cleanup deferred after a storage error (%s)",
+            type(err).__name__,
+        )
+    else:
+        return True
+    _schedule_cleanup_retry(hass)
+    return False
 
 
 async def async_delete_removed_subentries(hass: Any, entry: Any) -> None:
@@ -191,8 +261,8 @@ async def async_delete_removed_subentries(hass: Any, entry: Any) -> None:
     for subentry_id in known - current:
         if subentry_id in entry.subentries:
             continue
-        await async_delete_agent_data(hass, entry.entry_id, subentry_id)
-        known.discard(subentry_id)
+        if await _async_delete_discovered_agent(hass, entry.entry_id, subentry_id):
+            known.discard(subentry_id)
     known.update(entry.subentries)
 
 
@@ -227,6 +297,11 @@ async def async_delete_entry_data(hass: Any, entry: Any) -> None:
             if name.startswith(prefix):
                 identities.add(name[len(prefix) :].split(".", 1)[0])
                 break
+    pending = set()
     for subentry_id in identities:
-        await async_delete_agent_data(hass, entry.entry_id, subentry_id)
-    hass.data.get(KNOWN_AGENTS, {}).pop(entry.entry_id, None)
+        if not await _async_delete_discovered_agent(hass, entry.entry_id, subentry_id):
+            pending.add(subentry_id)
+    if pending:
+        hass.data.setdefault(KNOWN_AGENTS, {})[entry.entry_id] = pending
+    else:
+        hass.data.get(KNOWN_AGENTS, {}).pop(entry.entry_id, None)

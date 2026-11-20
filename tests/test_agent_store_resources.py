@@ -100,7 +100,16 @@ def test_embedding_cache_registers_without_changing_best_effort_store(hass):
     cache = HomeAssistantEmbeddingCacheStorage(hass, "provider", "agent")
     gate = agent_maintenance.get_agent_maintenance_gate(hass, "provider", "agent")
     assert gate.storage_resources == (cache._store,)
-    assert type(cache._store) is Store
+    assert isinstance(cache._store, Store)
+    cache_type = type(cache._store)
+    for operation in (
+        "async_load",
+        "async_save",
+        "async_delay_save",
+        "_async_handle_write_data",
+        "_async_write_data",
+    ):
+        assert getattr(cache_type, operation) is getattr(Store, operation)
 
 
 async def test_erasure_requires_ownership_and_preserves_failed_handles_for_retry(

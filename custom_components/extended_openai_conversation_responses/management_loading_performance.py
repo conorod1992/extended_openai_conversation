@@ -104,6 +104,7 @@ def _agent_snapshot(
     title: str | None = None,
     memory_count: int = 0,
     knowledge_source_count: int = 0,
+    knowledge_total_source_count: int | None = None,
     tokens_today: int = 0,
     guest_status: dict[str, Any] | None = None,
     function_tools_health: dict[str, Any] | None = None,
@@ -159,6 +160,7 @@ def _agent_snapshot(
         "memory_count": memory_count,
         "knowledge_enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
         "knowledge_source_count": knowledge_source_count,
+        "knowledge_total_source_count": knowledge_total_source_count,
         "function_count": (
             int(function_tools_health["enabled_count"])
             if function_tools_health is not None
@@ -179,7 +181,7 @@ def _agent_snapshot(
         "tokens_today": tokens_today,
         "guest_mode": guest_status,
     }
-    if knowledge_source_count == 0:
+    if knowledge_total_source_count is None:
         loaded = get_loaded_knowledge(hass, entry.entry_id, subentry.subentry_id)
         if loaded is not None:
             try:
@@ -187,6 +189,8 @@ def _agent_snapshot(
                     raise RuntimeError("Knowledge Library has not been initialized")
                 knowledge_source_count = int(loaded.source_count)
                 snapshot["knowledge_source_count"] = knowledge_source_count
+                knowledge_total_source_count = int(loaded.total_source_count)
+                snapshot["knowledge_total_source_count"] = knowledge_total_source_count
             except HomeAssistantError, RuntimeError, ValueError, OSError:
                 snapshot["knowledge_source_count"] = None
                 metadata_errors.append(
@@ -194,7 +198,9 @@ def _agent_snapshot(
                 )
     phase = perf_counter()
     snapshot["feature_status"] = management_feature_status(
-        options, knowledge_source_count=knowledge_source_count
+        options,
+        knowledge_source_count=knowledge_source_count,
+        knowledge_total_source_count=knowledge_total_source_count,
     )
     if snapshot["knowledge_source_count"] is None:
         snapshot["feature_status"]["knowledge"].update(
@@ -202,6 +208,7 @@ def _agent_snapshot(
             label="Unavailable",
             available=False,
             source_count=None,
+            total_source_count=None,
             summary="Knowledge status is unavailable; stored data is retained.",
             detail="Knowledge status could not be read. Review Knowledge Library recovery before relying on its availability.",
         )
@@ -262,6 +269,7 @@ async def async_agent_catalog(
                     ],
                     "guest_mode": {"state": "unavailable", "currently_active": None},
                     "knowledge_source_count": None,
+                    "knowledge_total_source_count": None,
                     "function_group_count": None,
                     "function_count": None,
                     "feature_status": {},
@@ -449,17 +457,22 @@ async def async_overview_detail(
     if kind == "knowledge":
         knowledge = await async_get_knowledge(hass, entry_id, subentry_id)
         source_count = int(knowledge.source_count)
+        total_source_count = int(knowledge.total_source_count)
         return {
             "kind": kind,
             "agent": {
                 "knowledge_source_count": source_count,
+                "knowledge_total_source_count": total_source_count,
                 "feature_status": management_feature_status(
-                    dict(subentry.data), knowledge_source_count=source_count
+                    dict(subentry.data),
+                    knowledge_source_count=source_count,
+                    knowledge_total_source_count=total_source_count,
                 ),
             },
             "setup_health": {
                 "knowledge": {
                     "source_count": source_count,
+                    "total_source_count": total_source_count,
                     "available": True,
                     "loading": False,
                 }
@@ -579,10 +592,12 @@ async def async_overview_summary(
         memory_count = int(memory_result.memory_count)
 
     knowledge_source_count = 0
+    knowledge_total_source_count = None
     if isinstance(knowledge_result, BaseException):
         record_failure("knowledge", "Knowledge", knowledge_result)
     else:
         knowledge_source_count = int(knowledge_result.source_count)
+        knowledge_total_source_count = int(knowledge_result.total_source_count)
 
     guest_status: dict[str, Any] | None = None
     if isinstance(guest_result, BaseException):
@@ -603,6 +618,7 @@ async def async_overview_summary(
             subentry,
             memory_count=memory_count,
             knowledge_source_count=knowledge_source_count,
+            knowledge_total_source_count=knowledge_total_source_count,
             tokens_today=tokens_today,
             guest_status=guest_status,
             function_tools_health=function_tools_health,

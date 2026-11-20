@@ -313,6 +313,10 @@ async def test_archive_malformed_session_is_ignored_without_losing_valid_session
         shared_archive_enabled=False,
         inactivity_minutes=30,
     )
+    await archive.async_record_turn(
+        session.session_id, run_id=None, user_text="Saved question",
+        assistant_text="Saved reply", successful=True,
+    )
     storage.metadata["sessions"].append({"session_id": "broken"})
 
     restarted = ConversationArchive(storage, "agent-1")

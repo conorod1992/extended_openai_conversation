@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
@@ -32,8 +31,8 @@ from .agent_config import (
     MAX_FUNCTION_GROUPS,
     AgentConfigError,
     agent_config_defaults,
+    agent_config_model_repair_snapshot,
     agent_config_options,
-    agent_config_sampling_repair_snapshot,
     agent_config_snapshot,
     function_tool_enabled,
     function_tool_yaml,
@@ -44,6 +43,7 @@ from .agent_config import (
     normalized_agent_integer,
     parse_configured_function_tools,
     preserve_agent_model_setting_omissions,
+    preserve_unselected_archive_retention,
     project_agent_config_transfer,
     project_agent_config_updates,
     shortened_usage_retention,
@@ -567,6 +567,7 @@ def _prepare_request_rule(
         raw,
         validate_sentence_pattern=not preserve_inactive,
         validate_script_schema=not preserve_inactive,
+        allow_empty_normalized_phrases=preserve_inactive,
     )
 
 
@@ -1406,7 +1407,9 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
             hass, entry, subentry, normalized
         )
         _require_agent_config_revision(subentry, message["revision"])
-    persisted = project_agent_config_updates(subentry.data, updates, normalized)
+    persisted = project_agent_config_updates(
+        subentry.data, updates, normalized, provider=provider
+    )
     saved_title = title.strip() if isinstance(title, str) else subentry.title
     refresh_local_handling = _local_handling_config_changed(
         subentry.data, persisted, updates
@@ -1607,12 +1610,10 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             validation_started = perf_counter()
             state, state_cache_hit = repair_state_for_projection(projection)
             if state is None:
-                if err.field not in {"temperature", "top_p"}:
+                if err.field not in {"temperature", "top_p", "service_tier"}:
                     raise
-                # This is display-only: keep the authoritative booleans visible
-                # and leave the validated projection cache empty. All writers
-                # and request construction retain their strict numeric checks.
-                config = agent_config_sampling_repair_snapshot(
+                # This projection is for repairing saved values in the editor.
+                config = agent_config_model_repair_snapshot(
                     dict(projection.data), provider=provider
                 )
                 snapshot_cache_hit = False
@@ -1759,7 +1760,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 hass, entry, subentry, normalized
             )
             _require_agent_config_revision(subentry, message["revision"])
-        normalized = project_agent_config_updates(subentry.data, updates, normalized)
+        normalized = project_agent_config_updates(
+            subentry.data, updates, normalized, provider=provider
+        )
         requested_title = message.get("title")
         saved_title = (
             validate_agent_title(requested_title)
@@ -1860,6 +1863,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         )
         _validated_model_request(parsed["config"], entry.data)
         if message.get("mode", "current") == "current":
+            parsed["config"] = preserve_unselected_archive_retention(
+                subentry.data, parsed["config"]
+            )
             await _async_validate_configuration_dependencies(
                 hass, entry, subentry, parsed["config"]
             )
@@ -1899,6 +1905,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         _validated_model_request(parsed["config"], entry.data)
         mode = message.get("mode", "current")
         if mode == "current":
+            parsed["config"] = preserve_unselected_archive_retention(
+                subentry.data, parsed["config"]
+            )
             await _async_validate_configuration_dependencies(
                 hass, entry, subentry, parsed["config"]
             )
@@ -2804,13 +2813,7 @@ async def _async_temporary_memories_command(
     if action == "temporary_clear":
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
-        records = await manager_any.async_list_owned(owner)
-        deleted = 0
-        for offset in range(0, len(records), 50):
-            deleted += await manager_any.async_delete_owned(
-                owner, [record.memory_id for record in records[offset : offset + 50]]
-            )
-        return {"deleted": deleted}
+        return {"deleted": await manager.async_clear_owned(owner)}
     memory_id = message.get("memory_id")
     if not isinstance(memory_id, str) or not memory_id:
         raise HomeAssistantError("memory_id is required")
@@ -2961,22 +2964,33 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
     return _unknown_management_action(request)
 
 
+def _knowledge_availability(
+    options: Mapping[str, Any], enabled_count: int, total_count: int
+) -> dict[str, Any]:
+    from .feature_status import management_feature_status
+
+    return management_feature_status(
+        options,
+        knowledge_source_count=enabled_count,
+        knowledge_total_source_count=total_count,
+    )["knowledge"]
+
+
 def _knowledge_mutation_result(
     request: _ManagementRequest,
     library: Any,
     result: dict[str, Any],
     source: Any = None,
 ) -> dict[str, Any]:
-    from .feature_status import management_feature_status
     from .knowledge import source_summary
 
     if source is not None:
         result["source"] = knowledge_source_as_dict(source)
     enrichments = {
         "stats": library.stats,
-        "feature_status": lambda: management_feature_status(
-            request.subentry.data, knowledge_source_count=library.total_source_count
-        )["knowledge"],
+        "feature_status": lambda: _knowledge_availability(
+            request.subentry.data, library.source_count, library.total_source_count
+        ),
     }
     if source is not None:
         enrichments["summary"] = lambda: source_summary(source)
@@ -2998,24 +3012,21 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
     _selected_scope(request.user_id, request.is_admin, request.message.get("scope_id"))
     library = await async_get_knowledge(hass, entry_id, subentry_id)
     if action == "list":
-        from .feature_status import management_feature_status
-
         sources = await library.async_list()
-        stats = library.stats()
-        source_count = len(sources) if isinstance(sources, list) else 0
-        if isinstance(stats, Mapping):
-            with suppress(TypeError, ValueError):
-                source_count = int(stats.get("source_count", source_count))
+        # The list includes disabled sources even when diagnostics are malformed.
+        listed = sources if isinstance(sources, list) else []
+        enabled_count = sum(
+            isinstance(source, Mapping) and source.get("enabled") is not False
+            for source in listed
+        )
         return {
             "sources": sources,
-            "stats": stats,
-            "feature_status": management_feature_status(
-                request.subentry.data, knowledge_source_count=source_count
-            )["knowledge"],
+            "stats": library.stats(),
+            "feature_status": _knowledge_availability(
+                request.subentry.data, enabled_count, len(listed)
+            ),
         }
     if action == "set_enabled":
-        from .feature_status import management_feature_status
-
         _require_admin(request.is_admin)
         enabled = message.get("enabled")
         if not isinstance(enabled, bool):
@@ -3037,9 +3048,9 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         result: dict[str, Any] = {
             "revision": None,
             "knowledge_enabled": bool(persisted.get(CONF_KNOWLEDGE_ENABLED, False)),
-            "feature_status": management_feature_status(
-                persisted, knowledge_source_count=library.total_source_count
-            )["knowledge"],
+            "feature_status": _knowledge_availability(
+                persisted, library.source_count, library.total_source_count
+            ),
         }
         update_live_subentry(
             request.hass, request.entry, request.subentry, data=persisted
@@ -3358,6 +3369,7 @@ async def _async_management_request(
                 getattr(entry, "data", {}),
                 result,
                 action=configuration_action,
+                client=getattr(entry, "runtime_data", None),
             )
             decoration_ms = _elapsed_ms(decoration_started)
             assert handler_started is not None

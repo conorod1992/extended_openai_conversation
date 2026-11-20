@@ -6,10 +6,8 @@ import logging
 import mimetypes
 from pathlib import Path
 import re
-import shutil
 from typing import Any, cast
 from urllib.parse import quote, urlparse
-from uuid import uuid4
 
 from openai._exceptions import OpenAIError
 import voluptuous as vol
@@ -48,7 +46,6 @@ from .const import (
     CONF_ORGANIZATION,
     CONF_SKIP_AUTHENTICATION,
     DEFAULT_API_MODE,
-    DEFAULT_CONF_BASE_URL,
     DOMAIN,
     GITHUB_REPO_NAME,
     GITHUB_REPO_OWNER,
@@ -65,12 +62,13 @@ from .const import (
     SERVICE_MEMORY_LIST,
     SERVICE_PROCESS,
     SERVICE_QUERY_IMAGE,
+    SERVICE_REBUILD_MEMORY_EMBEDDINGS,
     SERVICE_RELOAD_SKILLS,
 )
 from .guest_mode import async_get_guest_mode
 from .ha_schema import schema_for_ha
 from .ha_tool_result_compat import tool_result_data
-from .helpers import get_api_mode, get_authenticated_client
+from .helpers import get_api_mode, get_authenticated_client, is_native_openai_connection
 from .live_subentry_updates import update_live_subentry
 from .memory import async_get_memory, memory_as_dict, memory_user_id
 from .model_capabilities import model_capability_snapshot
@@ -93,6 +91,7 @@ from .skill_resource_limits import (
     async_read_bounded_json,
     async_read_bounded_response,
 )
+from .skill_transactions import SkillDownload, prepare_download
 
 SERVICE_ENABLE_FUNCTION_GROUPS = "enable_function_groups"
 SERVICE_DISABLE_FUNCTION_GROUPS = "disable_function_groups"
@@ -104,7 +103,7 @@ QUERY_IMAGE_SCHEMA = vol.Schema(
                 "integration": DOMAIN,
             }
         ),
-        vol.Required("model", default="gpt-4.1-mini"): cv.string,
+        vol.Optional("model"): cv.string,
         vol.Optional(CONF_API_MODE, default=DEFAULT_API_MODE): vol.In(
             [mode["key"] for mode in API_MODE_OPTIONS]
         ),
@@ -343,7 +342,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         await _async_require_service_admin(hass, call)
         entry = None
         try:
-            model = call.data["model"]
             if "max_tokens" in call.data and call.data["max_tokens"] in (None, ""):
                 raise HomeAssistantError("Output token limit is required")
             entry = hass.config_entries.async_get_entry(call.data["config_entry"])
@@ -351,15 +349,26 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 raise HomeAssistantError("Config entry not found")
             if getattr(entry, "state", None) is not ConfigEntryState.LOADED:
                 raise HomeAssistantError("Config entry is not loaded")
+            from .provider_credentials import require_provider_restore_complete
+
+            require_provider_restore_complete(hass, call.data["config_entry"])
             # Setup can fail before assigning a runtime client. Do not parse
             # images or make a provider request for an unavailable connection.
             client = getattr(entry, "runtime_data", None)
             if client is None:
                 raise HomeAssistantError("Config entry client is unavailable")
+            entry_data = getattr(entry, "data", {})
+            model = call.data.get("model")
+            if model is None:
+                model = (
+                    "gpt-6-luna"
+                    if is_native_openai_connection(entry_data, client=client)
+                    else "gpt-4.1-mini"
+                )
             with model_capability_snapshot(
                 model,
                 request_model_capabilities(
-                    {**call.data, CONF_CHAT_MODEL: model}, getattr(entry, "data", {})
+                    {**call.data, CONF_CHAT_MODEL: model}, entry_data
                 ),
             ):
                 api_mode = get_api_mode(call.data[CONF_API_MODE], model)
@@ -367,7 +376,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 model,
                 api_mode,
                 call.data,
-                getattr(entry, "data", {}),
+                entry_data,
             )
             image_params = await hass.async_add_executor_job(
                 prepare_image_params, hass, call.data["images"]
@@ -470,10 +479,12 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         from .provider_credentials import (
             incompatible_provider_agent,
             request_provider_reload_after_update,
+            require_provider_restore_complete,
             validate_agent_provider_request,
             validate_provider_connection,
         )
 
+        require_provider_restore_complete(hass, entry_id)
         provider = validate_provider_connection(new_data)
 
         _LOGGER.debug(
@@ -482,9 +493,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             ", ".join(sorted(updates)),
         )
 
-        if new_data.get(CONF_BASE_URL) == DEFAULT_CONF_BASE_URL:
-            # Do not pin the SDK's default URL to the current OpenAI endpoint.
-            new_data.pop(CONF_BASE_URL)
         if provider == "azure":
             new_data[CONF_API_PROVIDER] = provider
 
@@ -584,7 +592,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         )
         downloaded_files: list[str] = []
         download_budget = SkillDownloadBudget()
-        owns_staging = False
+        download: SkillDownload | None = None
 
         def _safe_child(base: Path, name: str) -> Path:
             root = base.resolve()
@@ -654,16 +662,10 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
 
-        def _prepare_staging(root: Path, staging: Path) -> None:
-            nonlocal owns_staging
-            root.mkdir(parents=True, exist_ok=True)
-            # A UUID collision is not authority to delete someone else's files.
-            staging.mkdir()
-            owns_staging = True
-
-        def _cleanup_path(path: Path) -> None:
-            if path.exists():
-                shutil.rmtree(path)
+        def _prepare_staging(root: Path) -> SkillDownload:
+            nonlocal download
+            download = prepare_download(root, skill_name)
+            return download
 
         skill_manager = await SkillManager.async_get_instance(hass)
         skills_root = skill_manager.user_skills_dir.resolve()
@@ -672,21 +674,20 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             raise HomeAssistantError("Skill target directory is unsafe")
 
         staging_root = skill_manager.staging_dir.resolve()
-        staging_dir = staging_root / f"{skill_name}.download-{uuid4().hex}"
-        published = False
-
         try:
-            await async_settle_owned_operation(
-                hass.async_add_executor_job(_prepare_staging, staging_root, staging_dir)
+            owner = await async_settle_owned_operation(
+                hass.async_add_executor_job(_prepare_staging, staging_root)
             )
+            staging_dir = owner.directory
             _LOGGER.info("Downloading skill `%s` from `%s`", skill_name, source_ref)
             await _download_directory(api_url, staging_dir)
             if not (staging_dir / "SKILL.md").is_file():
                 raise HomeAssistantError(
                     f"Downloaded skill `{skill_name}` does not contain SKILL.md"
                 )
-            await skill_manager.async_publish_staged_skill(skill_name, staging_dir)
-            published = True
+            await skill_manager.async_publish_staged_skill(
+                skill_name, staging_dir, download=owner
+            )
         except HomeAssistantError:
             raise
         except Exception as err:
@@ -694,9 +695,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 f"Failed to download skill `{skill_name}`: {err}"
             ) from err
         finally:
-            if owns_staging and not published:
+            if download is not None:
                 await async_settle_owned_operation(
-                    hass.async_add_executor_job(_cleanup_path, staging_dir)
+                    hass.async_add_executor_job(download.close)
                 )
 
         _LOGGER.info(
@@ -775,6 +776,16 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             call.data["functions"],
             True,
         )
+
+    async def rebuild_memory_embeddings(call: ServiceCall) -> None:
+        """Reset derived embeddings for an agent while preserving memories."""
+        await _async_require_service_admin(hass, call)
+        entry_id, subentry_id = resolve_memory_agent(
+            hass, call.data["config_entry"], call.data["agent_id"]
+        )
+        async with get_agent_maintenance_gate(hass, entry_id, subentry_id).exclusive():
+            memory = await async_get_memory(hass, entry_id, subentry_id)
+            await memory.async_rebuild_embedding_cache()
 
     async def disable_function_tools(call: ServiceCall) -> None:
         """Disable one or more configured Function Tools."""
@@ -999,6 +1010,12 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
     )
     hass.services.async_register(
         DOMAIN,
+        SERVICE_REBUILD_MEMORY_EMBEDDINGS,
+        rebuild_memory_embeddings,
+        schema=schema_for_ha(vol.Schema(MEMORY_AGENT_FIELDS)),
+    )
+    hass.services.async_register(
+        DOMAIN,
         SERVICE_DISABLE_FUNCTION_TOOLS,
         disable_function_tools,
         schema=schema_for_ha(FUNCTION_TOOL_STATE_SCHEMA),
@@ -1048,10 +1065,15 @@ def _ensure_complete_image_result(response: Any, api_mode: str) -> None:
             == "max_output_tokens"
         )
     else:
-        exhausted = any(
-            field(choice, "finish_reason") == "length"
+        finish_reasons = tuple(
+            field(choice, "finish_reason")
             for choice in field(response, "choices") or []
         )
+        if "content_filter" in finish_reasons:
+            raise HomeAssistantError(
+                "Image query was blocked by the provider content filter"
+            )
+        exhausted = "length" in finish_reasons
         if not exhausted:
             return
     if exhausted:

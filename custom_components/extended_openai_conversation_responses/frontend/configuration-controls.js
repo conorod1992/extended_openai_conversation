@@ -2,6 +2,8 @@ import {same, clone} from "./unsaved-state.js";
 import {voiceMappingDraftDirty} from "./voice-mapping-draft.js";
 
 export const CONFIGURATION_CONTROLS = "[data-config],[data-memory-config],#voice-mappings,[data-local-intent-exclusion],.regex-pattern,.regex-replacement";
+export const isTimeoutKey = (key) => /^(archive_session|conversation)_timeout_minutes$/.test(key);
+export const validTimeout = (value) => Number.isInteger(value) && value >= 1 && value <= 1440;
 export const skillNamesFromText = (value) => String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
 
 export function recordReasoningChoice(panel) {
@@ -34,12 +36,12 @@ export function configurationControlValue(control) {
   }
   if (control.dataset?.type === "boolean" || control.type === "checkbox") return Boolean(control.checked);
   if (control.dataset?.type === "number") {
-    if (control.validity?.badInput) return value;
+    if (control.validity?.badInput || (typeof value === "string" && !value.trim())) return value;
     if (value === "true" || value === "false") return value === "true";
     const number = Number(value);
     // Keep malformed recovery text for validation. JSON converts NaN and
     // Infinity to null, and empty recovery text does not specify zero.
-    return Number.isFinite(number) && (control.type !== "text" || value.trim()) ? number : value;
+    return Number.isFinite(number) ? number : value;
   }
   if (key === "skills") return skillNamesFromText(value);
   if (key?.startsWith("guest_readable_") || key?.startsWith("guest_controllable_")) {
@@ -54,6 +56,9 @@ export function applyConfigurationControl(panel, control, preserveText = true) {
   if (!panel._draft || !control) return null;
   const key = configKeyForControl(control);
   let value = configurationControlValue(control);
+  // A partial timeout edit belongs to the input, while the draft retains
+  // the last valid value for saving when its parent setting is disabled.
+  if (isTimeoutKey(key) && !validTimeout(value)) return {key, changed:false};
   if (key === "local_intent_exclusions") {
     const values = new Set(panel._draft[key] || []);
     if (control.checked) values.add(control.value);

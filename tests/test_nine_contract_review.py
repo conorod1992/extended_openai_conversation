@@ -111,7 +111,7 @@ async def test_knowledge_toggle_preserves_quarantined_source_bytes(hass, monkeyp
     monkeypatch.setattr(
         management_ui,
         "async_get_knowledge",
-        AsyncMock(return_value=SimpleNamespace(total_source_count=0)),
+        AsyncMock(return_value=SimpleNamespace(source_count=0, total_source_count=0)),
     )
     result = await management_ui.async_management_command(
         hass,

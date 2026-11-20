@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import conversation
 from custom_components.extended_openai_conversation_responses.const import (
+    CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
     CONF_MEMORY_MODE,
     CONF_SHARED_ARCHIVE_ENABLED,
@@ -31,6 +34,8 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
     TemporaryMemoryRecord,
 )
 from homeassistant.helpers import llm
+from homeassistant.util import dt as dt_util
+from tests.test_conversation_archive import _archive
 
 
 def _agent(options: dict | None = None) -> ExtendedOpenAIAgentEntity:
@@ -211,6 +216,77 @@ async def test_temporary_memory_dispatcher_uses_request_scope_for_all_mutations(
     assert deleted == {"status": "deleted", "deleted": 1}
 
 
+@pytest.mark.parametrize(
+    "preview_first", [False, True], ids=["direct", "same-turn-preview"]
+)
+async def test_model_date_range_cannot_delete_turns_outside_requested_dates(
+    monkeypatch,
+    preview_first,
+):
+    archive = await _archive()
+    entity = _agent({CONF_ARCHIVE_ENABLED: True})
+    entity._archive = archive
+    scope = user_scope("alice", source="test")
+    # Both turns are on 12 July UTC and on different dates in Home Assistant.
+    before = datetime.fromisoformat("2026-07-12T22:58:00+00:00")
+    after = datetime.fromisoformat("2026-07-12T23:02:00+00:00")
+    with monkeypatch.context() as clock:
+        clock.setattr(dt_util, "DEFAULT_TIME_ZONE", ZoneInfo("Europe/Dublin"))
+        clock.setattr(dt_util, "utcnow", lambda: before)
+        session = await archive.async_begin_session(
+            "test-session",
+            scope,
+            "test-conversation",
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
+        await archive.async_record_turn(
+            session.session_id,
+            run_id=None,
+            user_text="Yesterday's turn",
+            assistant_text="Answer",
+            successful=True,
+        )
+        clock.setattr(dt_util, "utcnow", lambda: after)
+        await archive.async_record_turn(
+            session.session_id,
+            run_id=None,
+            user_text="Today's turn",
+            assistant_text="Answer",
+            successful=True,
+        )
+        token = conversation._ACTIVE_TURN.set(
+            replace(
+                conversation._ACTIVE_TURN.get(),
+                scope=scope,
+                archive=("test-session", session.session_id),
+            )
+        )
+        try:
+            dates = {"start_date": "2026-07-13", "end_date": "2026-07-13"}
+            if preview_first:
+                preview = await entity._async_execute_archive_tool(
+                    "delete_range", {**dates, "confirm": False}
+                )
+                assert preview["status"] == "user_confirmation_required"
+            denied = await entity._async_execute_archive_tool(
+                "delete_range", {**dates, "confirm": True}
+            )
+            assert denied["status"] == "user_confirmation_required"
+            assert denied["earlier_turn_count"] == 1
+            assert denied["turn_count"] == 2
+            assert "Conversation history" in denied["confirmation"]
+            assert len((await archive.async_backup_data())["turns"]) == 2
+
+            allowed = await entity._async_execute_archive_tool(
+                "delete_range", {**dates, "start_date": "2026-07-12", "confirm": True}
+            )
+            assert allowed == {"deleted_sessions": 1, "deleted_turns": 2}
+        finally:
+            conversation._ACTIVE_TURN.reset(token)
+
+
 async def test_archive_dispatcher_routes_session_operations_and_resume_boundary() -> None:
     """Archive tools use the active owner/session and publish a resumed session."""
     entity = _agent(
@@ -229,6 +305,9 @@ async def test_archive_dispatcher_routes_session_operations_and_resume_boundary(
         async_resume_saving=AsyncMock(return_value=resumed_session),
         async_delete_session=AsyncMock(return_value={"deleted_turns": 1}),
         async_delete_selected=AsyncMock(return_value={"deleted_sessions": 2}),
+        async_preview_delete_date_range=AsyncMock(
+            return_value={"earlier_turn_count": 1}
+        ),
         async_delete_date_range=AsyncMock(return_value={"deleted_sessions": 3}),
     )
     scope = user_scope("alice", source="test")
@@ -261,6 +340,11 @@ async def test_archive_dispatcher_routes_session_operations_and_resume_boundary(
             "delete_selected",
             {"session_ids": ["session-2", "selected"], "confirm": True},
         )
+        range_preview = await entity._async_execute_archive_tool(
+            "delete_range",
+            {"start_date": "2026-09-01", "end_date": "2026-09-11", "confirm": False},
+        )
+        entity._archive.async_delete_date_range.assert_not_awaited()
         range_deleted = await entity._async_execute_archive_tool(
             "delete_range",
             {
@@ -295,8 +379,12 @@ async def test_archive_dispatcher_routes_session_operations_and_resume_boundary(
         "user:alice", ["session-2", "selected"], confirm=True
     )
     entity._archive.async_delete_date_range.assert_awaited_once_with(
-        "user:alice", "2026-09-01", "2026-09-11", confirm=True
+        "user:alice", "2026-09-01", "2026-09-11", confirm=True, allow_outside_range=False
     )
+    entity._archive.async_preview_delete_date_range.assert_awaited_once_with(
+        "user:alice", "2026-09-01", "2026-09-11"
+    )
+    assert range_preview == {"earlier_turn_count": 1}
     assert searched == {"results": []}
     assert fetched == {"session_id": "selected"}
     assert private == {"deleted_turns": 2}

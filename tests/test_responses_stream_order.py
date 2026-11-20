@@ -155,3 +155,38 @@ async def test_protocol_recovery_runs_before_owned_source_is_closed():
             async for item in ordered_output_events(source(), recover_usage=recover)
         ]
     assert order == ["recover", "closed"]
+
+@pytest.mark.parametrize("index", [-1, True, []], ids=["negative", "bool", "unhashable"])
+async def test_invalid_index_is_rejected_before_budget_accounting(index):
+    delta = event("response.output_text.delta", output_index=index, delta="Waiting")
+    with pytest.raises(ProviderStreamError, match="invalid output index"):
+        _ = [frame async for frame in ordered_output_events(stream([delta]))]
+
+
+async def test_preannouncement_delta_and_item_must_share_identity():
+    events = [
+        event("response.output_text.delta", output_index=0, item_id="msg_other", delta="Unowned"),
+        event("response.output_item.done", output_index=0),
+        event("response.completed"),
+    ]
+    with pytest.raises(ProviderStreamError, match="conflicting output item id"):
+        _ = [frame async for frame in ordered_output_events(stream(events))]
+
+
+async def test_late_annotation_does_not_reopen_completed_item():
+    frames = [
+        event("response.output_item.added", output_index=0),
+        event("response.output_item.done", output_index=0),
+        event("response.output_text.annotation.added", output_index=0, item_id="msg_0", annotation={}),
+        event("response.completed"),
+    ]
+    assert [frame async for frame in ordered_output_events(stream(frames))] == frames
+
+
+async def test_unannounced_content_uses_the_backlog_budget(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import provider_output_budget
+
+    monkeypatch.setattr(provider_output_budget, "MAX_BUFFERED_EVENTS", 1)
+    delta = event("response.output_text.delta", output_index=0, item_id="msg_0", delta="Waiting")
+    with pytest.raises(ProviderStreamError, match="local safety limits"):
+        _ = [frame async for frame in ordered_output_events(stream([delta, delta]))]

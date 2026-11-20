@@ -99,7 +99,7 @@ async def test_authentication_probe_timeout_normalizes_before_config_callers() -
     assert isinstance(caught.value.__cause__, TimeoutError)
 
 
-async def test_setup_treats_normalized_timeout_as_retryable(monkeypatch) -> None:
+async def test_setup_treats_normalized_timeout_as_retryable(hass, monkeypatch) -> None:
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.agent_deletion.async_delete_removed_subentries",
         AsyncMock(),
@@ -115,7 +115,7 @@ async def test_setup_treats_normalized_timeout_as_retryable(monkeypatch) -> None
         ),
         pytest.raises(ConfigEntryNotReady) as caught,
     ):
-        await async_setup_entry(MagicMock(), entry)
+        await async_setup_entry(hass, entry)
 
     assert caught.value.__cause__ is error
 

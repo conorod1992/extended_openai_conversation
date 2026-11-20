@@ -252,8 +252,8 @@ function knowledgeCheck(facts) {
     id: "knowledge",
     state: "warning",
     title: "Knowledge Library",
-    value: "Enabled, no sources",
-    detail: "Knowledge Library access is enabled but there are no stored sources to search.",
+    value: knowledge.total_source_count ? "No enabled sources" : "Enabled, no sources",
+    detail: "Knowledge tools require at least one enabled source.",
     action: action("data-memory", "knowledge"),
   };
 }

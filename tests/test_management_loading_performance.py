@@ -1173,7 +1173,7 @@ async def test_overview_summary_loads_selected_agent_managers_once(monkeypatch) 
         memory_count=7,
         stats=MagicMock(side_effect=AssertionError("overview must not build memory stats")),
     )
-    knowledge = SimpleNamespace(source_count=3)
+    knowledge = SimpleNamespace(source_count=3, total_source_count=3)
     guest = SimpleNamespace(
         status=lambda: {"state": "scheduled", "currently_active": False}
     )
@@ -1223,7 +1223,7 @@ async def test_overview_reuses_one_function_tool_health_projection(monkeypatch) 
     monkeypatch.setattr(
         loading,
         "async_get_knowledge",
-        AsyncMock(return_value=SimpleNamespace(source_count=0)),
+        AsyncMock(return_value=SimpleNamespace(source_count=0, total_source_count=0)),
     )
     monkeypatch.setattr(
         loading,
@@ -2176,7 +2176,7 @@ async def test_overview_summary_uses_exception_type_when_message_is_empty(
 ) -> None:
     """Empty exception messages still produce useful load-error diagnostics."""
     hass, entry, subentry = _hass_with_agent()
-    knowledge = SimpleNamespace(source_count=0)
+    knowledge = SimpleNamespace(source_count=0, total_source_count=0)
     guest = SimpleNamespace(status=lambda: {"state": "off", "currently_active": False})
     monkeypatch.setattr(loading, "settings_snapshot", lambda config: config)
     monkeypatch.setattr(

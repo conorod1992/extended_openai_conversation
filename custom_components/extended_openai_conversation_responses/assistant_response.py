@@ -9,6 +9,7 @@ from typing import Any, Literal
 from homeassistant.components import conversation
 
 from .ha_tool_result_compat import is_tool_result_content
+from .provider_content import answer_text
 
 type ProviderOutputKind = Literal[
     "answer", "commentary", "reasoning", "hosted_tool", "replay_only"
@@ -37,6 +38,20 @@ def classify_provider_output(item: Any) -> ProviderOutputKind:
     if native_type == "web_search_call":
         return "hosted_tool"
     return "replay_only"
+
+
+def responses_answer_text(output: Sequence[Any]) -> str:
+    """Read completed assistant answer parts, including unphased text."""
+    return "".join(
+        answer_text(part)
+        for item in output
+        if getattr(item, "type", None) == "message"
+        and getattr(item, "role", None) == "assistant"
+        and getattr(item, "status", None) in (None, "completed")
+        and classify_provider_output(item) == "answer"
+        for part in (getattr(item, "content", None) or ())
+        if getattr(part, "type", None) == "output_text"
+    )
 
 
 @asynccontextmanager
@@ -127,3 +142,26 @@ def final_assistant_text(
         if item.content:
             texts.append(item.content)
     return separator.join(reversed(texts))
+
+
+def responses_leave_tool_results_unanswered(
+    content: Sequence[conversation.Content],
+) -> bool:
+    """Check the current exchange while ignoring replay-only provider output."""
+    for item in reversed(content):
+        if isinstance(item, conversation.UserContent):
+            break
+        if is_tool_result_content(item):
+            return True
+        if (
+            isinstance(item, conversation.AssistantContent)
+            and not item.tool_calls
+            and classify_provider_output(item.native) == "answer"
+            and (
+                (item.content or "").strip()
+                # A completed assistant message can deliberately be empty.
+                or getattr(item.native, "type", None) == "message"
+            )
+        ):
+            break
+    return False

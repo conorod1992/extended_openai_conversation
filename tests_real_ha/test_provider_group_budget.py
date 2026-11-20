@@ -29,6 +29,7 @@ async def test_group_loading_obeys_effective_provider_budget(
     ]
     entry = _make_entry(
         include_ai_task=False,
+        base_url="https://resource.openai.azure.com" if provider == "azure" else None,
         data={"api_provider": provider, "api_version": "2024-10-21"},
         conversation_options={
             "functions": tools,

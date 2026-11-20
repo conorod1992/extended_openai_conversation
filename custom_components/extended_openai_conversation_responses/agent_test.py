@@ -16,6 +16,7 @@ from .agent_config import (
     parse_configured_function_tools,
     validate_function_groups,
 )
+from .assistant_response import responses_answer_text
 from .const import (
     API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
@@ -29,7 +30,6 @@ from .const import (
     CONF_SKILLS,
     CONF_WEB_SEARCH,
     DEFAULT_API_MODE,
-    DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -42,7 +42,7 @@ from .helpers import (
     effective_api_provider,
     get_api_mode,
     get_exposed_entities,
-    supports_openai_hosted_tools,
+    is_native_openai_connection,
 )
 from .memory import async_get_memory, memory_enabled
 from .model_capabilities import (
@@ -51,14 +51,20 @@ from .model_capabilities import (
     recommended_reasoning_effort,
     validate_reasoning_effort,
 )
-from .model_catalog import model_metadata
+from .provider_content import answer_text
+from .provider_credentials import require_provider_restore_complete
 from .provider_errors import (
     classify_config_provider_error,
     ensure_successful_responses_result,
     provider_user_message,
     request_reauthentication,
 )
-from .request import auxiliary_output_token_limit, conversation_tools_required
+from .request import (
+    auxiliary_output_token_limit,
+    build_provider_request_snapshot,
+    conversation_tools_required,
+    request_model_capabilities,
+)
 from .skill_availability import skill_loader_status
 from .skills import SkillManager
 from .usage import async_get_usage, extract_usage
@@ -134,6 +140,10 @@ async def async_test_agent(
     """Test one agent with local checks and at most one minimal live request."""
     checks: list[TestCheck] = []
     authentication_rejected = False
+    try:
+        require_provider_restore_complete(hass, getattr(entry, "entry_id", ""))
+    except HomeAssistantError as err:
+        return AgentTestResult("Failed", [_check("Authentication", "Failed", str(err))])
     client = getattr(entry, "runtime_data", None)
     if client is None:
         checks.append(_check("Authentication", "Failed", "API client is unavailable"))
@@ -151,14 +161,11 @@ async def async_test_agent(
             _check("API mode", "Failed", f"Unsupported mode: {configured_mode}")
         )
         return AgentTestResult(_overall(checks), checks)
-    underlying_model = subentry.data.get("azure_model")
-    if (
-        underlying_model
-        and effective_api_provider(
-            entry.data.get(CONF_API_PROVIDER), entry.data.get(CONF_BASE_URL)
-        )
-        != "azure"
-    ):
+    usage_provider = effective_api_provider(
+        entry.data.get(CONF_API_PROVIDER),
+        entry.data.get(CONF_BASE_URL),
+    )
+    if subentry.data.get("azure_model") and usage_provider != "azure":
         checks.append(
             _check(
                 "Configuration",
@@ -167,7 +174,25 @@ async def async_test_agent(
             )
         )
         return AgentTestResult(_overall(checks), checks)
-    metadata = model_metadata(str(underlying_model or model))
+    function_tools_required = getattr(
+        subentry, "subentry_type", "conversation"
+    ) == "conversation" and conversation_tools_required(subentry.data)
+    try:
+        build_provider_request_snapshot(
+            subentry.data,
+            entry.data,
+            tools_required=function_tools_required,
+            client=client,
+        )
+    except HomeAssistantError as err:
+        checks.append(_check("Saved request settings", "Failed", str(err)))
+    else:
+        checks.append(
+            _check(
+                "Saved request settings", "Passed", "Valid for the configured provider"
+            )
+        )
+    metadata = request_model_capabilities(subentry.data, entry.data, client=client)
     try:
         with model_capability_snapshot(model, metadata):
             effort = (
@@ -196,7 +221,6 @@ async def async_test_agent(
         )
         return AgentTestResult(_overall(checks), checks)
     checks.append(_check("API mode", "Passed", api_mode.replace("_", " ").title()))
-    usage_provider = str(entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER))
     usage_model = str(model)
     usage_api_mode = str(api_mode)
 
@@ -332,9 +356,7 @@ async def async_test_agent(
                 effort=subentry.data.get("reasoning_effort")
                 or metadata.get("recommended_profile", {}).get("reasoning_effort"),
             )
-            and supports_openai_hosted_tools(
-                entry.data.get(CONF_API_PROVIDER), entry.data.get(CONF_BASE_URL)
-            )
+            and is_native_openai_connection(entry.data, client=client)
         )
     if web_search and not web_search_compatible:
         checks.append(
@@ -347,9 +369,6 @@ async def async_test_agent(
     elif not web_search:
         checks.append(_check("Web Search", "Passed", "Disabled"))
 
-    function_tools_required = getattr(
-        subentry, "subentry_type", "conversation"
-    ) == "conversation" and conversation_tools_required(subentry.data)
     if not function_tools_required:
         checks.append(
             _check("Function calling", "Skipped", "Not required by this agent")
@@ -368,6 +387,7 @@ async def async_test_agent(
     }
     usage_manager = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
     probe_budget_exhausted = False
+    probe_usage = None
     try:
         # Use the same reasoning default and validator as live requests without
         # imposing unrelated request settings on this minimal capability probe.
@@ -378,7 +398,7 @@ async def async_test_agent(
                 if configured_effort is None:
                     configured_effort = recommended_reasoning_effort(model)
                 effort = validate_reasoning_effort(model, configured_effort, api_mode)
-        probe_reasoning = (
+        probe_reasoning: dict[str, str | dict[str, str]] = (
             (
                 {"reasoning": {"effort": effort}}
                 if api_mode == API_MODE_RESPONSES
@@ -401,6 +421,7 @@ async def async_test_agent(
             if tools:
                 response_kwargs.update(tools=tools, tool_choice="none")
             response = await client.responses.create(**response_kwargs)
+            probe_usage = extract_usage(getattr(response, "usage", None))
             probe_budget_exhausted = (
                 getattr(response, "error", None) is None
                 and getattr(response, "status", None) == "incomplete"
@@ -411,6 +432,12 @@ async def async_test_agent(
             )
             if not probe_budget_exhausted:
                 ensure_successful_responses_result(response)
+                if not responses_answer_text(
+                    getattr(response, "output", None) or ()
+                ).strip():
+                    raise HomeAssistantError(
+                        "Responses probe did not receive a completed text reply"
+                    )
         else:
             kwargs: dict[str, Any] = {
                 "model": model,
@@ -419,7 +446,12 @@ async def async_test_agent(
                 **dict(
                     [
                         auxiliary_output_token_limit(
-                            model, api_mode, 16, subentry.data, entry.data
+                            model,
+                            api_mode,
+                            16,
+                            subentry.data,
+                            entry.data,
+                            client=client,
                         )
                     ]
                 ),
@@ -440,10 +472,28 @@ async def async_test_agent(
                     tool_choice="none",
                 )
             response = await client.chat.completions.create(**kwargs)
-            probe_budget_exhausted = any(
-                getattr(choice, "finish_reason", None) == "length"
-                for choice in getattr(response, "choices", [])
-            )
+            probe_usage = extract_usage(getattr(response, "usage", None))
+            choices = getattr(response, "choices", None)
+            if not choices or len(choices) != 1:
+                raise HomeAssistantError("Chat Completions probe expected one reply")
+            choice = choices[0]
+            finish_reason = getattr(choice, "finish_reason", None)
+            if finish_reason == "content_filter":
+                raise HomeAssistantError(
+                    "The provider content filter blocked the probe"
+                )
+            probe_budget_exhausted = finish_reason == "length"
+            if not probe_budget_exhausted:
+                message = getattr(choice, "message", None)
+                content = answer_text(getattr(message, "content", None))
+                if (
+                    finish_reason != "stop"
+                    or getattr(message, "refusal", None)
+                    or not content.strip()
+                ):
+                    raise HomeAssistantError(
+                        "Chat Completions probe did not receive a completed text reply"
+                    )
     except OpenAIError as err:
         is_authentication_failure = (
             classify_config_provider_error(err) == "invalid_auth"
@@ -455,6 +505,7 @@ async def async_test_agent(
             authentication_rejected = True
             await usage_manager.async_record_request(
                 successful=False,
+                usage=probe_usage,
                 provider=usage_provider,
                 model=usage_model,
                 api_mode=usage_api_mode,
@@ -472,6 +523,7 @@ async def async_test_agent(
         else:
             await usage_manager.async_record_request(
                 successful=False,
+                usage=probe_usage,
                 provider=usage_provider,
                 model=usage_model,
                 api_mode=usage_api_mode,
@@ -487,6 +539,7 @@ async def async_test_agent(
     except Exception as err:
         await usage_manager.async_record_request(
             successful=False,
+            usage=probe_usage,
             provider=usage_provider,
             model=usage_model,
             api_mode=usage_api_mode,
@@ -499,7 +552,7 @@ async def async_test_agent(
     else:
         await usage_manager.async_record_request(
             successful=True,
-            usage=extract_usage(getattr(response, "usage", None)),
+            usage=probe_usage,
             provider=usage_provider,
             model=usage_model,
             api_mode=usage_api_mode,

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 import logging
 import types
 from typing import Any
 
-from openai import OpenAIError
+from openai import AsyncOpenAI, OpenAIError
 import voluptuous as vol
 import yaml
 
@@ -83,14 +84,22 @@ from .const import (
     DOMAIN,
 )
 from .ha_schema import schema_for_ha
-from .helpers import effective_api_provider, get_authenticated_client
+from .helpers import (
+    ProviderEndpointError,
+    effective_api_provider,
+    get_authenticated_client,
+    is_native_openai_connection,
+    resolve_provider_endpoint,
+)
 from .model_capabilities import (
     get_model_capabilities,
+    model_capability_snapshot,
     parameter_is_allowed,
     recommended_reasoning_effort,
 )
 from .operational_errors import log_handled_failure
 from .provider_errors import classify_config_provider_error, provider_log_remediation
+from .request import capability_model_identity, request_model_capabilities
 from .skills import SkillManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -122,7 +131,7 @@ LEGACY_STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_NAME, default="ChatGPT"): str,
         vol.Required(CONF_API_KEY): str,
-        vol.Optional(CONF_BASE_URL, default=DEFAULT_CONF_BASE_URL): str,
+        vol.Optional(CONF_BASE_URL): str,
         vol.Optional(CONF_API_VERSION): str,
         vol.Optional(CONF_ORGANIZATION): str,
         vol.Optional(
@@ -152,7 +161,7 @@ STEP_OPENAI_CREDENTIALS_SCHEMA = vol.Schema(
 STEP_OPENAI_ADVANCED_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_API_KEY): str,
-        vol.Optional(CONF_BASE_URL, default=DEFAULT_CONF_BASE_URL): str,
+        vol.Optional(CONF_BASE_URL): str,
         vol.Optional(CONF_ORGANIZATION): str,
         vol.Optional(
             CONF_SKIP_AUTHENTICATION, default=DEFAULT_SKIP_AUTHENTICATION
@@ -164,7 +173,10 @@ STEP_AZURE_CREDENTIALS_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_API_KEY): str,
         vol.Required(CONF_BASE_URL): str,
-        vol.Required(CONF_API_VERSION): str,
+        vol.Optional(CONF_API_VERSION): str,
+        vol.Optional(
+            CONF_SKIP_AUTHENTICATION, default=DEFAULT_SKIP_AUTHENTICATION
+        ): BooleanSelector(),
     }
 )
 
@@ -281,6 +293,17 @@ DEFAULT_CONF_FUNCTION_TOOLS_STR = yaml.dump(
 )
 
 DEFAULT_OPTIONS = types.MappingProxyType(agent_config_defaults())
+DEFAULT_OPENAI_SETUP_MODEL = "gpt-6.1-terra"
+
+
+def _new_agent_options(
+    defaults: Mapping[str, Any], entry_data: Mapping[str, Any], *, client: Any = None
+) -> dict[str, Any]:
+    """Give new direct-OpenAI agents a supported model at creation time."""
+    options = dict(defaults)
+    if is_native_openai_connection(entry_data, client=client):
+        options[CONF_CHAT_MODEL] = DEFAULT_OPENAI_SETUP_MODEL
+    return options
 
 
 def _ai_task_display_reasoning_effort(
@@ -309,26 +332,22 @@ def _ai_task_display_reasoning_effort(
     return recommended
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
+async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> AsyncOpenAI:
     """Validate a complete provider configuration before creating the entry."""
     api_key = data[CONF_API_KEY]
-    base_url = data.get(CONF_BASE_URL)
     api_version = data.get(CONF_API_VERSION)
     organization = data.get(CONF_ORGANIZATION)
     skip_authentication = data.get(CONF_SKIP_AUTHENTICATION, False)
-    api_provider = effective_api_provider(data.get(CONF_API_PROVIDER), base_url)
+    api_provider, base_url = resolve_provider_endpoint(
+        data.get(CONF_API_PROVIDER), data.get(CONF_BASE_URL), api_version
+    )
     if api_provider == "azure":
         data[CONF_API_PROVIDER] = api_provider
 
-    if base_url == DEFAULT_CONF_BASE_URL:
-        # Do not set base_url if using OpenAI for case of OpenAI's base_url change
-        base_url = None
+    if data.get(CONF_BASE_URL) == "":
         data.pop(CONF_BASE_URL)
 
-    if api_provider == "azure" and not base_url:
-        raise HomeAssistantError("Azure OpenAI requires a custom base URL.")
-
-    await get_authenticated_client(
+    return await get_authenticated_client(
         hass=hass,
         api_key=api_key,
         base_url=base_url,
@@ -339,12 +358,15 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     )
 
 
-_OPENAI_CREDENTIAL_DESCRIPTION_PLACEHOLDERS = {
-    "api_key_guide_url": (
-        "https://conorod1992.github.io/extended_openai_conversation/"
-        "getting-started/api-key/"
-    ),
-    "openai_api_keys_url": "https://platform.openai.com/api-keys",
+_OPENAI_FORM_PLACEHOLDERS = {
+    "openai_credentials": {
+        "api_key_guide_url": (
+            "https://conorod1992.github.io/extended_openai_conversation/"
+            "getting-started/api-key/"
+        ),
+        "openai_api_keys_url": "https://platform.openai.com/api-keys",
+    },
+    "openai_advanced": {"openai_base_url": DEFAULT_CONF_BASE_URL},
 }
 
 
@@ -397,7 +419,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                 step_id="openai_credentials",
                 data_schema=schema_for_ha(STEP_OPENAI_CREDENTIALS_SCHEMA),
                 description_placeholders=dict(
-                    _OPENAI_CREDENTIAL_DESCRIPTION_PLACEHOLDERS
+                    _OPENAI_FORM_PLACEHOLDERS["openai_credentials"]
                 ),
             )
 
@@ -423,6 +445,9 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_show_form(
                 step_id="openai_advanced",
                 data_schema=schema_for_ha(STEP_OPENAI_ADVANCED_SCHEMA),
+                description_placeholders=dict(
+                    _OPENAI_FORM_PLACEHOLDERS["openai_advanced"]
+                ),
             )
 
         data = {**self._setup_data, **user_input}
@@ -462,7 +487,9 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         display_values = dict(data)
         errors: dict[str, str] = {}
         try:
-            await validate_input(self.hass, data)
+            client = await validate_input(self.hass, data)
+        except ProviderEndpointError:
+            errors["base"] = "invalid_provider_endpoint"
         except OpenAIError as err:
             log_handled_failure(
                 _LOGGER,
@@ -482,13 +509,17 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                 subentries=[
                     {
                         "subentry_type": "conversation",
-                        "data": dict(DEFAULT_OPTIONS),
+                        "data": _new_agent_options(
+                            agent_config_defaults(), data, client=client
+                        ),
                         "title": DEFAULT_CONVERSATION_NAME,
                         "unique_id": None,
                     },
                     {
                         "subentry_type": "ai_task_data",
-                        "data": dict(DEFAULT_AI_TASK_OPTIONS),
+                        "data": _new_agent_options(
+                            DEFAULT_AI_TASK_OPTIONS, data, client=client
+                        ),
                         "title": DEFAULT_AI_TASK_NAME,
                         "unique_id": None,
                     },
@@ -503,15 +534,12 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         if step_id == "user":
             retry_schema = retry_schema.extend({}, extra=STEP_USER_DATA_SCHEMA.extra)
+        placeholders = _OPENAI_FORM_PLACEHOLDERS.get(step_id)
         return self.async_show_form(
             step_id=step_id,
             data_schema=retry_schema,
             errors=errors,
-            description_placeholders=(
-                dict(_OPENAI_CREDENTIAL_DESCRIPTION_PLACEHOLDERS)
-                if step_id == "openai_credentials"
-                else None
-            ),
+            description_placeholders=dict(placeholders) if placeholders else None,
         )
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
@@ -529,10 +557,17 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="reauth_failed")
         errors: dict[str, str] = {}
         if user_input is not None:
+            from .provider_credentials import require_provider_restore_complete
+
+            require_provider_restore_complete(
+                self.hass, getattr(self._reauth_entry, "entry_id", "")
+            )
             original_data = dict(self._reauth_entry.data)
             updated = {**original_data, **user_input}
             try:
                 await validate_input(self.hass, updated)
+            except ProviderEndpointError:
+                errors["base"] = "invalid_provider_endpoint"
             except OpenAIError as err:
                 log_handled_failure(
                     _LOGGER,
@@ -602,7 +637,11 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Add a subentry."""
-        self.options = agent_config_defaults()
+        self.options = _new_agent_options(
+            agent_config_defaults(),
+            self._get_entry().data,
+            client=getattr(self._get_entry(), "runtime_data", None),
+        )
         return await self.async_step_init()
 
     async def async_step_reconfigure(
@@ -675,7 +714,16 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
 
     async def _async_get_skills(self) -> list[dict[str, Any]]:
         """Load available skills using SkillManager."""
-        skill_manager = await SkillManager.async_get_instance(self.hass)
+        try:
+            skill_manager = await SkillManager.async_get_instance(self.hass)
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER,
+                "Skills could not be loaded for the new assistant. Check the "
+                "Skills recovery files and select Skills after recovery.",
+                err,
+            )
+            return []
         return [
             {
                 "name": skill.name,
@@ -735,6 +783,42 @@ def _ai_task_apply_form_edits(
     return candidate, cleared, edits
 
 
+def _ai_task_clean_sampling(
+    saved: Mapping[str, Any],
+    candidate: dict[str, Any],
+    entry_data: Mapping[str, Any],
+    *,
+    creation: bool,
+    submitted: Collection[str] = (),
+) -> set[str]:
+    """Clean changed routes and reject incompatible sampling submitted by a form."""
+    model = capability_model_identity(candidate, entry_data)
+    metadata = request_model_capabilities(candidate, entry_data)
+    recommended = metadata.get("recommended_profile", {}).get("reasoning_effort")
+    effort = candidate.get(CONF_REASONING_EFFORT)
+    if effort is None:
+        effort = recommended
+    previous_effort = saved.get(CONF_REASONING_EFFORT)
+    if previous_effort is None:
+        previous_effort = recommended
+    route_changed = (
+        creation
+        or model != capability_model_identity(saved, entry_data)
+        or effort != previous_effort
+    )
+    with model_capability_snapshot(model, metadata):
+        removed = {
+            parameter
+            for parameter in (CONF_TEMPERATURE, CONF_TOP_P)
+            if parameter in candidate
+            and (route_changed or parameter in submitted)
+            and not parameter_is_allowed(model, parameter, effort)
+        }
+    for parameter in removed:
+        candidate.pop(parameter)
+    return removed
+
+
 class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
     """Flow for managing AI Task subentries."""
 
@@ -750,7 +834,11 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Add a subentry."""
-        self.options = dict(DEFAULT_AI_TASK_OPTIONS)
+        self.options = _new_agent_options(
+            DEFAULT_AI_TASK_OPTIONS,
+            self._get_entry().data,
+            client=getattr(self._get_entry(), "runtime_data", None),
+        )
         return await self.async_step_init()
 
     async def async_step_reconfigure(
@@ -773,29 +861,29 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
 
         if user_input is not None:
             candidate, _, _ = _ai_task_apply_form_edits(self.options, user_input)
+            entry_data = self._get_entry().data
+            model_changed = capability_model_identity(
+                candidate, entry_data
+            ) != capability_model_identity(self.options, entry_data)
+            if model_changed:
+                candidate[CONF_REASONING_EFFORT] = (
+                    request_model_capabilities(candidate, entry_data)
+                    .get("recommended_profile", {})
+                    .get("reasoning_effort")
+                )
             # Check if advanced options is enabled
             if user_input.get(CONF_ADVANCED_OPTIONS, False):
                 # Store data and move to advanced step
                 self._temp_data = dict(user_input)
-                if (candidate.get("azure_model") or candidate.get(CONF_CHAT_MODEL)) != (
-                    self.options.get("azure_model") or self.options.get(CONF_CHAT_MODEL)
-                ):
-                    self._temp_data[CONF_REASONING_EFFORT] = (
-                        recommended_reasoning_effort(
-                            str(
-                                candidate.get("azure_model")
-                                or candidate[CONF_CHAT_MODEL]
-                            )
-                        )
-                    )
+                if model_changed:
+                    self._temp_data[CONF_REASONING_EFFORT] = candidate[
+                        CONF_REASONING_EFFORT
+                    ]
                 return await self.async_step_advanced()
 
-            if (candidate.get("azure_model") or candidate.get(CONF_CHAT_MODEL)) != (
-                self.options.get("azure_model") or self.options.get(CONF_CHAT_MODEL)
-            ):
-                candidate[CONF_REASONING_EFFORT] = recommended_reasoning_effort(
-                    str(candidate.get("azure_model") or candidate[CONF_CHAT_MODEL])
-                )
+            _ai_task_clean_sampling(
+                self.options, candidate, entry_data, creation=self._is_new
+            )
             from .request import build_provider_request_snapshot
 
             try:
@@ -837,7 +925,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             {
                 vol.Optional(
                     CONF_CHAT_MODEL,
-                    default=DEFAULT_CHAT_MODEL,
+                    default=self.options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
                 ): str,
                 vol.Optional("azure_model", default=""): str,
                 **(
@@ -899,9 +987,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         effective_options, _, _ = _ai_task_apply_form_edits(
             self.options, self._temp_data or {}
         )
-        chat_model = str(effective_options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
-        capability_model = str(effective_options.get("azure_model") or chat_model)
         entry_data = self._get_entry().data
+        capability_model = capability_model_identity(effective_options, entry_data)
         metadata = get_model_capabilities(
             capability_model,
             provider=effective_api_provider(
@@ -911,11 +998,19 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         recommended_effort = metadata.get("recommended_profile", {}).get(
             "reasoning_effort"
         )
+        reasoning = metadata["reasoning"]
+        api_mode = effective_options.get(CONF_API_MODE, DEFAULT_API_MODE)
+        efforts = reasoning.get("by_api", {}).get(api_mode, reasoning)["efforts"]
+        if recommended_effort not in efforts:
+            recommended_effort = next(iter(efforts), None)
         display_effort = _ai_task_display_reasoning_effort(
             capability_model,
             {**effective_options, CONF_CHAT_MODEL: capability_model},
             reconfigure=True,
-            metadata=metadata,
+            metadata={
+                "recommended_profile": {"reasoning_effort": recommended_effort},
+                "reasoning": {"efforts": efforts},
+            },
         )
 
         if user_input is not None:
@@ -931,28 +1026,24 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 if configured_effort is not None
                 else recommended_effort
             )
-            for parameter in (CONF_TEMPERATURE, CONF_TOP_P):
-                if parameter in final_data and not parameter_is_allowed(
-                    capability_model, parameter, effective_effort
-                ):
-                    final_data.pop(parameter, None)
+            removed_sampling = _ai_task_clean_sampling(
+                self.options,
+                final_data,
+                entry_data,
+                creation=self._is_new,
+                submitted=edited,
+            )
 
             if not self._is_new:
                 owned = set(edited) | cleared
-                model_changed = capability_model != str(
-                    self.options.get("azure_model")
-                    or self.options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
-                )
+                model_changed = capability_model_identity(
+                    final_data, entry_data
+                ) != capability_model_identity(self.options, entry_data)
                 if model_changed:
                     owned.add(CONF_REASONING_EFFORT)
                 # Changing the model/effort deliberately clears now-unsupported
                 # sampling fields. Other edits preserve their raw presence.
-                if model_changed or CONF_REASONING_EFFORT in submitted:
-                    owned.update(
-                        key
-                        for key in (CONF_TEMPERATURE, CONF_TOP_P)
-                        if key not in final_data
-                    )
+                owned.update(removed_sampling)
                 final_data = project_agent_config_fields(
                     self.options, owned, final_data
                 )
@@ -973,7 +1064,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 effective_options = (
                     final_data if self._is_new else {**self.options, **edited}
                 )
-                display_effort = effective_effort
+                if effective_effort in efforts:
+                    display_effort = effective_effort
             else:
                 if self._is_new:
                     title = final_data.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
@@ -989,8 +1081,6 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
 
         schema: dict[Any, Any] = {}
-        reasoning = metadata["reasoning"]
-
         if parameter_is_allowed(capability_model, CONF_TOP_P, display_effort):
             schema[
                 vol.Optional(
@@ -1038,8 +1128,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     BooleanSelector()
                 )
 
-        if reasoning["supported"]:
-            default_effort = display_effort or reasoning["efforts"][0]
+        if efforts:
+            default_effort = display_effort or efforts[0]
             schema[
                 vol.Optional(
                     CONF_REASONING_EFFORT,
@@ -1049,7 +1139,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 SelectSelectorConfig(
                     options=[
                         SelectOptionDict(value=opt, label=opt.capitalize())
-                        for opt in reasoning["efforts"]
+                        for opt in efforts
                     ],
                     mode=SelectSelectorMode.DROPDOWN,
                 )

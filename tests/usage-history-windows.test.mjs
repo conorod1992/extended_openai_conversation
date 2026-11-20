@@ -5,6 +5,7 @@ import {loadAllUsageDays, loadUsageWindow, loadUsageDaily} from "../custom_compo
 
 import {
   addUsageCalendarDays,
+  bindUsageDiagnostics,
   localUsageDateKey,
   renderUsagePage,
   selectUsageHistory,
@@ -37,7 +38,7 @@ assert.deepEqual(usageWindowBounds("year", today), {
   id:"year", label:"Year to date", startDate:"2026-01-01", endDate:today,
 });
 assert.deepEqual(usageWindowBounds("all", today), {
-  id:"all", label:"All available", startDate:null, endDate:today,
+  id:"all", label:"All available", startDate:"0000-01-01", endDate:"9999-12-31",
 });
 
 // Calendar-date arithmetic is deliberately timezone-free once HA's local date key
@@ -85,6 +86,16 @@ assert.equal(partial.availableStart, "2026-09-03");
 assert.equal(partial.availableEnd, today);
 
 const allHistory = selectUsageHistory(days, "all", today);
+const laterDay = makeDay("2026-09-08", 25);
+const allWithLaterDay = selectUsageHistory([...days, laterDay], "all", today);
+assert.equal(allWithLaterDay.availableEnd, laterDay.date);
+assert.equal(allWithLaterDay.summary.total_tokens, 1225);
+assert.equal(allWithLaterDay.partialStart, false);
+for (const window of ["7", "30", "90", "year"]) {
+  const selected = selectUsageHistory([...days, laterDay], window, today);
+  assert.equal(selected.availableEnd, today);
+  assert.equal(selected.days.at(-1).date, today);
+}
 const matchingLifetime = {
   conversation_count:120, api_request_count:120, successful_request_count:120,
   failed_request_count:0, input_tokens:960, output_tokens:240, total_tokens:1200,
@@ -103,13 +114,19 @@ assert.equal(monthBuckets.reduce((sum, bucket) => sum + bucket.total_tokens, 0),
 
 // All-available history is transferred in ordered, non-overlapping bounded pages.
 const pagedDays = ["2026-09-01","2026-09-02","2026-09-03","2026-09-04","2026-09-05"].map((date) => makeDay(date));
-const starts = [];
-const paged = await loadAllUsageDays(async (startDate) => {
-  starts.push(startDate);
-  return {days:pagedDays.filter((day) => day.date >= startDate).slice(0, 2)};
+const pages = [];
+const paged = await loadAllUsageDays(async (startDate, endDate) => {
+  pages.push([startDate, endDate]);
+  return {
+    days:pagedDays.filter((day) => day.date >= startDate).slice(0, 2),
+    local_run_summary:pages.length > 1 ? {count:1, start_date:startDate, end_date:endDate} : null,
+  };
 }, {pageSize:2,maxPages:4});
 assert.deepEqual(paged.days.map((day) => day.date), pagedDays.map((day) => day.date));
-assert.deepEqual(starts, ["0000-01-01","2026-09-03","2026-09-05"]);
+assert.deepEqual(pages, [
+  ["0000-01-01", "9999-12-31"], ["2026-09-03", "9999-12-31"], ["2026-09-05", "9999-12-31"],
+]);
+assert.equal(paged.local_run_summary, undefined, "later pages cannot supply a full-range summary");
 
 const usageDataImplementation = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-data.js", import.meta.url),
@@ -129,7 +146,6 @@ const usageDataSource = await readFile(new URL("../custom_components/extended_op
 assert.match(usageDataSource, /const agent = panel\._selectedAgent\?\.\(\)/);
 assert.match(usageDataSource, /entry_id: agent\.entry_id, subentry_id: agent\.subentry_id/);
 assert.match(usageSource, /await loadUsageWindow\(panel, next/);
-assert.match(usageDataSource, /const DEFAULT_USAGE_WINDOW = "30"/);
 assert.doesNotMatch(usageDataSource, /panel\._call\("usage", "footprint"\)/);
 
 const usageCalls = [];
@@ -148,9 +164,7 @@ assert.deepEqual(usageCalls[0], {
   start_date:"2026-08-09", end_date:"2026-09-07",
 });
 await loadUsageWindow(usagePanel, "30", "2026-09-07");
-assert.equal(usageCalls.length, 1, "in-page window revisits reuse the loaded aggregate range");
-await loadUsageWindow(usagePanel, "30", "2026-09-07", {useCache:false});
-assert.equal(usageCalls.length, 2, "route refreshes can bypass the in-page Usage cache");
+assert.equal(usageCalls.length, 2, "in-page window revisits read the current aggregate range");
 usagePanel._usageHistoryWindow = "7";
 await loadUsageDaily(usagePanel);
 assert.equal(usageCalls.at(-1).end_date >= usageCalls.at(-1).start_date, true);
@@ -158,6 +172,46 @@ const sevenDayStart = usageCalls.at(-1).start_date;
 const sevenDayEnd = usageCalls.at(-1).end_date;
 assert.equal((Date.parse(sevenDayEnd) - Date.parse(sevenDayStart)) / 86_400_000, 6,
   "initial route read uses the selected seven-day window");
+
+const defaultWindow = await loadUsageWindow(usagePanel, undefined, "2026-09-07");
+assert.equal(defaultWindow.requested_window, "30");
+assert.equal(usageCalls.at(-1).start_date, "2026-08-09");
+const fullWindow = await loadUsageWindow(usagePanel, "all", "2026-09-07");
+assert.equal(fullWindow.complete_history, true);
+assert.deepEqual(usageCalls.at(-1), {
+  entry_id:"entry-a", subentry_id:"agent-a",
+  start_date:"0000-01-01", end_date:"9999-12-31",
+});
+
+const windowSelector = {value: "90", disabled: false};
+const freshDays = {days: [makeDay(localUsageDateKey(new Date(), "UTC"), 25)]};
+const summaryError = {key: "summary", message: "Summary read failed"};
+const recoveryPanel = {
+  ...tablePanel,
+  ...usagePanel,
+  _hass: {config: {time_zone: "UTC"}},
+  _usageHistoryWindow: "30",
+  _viewKey: () => "usage-maintenance/usage",
+  _call: async () => freshDays,
+  _result: {
+    load_errors: [{key: "days", message: "Daily usage read failed"}, summaryError],
+    loading: {days: true, runs: true},
+  },
+  shadowRoot: {
+    querySelectorAll: () => [],
+    querySelector: selector => selector === "#usage-window" ? windowSelector : null,
+  },
+  _render() {
+    this.rendered = renderUsagePage(this, this._result);
+  },
+};
+bindUsageDiagnostics(recoveryPanel);
+await windowSelector.onchange({target: windowSelector});
+assert.deepEqual(recoveryPanel._result.days.days, freshDays.days);
+assert.deepEqual(recoveryPanel._result.load_errors, [summaryError]);
+assert.deepEqual(recoveryPanel._result.loading, {days: false, runs: true});
+assert.doesNotMatch(recoveryPanel.rendered, /Daily usage unavailable|may be stale/);
+assert.match(recoveryPanel.rendered, /Usage summary unavailable/);
 
 // The management-window feature must not replace or reinterpret Today / Month sensor semantics.
 const sensorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/sensor.py", import.meta.url), "utf8");

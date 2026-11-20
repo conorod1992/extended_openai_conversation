@@ -1,7 +1,11 @@
 import {captureAuthentication} from "./authentication-presentation.js";
+import {capturePageRead, acceptPageRead, completePolicyResponse} from "./page-save-acknowledgement.js";
+import {initializePageDraft} from "./management-page-drafts.js";
+import {same} from "./unsaved-state.js";
 
 const watches = new WeakMap();
 const paused = new WeakMap();
+const deferred = new WeakMap();
 const identityFor = (panel, view) => `${panel._data?.entry_id || ""}|${panel._agentId || ""}|${view}`;
 
 export function stopLiveStatus(panel, key = null) {
@@ -74,7 +78,23 @@ function boundaryDelay(value) {
     ? Math.min(60000, boundary - Date.now() + 200) : 60000;
 }
 
-export function watchTimedFeatureStatus(panel) {
+function refreshEditor(panel, current) {
+  const root = panel.shadowRoot;
+  const editing = () => root.activeElement?.matches("input,select,textarea,ha-selector,ha-entity-picker");
+  if (!editing()) return panel._render();
+  if (deferred.get(panel)?.()) return;
+  deferred.set(panel, current);
+  const end = () => requestAnimationFrame(() => {
+    if (current() && editing()) return;
+    root.removeEventListener("focusout", end);
+    if (deferred.get(panel) !== current) return;
+    deferred.delete(panel);
+    if (current()) panel._render();
+  });
+  root.addEventListener("focusout", end);
+}
+
+export function watchTimedFeatureStatus(panel, feature) {
   const view = panel._viewKey?.();
   if (!["capabilities/guest-mode", "capabilities/quiet-hours"].includes(view)) return;
   const guest = view === "capabilities/guest-mode";
@@ -84,23 +104,29 @@ export function watchTimedFeatureStatus(panel) {
       ? boundaryDelay(panel._result?.status?.scheduled ? panel._result.status.active_from : panel._result?.status?.active_until)
       : boundaryDelay(panel._result?.period_ends_at),
     refresh: async (current) => {
-      const loadToken = panel._loadToken;
-      const interval = guest ? panel._unsavedState?.scopes.get("guest-interval") : null;
-      const intervalRead = interval?.captureRead?.();
-      const result = await panel._call(guest ? "guest_mode" : "quiet_hours", "get");
-      if (!current() || panel._loadToken !== loadToken || panel._guestOperation) return;
+      const previous = panel._result, read = capturePageRead(panel, view);
+      const pending = () => panel._guestOperation || panel._unsavedState?.scopes.get(view)?.pending;
+      if (pending()) return;
+      const fresh = await panel._call(guest ? "guest_mode" : "quiet_hours", "get");
+      if (!current() || pending() || panel._result !== previous) return;
+      if (guest && !completePolicyResponse(fresh, true)) return;
+      const result = guest ? {...previous, ...fresh} : fresh;
+      if (!acceptPageRead(panel, result, read, {publish:true})) return;
       if (guest) {
-        interval?.reconcileRead?.(result.status, intervalRead);
-        panel._patchGuestModeStatus(panel._agentId, result.status);
-        const status = panel._result?.status || {};
-        const node = panel.shadowRoot.querySelector("[data-guest-live-status]");
-        if (node) node.textContent = `${panel._titleCase(String(status.state || "inactive").replaceAll("_", " "))} · ${status.active_from ? `Starts ${(status.active_from_local?.replace("T", " ") || panel._formatDate(status.active_from))}${status.active_until ? ` · Ends ${(status.active_until_local?.replace("T", " ") || panel._formatDate(status.active_until))}` : " · No expiry"}` : "No interval configured"}`;
-      } else {
-        panel._result = {...panel._result, active:result.active, period_started_at:result.period_started_at, period_ends_at:result.period_ends_at, owned_controls:result.owned_controls};
-        const title = panel.shadowRoot.querySelector("[data-qh-live-title]");
-        const badge = panel.shadowRoot.querySelector("[data-qh-live-badge]");
-        if (title) title.textContent = result.active ? "Quiet Hours active now" : panel._result.config?.enabled ? "Outside Quiet Hours" : "Quiet Hours schedule disabled";
-        if (badge) { badge.textContent = result.active ? "Active" : "Inactive"; badge.className = result.active ? "availability-badge" : "disabled-badge"; }
+        const agent = panel._selectedAgent?.();
+        if (agent) agent.guest_mode = result.status;
+      }
+      const draft = guest ? "_guestDraft" : "_quietHoursDraft";
+      const before = panel[draft];
+      initializePageDraft(panel);
+      feature?.refreshTimedStatus(panel);
+      const remount = feature?.timedStructure
+        ? !same(feature.timedStructure(previous), feature.timedStructure(result))
+        : !same(before, panel[draft]) || previous?.legacy_policy !== result.legacy_policy;
+      if (remount && result.available === false) panel._render();
+      else if (remount) {
+        refreshEditor(panel, () => current() && panel._loadToken === read.visit
+          && panel._cacheGeneration === read.generation);
       }
     },
   });

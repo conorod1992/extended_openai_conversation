@@ -70,7 +70,7 @@ Conversation-agent settings are available in the **Extended OpenAI** sidebar pan
 | **System prompt** | Included assistant prompt | User-authored behavioural instructions sent as one intact block under Prompt & context. Supports Home Assistant templates. |
 | **Include current date & time** | On for new agents | Adds Home Assistant-local date/time as volatile integration context. |
 | **Include exposed devices** | On for new agents | Adds compact exposed entity names, states, and genuine aliases as volatile integration context. |
-| **Chat model** | `gpt-5-mini` | Model or Azure deployment name sent to the configured provider. |
+| **Chat model** | `gpt-6.1-terra` for new direct OpenAI assistants | Model or Azure deployment name sent to the configured provider. Compatible endpoints and Azure retain their existing setup defaults. |
 | **Provider API format** | Auto | Chooses Chat Completions or Responses; under Basics → Advanced request settings. |
 | **Listen for a follow-up** | HA Default | Controls immediate voice follow-ups. |
 | **Web search** | Off | Enables OpenAI hosted Web Search when supported. |

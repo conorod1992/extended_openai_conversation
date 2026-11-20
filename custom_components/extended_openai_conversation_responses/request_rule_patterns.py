@@ -57,6 +57,7 @@ class PatternMatch:
     """One complete sentence-pattern match."""
 
     captures: dict[str, str]
+    capture_spans: dict[str, tuple[int, int]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,7 +204,9 @@ class CompiledSentencePattern:
         capture_index = {name: index for index, name in enumerate(self.capture_names)}
         empty_starts = (-1,) * len(self.capture_names)
         empty_lengths = (-1,) * len(self.capture_names)
-        empty_values: tuple[str | None, ...] = (None,) * len(self.capture_names)
+        empty_spans: tuple[tuple[int, int] | None, ...] = (None,) * len(
+            self.capture_names
+        )
         serial = count()
         queue: list[
             tuple[
@@ -214,7 +217,7 @@ class CompiledSentencePattern:
                 int,
                 tuple[int, ...],
                 tuple[int, ...],
-                tuple[str | None, ...],
+                tuple[tuple[int, int] | None, ...],
             ]
         ] = []
 
@@ -223,7 +226,7 @@ class CompiledSentencePattern:
             pos: int,
             starts: tuple[int, ...],
             lengths: tuple[int, ...],
-            values: tuple[str | None, ...],
+            spans: tuple[tuple[int, int] | None, ...],
             penalty: int,
         ) -> None:
             # Free-text captures are deterministic: prefer the shortest value for
@@ -249,7 +252,7 @@ class CompiledSentencePattern:
                     pos,
                     starts,
                     lengths,
-                    values,
+                    spans,
                 ),
             )
 
@@ -258,7 +261,7 @@ class CompiledSentencePattern:
             0,
             empty_starts,
             empty_lengths,
-            empty_values,
+            empty_spans,
             0,
         )
         seen: set[tuple[int, int, bool]] = set()
@@ -272,7 +275,7 @@ class CompiledSentencePattern:
                 pos,
                 starts,
                 lengths,
-                values,
+                spans,
             ) = heappop(queue)
             # At the same state/position every history has the same possible
             # suffixes. The heap visits the best capture-length prefix first;
@@ -292,12 +295,17 @@ class CompiledSentencePattern:
 
             if state.kind == "match":
                 if pos >= sentence_end:
-                    return PatternMatch(
-                        {
-                            name: values[index] or ""
-                            for name, index in capture_index.items()
-                        }
-                    )
+                    captures = {}
+                    capture_spans = {}
+                    for name, index in capture_index.items():
+                        span = spans[index]
+                        if span is None:
+                            captures[name] = ""
+                            continue
+                        start, end = span
+                        captures[name] = display[start:end]
+                        capture_spans[name] = span
+                    return PatternMatch(captures, capture_spans)
                 continue
 
             if state.kind == "split":
@@ -305,9 +313,9 @@ class CompiledSentencePattern:
                 # priority penalty so equivalent optional paths do not all fan out
                 # before the preferred path can finish.
                 if state.out1 is not None:
-                    push(state.out1, pos, starts, lengths, values, penalty)
+                    push(state.out1, pos, starts, lengths, spans, penalty)
                 if state.out2 is not None:
-                    push(state.out2, pos, starts, lengths, values, penalty + 1)
+                    push(state.out2, pos, starts, lengths, spans, penalty + 1)
                 continue
 
             if state.kind == "capture_start":
@@ -324,7 +332,7 @@ class CompiledSentencePattern:
                     pos,
                     tuple(updated_starts),
                     tuple(updated_lengths),
-                    values,
+                    spans,
                     penalty,
                 )
                 continue
@@ -338,21 +346,25 @@ class CompiledSentencePattern:
                 if start < 0:
                     raise SentenceMatchLimitError("invalid compiled capture state")
                 display_start, display_end = _display_span(prepared, start, pos)
-                captured = display[display_start:display_end].strip()
+                raw_capture = display[display_start:display_end]
+                captured = raw_capture.strip()
                 if not captured:
                     continue
                 updated_starts = list(starts)
                 updated_starts[index] = -1
                 updated_lengths = list(lengths)
                 updated_lengths[index] = pos - start
-                updated_values = list(values)
-                updated_values[index] = captured
+                updated_spans = list(spans)
+                trimmed_start = (
+                    display_start + len(raw_capture) - len(raw_capture.lstrip())
+                )
+                updated_spans[index] = (trimmed_start, trimmed_start + len(captured))
                 push(
                     state.out,
                     pos,
                     tuple(updated_starts),
                     tuple(updated_lengths),
-                    tuple(updated_values),
+                    tuple(updated_spans),
                     penalty,
                 )
                 continue
@@ -368,7 +380,7 @@ class CompiledSentencePattern:
                         pos + len(state.value),
                         starts,
                         lengths,
-                        values,
+                        spans,
                         penalty,
                     )
                 continue
@@ -379,18 +391,18 @@ class CompiledSentencePattern:
                 # at an input boundary. This makes natural `[optional] word`
                 # syntax work without allowing required middle separators to vanish.
                 if pos < len(folded) and folded[pos] == " ":
-                    push(state.out, pos + 1, starts, lengths, values, penalty)
+                    push(state.out, pos + 1, starts, lengths, spans, penalty)
                 if (
                     pos in {0, len(folded)}
                     or (pos == sentence_end and state.out in punctuation_suffix)
                     or (pos > 0 and folded[pos - 1] == " ")
                 ):
-                    push(state.out, pos, starts, lengths, values, penalty)
+                    push(state.out, pos, starts, lengths, spans, penalty)
                 continue
 
             if state.kind == "any":
                 if pos < len(folded):
-                    push(state.out, pos + 1, starts, lengths, values, penalty)
+                    push(state.out, pos + 1, starts, lengths, spans, penalty)
                 continue
 
             if state.kind == "enum":
@@ -402,7 +414,7 @@ class CompiledSentencePattern:
                             pos + len(choice),
                             starts,
                             lengths,
-                            values,
+                            spans,
                             penalty,
                         )
                 continue
@@ -426,7 +438,7 @@ class CompiledSentencePattern:
                         break
                     number = -magnitude if negative else magnitude
                     if state.minimum <= number <= state.maximum:
-                        push(state.out, end + 1, starts, lengths, values, penalty)
+                        push(state.out, end + 1, starts, lengths, spans, penalty)
                 continue
 
             raise SentenceMatchLimitError(f"unknown compiled state {state.kind}")

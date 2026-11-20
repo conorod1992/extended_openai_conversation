@@ -112,7 +112,9 @@ async def test_failed_expiry_startup_resets_and_reloads_successfully():
 
 
 async def test_owner_normalization_failure_retries_without_reloading_or_leaking():
-    store = Storage([record("valid"), record("unowned", owner=None)])
+    store = Storage(
+        [record("valid"), record("unowned", owner=None, scope="unknown:scope")]
+    )
     store.fail_save = True
     manager = temporary.TemporaryMemory(store)
     with pytest.raises(OSError, match="disk offline"):

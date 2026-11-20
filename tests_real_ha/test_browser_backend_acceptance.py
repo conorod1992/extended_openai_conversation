@@ -22,6 +22,10 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_GUEST_POLICY_VERSION,
     GUEST_POLICY_VERSION,
 )
+from custom_components.extended_openai_conversation_responses.conversation_archive import (
+    async_get_archive,
+)
+from custom_components.extended_openai_conversation_responses.scope import user_scope
 from homeassistant.components import conversation, onboarding
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.const import ATTR_SUPPORTED_FEATURES
@@ -31,7 +35,9 @@ from homeassistant.helpers.storage import Store
 from homeassistant.setup import async_setup_component
 from tests_real_ha.test_acceptance_lifecycle import _make_entry
 from tests_real_ha.test_management_backend_acceptance import (
+    ADMIN_ID,
     _admin_client,
+    _conversation_subentry,
     _entry,
     _management_call,
     _setup_entry,
@@ -182,6 +188,27 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
     """Chromium CRUD journeys must satisfy the genuine HA management contract."""
     entry = _entry("Browser Backend Acceptance")
     await _setup_entry(hass, entry)
+    archive = await async_get_archive(
+        hass, entry.entry_id, _conversation_subentry(entry).subentry_id
+    )
+    scope = user_scope(ADMIN_ID, source="authenticated_user")
+    session = await archive.async_begin_session(
+        "browser-search-fragment",
+        scope,
+        "browser-search-fragment",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    assert session is not None
+    await archive.async_record_turn(
+        session.session_id,
+        run_id=None,
+        user_text="Describe the report",
+        assistant_text=('🙂e\u0301\t"\\' * 4100)
+        + "Cafe\u0301 \t magnetometer <report>",
+        successful=True,
+    )
     # Both assistants are genuine loaded entries; identity coverage must not skip.
     await _setup_entry(hass, _entry("Dependent Journey"))
     runner, backend_url = await _start_ws_bridge(

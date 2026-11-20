@@ -30,6 +30,7 @@ from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
     _chat_sse_tool_call,
     _response_object,
+    _response_text_item,
     _responses_sse_text,
     _responses_sse_tool_call,
 )
@@ -214,7 +215,7 @@ async def test_text_only_production_and_diagnostic_do_not_require_tools(
         max_function_calls_per_conversation=0,
     )
     completion = (
-        _response_object("resp-text-only", [])
+        _response_object("resp-text-only", [_response_text_item("OK")])
         if mode == "responses"
         else {
             "id": "chat-text-only",
@@ -294,7 +295,10 @@ async def test_agent_probe_budget_warning_preserves_acceptance_and_usage(
         ],
     )
     if mode == "responses":
-        completion = _response_object("resp-probe-budget", [])
+        completion = _response_object(
+            "resp-probe-budget",
+            [_response_text_item("OK")] if outcome == "completed" else [],
+        )
         completion["usage"] = {
             "input_tokens": 5,
             "output_tokens": 16,
@@ -334,7 +338,10 @@ async def test_agent_probe_budget_warning_preserves_acceptance_and_usage(
                 {
                     "index": 0,
                     "finish_reason": "length" if outcome == "budget" else "stop",
-                    "message": {"role": "assistant", "content": ""},
+                    "message": {
+                        "role": "assistant",
+                        "content": "OK" if outcome == "completed" else "",
+                    },
                 }
             ],
             "usage": {

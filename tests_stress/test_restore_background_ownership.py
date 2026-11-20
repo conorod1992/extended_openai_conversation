@@ -12,7 +12,7 @@ import yaml
 
 from custom_components.extended_openai_conversation_responses import (
     backup,
-    conversation as agent_module,
+    conversation_archive as archive_module,
     restore_recovery,
     transfer,
 )
@@ -74,14 +74,14 @@ def _rule(name):
 
 async def _held_restore(hass, monkeypatch):
     callbacks = []
-    installed_tracker = agent_module.async_track_time_interval
+    installed_tracker = archive_module.async_track_time_interval
 
     def capture(hass, callback, interval, *args, **kwargs):
         if callback.__name__ == "_async_prune_archive_retention":
             callbacks.append(callback)
         return installed_tracker(hass, callback, interval, *args, **kwargs)
 
-    monkeypatch.setattr(agent_module, "async_track_time_interval", capture)
+    monkeypatch.setattr(archive_module, "async_track_time_interval", capture)
     entry = _make_entry(
         "Owned restore",
         include_ai_task=False,

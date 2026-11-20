@@ -64,6 +64,20 @@ def record(index: int, *, owner: str = "user-a", content: str | None = None):
     )
 
 
+def test_management_memory_dates_use_explicit_offsets_without_rewriting_records():
+    memory = record(1)
+    memory.created_at = "2026-06-01T12:30:00"
+    memory.updated_at = "2026-06-01T13:30:00+01:00"
+    original_revision = management_browser.memory_revision(memory)
+
+    result = management_browser.management_memory_dict(memory, include_scope=False)
+
+    assert result["created_at"] == "2026-06-01T12:30:00+00:00"
+    assert result["updated_at"] == memory.updated_at
+    assert result["revision"] == original_revision
+    assert memory.created_at == "2026-06-01T12:30:00"
+
+
 @pytest.mark.asyncio
 async def test_list_page_reports_authoritative_has_more() -> None:
     memory = FakeMemory([record(index) for index in range(101)])

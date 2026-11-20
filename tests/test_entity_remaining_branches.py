@@ -156,6 +156,12 @@ async def test_responses_stream_ignores_empty_events_and_normalizes_metadata() -
     valid_citation = SimpleNamespace(
         type="url_citation", start_index=0, end_index=2, title="Docs", url="https://x"
     )
+    message = SimpleNamespace(
+        type="message", content=[SimpleNamespace(type="output_text", text="ok")]
+    )
+    refusal = SimpleNamespace(
+        type="message", content=[SimpleNamespace(type="refusal", refusal="12345")]
+    )
     events = [
         SimpleNamespace(
             type="response.output_item.added", item=SimpleNamespace(type="other")
@@ -185,6 +191,8 @@ async def test_responses_stream_ignores_empty_events_and_normalizes_metadata() -
             type="response.output_text.annotation.added",
             annotation=SimpleNamespace(type="other"),
         ),
+        SimpleNamespace(type="response.output_item.done", output_index=0, item=message),
+        SimpleNamespace(type="response.output_item.done", output_index=1, item=refusal),
         SimpleNamespace(
             type="response.completed", response=SimpleNamespace(usage=None)
         ),
@@ -194,7 +202,14 @@ async def test_responses_stream_ignores_empty_events_and_normalizes_metadata() -
         _entity()._transform_responses_stream(SimpleNamespace(), _Stream(events))
     )
 
-    assert deltas == [{"content": "ok"}, {"content": "123"}, {"content": "45"}]
+    assert deltas == [
+        {"content": "ok"},
+        {"native": message},
+        {"role": "assistant"},
+        {"content": "123"},
+        {"content": "45"},
+        {"native": refusal},
+    ]
 
 
 @pytest.mark.parametrize(

@@ -463,7 +463,8 @@ def test_record_owner_normalization_preserves_valid_and_migrates_only_safe_legac
     assert (
         ownership._normalize_record_owner(legacy_safe).owner_scope_id == "user:legacy"
     )
-    assert ownership._normalize_record_owner(legacy_unsafe) is None
+    assert ownership._normalize_record_owner(legacy_unsafe) is legacy_unsafe
+    assert legacy_unsafe.is_unassigned_legacy
     assert ownership._normalize_record_owner(invalid) is None
 
 

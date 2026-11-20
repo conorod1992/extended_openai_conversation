@@ -54,7 +54,7 @@ const object = value => value && typeof value === "object" && !Array.isArray(val
 // policy scope, neither an acknowledgement nor a read may silently drop it.
 // Quiet replaces the whole policy, so omitted known fields would become defaults.
 export function completePolicyResponse(result, revisionRequired = false, knownConfig = null) {
-  return object(result?.config) && (result.revision == null && !revisionRequired
+  return result?.available !== false && object(result?.config) && (result.revision == null && !revisionRequired
     || typeof result.revision === "string" && result.revision.length > 0)
     && (!knownConfig || Object.keys(knownConfig).every(key => Object.hasOwn(result.config, key)));
 }
@@ -67,8 +67,12 @@ function pageProjection(result, view, revisionRequired = false, knownConfig = nu
 
 // Called only at accepted publication boundaries, never merely because a load
 // promise resolved. Metadata can change without replacing the policy projection.
-export function acceptPageRead(panel, result, read) {
-  if (!currentRead(panel, read) || panel._result !== result) return false;
+export function acceptPageRead(panel, result, read, {publish = false} = {}) {
+  if (!currentRead(panel, read) || (!publish && panel._result !== result)) return false;
+  if (read.view === "capabilities/quiet-hours" && result?.available === false) {
+    if (publish) panel._result = result;
+    return true;
+  }
   const scope = panel._unsavedState?.scopes.get(read.view);
   const ownsScope = scope?.isCurrent?.();
   const projection = pageProjection(result, read.view, Boolean(ownsScope && scope.revision != null),
@@ -77,8 +81,9 @@ export function acceptPageRead(panel, result, read) {
   // replacement baseline or be used by the rendering/draft initializer.
   if (read.view !== "capabilities/request-rules") requireMutationAcknowledgement(Boolean(projection), "loading the saved policy");
   if (!projection) return false;
+  if (publish) panel._result = result;
   acceptedReads.set(panel, {...read, projection, sequence:(acceptedReads.get(panel)?.sequence || 0) + 1});
-  if (ownsScope) scope.reconcileUncertainRead?.(result);
+  if (ownsScope && !publish) scope.reconcileUncertainRead?.(result);
   if (read.view === "capabilities/guest-mode") panel._unsavedState?.scopes.get("guest-interval")?.reconcileRead?.(result.status, read.interval);
   const obligations = readObligations.get(panel);
   for (const entry of obligations || []) {

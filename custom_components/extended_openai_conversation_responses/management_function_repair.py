@@ -1009,9 +1009,10 @@ async def async_function_repair(
         return result
 
     if action == "configuration_save":
+        provider = entry_api_provider(entry)
         validation = management_ui._validation_result(
             lambda: management_ui.merge_agent_config(
-                safe_base, filtered, provider=entry_api_provider(entry)
+                safe_base, filtered, provider=provider
             )
         )
         if not validation.get("valid"):
@@ -1021,7 +1022,9 @@ async def async_function_repair(
             hass, entry, subentry, normalized
         )
         require_repair_revision(subentry, operation_revision)
-        persisted = project_agent_config_updates(subentry.data, filtered, normalized)
+        persisted = project_agent_config_updates(
+            subentry.data, filtered, normalized, provider=provider
+        )
 
         requested_title = message.get("title")
         if requested_title is not None:

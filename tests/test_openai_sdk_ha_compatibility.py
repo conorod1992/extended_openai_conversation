@@ -17,6 +17,179 @@ from custom_components.extended_openai_conversation_responses.debug import (
 )
 
 
+@pytest.mark.parametrize("api_provider", ["azure", None])
+@pytest.mark.parametrize(
+    ("base_url", "api_version", "expected_api_version", "expected"),
+    [
+        (
+            "https://resource.openai.azure.com/openai/v1",
+            None,
+            None,
+            ("/openai/v1/models", "/openai/v1/chat/completions"),
+        ),
+        (
+            "https://resource.services.ai.azure.com/openai/v1/",
+            "2024-10-21",
+            None,
+            ("/openai/v1/models", "/openai/v1/chat/completions"),
+        ),
+        (
+            "https://resource.openai.azure.com/team/openai/v1/",
+            None,
+            None,
+            ("/team/openai/v1/models", "/team/openai/v1/chat/completions"),
+        ),
+        (
+            "https://resource.openai.azure.com",
+            "2024-10-21",
+            "2024-10-21",
+            ("/openai/models", "/openai/deployments/home-model/chat/completions"),
+        ),
+        (
+            "https://resource.openai.azure.com",
+            None,
+            "2025-04-01-preview",
+            ("/openai/models", "/openai/deployments/home-model/chat/completions"),
+        ),
+    ],
+)
+async def test_azure_endpoint_routes_authentication_and_requests(
+    hass, monkeypatch, api_provider, base_url, api_version, expected_api_version, expected
+):
+    monkeypatch.setenv("OPENAI_API_VERSION", "2025-04-01-preview")
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"object": "list", "data": []})
+        return httpx.Response(
+            200,
+            json={
+                "id": "chat-1",
+                "model": "home-model",
+                "object": "chat.completion",
+                "created": 0,
+                "choices": [],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as shared:
+        monkeypatch.setattr(helpers, "get_async_client", lambda _hass: shared)
+        client = await helpers.get_authenticated_client(
+            hass, "test-key", base_url, api_version, None, api_provider
+        )
+        await client.chat.completions.create(model="home-model", messages=[])
+
+    assert tuple(request.url.path for request in requests) == expected
+    for request in requests:
+        assert request.url.params.get("api-version") == expected_api_version
+    assert json.loads(requests[-1].content)["model"] == "home-model"
+
+
+@pytest.mark.parametrize(
+    ("api_provider", "endpoint", "api_version", "model_path", "chat_path"),
+    [
+        (
+            "azure",
+            "https://gateway.azure-api.net/team/openai/v1",
+            None,
+            "/team/openai/v1/models",
+            "/team/openai/v1/chat/completions",
+        ),
+        (
+            "azure",
+            "https://gateway.azure-api.net/team/openai/",
+            "2024-10-21",
+            "/team/openai/models",
+            "/team/openai/deployments/home-model/chat/completions",
+        ),
+        (
+            "openai",
+            "https://gateway.azure-api.net/team/llm/v1",
+            None,
+            "/team/llm/v1/models",
+            "/team/llm/v1/chat/completions",
+        ),
+        (
+            "openai",
+            "https://api.openai.com/v1",
+            None,
+            "/v1/models",
+            "/v1/chat/completions",
+        ),
+    ],
+)
+async def test_endpoint_queries_are_sent_separately_from_the_resource_path(
+    hass, monkeypatch, api_provider, endpoint, api_version, model_path, chat_path
+):
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"object": "list", "data": []})
+        return httpx.Response(
+            200,
+            json={"object": "chat.completion", "id": "chat-1", "choices": []},
+        )
+
+    configured = f"{endpoint}?tenant=kitchen%2Blab&region=west"
+    # Exercise normalization of the SDK environment default as well as the
+    # endpoint written by setup or a private backup.
+    if endpoint == "https://api.openai.com/v1":
+        monkeypatch.setenv("OPENAI_BASE_URL", configured)
+        configured = None
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as shared:
+        monkeypatch.setattr(helpers, "get_async_client", lambda _hass: shared)
+        client = await helpers.get_authenticated_client(
+            hass, "test-key", configured, api_version, None, api_provider
+        )
+        assert not helpers.is_native_openai_connection(
+            {"base_url": configured, "api_provider": api_provider}, client=client
+        )
+        await client.chat.completions.create(model="home-model", messages=[])
+
+    assert [request.url.path for request in requests] == [model_path, chat_path]
+    for request in requests:
+        assert request.url.params.get("tenant") == "kitchen+lab"
+        assert request.url.params.get("region") == "west"
+        assert request.url.params.get("api-version") == api_version
+
+
+@pytest.mark.parametrize(
+    ("query", "message"),
+    [
+        ("tenant=one&tenant=two", "unique names"),
+        ("tenant=", "unique names"),
+        ("=value", "unique names"),
+        ("tenant=%FF", "UTF-8"),
+    ],
+)
+def test_endpoint_rejects_query_parameters_the_sdk_cannot_preserve(query, message):
+    with pytest.raises(helpers.ProviderEndpointError, match=message):
+        helpers.resolve_provider_endpoint(
+            "azure", f"https://gateway.azure-api.net/openai/v1/?{query}", None
+        )
+
+
+@pytest.mark.parametrize(
+    ("api_version", "environment_version"), [(None, None), ("", "2024-10-21")]
+)
+def test_legacy_azure_requires_an_effective_api_version(
+    monkeypatch, api_version, environment_version
+):
+    if environment_version is None:
+        monkeypatch.delenv("OPENAI_API_VERSION", raising=False)
+    else:
+        monkeypatch.setenv("OPENAI_API_VERSION", environment_version)
+
+    with pytest.raises(helpers.ProviderEndpointError, match=r"requires.*api_version"):
+        helpers.resolve_provider_endpoint(
+            None, "https://resource.openai.azure.com", api_version
+        )
+
+
 @pytest.mark.parametrize("provider", ["openai", "azure"])
 @pytest.mark.parametrize("skip_authentication", [False, True])
 async def test_sdk_resources_prepared_off_loop_before_debug_wrapper(

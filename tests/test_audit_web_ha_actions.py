@@ -33,8 +33,9 @@ from tests.test_remote_response_bounds import _FakeResponse, _FakeSession, _rest
         (" {{ text }}\n", ' {"a":1}\n'),
         ("{{ text }}\n\n", '{"a":1}\n\n'),
         ("{% for i in range(2) %}{{ text }}\n{% endfor %}", '{"a":1}\n{"a":1}\n'),
+        ("\r\n{{ text }}\r\n\nnext\r\n", '\r\n{"a":1}\r\n\nnext\r\n'),
     ],
-    ids=["leading-space", "final-newlines", "ndjson-loop"],
+    ids=["leading-space", "final-newlines", "ndjson-loop", "mixed-line-endings"],
 )
 async def test_literal_and_templated_payloads_transmit_identical_bytes(
     hass, monkeypatch, socket_enabled, scrape, source, expected

@@ -26,6 +26,7 @@ from .skill_resource_limits import (
     read_bounded_skill_text,
 )
 from .skill_transactions import (
+    SkillDownload,
     commit_transaction,
     prepare_transaction,
     recover_transaction,
@@ -265,9 +266,8 @@ class SkillManager:
 
     def _discover_skills_sync(self, skills_dir: Path) -> dict[str, Skill]:
         """Read and parse an owned catalogue without occupying HA's loop."""
-        skills_data = self._load_skills_from_dir_sync(skills_dir)
         loaded: dict[str, Skill] = {}
-        for skill_path, content in skills_data:
+        for skill_path, content in self._iter_skill_texts_sync(skills_dir):
             try:
                 skill = SkillMdParser.parse(content, skill_path, skills_dir)
                 if skill is not None:
@@ -280,6 +280,9 @@ class SkillManager:
                     err,
                     level=logging.ERROR,
                 )
+            finally:
+                # Release decoded text before the iterator reads the next body.
+                del content
         return loaded
 
     @asynccontextmanager
@@ -289,12 +292,18 @@ class SkillManager:
             yield
 
     async def async_publish_staged_skill(
-        self, skill_name: str, staged_dir: Path
+        self,
+        skill_name: str,
+        staged_dir: Path,
+        *,
+        download: SkillDownload | None = None,
     ) -> None:
         """Publish a completed staged Skill and refresh the catalogue atomically."""
         self._validate_direct_skill_name(skill_name)
         staging_root = self.staging_dir.resolve()
         staged = staged_dir.resolve()
+        if download is not None and download.directory.resolve() != staged:
+            raise HomeAssistantError("Skill download does not own the staged directory")
         if staged == staging_root or not staged.is_relative_to(staging_root):
             raise HomeAssistantError(
                 "Skill staging path is outside the managed staging area"
@@ -310,6 +319,8 @@ class SkillManager:
                 prepare_transaction, self.staging_dir, target, backup, staged
             )
             try:
+                if download is not None:
+                    await self._hass.async_add_executor_job(download.hand_off)
                 await self._hass.async_add_executor_job(
                     self._activate_staged_skill_sync, staged, target, backup
                 )
@@ -371,20 +382,20 @@ class SkillManager:
             with suppress(FileNotFoundError):
                 path.unlink()
 
-    def _load_skills_from_dir_sync(self, skills_dir: Path) -> list[tuple[Path, str]]:
-        """Read bounded metadata only from published, non-temporary Skill paths."""
-        results: list[tuple[Path, str]] = []
+    def _iter_skill_texts_sync(self, skills_dir: Path) -> Iterator[tuple[Path, str]]:
+        """Yield bounded text from published, non-temporary Skill paths."""
         if not skills_dir.exists():
             _LOGGER.debug("Skills directory does not exist: %s", skills_dir)
-            return results
+            return
         if not skills_dir.is_dir():
             _LOGGER.warning(
                 "The configured Skills path is not a directory, so installed Skills "
                 "cannot be loaded. Check the Skills path in Extended OpenAI > Skills: %s",
                 skills_dir,
             )
-            return results
+            return
         entries_seen = 0
+        readable_files = 0
         for skill_dir in skills_dir.iterdir():
             entries_seen += 1
             if entries_seen > MAX_SKILL_DISCOVERY_ENTRIES:
@@ -399,13 +410,13 @@ class SkillManager:
             if not skill_file.exists():
                 _LOGGER.debug("No SKILL.md found in %s", skill_dir)
                 continue
-            if len(results) >= MAX_DISCOVERED_SKILLS:
+            if readable_files >= MAX_DISCOVERED_SKILLS:
                 _LOGGER.warning(
                     "Skill discovery stopped after %d Skills", MAX_DISCOVERED_SKILLS
                 )
                 break
             try:
-                results.append((skill_file, read_bounded_skill_text(skill_file)))
+                content = read_bounded_skill_text(skill_file)
             except HomeAssistantError as err:
                 log_handled_failure(
                     _LOGGER,
@@ -414,7 +425,10 @@ class SkillManager:
                     f"> Skills. File: {skill_file}",
                     err,
                 )
-        return results
+            else:
+                readable_files += 1
+                yield skill_file, content
+                del content
 
     def get_skill(self, name: str) -> Skill | None:
         """Get one Skill from the current atomic catalogue snapshot."""

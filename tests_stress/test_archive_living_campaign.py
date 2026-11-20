@@ -522,7 +522,13 @@ async def test_public_archive_date_range_bulk_transaction(
         ),
     ]
     for session in (controls[0], controls[2]):
-        turns.append(_turn(session.session_id, turn_id=f"turn-{session.session_id}"))
+        turns.append(
+            _turn(
+                session.session_id,
+                turn_id=f"turn-{session.session_id}",
+                timestamp=session.last_message_at,
+            )
+        )
     for month in sorted({turn.timestamp[:7] for turn in turns}):
         await storage.async_save_partition(
             month,

@@ -21,10 +21,12 @@ from .context import (
     select_summary_history,
 )
 from .operational_errors import log_handled_failure
+from .provider_content import RoutedReasoning
 
 _LOGGER = logging.getLogger(__name__)
 
 MAX_PENDING_CONTEXT_SUMMARIES = 128
+DEFERRED_CONTEXT_SUMMARY_TIMEOUT = 15.0
 SummaryCallback = Callable[
     [list[conversation.Content], str, str], Awaitable[str | None]
 ]
@@ -74,6 +76,7 @@ class PendingContextSummary:
     fallback_content: list[conversation.Content]
     task: asyncio.Future[ContextSummaryResult]
     created_at: float
+    deadline: float | None = None
 
 
 class DeferredContextSummaryManager:
@@ -110,6 +113,7 @@ class DeferredContextSummaryManager:
         if plan is None:
             return False
         selected, fallback = plan.selected, plan.fallback
+        deadline = asyncio.get_running_loop().time() + DEFERRED_CONTEXT_SUMMARY_TIMEOUT
         task = scheduler(
             self._async_build_result(
                 snapshot,
@@ -118,6 +122,7 @@ class DeferredContextSummaryManager:
                 api_mode=api_mode,
                 summarize=summarize,
                 fallback=fallback,
+                deadline=deadline,
             )
         )
         self._pending[conversation_id] = PendingContextSummary(
@@ -126,6 +131,7 @@ class DeferredContextSummaryManager:
             fallback_content=fallback,
             task=task,
             created_at=time.monotonic(),
+            deadline=deadline,
         )
         return True
 
@@ -181,14 +187,23 @@ class DeferredContextSummaryManager:
 
         remove_pending = False
         try:
-            try:
-                result = await asyncio.shield(pending.task)
-            except asyncio.CancelledError:
-                if not pending.task.cancelled():
-                    raise
+            remaining = (
+                max(0, pending.deadline - asyncio.get_running_loop().time())
+                if pending.deadline is not None
+                else None
+            )
+            done, _ = await asyncio.wait({pending.task}, timeout=remaining)
+            if not done:
+                pending.task.cancel()
+                _LOGGER.warning(
+                    "Deferred context summary timed out; keeping recent valid turns instead"
+                )
+            if not done or pending.task.cancelled():
                 result = ContextSummaryResult(
                     list(pending.fallback_content), summarized=False
                 )
+            else:
+                result = pending.task.result()
             if len(content) < pending.snapshot_length:
                 remove_pending = True
                 _LOGGER.warning(
@@ -261,13 +276,15 @@ class DeferredContextSummaryManager:
         api_mode: str,
         summarize: SummaryCallback,
         fallback: list[conversation.Content],
+        deadline: float | None = None,
     ) -> ContextSummaryResult:
         """Build exactly the summary shape used by synchronous truncation."""
         older, retained = selected
         retained_parts = partition_history(retained)
         summary_source = [*retained_parts.prefix[1:], *older]
         try:
-            summary = await summarize(summary_source or older, model, api_mode)
+            async with asyncio.timeout_at(deadline):
+                summary = await summarize(summary_source or older, model, api_mode)
         except asyncio.CancelledError:
             raise
         except Exception as err:
@@ -304,6 +321,10 @@ def _history_signature(items: list[conversation.Content]) -> str:
         if not isinstance(item, conversation.AssistantContent) or item.native is None:
             continue
         native = item.native
+        route = None
+        if isinstance(native, RoutedReasoning):
+            route = native.route
+            native = native.item
         if hasattr(native, "model_dump"):
             try:
                 serialized = native.model_dump(exclude_none=True)
@@ -323,6 +344,7 @@ def _history_signature(items: list[conversation.Content]) -> str:
                 "type": getattr(native, "type", None),
                 "id": getattr(native, "id", None),
                 "value": serialized,
+                "route": route,
             }
         )
 

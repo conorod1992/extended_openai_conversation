@@ -77,6 +77,36 @@ async def test_edit_preserves_whitespace_boundaries(
     assert target.read_bytes() == after.encode()
 
 
+async def test_write_and_edit_preserve_authored_crlf_in_interpolated_text(hass, tmp_path):
+    target = tmp_path / "extended_openai_conversation_responses" / "mixed.txt"
+    path = str(target)
+    writer = WriteFileFunction()
+    write_config = writer.validate_schema(
+        {"type": "write_file", "path": path, "content": "First {{ word }}\r\nLast\n"}
+    )
+    write_config["path"].hass = hass
+    assert (await writer.execute(hass, write_config, {"word": "value"}, None, []))[
+        "success"
+    ]
+    assert target.read_bytes() == b"First value\r\nLast\n"
+
+    target = target.with_name("edit-mixed.txt")
+    target.write_bytes(b"First value\r\nLast\n")
+    editor = EditFileFunction()
+    edit_config = editor.validate_schema(
+        {
+            "type": "edit_file",
+            "path": str(target),
+            "old_text": "{{ word }}\r\nLast",
+            "new_text": "{{ word | upper }}\r\nEnd",
+        }
+    )
+    edit_config["path"].hass = hass
+    result = await editor.execute(hass, edit_config, {"word": "value"}, None, [])
+    assert result.get("success"), result
+    assert target.read_bytes() == b"First VALUE\r\nEnd\n"
+
+
 @pytest.mark.parametrize(
     "command",
     [

@@ -113,11 +113,13 @@ def test_parallel_history_groups_calls_without_crossing_results():
     assert [call["id"] for call in messages[0]["tool_calls"]] == ["a", "b"]
 
 
-async def test_failed_response_removes_only_its_reasoning_and_keeps_calls():
+async def test_failed_response_removes_only_its_reasoning_and_keeps_calls(hass):
     previous = conversation.AssistantContent(
         agent_id="agent", native=SimpleNamespace(type="reasoning", id="old")
     )
-    log = SimpleNamespace(content=[previous])
+    log = _chat_log(hass)
+    log.content.append(previous)
+    existing = list(log.content)
     stream = FakeStream(
         [
             SimpleNamespace(
@@ -136,14 +138,23 @@ async def test_failed_response_removes_only_its_reasoning_and_keeps_calls():
                     arguments="{}",
                 ),
             ),
+            SimpleNamespace(
+                type="response.output_item.added",
+                output_index=2,
+                item=SimpleNamespace(type="message", id="interrupted"),
+            ),
         ]
     )
     with pytest.raises(HomeAssistantError, match="terminal"):
-        async for delta in _stream_entity()._transform_responses_stream(log, stream):
-            log.content.append(conversation.AssistantContent(agent_id="agent", **delta))
-    assert log.content[0] is previous
-    assert len(log.content) == 2
-    assert log.content[1].tool_calls[0].id == "call"
+        _ = [
+            content
+            async for content in log.async_add_delta_content_stream(
+                "agent", _stream_entity()._transform_responses_stream(log, stream)
+            )
+        ]
+    assert all(actual is old for actual, old in zip(log.content, existing))
+    assert len(log.content) == len(existing) + 1
+    assert log.content[-1].tool_calls[0].id == "call"
 
 
 def test_debug_summary_uses_first_request_with_text():

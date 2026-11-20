@@ -1,6 +1,7 @@
 """Unified Management parity and shared Memory store safety regressions."""
 
 from copy import deepcopy
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -17,7 +18,11 @@ from custom_components.extended_openai_conversation_responses.memory import (
     PersistentMemory,
     memory_revision,
 )
+from custom_components.extended_openai_conversation_responses.temporary_memory import (
+    TemporaryMemory,
+)
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 
 class _Storage:
@@ -201,26 +206,37 @@ async def test_disabled_shared_destination_and_invalid_controls(store):
     assert (await command("list"))["memories"] == [record]
 
 
-async def test_temporary_clear_requires_confirmation_and_batches_authorized_owner(
+async def test_temporary_clear_is_atomic_for_more_than_fifty_records(
     monkeypatch,
 ):
-    records = [SimpleNamespace(memory_id=f"m-{i}") for i in range(55)]
-    manager = SimpleNamespace(
-        async_list_owned=AsyncMock(return_value=records),
-        async_delete_owned=AsyncMock(side_effect=[50, 5]),
-    )
+    storage = _Storage()
+    manager = TemporaryMemory(storage)
+    expires_at = (dt_util.utcnow() + timedelta(hours=1)).isoformat()
+    for index in range(55):
+        await manager.async_add_owned("user:user-7", f"Fact {index}", expires_at)
+    await manager.async_add_owned("user:other", "Other fact", expires_at)
     get = AsyncMock(return_value=manager)
     monkeypatch.setattr(management_ui, "async_get_temporary_memory", get)
+    save_count = storage.save_count
     with pytest.raises(HomeAssistantError, match="confirmation"):
         await command("temporary_clear")
-    manager.async_list_owned.assert_not_awaited()
     with pytest.raises(HomeAssistantError, match="not available"):
         await command("temporary_clear", scope_id="user:other", confirm=True)
+    assert storage.save_count == save_count
+    with monkeypatch.context() as fault:
+        fail = AsyncMock(side_effect=OSError("cannot save clear"))
+        fault.setattr(storage, "async_save", fail)
+        with pytest.raises(OSError, match="cannot save clear"):
+            await command("temporary_clear", confirm=True)
+        fail.assert_awaited_once()
+        assert len(fail.await_args.args[0]["records"]) == 1
+    assert await manager.async_list_owned("user:user-7")
+    assert len(await TemporaryMemory(storage).async_list_owned("user:user-7")) == 55
     assert await command("temporary_clear", confirm=True) == {"deleted": 55}
-    manager.async_list_owned.assert_awaited_once_with("user:user-7")
-    assert [args.args for args in manager.async_delete_owned.await_args_list] == [
-        ("user:user-7", [r.memory_id for r in records[:50]]),
-        ("user:user-7", [r.memory_id for r in records[50:]]),
+    assert storage.save_count == save_count + 1
+    assert not await manager.async_list_owned("user:user-7")
+    assert [row.content for row in await manager.async_list_owned("user:other")] == [
+        "Other fact"
     ]
     assert get.await_args.args[1:] == ("entry-1", "agent-1")
 

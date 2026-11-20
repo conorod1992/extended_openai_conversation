@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from contextvars import copy_context
@@ -24,7 +25,14 @@ from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
-from .retrieval_text import bounded_phrase
+from .retrieval_text import (
+    _CJK_RUN,
+    _LEXICAL_TOKEN,
+    bounded_phrase,
+    cjk_terms,
+    word_character_projection,
+    word_tokens,
+)
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .storage_namespaces import KNOWLEDGE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
@@ -178,14 +186,20 @@ def _index_source(source: KnowledgeSource, index: _KnowledgeIndex) -> None:
         normalized_description=normalized_description,
         normalized_metadata=_normalize_catalog(f"{source.title} {source.description}"),
     )
-    for chunk_id, (start, text) in enumerate(_split_chunks(source.content)):
+    for chunk_id, (start, text, searchable, phrase_text) in enumerate(
+        _searchable_chunks(source.content)
+    ):
+        tokens = _tokens(searchable)
+        if searchable != text:
+            # Continuous CJK already indexes real substrings of the source.
+            tokens.update(cjk_terms(text))
         chunk = _Chunk(
             source_id=source.source_id,
             chunk_id=chunk_id,
             start=start,
             text=text,
-            normalized_text=_normalize(text),
-            tokens=frozenset(_search_tokens(text)),
+            normalized_text=_normalize(phrase_text),
+            tokens=frozenset(_search_tokens(searchable, tokens)),
         )
         key = (source.source_id, chunk_id)
         index.chunks[key] = chunk
@@ -1235,20 +1249,74 @@ def _search_tokens(value: str, exact: set[str] | None = None) -> set[str]:
 
 
 def _tokens(value: str) -> set[str]:
-    from .retrieval_text import cjk_terms, lexical_terms
+    from .retrieval_text import lexical_terms
 
     return set(lexical_terms(value, include_spelling_aliases=False)) | cjk_terms(value)
 
 
 def _normalize(value: str) -> str:
     normalized = unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
-    return " ".join(_PHRASE_TOKEN_PATTERN.findall(normalized))
+    return " ".join(word_tokens(normalized, _PHRASE_TOKEN_PATTERN))
 
 
 def _normalize_catalog(value: str) -> str:
     from .retrieval_text import lexical_tokens
 
     return " ".join(lexical_tokens(value))
+
+
+def _searchable_chunks(content: str) -> list[tuple[int, str, str, str]]:
+    """Exclude clipped lexical terms from scoring while retaining source excerpts."""
+    chunks = _split_chunks(content)
+    if len(chunks) <= 1:
+        return [(start, text, text, text) for start, text in chunks]
+
+    # Match lexical spans in coordinates of the original source. Combining
+    # marks can compose with adjacent letters, so keep them within the span.
+    edges = word_character_projection(content.replace("\u2019", "'"))
+
+    def word_boundaries(pattern: re.Pattern[str]) -> tuple[list[int], list[int]]:
+        starts, ends = [], []
+        for match in pattern.finditer(edges):
+            starts.append(match.start())
+            ends.append(match.end())
+        return starts, ends
+
+    def bounded_text(
+        offset: int, end: int, boundaries: tuple[list[int], list[int]]
+    ) -> str:
+        starts, ends = boundaries
+        first = bisect_right(ends, offset)
+        last = bisect_left(starts, end) - 1
+        left, right = offset, end
+        if first <= last:
+            if starts[first] < offset and not _CJK_RUN.fullmatch(
+                content[offset : min(ends[first], end)]
+            ):
+                left = ends[first]
+            if ends[last] > end and not _CJK_RUN.fullmatch(
+                content[max(starts[last], offset) : end]
+            ):
+                right = starts[last]
+        return content[left:right]
+
+    lexical = word_boundaries(_LEXICAL_TOKEN)
+    phrase = word_boundaries(_PHRASE_TOKEN_PATTERN)
+    results = []
+    for start, text in chunks:
+        offset = start
+        while content[offset].isspace():
+            offset += 1
+        end = offset + len(text)
+        results.append(
+            (
+                start,
+                text,
+                bounded_text(offset, end, lexical),
+                bounded_text(offset, end, phrase),
+            )
+        )
+    return results
 
 
 def _split_chunks(content: str) -> list[tuple[int, str]]:
@@ -1261,8 +1329,8 @@ def _split_chunks(content: str) -> list[tuple[int, str]]:
         end = target
         if target < length:
             lower = max(start + CHUNK_SIZE // 2, target - 350)
-            paragraph = content.rfind("\n\n", lower, target + 1)
-            line = content.rfind("\n", lower, target + 1)
+            paragraph = content.rfind("\n\n", lower, target)
+            line = content.rfind("\n", lower, target)
             boundary = paragraph if paragraph >= lower else line
             if boundary >= lower:
                 end = boundary + (2 if boundary == paragraph else 1)

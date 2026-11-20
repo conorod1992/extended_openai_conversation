@@ -60,6 +60,36 @@ def _entity(mode, response, options=None, entry_data=None):
     return entity, create
 
 
+@pytest.mark.parametrize(
+    "phases,expected",
+    [
+        (["commentary", "final_answer"], "Text 1"),
+        (["commentary"], None),
+        ([None], "Text 0"),
+    ],
+    ids=["mixed", "commentary-only", "unphased"],
+)
+async def test_responses_summary_persists_answer_text_only(phases, expected):
+    response = _response("responses")
+    response.output = [
+        SimpleNamespace(
+            type="message",
+            role="assistant",
+            status="completed",
+            phase=phase,
+            content=[SimpleNamespace(type="output_text", text=f"Text {index}")],
+        )
+        for index, phase in enumerate(phases)
+    ]
+    entity, _ = _entity("responses", response)
+    result = await entity._async_summary_attempt(
+        "Summarize", "gpt-4.1", "responses", entity.subentry.data, retry=False
+    )
+    # The SDK aggregate may contain all phases.
+    assert result == (expected, False)
+    entity._usage.async_record_request.assert_awaited_once()
+
+
 @pytest.mark.parametrize("mode", ["responses", "chat_completions"])
 @pytest.mark.parametrize(
     "model,effort",
@@ -179,11 +209,12 @@ def test_summary_uses_recommended_effort_and_rejects_unsupported_values():
 @pytest.mark.parametrize("mode", ["responses", "chat_completions"])
 async def test_model_ceiling_prevents_a_pointless_retry(monkeypatch, mode):
     from copy import deepcopy
+
     from custom_components.extended_openai_conversation_responses import request
 
     capabilities = deepcopy(request.get_model_capabilities("gpt-5"))
     capabilities["limits"]["max_output_tokens"] = 1024
-    monkeypatch.setattr(request, "request_model_capabilities", lambda *_: capabilities)
+    monkeypatch.setattr(request, "request_model_capabilities", lambda *_, **_kwargs: capabilities)
     entity, create = _entity(
         mode, _response(mode, exhausted=True), {"reasoning_effort": "minimal"}
     )
@@ -221,8 +252,8 @@ async def test_live_provider_loop_hands_effective_options_to_compaction(
     hass, mode, deferred
 ):
     from tests import (
-        test_tool_exchange_protocol as responses,
         test_provider_tool_protocol as chat,
+        test_tool_exchange_protocol as responses,
     )
 
     fixture = responses if mode == "responses" else chat

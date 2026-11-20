@@ -12,6 +12,7 @@ from custom_components.extended_openai_conversation_responses import (
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
     agent_config_defaults,
+    agent_config_model_repair_snapshot,
     agent_config_snapshot,
     merge_agent_config,
     normalize_agent_config,
@@ -24,6 +25,34 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
+from homeassistant.exceptions import HomeAssistantError
+
+
+def test_legacy_gpt4o_processing_tier_stays_omitted_until_an_explicit_selection():
+    # 6.8.3 stored the hidden Priority choice and its request did not send it.
+    saved = {**agent_config_defaults(), "chat_model": "gpt-4o", "service_tier": "priority"}
+    with pytest.raises(HomeAssistantError, match="processing tier"):
+        build_provider_request_snapshot(saved, {})
+    assert _migrate_saved_service_tier(saved)
+    assert "service_tier" not in build_provider_request_snapshot(saved, {}).api_kwargs
+    assert not _migrate_saved_service_tier(saved)
+    edited = merge_agent_config(saved, {"max_tokens": 1800})
+    assert "service_tier" not in build_provider_request_snapshot(edited, {}).api_kwargs
+    assert "service_tier" not in edited
+    explicit = merge_agent_config(saved, {"service_tier": "default"})
+    assert build_provider_request_snapshot(explicit, {}).api_kwargs["service_tier"] == "default"
+    with pytest.raises(AgentConfigError, match="service_tier"):
+        merge_agent_config(saved, {"service_tier": "priority"})
+
+
+def test_unsupported_saved_processing_tier_is_visible_for_repair():
+    saved = {"chat_model": "gpt-4.1", "service_tier": "flex", "temperature": True}
+    assert not _migrate_saved_service_tier(saved)
+    shown = agent_config_model_repair_snapshot(saved)
+    assert shown["service_tier"] == "flex"
+    assert shown["temperature"] is True
+    fixed = merge_agent_config(saved, {"service_tier": "default", "temperature": 0.2})
+    assert fixed["service_tier"] == "default"
 
 
 @pytest.mark.parametrize("version", [1, 2, CONFIG_ENTRY_VERSION])

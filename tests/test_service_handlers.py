@@ -25,6 +25,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     SERVICE_MEMORY_LIST,
     SERVICE_PROCESS,
     SERVICE_QUERY_IMAGE,
+    SERVICE_REBUILD_MEMORY_EMBEDDINGS,
     SERVICE_RELOAD_SKILLS,
 )
 from custom_components.extended_openai_conversation_responses.memory import MemoryRecord
@@ -366,9 +367,9 @@ async def test_change_config_validates_and_saves_provider_settings(
 
     authenticate.assert_awaited_once()
     assert authenticate.await_args.kwargs["api_key"] == "new"
-    assert authenticate.await_args.kwargs["base_url"] is None
+    assert authenticate.await_args.kwargs["base_url"] == DEFAULT_CONF_BASE_URL
     saved = hass.config_entries.async_update_entry.call_args.kwargs["data"]
-    assert saved == {CONF_API_KEY: "new"}
+    assert saved == {CONF_API_KEY: "new", CONF_BASE_URL: DEFAULT_CONF_BASE_URL}
 
 
 async def test_change_config_ignores_empty_update_and_rejects_invalid_entry(
@@ -489,8 +490,8 @@ async def _download_handler(hass, monkeypatch, tmp_path: Path, responses: dict):
         AsyncMock(return_value="v1.2.3"),
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.services.uuid4",
-        lambda: SimpleNamespace(hex="fixed"),
+        "custom_components.extended_openai_conversation_responses.skill_transactions.uuid4",
+        lambda: SimpleNamespace(hex="a" * 32),
     )
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.services.async_read_bounded_json",
@@ -543,6 +544,17 @@ async def test_download_skill_recursively_stages_and_publishes_files(
     }
     handler, manager = await _download_handler(hass, monkeypatch, tmp_path, responses)
 
+    async def publish(name, staged, *, download):
+        assert name == "demo"
+        assert (staged / "SKILL.md").read_text() == "# Demo\n"
+        assert (staged / "assets" / "guide.txt").read_text() == "guide"
+        assert download.record.is_file()
+        # Unit fixture stands in for the publication transaction and rename.
+        download.hand_off()
+        manager.user_skills_dir.mkdir()
+        staged.rename(manager.user_skills_dir / name)
+
+    manager.async_publish_staged_skill.side_effect = publish
     result = await handler(_call({"skill_name": "demo"}))
 
     assert result["skill_name"] == "demo"
@@ -551,10 +563,8 @@ async def test_download_skill_recursively_stages_and_publishes_files(
         "skills/demo/SKILL.md",
         "skills/demo/assets/guide.txt",
     ]
-    staged = tmp_path / "staging" / "demo.download-fixed"
-    assert (staged / "SKILL.md").read_text() == "# Demo\n"
-    assert (staged / "assets" / "guide.txt").read_text() == "guide"
-    manager.async_publish_staged_skill.assert_awaited_once_with("demo", staged)
+    assert not list(manager.staging_dir.iterdir())
+    manager.async_publish_staged_skill.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
@@ -613,7 +623,7 @@ async def test_download_skill_rejects_invalid_remote_content_and_cleans_staging(
 
     with pytest.raises(HomeAssistantError, match=message):
         await handler(_call({"skill_name": "demo"}))
-    assert not (tmp_path / "staging" / "demo.download-fixed").exists()
+    assert not list(manager.staging_dir.iterdir())
     manager.async_publish_staged_skill.assert_not_awaited()
 
 
@@ -638,7 +648,7 @@ async def test_download_skill_requires_manifest_and_cleans_staging(
 
     with pytest.raises(HomeAssistantError, match=r"does not contain SKILL\.md"):
         await handler(_call({"skill_name": "demo"}))
-    assert not (tmp_path / "staging" / "demo.download-fixed").exists()
+    assert not list(manager.staging_dir.iterdir())
     manager.async_publish_staged_skill.assert_not_awaited()
 
 
@@ -664,7 +674,7 @@ async def test_download_skill_wraps_unexpected_publish_failure_and_cleans_stagin
 
     with pytest.raises(HomeAssistantError, match="disk offline"):
         await handler(_call({"skill_name": "demo"}))
-    assert not (tmp_path / "staging" / "demo.download-fixed").exists()
+    assert not list(manager.staging_dir.iterdir())
 
 
 def _record(memory_id: str) -> MemoryRecord:
@@ -779,6 +789,23 @@ async def test_memory_clear_requires_explicit_confirmation(hass) -> None:
                 }
             )
         )
+
+
+async def test_rebuild_memory_embeddings_requires_admin_and_targets_one_agent(
+    hass, monkeypatch
+):
+    memory = SimpleNamespace(async_rebuild_embedding_cache=AsyncMock())
+    handlers, get_memory = await _memory_handlers(hass, monkeypatch, memory)
+    rebuild = handlers[SERVICE_REBUILD_MEMORY_EMBEDDINGS]
+    data = {"config_entry": "entry", "agent_id": "agent"}
+    hass.auth.async_get_user.return_value = SimpleNamespace(is_admin=False)
+    with pytest.raises(HomeAssistantError, match="Administrator permission"):
+        await rebuild(_call(data, "alice"))
+    get_memory.assert_not_awaited()
+    hass.auth.async_get_user.return_value = SimpleNamespace(is_admin=True)
+    await rebuild(_call(data, "alice"))
+    get_memory.assert_awaited_once_with(hass, "entry", "agent")
+    memory.async_rebuild_embedding_cache.assert_awaited_once_with()
 
 
 async def test_guest_mode_update_translates_invalid_interval(hass, monkeypatch) -> None:
@@ -931,7 +958,7 @@ async def test_download_skill_rejects_failed_file_download_and_cleans_staging(
     with pytest.raises(HomeAssistantError, match="Failed to download"):
         await handler(_call({"skill_name": "demo"}))
 
-    assert not (tmp_path / "staging" / "demo.download-fixed").exists()
+    assert not list(manager.staging_dir.iterdir())
     manager.async_publish_staged_skill.assert_not_awaited()
 
 
@@ -1068,12 +1095,17 @@ async def test_change_config_canonicalizes_azure_endpoint_before_validation(
     assert original.get(CONF_API_PROVIDER) == saved_provider
 
 
-
 @pytest.mark.parametrize(
     "entry,expected",
     [
-        (SimpleNamespace(domain=DOMAIN, state=ConfigEntryState.SETUP_ERROR), "not loaded"),
-        (SimpleNamespace(domain=DOMAIN, state=ConfigEntryState.LOADED), "client is unavailable"),
+        (
+            SimpleNamespace(domain=DOMAIN, state=ConfigEntryState.SETUP_ERROR),
+            "not loaded",
+        ),
+        (
+            SimpleNamespace(domain=DOMAIN, state=ConfigEntryState.LOADED),
+            "client is unavailable",
+        ),
         (
             SimpleNamespace(
                 domain=DOMAIN,
@@ -1154,3 +1186,41 @@ async def test_change_config_invalid_legacy_provider_requires_correction(
         )
     authenticate.assert_not_awaited()
     hass.config_entries.async_update_entry.assert_not_called()
+
+@pytest.mark.parametrize(
+    ("entry_data", "requested", "expected"),
+    [
+        ({}, None, "gpt-6-luna"),
+        ({"base_url": "https://api.openai.com/v1/"}, "gpt-4.1", "gpt-4.1"),
+        ({"base_url": "https://compatible.example/v1"}, None, "gpt-4.1-mini"),
+        ({"base_url": "https://compatible.example/v1"}, "vision-custom", "vision-custom"),
+        ({"api_provider": "azure"}, None, "gpt-4.1-mini"),
+        ({"api_provider": "azure"}, "vision-deployment", "vision-deployment"),
+    ],
+)
+async def test_query_image_resolves_omitted_model_after_entry_selection(
+    hass, monkeypatch, entry_data, requested, expected
+):
+    create = AsyncMock(return_value=SimpleNamespace(model_dump=lambda: {"id": "image"}))
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=create),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+    )
+    hass.config_entries.async_get_entry.return_value = SimpleNamespace(
+        domain=DOMAIN, state=ConfigEntryState.LOADED, data=entry_data, runtime_data=client
+    )
+    monkeypatch.setattr(services, "ensure_successful_responses_result", MagicMock())
+    data = services.QUERY_IMAGE_SCHEMA({
+        "config_entry": "entry", "prompt": "Describe this",
+        "images": [{"url": "https://example.test/camera.jpg"}],
+        **({"model": requested} if requested else {}),
+    })
+    assert data.get("model") == requested
+    handlers = await _handlers(hass)
+    assert await handlers[SERVICE_QUERY_IMAGE](_call(data)) == {"id": "image"}
+    create.assert_awaited_once()
+    wire = create.await_args.kwargs
+    assert wire["model"] == expected
+    if expected == "gpt-6-luna":
+        assert wire["max_output_tokens"] > 300
+        assert wire["input"][0]["content"][1]["type"] == "input_image"

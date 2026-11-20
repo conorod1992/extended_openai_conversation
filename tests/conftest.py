@@ -1,5 +1,6 @@
 """Fixtures for extended_openai_conversation_responses tests."""
 
+import asyncio
 from functools import wraps
 from inspect import signature
 from pathlib import Path
@@ -71,6 +72,9 @@ def hass(tmp_path: Path, monkeypatch) -> MagicMock:
     hass.states.get = MagicMock(return_value=MagicMock(state="on"))
     hass.states.async_all = MagicMock(return_value=[])
     hass.config_entries.async_wait_initialized = AsyncMock()
+    hass.async_create_background_task.side_effect = (
+        lambda coro, name, **_kwargs: asyncio.create_task(coro, name=name)
+    )
     hass.services = MagicMock()
     hass.services.has_service = MagicMock(return_value=True)
     hass.services.async_call = AsyncMock()

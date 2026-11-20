@@ -49,7 +49,7 @@ def grouped_agent(request, monkeypatch, hass):
     monkeypatch.setattr(
         ui,
         "async_get_knowledge",
-        AsyncMock(return_value=SimpleNamespace(total_source_count=0)),
+        AsyncMock(return_value=SimpleNamespace(source_count=0, total_source_count=0)),
     )
     monkeypatch.setattr(
         ui, "decorate_configuration_result", lambda _h, _d, result, **kw: result

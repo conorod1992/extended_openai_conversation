@@ -12,6 +12,7 @@ from typing import Any
 from homeassistant.components import conversation
 
 from .model_tool_results import model_tool_result_data
+from .provider_content import RoutedReasoning
 
 HistoryEstimator = Callable[[list[conversation.Content]], int]
 
@@ -183,8 +184,14 @@ def history_as_summary_text(items: list[conversation.Content]) -> str:
             )
         native = getattr(item, "native", None)
         if native is not None and not content:
+            if isinstance(native, RoutedReasoning):
+                native = native.item
             if hasattr(native, "model_dump"):
                 native = native.model_dump(exclude_none=True)
+            elif getattr(native, "type", None) == "reasoning" and hasattr(
+                native, "to_dict"
+            ):
+                native = native.to_dict()
             if isinstance(native, dict) and native.get("type") == "reasoning":
                 native = {
                     key: value

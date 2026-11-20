@@ -135,10 +135,11 @@ async def test_catalog_checks_single_field_routing_without_losing_other_options(
     monkeypatch.setattr(request, "build_provider_request_snapshot", build)
     manager = models.ModelCatalogManager(hass)
     assert await manager._candidate_preserves_saved_requests(catalog.BUNDLED_CATALOG)
-    assert build.call_count == 2
-    effective = build.call_args.args[0]
     key = models.CONF_CHAT_MODEL if field == "model" else models.CONF_REASONING_EFFORT
-    assert effective == {**options, key: value}
+    effective = {**options, key: value}
+    # An inherited effort is tested against both the old and proposed capabilities.
+    routed = [effective, effective] if field == "reasoning_effort" else [effective]
+    assert [call.args[0] for call in build.call_args_list] == [options, *routed]
     assert options == {
         models.CONF_CHAT_MODEL: "gpt-5",
         models.CONF_REASONING_EFFORT: "medium",

@@ -61,7 +61,12 @@ After Home Assistant restarts:
 3. Search for **Extended OpenAI Conversation (Responses)**.
 4. Choose **OpenAI** or **Azure OpenAI**, then enter the requested credentials.
 5. For direct OpenAI, leave **Show advanced provider settings** off. A compatible third-party endpoint uses the OpenAI option with advanced provider settings enabled.
-6. Set **Base URL** only when your provider requires one. Azure requires its endpoint and API version.
+6. Set **Base URL** only when your provider requires one. For Azure, enter the endpoint. Leave **API version** blank for an endpoint ending in `/openai/v1/`. For a legacy Azure endpoint, set the dated version here or in the Home Assistant process environment with `OPENAI_API_VERSION`.
+7. If your Azure gateway only exposes model deployments, enable **Skip authentication** to skip the model-list check. Requests still use the supplied API key.
+
+For an Azure API Management unified model endpoint on `azure-api.net` ending in `/llm/v1`, choose **OpenAI**, use that gateway URL under advanced provider settings, and select **Chat Completions** and the gateway's model alias in the assistant. If using an API Management subscription key as the API key, enable bearer subscription-key recognition on the gateway. [Microsoft's unified model setup](https://learn.microsoft.com/en-us/azure/api-management/unified-model-api#call-the-api-from-a-client-application) describes this setting.
+
+If the gateway base URL includes query parameters, give each parameter a unique name and a non-empty value. For legacy Azure endpoints, set the API version in the **API version** field or in `OPENAI_API_VERSION`. The configured version takes precedence over an `api-version` parameter in the base URL.
 
 The integration is now installed. Continue with [First setup](setup.md) to select the conversation agent and expose Home Assistant entities.
 

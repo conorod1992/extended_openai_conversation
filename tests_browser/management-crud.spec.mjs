@@ -190,6 +190,9 @@ test("Request Rule condition selector, local continuation, and group survive rel
   await panel.locator("#rule-phrases").fill("good kitchen");
   await panel.locator("#rule-group").selectOption({label:"Kitchen"});
   await panel.locator("#rule-local-continue-to-ai").check();
+  await expect(panel.locator("#rule-response-reference")).toBeVisible();
+  await panel.locator("#rule-success").fill("Stopped successfully");
+  await panel.locator("#rule-failure").fill("Could not run the action");
   await panel.locator("#rule-advanced summary").click();
   await panel.locator("#rule-continue-matching").check();
   await expect(panel.locator("#rule-action-sequence-host ha-selector")).toHaveJSProperty("value", []);
@@ -217,6 +220,10 @@ test("Request Rule condition selector, local continuation, and group survive rel
   await expect(card).toContainText("continues to AI");
   await card.locator(".rule-edit").click();
   await expect(panel.locator("#rule-local-continue-to-ai")).toBeChecked();
+  await expect(panel.locator("#rule-success")).toBeVisible();
+  await expect(panel.locator("#rule-success")).toHaveValue("Stopped successfully");
+  await expect(panel.locator("#rule-failure")).toBeVisible();
+  await expect(panel.locator("#rule-failure")).toHaveValue("Could not run the action");
   await expect(panel.locator("#rule-continue-matching")).toBeChecked();
   await expect(panel.locator("#rule-group")).toHaveValue(await panel.locator(".rule-group-row").getAttribute("data-group-id"));
   const saved = await panel.locator("#rule-condition-host ha-selector").evaluate((selector) => selector.value);

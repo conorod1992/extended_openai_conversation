@@ -29,6 +29,9 @@ for (const kind of ["knowledge", "persistent"]) {
       await beginDataMeasure(page);
       await panel.locator(`#${editor(kind)}-save`).click();
       await expect(list(panel, kind).getByText("Changed one record", {exact: true})).toBeVisible();
+      if (kind === "persistent") {
+        await expect(list(panel, kind).locator(".list-card").first()).toContainText("Changed one record");
+      }
       expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 79, initialCards: 80, mainChildReplacements: 0, inputRetained: true});
       await card(panel, kind, 20).locator(action(kind, "delete")).click();
       await beginDataMeasure(page); await acceptConfirmation(panel);
@@ -49,6 +52,9 @@ for (const kind of ["knowledge", "persistent"]) {
       await beginDataMeasure(page);
       await panel.locator(`#${editor(kind)}-save`).click();
       await expect(list(panel, kind).getByText("Brand new record", {exact: true})).toBeVisible();
+      if (kind === "persistent") {
+        await expect(list(panel, kind).locator(".list-card").first()).toContainText("Brand new record");
+      }
       if (kind === "knowledge") await expect(panel.locator("[data-source-count]")).toHaveText("80 sources");
       else expect(await panel.evaluate(host => host._data.scopes.find(scope => scope.scope_id === host._scopeId).memory_count)).toBe(80);
       expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 79, initialCards: 79, mainChildReplacements: 0});
@@ -65,7 +71,7 @@ for (const kind of ["knowledge", "persistent"]) {
     await beginDataMeasure(page);
     await search.fill(kind === "knowledge" ? "Source 1" : "Memory 1");
     await search.evaluate(node => node.setSelectionRange(2, 5));
-    if (kind === "persistent") await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "memory 1");
+    if (kind === "persistent") await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "Memory 1");
     await expect(list(panel, kind).locator("article:visible")).toHaveCount(11);
     expect(await search.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([2, 5]);
     expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 100, initialCards: 100, elementsAdded: 0, elementsRemoved: 0, routeRenders: 0, mainChildReplacements: 0, inputRetained: true, inputFocused: true});
@@ -180,7 +186,7 @@ test("Persistent Memory: category edits and pagination retain other loaded recor
   await expect(panel.locator("#load-more-memories")).toBeHidden();
   // Search beyond the initial page preserves the already-loaded card nodes.
   await beginDataMeasure(page); await panel.locator("#list-search").fill("Memory 220");
-  await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "memory 220");
+  await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "Memory 220");
   await expect(panel.locator(".memory-list article:visible")).toHaveCount(1);
   expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 230, elementsAdded: 0, elementsRemoved: 0, routeRenders: 0});
   await card(panel, "persistent", 220).locator(".memory-edit-button").click();
@@ -350,7 +356,7 @@ test("Persistent Memory: a late load-more response cannot replace a newer search
   await panel.locator("#load-more-memories").click();
   await page.waitForFunction(() => window.releaseMore);
   await panel.locator("#list-search").fill("Memory 220");
-  await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "memory 220");
+  await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "Memory 220");
   await page.evaluate(() => releaseMore());
   await expect(panel.locator(".memory-list article:visible")).toHaveCount(1);
   await expect(panel.locator(".memory-list article:visible")).toContainText("Memory 220");

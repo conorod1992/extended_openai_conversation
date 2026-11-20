@@ -18,6 +18,46 @@ from homeassistant.exceptions import HomeAssistantError
 from tests.test_usage_detail_lifecycle import DetailStorage, TotalsStorage
 
 
+async def test_configuration_overwrite_preserves_archive_retention(
+    hass, management_agent, management_message, monkeypatch
+):
+    entry, subentry = management_agent
+    entry.state = ConfigEntryState.NOT_LOADED
+    field = "archive_retention_days"
+    subentry.data = {**subentry.data, field: 365}
+    monkeypatch.setattr(
+        ui,
+        "async_get_request_rules",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                revision=lambda: "rules-0",
+                async_backup_data=AsyncMock(return_value={"rules": []}),
+            )
+        ),
+    )
+    baseline = await ui.async_management_command(
+        hass, "admin", True, management_message("configuration", "get")
+    )
+    exported = await ui.async_management_command(
+        hass, "admin", True, management_message("configuration", "export")
+    )
+    document = exported["document"]
+    document["config"].pop(field, None)
+    payload = {"document": json.dumps(document), "mode": "current"}
+    preview = await ui.async_management_command(
+        hass, "admin", True,
+        management_message("configuration", "import_preview", **payload),
+    )
+    assert preview["config"][field] == 365
+    result = await ui.async_management_command(
+        hass, "admin", True,
+        management_message("configuration", "import", confirm=True,
+                           revision=baseline["revision"], **payload),
+    )
+    assert result["status"] == "updated"
+    assert subentry.data[field] == 365
+
+
 @pytest.mark.parametrize("action", ["save", "update", "import"])
 @pytest.mark.parametrize("detail", ["request", "run"])
 async def test_same_policy_retry_reaches_deletion(

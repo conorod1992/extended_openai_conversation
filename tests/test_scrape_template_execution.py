@@ -23,6 +23,9 @@ from custom_components.extended_openai_conversation_responses.conversation impor
     ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.functions import web
+from custom_components.extended_openai_conversation_responses.functions.exact_text import (
+    ExactTextTemplate,
+)
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
 )
@@ -149,7 +152,7 @@ async def test_each_template_renders_once_with_arguments_and_ha_context(
     original = Template.async_render
 
     def render(self, *args, **kwargs):
-        source = re.sub(r"__eoai_payload_[0-9a-f]{32}__", "", self.template)
+        source = self.source if isinstance(self, ExactTextTemplate) else self.template
         counts[source] += 1
         return original(self, *args, **kwargs)
 

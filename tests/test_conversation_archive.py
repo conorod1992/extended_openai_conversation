@@ -3,8 +3,10 @@
 import asyncio
 from copy import deepcopy
 from dataclasses import asdict, replace
-from datetime import datetime
+from datetime import datetime, timedelta
+from threading import get_ident
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -33,6 +35,7 @@ from custom_components.extended_openai_conversation_responses.scope import (
     unretained_scope,
     user_scope,
 )
+from homeassistant.util import dt as dt_util
 
 
 class FakeArchiveStorage:
@@ -67,6 +70,95 @@ async def _archive():
     archive = ConversationArchive(FakeArchiveStorage(), "agent-1")
     await archive.async_initialize()
     return archive
+
+
+async def test_date_delete_previews_earlier_turns_in_home_assistants_timezone(
+    monkeypatch,
+):
+    zone = ZoneInfo("Europe/Dublin")
+    # Both turns fall on the same UTC date, but opposite sides of local midnight.
+    timestamps = [
+        datetime.fromisoformat(value)
+        for value in ("2026-07-12T22:59:00+00:00", "2026-07-12T23:01:00+00:00")
+    ]
+    archive = await _archive()
+    scope = user_scope("alice", source="authenticated_user")
+    monkeypatch.setattr(dt_util, "utcnow", lambda: timestamps[0])
+    session = await archive.async_begin_session(
+        "midnight",
+        scope,
+        "chat",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    for timestamp in timestamps:
+        monkeypatch.setattr(dt_util, "utcnow", lambda timestamp=timestamp: timestamp)
+        await archive.async_record_turn(
+            session.session_id,
+            run_id=None,
+            user_text="Midnight transcript",
+            assistant_text="Okay",
+            successful=True,
+        )
+    scope_id = scope.scope_id
+    with monkeypatch.context() as local:
+        local.setattr(dt_util, "DEFAULT_TIME_ZONE", zone)
+        preview = await archive.async_preview_delete_date_range(
+            scope_id, "2026-07-13", "2026-07-13"
+        )
+        assert preview["session_count"] == 1
+        assert preview["turn_count"] == 2
+        assert preview["earlier_turn_count"] == 1
+        assert preview["sessions"][0]["session_id"] == session.session_id
+        assert len((await archive.async_backup_data())["turns"]) == 2
+        assert await archive.async_delete_date_range(
+            scope_id, "2026-07-13", "2026-07-13", confirm=True
+        ) == {"deleted_sessions": 1, "deleted_turns": 2}
+
+
+async def test_live_archive_writes_build_payloads_off_loop_for_only_changed_months(
+    monkeypatch,
+):
+    archive = await _archive()
+    scope = user_scope("alice", source="authenticated_user")
+    times = iter([
+        datetime.fromisoformat("2026-09-01T00:00:00+00:00"),
+        datetime.fromisoformat("2026-09-01T00:00:00+00:00"),
+        datetime.fromisoformat("2026-10-01T00:00:00+00:00"),
+        datetime.fromisoformat("2026-10-01T00:00:00+00:00"),
+    ])
+    monkeypatch.setattr(archive_module.dt_util, "utcnow", lambda: next(times))
+    loop = get_ident()
+    metadata_threads = []
+    months = []
+    metadata = archive._metadata_payload_for_state
+    turn_payload = archive_module._turn_payload
+
+    def observe_metadata(*args):
+        metadata_threads.append(get_ident())
+        return metadata(*args)
+
+    def observe_turn(turn):
+        assert get_ident() != loop
+        months.append(turn.timestamp[:7])
+        return turn_payload(turn)
+
+    monkeypatch.setattr(archive, "_metadata_payload_for_state", observe_metadata)
+    monkeypatch.setattr(archive_module, "_turn_payload", observe_turn)
+    for key in ("september", "october"):
+        session = await archive.async_begin_session(
+            key, scope, key, archive_enabled=True, shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
+        await archive.async_record_turn(
+            session.session_id, run_id=None, user_text=key, assistant_text="OK",
+            successful=True,
+        )
+    assert len(metadata_threads) == 4 and loop not in metadata_threads
+    assert months == ["2026-09", "2026-10"]
+    assert archive._storage.metadata["partitions"] == ["2026-09", "2026-10"]
+    assert "pending_partitions" not in archive._storage.metadata
 
 
 async def test_archive_is_unretained_when_disabled_or_scope_is_unresolved() -> None:
@@ -137,7 +229,7 @@ async def test_scope_is_stable_and_different_sessions_are_not_joined() -> None:
 async def test_archive_scope_counts_include_only_retained_sessions() -> None:
     archive = await _archive()
     alice = user_scope("alice", source="authenticated_user")
-    await archive.async_begin_session(
+    first = await archive.async_begin_session(
         "a",
         alice,
         "one",
@@ -145,7 +237,7 @@ async def test_archive_scope_counts_include_only_retained_sessions() -> None:
         shared_archive_enabled=False,
         inactivity_minutes=30,
     )
-    await archive.async_begin_session(
+    second = await archive.async_begin_session(
         "b",
         alice,
         "two",
@@ -162,6 +254,12 @@ async def test_archive_scope_counts_include_only_retained_sessions() -> None:
         inactivity_minutes=30,
     )
 
+    assert archive.scope_counts() == {}
+    for session in (first, second):
+        await archive.async_record_turn(
+            session.session_id, run_id=None, user_text="Question",
+            assistant_text="Reply", successful=True,
+        )
     assert archive.scope_counts() == {"user:alice": 2}
 
 
@@ -368,7 +466,7 @@ async def test_partition_write_failure_recovers_private_state_on_restart() -> No
     "operation", ["delete", "clear", "selected", "date_range", "prune"]
 )
 async def test_interrupted_deletion_commits_recover_deterministically(
-    operation: str,
+    operation: str, monkeypatch,
 ) -> None:
     storage = FakeArchiveStorage()
     archive = ConversationArchive(storage, "agent-1")
@@ -389,9 +487,8 @@ async def test_interrupted_deletion_commits_recover_deterministically(
         successful=True,
     )
     if operation == "prune":
-        archive._sessions[session.session_id] = replace(
-            archive._sessions[session.session_id], last_message_at="2000-01-01T00:00:00+00:00"
-        )
+        now = dt_util.utcnow() + timedelta(days=2)
+        monkeypatch.setattr(dt_util, "utcnow", lambda: now)
     storage.fail_metadata_on = storage.metadata_save_count + 2
     with pytest.raises(OSError, match="metadata write failed"):
         if operation == "delete":
@@ -494,7 +591,7 @@ async def _archive_with_failed_turn():
         )
 
     assert archive._pending_partitions
-    assert "pending_partitions" in storage.metadata
+    assert "pending_append" in storage.metadata
     return archive, storage, session
 
 
@@ -512,6 +609,7 @@ async def test_loaded_archive_converges_after_partition_failure_without_restart(
     assert second is not None
     assert archive._pending_partitions == set()
     assert "pending_partitions" not in storage.metadata
+    assert "pending_append" not in storage.metadata
 
     restarted = ConversationArchive(storage, "agent-1")
     await restarted.async_initialize()
@@ -527,6 +625,7 @@ async def test_later_session_publish_preserves_pending_transaction_for_restart()
     """Unrelated metadata writes cannot erase an unfinished partition journal."""
     archive, storage, failed_session = await _archive_with_failed_turn()
 
+    intent = deepcopy(storage.metadata["pending_append"])
     later_session = await archive.async_begin_session(
         "kitchen",
         user_scope("bob", source="test"),
@@ -537,7 +636,7 @@ async def test_later_session_publish_preserves_pending_transaction_for_restart()
     )
 
     assert later_session is not None
-    assert "pending_partitions" in storage.metadata
+    assert storage.metadata["pending_append"] == intent
     persisted_ids = {item["session_id"] for item in storage.metadata["sessions"]}
     assert failed_session.session_id in persisted_ids
     assert later_session.session_id in persisted_ids
@@ -548,10 +647,25 @@ async def test_later_session_publish_preserves_pending_transaction_for_restart()
     failed = await restarted.async_get("user:alice", failed_session.session_id)
     assert [turn["user_text"] for turn in failed["turns"]] == ["first turn"]
     listed = await restarted.async_list_sessions("user:bob")
-    assert [item["session_id"] for item in listed["sessions"]] == [
-        later_session.session_id
-    ]
+    assert listed["sessions"] == []
+    assert (await restarted.async_get("user:bob", later_session.session_id))["turns"] == []
     assert "pending_partitions" not in storage.metadata
+    assert "pending_append" not in storage.metadata
+
+
+async def test_making_session_private_discards_failed_append_intent() -> None:
+    archive, storage, failed_session = await _archive_with_failed_turn()
+
+    await archive.async_make_private(failed_session.session_id)
+
+    assert "pending_append" not in storage.metadata
+    assert "pending_partitions" not in storage.metadata
+    assert "first turn" not in str((storage.metadata, storage.partitions))
+    restarted = ConversationArchive(storage, "agent-1")
+    await restarted.async_initialize()
+    assert restarted.stats()["turn_count"] == 0
+    with pytest.raises(ValueError, match="not found"):
+        await restarted.async_get("user:alice", failed_session.session_id)
 
 
 class CoverageArchiveStorage:
@@ -584,6 +698,40 @@ async def _coverage_archive(storage: CoverageArchiveStorage | None = None) -> Co
     return archive
 
 
+async def test_empty_session_is_hidden_after_reload_and_can_still_resume():
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.extended_openai_conversation_responses.management_history_queries import (
+        archive_list_page,
+    )
+
+    storage = CoverageArchiveStorage()
+    archive = await _coverage_archive(storage)
+    scope = user_scope("alice", source="authenticated_user")
+
+    async def begin(manager):
+        return await manager.async_begin_session(
+            "native-session", scope, "id", archive_enabled=True,
+            shared_archive_enabled=False, inactivity_minutes=30,
+        )
+
+    original = await begin(archive)
+    restarted = await _coverage_archive(storage)
+    day = dt_util.now().date().isoformat()
+    assert (await restarted.async_list_sessions(scope.scope_id))["sessions"] == []
+    assert (await archive_list_page(restarted, scope.scope_id))["sessions"] == []
+    preview = await restarted.async_preview_delete_date_range(scope.scope_id, day, day)
+    assert preview["session_count"] == 0
+    resumed = await begin(restarted)
+    assert resumed.session_id == original.session_id
+    await restarted.async_record_turn(
+        resumed.session_id, run_id=None, user_text="Question",
+        assistant_text="Reply", successful=True,
+    )
+    page = await archive_list_page(restarted, scope.scope_id)
+    assert [session["session_id"] for session in page["sessions"]] == [original.session_id]
+
+
 def _session(
     session_id: str = "session-1",
     *,
@@ -614,6 +762,7 @@ def _turn(
     timestamp: str = "2026-09-01T10:01:00+00:00",
     user_text: str = "Remember the running shoes",
     assistant_text: str = "You chose the blue pair",
+    sequence: int | None = None,
 ) -> ArchiveTurn:
     return ArchiveTurn(
         turn_id=turn_id,
@@ -623,6 +772,7 @@ def _turn(
         user_text=user_text,
         assistant_text=assistant_text,
         successful=True,
+        sequence=sequence,
     )
 
 
@@ -780,11 +930,19 @@ async def test_list_sessions_clamps_orders_and_reports_more() -> None:
         shared_archive_enabled=False,
         inactivity_minutes=30,
     )
+    for session in (first, second):
+        await archive.async_record_turn(
+            session.session_id,
+            run_id=None,
+            user_text="Question",
+            assistant_text="Reply",
+            successful=True,
+        )
     archive._sessions[first.session_id] = replace(
-        first, last_message_at="2026-01-01T00:00:00+00:00"
+        archive._sessions[first.session_id], last_message_at="2026-01-01T00:00:00+00:00"
     )
     archive._sessions[second.session_id] = replace(
-        second, last_message_at="2026-02-01T00:00:00+00:00"
+        archive._sessions[second.session_id], last_message_at="2026-02-01T00:00:00+00:00"
     )
 
     page = await archive.async_list_sessions("user:alice", limit=1, offset=-3)
@@ -1099,7 +1257,11 @@ async def test_home_assistant_storage_delegates_to_private_atomic_stores(monkeyp
         async def async_save(self, data):
             self.saved.append(data)
 
+        def require_migrated(self):
+            pass
+
     monkeypatch.setattr(archive_module, "PropagatingWriteStore", FakeStore)
+    monkeypatch.setattr(archive_module, "_ArchiveMetadataStore", FakeStore)
     hass = object()
     storage = HomeAssistantArchiveStorage(hass, "entry", "agent")
 
@@ -1115,6 +1277,7 @@ async def test_home_assistant_storage_delegates_to_private_atomic_stores(monkeyp
     await storage.async_save_partition("2026-09", {"turns": []})
 
     assert len(created) == 3
+    assert [version for _, version, _, _ in created] == [2, 1, 1]
     assert created[0][3]["private"] is True
     assert created[0][3]["atomic_writes"] is True
     assert created[0][3]["serialize_in_event_loop"] is False
@@ -1495,6 +1658,27 @@ async def test_archive_canonical_unicode_search_preserves_original_content(form)
     assert (await archive.async_backup_data())["turns"][0]["user_text"] == content
     fresh = await _coverage_archive(storage)
     assert (await fresh.async_search("user:alice", "café résumé"))["results"]
+
+
+async def test_archive_search_keeps_combining_marks_in_matches_and_excerpts():
+    storage = CoverageArchiveStorage()
+    storage.metadata = {"sessions": [asdict(_session())], "partitions": ["2026-09"]}
+    storage.partitions["2026-09"] = {
+        "turns": [
+            asdict(_turn(user_text="खोलो ☀️", assistant_text="Saved")),
+            asdict(
+                _turn(
+                    turn_id="turn-2", user_text="Request " * 100 + "खेलो",
+                    assistant_text="Saved",
+                )
+            ),
+        ]
+    }
+    archive = await _coverage_archive(storage)
+    rows = (await archive.async_search("user:alice", "खेलो"))["results"]
+    assert [row["turn_id"] for row in rows] == ["turn-2"]
+    assert "खेलो" in rows[0]["excerpt"]
+    assert (await archive.async_search("user:alice", "❤️"))["results"] == []
 
 
 async def test_record_repair_partition_failure_replays_durable_journal_without_partial_publication():

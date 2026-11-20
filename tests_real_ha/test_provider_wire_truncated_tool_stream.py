@@ -360,11 +360,24 @@ async def test_rejected_responses_protocol_keeps_trailing_usage(
     assert calls == []
 
 
-@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "chat_completions",
+        "responses",
+        "responses-leading",
+        "responses-flushed",
+        "responses-text-only",
+        "responses-text-after-item",
+        "responses-reused-index",
+        "responses-arguments-only",
+    ],
+)
 @pytest.mark.parametrize("report_usage", [False, True])
 async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
-    hass, monkeypatch, mode, report_usage
+    hass, monkeypatch, scenario, report_usage
 ):
+    mode = "chat_completions" if scenario == "chat_completions" else "responses"
     import httpx
 
     from custom_components.extended_openai_conversation_responses import (
@@ -374,6 +387,7 @@ async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
         _chat_sse_tool_call,
         _raw_client,
         _response_object,
+        _response_text_item,
     )
 
     # Exercise real SDK parsing without making its cold-start cost a deadline test.
@@ -412,12 +426,50 @@ async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
             "arguments": "{}",
             "status": "completed",
         }
-        response = _response_object("unfinished-output", [item])
+        events = []
+        output = []
+        if scenario in {"responses-flushed", "responses-text-after-item", "responses-reused-index"}:
+            first = _response_text_item("A completed item precedes unfinished output")
+            output.append(first)
+            events.extend([
+                {"type": "response.output_item.added", "output_index": 0, "item": first},
+                {"type": "response.output_item.done", "output_index": 0, "item": first},
+            ])
+        if scenario in {"responses-text-only", "responses-text-after-item", "responses-reused-index"}:
+            item = _response_text_item("This answer was never completed on the wire")
+            item["id"] = "msg-orphan"
+            events.append(
+                {
+                    "type": "response.output_text.delta",
+                    "output_index": 0 if scenario == "responses-reused-index" else len(output),
+                    "content_index": 0,
+                    "item_id": item["id"],
+                    "delta": "Partial text",
+                    "logprobs": [],
+                }
+            )
+        elif scenario == "responses-arguments-only":
+            events.append(
+                {
+                    "type": "response.function_call_arguments.delta",
+                    "output_index": 0,
+                    "item_id": item["id"],
+                    "delta": item["arguments"],
+                }
+            )
+        else:
+            events.append(
+                {
+                    "type": "response.output_item.added",
+                    "output_index": 0 if scenario == "responses-leading" else 1,
+                    "item": item,
+                }
+            )
+        if scenario != "responses-reused-index":
+            output.append(item)
+        response = _response_object("unfinished-output", output)
         response["usage"] = None
-        events = [
-            {"type": "response.output_item.added", "output_index": 1, "item": item},
-            {"type": "response.completed", "response": response},
-        ]
+        events.append({"type": "response.completed", "response": response})
         usage_event = {
             "type": "response.usage",
             "usage": {"input_tokens": 223, "output_tokens": 17, "total_tokens": 240},
@@ -482,3 +534,105 @@ async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
     recovered = await followup(hass, agent, "continue", failed.conversation_id)
     assert _speech(recovered) == "Healthy follow-up"
     assert calls == []
+
+async def test_indexed_text_without_add_completes_through_item_done(hass, monkeypatch):
+    """A done item can complete indexed content and supply its missing suffix."""
+    text = "The complete provider answer."
+    events = [
+        json.loads(line[6:])
+        for line in _responses_sse_text(text).decode().splitlines()
+        if line.startswith("data: ")
+    ][1:]
+    events[0]["delta"] = "The complete"
+    stream = "".join(
+        f"data: {json.dumps({**event, 'sequence_number': i})}\n\n"
+        for i, event in enumerate(events)
+    ).encode()
+    agent = await _agent(hass, "responses")
+    wire = _install_wire(monkeypatch, agent, [stream])
+    result = await _say(hass, agent)
+    assert result.response.error_code is None
+    assert _speech(result) == text
+    assert len(wire.requests) == 1
+
+@pytest.mark.parametrize("late_add", [False, True])
+async def test_indexed_delta_of_future_item_waits_for_its_own_entry(
+    hass, monkeypatch, late_add
+):
+    from tests_real_ha.test_provider_wire_e2e import _response_object, _response_text_item
+
+    first = _response_text_item("First item.")
+    second = _response_text_item("Second item.")
+    second["id"] = "msg-second"
+
+    def added(index, item):
+        return {"type": "response.output_item.added", "output_index": index,
+                "item": {**item, "status": "in_progress", "content": []}}
+
+    def delta(index, item, text):
+        return {"type": "response.output_text.delta", "content_index": 0,
+                "output_index": index, "item_id": item["id"], "delta": text, "logprobs": []}
+
+    events = [added(0, first), delta(0, first, "First "), delta(1, second, "Second ")]
+    if late_add:
+        events.append(added(1, second))
+    events.extend([
+        {"type": "response.output_item.done", "output_index": 1, "item": second},
+        {"type": "response.output_item.done", "output_index": 0, "item": first},
+        {"type": "response.completed", "response": _response_object("ordered", [first, second])},
+    ])
+    stream = "".join(
+        f"data: {json.dumps({**event, 'sequence_number': i})}\n\n"
+        for i, event in enumerate(events)
+    ).encode()
+    agent = await _agent(hass, "responses")
+    wire = _install_wire(monkeypatch, agent, [stream])
+    result = await _say(hass, agent)
+    assert result.response.error_code is None
+    assert "".join(_speech(result).split()) == "Firstitem.Seconditem."
+    assert len(wire.requests) == 1
+
+
+@pytest.mark.parametrize("kind", ["text", "reasoned-text", "refusal", "tool", "conflict"])
+async def test_responses_terminal_output_has_safe_recovery(hass, monkeypatch, kind):
+    from tests_real_ha.test_provider_wire_e2e import _response_object, _response_text_item
+
+    agent = await _agent(hass, "responses")
+    calls = await _prepare_service(hass)
+    message = "I cannot help with that." if kind == "refusal" else "Terminal answer."
+    item = _response_text_item(message)
+    events = []
+    if kind == "refusal":
+        item["content"] = [{"type": "refusal", "refusal": message}]
+    if kind == "tool":
+        item = {
+            "type": "function_call", "id": "fc-terminal", "call_id": "call-terminal",
+            "status": "completed", "name": "execute_services", "arguments": "{}",
+        }
+    if kind == "conflict":
+        events.append({"type": "response.output_item.done", "output_index": 0, "item": item})
+        item = {**item, "id": "conflicting-id"}
+    output = [item]
+    if kind == "reasoned-text":
+        output.insert(0, {"id": "rs-terminal", "type": "reasoning", "summary": [],
+                          "encrypted_content": "ciphertext"})
+    response = _response_object("terminal-body", output)
+    response["usage"] = {"input_tokens": 17, "output_tokens": 4, "total_tokens": 21,
+                         "input_tokens_details": {"cached_tokens": 0},
+                         "output_tokens_details": {"reasoning_tokens": 0}}
+    events.append({"type": "response.completed", "response": response})
+    stream = "".join(
+        f"data: {json.dumps({**event, 'sequence_number': index})}\n\n"
+        for index, event in enumerate(events)
+    ).encode()
+    wire = _install_wire(monkeypatch, agent, [stream])
+    result = await _say(hass, agent)
+    if kind in {"text", "reasoned-text", "refusal"}:
+        assert result.response.error_code is None
+        assert _speech(result) == message
+    else:
+        assert result.response.error_code is not None
+    usage = agent._usage.requests[-1]
+    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (17, 4, 21)
+    assert calls == []
+    assert len(wire.requests) == 1

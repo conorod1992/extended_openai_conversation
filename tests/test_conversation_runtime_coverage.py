@@ -193,7 +193,7 @@ async def test_memory_search_preserves_lexical_and_hybrid_semantics(
 
     assert result == ["result"]
     if mode == MEMORY_RETRIEVAL_HYBRID:
-        prepare.assert_awaited_once_with(scopes, "boiler pressure")
+        prepare.assert_awaited_once_with(scopes, "boiler pressure", category="fact", automatic_recall=False)
     else:
         prepare.assert_not_awaited()
     search.assert_awaited_once_with(
@@ -371,7 +371,7 @@ async def test_embedding_results_are_count_checked_and_sorted_by_provider_index(
         )
     ))
 
-    assert await agent._async_create_embeddings(["first", "second"]) == [
+    assert (await agent._async_create_embeddings(["first", "second"])).vectors == [
         [1.0],
         [2.0],
     ]

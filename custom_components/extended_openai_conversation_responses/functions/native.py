@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable
 from copy import deepcopy
 from datetime import datetime, timedelta
+from io import StringIO
 import logging
 import os
 from pathlib import Path
@@ -22,6 +23,7 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import llm, target as target_helpers
 import homeassistant.util.dt as dt_util
+from homeassistant.util.yaml import Secrets, parse_yaml
 
 from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
 from ..exceptions import CallServiceError, NativeNotFound
@@ -46,7 +48,7 @@ from ..safety_hardening import (
     _validate_execute_service_request,
     _validate_history_request,
 )
-from ..yaml_serialization import dump_yaml
+from ..yaml_serialization import SecretReference, dump_yaml
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -178,10 +180,40 @@ def _filtered_energy_preferences(data: Any, allowed: set[str]) -> dict[str, Any]
     return result
 
 
-def _parse_automation_config(raw_config: str) -> dict[str, Any]:
+class _AutomationLoader(yaml.SafeLoader):
+    """Accept HA's !secret references without expanding YAML capabilities."""
+
+    has_secrets = False
+
+
+def _load_secret_reference(
+    loader: _AutomationLoader, node: yaml.Node
+) -> SecretReference:
+    if not isinstance(node, yaml.ScalarNode):
+        raise yaml.constructor.ConstructorError(
+            problem="Expected a scalar name for !secret", problem_mark=node.start_mark
+        )
+    loader.has_secrets = True
+    return SecretReference(loader.construct_scalar(node))
+
+
+_AutomationLoader.add_constructor("!secret", _load_secret_reference)
+
+
+class _AutomationYamlSource(StringIO):
+    """An in-memory YAML file with the same lookup name as the disk file."""
+
+    name: str
+
+
+def _parse_automation_config(raw_config: str) -> tuple[dict[str, Any], bool]:
     """Parse exactly one automation and assign an integration-owned unique ID."""
     try:
-        parsed = yaml.safe_load(raw_config)
+        loader = _AutomationLoader(raw_config)
+        try:
+            parsed = loader.get_single_data()
+        finally:
+            loader.dispose()
     except yaml.YAMLError as err:
         raise HomeAssistantError(f"Automation YAML is invalid: {err}") from err
 
@@ -198,8 +230,52 @@ def _parse_automation_config(raw_config: str) -> dict[str, Any]:
 
     # IDs are integration-owned so concurrent or model-supplied values cannot collide
     # with another automation created by this tool.
+    config.pop("id", None)
     config["id"] = uuid4().hex
-    return config
+    return config, loader.has_secrets
+
+
+def _resolve_automation_secrets(
+    config: dict[str, Any], automation_path: Path, config_dir: Path
+) -> dict[str, Any]:
+    """Use HA's YAML semantics and the configured path's secret lookup scope."""
+    with _AutomationYamlSource(dump_yaml(config)) as source:
+        source.name = str(automation_path)
+        resolved = parse_yaml(source, Secrets(config_dir))
+    return cast(dict[str, Any], resolved)
+
+
+def _automation_event_config(value: Any) -> Any:
+    """Represent references in the event as JSON strings, including nested refs."""
+    if isinstance(value, SecretReference):
+        return f"!secret {value.key}"
+    if isinstance(value, dict):
+        return {
+            _automation_event_config(key): _automation_event_config(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_automation_event_config(item) for item in value]
+    return value
+
+
+async def _async_validate_automation_with_secrets(
+    hass: HomeAssistant, config: dict[str, Any], path: Path
+) -> None:
+    try:
+        resolved = await hass.async_add_executor_job(
+            _resolve_automation_secrets, config, path, Path(hass.config.config_dir)
+        )
+        await automation.config._async_validate_config_item(hass, resolved, True, False)
+    except Exception:
+        # HA validation errors can contain expanded secret values. Raise outside
+        # the handler so the exception carries no link to the private failure.
+        pass
+    else:
+        return
+    raise HomeAssistantError(
+        "Could not resolve or validate automation YAML containing !secret references"
+    )
 
 
 def _read_optional_text(path: Path) -> str | None:
@@ -566,20 +642,26 @@ class NativeFunction(Function):
         exposed_entities: list[dict[str, Any]],
     ) -> str:
         await _async_require_admin(hass, llm_context)
-        config = await hass.async_add_executor_job(
+        config, has_secrets = await hass.async_add_executor_job(
             _parse_automation_config, arguments["automation_config"]
         )
-        await automation.config._async_validate_config_item(hass, config, True, False)
-
         automation_path = Path(
             os.path.join(hass.config.config_dir, AUTOMATION_CONFIG_PATH)
         )
+        if has_secrets:
+            await _async_validate_automation_with_secrets(hass, config, automation_path)
+        else:
+            await automation.config._async_validate_config_item(
+                hass, config, True, False
+            )
+        event_config = _automation_event_config(config) if has_secrets else config
         lock = hass.data.setdefault(_AUTOMATION_WRITE_LOCK_KEY, asyncio.Lock())
 
         async def update() -> str:
             previous, raw_config, written = await hass.async_add_executor_job(
                 _append_automation_atomic, automation_path, config
             )
+            rollback_failed = False
             try:
                 await hass.services.async_call(
                     automation.config.DOMAIN, SERVICE_RELOAD, blocking=True
@@ -598,26 +680,40 @@ class NativeFunction(Function):
                     await hass.async_add_executor_job(
                         _restore_automation_file, automation_path, previous, written
                     )
-                except HomeAssistantError as rollback_err:
-                    raise HomeAssistantError(
-                        "Automation reload failed and automations.yaml changed before "
-                        "rollback; external changes were preserved"
-                    ) from rollback_err
-                try:
-                    await hass.services.async_call(
-                        automation.config.DOMAIN, SERVICE_RELOAD, blocking=True
-                    )
-                except Exception:
-                    _LOGGER.exception(
-                        "Unable to reload automations after rolling back add_automation"
-                    )
-                raise
-
-            hass.bus.async_fire(
-                EVENT_AUTOMATION_REGISTERED,
-                {"automation_config": config, "raw_config": raw_config},
+                except Exception as rollback_err:
+                    if not has_secrets:
+                        if isinstance(rollback_err, HomeAssistantError):
+                            raise HomeAssistantError(
+                                "Automation reload failed and automations.yaml changed before "
+                                "rollback; external changes were preserved"
+                            ) from rollback_err
+                        raise
+                    rollback_failed = True
+                else:
+                    try:
+                        await hass.services.async_call(
+                            automation.config.DOMAIN, SERVICE_RELOAD, blocking=True
+                        )
+                    except Exception:
+                        _LOGGER.error(
+                            "Unable to reload automations after rolling back add_automation",
+                            exc_info=not has_secrets,
+                        )
+                if not has_secrets:
+                    raise
+            else:
+                hass.bus.async_fire(
+                    EVENT_AUTOMATION_REGISTERED,
+                    {"automation_config": event_config, "raw_config": raw_config},
+                )
+                return "Success"
+            if rollback_failed:
+                raise HomeAssistantError(
+                    "Could not reload or roll back automation YAML containing !secret references"
+                )
+            raise HomeAssistantError(
+                "Could not reload automation YAML containing !secret references"
             )
-            return "Success"
 
         async with lock:
             from ..execution_outcomes import execution_completed, execution_started
@@ -626,13 +722,14 @@ class NativeFunction(Function):
             # the configured symlink would detach HA from its shared file;
             # resolving again during rollback could target a different file.
             automation_path = await hass.async_add_executor_job(automation_path.resolve)
+            definition = {key: value for key, value in config.items() if key != "id"}
             receipt = execution_started(
                 kind="automation_update",
                 prepared={
                     "destination": str(automation_path),
-                    "definition": {
-                        key: value for key, value in config.items() if key != "id"
-                    },
+                    "definition": dump_yaml(definition, sort_keys=True)
+                    if has_secrets
+                    else definition,
                 },
             )
             result = await _async_settle_automation_update(update())

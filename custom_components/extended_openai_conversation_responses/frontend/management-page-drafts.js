@@ -84,6 +84,7 @@ export function initializePageDraft(panel) {
     destinations: () => [view],
     save: async (submitted, current) => {
       if (hasPendingPageSaveRead(panel)) throw new Error(PAGE_SAVE_READ_MESSAGE);
+      if (view === QUIET && panel._result?.available === false) throw new Error("Quiet Hours is unavailable");
       if (view === RULES) return saveRuleSettings(panel, submitted, current);
       if (view === QUIET && !current.revision && !same(current.baseline, current.result?.config || {})) {
         // Without a backend revision, do not overwrite a newer policy this

@@ -1,106 +1,20 @@
 import {tokenCount, tokenBreakdown, formatUsageNumber, formatUsageTimestamp} from "./usage-format.js";
+import {readSectionCache, writeSectionCache} from "./management-cache.js";
+import {
+  DEFAULT_USAGE_WINDOW, USAGE_WINDOW_OPTIONS, dateParts, formatUsageDate,
+  localUsageDateKey, normalizeUsageWindow, usageCalendarToday, usageWindowBounds,
+} from "./usage-calendar.js";
 import {loadUsageWindow} from "./usage-data.js";
+export {addUsageCalendarDays, localUsageDateKey, usageWindowBounds} from "./usage-calendar.js";
 export {loadAllUsageDays} from "./usage-data.js";
 export {tokenBreakdown, formatUsageNumber, formatUsageTimestamp} from "./usage-format.js";
-
-const USAGE_WINDOW_OPTIONS = [
-  {id: "7", label: "7 days"},
-  {id: "30", label: "30 days"},
-  {id: "90", label: "90 days"},
-  {id: "year", label: "Year to date"},
-  {id: "all", label: "All available"},
-];
-const DEFAULT_USAGE_WINDOW = "30";
-const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
-const usageDateKeyFormatters = new Map();
-const usageDisplayFormatters = new Map();
-
-function cachedDateTimeFormat(cache, locales, options) {
-  const key = JSON.stringify([locales || null, options]);
-  let formatter = cache.get(key);
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat(locales, options);
-    cache.set(key, formatter);
-  }
-  return formatter;
-}
-
-function normalizeUsageWindow(value) {
-  const key = String(value || "");
-  return USAGE_WINDOW_OPTIONS.some((item) => item.id === key) ? key : DEFAULT_USAGE_WINDOW;
-}
-
-function dateParts(value) {
-  const match = DATE_KEY.exec(String(value || ""));
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day
-  ) return null;
-  return {year, month, day};
-}
-
-function dateKeyFromUtc(date) {
-  return `${String(date.getUTCFullYear()).padStart(4, "0")}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-}
-
-export function addUsageCalendarDays(value, amount) {
-  const parts = dateParts(value);
-  if (!parts || !Number.isInteger(amount)) return null;
-  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
-  date.setUTCDate(date.getUTCDate() + amount);
-  return dateKeyFromUtc(date);
-}
-
-export function localUsageDateKey(value = new Date(), timeZone = undefined) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  try {
-    const parts = Object.fromEntries(
-      cachedDateTimeFormat(usageDateKeyFormatters, "en-US", {
-        year: "numeric", month: "2-digit", day: "2-digit", timeZone,
-      }).formatToParts(date).filter((item) => item.type !== "literal").map((item) => [item.type, item.value]),
-    );
-    return `${parts.year}-${parts.month}-${parts.day}`;
-  } catch (_) {
-    return date.toISOString().slice(0, 10);
-  }
-}
-
-export function usageWindowBounds(window, today) {
-  const id = normalizeUsageWindow(window);
-  const validToday = dateParts(today) ? today : localUsageDateKey();
-  const label = USAGE_WINDOW_OPTIONS.find((item) => item.id === id)?.label || "30 days";
-  if (id === "all") return {id, label, startDate: null, endDate: validToday};
-  if (id === "year") return {id, label, startDate: `${validToday.slice(0, 4)}-01-01`, endDate: validToday};
-  const days = Number(id);
-  return {id, label, startDate: addUsageCalendarDays(validToday, -(days - 1)), endDate: validToday};
-}
-
-function formatUsageDate(value, locales = undefined, monthOnly = false) {
-  const parts = dateParts(monthOnly ? `${value}-01` : value);
-  if (!parts) return String(value || "");
-  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12));
-  try {
-    const options = monthOnly
-      ? {year: "numeric", month: "short", timeZone: "UTC"}
-      : {year: "numeric", month: "short", day: "numeric", timeZone: "UTC"};
-    return cachedDateTimeFormat(usageDisplayFormatters, locales, options).format(date);
-  } catch (_) {
-    return String(value || "");
-  }
-}
 
 const diagnosticCounters = [
   "run_count", "successful_run_count", "failed_run_count", "api_request_count",
   "successful_request_count", "failed_request_count", "input_tokens", "output_tokens",
   "total_tokens", "cached_input_tokens", "reasoning_tokens", "tool_call_count",
-  "web_search_run_count", "total_run_duration_ms",
+  "web_search_run_count", "total_run_duration_ms", "run_request_count", "run_total_tokens",
+  "unattributed_run_count",
 ];
 
 function mergeBreakdown(target, source) {
@@ -117,6 +31,7 @@ export function summarizeUsageDiagnostics(days = []) {
   summary.api_mode_breakdown = {};
   for (const day of Array.isArray(days) ? days : []) {
     for (const key of diagnosticCounters) summary[key] += tokenCount(day?.[key]);
+    if (day?.unattributed_run_count === undefined) summary.unattributed_run_count += tokenCount(day?.run_count);
     mergeBreakdown(summary.provider_breakdown, day?.provider_breakdown);
     mergeBreakdown(summary.model_breakdown, day?.model_breakdown);
     mergeBreakdown(summary.api_mode_breakdown, day?.api_mode_breakdown);
@@ -124,8 +39,9 @@ export function summarizeUsageDiagnostics(days = []) {
   summary.cache_percent = summary.input_tokens ? Math.min(100, summary.cached_input_tokens / summary.input_tokens * 100) : null;
   summary.run_success_percent = summary.run_count ? summary.successful_run_count / summary.run_count * 100 : null;
   summary.request_success_percent = summary.api_request_count ? summary.successful_request_count / summary.api_request_count * 100 : null;
-  summary.average_tokens_per_run = summary.run_count ? summary.total_tokens / summary.run_count : 0;
-  summary.average_requests_per_run = summary.run_count ? summary.api_request_count / summary.run_count : 0;
+  const runAverage = value => summary.unattributed_run_count ? null : value / (summary.run_count || 1);
+  summary.average_tokens_per_run = runAverage(summary.run_total_tokens);
+  summary.average_requests_per_run = runAverage(summary.run_request_count);
   summary.average_duration_ms = summary.run_count ? summary.total_run_duration_ms / summary.run_count : 0;
   return summary;
 }
@@ -139,9 +55,8 @@ export function selectUsageHistory(days = [], window = DEFAULT_USAGE_WINDOW, tod
     byDate.set(date, day);
   }
   const availableDays = [...byDate.values()].sort((left, right) => String(left.date).localeCompare(String(right.date)));
-  const selectedDays = bounds.startDate
-    ? availableDays.filter((day) => day.date >= bounds.startDate && day.date <= bounds.endDate)
-    : availableDays;
+  const all = bounds.id === "all";
+  const selectedDays = all ? availableDays : availableDays.filter((day) => day.date >= bounds.startDate);
   return {
     ...bounds,
     days: selectedDays,
@@ -149,7 +64,7 @@ export function selectUsageHistory(days = [], window = DEFAULT_USAGE_WINDOW, tod
     allSummary: summarizeUsageDiagnostics(availableDays),
     availableStart: availableDays[0]?.date || null,
     availableEnd: availableDays.at(-1)?.date || null,
-    partialStart: Boolean(bounds.startDate && availableDays[0]?.date && availableDays[0].date > bounds.startDate),
+    partialStart: Boolean(!all && availableDays[0]?.date && availableDays[0].date > bounds.startDate),
   };
 }
 
@@ -228,13 +143,6 @@ function breakdownList(panel, title, values) {
   }).join("")}</div>` : `<p class="usage-diagnostic-empty">No recorded data in this period.</p>`}</section>`;
 }
 
-function usageCalendarToday(panel) {
-  // Relative periods use HA's current local calendar. Activity rows and retained
-  // summary reads describe usage; neither can establish today's date or the
-  // bounds of a subsequent read after a failed or delayed refresh.
-  return localUsageDateKey(new Date(), panel?._hass?.config?.time_zone);
-}
-
 function historyRangeLabel(history) {
   if (history.id === "all") {
     return history.availableStart
@@ -266,8 +174,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
   const recentRuns = result.runs?.runs || [];
   const failedRuns = recentRuns.filter((run) => run.successful === false).slice(0, 5);
   const localRuns = result.days?.local_run_summary;
-  const localRunCount = localRuns && localRuns.end_date === history.endDate
-    && (localRuns.start_date === history.startDate || (!history.startDate && localRuns.start_date === "0000-01-01"))
+  const localRunCount = localRuns && localRuns.end_date === history.endDate && localRuns.start_date === history.startDate
     ? formatUsageNumber(localRuns.count) : "Unavailable";
   const cacheDetail = summary.input_tokens
     ? `${formatUsageNumber(summary.cached_input_tokens)} of ${formatUsageNumber(summary.input_tokens)} input tokens`
@@ -297,7 +204,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
       ${dailyState.available ? `      <div class="usage-diagnostic-grid">
         ${diagnosticMetric(panel, "Cached input", formatPercent(summary.cache_percent), cacheDetail)}
         ${diagnosticMetric(panel, "Run success", formatPercent(summary.run_success_percent), `${formatUsageNumber(summary.failed_run_count)} failed run${summary.failed_run_count === 1 ? "" : "s"}`)}
-        ${diagnosticMetric(panel, "Requests per run", summary.average_requests_per_run.toFixed(summary.average_requests_per_run >= 10 ? 1 : 2), `${formatUsageNumber(summary.api_request_count)} provider requests`)}
+        ${diagnosticMetric(panel, "Requests per run", summary.average_requests_per_run?.toFixed(summary.average_requests_per_run >= 10 ? 1 : 2) ?? "Unavailable", `${formatUsageNumber(summary.api_request_count)} provider requests`)}
         ${diagnosticMetric(panel, "Average run time", formatDuration(summary.average_duration_ms), `${formatUsageNumber(summary.run_count)} completed runs`)}
       </div>
       <div class="usage-diagnostic-columns">
@@ -306,7 +213,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
           <div class="usage-fact"><span>Output</span><strong>${formatUsageNumber(summary.output_tokens)}</strong></div>
           <div class="usage-fact"><span>Cached input</span><strong>${formatUsageNumber(summary.cached_input_tokens)}</strong></div>
           <div class="usage-fact"><span>Reasoning</span><strong>${formatUsageNumber(summary.reasoning_tokens)}</strong></div>
-          <div class="usage-fact"><span>Average total / run</span><strong>${formatUsageNumber(Math.round(summary.average_tokens_per_run))}</strong></div>
+          <div class="usage-fact"><span>Average total / run</span><strong>${summary.average_tokens_per_run === null ? "Unavailable" : formatUsageNumber(Math.round(summary.average_tokens_per_run))}</strong></div>
           <div class="usage-fact"><span>Request success</span><strong>${panel._e(formatPercent(summary.request_success_percent))}</strong></div>
         </div></section>
         <section class="usage-diagnostic-panel"><h3>Activity</h3><div class="usage-facts">
@@ -356,7 +263,8 @@ function renderUsageBar(panel, bucket, max) {
 }
 
 function usageWarnings(panel, result) {
-  return (result.load_errors || []).map((issue) => `<div class="notice warning"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)} Other usage information is still shown where available.</p><button type="button" class="secondary" data-usage-retry>Retry usage loading</button></div>`).join("");
+  const storage = result.summary?.storage_warning || result.days?.storage_warning;
+  return (storage ? `<p class="notice warning" role="status">${panel._e(storage)}</p>` : "") + (result.load_errors || []).map((issue) => `<div class="notice warning"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)}</p><button type="button" class="secondary" data-usage-retry>Retry usage loading</button></div>`).join("");
 }
 
 function usageRecentRows(panel, result) {
@@ -443,10 +351,22 @@ export function bindUsageDiagnostics(panel) {
     const generation = panel._usageWindowGeneration = (panel._usageWindowGeneration || 0) + 1;
     event.target.disabled = true;
     try {
-      const days = await loadUsageWindow(panel, next, usageCalendarToday(panel));
+      // Only All can require multiple WebSocket pages. Its short-lived snapshot
+      // uses the route cache and is independent of today's local date.
+      const allDaysKey = next === "all" && panel._sectionCache
+        ? `${agentId}|usage-maintenance/usage|all-days` : null;
+      const cached = allDaysKey ? readSectionCache(panel, "usage-maintenance/usage", allDaysKey) : null;
+      const reuse = cached?.fresh;
+      const days = reuse ? cached.result : await loadUsageWindow(panel, next);
       if (generation !== panel._usageWindowGeneration || panel._agentId !== agentId || panel._viewKey?.() !== "usage-maintenance/usage") return;
+      if (allDaysKey && !reuse) writeSectionCache(panel, allDaysKey, days);
       panel._usageHistoryWindow = next;
-      panel._result = {...(panel._result || {}), days};
+      panel._result = {
+        ...(panel._result || {}),
+        days,
+        load_errors: (panel._result?.load_errors || []).filter(issue => issue.key !== "days"),
+        loading: {...(panel._result?.loading || {}), days: false},
+      };
       panel._render();
     } catch (err) {
       if (generation === panel._usageWindowGeneration && panel._agentId === agentId && panel._viewKey?.() === "usage-maintenance/usage") {

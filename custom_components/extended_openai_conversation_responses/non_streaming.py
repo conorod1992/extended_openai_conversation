@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,6 +14,23 @@ async def completed_responses_events(
 ) -> AsyncIterator[Any]:
     """Emit only the events consumed by EOAI's Responses transformer."""
     _capture_provider_usage(request_usage, getattr(response, "usage", None))
+    for event in completed_responses_output_events(response):
+        yield event
+    status = getattr(response, "status", None)
+    if getattr(response, "error", None) is not None:
+        status = "failed"
+    elif status is None:
+        status = "completed"
+    event_type = {
+        "completed": "response.completed",
+        "incomplete": "response.incomplete",
+        "failed": "response.failed",
+    }.get(status, "response.failed")
+    yield SimpleNamespace(type=event_type, response=response)
+
+
+def completed_responses_output_events(response: Any) -> Iterator[Any]:
+    """Adapt completed output without emitting another request terminal."""
     for output_index, item in enumerate(getattr(response, "output", ())):
         yield SimpleNamespace(
             type="response.output_item.added", item=item, output_index=output_index
@@ -47,17 +64,6 @@ async def completed_responses_events(
         yield SimpleNamespace(
             type="response.output_item.done", item=item, output_index=output_index
         )
-    status = getattr(response, "status", None)
-    if getattr(response, "error", None) is not None:
-        status = "failed"
-    elif status is None:
-        status = "completed"
-    event_type = {
-        "completed": "response.completed",
-        "incomplete": "response.incomplete",
-        "failed": "response.failed",
-    }.get(status, "response.failed")
-    yield SimpleNamespace(type=event_type, response=response)
 
 
 async def completed_chat_chunks(

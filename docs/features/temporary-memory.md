@@ -25,6 +25,8 @@ before every injection, and are pruned at startup. Selection is local and bounde
 The model can add, supersede, or forget records only in the scope derived from the
 current request; it cannot choose another owner. Personal and Shared owners determine access; conversation and device continuity are metadata and do not grant access to another owner’s records.
 
+After an upgrade or restore, older conversation- or device-scoped records whose owner cannot be established keep their original expiry. They are excluded from prompts and appear as a count in diagnostics and backup previews.
+
 EOAI no longer classifies Temporary Memory content or categories to block secrets,
 credentials, financial information or sensitive personal topics. Current user statements override stored
 temporary facts. The Memories page has Long-term and Short-term views. **+ Add memory** on either tab opens one dialog with Memory, Type, Category and Owner; Short-term also asks for Expires using Home Assistant local date/time. The type defaults to the current tab and is fixed when editing.
@@ -35,7 +37,7 @@ Content and categories retain type and size validation, including during editing
 
 Stored values may enter later model prompts, full private backups, selected custom transfers and explicitly enabled administrator request-debug captures. Backup encoding and ZIP transport are not encryption. Shareable Setup excludes Memory and continues protecting configured credentials; ordinary diagnostics and Usage do not include Memory content. Persistent Memory hybrid retrieval can additionally send its text/metadata to the configured embedding provider. EOAI Memory is not a dedicated secrets vault.
 
-Storage versions are unchanged. Downgrading to an older release may reject newly permitted records during restore or purge them at startup. Already purged records cannot be recovered by this change.
+The upgraded Temporary Memory store protects saved records during a downgrade. Older releases such as 6.8.3 leave the upgraded store on disk and cannot open it. Reinstalling the newer integration reopens the preserved records with their original expiry.
 
 ## Limits and reminders
 

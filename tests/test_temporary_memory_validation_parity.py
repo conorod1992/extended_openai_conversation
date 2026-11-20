@@ -9,11 +9,43 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
+    STORAGE_KEY_PREFIX,
     TemporaryMemory,
     TemporaryMemoryStore,
+    async_get_temporary_memory,
+    async_read_temporary_memory_snapshot,
 )
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 from tests.test_temporary_memory import Storage, _record
+
+
+@pytest.mark.parametrize("has_owner_field", [False, True])
+async def test_v1_snapshot_is_read_only_until_guarded_owner_migration(
+    hass, has_owner_field
+):
+    store = Store(hass, 1, f"{STORAGE_KEY_PREFIX}.entry.agent", private=True)
+    record = _record(scope_id="user:alice", content="Visitors arrive tomorrow")
+    if not has_owner_field:
+        record.pop("owner_scope_id")
+    await store.async_save({"records": [record]})
+    original = Path(store.path).read_bytes()
+    snapshot = await async_read_temporary_memory_snapshot(
+        hass, "entry", "agent", "user:alice", "user:alice"
+    )
+    assert [item.content for item in snapshot] == ["Visitors arrive tomorrow"]
+    assert Path(store.path).read_bytes() == original
+
+    memory = await async_get_temporary_memory(hass, "entry", "agent")
+    assert [item.content for item in await memory.async_active("user:alice", "user:alice")] == [
+        "Visitors arrive tomorrow"
+    ]
+    upgraded = Path(store.path).read_bytes()
+    assert json.loads(upgraded)["version"] == 2
+    with pytest.raises((HomeAssistantError, NotImplementedError)):
+        await store.async_load()
+    assert Path(store.path).read_bytes() == upgraded
 
 
 async def test_damaged_generation_never_attempts_a_content_purge(hass, monkeypatch):

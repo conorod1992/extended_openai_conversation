@@ -1,128 +1,129 @@
-"""Adapt concurrent Responses output lifetimes to HA's sequential accumulator."""
+"""Serialize indexed Responses items for HA's single active assistant entry."""
 
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import aclosing
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
+from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
+from .non_streaming import completed_responses_output_events
 from .provider_errors import ProviderStreamError
-from .provider_output_budget import ProviderOutputBudget
+from .provider_output_budget import MAX_OUTPUT_ITEMS, ProviderOutputBudget
+
+_ADDED = "response.output_item.added"
+_DONE = "response.output_item.done"
+_ARGUMENT_DELTA = "response.function_call_arguments.delta"
+_ARGUMENT_DONE = "response.function_call_arguments.done"
+_USAGE = {"response.usage", "response.usage.updated"}
+_RESPONSE_EVENTS = {
+    "response.created",
+    "response.in_progress",
+    "response.queued",
+    "response.completed",
+    "response.incomplete",
+    "response.failed",
+    "response.error",
+    *_USAGE,
+}
 
 
-async def _validated_output_events(
-    events: AsyncIterator[Any],
-    recover_usage: Callable[[], Awaitable[None]] | None = None,
-    budget: ProviderOutputBudget | None = None,
-) -> AsyncGenerator[Any]:
-    """Validate wire identities and arguments before presentation can buffer them."""
-    budget = budget or ProviderOutputBudget()
-    terminal_seen = False
-    completed_items: set[tuple[Any, Any]] = set()
-    output_items: dict[Any, tuple[Any, Any, Any]] = {}
-    argument_fragments: dict[Any, str] = {}
-    try:
-        async for event in events:
-            budget.responses_event(event)
-            event_type = getattr(event, "type", "")
-            if (
-                terminal_seen
-                and event_type.startswith("response.")
-                and event_type not in {"response.usage", "response.usage.updated"}
-            ):
-                raise ProviderStreamError(
-                    "Provider returned malformed data: event after terminal response",
-                    error_type="invalid_event_sequence",
+def _malformed(reason: str) -> ProviderStreamError:
+    return ProviderStreamError(
+        f"Provider returned malformed data: {reason}",
+        error_type="invalid_event_sequence",
+    )
+
+
+def _item_identity(item: Any) -> tuple[Any, ...]:
+    return tuple(
+        getattr(item, field, None)
+        for field in ("type", "id", "call_id", "name", "arguments")
+    )
+
+
+@dataclass(slots=True)
+class _OutputItem:
+    """Own one index's wire identity, completion and deferred presentation."""
+
+    item_id: str | None = None
+    signature: tuple[Any, ...] | None = None
+    completion: tuple[Any, ...] | None = None
+    arguments: str | None = None
+    opening: Any = None
+    presented: bool = False
+    done: bool = False
+    pending: list[Any] = field(default_factory=list)
+    pending_weight: int = 0
+
+    @property
+    def ready(self) -> bool:
+        return self.presented or self.opening is not None
+
+    def observe(self, event: Any, kind: str, item_id: str | None) -> None:
+        if item_id:
+            if self.item_id and self.item_id != item_id:
+                reason = (
+                    "conflicting argument item"
+                    if kind in {_ARGUMENT_DELTA, _ARGUMENT_DONE}
+                    else "conflicting output item id"
                 )
+                raise _malformed(reason)
+            self.item_id = item_id
+        if self.done:
+            if kind == _DONE:
+                raise _malformed("repeated completed output item")
+            if kind == _ADDED or kind.endswith(".delta"):
+                raise _malformed("content after completed output item")
 
-            if event_type in {
-                "response.output_item.added",
-                "response.output_item.done",
-            }:
-                index = getattr(event, "output_index", None)
-                item = event.item
-                identity = (
-                    getattr(item, "id", None),
-                    getattr(item, "call_id", None),
-                    getattr(item, "name", None),
-                )
-                if (
-                    index is not None
-                    and index in output_items
-                    and output_items[index] != identity
-                ):
-                    raise ProviderStreamError(
-                        "Provider returned malformed data: conflicting output item",
-                        error_type="invalid_event_sequence",
+        if kind in {_ADDED, _DONE}:
+            item = event.item
+            signature = tuple(
+                getattr(item, field, None) for field in ("type", "call_id", "name")
+            )
+            if self.signature is not None and self.signature != signature:
+                raise _malformed("conflicting output item")
+            self.signature = signature
+            if kind == _ADDED:
+                if self.ready:
+                    raise _malformed("repeated output item start")
+                self.opening = event
+            else:
+                self.check_arguments(getattr(item, "arguments", None))
+                self.done = True
+                self.completion = _item_identity(item)
+                # A done-only provider still needs an opening to select the
+                # correct role and phase before presenting deferred content.
+                if not self.ready:
+                    self.opening = SimpleNamespace(
+                        type=_ADDED, item=item, output_index=event.output_index
                     )
-                if index is not None:
-                    if identity[0] and any(
-                        other_index != index and other_identity[0] == identity[0]
-                        for other_index, other_identity in output_items.items()
-                    ):
-                        raise ProviderStreamError(
-                            "Provider returned malformed data: duplicate output item id",
-                            error_type="invalid_event_sequence",
-                        )
-                    output_items[index] = identity
-                    if (
-                        event_type == "response.output_item.done"
-                        and index in argument_fragments
-                        and getattr(item, "arguments", None)
-                        != argument_fragments[index]
-                    ):
-                        raise ProviderStreamError(
-                            "Provider returned malformed data: conflicting tool arguments",
-                            error_type="invalid_event_sequence",
-                        )
-            elif event_type in {
-                "response.function_call_arguments.delta",
-                "response.function_call_arguments.done",
-            }:
-                index = getattr(event, "output_index", None)
-                if (
-                    index in output_items
-                    and getattr(event, "item_id", None) != output_items[index][0]
-                ):
-                    raise ProviderStreamError(
-                        "Provider returned malformed data: conflicting argument item",
-                        error_type="invalid_event_sequence",
-                    )
+        else:
+            self.observe_arguments(event, kind)
 
-                if event_type == "response.function_call_arguments.delta":
-                    argument_fragments[index] = (
-                        argument_fragments.get(index, "") + event.delta
-                    )
-                elif (
-                    index in argument_fragments
-                    and event.arguments != argument_fragments[index]
-                ):
-                    raise ProviderStreamError(
-                        "Provider returned malformed data: conflicting tool arguments",
-                        error_type="invalid_event_sequence",
-                    )
+    def observe_arguments(self, event: Any, kind: str) -> None:
+        if kind == _ARGUMENT_DELTA:
+            self.arguments = (self.arguments or "") + event.delta
+        elif kind == _ARGUMENT_DONE:
+            self.check_arguments(event.arguments)
 
-            if event_type == "response.output_item.done":
-                item = event.item
-                key = (getattr(event, "output_index", None), getattr(item, "id", None))
-                if key != (None, None):
-                    if key in completed_items:
-                        raise ProviderStreamError(
-                            "Provider returned malformed data: repeated completed output item",
-                            error_type="invalid_event_sequence",
-                        )
-                    completed_items.add(key)
-            if event_type == "response.completed":
-                terminal_seen = True
-            yield event
+    def check_arguments(self, arguments: str | None) -> None:
+        if self.arguments is not None and self.arguments != arguments:
+            raise _malformed("conflicting tool arguments")
 
-    except ProviderStreamError:
-        # Recover from the raw owned stream before closing normalized iteration.
-        # This never interprets buffered output or executes any Function calls.
-        if recover_usage is not None:
-            await recover_usage()
-        raise
-    finally:
-        if (close := getattr(events, "aclose", None)) is not None:
-            await close()
+    def buffer(self, event: Any, budget: ProviderOutputBudget) -> None:
+        self.pending_weight += budget.buffer(event)
+        self.pending.append(event)
+
+    def release(self, budget: ProviderOutputBudget) -> Iterator[Any]:
+        opening, self.opening = self.opening, None
+        events, self.pending = self.pending, []
+        budget.release_buffer(self.pending_weight, len(events))
+        self.pending_weight = 0
+        self.presented = True
+        if opening is not None:
+            yield opening
+        for event in events:
+            if event is not opening:
+                yield event
 
 
 async def ordered_output_events(
@@ -130,64 +131,171 @@ async def ordered_output_events(
     *,
     recover_usage: Callable[[], Awaitable[None]] | None = None,
 ) -> AsyncGenerator[Any]:
-    """Stream the leading item live and buffer later items until their turn.
-
-    Responses identifies output by index; HA has only one current assistant
-    content entry. Keep all indexed events together, including text, refusals,
-    arguments and native completion. No payload is copied or reinterpreted.
-    """
+    """Validate in wire order and present each indexed item as one HA entry."""
     budget = ProviderOutputBudget()
+    items: dict[int, _OutputItem] = {}
+    owners: dict[str, int] = {}
     next_index = 0
-    pending: dict[int, list[Any]] = {}
-    pending_weights: dict[int, int] = {}
-    known_indices: set[int] = set()
-    async with aclosing(
-        _validated_output_events(events, recover_usage, budget)
-    ) as validated:
-        async for event in validated:
+    terminal_seen = False
+    legacy = _OutputItem()
+    legacy_start = False
+    legacy_completions: set[str] = set()
+    legacy_items: list[tuple[Any, ...]] = []
+    legacy_output_seen = False
+    try:
+        async for event in events:
             index = getattr(event, "output_index", None)
-            if index is not None and event.type in {
-                "response.output_item.added",
-                "response.output_item.done",
-            }:
-                known_indices.add(index)
-            if index is None or index not in known_indices:
-                if event.type == "response.completed" and pending:
-                    # This rejection belongs to ordering, outside wire validation.
-                    # Drain once while the normalized/raw stream is still owned.
-                    if recover_usage is not None:
-                        await recover_usage()
-                    raise ProviderStreamError(
-                        "Provider returned malformed data: unfinished output item",
-                        error_type="invalid_event_sequence",
-                    )
+            if index is not None and (type(index) is not int or index < 0):
+                raise _malformed("invalid output index")
+            budget.responses_event(event)
+            kind = getattr(event, "type", "")
+            if terminal_seen and kind.startswith("response.") and kind not in _USAGE:
+                raise _malformed("event after terminal response")
+
+            if kind == "response.completed":
+                if any(index >= next_index for index in items):
+                    raise _malformed("unfinished output item")
+                response = getattr(event, "response", None)
+                output = getattr(response, "output", ())
+                if isinstance(output, (list, tuple)) and output:
+                    if len(output) > MAX_OUTPUT_ITEMS:
+                        raise ProviderStreamError(
+                            "Provider output exceeded local safety limits",
+                            error_type="output_limit_exceeded",
+                        )
+                    if items or legacy_output_seen:
+                        completed = [
+                            items[index].completion for index in range(next_index)
+                        ]
+                        completed.extend(legacy_items)
+                        if tuple(completed) != tuple(
+                            _item_identity(item) for item in output
+                        ):
+                            raise _malformed(
+                                "terminal output conflicts with streamed items"
+                            )
+                    else:
+                        # Local tool dispatch requires item lifecycle evidence.
+                        # A terminal-only response can recover assistant text/refusal.
+                        messages = [
+                            item
+                            for item in output
+                            if getattr(item, "type", None) == "message"
+                        ]
+                        if (
+                            getattr(response, "error", None) is not None
+                            or not messages
+                            or any(
+                                getattr(item, "type", None)
+                                not in {"message", "reasoning"}
+                                for item in output
+                            )
+                            or any(
+                                getattr(item, "role", None) != "assistant"
+                                or any(
+                                    getattr(part, "type", None)
+                                    not in {"output_text", "refusal"}
+                                    for part in getattr(item, "content", ())
+                                )
+                                for item in messages
+                            )
+                        ):
+                            raise _malformed("ambiguous terminal-only output")
+                        ids = [
+                            identity
+                            for item in output
+                            if (identity := getattr(item, "id", None))
+                        ]
+                        if len(ids) != len(set(ids)):
+                            raise _malformed("duplicate terminal output item id")
+                        for frame in completed_responses_output_events(response):
+                            budget.responses_event(frame)
+                            yield frame
+                terminal_seen = True
+
+            if kind in _RESPONSE_EVENTS or not kind.startswith("response."):
                 yield event
                 continue
-            if index != next_index:
-                if index < next_index:
-                    # Identities/completions were checked in original wire order.
-                    yield event
+
+            item_id = (
+                getattr(event.item, "id", None)
+                if kind in {_ADDED, _DONE}
+                else getattr(event, "item_id", None)
+            )
+            if index is None:
+                # Older providers and synthetic streams may omit all indices.
+                legacy_output_seen = True
+                if kind == _ADDED:
+                    legacy.item_id = item_id
+                    legacy_start = True
+                elif kind == _DONE:
+                    if item_id:
+                        if item_id in legacy_completions:
+                            raise _malformed("repeated completed output item")
+                        legacy_completions.add(item_id)
+                    legacy_items.append(_item_identity(event.item))
+                    legacy = _OutputItem()
+                    legacy_start = False
                 else:
-                    try:
-                        weight = budget.buffer(event)
-                    except ProviderStreamError:
-                        # Backlog admission is outside wire validation, but still
-                        # owns the normalized/raw stream until accounting settles.
-                        if recover_usage is not None:
-                            await recover_usage()
-                        raise
-                    pending.setdefault(index, []).append(event)
-                    pending_weights[index] = pending_weights.get(index, 0) + weight
+                    legacy.observe_arguments(event, kind)
+                yield event
                 continue
-            yield event
-            if event.type != "response.output_item.done":
+
+            item = items.get(index)
+            if item is None:
+                budget.reserve_response_item(index)
+                item = items[index] = _OutputItem()
+            if item_id and owners.setdefault(item_id, index) != index:
+                raise _malformed("duplicate output item id")
+
+            # Keep a legacy opener when it already introduced this item before
+            # a compatible provider supplied its index.
+            if (
+                index == next_index
+                and legacy_start
+                and not item.ready
+                and kind != _ADDED
+                and legacy.item_id == item_id
+            ):
+                item.presented = True
+                item.arguments = legacy.arguments
+                legacy = _OutputItem()
+                legacy_start = False
+
+            was_done = item.done
+            item.observe(event, kind, item_id)
+            if was_done and kind in {
+                "response.output_text.done",
+                "response.refusal.done",
+            }:
+                # A late part snapshot cannot alter already finalized content.
                 continue
-            next_index += 1
-            while next_index in pending:
-                buffered = pending.pop(next_index)
-                budget.release_buffer(pending_weights.pop(next_index), len(buffered))
-                for buffered_event in buffered:
-                    yield buffered_event
-                if buffered[-1].type != "response.output_item.done":
-                    break
+            if index < next_index:
+                yield event
+                continue
+            if index > next_index or not item.ready:
+                item.buffer(event, budget)
+                continue
+
+            is_opening = event is item.opening
+            if not item.presented or item.pending:
+                for frame in item.release(budget):
+                    yield frame
+            if not is_opening:
+                yield event
+            while item.done:
                 next_index += 1
+                following = items.get(next_index)
+                if following is None or not following.ready:
+                    break
+                item = following
+                for frame in item.release(budget):
+                    yield frame
+    except ProviderStreamError:
+        # Drain usage while the normalized/raw stream is still owned.
+        if recover_usage is not None:
+            await recover_usage()
+        raise
+    finally:
+        if (close := getattr(events, "aclose", None)) is not None:
+            await close()

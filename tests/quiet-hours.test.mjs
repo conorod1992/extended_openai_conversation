@@ -132,6 +132,26 @@ test("renders native device-scoped override pickers and preserves manual status"
   assert.doesNotMatch(html, /<select class="qh-override"/);
 });
 
+test("gives unset entity pickers native labels identifying the setting and satellite", () => {
+  const html = renderQuietHours(panel({
+    config: baseConfig,
+    satellites: [
+      {satellite_entity_id: "assist_satellite.bedroom", name: 'Bedroom "Voice"'},
+      {satellite_entity_id: "assist_satellite.kitchen", name: "Kitchen & Hall"},
+    ],
+  }));
+
+  assert.deepEqual(
+    [...html.matchAll(/<ha-entity-picker class="qh-override" label="([^"]+)"/g)].map(match => match[1]),
+    [
+      "Speaker volume entity for Bedroom &quot;Voice&quot;",
+      "Wake-word sound switch for Bedroom &quot;Voice&quot;",
+      "Speaker volume entity for Kitchen &amp; Hall",
+      "Wake-word sound switch for Kitchen &amp; Hall",
+    ],
+  );
+});
+
 test("marks a mapped speaker ready only when a numeric volume is available", () => {
   const satellite = {
     satellite_entity_id: "assist_satellite.bedroom",

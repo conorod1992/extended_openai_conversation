@@ -404,10 +404,26 @@ async def test_setup_is_shared_and_timer_is_removed_on_stop(hass, monkeypatch):
     assert interval.call_count == 1
     assert interval.call_args.args[2].total_seconds() == 3600
     check_manager.async_check = AsyncMock()
-    await interval.call_args.args[1](None)
+    first_timer = interval.call_args.args[1]
+    await first_timer(None)
     check_manager.async_check.assert_awaited_once()
-    hass.bus.async_listen_once.call_args.args[1](None)
+
+    runtime.async_stop_model_catalog_refresh(hass)
     cancel.assert_called_once()
+    await first_timer(None)
+    check_manager.async_check.assert_awaited_once()
+
+    runtime.async_start_model_catalog_refresh(hass)
+    await runtime.async_setup_model_catalog(hass)
+    assert interval.call_count == 2
+    second_timer = interval.call_args.args[1]
+    await first_timer(None)
+    await second_timer(None)
+    assert check_manager.async_check.await_count == 2
+    runtime.websocket_api.async_register_command.assert_called_once()
+    hass.bus.async_listen_once.assert_called_once()
+    hass.bus.async_listen_once.call_args.args[1](None)
+    assert cancel.call_count == 2
 
 
 @pytest.mark.parametrize(

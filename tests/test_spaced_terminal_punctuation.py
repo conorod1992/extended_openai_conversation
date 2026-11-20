@@ -39,13 +39,15 @@ def test_spaced_suffix_matches_literal_constrained_and_free_endings(
 def test_terminal_handoff_preserves_exact_original_suffix(suffix, capture_text):
     text = "ask " + capture_text + suffix
     pattern = "ask {query}"
-    slots = compile_sentence_pattern(pattern).match(text).captures
+    matched = compile_sentence_pattern(pattern).match(text)
+    assert matched is not None
     match = RuleMatch(
         {"ai_input_mode": "capture", "ai_input_capture": "query"},
         pattern,
         False,
         100,
-        slots,
+        matched.captures,
+        matched.capture_spans,
     )
     assert rule_provider_input(match, text) == "Weather tomorrow" + suffix
 
@@ -71,13 +73,15 @@ def test_existing_negative_boundaries(pattern, text):
 def test_nonterminal_capture_and_explicit_literals_keep_their_boundaries():
     pattern = "ask {query} please"
     text = "ask Weather? tomorrow please ? !"
-    slots = compile_sentence_pattern(pattern).match(text).captures
+    matched = compile_sentence_pattern(pattern).match(text)
+    assert matched is not None
     match = RuleMatch(
         {"ai_input_mode": "capture", "ai_input_capture": "query"},
         pattern,
         False,
         100,
-        slots,
+        matched.captures,
+        matched.capture_spans,
     )
     assert rule_provider_input(match, text) == "Weather? tomorrow"
     assert compile_sentence_pattern("say hello!").match("say hello! ? !")

@@ -1775,7 +1775,7 @@ def test_period_usage_sensor_abstract_summary_branch() -> None:
         period._summary()
 
 
-def test_usage_period_sensor_summary_and_last_reset_branches(monkeypatch) -> None:
+def test_usage_period_sensor_summary_and_period_start(monkeypatch) -> None:
     from datetime import datetime, UTC
 
     from custom_components.extended_openai_conversation_responses import sensor
@@ -1801,15 +1801,18 @@ def test_usage_period_sensor_summary_and_last_reset_branches(monkeypatch) -> Non
         data={},
     )
     day_start = datetime(2026, 10, 5, tzinfo=UTC)
-    monkeypatch.setattr(sensor.dt_util, "start_of_local_day", Mock(return_value=day_start))
+    monkeypatch.setattr(sensor.dt_util, "now", lambda: day_start.replace(hour=12))
+    monkeypatch.setattr(sensor.dt_util, "DEFAULT_TIME_ZONE", UTC)
 
     today = sensor.UsageTodaySensor(subentry, usage)
     month = sensor.UsageMonthSensor(subentry, usage)
 
     assert today.native_value == 10
-    assert today.last_reset == day_start
+    assert today.extra_state_attributes["period_start"] == "2026-10-05"
+    assert today.state_class is None
     assert month.native_value == 10
-    assert month.last_reset == day_start.replace(day=1)
+    assert month.extra_state_attributes["period_start"] == "2026-10-01"
+    assert month.state_class is None
     assert today.extra_state_attributes["failures"] == 1
     usage.today_summary.assert_called()
     usage.month_summary.assert_called()

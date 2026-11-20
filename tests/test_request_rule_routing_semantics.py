@@ -123,6 +123,44 @@ def test_captured_reasoning_requires_effort_support_for_fixed_routes(model) -> N
 
 
 
+@pytest.mark.parametrize(
+    ("binding", "effort", "valid"),
+    [
+        ("gpt-4.1", "high", False),
+        ("gpt-4.1", "{effort}", False),
+        ("gpt-5.6", "high", True),
+        ("gpt-5.6", "{effort}", True),
+        ("{binding}", "high", True),
+    ],
+)
+def test_captured_azure_deployment_validates_fixed_bound_capabilities(
+    binding, effort, valid
+) -> None:
+    rule = validate_rule(
+        _rule(
+            "azure-captured-deployment",
+            "route {deployment} via {binding} at {effort=low|high}",
+            match_type="sentence_pattern",
+            action={
+                "model": "{deployment}",
+                "azure_model": binding,
+                "reasoning_effort": effort,
+                "scope": "request",
+                "continue_to_ai": True,
+            },
+        )
+    )
+    options = {CONF_CHAT_MODEL: "ha-default", "azure_model": "gpt-4.1"}
+    entry_data = {"api_provider": "azure"}
+    if valid:
+        validate_rule_model_request(rule, options, entry_data)
+    else:
+        with pytest.raises(HomeAssistantError, match="does not support reasoning effort"):
+            validate_rule_model_request(rule, options, entry_data)
+        validate_rule_model_request({**rule, "enabled": False}, options, entry_data)
+        validate_saved_model_routes([rule], options, entry_data)
+
+
 async def test_continued_routing_uses_later_override_in_global_order(hass) -> None:
     first = _rule("first", "route", order=0, action={
         "model": "gpt-5.6", "reasoning_effort": None, "scope": "request",
@@ -269,6 +307,48 @@ def test_astra_reasoning_values_are_model_specific() -> None:
                 },
             )
         ), {}, {})
+
+
+async def test_literal_effort_only_rule_uses_the_inherited_model() -> None:
+    options = {"chat_model": "gpt-4.1-mini", "api_mode": "auto"}
+    rule = validate_rule(
+        _rule(
+            "think-hard",
+            "think hard",
+            action={
+                "reasoning_effort": "high",
+                "scope": "request",
+                "continue_to_ai": True,
+            },
+        )
+    )
+    validate_rule_model_request(rule, options, {})
+    rules = RequestRules(MemoryStore({"rules": [rule]}))
+    await rules.async_initialize()
+    runtime = RequestRuleRuntime()
+    runtime.set("routed", {CONF_CHAT_MODEL: "gpt-5.6"})
+
+    async def evaluate(session):
+        return await async_evaluate_rule(
+            SimpleNamespace(),
+            rules,
+            runtime,
+            "think hard",
+            session,
+            options["chat_model"],
+            request_options=options,
+            entry_data={},
+        )
+
+    result = await evaluate("routed")
+    assert result is not None
+    effective = runtime.effective_options(options, "routed", result.request_override)
+    assert effective[CONF_CHAT_MODEL] == "gpt-5.6"
+    assert effective[CONF_REASONING_EFFORT] == "high"
+
+    with pytest.raises(HomeAssistantError, match="does not support reasoning effort"):
+        await evaluate("default")
+    assert runtime.get("default") == {}
 
 
 async def test_captured_reasoning_uses_effective_routed_model_before_publish() -> None:

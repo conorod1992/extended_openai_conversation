@@ -131,6 +131,43 @@ async def test_model_change_resets_reasoning_but_unrelated_edit_keeps_omission(
     )
 
 
+@pytest.mark.parametrize("effort", ["high", None])
+def test_azure_deployment_alias_edit_preserves_reasoning_choice(effort):
+    current = {
+        "chat_model": "old-deployment",
+        "azure_model": "gpt-5.2",
+        "functions": [],
+    }
+    if effort is not None:
+        current["reasoning_effort"] = effort
+    updates = {"chat_model": "new-deployment"}
+    merged = merge_agent_config(current, updates, provider="azure")
+    saved = project_agent_config_updates(current, updates, merged, provider="azure")
+    assert saved["chat_model"] == "new-deployment"
+    assert saved["azure_model"] == "gpt-5.2"
+    assert saved.get("reasoning_effort") == effort
+    assert ("reasoning_effort" in saved) is (effort is not None)
+
+
+def test_openai_model_edits_ignore_a_stale_azure_binding():
+    current = {
+        "chat_model": "gpt-5.2",
+        "azure_model": "gpt-5",
+        "reasoning_effort": "high",
+        "functions": [],
+    }
+    updates = {"chat_model": "gpt-5.6"}
+    merged = merge_agent_config(current, updates, provider="openai")
+    saved = project_agent_config_updates(current, updates, merged, provider="openai")
+    assert saved["chat_model"] == "gpt-5.6"
+    assert saved["reasoning_effort"] == "low"
+
+    updates = {"azure_model": ""}
+    merged = merge_agent_config(current, updates, provider="openai")
+    saved = project_agent_config_updates(current, updates, merged, provider="openai")
+    assert saved["reasoning_effort"] == "high"
+
+
 async def test_display_and_explicit_reset_values_do_not_imply_persistence(hass):
     raw = {"chat_model": "gpt-5.2", "functions": "[]"}
     before = deepcopy(raw)

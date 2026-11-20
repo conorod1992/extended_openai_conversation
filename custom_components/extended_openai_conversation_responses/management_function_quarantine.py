@@ -112,7 +112,9 @@ def merge_unchanged_function_configuration(
         function_tools_as_list=True,
         provider=provider,
     )
-    persisted = project_agent_config_updates(subentry.data, updates, candidate)
+    persisted = project_agent_config_updates(
+        subentry.data, updates, candidate, provider=provider
+    )
     return persisted, candidate
 
 

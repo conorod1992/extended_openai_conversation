@@ -12,8 +12,6 @@ from homeassistant.exceptions import HomeAssistantError
 from .const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
-    CONF_API_PROVIDER,
-    CONF_BASE_URL,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -23,7 +21,7 @@ from .const import (
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
 )
 from .exposed_attributes import exposed_attribute_catalog
-from .helpers import effective_api_provider, supports_openai_hosted_tools
+from .helpers import effective_api_provider, is_native_openai_connection
 from .request import build_provider_request_snapshot
 from .skill_availability import skill_loader_status
 
@@ -40,13 +38,12 @@ def configuration_guidance_snapshot(
     options: Mapping[str, Any],
     *,
     decoded_functions: bool = False,
+    client: Any = None,
 ) -> dict[str, Any]:
     """Return runtime-derived configuration facts without making provider calls."""
     configured_api_mode = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
     effective_api_mode = configured_api_mode
-    hosted_tools_supported = supports_openai_hosted_tools(
-        entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-    )
+    hosted_tools_supported = is_native_openai_connection(entry_data, client=client)
 
     # This is the production resolver with only the hosted feature forced on.
     probe = dict(options)
@@ -54,7 +51,9 @@ def configuration_guidance_snapshot(
     web_search_available = True
     web_search_message: str | None = None
     try:
-        effective_api_mode = build_provider_request_snapshot(probe, entry_data).api_mode
+        effective_api_mode = build_provider_request_snapshot(
+            probe, entry_data, client=client
+        ).api_mode
     except HomeAssistantError as err:
         web_search_available = False
         web_search_message = str(err)
@@ -63,6 +62,7 @@ def configuration_guidance_snapshot(
                 {**options, CONF_WEB_SEARCH: False},
                 entry_data,
                 tools_required=True,
+                client=client,
             ).api_mode
 
     reason: str | None
@@ -135,6 +135,7 @@ def decorate_configuration_result(
     result: dict[str, Any],
     *,
     action: str,
+    client: Any = None,
 ) -> dict[str, Any]:
     """Attach the common dynamic metadata contract to one Configuration payload."""
     config = result.get("config")
@@ -147,7 +148,7 @@ def decorate_configuration_result(
             entry_data.get("api_provider"), entry_data.get("base_url")
         ),
         "configuration_guidance": configuration_guidance_snapshot(
-            entry_data, config, decoded_functions=True
+            entry_data, config, decoded_functions=True, client=client
         ),
     }
     if action in {"update", "save"}:

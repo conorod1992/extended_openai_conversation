@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
-from contextlib import AsyncExitStack, aclosing
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
+from contextlib import AsyncExitStack, aclosing, suppress
 from copy import deepcopy
 from dataclasses import replace
 from hashlib import sha256
@@ -35,9 +35,12 @@ from homeassistant.util import slugify
 from .assistant_response import (
     classify_provider_output,
     provider_output_presentation,
+    responses_answer_text,
+    responses_leave_tool_results_unanswered,
     separate_assistant_messages,
 )
 from .const import (
+    API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -120,16 +123,17 @@ from .ha_tool_result_compat import (
     is_tool_result_content,
     make_tool_result_content,
 )
-from .helpers import entry_api_provider, get_api_mode
+from .helpers import entry_api_provider, get_api_mode, is_native_openai_connection
 from .model_tool_results import async_prepare_tool_results, serialize_model_tool_result
 from .non_streaming import completed_chat_chunks, completed_responses_events
 from .operational_errors import log_handled_failure
-from .provider_content import answer_text
+from .provider_content import RoutedReasoning, answer_text
 from .provider_errors import (
     ProviderStreamError,
     ensure_successful_responses_result,
     provider_stream_error,
     provider_transport_error,
+    responses_incomplete_reason,
 )
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
 from .provider_output_budget import ProviderOutputBudget
@@ -144,7 +148,11 @@ from .request import (
     validate_provider_tool_count,
 )
 from .request_static_cache import cached_format_tools
-from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
+from .resource_limits import (
+    MAX_ATTACHMENT_COUNT,
+    bounded_local_file_size,
+    read_bounded_local_file,
+)
 from .responses_stream_order import ordered_output_events
 from .schema_normalization import normalize_exclusive_bounds
 from .speech import async_streaming_speech_cleanup
@@ -373,12 +381,18 @@ def _disjoint_schema_alternatives(variants: list[Any]) -> bool:
 
 
 def _adjust_schema(
-    schema: dict[str, Any], *, root: bool = False, azure: bool = False
+    schema: dict[str, Any],
+    *,
+    root: bool = False,
+    azure: bool = False,
+    preserve_date_formats: bool = False,
 ) -> None:
     """Adjust the schema to be compatible with OpenAI API."""
-    # HA selectors emit domain-specific annotations outside strict provider schemas.
-    schema.pop("format", None)
+    # The HA time selector accepts timezone-free clock times, unlike RFC 3339.
+    if not preserve_date_formats or schema.get("format") not in ("date", "date-time"):
+        schema.pop("format", None)
     schema.pop("uniqueItems", None)
+    schema.pop("default", None)
     if azure:
         # Azure's strict subset excludes constraints supported by direct OpenAI.
         # The caller's original schema still validates the returned task data.
@@ -438,14 +452,22 @@ def _adjust_schema(
         if isinstance(variants, list):
             for variant in variants:
                 if isinstance(variant, dict):
-                    _adjust_schema(variant, azure=azure)
+                    _adjust_schema(
+                        variant,
+                        azure=azure,
+                        preserve_date_formats=preserve_date_formats,
+                    )
 
     for keyword in ("$defs", "definitions"):
         definitions = schema.get(keyword)
         if isinstance(definitions, dict):
             for definition in definitions.values():
                 if isinstance(definition, dict):
-                    _adjust_schema(definition, azure=azure)
+                    _adjust_schema(
+                        definition,
+                        azure=azure,
+                        preserve_date_formats=preserve_date_formats,
+                    )
 
     schema_type = schema.get("type")
     schema_types = (
@@ -472,7 +494,9 @@ def _adjust_schema(
             for prop, prop_info in properties.items():
                 if not isinstance(prop_info, dict):
                     continue
-                _adjust_schema(prop_info, azure=azure)
+                _adjust_schema(
+                    prop_info, azure=azure, preserve_date_formats=preserve_date_formats
+                )
                 if prop not in required:
                     _make_schema_nullable(prop_info)
                     required.append(prop)
@@ -480,7 +504,9 @@ def _adjust_schema(
     if "array" in schema_types:
         items = schema.get("items")
         if isinstance(items, dict):
-            _adjust_schema(items, azure=azure)
+            _adjust_schema(
+                items, azure=azure, preserve_date_formats=preserve_date_formats
+            )
 
 
 def _serialize_structured_output(
@@ -489,10 +515,11 @@ def _serialize_structured_output(
     """Serialize the caller contract without provider adaptation."""
     from .ha_llm_tools import compatible_to_openapi
 
+    serializer = llm_api.custom_serializer if llm_api is not None else None
     result: dict[str, Any] = compatible_to_openapi(
         schema,
         custom_serializer=(
-            llm_api.custom_serializer if llm_api else llm.selector_serializer
+            serializer if serializer is not None else llm.selector_serializer
         ),
     )
 
@@ -500,11 +527,17 @@ def _serialize_structured_output(
 
 
 def _format_structured_output(
-    schema: SchemaValidator, llm_api: llm.APIInstance | None, *, azure: bool = False
+    schema: SchemaValidator,
+    llm_api: llm.APIInstance | None,
+    *,
+    azure: bool = False,
+    preserve_date_formats: bool = False,
 ) -> dict[str, Any]:
     """Adapt a fresh caller schema to the provider's strict contract."""
     result = _serialize_structured_output(schema, llm_api)
-    _adjust_schema(result, root=True, azure=azure)
+    _adjust_schema(
+        result, root=True, azure=azure, preserve_date_formats=preserve_date_formats
+    )
     return result
 
 
@@ -620,8 +653,31 @@ def _discard_conditional_drafts(
     chat_log.content[:] = retained
 
 
+def _responses_reasoning_route(
+    entry: Any, client: Any, options: Mapping[str, Any]
+) -> str:
+    """Bind encrypted items to the client connection and routed deployment."""
+    from .provider_errors import provider_authentication_snapshot
+
+    authentication = getattr(client, "_eoai_authentication_snapshot", None)
+    if not isinstance(authentication, tuple):
+        authentication = provider_authentication_snapshot(entry)
+    endpoint = getattr(client, "base_url", None)
+    route = (
+        authentication,
+        str(endpoint)
+        if isinstance(endpoint, str) or isinstance(getattr(endpoint, "host", None), str)
+        else None,
+        options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
+        options.get("azure_model"),
+    )
+    return sha256(json.dumps(route).encode()).hexdigest()
+
+
 def _serialize_response_item(item: Any) -> dict[str, Any]:
     """Serialize an SDK Responses item for use as a subsequent input item."""
+    if isinstance(item, RoutedReasoning):
+        item = item.item
     if hasattr(item, "model_dump"):
         serialized = cast(dict[str, Any], item.model_dump(exclude_none=True))
     elif hasattr(item, "to_dict"):
@@ -645,6 +701,7 @@ def _convert_content_to_responses_param(
     prepared_user_content: Mapping[int, Any] | None = None,
     *,
     include_reasoning: bool = True,
+    reasoning_route: str | None = None,
 ) -> list[dict[str, Any]]:
     """Convert Home Assistant chat content to Responses API input items."""
     items: list[dict[str, Any]] = []
@@ -666,7 +723,9 @@ def _convert_content_to_responses_param(
         if isinstance(content, conversation.AssistantContent):
             native = content.native
             native_type = getattr(native, "type", "") if native is not None else ""
-            if (include_reasoning or native_type != "reasoning") and native_type in {
+            origin = native.route if isinstance(native, RoutedReasoning) else None
+            replay_reasoning = include_reasoning and origin == reasoning_route
+            if (replay_reasoning or native_type != "reasoning") and native_type in {
                 "reasoning",
                 "web_search_call",
                 "message",
@@ -861,6 +920,48 @@ def _is_post_terminal_chat_accounting_choice(
     )
 
 
+def _attachment_mime_type(attachment: conversation.Attachment) -> str | None:
+    return attachment.mime_type or mimetypes.guess_type(attachment.path)[0]
+
+
+def _attachments_include_pdf(attachments: list[conversation.Attachment]) -> bool:
+    """Identify PDFs using the same MIME lookup as the attachment encoder."""
+    return any(_attachment_mime_type(item) == "application/pdf" for item in attachments)
+
+
+def _pdf_attachment_routing(
+    turns: list[list[conversation.Attachment]],
+) -> tuple[bool, bool]:
+    """Return whether a current PDF requires, or a usable earlier PDF prefers, Responses."""
+    if _attachments_include_pdf(turns[-1]):
+        return True, False
+    if not any(_attachments_include_pdf(attachments) for attachments in turns[:-1]):
+        return False, False
+
+    total_bytes = count = 0
+    for attachments in reversed(turns):
+        for attachment in attachments:
+            if count >= MAX_ATTACHMENT_COUNT:
+                return False, False
+            mime = _attachment_mime_type(attachment) or ""
+            if mime != "application/pdf" and not mime.startswith("image/"):
+                continue
+            path = Path(attachment.path)
+            try:
+                if not path.is_file():
+                    continue
+                size = bounded_local_file_size(path, total_bytes)
+                with path.open("rb"):
+                    pass
+            except HomeAssistantError, OSError:
+                continue
+            if mime == "application/pdf":
+                return False, True
+            total_bytes += size
+            count += 1
+    return False, False
+
+
 class ExtendedOpenAIBaseLLMEntity(Entity):
     """Extended OpenAI base entity."""
 
@@ -903,6 +1004,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         structure_schema: dict[str, Any] | None = None,
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
+        from .provider_credentials import require_provider_restore_complete
+
+        hass = getattr(self, "hass", None)
+        entry_id = getattr(self.entry, "entry_id", None)
+        if hass is not None and isinstance(entry_id, str):
+            require_provider_restore_complete(hass, entry_id)
+        provider_client = self._client
+        provider_entry_data = getattr(self.entry, "data", {})
         await async_prepare_tool_results(chat_log.content)
         async with (
             context_summary_request(self, chat_log),
@@ -916,11 +1025,36 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # double-counting live conversation runs.
                     await self._usage.async_record_conversation()
             options = request_options or self.subentry.data
-            from .context_usage_hardening import estimate_provider_input_tokens
+            from .context_usage_hardening import (
+                estimate_provider_input_tokens,
+                omit_prior_reasoning_ciphertext,
+            )
 
             threshold = int(
                 options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
             )
+
+            users = [
+                item
+                for item in chat_log.content
+                if isinstance(item, conversation.UserContent)
+            ]
+            attachment_turns = [
+                getattr(user, "attachments", None) or [] for user in users
+            ]
+            attachment_io = any(attachment_turns)
+            responses_required = responses_preferred = False
+            if (
+                options.get(CONF_API_MODE, DEFAULT_API_MODE) == API_MODE_AUTO
+                and attachment_io
+                and len(attachment_turns[-1]) <= MAX_ATTACHMENT_COUNT
+            ):
+                (
+                    responses_required,
+                    responses_preferred,
+                ) = await self.hass.async_add_executor_job(
+                    _pdf_attachment_routing, attachment_turns
+                )
 
             def snapshot_for_live_tools() -> tuple[
                 list[dict[str, Any]], ProviderRequestSnapshot
@@ -941,17 +1075,26 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         if tool.get("function", {}).get("type")
                         == "function_group_loader"
                     ]
-                return initial_tools, build_provider_request_snapshot(
-                    options,
-                    getattr(self.entry, "data", {}),
-                    tools_required=bool(initial_tools) or conditional_continue,
-                )
 
-            attachment_io = any(
-                getattr(item, "attachments", None)
-                for item in chat_log.content
-                if isinstance(item, conversation.UserContent)
-            )
+                def request_snapshot(
+                    require_responses: bool,
+                ) -> ProviderRequestSnapshot:
+                    return build_provider_request_snapshot(
+                        options,
+                        provider_entry_data,
+                        tools_required=bool(initial_tools) or conditional_continue,
+                        responses_required=require_responses,
+                        client=provider_client,
+                    )
+
+                snapshot = request_snapshot(responses_required)
+                if responses_preferred and snapshot.api_mode != API_MODE_RESPONSES:
+                    # Earlier files can be omitted when the current route
+                    # cannot send them, just as in explicit Chat mode.
+                    with suppress(HomeAssistantError):
+                        snapshot = request_snapshot(True)
+                return initial_tools, snapshot
+
             # Text-only turns still assemble their live catalogue exactly once,
             # after the attachment await. File-bearing turns need an initial API
             # choice so incompatible files never consume its replay budget.
@@ -1001,6 +1144,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
             }
 
+            reasoning_route = (
+                _responses_reasoning_route(self.entry, provider_client, options)
+                if provider_snapshot.api_mode == API_MODE_RESPONSES
+                and entry_api_provider(self.entry) == "azure"
+                else None
+            )
+
             def responses_input(
                 content: Iterable[conversation.Content],
             ) -> list[dict[str, Any]]:
@@ -1008,7 +1158,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     content,
                     prepared_user_content,
                     include_reasoning=provider_snapshot.reasoning_items_supported,
+                    reasoning_route=reasoning_route,
                 )
+
+            def estimate_input(
+                prepared: Sequence[Mapping[str, Any]], tools: Any
+            ) -> int:
+                if provider_snapshot.reasoning_current_turn_only:
+                    prepared = omit_prior_reasoning_ciphertext(prepared)
+                return estimate_provider_input_tokens(prepared, tools)
 
             # Initial attachment preparation precedes the final capability snapshot.
             # Rebuild only the wire projection, retaining the encoded attachments and
@@ -1066,13 +1224,28 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         f"{model} does not support native Structured Outputs."
                     )
                 azure = entry_api_provider(self.entry) == "azure"
+                preserve_date_formats = (
+                    not azure
+                    and not model.startswith("ft:")
+                    and is_native_openai_connection(
+                        provider_entry_data, client=provider_client
+                    )
+                )
                 if structure_schema is None:
                     structured_schema = _format_structured_output(
-                        structure, chat_log.llm_api, azure=azure
+                        structure,
+                        chat_log.llm_api,
+                        azure=azure,
+                        preserve_date_formats=preserve_date_formats,
                     )
                 else:
                     structured_schema = deepcopy(structure_schema)
-                    _adjust_schema(structured_schema, root=True, azure=azure)
+                    _adjust_schema(
+                        structured_schema,
+                        root=True,
+                        azure=azure,
+                        preserve_date_formats=preserve_date_formats,
+                    )
                 output_format = {
                     "type": "json_schema",
                     "name": _provider_schema_name(structure_name),
@@ -1104,7 +1277,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             )
             ha_prompt_applied = False
             draft_content_ids: set[int] = set()
-            draft_content: list[Any] = []
+            draft_content: list[conversation.AssistantContent] = []
             context_measurement: ContextInputMeasurement | None = None
             loader_rounds = 0
             integration_loader_seen = False
@@ -1222,10 +1395,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             content, shorten_tool_call_id, prepared_user_content
                         )
                     )
-                    return estimate_provider_input_tokens(prepared, tools)
+                    return estimate_input(prepared, tools)
 
                 round_estimate = await asyncio.to_thread(
-                    estimate_provider_input_tokens, messages, tool_kwargs.get("tools")
+                    estimate_input, messages, tool_kwargs.get("tools")
                 )
                 if (
                     round_estimate > threshold
@@ -1253,7 +1426,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                     )
                     immediate_estimate = await asyncio.to_thread(
-                        estimate_provider_input_tokens,
+                        estimate_input,
                         messages,
                         tool_kwargs.get("tools"),
                     )
@@ -1277,7 +1450,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             )
                         )
                         round_estimate = await asyncio.to_thread(
-                            estimate_provider_input_tokens,
+                            estimate_input,
                             messages,
                             tool_kwargs.get("tools"),
                         )
@@ -1311,7 +1484,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 streaming = api_kwargs.get("stream", True)
                 try:
                     if api_mode == API_MODE_RESPONSES:
-                        response = await self._client.responses.create(
+                        response = await provider_client.responses.create(
                             input=messages,
                             **api_kwargs,
                             **tool_kwargs,
@@ -1328,9 +1501,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             response_events,
                             request_usage,
                             effective_output_limit=effective_output_limit,
+                            reasoning_route=reasoning_route,
                         )
                     else:
-                        response = await self._client.chat.completions.create(
+                        response = await provider_client.chat.completions.create(
                             messages=messages,
                             **api_kwargs,
                             **tool_kwargs,
@@ -1642,15 +1816,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     and not control_calls
                     and not loader_calls
                 ):
+                    round_text = [
+                        content
+                        for content in chat_log.content
+                        if id(content) not in existing_content_ids
+                        and isinstance(content, conversation.AssistantContent)
+                        and content.content
+                        and not content.tool_calls
+                    ]
                     if not finalization_retry_attempted:
-                        draft_content.extend(
-                            content
-                            for content in chat_log.content
-                            if id(content) not in existing_content_ids
-                            and isinstance(content, conversation.AssistantContent)
-                            and bool(content.content)
-                            and not content.tool_calls
-                        )
+                        draft_content = round_text
                         draft_content_ids.update(
                             id(content) for content in draft_content
                         )
@@ -1663,41 +1838,50 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                         continue
 
+                    answers = [
+                        content
+                        for content in round_text
+                        if classify_provider_output(content.native) == "answer"
+                    ]
+                    hidden_ids = draft_content_ids
+                    if not any((content.content or "").strip() for content in answers):
+                        # A commentary-only or blank retry cannot replace an
+                        # answer. Keep the draft and retain native retry items.
+                        hidden_ids = {id(content) for content in answers}
+                        answers = [
+                            content
+                            for content in chat_log.content
+                            if id(content) in draft_content_ids
+                            and isinstance(content, conversation.AssistantContent)
+                            and classify_provider_output(content.native) == "answer"
+                        ]
+                        if not any(
+                            (content.content or "").strip() for content in answers
+                        ):
+                            # Completed empty Responses already act as a
+                            # bounded, silent acknowledgement after tools.
+                            hidden_ids.update(draft_content_ids)
+                            answers = []
+                    if hidden_ids:
+                        _discard_conditional_drafts(
+                            chat_log,
+                            hidden_ids,
+                            preserve_native=api_mode == API_MODE_RESPONSES,
+                        )
                     _LOGGER.error(
                         "Conditional response omitted %s after the finalization retry; "
                         "using the assistant text with continuation disabled",
                         CONTINUE_CONVERSATION_TOOL_NAME,
                     )
-                    if draft_content_ids:
-                        _discard_conditional_drafts(
-                            chat_log,
-                            draft_content_ids,
-                            preserve_native=api_mode == API_MODE_RESPONSES,
-                        )
                     if chat_log.delta_listener:
                         with async_streaming_speech_cleanup(
                             chat_log, options, completed=True
                         ) as speech_presentation:
-                            for finalizer_content in chat_log.content:
-                                if (
-                                    id(finalizer_content) not in existing_content_ids
-                                    and isinstance(
-                                        finalizer_content, conversation.AssistantContent
-                                    )
-                                    and finalizer_content.content
-                                    and not finalizer_content.tool_calls
-                                    and classify_provider_output(
-                                        finalizer_content.native
-                                    )
-                                    == "answer"
-                                ):
-                                    chat_log.delta_listener(
-                                        chat_log,
-                                        {
-                                            "role": "assistant",
-                                            "content": finalizer_content.content,
-                                        },
-                                    )
+                            for answer in answers:
+                                chat_log.delta_listener(
+                                    chat_log,
+                                    {"role": "assistant", "content": answer.content},
+                                )
                             if speech_presentation is not None:
                                 await speech_presentation.async_flush_completed(
                                     self.hass, chat_log
@@ -1706,10 +1890,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if (
                     api_mode == API_MODE_RESPONSES
                     and not round_tool_calls
-                    and chat_log.unresponded_tool_results
+                    and responses_leave_tool_results_unanswered(chat_log.content)
                 ):
-                    # A completed response without output is not an assistant
-                    # acknowledgement. Preserve the calls/results for replay
+                    # Replay-only output does not acknowledge tool results.
+                    # Preserve the calls/results for replay
                     # protection, but never resubmit them until the safety limit.
                     raise HomeAssistantError(
                         "OpenAI Responses completed without assistant output "
@@ -1750,7 +1934,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                     )
                     observed_input_tokens = await asyncio.to_thread(
-                        estimate_provider_input_tokens,
+                        estimate_input,
                         prepared_current,
                         tool_kwargs.get("tools"),
                     )
@@ -1976,7 +2160,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         raise HomeAssistantError(f"`{path}` does not exist")
                     if not path.is_file():
                         raise HomeAssistantError(f"`{path}` is not a file")
-                    mime_type = attachment.mime_type or mimetypes.guess_type(path)[0]
+                    mime_type = _attachment_mime_type(attachment)
                     if not mime_type:
                         raise HomeAssistantError(
                             f"Unable to determine attachment type for `{path}`"
@@ -2319,6 +2503,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         request_usage: RequestTokenMeasurements | None = None,
         *,
         effective_output_limit: int | None = None,
+        reasoning_route: str | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -2333,6 +2518,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     result,
                     request_usage,
                     effective_output_limit=effective_output_limit,
+                    reasoning_route=reasoning_route,
                 )
             ) as events:
                 async for delta in events:
@@ -2354,6 +2540,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         request_usage: RequestTokenMeasurements | None = None,
         *,
         effective_output_limit: int | None = None,
+        reasoning_route: str | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -2496,7 +2683,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if item_type in {"reasoning", "web_search_call"}:
                         # Preserve native hosted-tool and reasoning output so stateless
                         # chained function calls retain the complete Responses context.
-                        yield {"native": item}
+                        yield {
+                            "native": RoutedReasoning(reasoning_route, item)
+                            if item_type == "reasoning" and reasoning_route is not None
+                            else item
+                        }
                     elif (
                         item_type == "message"
                         and getattr(item, "content", None) is not None
@@ -2590,11 +2781,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         _trace_provider_usage(chat_log, extract_usage(response.usage))
 
                     if event_type == "response.incomplete":
-                        details = response.incomplete_details
                         reason = (
-                            details.reason
-                            if details and details.reason
-                            else "unknown reason"
+                            responses_incomplete_reason(response) or "unknown reason"
                         )
                         if reason == "max_output_tokens":
                             raise TokenLengthExceededError(effective_output_limit)
@@ -2920,16 +3108,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     **settings,
                     store=False,
                 )
-                text = getattr(response, "output_text", None)
-                details = getattr(response, "incomplete_details", None)
-                reason = (
-                    details.get("reason")
-                    if isinstance(details, dict)
-                    else getattr(details, "reason", None)
+                output = getattr(response, "output", None)
+                text = (
+                    responses_answer_text(output)
+                    if output is not None
+                    else getattr(response, "output_text", None)
                 )
                 exhausted = (
                     getattr(response, "status", None) == "incomplete"
-                    and reason == "max_output_tokens"
+                    and responses_incomplete_reason(response) == "max_output_tokens"
                 )
             else:
                 kwargs: dict[str, Any] = {

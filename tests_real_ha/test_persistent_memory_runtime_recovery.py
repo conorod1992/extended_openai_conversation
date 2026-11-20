@@ -1,6 +1,10 @@
 """Recover invalidated Memory through ordinary Assist, using durable storage."""
 
+import asyncio
 import json
+import os
+from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -9,15 +13,123 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     normalize_agent_config,
 )
 from custom_components.extended_openai_conversation_responses.const import (
+    DOMAIN,
     SUBSYSTEM_STATUS_KEY,
 )
 from homeassistant.components import conversation
-from homeassistant.core import Context
+from homeassistant.core import Context, CoreState
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util.file import WriteError
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_cross_feature_acceptance import _speech
 from tests_real_ha.test_provider_input_history import _transport
 from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _chat_sse_tool_call
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
+
+
+@pytest.mark.usefixtures("real_store_io")
+async def test_rebuild_embeddings_requires_durable_removal(hass, monkeypatch):
+    entry = _make_entry("Cache reset", include_ai_task=False)
+    await _setup_entry(hass, entry)
+    agent_id = next(iter(entry.subentries))
+    manager = await memory.async_get_memory(hass, entry.entry_id, agent_id)
+    _, fact = await manager.async_add_record(
+        "review-user", "The orchid is purple.", "general", "explicit"
+    )
+    provider = AsyncMock(
+        side_effect=lambda texts: memory.EmbeddingBatch(
+            [[1.0, 0.0] for _ in texts], "alias"
+        )
+    )
+    manager.set_embedding_provider(provider, "alias")
+    assert await manager.async_prepare_hybrid(["review-user"], "old query") == [
+        1.0,
+        0.0,
+    ]
+    cache = manager._embedding_cache_storage
+    path = Path(cache._store.path)
+    old_file = await hass.async_add_executor_job(path.read_bytes)
+    original_unlink = os.unlink
+
+    def reject_cache_removal(target, *args, **kwargs):
+        if target == str(path):
+            raise PermissionError("Cache filesystem is read-only")
+        return original_unlink(target, *args, **kwargs)
+
+    async def rebuild():
+        await hass.services.async_call(
+            DOMAIN,
+            "rebuild_memory_embeddings",
+            {"config_entry": entry.entry_id, "agent_id": agent_id},
+            blocking=True,
+        )
+
+    with monkeypatch.context() as unavailable:
+        unavailable.setattr(os, "unlink", reject_cache_removal)
+        with pytest.raises(
+            HomeAssistantError, match="Could not persist the embedding cache reset"
+        ):
+            await rebuild()
+    assert await hass.async_add_executor_job(path.read_bytes) == old_file
+    assert len(manager._embedding_cache) == 1
+
+    writer = AsyncMock(side_effect=WriteError("Native writer unavailable"))
+    monkeypatch.setattr(cache._store, "_async_write_data", writer)
+    # Rebuilding must also retire a pending native generation.
+    cache._store.async_delay_save(lambda: {"embeddings": {}}, delay=3600)
+    started, release = asyncio.Event(), asyncio.Event()
+    native_remove = cache.async_remove
+
+    async def delayed_remove():
+        started.set()
+        await release.wait()
+        await native_remove()
+
+    monkeypatch.setattr(cache, "async_remove", delayed_remove)
+    with monkeypatch.context() as stopping:
+        stopping.setattr(hass, "state", CoreState.stopping)
+        operation = asyncio.create_task(manager.async_rebuild_embedding_cache())
+        await started.wait()
+        operation.cancel()
+        await asyncio.sleep(0)
+        assert not operation.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+    writer.assert_not_awaited()
+    assert not await hass.async_add_executor_job(path.exists)
+    assert await cache.async_load() is None
+    await rebuild()
+
+    fresh_cache = memory.HomeAssistantEmbeddingCacheStorage(
+        hass, entry.entry_id, agent_id
+    )
+    reloaded = memory.PersistentMemory(manager._storage, fresh_cache)
+    await reloaded.async_initialize()
+    assert await reloaded.async_list("review-user") == [fact]
+    provider.reset_mock()
+    provider.side_effect = lambda texts: memory.EmbeddingBatch(
+        [[0.0, 1.0] for _ in texts], "alias"
+    )
+    reloaded.set_embedding_provider(provider, "alias")
+    assert await reloaded.async_prepare_hybrid(["review-user"], "fresh query") == [
+        0.0,
+        1.0,
+    ]
+    assert [call.args[0] for call in provider.await_args_list] == [
+        ["general | The orchid is purple."],
+        ["fresh query"],
+    ]
+    await hass.async_add_executor_job(path.write_bytes, b"{invalid")
+    recovered = memory.PersistentMemory(
+        manager._storage, memory.HomeAssistantEmbeddingCacheStorage(hass, entry.entry_id, agent_id)
+    )
+    await recovered.async_initialize()
+    assert await recovered.async_list("review-user") == [fact]
+    recovered.set_embedding_provider(provider, "alias")
+    provider.reset_mock()
+    assert await recovered.async_prepare_hybrid(["review-user"], "after corruption") == [0.0, 1.0]
+    assert provider.await_count == 2
 
 
 class FaultStorage:

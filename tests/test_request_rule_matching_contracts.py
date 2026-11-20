@@ -82,7 +82,7 @@ async def test_text_modes_require_whole_phrase_at_the_right_position(
 )
 @pytest.mark.parametrize("fuzzy", [False, True])
 @pytest.mark.parametrize("negative_first", [False, True])
-@pytest.mark.parametrize("magnitude", ["5", "5.25", ".5"])
+@pytest.mark.parametrize("magnitude", ["5", "5.25", ".5", "5C", "5.25C"])
 async def test_text_modes_preserve_signed_numeric_tokens_in_match_and_preview(
     hass, match_type, fuzzy, negative_first, magnitude
 ):

@@ -61,7 +61,7 @@ async def _archive_recovery(hass, monkeypatch, phase):
         }
     )
 
-    async def managers(hass, entry_id, subentry_id):
+    async def managers(hass, entry_id, subentry_id, *, include_usage=True):
         return participants(
             temporary=await temporary_memory.async_get_temporary_memory(
                 hass, entry_id, subentry_id

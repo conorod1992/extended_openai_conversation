@@ -91,7 +91,7 @@ async def test_overview_bounds_and_sanitizes_usage_once(
     monkeypatch.setattr(
         loading,
         "async_get_knowledge",
-        AsyncMock(return_value=SimpleNamespace(source_count=0)),
+        AsyncMock(return_value=SimpleNamespace(source_count=0, total_source_count=0)),
     )
     monkeypatch.setattr(
         loading,

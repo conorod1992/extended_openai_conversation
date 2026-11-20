@@ -311,7 +311,8 @@ async def test_azure_rule_snapshot_reports_underlying_capability_model(hass, bou
 
     entry = _make_entry(
         include_ai_task=False,
-        data={"api_provider": "azure"},
+        base_url="https://resource.openai.azure.com",
+        data={"api_provider": "azure", "api_version": "2024-10-21"},
         conversation_options={
             "chat_model": "home-deployment" if bound else "gpt-4.1",
             "azure_model": "gpt-5.6" if bound else "",

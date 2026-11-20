@@ -251,6 +251,7 @@ async def test_usage_sensor_projection_matches_manager_exactly() -> None:
     summary = manager.today_summary()
     assert today.native_value == summary["total_tokens"] == 28
     assert today.extra_state_attributes == {
+        "period_start": next(iter(manager.daily)),
         "input": 11,
         "output": 17,
         "cached_input": 3,

@@ -381,6 +381,9 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest tests/ tests_stress/test_management_ws_contract.py \
+            tests_real_ha/test_agent_private_data_deletion.py \
+            tests_real_ha/test_archive_record_integrity.py \
+            tests_real_ha/test_usage_period_statistics.py \
             -n 2 \
             --dist=loadscope \
             -v \

@@ -129,11 +129,15 @@ async def test_rest_value_variables(hass, rest_server, kind, template, expected)
 
 
 @pytest.mark.parametrize("scrape", [False, True])
-async def test_charset_fallback_reuses_bounded_body(hass, monkeypatch, scrape):
+@pytest.mark.parametrize("advertised_charset", ["utf-8", "utf-8mb4"])
+async def test_charset_fallback_reuses_bounded_body(
+    hass, monkeypatch, scrape, advertised_charset
+):
     hass.loop = asyncio.get_running_loop()
     hass.is_stopping = False
     response = _FakeResponse(b"<p>caf\xe9</p>" if scrape else b"caf\xe9")
-    response.headers = {"Content-Type": "text/html; charset=utf-8"}
+    response.charset = advertised_charset
+    response.headers = {"Content-Type": f"text/html; charset={advertised_charset}"}
     session = _FakeSession(response)
     monkeypatch.setattr(web, "async_get_clientsession", lambda *_a, **_kw: session)
     config = {**_rest_config(), "encoding": "windows-1252"}

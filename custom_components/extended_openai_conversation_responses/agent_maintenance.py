@@ -174,6 +174,11 @@ class AgentMaintenanceGate:
         """Drain readers and exclude new work for one maintenance operation."""
         acquired = False
         async with self._condition:
+            if self._reader_depth.get(self._reader_owner.get(), 0):
+                raise HomeAssistantError(
+                    "This operation needs exclusive assistant access. Run it "
+                    "outside the active conversation or Request Rule."
+                )
             self._waiting_writers += 1
             try:
                 await self._condition.wait_for(
@@ -241,6 +246,9 @@ async def conversation_request_lease(entity: Any) -> AsyncIterator[None]:
     ):
         yield
         return
+    from .provider_credentials import require_provider_restore_complete
+
+    require_provider_restore_complete(hass, entry_id)
     async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared():
         yield
 

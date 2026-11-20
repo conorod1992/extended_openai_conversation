@@ -370,14 +370,32 @@ def preserve_legacy_guest_policy(
     return normalized
 
 
-def _agent_model_changed(
-    current: Mapping[str, Any], updates: Mapping[str, Any]
-) -> bool:
-    """Recognize the same model transition for validation and persistence."""
-    return any(
-        key in updates and updates[key] != current.get(key)
-        for key in (CONF_CHAT_MODEL, "azure_model")
+def _reasoning_model_id(config: Mapping[str, Any], provider: str | None) -> str:
+    return str(
+        (config.get("azure_model") if not provider or provider == "azure" else None)
+        or config.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
     )
+
+
+def _agent_reasoning_model_changed(
+    current: Mapping[str, Any], updates: Mapping[str, Any], provider: str | None
+) -> bool:
+    """Whether an edit changes the model that determines reasoning options."""
+    return _reasoning_model_id(current, provider) != _reasoning_model_id(
+        {**current, **updates}, provider
+    )
+
+
+def legacy_processing_tier_was_omitted(model: Any) -> bool:
+    """Identify the GPT-4o deployments affected by the 6.8.3 tier omission."""
+    return isinstance(model, str) and model in {
+        "gpt-4o",
+        "gpt-4o-2024-05-13",
+        "gpt-4o-2024-08-06",
+        "gpt-4o-2024-11-20",
+        "gpt-4o-mini",
+        "gpt-4o-mini-2024-07-18",
+    }
 
 
 def preserve_agent_model_setting_omissions(
@@ -388,9 +406,12 @@ def preserve_agent_model_setting_omissions(
     This is an operation contract, not a list inferred from default values.
     Sampling settings deliberately remain outside this policy.
     """
-    for key in (CONF_REASONING_EFFORT,):
-        if key not in source:
-            normalized.pop(key, None)
+    if CONF_REASONING_EFFORT not in source:
+        normalized.pop(CONF_REASONING_EFFORT, None)
+    if CONF_SERVICE_TIER not in source and legacy_processing_tier_was_omitted(
+        normalized.get(CONF_CHAT_MODEL)
+    ):
+        normalized.pop(CONF_SERVICE_TIER, None)
     return normalized
 
 
@@ -413,10 +434,12 @@ def project_agent_config_updates(
     current: Mapping[str, Any],
     updates: Mapping[str, Any],
     normalized: Mapping[str, Any],
+    *,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Persist submitted edits, including reasoning reset on a model transition."""
     changed = set(updates)
-    if _agent_model_changed(current, updates):
+    if _agent_reasoning_model_changed(current, updates, provider):
         changed.add(CONF_REASONING_EFFORT)
     return project_agent_config_fields(current, changed, normalized)
 
@@ -983,10 +1006,7 @@ def _configuration_reasoning_context(
     supported by either installed provider contract until a destination is known.
     """
     provider = provider or ("azure" if config.get("azure_model") else None)
-    model = str(
-        (config.get("azure_model") if provider == "azure" else None)
-        or config.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
-    )
+    model = _reasoning_model_id(config, provider)
     options = get_reasoning_effort_options(model, provider=provider)
     if provider is None:
         options = list(
@@ -1117,6 +1137,23 @@ def shortened_usage_retention(
         if type(days) is int and (type(old) is not int or days < old):
             result[key] = days
     return result
+
+
+def preserve_unselected_archive_retention(
+    current: Mapping[str, Any], target: dict[str, Any]
+) -> dict[str, Any]:
+    """Keep the destination's retention floor when replacing configuration alone."""
+    retention = normalized_agent_integer(
+        current, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+    )
+    if (
+        normalized_agent_integer(
+            target, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+        )
+        < retention
+    ):
+        return {**target, CONF_ARCHIVE_RETENTION_DAYS: retention}
+    return target
 
 
 def normalize_agent_config(
@@ -1396,7 +1433,7 @@ def merge_agent_config(
         # Untouched fields belong to an existing agent, not a new collection edit.
         # Decode before merging so legacy falsy values and YAML null stay distinct.
         known[CONF_FUNCTION_TOOLS] = parse_configured_function_tools(current) or []
-    model_changed = _agent_model_changed(current, updates)
+    model_changed = _agent_reasoning_model_changed(current, updates, provider)
     if model_changed and CONF_REASONING_EFFORT not in updates:
         # A model change with no explicit effort should use the new model's
         # recommended profile. Retaining the prior model's effort can make a
@@ -1524,12 +1561,12 @@ def model_capabilities(model: str, *, provider: str | None = None) -> dict[str, 
     return capabilities
 
 
-def agent_config_sampling_repair_snapshot(
+def agent_config_model_repair_snapshot(
     data: dict[str, Any], *, provider: str | None = None
 ) -> dict[str, Any]:
-    """Display legacy sampling booleans without certifying them for a save/run.
+    """Display invalid saved model controls without certifying a save or run.
 
-    Validate every other setting using a private numeric stand-in, then restore
+    Validate every other setting using private stand-ins, then restore
     the exact damaged values for the editor. Never cache this as validated data.
     """
     damaged = {
@@ -1537,6 +1574,14 @@ def agent_config_sampling_repair_snapshot(
         for key in (CONF_TEMPERATURE, CONF_TOP_P)
         if isinstance(data.get(key), bool)
     }
+    tier = data.get(CONF_SERVICE_TIER)
+    if isinstance(tier, str):
+        model, effective_provider, _ = _configuration_reasoning_context(data, provider)
+        tiers = get_model_config(model, provider=effective_provider).get(
+            "service_tier_options", []
+        )
+        if tier != DEFAULT_SERVICE_TIER and tier not in tiers:
+            damaged[CONF_SERVICE_TIER] = tier
     defaults = agent_config_defaults()
     source = {**data, **{key: defaults[key] for key in damaged}}
     return {**agent_config_snapshot(source, provider=provider), **damaged}
