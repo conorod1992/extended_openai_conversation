@@ -339,11 +339,28 @@ def _append_automation_atomic(
         current = []
 
     raw_config = dump_yaml([config], sort_keys=False)
-    if not current:
-        prefix = existing_text if current_node is None else ""
+    if current_node is None:
+        prefix = existing_text
         if prefix and not prefix.endswith("\n"):
             prefix += "\n"
         updated = prefix + raw_config
+    elif not current:
+        tokens = yaml.scan(existing_text, Loader=yaml.SafeLoader)
+        start = next(
+            token for token in tokens if isinstance(token, yaml.FlowSequenceStartToken)
+        )
+        end = next(
+            token for token in tokens if isinstance(token, yaml.FlowSequenceEndToken)
+        )
+        prefix = existing_text[: start.start_mark.index]
+        comments = existing_text[start.end_mark.index : end.start_mark.index]
+        suffix = existing_text[end.end_mark.index :]
+        # Keep document markers, anchors and comments on their own lines.
+        if prefix and not prefix.endswith("\n"):
+            prefix += "\n"
+        if comments.strip() and not comments.endswith("\n"):
+            comments += "\n"
+        updated = prefix + comments + raw_config + suffix
     else:
         prefix = existing_text
         if not prefix.endswith("\n"):

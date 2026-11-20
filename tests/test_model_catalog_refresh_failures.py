@@ -78,6 +78,20 @@ def _chunked_transport(monkeypatch, raw, *, status=200, etag='"v3"', error=None)
     return session.get
 
 
+async def test_clock_rollback_expires_future_refresh_timestamp(
+    check_manager, monkeypatch
+) -> None:
+    now = 1_900_000_000
+    monkeypatch.setattr(runtime.time, "time", lambda: now)
+    check_manager.last_checked = now + 7 * 86400
+    check_manager.etag = '"v3"'
+    request = _chunked_transport(monkeypatch, b"", status=304)
+
+    assert (await check_manager.async_check())["last_checked"] == now
+    await check_manager.async_check()
+    request.assert_called_once()
+
+
 def _stored_manager(hass) -> runtime.ModelCatalogManager:
     manager = runtime.ModelCatalogManager(hass)
     manager.store = MemoryStore()

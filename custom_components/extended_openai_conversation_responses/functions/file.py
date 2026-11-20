@@ -78,8 +78,27 @@ def _read_text_bounded(path: Path) -> str:
     return content.decode("utf-8")
 
 
-def _read_text_bounded_snapshot(path: Path) -> tuple[str, _FileFingerprint]:
+def _checked_file_size(path: Path, display_path: str) -> int:
+    try:
+        metadata = path.stat()
+    except FileNotFoundError:
+        raise FileNotFoundError(f"File not found: {display_path}") from None
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"Not a file: {display_path}")
+    return metadata.st_size
+
+
+def _read_file(path: Path, display_path: str) -> tuple[str, int]:
+    size = _checked_file_size(path, display_path)
+    return _read_text_bounded(path), size
+
+
+def _read_text_bounded_snapshot(
+    path: Path, display_path: str | None = None
+) -> tuple[str, _FileFingerprint]:
     """Read bounded text and capture the exact file version that was read."""
+    if display_path is not None:
+        _checked_file_size(path, display_path)
     with path.open("rb") as handle:
         before = os.fstat(handle.fileno())
         if before.st_size > FILE_READ_SIZE_LIMIT:
@@ -317,16 +336,15 @@ class ReadFileFunction(FileFunction):
     ) -> dict[str, Any]:
         """Resolve and read one bounded file through the existing security checks."""
         try:
-            target_path = self._resolve_path(hass, path_str, allow_dirs)
+            target_path = await hass.async_add_executor_job(
+                self._resolve_path, hass, path_str, allow_dirs
+            )
             await async_ensure_workspace(
                 hass, self.get_working_dir(hass), target=target_path
             )
-            if not target_path.exists():
-                return backend_failure(f"File not found: {path_str}")
-            if not target_path.is_file():
-                return backend_failure(f"Not a file: {path_str}")
-            file_size = target_path.stat().st_size
-            content = await hass.async_add_executor_job(_read_text_bounded, target_path)
+            content, file_size = await hass.async_add_executor_job(
+                _read_file, target_path, path_str
+            )
         except Exception as err:
             log_handled_failure(_LOGGER, "Function Tool file read failed", err)
             return backend_failure(str(err), err)
@@ -438,7 +456,9 @@ class WriteFileFunction(FileFunction):
         )
 
         try:
-            target_path = self._resolve_path(hass, path_str, allow_dirs)
+            target_path = await hass.async_add_executor_job(
+                self._resolve_path, hass, path_str, allow_dirs
+            )
             await async_ensure_workspace(
                 hass, self.get_working_dir(hass), target=target_path
             )
@@ -511,19 +531,15 @@ class EditFileFunction(FileFunction):
         )
 
         try:
-            target_path = self._resolve_path(hass, path_str, allow_dirs)
+            target_path = await hass.async_add_executor_job(
+                self._resolve_path, hass, path_str, allow_dirs
+            )
             await async_ensure_workspace(
                 hass, self.get_working_dir(hass), target=target_path
             )
             async with _get_edit_lock(hass, target_path):
-                if not target_path.exists():
-                    return backend_failure(f"File not found: {path_str}")
-
-                if not target_path.is_file():
-                    return backend_failure(f"Not a file: {path_str}")
-
                 content, fingerprint = await hass.async_add_executor_job(
-                    _read_text_bounded_snapshot, target_path
+                    _read_text_bounded_snapshot, target_path, path_str
                 )
 
                 first_match = content.find(old_text)

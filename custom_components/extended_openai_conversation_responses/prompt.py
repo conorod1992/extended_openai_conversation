@@ -11,26 +11,31 @@ from typing import Any
 from homeassistant.helpers import template
 from homeassistant.helpers.template.helpers import resolve_area_id
 
+from .agent_config import normalized_agent_integer
 from .capabilities import (
     persistent_memory_scope_available,
     resolve_effective_capabilities,
 )
 from .const import (
     CONF_ARCHIVE_ENABLED,
+    CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
     CONF_CONTINUE_CONVERSATION,
     CONF_CURRENT_DATETIME_ENABLED,
     CONF_CURRENT_DATETIME_TEMPLATE,
     CONF_EXPOSED_ENTITIES_ENABLED,
     CONF_EXPOSED_ENTITIES_TEMPLATE,
+    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_PROMPT,
     CONF_SHARED_MEMORY_MODE,
     CONF_TEMPORARY_MEMORY,
     CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_ARCHIVE_ENABLED,
+    DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CURRENT_DATETIME_TEMPLATE,
     DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE,
     DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
+    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_PROMPT,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_TEMPORARY_MEMORY,
@@ -49,7 +54,8 @@ from .exposed_attributes import (
 from .guest_mode import GuestCapabilityPolicy
 from .memory import MemoryRecord, automatic_memory_enabled, memory_revision
 from .model_payload import (
-    ARCHIVE_GUIDANCE,
+    ARCHIVE_PRIVACY_GUIDANCE,
+    ARCHIVE_SEARCH_GUIDANCE,
     CONTINUATION_GUIDANCE,
     GUEST_GUIDANCE,
     KNOWLEDGE_GUIDANCE,
@@ -318,6 +324,8 @@ def render_effective_prompt(
     knowledge_available: bool = False,
     guest_policy: GuestCapabilityPolicy | None = None,
     memory_scope_available: bool | None = None,
+    temporary_scope_available: bool = True,
+    archive_available: bool = True,
 ) -> EffectivePrompt:
     """Render and assemble the production system prompt in deterministic order."""
     if guest_policy is not None and guest_policy.guest_active:
@@ -353,6 +361,14 @@ def render_effective_prompt(
         guest_policy=policy,
     )
     retrieval_safety_added = False
+    function_tools_available = (
+        normalized_agent_integer(
+            options,
+            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+            DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+        )
+        > 0
+    )
 
     if policy.guest_active:
         sections.append(
@@ -364,7 +380,7 @@ def render_effective_prompt(
             )
         )
 
-    if capabilities.persistent_memory:
+    if function_tools_available and capabilities.persistent_memory:
         sections.append(
             PromptSection(
                 "persistent_memory_instructions",
@@ -379,7 +395,12 @@ def render_effective_prompt(
         retrieval_safety_added = True
 
     temporary_mode = options.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
-    if temporary_mode != TEMPORARY_MEMORY_OFF and policy.temporary_memory:
+    temporary_available = (
+        temporary_scope_available
+        and temporary_mode != TEMPORARY_MEMORY_OFF
+        and policy.temporary_memory
+    )
+    if function_tools_available and temporary_available:
         sections.append(
             PromptSection(
                 "temporary_memory_instructions",
@@ -395,7 +416,7 @@ def render_effective_prompt(
         )
         retrieval_safety_added = True
 
-    if knowledge_available and policy.knowledge_access:
+    if function_tools_available and knowledge_available and policy.knowledge_access:
         sections.append(
             PromptSection(
                 "knowledge_instructions",
@@ -410,17 +431,26 @@ def render_effective_prompt(
         retrieval_safety_added = True
 
     if (
-        options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+        function_tools_available
+        and archive_available
+        and options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
         and policy.archive_access
     ):
+        search_available = options.get(
+            CONF_ARCHIVE_MODEL_SEARCH_ENABLED, DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED
+        )
+        archive_guidance = ARCHIVE_PRIVACY_GUIDANCE
+        if search_available:
+            archive_guidance = _with_retrieved_data_safety(
+                f"{archive_guidance.rstrip()}\n\n{ARCHIVE_SEARCH_GUIDANCE}",
+                not retrieval_safety_added,
+            )
+            retrieval_safety_added = True
         sections.append(
             PromptSection(
                 "archive_instructions",
                 "Conversation-archive instructions",
-                _with_retrieved_data_safety(
-                    ARCHIVE_GUIDANCE,
-                    not retrieval_safety_added,
-                ),
+                archive_guidance,
                 "stable",
             )
         )
@@ -543,21 +573,23 @@ def render_effective_prompt(
             PromptSection(
                 "persistent_memory_context",
                 "Retrieved persistent-memory context",
-                _persistent_memory_context(memories),
+                _with_retrieved_data_safety(
+                    _persistent_memory_context(memories), not retrieval_safety_added
+                ),
                 "volatile",
             )
         )
+        retrieval_safety_added = True
 
-    if (
-        temporary_mode != TEMPORARY_MEMORY_OFF
-        and temporary_memories
-        and policy.temporary_memory
-    ):
+    if temporary_available and temporary_memories:
         sections.append(
             PromptSection(
                 "temporary_memory_context",
                 "Active temporary-memory context",
-                _temporary_memory_context(temporary_memories),
+                _with_retrieved_data_safety(
+                    _temporary_memory_context(temporary_memories),
+                    not retrieval_safety_added,
+                ),
                 "volatile",
             )
         )

@@ -414,6 +414,62 @@ def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last
     )
 
 
+@pytest.mark.parametrize("search_enabled", [False, True])
+def test_retention_guidance_matches_available_tools(hass, search_enabled):
+    from custom_components.extended_openai_conversation_responses import (
+        conversation as runtime,
+    )
+    from tests.test_runtime_readiness import _agent
+
+    options = normalize_agent_config({
+        "prompt": "BASE",
+        "temporary_memory": "eager",
+        "voice_scope_policy": "unretained",
+        "archive_enabled": True,
+        "archive_model_search_enabled": search_enabled,
+        "current_datetime_enabled": False,
+        "exposed_entities_enabled": False,
+    })
+    agent = _agent(hass, SimpleNamespace(entry_id="entry"), SimpleNamespace(data=options))
+    agent._temporary_memory = object()
+    token = runtime._ACTIVE_TURN.set(runtime.ConversationTurnContext(temporary_scope=None))
+    try:
+        context = SimpleNamespace(device_id="kitchen")
+        prompt = agent._build_system_prompt([], context, None)
+        tools = {item["spec"]["name"] for item in agent._get_function_tools()}
+    finally:
+        runtime._ACTIVE_TURN.reset(token)
+
+    assert "Silently store concise facts" not in prompt
+    assert not any(name.startswith("temporary_memory_") for name in tools)
+    assert ("Search it only when" in prompt) is search_enabled
+    assert ("conversation_search" in tools) is search_enabled
+    assert "privacy/deletion tools" in prompt
+    assert "conversation_private" in tools
+
+
+def test_zero_budget_omits_tool_guidance_but_keeps_memory_context(hass):
+    result = render_effective_prompt(
+        hass, {
+            CONF_PROMPT: "BASE",
+            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: 0,
+            CONF_MEMORY_MODE: MEMORY_MODE_AUTOMATIC,
+            CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED,
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_CURRENT_DATETIME_ENABLED: False,
+            CONF_EXPOSED_ENTITIES_ENABLED: False,
+        },
+        exposed_entities=[], current_device_id=None, user_input=None, skills=[],
+        memories=[_memory()], temporary_memories=[_temporary()], knowledge_available=True,
+    )
+    keys = {section.key for section in result.sections}
+    assert {"persistent_memory_context", "temporary_memory_context"} <= keys
+    assert not {
+        "persistent_memory_instructions", "temporary_memory_instructions",
+        "archive_instructions", "knowledge_instructions",
+    } & keys
+
+
 def _entity_context() -> list[dict]:
     return [
         {

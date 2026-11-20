@@ -34,7 +34,7 @@ from .function_groups import assemble_function_tools
 from .guest_function_tools import filter_guest_tools_and_groups
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
 from .ha_llm_tools import ToolSnapshot, async_discover
-from .helpers import get_exposed_entities
+from .helpers import entry_api_provider, get_exposed_entities
 from .knowledge import get_loaded_knowledge
 from .memory import memory_enabled
 from .prompt import render_effective_prompt
@@ -46,6 +46,7 @@ from .request import (
     canonical_json,
     format_function_tools,
     ha_tool_discovery_references,
+    validate_provider_tool_count,
 )
 from .skill_runtime_availability import effective_tool_runtime_scope
 from .skills import SkillManager
@@ -177,6 +178,7 @@ async def async_preview_effective_request(
             temporary_memories=temporary_memories,
             knowledge_available=knowledge_available,
             guest_policy=guest_policy,
+            temporary_scope_available=True,
         )
         availability_groups = groups
         availability_tools = configured_tools
@@ -250,6 +252,14 @@ async def async_preview_effective_request(
         )
         formatted_provider = (
             list(provider.provider_tools) if guest_policy.web_search else []
+        )
+        validate_provider_tool_count(
+            len(formatted_custom)
+            + len(formatted_loader)
+            + len(formatted_integration)
+            + len(formatted_provider),
+            entry_api_provider(entry),
+            provider.api_mode,
         )
         request_settings = {"api_mode": provider.api_mode, **provider.api_kwargs}
         if (

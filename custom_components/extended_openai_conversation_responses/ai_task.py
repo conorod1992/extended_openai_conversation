@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass, field
-from json import JSONDecodeError
+import json
 import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 from openai import OpenAIError
@@ -18,7 +19,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.util.json import json_loads
 
 from .assistant_response import final_assistant_text
 from .debug import record_current_provider_failure
@@ -305,13 +305,26 @@ def parse_ai_task_structured_response(
 ) -> Any:
     """Parse and validate the caller's contract without exposing task contents."""
     try:
-        data = json_loads(text)
-    except JSONDecodeError as err:
-        _LOGGER.error("Failed to parse structured AI Task JSON response: %s", err)
-        raise HomeAssistantError("Error with structured response") from err
+        data = json.loads(
+            text, parse_constant=_reject_json_constant, parse_float=_finite_json_float
+        )
+    except ValueError, RecursionError:
+        _LOGGER.error("Failed to parse structured AI Task JSON response")
+        raise HomeAssistantError("Error with structured response") from None
     if original_schema is not None:
         data = _omit_optional_nulls(data, original_schema)
     return _validate_with_caller_cleanup(data, structure)
+
+
+def _reject_json_constant(_value: str) -> Any:
+    raise ValueError("Non-finite value in structured AI Task JSON")
+
+
+def _finite_json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        _reject_json_constant(value)
+    return number
 
 
 def _validate_with_caller_cleanup(data: Any, structure: SchemaValidator | None) -> Any:

@@ -46,6 +46,21 @@ const REQUEST_RULE_CACHE_KEY = "capabilities/request-rules";
 
 const KNOWLEDGE_TITLE_LIMIT = 120;
 const KNOWLEDGE_DESCRIPTION_LIMIT = 500;
+
+function knowledgeCharacterCount(value) {
+  let length = value.length;
+  for (let index = 0; index < value.length; index++) {
+    if (value.codePointAt(index) > 0xFFFF) {
+      length--;
+      index++;
+    }
+  }
+  return length;
+}
+
+function normalizedKnowledgeContent(value) {
+  return value.replace(/\r\n?/g, "\n").replace(/[ \t]+$/gm, "").trim();
+}
 const KNOWLEDGE_LIMIT = 100000;
 const NAVIGATION_MARK_PREFIX = "extended-openai:navigation";
 const LOAD_MARK_PREFIX = "extended-openai:load-section";
@@ -2283,7 +2298,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _dialogs() {
     const owned = this._dialogOwnership();
     const view = this._viewKey();
-    const content = `${view === "data-memory/knowledge" && owned.has("knowledge-dialog") ? `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" maxlength="${KNOWLEDGE_TITLE_LIMIT}" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}" spellcheck="true"></textarea></label>${knowledgeSourceAvailabilityControl()}<label>Content<textarea id="knowledge-content" class="knowledge-editor" maxlength="${KNOWLEDGE_LIMIT}" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>` : ""}
+    const content = `${view === "data-memory/knowledge" && owned.has("knowledge-dialog") ? `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" spellcheck="true"></textarea></label>${knowledgeSourceAvailabilityControl()}<label>Content<textarea id="knowledge-content" class="knowledge-editor" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>` : ""}
       ${view === "data-memory/memories" && owned.has("memory-dialog") ? `<dialog id="memory-dialog" class="editor-dialog" aria-labelledby="memory-dialog-title"><form id="memory-form"><div class="dialog-header"><h2 id="memory-dialog-title">Add memory</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Memory<textarea id="memory-content" required spellcheck="true" placeholder="What should the agent remember?"></textarea></label><div id="memory-metadata"></div><p id="memory-meta" class="meta"></p><div id="memory-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="memory-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="memory-save">Save</button></div></form></dialog>` : ""}
       ${view === "data-memory/conversations" && owned.has("session-dialog") ? `<dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>` : ""}
       ${view === "data-memory/memories" && this._memoryKind !== "temporary" && owned.has("reassign-dialog") ? `<dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope"></select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>` : ""}
@@ -2613,6 +2628,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (button.disabled || this.shadowRoot.querySelector("#knowledge-dialog").__eocUncertainMutation
         || !["create", "edit"].includes(this._knowledgeMode)) return;
     const values = this._knowledgeValues();
+    for (const [label, value, limit] of [
+      ["Title", values.title.trim().replace(/\s+/g, " "), KNOWLEDGE_TITLE_LIMIT],
+      ["Description", values.description.trim().replace(/\s+/g, " "), KNOWLEDGE_DESCRIPTION_LIMIT],
+      ["Content", normalizedKnowledgeContent(values.content), KNOWLEDGE_LIMIT],
+    ]) {
+      if (knowledgeCharacterCount(value) > limit) {
+        this._setDialogError("knowledge", `${label} must be at most ${formatUsageNumber(limit)} characters.`);
+        return;
+      }
+    }
     const editing = this._knowledgeMode === "edit";
     const owner = this._retainedMutationOwner();
     const submission = captureConfigurationOwner(this);
@@ -2980,7 +3005,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _updateKnowledgeCounter() {
-    const length = this.shadowRoot.querySelector("#knowledge-content")?.value.length || 0;
+    const value = this.shadowRoot.querySelector("#knowledge-content")?.value || "";
+    const length = knowledgeCharacterCount(normalizedKnowledgeContent(value));
     this.shadowRoot.querySelector("#knowledge-counter").textContent = `${formatUsageNumber(length)} / ${formatUsageNumber(KNOWLEDGE_LIMIT)} characters`;
   }
 

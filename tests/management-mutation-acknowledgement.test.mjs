@@ -68,6 +68,27 @@ function authenticationRoundTrip(panel) {
   assert.equal(panel._eocAuthenticationGeneration, 2);
 }
 
+test("Knowledge submits the complete Unicode input at its limit and rejects excess", async () => {
+  const {panel, control} = host();
+  const value = "a".repeat(99997) + "😀Z!";
+  const fields = control("#knowledge-content");
+  control("#knowledge-counter");
+  fields.value = value;
+  panel._updateKnowledgeCounter();
+  assert.match(control("#knowledge-counter").textContent, /^100.000 \/ 100.000 characters$/);
+  const calls = [];
+  panel._call = async (...args) => { calls.push(args); throw new Error("Test response"); };
+  panel._knowledgeValues = () => ({title:"Source", description:"", content:fields.value});
+  fields.value += "a";
+  await panel._saveKnowledge();
+  assert.equal(calls.length, 0);
+  assert.match(panel.visibleError, /at most 100.000 characters/);
+  fields.value = value;
+  await panel._saveKnowledge();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][2].content, value);
+});
+
 for (const differing of [false, true]) test(`persistent duplicate preserves Add identity, counts, and metadata draft (different=${differing})`, async () => {
   const {panel, dialog} = host("memory");
   const values = {...panel._memoryValues(), subject:"Alice", valid_from:"2026-01-01T00:00:00Z"};

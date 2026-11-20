@@ -8,7 +8,7 @@ assert.equal(isHALlmTool(tool), true);
 assert.equal(haToolName(tool), "native_tool");
 const card = renderHAToolCard(panel, tool, 0);
 assert.match(card, /native_tool/);
-assert.match(card, /Unavailable/);
+assert.match(card, /Unavailable in preview/);
 assert.match(card, /Remove/);
 assert.match(card, /tool-enabled/);
 assert.match(card, /&lt;unsafe>/);

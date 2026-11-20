@@ -1202,6 +1202,13 @@ class ExtendedOpenAIAgentEntity(
                             user_input,
                             chat_log,
                             successful=run.successful,
+                            public_reply=(
+                                result.response.speech.get("plain", {}).get(
+                                    "speech", ""
+                                )
+                                if result.response.error_code is not None
+                                else ""
+                            ),
                         )
                         if run.successful:
                             await continuity.async_record_success(
@@ -1594,6 +1601,7 @@ class ExtendedOpenAIAgentEntity(
         chat_log: ChatLog,
         *,
         successful: bool,
+        public_reply: str = "",
     ) -> None:
         """Archive a completed turn without changing its user-facing outcome."""
         if (
@@ -1604,6 +1612,8 @@ class ExtendedOpenAIAgentEntity(
         ):
             return
         assistant_text = final_assistant_text(chat_log.content)
+        if not successful and not assistant_text:
+            assistant_text = public_reply
         try:
             await self._archive.async_record_turn(
                 archive_session.session_id,
@@ -1755,6 +1765,11 @@ class ExtendedOpenAIAgentEntity(
             temporary_memories=temporary_memories,
             knowledge_available=self._knowledge_available,
             guest_policy=policy,
+            temporary_scope_available=(
+                getattr(self, "_temporary_memory", None) is not None
+                and _ACTIVE_TURN.get().temporary_scope is not None
+            ),
+            archive_available=getattr(self, "_archive", None) is not None,
         )
         record_prompt_render(effective, render_started)
         _PROMPT_CACHE_CONTEXT.set(prompt_cache_context(effective, self.subentry.data))

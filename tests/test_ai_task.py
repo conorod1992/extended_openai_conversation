@@ -34,6 +34,35 @@ def _entity() -> ai_task_platform.ExtendedOpenAITaskEntity:
     )
 
 
+async def test_structured_task_preserves_integer_above_uint64(monkeypatch):
+    identifier = 123456789012345678901
+    entity = _entity()
+    task = ai_task.GenDataTask(
+        name="Read an identifier",
+        instructions="Extract the numeric identifier",
+        structure=vol.Schema({vol.Required("identifier"): int}),
+    )
+    chat_log = SimpleNamespace(llm_api=None, content=[], conversation_id="task")
+
+    async def respond(log, *, structure_schema, **kwargs):
+        assert structure_schema["properties"]["identifier"]["type"] == "integer"
+        log.content.append(
+            conversation.AssistantContent(
+                agent_id="task", content=f'{{"identifier": {identifier}}}'
+            )
+        )
+
+    monkeypatch.setattr(entity, "_async_handle_chat_log", respond)
+    result = await entity._async_generate_data(task, chat_log)
+    assert result.data == {"identifier": identifier}
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_structured_task_rejects_nonfinite_json(literal):
+    with pytest.raises(HomeAssistantError, match="Error with structured response"):
+        ai_task_platform.parse_ai_task_structured_response(f'{{"value": {literal}}}')
+
+
 @pytest.mark.asyncio
 async def test_setup_entry_adds_only_ai_task_subentries(
     monkeypatch: pytest.MonkeyPatch,

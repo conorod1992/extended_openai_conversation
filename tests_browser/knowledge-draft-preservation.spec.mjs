@@ -1,6 +1,32 @@
 import {expect, test} from "@playwright/test";
 import {exerciseConfigurationDraftTransition, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+test("Knowledge accepts a full-size Unicode paste without dropping text", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("data-memory/knowledge"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#add-source").click();
+  await panel.locator("#knowledge-title").fill("Unicode source");
+  const content = panel.locator("#knowledge-content");
+  await content.focus();
+  const pasted = "a".repeat(99997) + "😀Z!";
+  await page.keyboard.insertText(pasted);
+  expect(await content.inputValue()).toBe(pasted);
+
+  await page.keyboard.insertText("b");
+  await panel.locator("#knowledge-save").click();
+  await expect(panel.locator("#knowledge-error")).toContainText("Content must be at most");
+  await content.press("End");
+  await content.press("Backspace");
+  await panel.locator("#knowledge-save").click();
+  await expect(panel.locator("#knowledge-dialog")).not.toBeVisible();
+  const saved = await page.evaluate(() => browserHarness.calls.find(
+    call => call.section === "knowledge" && call.action === "create"
+  )?.content);
+  expect(saved).toBe(pasted);
+  await expectHarnessClean(page, errors);
+});
+
 test("Knowledge immediate save preserves prompt and name drafts through navigation, full save and reload", async ({page}) => {
   const errors=trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/prompt-context"));

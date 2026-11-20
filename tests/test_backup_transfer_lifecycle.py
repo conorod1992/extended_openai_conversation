@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 import hashlib
 import os
 from types import SimpleNamespace
@@ -141,17 +142,19 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         *,
         sections,
         current_snapshot,
+        archive_retention_at,
     ):
         assert actual_entry is entry
         assert actual_subentry is subentry
         assert actual_prepared is prepared
         assert sections == frozenset({"memory"})
         assert current_snapshot is not None
+        assert archive_retention_at is None
         return object(), {"changes": 1, "selected_sections": ["memory"]}
 
     async def restore(
         _hass, actual_entry, actual_subentry, actual_prepared, *, sections, precondition,
-        confirm_retention, provider_connection, expected_provider_data,
+        confirm_retention, provider_connection, expected_provider_data, archive_retention_at,
     ):
         assert actual_entry is entry
         assert actual_subentry is subentry
@@ -159,6 +162,7 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert sections == ["memory"]
         assert not confirm_retention
         assert provider_connection is expected_provider_data is None
+        assert archive_retention_at is None
         await precondition()
         return {"restored": True}
 
@@ -294,6 +298,80 @@ async def test_inspection_with_missing_user_mapping_requires_selection_before_pr
     session = backup_transfer._imports(hass)[session_id]
     assert session.preview_sections == (selected_section,)
     assert session.preview_user_scope_mappings is None
+
+
+async def test_expired_archive_owner_does_not_block_restore_preview(hass, monkeypatch):
+    from tests.test_restore_recovery import _states
+    from tests.test_transfer_user_mapping import _prepared
+
+    selected = transfer.SECTION_CONVERSATION_ARCHIVE
+    prepared = _prepared()
+    now = datetime(2026, 11, 20, tzinfo=UTC)
+    original = prepared.archive_sessions[0]
+    stamp = (now - timedelta(days=2)).isoformat()
+    prepared.archive_sessions.append(
+        replace(
+            original,
+            session_id="recent",
+            home_assistant_conversation_id="recent-conversation",
+            scope_id="user:current-user",
+            started_at=stamp,
+            last_message_at=stamp,
+            last_activity_at=stamp,
+        )
+    )
+    prepared.archive_turns = []
+    entry = SimpleNamespace(entry_id="entry-1", data={})
+    subentry = SimpleNamespace(subentry_id="agent-1")
+    hass.auth.async_get_users = AsyncMock(
+        return_value=[SimpleNamespace(id="current-user", name="Current user")]
+    )
+    monkeypatch.setattr(backup_transfer.dt_util, "utcnow", lambda: now)
+    monkeypatch.setattr(backup_transfer, "_resolve_agent", lambda *_: (entry, subentry))
+    monkeypatch.setattr(
+        backup_transfer, "_async_load_prepared_restore", AsyncMock(return_value=prepared)
+    )
+    current = replace(_states()[0], config={"archive_retention_days": 30})
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))
+
+    started = await backup_transfer._start_import(
+        hass, entry.entry_id, subentry.subentry_id, {"filename": "backup.json", "size": 4}
+    )
+    session_id = started["session_id"]
+    await backup_transfer._import_chunk(
+        hass, entry.entry_id, subentry.subentry_id,
+        {"session_id": session_id, "index": 0, "data": base64.b64encode(b"data").decode()},
+    )
+    result = await backup_transfer._inspect_import(
+        hass, entry.entry_id, subentry.subentry_id,
+        {"session_id": session_id, "sections": [selected]},
+    )
+    assert result["preview_token"]
+    assert result["preview"]["archive_sessions"] == 1
+    assert result["preview"]["archive_retention"]["expired_sessions"] == 1
+    assert result["preview"]["user_scope_mapping"]["resolved"] == {
+        "current-user": "current-user"
+    }
+
+    # A backwards wall-clock correction between preview and confirmation
+    # must not make a session with no approved owner mapping eligible again.
+    async def commit(hass, entry, subentry, imported, *, precondition, sections,
+                     archive_retention_at, **kwargs):
+        await precondition()
+        target, _ = await transfer.async_materialize_restore(
+            hass, entry, subentry, imported, sections=sections,
+            archive_retention_at=archive_retention_at,
+        )
+        return {"owners": [session.scope_id for session in target.archive_sessions]}
+
+    monkeypatch.setattr(transfer, "async_restore_transfer", commit)
+    monkeypatch.setattr(backup_transfer.dt_util, "utcnow", lambda: now - timedelta(days=30))
+    restored = await backup_transfer._restore_import(
+        hass, entry, subentry, {
+            "session_id": session_id, "preview_token": result["preview_token"],
+        }
+    )
+    assert restored == {"owners": ["user:current-user"]}
 
 
 async def test_restore_failure_still_consumes_and_deletes_completed_upload(

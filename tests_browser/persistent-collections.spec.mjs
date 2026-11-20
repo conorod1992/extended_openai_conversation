@@ -247,19 +247,25 @@ test("Functions: create and rename a group preserve tool and other group identit
   expect(await page.evaluate(() => retainedGroup === browserHarness.panel.shadowRoot.querySelector('.function-group-card[data-group-id="group-0"]'))).toBe(true);
 });
 
-test("Functions: adding HA tools refreshes saved metadata without rebinding existing cards", async ({page}) => {
+test("Functions: a satellite tool can be added without rebinding existing cards", async ({page}) => {
   const panel = await openCollection(page, "capabilities/functions");
   await remember(page, '[data-tool-key="tool_0"]');
   await page.evaluate(() => {
     const hass = browserHarness.hass, original = hass.callWS.bind(hass);
     const reference = {type: "ha_llm", source_id: "fixture", api_id: "assist", tool_name: "new_ha_tool"};
-    window.catalogReads = 0;
+    window.catalogReads = [];
+    window.addDevice = null;
     hass.callWS = message => {
       if (message.section === "tools" && message.action === "ha_catalog") {
-        catalogReads++;
-        return Promise.resolve({tools: [{name: "new_ha_tool", source: "fixture", description: "Fixture live tool", reference}], saved: {}});
+        catalogReads.push(message.preview_device_id ?? null);
+        return Promise.resolve({
+          tools: message.preview_device_id === "kitchen" ? [{name: "new_ha_tool", source: "fixture", description: "Fixture live tool", reference}] : [],
+          saved: {},
+          preview_devices: [{device_id: "kitchen", name: "Kitchen satellite"}],
+        });
       }
       if (message.section === "tools" && message.action === "ha_add") {
+        addDevice = message.preview_device_id;
         const config = browserHarness.panel._draft;
         return Promise.resolve({revision:browserHarness.panel._configData.revision, functions: [...structuredClone(config.functions), {spec: {name: "new_ha_tool"}, function: reference}], function_groups: structuredClone(config.function_groups), ha_saved: {new_ha_tool: {description: "Saved tool metadata", available: true, source: "fixture"}}});
       }
@@ -269,12 +275,17 @@ test("Functions: adding HA tools refreshes saved metadata without rebinding exis
   await panel.locator("#function-add").click();
   await panel.locator("#add-ha-tools").click();
   const dialog = panel.locator('dialog[aria-label="Add Home Assistant tools"]');
+  await expect(dialog.locator("[data-tools]")).toContainText("No matching tools");
+  await dialog.getByLabel("Preview device").selectOption({label:"Kitchen satellite"});
   await dialog.locator("[data-tools] input").check();
   await dialog.locator("[data-add]").click();
   await expect(dialog).toHaveCount(0);
   await expect(tool(panel, "new_ha_tool")).toContainText("Saved tool metadata");
   await expectRetained(page, '[data-tool-key="tool_0"]');
-  expect(await page.evaluate(() => catalogReads)).toBe(1);
+  expect(await page.evaluate(() => ({catalogReads, addDevice}))).toEqual({
+    catalogReads: [null, "kitchen"],
+    addDevice: "kitchen",
+  });
 });
 
 

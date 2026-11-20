@@ -34,6 +34,9 @@ from custom_components.extended_openai_conversation_responses.function_groups im
 from custom_components.extended_openai_conversation_responses.function_tool_quarantine import (
     _runtime_configured_function_tools,
 )
+from custom_components.extended_openai_conversation_responses.management_request_preview import (
+    async_preview_effective_request,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
@@ -77,6 +80,22 @@ def _agent(hass, entry, subentry):
         )  # Healthy manager; this probe requests no archive operation.
     agent._usage = None
     return agent
+
+
+async def test_request_preview_rejects_azure_tool_count_for_signed_in_caller(hass):
+    options = _options(
+        126,
+        azure_model="gpt-4o",
+        memory_mode="manual",
+        current_datetime_enabled=False,
+        exposed_entities_enabled=False,
+        prompt="Usage test",
+    )
+    entry = SimpleNamespace(entry_id="entry", data={"api_provider": "azure"})
+    subentry = SimpleNamespace(subentry_id="agent", data=options)
+    request.validate_runtime_readiness(options, entry.data)
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        await async_preview_effective_request(hass, entry, subentry, options, "admin")
 
 
 @pytest.fixture

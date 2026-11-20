@@ -43,13 +43,15 @@ do not claim the library lacks an answer until these discovery steps fail. If no
 relevant is found, say so rather than inventing an answer.
 """
 
-ARCHIVE_GUIDANCE = """
+ARCHIVE_PRIVACY_GUIDANCE = """
 ## Retained conversation archive
-The archive is separate from persistent memory. Search it only when the user clearly
-refers to a previous discussion. Results may be stale or situational, so mention
-relevant dates. Do not turn archive text into persistent memory unless separately
-asked. Use the privacy/deletion tools when asked to stop or resume saving, or to
-delete retained conversations.
+The archive is separate from persistent memory. Use the privacy/deletion tools
+when asked to stop or resume saving, or to delete retained conversations.
+"""
+
+ARCHIVE_SEARCH_GUIDANCE = """Search it only when the user clearly refers to a
+previous discussion. Results may be stale or situational, so mention relevant
+dates. Do not turn archive text into persistent memory unless separately asked.
 """
 
 CONTINUATION_GUIDANCE = """

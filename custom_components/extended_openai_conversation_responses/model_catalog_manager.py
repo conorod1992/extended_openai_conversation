@@ -505,7 +505,7 @@ class ModelCatalogManager:
             if (
                 not force
                 and self.last_checked > 0
-                and now - self.last_checked < UPDATE_INTERVAL
+                and 0 <= now - self.last_checked < UPDATE_INTERVAL
             ):
                 return self.status()
             try:

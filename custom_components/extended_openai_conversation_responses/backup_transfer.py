@@ -8,6 +8,7 @@ import binascii
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, is_dataclass
+from datetime import datetime
 from decimal import Decimal
 import hashlib
 import io
@@ -33,6 +34,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
+from homeassistant.util import dt as dt_util
 
 from . import backup, transfer
 from .agent_maintenance import get_agent_maintenance_gate
@@ -130,6 +132,7 @@ class ImportSession:
     preview_revision: str | None = None
     preview_sections: tuple[str, ...] | None = None
     preview_user_scope_mappings: tuple[tuple[str, str], ...] | None = None
+    preview_archive_retention_at: datetime | None = None
     preview_provider_data: dict[str, Any] | None = None
     preview_restore_provider: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -1273,14 +1276,25 @@ async def _inspect_import_owned(
             raise backup.BackupError(
                 "Provider restoration requires private configuration"
             )
+        current = await transfer._current_snapshot(
+            hass, entry, subentry, include_usage=transfer.SECTION_USAGE in selected
+        )
+        archive_retention_at = None
+        archive_config = None
+        if transfer.SECTION_CONVERSATION_ARCHIVE in selected:
+            archive_retention_at = dt_util.utcnow()
+            archive_config = (
+                (prepared.config or {})
+                if transfer.SECTION_CONFIGURATION in selected
+                else current.config
+            )
         mapping_plan = await transfer.async_user_scope_mapping_plan(
             hass,
             prepared,
             selected,
             data.get("user_scope_mappings"),
-        )
-        current = await transfer._current_snapshot(
-            hass, entry, subentry, include_usage=transfer.SECTION_USAGE in selected
+            archive_config=archive_config,
+            archive_retention_at=archive_retention_at,
         )
         if mapping_plan["missing_source_user_ids"]:
             preview = {
@@ -1300,6 +1314,7 @@ async def _inspect_import_owned(
                 session.preview_revision = None
                 session.preview_sections = tuple(preview["selected_sections"])
                 session.preview_user_scope_mappings = None
+                session.preview_archive_retention_at = None
                 session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
                 _schedule_expiry(hass)
             token = None
@@ -1314,6 +1329,7 @@ async def _inspect_import_owned(
                 mapped,
                 sections=selected,
                 current_snapshot=current,
+                archive_retention_at=archive_retention_at,
                 **(
                     {"provider_connection": prepared.provider_connection}
                     if restore_provider
@@ -1341,6 +1357,7 @@ async def _inspect_import_owned(
                 session.preview_user_scope_mappings = tuple(
                     sorted(mapping_plan["resolved"].items())
                 )
+                session.preview_archive_retention_at = archive_retention_at
                 session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
                 _schedule_expiry(hass)
                 _latest_previews(hass)[(entry_id, subentry_id)] = (
@@ -1394,6 +1411,7 @@ async def _restore_import(
             sections=session.preview_sections,
         )
         selected_sections = tuple(session.preview_sections or ())
+        archive_retention_at = session.preview_archive_retention_at
         resolved_user_mappings = dict(session.preview_user_scope_mappings or ())
         prepared = await transfer.async_apply_user_scope_mappings(
             prepared, selected_sections, resolved_user_mappings
@@ -1470,6 +1488,7 @@ async def _restore_import(
             else session.preview_sections,
             precondition=validate_preview,
             confirm_retention=data.get("confirm_retention") is True,
+            archive_retention_at=archive_retention_at,
             provider_connection=prepared.provider_connection
             if restore_provider
             else None,

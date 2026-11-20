@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
+from threading import get_ident
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,7 @@ from custom_components.extended_openai_conversation_responses.functions import (
     file as file_fn,
 )
 from homeassistant.exceptions import HomeAssistantError
+from tests.helpers import prepare_function_tool_from_yaml
 
 
 def test_read_text_bounded_detects_growth_after_stat(tmp_path, monkeypatch) -> None:
@@ -22,6 +24,46 @@ def test_read_text_bounded_detects_growth_after_stat(tmp_path, monkeypatch) -> N
 
     with pytest.raises(ValueError, match="File too large"):
         file_fn._read_text_bounded(path)
+
+
+@pytest.mark.parametrize("operation", ["read", "write", "edit"])
+async def test_file_tool_path_io_runs_off_event_loop(hass, monkeypatch, operation):
+    path = Path(hass.config.config_dir, file_fn.DEFAULT_WORKING_DIRECTORY, "notes.txt")
+    path.write_text("old text", encoding="utf-8")
+    real_stat = Path.stat
+    real_resolve = Path.resolve
+    owner = get_ident()
+    calls = []
+
+    def stat(self, *args, **kwargs):
+        if self == path:
+            calls.append(("stat", get_ident()))
+        return real_stat(self, *args, **kwargs)
+
+    def resolve(self, *args, **kwargs):
+        if self == path:
+            calls.append(("resolve", get_ident()))
+        return real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    monkeypatch.setattr(Path, "resolve", resolve)
+    hass.async_add_executor_job.side_effect = asyncio.to_thread
+    tool = prepare_function_tool_from_yaml(f"{operation}_file_example.yaml", 0)
+    runner = {
+        "read": file_fn.ReadFileFunction,
+        "write": file_fn.WriteFileFunction,
+        "edit": file_fn.EditFileFunction,
+    }[operation]()
+    result = await runner.execute(
+        hass,
+        tool["function"],
+        {"filename": path.name, "content": "new", "old_text": "old", "new_text": "new"},
+        None,
+        [],
+    )
+    assert result.get("success", result.get("content") == "old text"), result
+    assert {kind for kind, _ in calls} == {"resolve", "stat"}
+    assert all(thread != owner for _, thread in calls)
 
 
 def test_read_text_bounded_detects_growth_during_read(tmp_path, monkeypatch) -> None:

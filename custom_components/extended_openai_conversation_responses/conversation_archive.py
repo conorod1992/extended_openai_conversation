@@ -154,9 +154,11 @@ def archive_sessions_past_retention(
     sessions: Iterable[ArchiveSession],
     turns: Iterable[ArchiveTurn],
     retention_days: int,
+    *,
+    now: datetime | None = None,
 ) -> set[str]:
     """Use the same expiry rule in retention maintenance and restore preview."""
-    cutoff = dt_util.utcnow() - timedelta(days=max(1, retention_days))
+    cutoff = (now or dt_util.utcnow()) - timedelta(days=max(1, retention_days))
     latest: dict[str, datetime] = {}
     for turn in turns:
         stamp = _parse_time(turn.timestamp)

@@ -760,6 +760,15 @@ class PersistentMemory:
             return None
         if monotonic() < self._hybrid_retry_at:
             return None
+        allowed_scopes = set(scope_ids)
+        async with async_storage_lock(self._storage, self._lock):
+            self._ensure_initialized()
+            if not any(
+                memory.user_id in allowed_scopes
+                and (category_filter is None or memory.category == category_filter)
+                for memory in self._memories.values()
+            ):
+                return None
         attempt_identity = self._embedding_retry_identity
         attempt_provider = self._embedding_provider
         migrated_model = None
@@ -796,7 +805,6 @@ class PersistentMemory:
                 )
             vector = _clean_embedding(batch.vectors[0])
             width = len(vector)
-            allowed_scopes = set(scope_ids)
             readable = [
                 entry
                 for memory_id, entry in self._embedding_cache.items()

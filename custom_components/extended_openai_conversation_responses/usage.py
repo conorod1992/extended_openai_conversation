@@ -16,7 +16,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, UnsupportedStorageVersionError
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
@@ -81,6 +81,24 @@ def _settle_accounting[**P](
 
 class _UsageStore(PropagatingWriteStore):
     """Surface explicit save failures while keeping delayed telemetry best effort."""
+
+    _checkpoint_deadline: float | None = None
+
+    @callback
+    def async_delay_save(
+        self, data_func: Callable[[], dict[str, Any]], delay: float = 0
+    ) -> None:
+        """Replace pending data while holding its original checkpoint deadline."""
+        now = self.hass.loop.time()
+        if self._checkpoint_deadline is None:
+            self._checkpoint_deadline = now + delay
+        super().async_delay_save(data_func, max(0, self._checkpoint_deadline - now))
+
+    async def _async_write_data(self, data: dict[str, Any]) -> None:
+        # Store has consumed the pending data. A load may evaluate the data
+        # callback too, so evaluating a snapshot cannot retire this deadline.
+        self._checkpoint_deadline = None
+        await super()._async_write_data(data)
 
     async def async_save(self, data: dict[str, Any]) -> None:
         token = _EXPLICIT_USAGE_SAVE.set(True)
@@ -1004,12 +1022,12 @@ class UsageManager:
     @property
     def lifetime_available(self) -> bool:
         """Whether lifetime counters can be published as numeric sensor states."""
-        return not self.is_volatile and not self._totals_need_repair
+        return not self.is_volatile and not self._aggregates_need_repair
 
     @property
     def daily_available(self) -> bool:
         """Whether the daily aggregates are reliable enough to display."""
-        return not self.is_volatile and not self._daily_needs_repair
+        return not self.is_volatile and not self._aggregates_need_repair
 
     @property
     def _aggregates_need_repair(self) -> bool:

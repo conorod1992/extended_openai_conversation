@@ -1,6 +1,7 @@
 """Memory provenance, search pagination and Usage sensor notification regressions."""
 
 from datetime import timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -63,6 +64,20 @@ async def test_search_offset_returns_disjoint_ranked_pages():
     assert first + second + third == ranked
     assert len({record.memory_id for record in first + second + third}) == 6
     assert await memory.async_search("user", "tea", offset=99) == []
+
+
+async def test_hybrid_memory_embeds_only_for_searchable_scope_and_category():
+    memory = await _memory()
+    embed = AsyncMock(side_effect=lambda texts: [[1.0, 0.0] for _ in texts])
+    memory.set_embedding_provider(embed, "model")
+    assert await memory.async_prepare_hybrid(["alice"], "tea") is None
+    await memory.async_add("bob", "Tea", "general", "explicit")
+    await memory.async_add("alice", "Tea", "general", "explicit")
+    assert await memory.async_prepare_hybrid(["charlie"], "tea") is None
+    assert await memory.async_prepare_hybrid(["alice"], "tea", category="other") is None
+    embed.assert_not_awaited()
+    assert await memory.async_prepare_hybrid(["alice"], "tea") == [1.0, 0.0]
+    assert embed.await_args.args == (["tea"],)
 
 
 @pytest.mark.parametrize("operation", ["clear", "prune"])

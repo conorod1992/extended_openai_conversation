@@ -9,6 +9,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from openai import OpenAIError
+
 from custom_components.extended_openai_conversation_responses import (
     conversation as conversation_module,
 )
@@ -606,7 +608,7 @@ async def test_conversation_persistence_failure_does_not_replay_provider_or_tool
     assert persistence_call.args[1] == "run-1"
     assert persistence_call.args[2].text == "hello"
     assert persistence_call.args[3] is logs[0]
-    assert persistence_call.kwargs == {"successful": True}
+    assert persistence_call.kwargs == {"successful": True, "public_reply": ""}
     continuity.async_record_success.assert_awaited_once()
     continuity.async_release.assert_awaited_once()
 
@@ -646,6 +648,34 @@ async def test_archive_turn_write_failure_is_best_effort(hass) -> None:
         user_text="hello",
         assistant_text="Persisting is best effort.",
         successful=True,
+    )
+
+
+async def test_provider_error_speech_is_archived(hass, monkeypatch):
+    usage = _UsageHarness()
+    usage.mark_current_run_failed.side_effect = lambda _: setattr(
+        usage.current_run(), "successful", False
+    )
+    archive = SimpleNamespace(async_record_turn=AsyncMock())
+    _, _, _, _, invoke = _provider_fixture(
+        hass,
+        monkeypatch,
+        [OpenAIError("provider failure")],
+        options={"archive_enabled": True},
+        usage=usage,
+        archive=archive,
+        archive_session=SimpleNamespace(session_id="archive-1"),
+    )
+    result = await invoke()
+    speech = result.response.speech["plain"]["speech"]
+    assert result.response.error_code is not None
+    assert speech
+    archive.async_record_turn.assert_awaited_once_with(
+        "archive-1",
+        run_id="run-1",
+        user_text="hello",
+        assistant_text=speech,
+        successful=False,
     )
 
 

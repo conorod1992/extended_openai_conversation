@@ -29,6 +29,20 @@ async def _disable_automation_validation(monkeypatch) -> None:
     )
 
 
+def test_adding_first_automation_preserves_comments_in_empty_list(tmp_path):
+    path = tmp_path / "automations.yaml"
+    path.write_text(
+        "# Keep instructions\n--- [\n  # Inside the list\n] # Original list\n...\n",
+        encoding="utf-8",
+    )
+    record = {"id": "first", "alias": "First automation"}
+    _append_automation_atomic(path, record)
+    updated = path.read_text(encoding="utf-8")
+    assert yaml.safe_load(updated) == [record]
+    for text in ("# Keep instructions", "# Inside the list", "# Original list"):
+        assert text in updated
+
+
 def _symlink(path: Path, target: Path) -> None:
     try:
         path.symlink_to(target)

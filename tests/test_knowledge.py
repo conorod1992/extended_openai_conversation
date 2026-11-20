@@ -37,7 +37,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 
 def test_management_panel_knowledge_limits_match_backend() -> None:
-    """Keep browser maxlength constraints aligned with backend validation."""
+    """Use backend limits without the browser's UTF-16 truncation."""
     panel = (
         Path(__file__).parents[1]
         / "custom_components"
@@ -49,9 +49,9 @@ def test_management_panel_knowledge_limits_match_backend() -> None:
     assert f"const KNOWLEDGE_TITLE_LIMIT = {MAX_TITLE_LENGTH};" in panel
     assert f"const KNOWLEDGE_DESCRIPTION_LIMIT = {MAX_DESCRIPTION_LENGTH};" in panel
     assert f"const KNOWLEDGE_LIMIT = {MAX_CONTENT_LENGTH};" in panel
-    assert 'maxlength="${KNOWLEDGE_TITLE_LIMIT}"' in panel
-    assert 'maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}"' in panel
-    assert 'maxlength="${KNOWLEDGE_LIMIT}"' in panel
+    assert 'maxlength="${KNOWLEDGE_TITLE_LIMIT}"' not in panel
+    assert 'maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}"' not in panel
+    assert 'maxlength="${KNOWLEDGE_LIMIT}"' not in panel
 
 
 class FakeStorage:
