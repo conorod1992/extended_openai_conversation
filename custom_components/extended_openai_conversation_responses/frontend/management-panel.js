@@ -326,12 +326,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._eocOverviewBroadcastPromise = null;
       pauseLiveStatus(this);
       stopDraftRecovery(this);
+      getRouteFeature("status")?.retireDiagnostics(this);
       getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     }
     const wasBlocked = this._eocPresentationBlocked;
     this._hass = value;
     updateAuthenticationPresentation(this, previousUser);
-    if (wasBlocked && !this._eocPresentationBlocked) resumeLiveStatus(this);
+    if (wasBlocked && !this._eocPresentationBlocked) {
+      resumeLiveStatus(this);
+      getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
+    }
     this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     this.shadowRoot?.querySelectorAll("ha-selector, ha-entity-picker, ha-user-picker, ha-yaml-editor").forEach(element => { element.hass = value; });
     this._loadInitialAgents();
@@ -419,6 +423,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._onHistoryNavigation = null;
     }
     stopLiveStatus(this);
+    getRouteFeature("status")?.retireDiagnostics(this);
     getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     cleanupStateSafety(this);
   }

@@ -1,4 +1,5 @@
 import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {retireDiagnostics} from "./management-feature-status.js";
 const CREDENTIAL_COMMAND = "extended_openai_conversation_responses/management/update_api_key";
 
 export function providerCredentialScope(agent = {}) {
@@ -96,6 +97,7 @@ function resetDiagnosticsAfterCredentialUpdate(panel, result) {
   // If validation was explicitly skipped and the stored key did not change, the
   // previous diagnostic result is still the best evidence we have; keep it.
   if (result?.updated === false && result?.validation_performed === false) return;
+  retireDiagnostics(panel);
   syncAuthenticationRecovery(panel, {authentication_rejected: false});
   const output = panel.shadowRoot?.querySelector("#test-result");
   if (output) {
