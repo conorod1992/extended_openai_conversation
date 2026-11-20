@@ -22,6 +22,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_MEMORY_MODE,
     CONF_REASONING_EFFORT,
     CONF_WEB_SEARCH,
+    DEFAULT_API_PROVIDER,
     MEMORY_MODE_MANUAL,
     MEMORY_MODE_OFF,
 )
@@ -79,7 +80,7 @@ def _objects(options: dict | None = None):
 
 def _usage_attribution(
     *,
-    provider: str = agent_test.DEFAULT_API_PROVIDER,
+    provider: str = DEFAULT_API_PROVIDER,
     model: str = "gpt-4.1-mini",
     api_mode: str = API_MODE_CHAT_COMPLETIONS,
 ) -> dict[str, str]:

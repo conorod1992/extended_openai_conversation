@@ -52,7 +52,7 @@ class FlakyLoadStorage(FakeStorage):
         self.load_calls += 1
         if self.fail_next_load:
             self.fail_next_load = False
-            raise OSError("temporary read failure")
+            raise HomeAssistantError("temporary maintenance failure")
         return deepcopy(self.data)
 
 
@@ -115,7 +115,7 @@ async def test_concurrent_usage_acquisition_publishes_one_manager(monkeypatch) -
 
 
 async def test_initialization_failure_is_transactional_and_retryable() -> None:
-    """A failed detail load leaves no partial or duplicate live state."""
+    """A maintenance failure still aborts initialization without publishing partial state."""
     primary = FakeStorage(asdict(UsageTotals(api_request_count=4, total_tokens=12)))
     daily = FakeStorage({"days": {}})
     detail = FlakyLoadStorage(
@@ -126,12 +126,8 @@ async def test_initialization_failure_is_transactional_and_retryable() -> None:
     )
     manager = UsageManager(primary, daily, detail, agent_subentry_id="agent-1")
 
-    try:
+    with pytest.raises(HomeAssistantError, match="temporary maintenance failure"):
         await manager.async_initialize()
-    except OSError:
-        pass
-    else:
-        raise AssertionError("first initialization should fail")
 
     assert manager._initialized is False
     assert manager.totals == UsageTotals()
