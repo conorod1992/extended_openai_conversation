@@ -1,5 +1,6 @@
 """Configuration repair retains the same model-route validation as normal edits."""
 
+import asyncio
 from copy import deepcopy
 from unittest.mock import AsyncMock
 
@@ -133,3 +134,41 @@ async def test_disabled_route_does_not_block_repair_save(routed_agent):
     )
     assert saved["valid"] is True
     assert subentry.data["api_mode"] == "chat_completions"
+
+
+@pytest.mark.parametrize("action", ["save", "update"])
+@pytest.mark.parametrize("validation", ["model", "dependencies"])
+async def test_configuration_write_rechecks_revision_after_each_validation(
+    routed_agent, monkeypatch, action, validation
+):
+    hass, _entry, subentry, _rules = routed_agent
+    subentry.data = repair.safe_function_configuration(subentry.data)
+    entered = asyncio.Event()
+    resume = asyncio.Event()
+
+    async def hold(*_args):
+        entered.set()
+        await resume.wait()
+
+    model = AsyncMock(side_effect=hold if validation == "model" else None)
+    dependencies = AsyncMock(side_effect=hold if validation == "dependencies" else None)
+    monkeypatch.setattr(ui, "_async_validate_configuration_request", model)
+    monkeypatch.setattr(ui, "_async_validate_configuration_dependencies", dependencies)
+    pending = asyncio.create_task(
+        _command(routed_agent, "configuration", action, {CONF_FUNCTION_GROUPS: []})
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        newer = {**subentry.data, "prompt": "Concurrent edit"}
+        subentry.data = newer
+    finally:
+        resume.set()
+        with pytest.raises(HomeAssistantError, match="changed in another tab"):
+            await asyncio.wait_for(pending, timeout=5)
+    assert subentry.data is newer
+    hass.config_entries.async_update_subentry.assert_not_called()
+    model.assert_awaited_once()
+    if validation == "model":
+        dependencies.assert_not_awaited()
+    else:
+        dependencies.assert_awaited_once()

@@ -85,7 +85,10 @@ from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
 from .exposed_attributes import exposed_attribute_catalog
 from .frontend_assets import async_register_frontend_assets, frontend_entry_url
-from .function_configuration_repair import has_unavailable_native_tool
+from .function_configuration_repair import (
+    FunctionConfigurationRepairState,
+    has_unavailable_native_tool,
+)
 from .function_dependency_integrity import (
     _rule_script_actions,
     async_finish_function_rename,
@@ -1319,8 +1322,105 @@ async def async_backup_command(request: _ManagementRequest) -> dict[str, Any]:
     return _unknown_management_action(request)
 
 
+@dataclass(frozen=True)
+class _PreparedConfigurationWrite:
+    normalized: dict[str, Any]
+    persisted: dict[str, Any]
+    repair_state: FunctionConfigurationRepairState | None
+    cached_tools: list[dict[str, Any]] | None
+
+
+async def _async_prepare_configuration_write(
+    request: _ManagementRequest,
+    updates: dict[str, Any],
+    *,
+    provider: str,
+    editor_timings: dict[str, Any] | None = None,
+) -> _PreparedConfigurationWrite | dict[str, Any]:
+    """Validate the proposed request before projecting only the fields it owns.
+
+    The editor uses its cached Function projection and reports field errors inline.
+    The direct update route uses the strict merge and propagates validation errors.
+    """
+    hass, entry, subentry = request.hass, request.entry, request.subentry
+    phase = perf_counter()
+    revision = request.message.get("revision")
+    if not isinstance(revision, str):
+        raise HomeAssistantError(
+            "Configuration revision is required; reload the latest saved settings before saving."
+        )
+    _require_agent_config_revision(subentry, revision)
+    if editor_timings is not None:
+        editor_timings["stale_revision_ms"] = _elapsed_ms(phase)
+
+    phase = perf_counter()
+    field_only = is_field_only_configuration_update(updates)
+    projection = (
+        persisted_config_projection(subentry) if editor_timings is not None else None
+    )
+    snapshot = projection.snapshot if projection is not None else None
+    cached_tools = (
+        snapshot[CONF_FUNCTION_TOOLS]
+        if snapshot is not None and CONF_FUNCTION_TOOLS not in updates
+        else None
+    )
+    if editor_timings is not None:
+        editor_timings["function_state_lookup_ms"] = _elapsed_ms(phase)
+    phase = perf_counter()
+    try:
+        if field_only:
+            _, normalized = merge_unchanged_function_configuration(
+                subentry, updates, provider=provider
+            )
+        else:
+            normalized = merge_agent_config(
+                subentry.data,
+                updates,
+                validated_functions=(cached_tools, None)
+                if cached_tools is not None
+                else None,
+                provider=provider,
+            )
+        # The field-only merge can discover repair state as it validates.
+        repair_state = (
+            projection.repair_state if field_only and projection is not None else None
+        )
+        if editor_timings is not None:
+            editor_timings["function_tools_reused"] = (
+                repair_state is not None or cached_tools is not None
+            )
+            editor_timings["function_groups_reused"] = repair_state is not None or (
+                field_only and snapshot is not None
+            )
+            editor_timings["merge_validation_ms"] = _elapsed_ms(phase)
+        phase = perf_counter()
+        await _async_validate_configuration_request(hass, entry, subentry, normalized)
+    except AgentConfigError as err:
+        if editor_timings is None:
+            raise
+        return {"valid": False, "errors": {err.field: str(err).split(": ", 1)[-1]}}
+    if editor_timings is not None:
+        editor_timings["model_request_validation_ms"] = _elapsed_ms(phase)
+
+    phase = perf_counter()
+    _require_agent_config_revision(subentry, revision)
+    if not field_only:
+        await _async_validate_configuration_dependencies(
+            hass, entry, subentry, normalized
+        )
+        _require_agent_config_revision(subentry, revision)
+    persisted = project_agent_config_updates(
+        subentry.data, updates, normalized, provider=provider
+    )
+    if editor_timings is not None:
+        editor_timings["persistence_preparation_ms"] = _elapsed_ms(phase)
+    return _PreparedConfigurationWrite(
+        normalized, persisted, repair_state, cached_tools
+    )
+
+
 async def _async_save_configuration(request: _ManagementRequest) -> dict[str, Any]:
-    """Normalize once, persist that candidate, and return the frontend snapshot."""
+    """Persist the editor's candidate and return its frontend snapshot."""
     from .management_loading_performance import (
         _agent_snapshot,
         _snapshot_normalized_configuration,
@@ -1344,77 +1444,17 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     updates = message.get("config", {})
     if not isinstance(updates, dict):
         raise HomeAssistantError("config must be an object")
-    phase = perf_counter()
-    if not isinstance(message.get("revision"), str):
-        raise HomeAssistantError(
-            "Configuration revision is required; reload the latest saved settings before saving."
-        )
-    _require_agent_config_revision(subentry, message["revision"])
-    timings["stale_revision_ms"] = _elapsed_ms(phase)
-
-    phase = perf_counter()
-    projection = persisted_config_projection(subentry)
-    tools_changed = CONF_FUNCTION_TOOLS in updates
-    groups_changed = CONF_FUNCTION_GROUPS in updates
-    repair_state = None
-    validated_functions = None
-    if is_field_only_configuration_update(updates):
-        validation = _validation_result(
-            lambda: merge_unchanged_function_configuration(
-                subentry, updates, provider=provider
-            )[1]
-        )
-        repair_state = projection.repair_state
-        if projection.snapshot is not None:
-            validated_functions = (
-                projection.snapshot[CONF_FUNCTION_TOOLS],
-                projection.snapshot[CONF_FUNCTION_GROUPS],
-            )
-    else:
-        if not tools_changed and projection.snapshot is not None:
-            validated_functions = (projection.snapshot[CONF_FUNCTION_TOOLS], None)
-        validation = _validation_result(
-            lambda: merge_agent_config(
-                dict(subentry.data),
-                updates,
-                validated_functions=validated_functions,
-                provider=provider,
-            )
-        )
-    timings["function_state_lookup_ms"] = _elapsed_ms(phase)
-    timings["function_tools_reused"] = (
-        repair_state is not None or validated_functions is not None
+    prepared = await _async_prepare_configuration_write(
+        request, updates, provider=provider, editor_timings=timings
     )
-    timings["function_groups_reused"] = repair_state is not None or (
-        validated_functions is not None and validated_functions[1] is not None
-    )
-    phase = perf_counter()
-    if not validation.get("valid"):
-        return validation
-    timings["merge_validation_ms"] = _elapsed_ms(phase)
-    phase = perf_counter()
-    normalized = validation["config"]
-    try:
-        await _async_validate_configuration_request(hass, entry, subentry, normalized)
-    except AgentConfigError as err:
-        return {"valid": False, "errors": {err.field: str(err).split(": ", 1)[-1]}}
-    timings["model_request_validation_ms"] = _elapsed_ms(phase)
-
-    phase = perf_counter()
-    _require_agent_config_revision(subentry, message["revision"])
-    if tools_changed or groups_changed:
-        await _async_validate_configuration_dependencies(
-            hass, entry, subentry, normalized
-        )
-        _require_agent_config_revision(subentry, message["revision"])
-    persisted = project_agent_config_updates(
-        subentry.data, updates, normalized, provider=provider
-    )
+    if isinstance(prepared, dict):
+        return prepared
+    normalized, persisted = prepared.normalized, prepared.persisted
+    repair_state = prepared.repair_state
     saved_title = title.strip() if isinstance(title, str) else subentry.title
     refresh_local_handling = _local_handling_config_changed(
         subentry.data, persisted, updates
     )
-    timings["persistence_preparation_ms"] = _elapsed_ms(phase)
     # merge_agent_config validated both fields before persistence. Decode the
     # normalized YAML for the editor without repeating schema validation.
     phase = perf_counter()
@@ -1423,9 +1463,9 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         response_data = dict(normalized)
         response_data[CONF_FUNCTION_TOOLS] = repair_state.valid
         response_data[CONF_FUNCTION_GROUPS] = repair_state.groups
-    elif validated_functions is not None:
+    elif prepared.cached_tools is not None:
         response_data = dict(normalized)
-        response_data[CONF_FUNCTION_TOOLS] = validated_functions[0]
+        response_data[CONF_FUNCTION_TOOLS] = prepared.cached_tools
     snapshot = _snapshot_normalized_configuration(
         response_data, validated=True, provider=provider
     )
@@ -1740,29 +1780,11 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         updates = message.get("config")
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
-        if not isinstance(message.get("revision"), str):
-            raise HomeAssistantError(
-                "Configuration revision is required; reload the latest saved settings before saving."
-            )
-        _require_agent_config_revision(subentry, message["revision"])
-        field_only = is_field_only_configuration_update(updates)
-        if field_only:
-            _persisted, normalized = merge_unchanged_function_configuration(
-                subentry, updates, provider=provider
-            )
-        else:
-            normalized = merge_agent_config(subentry.data, updates, provider=provider)
-        response_candidate = normalized
-        await _async_validate_configuration_request(hass, entry, subentry, normalized)
-        _require_agent_config_revision(subentry, message["revision"])
-        if not field_only:
-            await _async_validate_configuration_dependencies(
-                hass, entry, subentry, normalized
-            )
-            _require_agent_config_revision(subentry, message["revision"])
-        normalized = project_agent_config_updates(
-            subentry.data, updates, normalized, provider=provider
+        prepared = await _async_prepare_configuration_write(
+            request, updates, provider=provider
         )
+        assert isinstance(prepared, _PreparedConfigurationWrite)
+        persisted = prepared.persisted
         requested_title = message.get("title")
         saved_title = (
             validate_agent_title(requested_title)
@@ -1770,12 +1792,12 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             else validate_agent_title(subentry.title)
         )
         refresh_local_handling = _local_handling_config_changed(
-            subentry.data, normalized, updates
+            subentry.data, persisted, updates
         )
         from .management_loading_performance import _snapshot_normalized_configuration
 
         snapshot = _snapshot_normalized_configuration(
-            response_candidate, validated=True, provider=provider
+            prepared.normalized, validated=True, provider=provider
         )
         result = {
             "valid": True,
@@ -1795,9 +1817,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 snapshot.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
             )
         update_configuration_subentry(
-            hass, entry, subentry, data=normalized, title=saved_title
+            hass, entry, subentry, data=persisted, title=saved_title
         )
-        adopt_saved_configuration_revision(subentry, normalized, result)
+        adopt_saved_configuration_revision(subentry, persisted, result)
         try:
             seed_persisted_config_projection(
                 entry, subentry, snapshot, result["revision"]
