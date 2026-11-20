@@ -53,6 +53,12 @@ const SURFACES = {
   ],
   "capabilities/functions": [
     {
+      name: "Home Assistant tool picker",
+      open: ["#function-add", "#add-ha-tools"],
+      ready: "#ha-llm-tools-dialog [data-device]",
+      close: "#ha-llm-tools-dialog [data-cancel]",
+    },
+    {
       name: "Function Tool editor",
       open: ["#function-add", "#add-tool"],
       ready: "#tool-dialog",

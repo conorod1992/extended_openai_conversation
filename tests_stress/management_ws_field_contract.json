@@ -199,6 +199,10 @@
       "required": false,
       "kind": "string"
     },
+    "preview_device_id": {
+      "required": false,
+      "kind": "string"
+    },
     "query": {
       "required": false,
       "kind": "string"

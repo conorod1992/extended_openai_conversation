@@ -404,6 +404,7 @@ async def test_meaningful_retry_identity_change_retries_immediately(monkeypatch)
     from unittest.mock import AsyncMock
 
     memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea", "preferences", "explicit")
     provider = AsyncMock(side_effect=OSError("unavailable"))
     memory.set_embedding_provider(
         provider, "model", space_id="space", retry_identity="client-a"
@@ -434,6 +435,7 @@ async def test_backoff_is_bounded_and_cancellation_does_not_start_it(monkeypatch
     clock = [100.0]
     monkeypatch.setattr(module, "monotonic", lambda: clock[0])
     memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea", "preferences", "explicit")
     provider = AsyncMock(side_effect=asyncio.CancelledError())
     memory.set_embedding_provider(provider)
     with pytest.raises(asyncio.CancelledError):

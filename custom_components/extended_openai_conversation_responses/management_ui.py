@@ -2092,7 +2092,9 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                     and satellite.device_id
                     and not satellite.disabled_by
                 ):
-                    preview_devices.setdefault(satellite.device_id, satellite_state.name)
+                    preview_devices.setdefault(
+                        satellite.device_id, satellite_state.name
+                    )
         device_id = message.get("preview_device_id")
         if device_id is not None and (
             not isinstance(device_id, str) or device_id not in preview_devices

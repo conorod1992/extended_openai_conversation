@@ -234,6 +234,7 @@ async def test_memory_fallback_records_cause_once_and_recovery(caplog, monkeypat
     caplog.set_level(logging.DEBUG)
     memory = PersistentMemory(FakeStorage())
     await memory.async_initialize()
+    await memory.async_add("scope", "Tea preference", "general", "explicit")
     provider = AsyncMock(
         side_effect=ProviderStreamError(SECRET, code="insufficient_quota")
     )

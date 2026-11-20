@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import json
 import logging
 import math
+import re
 from typing import TYPE_CHECKING, Any
 
 from openai import OpenAIError
@@ -39,6 +40,7 @@ from .schema_normalization import normalize_exclusive_bounds
 from .tool_replay_guard import clear_unacknowledged_calls, remember_unacknowledged_calls
 
 _LOGGER = logging.getLogger(__name__)
+_JSON_SURROGATE = re.compile(r"[\ud800-\udfff]|\\u[dD][89a-fA-F][0-9a-fA-F]{2}")
 
 
 @dataclass(slots=True)
@@ -308,6 +310,10 @@ def parse_ai_task_structured_response(
         data = json.loads(
             text, parse_constant=_reject_json_constant, parse_float=_finite_json_float
         )
+        if _JSON_SURROGATE.search(text):
+            # The standard decoder combines valid pairs but otherwise preserves
+            # lone surrogates, which cannot be sent back through HA's UTF-8 API.
+            json.dumps(data, ensure_ascii=False).encode("utf-8")
     except ValueError, RecursionError:
         _LOGGER.error("Failed to parse structured AI Task JSON response")
         raise HomeAssistantError("Error with structured response") from None

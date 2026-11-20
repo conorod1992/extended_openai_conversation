@@ -40,6 +40,7 @@ async def test_embedding_space_tracks_sdk_environment_endpoint(monkeypatch):
 
 async def test_configuration_sync_preserves_backoff_until_credentials_or_client_change():
     memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea", "preferences", "explicit")
     entity = SimpleNamespace(
         _memory=memory,
         subentry=SimpleNamespace(data={"memory_retrieval_mode": "hybrid"}),
@@ -117,6 +118,7 @@ async def test_equivalent_sync_during_overlapping_retrieval_retains_provider(pha
 @pytest.mark.parametrize("change", ["entity", "client"])
 async def test_rebinding_retires_old_failure_without_backing_off_new_provider(change):
     memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea", "preferences", "explicit")
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def old(texts, *, model):

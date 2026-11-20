@@ -76,6 +76,7 @@ def _hass(entry=None):
         config_entries=config_entries,
         auth=SimpleNamespace(),
         config=SimpleNamespace(language="en", time_zone="UTC"),
+        states=SimpleNamespace(async_all=lambda *_: []),
         data={},
         services=SimpleNamespace(async_call=AsyncMock()),
     )

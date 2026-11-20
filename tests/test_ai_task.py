@@ -63,6 +63,13 @@ def test_structured_task_rejects_nonfinite_json(literal):
         ai_task_platform.parse_ai_task_structured_response(f'{{"value": {literal}}}')
 
 
+def test_structured_task_accepts_unicode_pairs_and_rejects_unpaired_surrogates():
+    parse = ai_task_platform.parse_ai_task_structured_response
+    assert parse(r'{"value":"\ud83d\ude00"}') == {"value": "😀"}
+    with pytest.raises(HomeAssistantError, match="Error with structured response"):
+        parse(r'{"value":"\ud800"}')
+
+
 @pytest.mark.asyncio
 async def test_setup_entry_adds_only_ai_task_subentries(
     monkeypatch: pytest.MonkeyPatch,

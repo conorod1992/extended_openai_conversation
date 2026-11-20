@@ -287,7 +287,10 @@ def transfer_user_scope_ids(
 
     if SECTION_CONVERSATION_ARCHIVE in selected_set:
         for session in prepared.archive_sessions or ():
-            if session.session_id in expired_archive_sessions:
+            if (
+                expired_archive_sessions
+                and session.session_id in expired_archive_sessions
+            ):
                 continue
             if user_id := _portable_user_id(session.scope_id, prefixed_only=True):
                 user_ids.add(user_id)
