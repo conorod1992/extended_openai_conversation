@@ -338,11 +338,18 @@ def test_balanced_prompt_infers_weekend_expiry_without_clarification() -> None:
             CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED,
         }
     )
-    prompt = entity._build_system_prompt(
-        [],
-        SimpleNamespace(device_id=None),
-        SimpleNamespace(extra_system_prompt=None),
+    entity._temporary_memory = TemporaryMemory(Storage())
+    token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), temporary_scope="user:alice")
     )
+    try:
+        prompt = entity._build_system_prompt(
+            [],
+            SimpleNamespace(device_id=None),
+            SimpleNamespace(extra_system_prompt=None),
+        )
+    finally:
+        _ACTIVE_TURN.reset(token)
     assert "instead of asking unnecessary clarification" in prompt
     assert 'for "this weekend" use the end of Sunday' in prompt
     assert "Europe/Dublin" in prompt

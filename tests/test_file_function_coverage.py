@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
+import stat
 from threading import get_ident
 from types import SimpleNamespace
 
@@ -70,7 +71,9 @@ def test_read_text_bounded_detects_growth_during_read(tmp_path, monkeypatch) -> 
     path = tmp_path / "growing.txt"
     path.write_bytes(b"abcd")
     monkeypatch.setattr(file_fn, "FILE_READ_SIZE_LIMIT", 3)
-    monkeypatch.setattr(Path, "stat", lambda self: SimpleNamespace(st_size=3))
+    monkeypatch.setattr(
+        Path, "stat", lambda self: SimpleNamespace(st_size=3, st_mode=stat.S_IFREG)
+    )
 
     with pytest.raises(ValueError, match="grew beyond the read limit"):
         file_fn._read_text_bounded(path)

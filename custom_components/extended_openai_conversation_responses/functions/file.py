@@ -61,9 +61,11 @@ def _fingerprint(stat_result: os.stat_result) -> _FileFingerprint:
     )
 
 
-def _read_text_bounded(path: Path) -> str:
+def _read_text_bounded(path: Path, display_path: str | None = None) -> tuple[str, int]:
     """Read UTF-8 text without allowing a size-check/read race to grow memory."""
-    file_size = path.stat().st_size
+    file_size = _checked_file_size(
+        path, str(path) if display_path is None else display_path
+    )
     if file_size > FILE_READ_SIZE_LIMIT:
         raise ValueError(
             f"File too large: {file_size} bytes (limit: {FILE_READ_SIZE_LIMIT})"
@@ -75,7 +77,7 @@ def _read_text_bounded(path: Path) -> str:
             "File grew beyond the read limit while it was being read "
             f"(limit: {FILE_READ_SIZE_LIMIT} bytes)"
         )
-    return content.decode("utf-8")
+    return content.decode("utf-8"), file_size
 
 
 def _checked_file_size(path: Path, display_path: str) -> int:
@@ -86,11 +88,6 @@ def _checked_file_size(path: Path, display_path: str) -> int:
     if not stat.S_ISREG(metadata.st_mode):
         raise ValueError(f"Not a file: {display_path}")
     return metadata.st_size
-
-
-def _read_file(path: Path, display_path: str) -> tuple[str, int]:
-    size = _checked_file_size(path, display_path)
-    return _read_text_bounded(path), size
 
 
 def _read_text_bounded_snapshot(
@@ -343,7 +340,7 @@ class ReadFileFunction(FileFunction):
                 hass, self.get_working_dir(hass), target=target_path
             )
             content, file_size = await hass.async_add_executor_job(
-                _read_file, target_path, path_str
+                _read_text_bounded, target_path, path_str
             )
         except Exception as err:
             log_handled_failure(_LOGGER, "Function Tool file read failed", err)
