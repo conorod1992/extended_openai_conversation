@@ -1012,6 +1012,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             require_provider_restore_complete(hass, entry_id)
         provider_client = self._client
         provider_entry_data = getattr(self.entry, "data", {})
+        provider = entry_api_provider(self.entry)
         await async_prepare_tool_results(chat_log.content)
         async with (
             context_summary_request(self, chat_log),
@@ -1336,22 +1337,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if allowed_web_search is not None
                     else formatted_function_tools
                 )
-                tool_kwargs: dict[str, Any] = {}
-                validate_provider_tool_count(
-                    len(tools),
-                    getattr(self.entry, "data", {}).get("api_provider"),
-                    api_mode,
-                )
-                if tools:
-                    tool_kwargs["tools"] = tools
-                    tool_kwargs["tool_choice"] = (
-                        "required" if conditional_continue else "auto"
-                    )
+                tool_choice = "required" if conditional_continue else "auto"
                 if force_finalizer_only:
-                    tool_kwargs["tools"] = _format_tools(
-                        [CONTINUE_CONVERSATION_TOOL], api_mode
-                    )
-                    tool_kwargs["tool_choice"] = "required"
+                    tools = _format_tools([CONTINUE_CONVERSATION_TOOL], api_mode)
+                    tool_choice = "required"
+                validate_provider_tool_count(len(tools), provider, api_mode)
+                tool_kwargs: dict[str, Any] = {}
+                if tools:
+                    tool_kwargs.update(tools=tools, tool_choice=tool_choice)
 
                 ha_prompt = current_snapshot().prompt_for(
                     [] if force_finalizer_only else request_function_tools
