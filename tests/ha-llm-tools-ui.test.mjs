@@ -65,3 +65,66 @@ assert.equal(syncPanel.synced, true);
     Date.now = previousNow;
   }
 }
+
+for (const transition of ["late success", "late failure", "assistant round trip"]) {
+  const requests = [];
+  const rendered = [];
+  const errors = [];
+  let host, refresh, button;
+  const catalogPanel = {
+    _draft: {functions: [tool]},
+    _selectedAgent() { return {entry_id: `entry-${this._agentId}`}; },
+    shadowRoot: {querySelector: selector => {
+      if (selector === ".tools-surface") return host;
+      if (selector === "#refresh-ha-tools") return button;
+      return null;
+    }},
+    _call(section, action) {
+      assert.deepEqual([section, action], ["tools", "ha_catalog"]);
+      const agentId = this._agentId;
+      return new Promise((resolve, reject) => requests.push({agentId, resolve, reject}));
+    },
+    _render() { rendered.push(this._haCatalogAgent); },
+    _toast(message) { errors.push(message); },
+  };
+  const select = agentId => {
+    catalogPanel._agentId = agentId;
+    host = {};
+    button = {
+      isConnected: true,
+      addEventListener(_event, listener) { refresh = () => listener({currentTarget: this}); },
+    };
+    bindHALlmTools(catalogPanel);
+    return catalogPanel._haCatalogLoad.promise;
+  };
+
+  const first = select("A");
+  assert.equal(select("A"), first, "rebinding the current assistant shares its pending read");
+  const second = select("B");
+  assert.deepEqual(requests.map(request => request.agentId), ["A", "B"]);
+  const roundTrip = transition === "assistant round trip";
+  const latest = roundTrip ? select("A") : second;
+  const refreshResult = refresh();
+  assert.equal(button.disabled, true);
+  assert.deepEqual(requests.map(request => request.agentId), roundTrip ? ["A", "B", "A"] : ["A", "B"]);
+
+  if (transition === "late failure") requests[0].reject(new Error("Old catalogue failed"));
+  else requests[0].resolve({saved: {old: {}}});
+  assert.equal(await first, null);
+  if (roundTrip) {
+    requests[1].resolve({saved: {other: {}}});
+    assert.equal(await second, null);
+  }
+  assert.equal(catalogPanel._haCatalogLoad.promise, latest);
+  assert.equal(catalogPanel._haCatalog, undefined);
+  assert.deepEqual(rendered, []);
+  assert.deepEqual(errors, []);
+
+  const currentCatalog = {saved: {current: {}}};
+  requests.at(-1).resolve(currentCatalog);
+  await refreshResult;
+  assert.equal(button.disabled, false);
+  assert.equal(catalogPanel._haCatalog, currentCatalog);
+  assert.equal(catalogPanel._haCatalogAgent, roundTrip ? "A" : "B");
+  assert.ok(rendered.includes(catalogPanel._haCatalogAgent));
+}

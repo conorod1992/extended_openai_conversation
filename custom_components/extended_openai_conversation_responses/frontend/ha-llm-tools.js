@@ -1,4 +1,5 @@
 import {filterHATools, isHALlmTool} from "./ha-llm-tools-list.js";
+import {captureAuthentication} from "./authentication-presentation.js";
 import {captureConfigurationSubmission} from "./configuration-acknowledgement.js";
 import {cacheTimestampIsFresh} from "./management-cache.js";
 export {filterHATools, haToolName, isHALlmTool, renderHAToolCard, toolDescription} from "./ha-llm-tools-list.js";
@@ -11,40 +12,58 @@ export function bindHALlmTools(panel, acknowledge) {
   const host = root.querySelector(".tools-surface");
   if (!host || host.__eocHaBound) return;
   host.__eocHaBound = true;
-  const agentId = panel._agentId;
+  const agentId = panel._agentId, entryId = panel._selectedAgent?.()?.entry_id;
+  const selected = () => panel._agentId === agentId && panel._selectedAgent?.()?.entry_id === entryId;
   const load = () => {
-    if (panel._haCatalogLoad?.agentId === agentId) return panel._haCatalogLoad.promise;
-    const request = (async () => {
-      const catalog = await panel._call("tools", "ha_catalog");
-      if (panel._agentId !== agentId) throw new Error("The selected agent changed");
-      panel._haCatalog = catalog;
-      panel._haCatalogAgent = agentId;
-      panel._haCatalogLoadedAt = Date.now();
-      return catalog;
+    if (!selected()) return Promise.resolve(null);
+    if (panel._haCatalogLoad?.current()) return panel._haCatalogLoad.promise;
+    const authenticated = captureAuthentication(panel);
+    const request = {current: () => selected() && authenticated(), promise: null};
+    panel._haCatalogLoad = request;
+    const ownsLoad = () => panel._haCatalogLoad === request && request.current();
+    request.promise = (async () => {
+      try {
+        const catalog = await panel._call("tools", "ha_catalog");
+        if (!ownsLoad()) return null;
+        panel._haCatalog = catalog;
+        panel._haCatalogAgent = agentId;
+        panel._haCatalogLoadedAt = Date.now();
+        return catalog;
+      } catch (error) {
+        if (ownsLoad()) throw error;
+        return null;
+      } finally {
+        if (panel._haCatalogLoad === request) panel._haCatalogLoad = null;
+      }
     })();
-    const tracked = request.finally(() => {
-      if (panel._haCatalogLoad?.promise === tracked) panel._haCatalogLoad = null;
-    });
-    panel._haCatalogLoad = {agentId, promise: tracked};
-    return tracked;
+    return request.promise;
+  };
+  const refresh = async () => {
+    const authenticated = captureAuthentication(panel);
+    const visible = () => selected() && authenticated() && panel.isConnected !== false
+      && root.querySelector(".tools-surface");
+    try {
+      if (await load() && visible() && !root.querySelector("dialog[open]")) panel._render();
+    } catch (err) {
+      if (visible()) panel._toast(err.message, true);
+    }
   };
   const catalogFresh = panel._haCatalogAgent === agentId
     && cacheTimestampIsFresh(panel._haCatalogLoadedAt, HA_TOOL_CATALOG_TTL_MS);
-  if ((panel._draft.functions || []).some(isHALlmTool) && !catalogFresh && !panel._haCatalogLoading) {
-    panel._haCatalogLoading = true;
-    load().then(() => { if (!root.querySelector("dialog[open]")) panel._render(); }).catch(err => panel._toast(err.message, true)).finally(() => { panel._haCatalogLoading = false; });
+  if ((panel._draft.functions || []).some(isHALlmTool) && !catalogFresh && !panel._haCatalogLoad?.current()) {
+    void refresh();
   }
   root.querySelector("#refresh-ha-tools")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     if (button.disabled) return;
     button.disabled = true;
-    try { await load(); panel._render(); } catch (err) { panel._toast(err.message, true); }
+    try { await refresh(); }
     finally { if (button.isConnected) button.disabled = false; }
   });
   panel._openHALlmTools = async () => {
     const existing = root.querySelector('dialog[data-ha-llm-tools-dialog][open]');
     if (existing) { existing.focus?.(); return; }
-const dialog = document.createElement("dialog");
+    const dialog = document.createElement("dialog");
     dialog.id = "ha-llm-tools-dialog";
     dialog.className = "editor-dialog";
     dialog.dataset.haLlmToolsDialog = "";
@@ -61,31 +80,36 @@ const dialog = document.createElement("dialog");
     dialog.showModal();
     dialog.addEventListener("close", () => dialog.remove());
     dialog.querySelector("[data-cancel]").onclick = () => dialog.close();
+    const status = dialog.querySelector("[data-status]");
     try {
       const catalog = await load();
       if (!dialog.open) return;
+      if (!catalog) throw new Error("The selected agent changed");
       // Identity survives filtering, catalogue reordering and panel recreation.
       const key = reference => JSON.stringify(reference, Object.keys(reference).sort());
       const selected = new Map();
       const available = catalog.tools || [];
       const indexByTool = new Map(available.map((tool, index) => [tool, index]));
-      const status = dialog.querySelector("[data-status]");
+      const search = dialog.querySelector("[data-search]");
+      const sources = dialog.querySelector("[data-sources]");
+      const list = dialog.querySelector("[data-tools]");
+      const add = dialog.querySelector("[data-add]");
       status.textContent = catalog.unavailable_sources?.length ? "Some sources are unavailable. Other tools can still be added." : "Preview uses your administrator context. Actual requests resolve tools with the caller's context and permissions.";
-      dialog.querySelector("[data-sources]").innerHTML = [...new Set(available.map(tool => tool.source))].sort().map(source => `<option value="${panel._e(source)}">${panel._e(source)}</option>`).join("");
-      const visible = () => filterHATools(available, dialog.querySelector("[data-search]").value, [...dialog.querySelector("[data-sources]").selectedOptions].map(option => option.value));
+      sources.innerHTML = [...new Set(available.map(tool => tool.source))].sort().map(source => `<option value="${panel._e(source)}">${panel._e(source)}</option>`).join("");
+      const visible = () => filterHATools(available, search.value, [...sources.selectedOptions].map(option => option.value));
       const group = dialog.querySelector("[data-group]");
       const availableKeys = new Set(available.map(tool => key(tool.reference)));
       const render = () => {
-        dialog.querySelector("[data-tools]").innerHTML = visible().map(tool => {
+        list.innerHTML = visible().map(tool => {
           const index = indexByTool.get(tool);
           return `<label class="group-function-choice"><input type="checkbox" data-index="${index}" ${selected.has(key(tool.reference)) ? "checked" : ""} ${tool.already_added ? "disabled" : ""}><span><strong>${panel._e(tool.name)}${tool.already_added ? " · Already added" : ""}</strong><small>${panel._e(tool.source)} · ${panel._e(tool.description)}</small></span></label>`;
         }).join("") || "No matching tools are available in this context.";
-        dialog.querySelector("[data-add]").disabled = selected.size === 0 || [...selected.keys()].some(id => !availableKeys.has(id)) || Boolean(group.selectedOptions[0]?.disabled);
-        dialog.querySelector("[data-add]").textContent = `Add ${selected.size} selected tools`;
+        add.disabled = selected.size === 0 || [...selected.keys()].some(id => !availableKeys.has(id)) || Boolean(group.selectedOptions[0]?.disabled);
+        add.textContent = `Add ${selected.size} selected tools`;
       };
-      dialog.querySelector("[data-search]").oninput = render;
-      dialog.querySelector("[data-sources]").onchange = render;
-      dialog.querySelector("[data-tools]").onchange = event => {
+      search.oninput = render;
+      sources.onchange = render;
+      list.onchange = event => {
         const index = Number(event.target.dataset.index);
         if (event.target.checked) selected.set(key(available[index].reference), available[index].reference); else selected.delete(key(available[index].reference));
         dialog.querySelector("[data-add]").disabled = selected.size === 0 || [...selected.keys()].some(id => !availableKeys.has(id)) || Boolean(group.selectedOptions[0]?.disabled);
@@ -93,10 +117,9 @@ const dialog = document.createElement("dialog");
       };
       dialog.querySelector("[data-all]").onclick = () => { for (const tool of visible()) if (!tool.already_added) selected.set(key(tool.reference), tool.reference); render(); };
       dialog.querySelector("[data-clear]").onclick = () => { selected.clear(); render(); };
-      dialog.querySelector("[data-add]").onclick = async () => {
-        const button = dialog.querySelector("[data-add]");
-        if (button.disabled) return;
-        button.disabled = true;
+      add.onclick = async () => {
+        if (add.disabled) return;
+        add.disabled = true;
         try {
           if (panel._agentId !== agentId) throw new Error("The selected agent changed");
           const submission = captureConfigurationSubmission(panel);
@@ -111,7 +134,7 @@ const dialog = document.createElement("dialog");
             dialog.close();
             panel._render();
           });
-        } catch (err) { status.textContent = err.message || String(err); button.disabled = false; }
+        } catch (err) { status.textContent = err.message || String(err); add.disabled = false; }
       };
       dialog.__eocReadDraft = () => ({tools:[...selected.values()], group:group.value});
       dialog.__eocRestoreDraft = draft => {
@@ -128,7 +151,7 @@ const dialog = document.createElement("dialog");
       group.addEventListener("change", render);
       panel._captureDialogBaseline?.(dialog);
       render();
-    } catch (err) { dialog.querySelector("[data-status]").textContent = err.message || String(err); }
+    } catch (err) { status.textContent = err.message || String(err); }
   };
   root.querySelector("#add-ha-tools")?.addEventListener("click", () => { void panel._openHALlmTools(); });
 }
