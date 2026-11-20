@@ -1,5 +1,6 @@
 """Compare explicit same-policy retries through all supported config writes."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -15,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.mutation_outcomes 
 )
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
+from tests.test_function_repair_configuration_contract import _repairable_agent
 from tests.test_usage_detail_lifecycle import DetailStorage, TotalsStorage
 
 
@@ -58,10 +60,19 @@ async def test_configuration_overwrite_preserves_archive_retention(
     assert subentry.data[field] == 365
 
 
-@pytest.mark.parametrize("action", ["save", "update", "import"])
+@pytest.mark.parametrize(
+    ("section", "action"),
+    [
+        ("configuration", "save"),
+        ("configuration", "update"),
+        ("configuration", "import"),
+        ("settings", "update"),
+        ("function_repair", "configuration_save"),
+    ],
+)
 @pytest.mark.parametrize("detail", ["request", "run"])
 async def test_same_policy_retry_reaches_deletion(
-    hass, management_agent, management_message, monkeypatch, action, detail
+    hass, management_agent, management_message, monkeypatch, section, action, detail
 ):
     field = f"usage_{detail}_retention_days"
     collection = f"{detail}s"
@@ -88,14 +99,29 @@ async def test_same_policy_retry_reaches_deletion(
             )
         ),
     )
+    revision_section, revision_action = "configuration", "get"
+    if section == "function_repair":
+        _, repairable = _repairable_agent()
+        subentry.data = {**subentry.data, **repairable.data}
+        revision_section, revision_action = "function_repair", "configuration_get"
     baseline = await ui.async_management_command(
-        hass, "admin", True, management_message("configuration", "get")
+        hass, "admin", True, management_message(revision_section, revision_action)
     )
-    exported = await ui.async_management_command(
-        hass, "admin", True, management_message("configuration", "export")
-    )
-    document = exported["document"]
-    document["config"][field] = 0
+    if action == "import":
+        exported = await ui.async_management_command(
+            hass, "admin", True, management_message("configuration", "export")
+        )
+        document = exported["document"]
+        document["config"][field] = 0
+        payload = {
+            "document": json.dumps(document),
+            "mode": "current",
+            "confirm": True,
+            "confirm_retention": True,
+        }
+    else:
+        field_owner = "settings" if section == "settings" else "config"
+        payload = {field_owner: {field: 0}}
     original_save = manager._detail_storage.async_save
     attempts = []
 
@@ -106,24 +132,19 @@ async def test_same_policy_retry_reaches_deletion(
         await original_save(data)
 
     monkeypatch.setattr(manager._detail_storage, "async_save", save)
-    payload = (
-        {"document": json.dumps(document), "mode": "current", "confirm": True, "confirm_retention": True}
-        if action == "import"
-        else {"config": {field: 0}}
-    )
     with pytest.raises(HomeAssistantError) as failure:
         await ui.async_management_command(
             hass,
             "admin",
             True,
             management_message(
-                "configuration", action, revision=baseline["revision"], **payload
+                section, action, revision=baseline["revision"], **payload
             ),
         )
     assert mutation_error_code(failure.value) == "eoai_mutation_committed"
     assert subentry.data[field] == 0
     current = await ui.async_management_command(
-        hass, "admin", True, management_message("configuration", "get")
+        hass, "admin", True, management_message(revision_section, revision_action)
     )
     if action == "import":
         preview = await ui.async_management_command(
@@ -133,7 +154,7 @@ async def test_same_policy_retry_reaches_deletion(
             management_message(
                 "configuration",
                 "import_preview",
-                document=json.dumps(document),
+                document=payload["document"],
                 mode="current",
             ),
         )
@@ -143,22 +164,72 @@ async def test_same_policy_retry_reaches_deletion(
         "admin",
         True,
         management_message(
-            "configuration", action, revision=current["revision"], **payload
+            section, action, revision=current["revision"], **payload
         ),
     )
     witness = {
         "action": action,
+        "section": section,
         "result": result.get("status", result.get("valid")),
         "write_attempts": len(attempts),
         "saved_retention": subentry.data[field],
         "stored_requests": len(manager._detail_storage.data[collection]),
     }
     print(json.dumps(witness))
-    assert (
-        (result.get("status") == "updated") if action == "import" else result["valid"]
-    )
+    if action == "import":
+        assert result["status"] == "updated"
+    elif section == "settings":
+        assert result["settings"][field] == 0
+    else:
+        assert result["valid"] is True
     assert len(attempts) == 2
     assert manager._detail_storage.data[collection] == []
+
+
+async def test_preview_does_not_prune_retention_committed_by_another_command(
+    hass, management_agent, management_message, monkeypatch
+):
+    entry, subentry = management_agent
+    entry.state = ConfigEntryState.NOT_LOADED
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def preview(*_):
+        entered.set()
+        await release.wait()
+        return {"preview": True}
+
+    monkeypatch.setattr(ui, "_async_preview_effective_request", preview)
+    prune = AsyncMock()
+    monkeypatch.setattr(usage, "async_apply_usage_retention", prune)
+    baseline = await ui.async_management_command(
+        hass, "admin", True, management_message("configuration", "get")
+    )
+    pending = asyncio.create_task(
+        ui.async_management_command(
+            hass, "admin", True, management_message("configuration", "request_preview")
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        result = await ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            management_message(
+                "configuration",
+                "save",
+                revision=baseline["revision"],
+                config={"usage_request_retention_days": 0},
+            ),
+        )
+        assert result["valid"] is True
+    finally:
+        release.set()
+        preview_result = await asyncio.wait_for(pending, timeout=2)
+
+    assert preview_result == {"preview": True}
+    prune.assert_awaited_once_with(hass, entry.entry_id, subentry.subentry_id)
 
 
 async def test_import_into_new_assistant_does_not_prune_selected_source(

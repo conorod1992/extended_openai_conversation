@@ -6,11 +6,16 @@ from dataclasses import replace
 from datetime import timedelta
 import json
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses.private_backup import encode_document
-from custom_components.extended_openai_conversation_responses import backup, transfer
+from custom_components.extended_openai_conversation_responses import (
+    backup,
+    management_ui,
+    transfer,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     CONF_API_MODE,
@@ -131,9 +136,9 @@ async def test_shorter_archive_retention_requires_selecting_the_archive(
     assert bool(results["results"]) is not include_archive
 
 
-@pytest.mark.parametrize("selection", ["usage", "both", "configuration"])
+@pytest.mark.parametrize("selection", ["usage", "both", "configuration", "full_backup"])
 async def test_usage_restore_projects_retention_and_keeps_aggregate_totals(
-    hass, selection
+    hass, selection, monkeypatch
 ):
     request_days, run_days = "usage_request_retention_days", "usage_run_retention_days"
     entry = _make_entry(
@@ -155,26 +160,45 @@ async def test_usage_restore_projects_retention_and_keeps_aggregate_totals(
         await usage.async_record_request(successful=True, usage=None)
     before = await usage.async_backup_data()
     original["daily"] = before["daily"]
-    sections = []
-    if selection != "configuration":
-        sections.append(transfer.SECTION_USAGE)
-    if selection != "usage":
-        sections.append(transfer.SECTION_CONFIGURATION)
-    result = await transfer.async_restore_transfer(
-        hass,
-        entry,
-        subentry,
-        backup.finalize_backup_snapshot(snapshot)["document"],
-        sections=sections,
-        confirm_retention=True,
-    )
-    projected = result["transfer"]
+    document = backup.finalize_backup_snapshot(snapshot)["document"]
+    if selection == "full_backup":
+        prune = AsyncMock()
+        monkeypatch.setattr(usage_module, "async_apply_usage_retention", prune)
+        result = await management_ui.async_management_command(
+            hass,
+            _USER_ID,
+            True,
+            {
+                "entry_id": entry.entry_id,
+                "subentry_id": subentry.subentry_id,
+                "section": "backup",
+                "action": "restore",
+                "document": document,
+                "confirm": True,
+            },
+        )
+        assert result["status"] == "restored"
+        prune.assert_not_awaited()
+    else:
+        sections = []
+        if selection != "configuration":
+            sections.append(transfer.SECTION_USAGE)
+        if selection != "usage":
+            sections.append(transfer.SECTION_CONFIGURATION)
+        result = await transfer.async_restore_transfer(
+            hass, entry, subentry, document, sections=sections, confirm_retention=True
+        )
     actual_usage = await async_get_durable_usage(
         hass, entry.entry_id, subentry.subentry_id
     )
     actual = await actual_usage.async_backup_data()
-    assert projected["usage_requests"] == len(actual["requests"])
-    assert projected["usage_runs"] == len(actual["runs"])
+    if selection == "full_backup":
+        assert len(actual["requests"]) == 1
+        assert actual["runs"] == []
+    else:
+        projected = result["transfer"]
+        assert projected["usage_requests"] == len(actual["requests"])
+        assert projected["usage_runs"] == len(actual["runs"])
     if selection == "usage":
         assert projected["usage_retention"] == {
             "expired_requests": 1,

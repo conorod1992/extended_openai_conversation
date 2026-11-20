@@ -774,24 +774,14 @@ def test_management_seed_projection_preserves_existing_repair_state(monkeypatch)
     subentry = SimpleNamespace(subentry_id="agent", data=data, title="Agent")
     entry = SimpleNamespace(subentries={"agent": subentry})
     old_state = object()
-    previous = repair._PersistedProjection(
-        subentry,
-        data,
-        "Agent",
-        None,
-        "old",
-        {
-            key: deepcopy(data[key])
-            for key in repair._RETENTION_FIELDS
-        },
-        repair_state=old_state,
-    )
-    repair._persisted_projections[id(subentry)] = previous
+    previous = repair.persisted_config_projection(subentry)
+    monkeypatch.setattr(previous, "repair_state", old_state)
     snapshot = repair.agent_config_snapshot(data)
 
     repair.seed_persisted_config_projection(entry, subentry, snapshot, "new")
 
-    seeded = repair._persisted_projections[id(subentry)]
+    seeded = repair.persisted_config_projection(subentry)
+    assert seeded.revision == "new"
     assert seeded.repair_state is old_state
     assert seeded.snapshot is None
     assert seeded.repair_snapshot == snapshot

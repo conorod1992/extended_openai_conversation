@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
+from collections.abc import AsyncIterator, Callable, Collection, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -33,6 +33,8 @@ from .const import (
     DOMAIN,
 )
 from .debug import record_current_run_failure
+from .mutation_outcomes import mark_mutation_failure
+from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .persistence_hardening import StorageRepairRequired
 from .storage_namespaces import USAGE_PREFIX as STORAGE_KEY_PREFIX
@@ -1887,6 +1889,37 @@ async def async_apply_usage_retention(
     durable.request_retention_days = policy["request_retention_days"]
     durable.run_retention_days = policy["run_retention_days"]
     await durable.async_prune_details()
+
+
+async def async_finish_usage_retention_write(
+    hass: HomeAssistant,
+    entry_id: str,
+    subentry_id: str,
+    *,
+    updated_fields: Collection[str] | None,
+) -> None:
+    """Apply the committed policy after a patch or full configuration import.
+
+    The writer supplies its destination and authored fields, even on a retry
+    with no value changes. A full replacement uses None for updated_fields.
+    Restore recovery enforces its own retention inside the transaction.
+    """
+    if updated_fields is not None and not (
+        CONF_USAGE_REQUEST_RETENTION_DAYS in updated_fields
+        or CONF_USAGE_RUN_RETENTION_DAYS in updated_fields
+    ):
+        return
+    try:
+        await async_settle_owned_operation(
+            async_apply_usage_retention(hass, entry_id, subentry_id)
+        )
+    except Exception as err:
+        raise mark_mutation_failure(
+            HomeAssistantError(
+                "Configuration saved, but Usage retention could not be applied; retry saving retention to finish deletion."
+            ),
+            "committed",
+        ) from err
 
 
 async def async_retry_unused_volatile_usage(hass: HomeAssistant, entry_id: str) -> None:
