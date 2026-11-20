@@ -264,7 +264,7 @@ function renderUsageBar(panel, bucket, max) {
 
 function usageWarnings(panel, result) {
   const storage = result.summary?.storage_warning || result.days?.storage_warning;
-  return (storage ? `<p class="notice warning" role="status">${panel._e(storage)}</p>` : "") + (result.load_errors || []).map((issue) => `<div class="notice warning"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)}</p><button type="button" class="secondary" data-usage-retry>Retry</button></div>`).join("");
+  return (storage ? `<p class="notice warning" role="status">${panel._e(storage)}</p>` : "") + (result.load_errors || []).map((issue) => `<div class="notice warning"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)}</p><button type="button" class="secondary" data-usage-retry>Retry usage loading</button></div>`).join("");
 }
 
 function usageRecentRows(panel, result) {

@@ -356,6 +356,9 @@ test("Usage unavailable dependencies do not become zero totals or reassuring emp
         if (request.action === "daily") throw Error("Daily data offline");
         if (request.action === "runs") { await new Promise(resolve => { window.releaseUsageRuns = resolve; }); throw Error("Run data offline"); }
       }
+      if (request.section === "usage" && request.action === "daily") {
+        return {...await original(request), storage_warning: "Usage totals need storage repair."};
+      }
       return original(request);
     };
   });
@@ -372,4 +375,5 @@ test("Usage unavailable dependencies do not become zero totals or reassuring emp
   await expect(panel.locator("[data-eoc-usage-runs]")).toContainText("No saved recent runs");
   await expect(panel.locator("[data-eoc-usage-diagnostics]")).toContainText("No failed runs were found");
   await expect(panel.locator(".metric-grid").first()).not.toContainText("unavailable");
+  await expect(panel.locator("[data-eoc-usage-warnings]")).toContainText("Usage totals need storage repair.");
 });
