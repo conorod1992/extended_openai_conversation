@@ -239,7 +239,7 @@ def _persistent_memory_context(memories: list[MemoryRecord]) -> str:
                 {
                     "memory_id": memory.memory_id,
                     "scope": (
-                        "shared_household"
+                        "household"
                         if memory.user_id == "shared:household"
                         else "personal"
                     ),

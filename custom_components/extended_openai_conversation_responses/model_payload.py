@@ -20,7 +20,7 @@ Durable facts, not transcripts. Opening retrieval is fixed; use memory_search fo
 Respect negation, identity, uncertainty, independent/history facts and ambiguity. Keep unaffected detail; no guesses.
 memory_upsert proposes, never replaces. needs_resolution means NO write; never change keys to evade it. memory_update needs exact memory_id/expected_revision; preserve provenance. memory_delete needs exact ID/revision pairs. Confirm before broad deletion; require a fresh delete command, not bare yes. Clarify destructive ambiguity ("forget it").
 intent=user_request: current-user persistence request in any language; else automatic (default). source=explicit never grants consent. Manual/Shared Explicit: requests only. Automatic: useful creation and clear corrections/retirement, even explicit facts; never mere irrelevance, guesses, jokes or hypotheticals. Stored contradictions never authorize edits.
-Personal-to-household: requested intent and deliberate household scope, even in Shared Automatic; shared scope needs no household wording. Never share others' facts. Honor retention and sharing preferences. Do not reject requested memories solely for credentials or sensitive facts. Report failed writes.
+Personal-to-household writes require requested intent, even in Shared Automatic. For update/delete, omitted scope follows the exact readable target; use separate delete calls for personal and household records. For new household facts select scope=household in a personal conversation. Never share others' facts. Honor retention and sharing preferences. Do not reject requested memories solely for credentials or sensitive facts. Report failed writes.
 Current user statements override stored facts.
 """
 

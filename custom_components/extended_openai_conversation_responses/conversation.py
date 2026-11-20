@@ -185,6 +185,7 @@ from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_d
 from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
 from .memory import (
+    MEMORY_OPTIONAL_ARGUMENTS,
     EmbeddingBatch,
     MemoryRecord,
     PersistentMemory,
@@ -193,6 +194,7 @@ from .memory import (
     memory_enabled,
     memory_user_id,
 )
+from .memory_tool_arguments import normalise_memory_tool_arguments
 from .model_lifecycle import clear_entity_retirement_failure
 from .model_search_hardening import _require_nonblank_query
 from .model_tool_results import (
@@ -253,6 +255,7 @@ from .speech import (
 )
 from .temporary_memory import (
     _ACTIVE_OWNER_SCOPE_ID,
+    TEMPORARY_MEMORY_OPTIONAL_ARGUMENTS,
     TemporaryMemory,
     TemporaryMemoryRecord,
     _owner_from_resolved_scope,
@@ -2820,6 +2823,9 @@ class ExtendedOpenAIAgentEntity(
         llm_context: llm.LLMContext | None,
     ) -> dict[str, Any]:
         """Execute a scoped persistent-memory operation."""
+        arguments = normalise_memory_tool_arguments(
+            arguments, MEMORY_OPTIONAL_ARGUMENTS.get(operation, frozenset())
+        )
         if operation == "search":
             _require_nonblank_query(arguments)
         if not memory_enabled(self.subentry.data):
@@ -2857,7 +2863,12 @@ class ExtendedOpenAIAgentEntity(
             # including duplicate/conflict metadata returned by the memory store.
             if write_scope_id not in readable_scope_ids:
                 return {"status": result["status"]}
-            return _compact_memory_result(result)
+            return _compact_memory_result(
+                result,
+                scope="household"
+                if write_scope_id == SHARED_HOUSEHOLD_SCOPE_ID
+                else "personal",
+            )
         if operation == "search":
             query = arguments.get("query")
             category = arguments.get("category")
@@ -2964,7 +2975,9 @@ class ExtendedOpenAIAgentEntity(
             if source is not None and source not in ("explicit", "implicit"):
                 raise ValueError("source must be explicit or implicit")
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"),
+                await self._async_memory_mutation_scope(
+                    arguments.get("scope"), [memory_id], readable_scope_ids
+                ),
                 llm_context,
                 intent=arguments.get("intent", "automatic"),
             )
@@ -3017,7 +3030,9 @@ class ExtendedOpenAIAgentEntity(
                 raise ValueError("legacy memory_ids cannot authorize model deletion")
             requested = arguments.get("intent", "automatic") == "user_request"
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"),
+                await self._async_memory_mutation_scope(
+                    arguments.get("scope"), ids, readable_scope_ids
+                ),
                 llm_context,
                 intent=arguments.get("intent", "automatic"),
             )
@@ -3033,6 +3048,32 @@ class ExtendedOpenAIAgentEntity(
             )
             return {"status": "deleted", "deleted": deleted}
         raise ValueError("unknown memory operation")
+
+    async def _async_memory_mutation_scope(
+        self, selector: Any, ids: list[str], readable_scope_ids: list[str]
+    ) -> Any:
+        """Infer scope from exact readable targets; leave admission to the writer."""
+        if len(readable_scope_ids) < 2 or (selector is not None and len(ids) == 1):
+            return selector
+        assert self._memory is not None
+        records = await self._memory.async_get_many(
+            [
+                (scope_id, memory_id)
+                for scope_id in readable_scope_ids
+                for memory_id in ids
+            ],
+            readable_scope_ids,
+        )
+        owners = {record.user_id for record in records}
+        if len(owners) > 1:
+            raise ValueError(
+                "Use separate scope-specific calls to delete personal and household memories"
+            )
+        if selector is not None:
+            return selector
+        if len(records) != len(ids):
+            raise ValueError("memory not found or changed; search again")
+        return "household" if SHARED_HOUSEHOLD_SCOPE_ID in owners else "personal"
 
     def _current_memory_scope_id(
         self, llm_context: llm.LLMContext | None = None
@@ -3179,6 +3220,9 @@ class ExtendedOpenAIAgentEntity(
         self, operation: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Execute a narrow operation within the request-derived scope."""
+        arguments = normalise_memory_tool_arguments(
+            arguments, TEMPORARY_MEMORY_OPTIONAL_ARGUMENTS.get(operation, frozenset())
+        )
         owner = (
             _owner_from_resolved_scope(_ACTIVE_TURN.get().scope)
             if _ACTIVE_TURN.get().temporary_scope is not None

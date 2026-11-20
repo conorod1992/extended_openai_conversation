@@ -12,14 +12,22 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses.const import (
+    API_MODE_CHAT_COMPLETIONS,
+    API_MODE_RESPONSES,
     CONF_MEMORY_MODE,
     CONF_SHARED_MEMORY_MODE,
     MEMORY_MODE_AUTOMATIC,
     MEMORY_MODE_MANUAL,
     SHARED_MEMORY_EXPLICIT,
 )
+from custom_components.extended_openai_conversation_responses.function_execution import (
+    async_validate_function_arguments,
+)
+from custom_components.extended_openai_conversation_responses.request import format_function_tools
+from custom_components.extended_openai_conversation_responses.temporary_memory import temporary_memory_tools
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
     _ACTIVE_TURN,
@@ -85,6 +93,81 @@ async def model_call(
         return await agent._async_execute_memory_tool(operation, arguments, None)
     finally:
         _ACTIVE_TURN.reset(token)
+
+
+@pytest.mark.parametrize("selector", [{}, {"scope": "household"}])
+async def test_exact_household_mutation_and_atomic_mixed_rejection(selector):
+    memory, storage = await store()
+    agent = entity(memory)
+    for owner in ("alice", "shared:household", "bob"):
+        await memory.async_add(owner, f"Fact for {owner}", "general", "explicit")
+    personal, household, foreign = [(
+        await memory.async_list(owner)
+    )[0] for owner in ("alice", "shared:household", "bob")]
+
+    def target(record):
+        return {"memory_id": record.memory_id, "expected_revision": memory_revision(record)}
+
+    with pytest.raises(ValueError, match="automatic shared"):
+        await model_call(agent, "update", **target(household), content="New content", **selector)
+    updated = await model_call(
+        agent, "update", **target(household), content="New content", intent="user_request", **selector
+    )
+    assert updated["memory"]["scope"] == "household"
+    [edited] = await memory.async_list("shared:household")
+    before = storage.saves
+    for targets, error in [
+        ([target(personal), target(edited)], "separate scope-specific"),
+        ([target(household)], "changed since"),
+        ([target(foreign)], "memory not found"),
+    ]:
+        with pytest.raises(ValueError, match=error):
+            await model_call(agent, "delete", targets=targets, intent="user_request", **selector)
+    assert storage.saves == before
+    assert await model_call(agent, "delete", targets=[target(edited)], intent="user_request", **selector) == {
+        "status": "deleted", "deleted": 1,
+    }
+    created = await model_call(agent, "upsert", content="New personal", category="general", source="explicit")
+    assert created["memory"]["scope"] == "personal"
+    assert len(await memory.async_list("alice")) == 2
+    assert await memory.async_list("shared:household") == []
+
+
+@pytest.mark.parametrize("mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+async def test_memory_nulls_through_provider_format_and_argument_validation(hass, mode):
+    specs = {}
+    for tool in format_function_tools(memory_tools() + temporary_memory_tools(), mode):
+        spec = tool if mode == API_MODE_RESPONSES else tool["function"]
+        specs[spec["name"]] = spec
+
+    async def validate(name, arguments):
+        return await async_validate_function_arguments(hass, specs[name], arguments)
+
+    memory, _ = await store()
+    agent = entity(memory)
+    await memory.async_add("alice", "Original fact", "general", "explicit", key="original")
+    args = {"content": "Original fact", "category": "general", "source": "explicit",
+            "scope": None, "intent": None, "key": None, "subject": None, "valid_from": None}
+    validated = await validate("memory_upsert", args)
+    assert await model_call(agent, "upsert", **validated) == await model_call(
+        agent, "upsert", content="Original fact", category="general", source="explicit"
+    )
+    assert (await model_call(agent, "upsert", **validated))["status"] == "needs_resolution"
+    assert validated["intent"] is None and args["key"] is None
+    with pytest.raises(ValueError, match="automatic memory mutations"):
+        await model_call(entity(memory, automatic=False), "upsert", **validated)
+    assert (await validate("memory_search", {"query": "fact", "offset": 0, "limit": None}))["offset"] == 0
+    assert (await validate("temporary_memory_add", {"content": "x", "expires_at": "tomorrow", "category": None}))["category"] is None
+    for name, invalid in [
+        ("memory_search", {"query": None}),
+        ("memory_upsert", {**args, "source": None}),
+        ("memory_upsert", {**args, "unrecognised": None}),
+        ("memory_delete", {"targets": [{"memory_id": "a", "expected_revision": None}]}),
+        ("memory_delete", {"targets": [{"memory_id": "a", "expected_revision": "0" * 64}], "memory_ids": None}),
+        ("temporary_memory_delete", {"memory_ids": None}),
+    ]:
+        with pytest.raises(HomeAssistantError):
+            await validate(name, invalid)
 
 
 async def test_model_create_idempotent_noop_conflict_and_no_write_on_old_identity():

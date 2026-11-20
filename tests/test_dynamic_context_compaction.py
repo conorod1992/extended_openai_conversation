@@ -198,7 +198,7 @@ def test_persistent_memory_context_preserves_record_fields_with_compact_json() -
     assert json.loads(serialized) == [
         {
             "memory_id": "memory-1",
-            "scope": "shared_household",
+            "scope": "household",
             "category": "household",
             "source": "explicit",
             "revision": memory_revision(memory),

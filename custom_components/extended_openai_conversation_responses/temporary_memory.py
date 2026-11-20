@@ -16,6 +16,7 @@ from uuid import uuid4
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .memory_tool_arguments import nullable_memory_tool_arguments
 from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
@@ -401,7 +402,7 @@ class TemporaryMemory:
                 if content is not None
                 else current.content
             )
-            effective_source = source or current.source
+            effective_source = "manual" if source == "manual" else current.source
             new_category = (
                 _clean(category, MAX_CATEGORY_LENGTH, "category")
                 if category is not None
@@ -914,10 +915,16 @@ def temporary_memory_as_dict(
     return result
 
 
+TEMPORARY_MEMORY_OPTIONAL_ARGUMENTS = {
+    "add": frozenset({"category"}),
+    "update": frozenset({"content", "expires_at", "category"}),
+}
+
+
 def temporary_memory_tools() -> list[dict[str, Any]]:
     """Return the small model-facing maintenance surface."""
     common = {"type": "temporary_memory"}
-    return [
+    tools = [
         {
             "spec": {
                 "name": "temporary_memory_add",
@@ -977,6 +984,7 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
             "function": {**common, "operation": "delete"},
         },
     ]
+    return nullable_memory_tool_arguments(tools, TEMPORARY_MEMORY_OPTIONAL_ARGUMENTS)
 
 
 _MANAGERS = f"{DOMAIN}.temporary_memory_managers"

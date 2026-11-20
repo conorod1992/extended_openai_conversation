@@ -831,7 +831,7 @@ async def test_unretained_request_has_no_active_temporary_memory_scope(monkeypat
     active.assert_not_awaited()
 
 
-async def test_model_sensitive_update_uses_automatic_provenance(monkeypatch):
+async def test_model_update_preserves_manual_provenance_and_duplicate_protection(monkeypatch):
     from custom_components.extended_openai_conversation_responses.conversation import (
     _ACTIVE_TURN,
 )
@@ -871,11 +871,15 @@ async def test_model_sensitive_update_uses_automatic_provenance(monkeypatch):
         )
         records = await memory.async_active("user:alice", owner_scope_id="user:alice")
         assert records[0].content == "My medical diagnosis is diabetes"
-        assert records[0].source == "automatic"
+        assert records[0].source == "manual"
         updated = await agent._async_execute_temporary_memory_tool("update", {
             "memory_id": created["memory"]["memory_id"], "content": "Visitors arrive Friday",
         })
-        assert updated["memory"]["source"] == "automatic"
+        assert updated["memory"]["source"] == "manual"
+        duplicate = await agent._async_execute_temporary_memory_tool("add", {
+            "content": "Visitors arrive Friday", "expires_at": future(48), "category": "changed",
+        })
+        assert duplicate["memory"] == updated["memory"]
         explicit = await memory.async_update("user:alice", created["memory"]["memory_id"],
             "My medical diagnosis is diabetes", None, None, owner_scope_id="user:alice", source="manual")
         assert explicit.source == "manual"
