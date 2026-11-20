@@ -968,19 +968,23 @@ async def _async_prepare_import(
                     inspect_only=inspect_only,
                 )
             )
-            # A timed-out caller may never retry. Observe failed preparations
-            # without consuming the outcome available to the next matching caller.
-            task.add_done_callback(
-                lambda done: None if done.cancelled() else done.exception()
-            )
+
+            def release(completed: asyncio.Task[transfer.PreparedTransfer]) -> None:
+                # Waiters keep their task reference. A timed-out caller may
+                # never return, so the session only holds work while it runs.
+                if not completed.cancelled():
+                    completed.exception()
+                if session.preparation is completed:
+                    session.preparation = None
+                    session.preparation_key = None
+                pending = _pending(hass).get(session.path)
+                if pending is not None and pending.reader is completed:
+                    pending.reader = None
+
+            task.add_done_callback(release)
             session.preparation = task
             session.preparation_key = key
-    try:
-        return await asyncio.shield(task)
-    finally:
-        if task.done() and session.preparation is task:
-            session.preparation = None
-            session.preparation_key = None
+    return await asyncio.shield(task)
 
 
 async def _discard_export(hass: HomeAssistant, session_id: str) -> bool:

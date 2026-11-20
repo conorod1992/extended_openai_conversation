@@ -763,12 +763,34 @@ async def test_native_upload_worker_survives_timeout_without_blocking_agent(hass
                 assert not gate._writer_active
         with pytest.raises(backup.BackupError, match="still pending"):
             await backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, {**request, "inspect_only": False})
-        release.set()
+        retry_started = asyncio.Event()
+        prepare = backup_transfer._async_prepare_import
+
+        async def observe_retry(*args, **kwargs):
+            retry_started.set()
+            return await prepare(*args, **kwargs)
+
+        monkeypatch.setattr(backup_transfer, "_async_prepare_import", observe_retry)
         monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 1)
-        assert await backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, request) == {
-            "valid": True, "preview_token": None,
-        }
+        retry = asyncio.create_task(backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, request))
+        await asyncio.wait_for(retry_started.wait(), timeout=1)
+        release.set()
+        assert await retry == {"valid": True, "preview_token": None}
         assert len(calls) == 1
+        assert session.preparation is None
+
+        # A worker that finishes after its final waiter times out also releases
+        # the parsed document while keeping the upload available for another try.
+        release.clear()
+        monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 0.05)
+        with pytest.raises(backup.BackupError, match="inspection timed out"):
+            await backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, request)
+        abandoned = session.preparation
+        assert abandoned is not None
+        release.set()
+        await asyncio.wait_for(asyncio.shield(abandoned), timeout=1)
+        assert session.preparation is None
+        assert path.exists() and len(calls) == 2
     finally:
         release.set()
         await backup_transfer._discard_import(hass, session.session_id)
