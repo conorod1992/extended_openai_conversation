@@ -27,6 +27,24 @@ const baseConfig = {
   overrides: {},
 };
 
+test("renders orphaned bindings independently of temporarily unavailable controls", () => {
+  const satellite = "assist_satellite.reused", speaker = "media_player.reused", wake = "switch.missing";
+  const config = {...baseConfig, overrides:{[satellite]:{media_player_entity_id:speaker, wake_sound_entity_id:wake}}};
+  const html = renderQuietHours(panel({
+    config, satellites:[], selection_issues:{
+      [satellite]:{status:"replaced", review_token:"satellite"},
+      [speaker]:{status:"unavailable"}, [wake]:{status:"missing"},
+    },
+  }));
+  assert.match(html, /Replacement requires confirmation/);
+  assert.match(html, /Use replacement satellite/);
+  assert.match(html, /Clear saved override/);
+  assert.match(html, /Temporarily unavailable/);
+  assert.match(html, /Saved binding missing/);
+  assert.match(html, /ha-entity-picker/);
+  assert.doesNotMatch(html, /Use replacement speaker/);
+});
+
 test("unverified legacy ownership shows the recovery message without settings controls", () => {
   const error = "Quiet Hours is paused because saved control records lack verified registry identities. All saved settings and restoration values are preserved. Administrator review is required.";
   const html = renderQuietHours(panel({available:false, error}, {...baseConfig, enabled:false}));

@@ -1,5 +1,5 @@
 import {ensureNativePicker} from "./native-picker-loader.js";
-import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
 
 export async function loadQuietHours(panel, silent = false) {
@@ -47,6 +47,25 @@ function volumeStatus(panel, satellite) {
   return {label: "Speaker ready", ready: true};
 }
 
+const bindingStatus = {
+  missing: "Saved binding missing",
+  replaced: "Replacement requires confirmation",
+  invalid: "Saved binding invalid",
+  unavailable: "Temporarily unavailable",
+};
+
+function quietHourSatellites(panel) {
+  const result = panel._result || {};
+  const discovered = result.satellites || [];
+  const ids = new Set(discovered.map(item => item.satellite_entity_id));
+  const orphaned = Object.keys(result.config?.overrides || {}).filter(id => !ids.has(id));
+  return [...discovered, ...orphaned.map(id => ({satellite_entity_id:id, orphaned:true}))];
+}
+
+function bindingIssue(panel, entityId) {
+  return panel._result?.selection_issues?.[entityId];
+}
+
 // Summaries use the draft's selected entities. Clearing a saved manual override
 // does not guess what the backend will detect automatically after Save.
 export function quietHoursSatellitePresentation(panel, satellite, config) {
@@ -73,17 +92,20 @@ export function quietHoursSatellitePresentation(panel, satellite, config) {
   const wakeUnavailable = Boolean(wake.id) && (!wakeState || ["unknown", "unavailable"].includes(wakeState));
   const wakeReview = !wake.id && !wake.pending && satellite.wake_sound_ambiguous === true;
   const wakeUsed = config.wake_sound !== "unchanged";
+  const mediaIssue = media.manual && media.id === saved.media_player_entity_id ? bindingIssue(panel, media.id) : null;
+  const wakeIssue = wake.manual && wake.id === saved.wake_sound_entity_id ? bindingIssue(panel, wake.id) : null;
+  const satelliteIssue = bindingIssue(panel, satellite.satellite_entity_id);
   return {
-    media, wake, speaker,
-    mediaSummary: media.id ? `${label(media)}${speaker.ready ? "" : " — temporarily unavailable"}`
+    media, wake, speaker: mediaIssue ? {label:bindingStatus[mediaIssue.status], ready:false} : speaker,
+    mediaSummary: media.id ? `${label(media)}${mediaIssue ? ` — ${bindingStatus[mediaIssue.status]}` : speaker.ready ? "" : " — temporarily unavailable"}`
       : media.pending ? label(media)
       : mediaReview ? `Manual selection required · ${satellite.media_player_candidates.length} media players on this device`
       : "No compatible speaker found",
-    wakeSummary: wake.id ? `${label(wake)}${wakeUnavailable ? " — temporarily unavailable" : ""}`
+    wakeSummary: wake.id ? `${label(wake)}${wakeIssue ? ` — ${bindingStatus[wakeIssue.status]}` : wakeUnavailable ? " — temporarily unavailable" : ""}`
       : wake.pending ? label(wake)
       : wakeReview ? "Manual selection required · multiple recognised wake-word switches"
       : "No wake-word switch found (optional)",
-    needsAttention: (!media.pending && !speaker.ready) || (wakeUsed && (wakeUnavailable || wakeReview)),
+    needsAttention: Boolean(satelliteIssue || mediaIssue || wakeIssue || satellite.orphaned) || (!media.pending && !speaker.ready) || (wakeUsed && (wakeUnavailable || wakeReview)),
   };
 }
 
@@ -98,17 +120,26 @@ function pickerHelp(satellite, media) {
 function satelliteCard(panel, satellite, config) {
   const presentation = quietHoursSatellitePresentation(panel, satellite, config);
   const speakerStatus = presentation.speaker;
-  const satelliteName = panel._e(satellite.name || satellite.satellite_entity_id);
+  const satelliteId = satellite.satellite_entity_id;
+  const satelliteName = panel._e(satellite.name || satelliteId);
+  const status = bindingStatus[bindingIssue(panel, satelliteId)?.status] || (satellite.orphaned ? "Temporarily unavailable" : "");
+  const saved = manualOverride(panel._result?.config, satelliteId);
+  const replacementButtons = [
+    [satelliteId, "satellite"], [saved.media_player_entity_id, "speaker"], [saved.wake_sound_entity_id, "wake-word switch"],
+  ].filter(([id]) => bindingIssue(panel, id)?.status === "replaced")
+    .map(([id, name]) => `<button type="button" class="secondary qh-rebind" data-id="${panel._e(id)}">Use replacement ${name}</button>`).join("");
+  const clearOverride = satellite.orphaned && Object.hasOwn(config.overrides || {}, satelliteId)
+    ? `<button type="button" class="secondary qh-clear-override" data-id="${panel._e(satelliteId)}">Clear saved override</button>` : "";
   return `<article class="qh-satellite" data-qh-satellite="${panel._e(satellite.satellite_entity_id)}" ${presentation.needsAttention ? "data-qh-attention" : ""}>
     <div class="qh-satellite-heading">
-      <div><strong>${satelliteName}</strong><small>${panel._e(satellite.satellite_entity_id)}</small></div>
+      <div><strong>${satelliteName}</strong><small>${panel._e(satelliteId)}${status ? ` · ${panel._e(status)}` : ""}</small></div>
       <span data-qh-speaker-status class="${speakerStatus.ready ? "availability-badge" : "disabled-badge"}">${speakerStatus.label}</span>
     </div>
     <div class="qh-satellite-summary"><span>Speaker: <span data-qh-media-summary>${panel._e(presentation.mediaSummary)}</span></span><span>Wake-word switch: <span data-qh-wake-summary>${panel._e(presentation.wakeSummary)}</span></span></div>
     <details class="qh-satellite-config eoc-details-base" ${presentation.needsAttention ? "open" : ""}><summary>Configure</summary><div class="qh-grid">
       <div><ha-entity-picker class="qh-override" label="Speaker volume entity for ${satelliteName}" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="media_player_entity_id" data-domain="media_player"></ha-entity-picker><small>${panel._e(pickerHelp(satellite, true))}</small></div>
       <div><ha-entity-picker class="qh-override" label="Wake-word sound switch for ${satelliteName}" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="wake_sound_entity_id" data-domain="switch"></ha-entity-picker><small>${panel._e(pickerHelp(satellite, false))}</small></div>
-    </div></details>
+    </div>${replacementButtons || clearOverride ? `<div class="actions">${replacementButtons}${clearOverride}</div>` : ""}</details>
   </article>`;
 }
 
@@ -147,7 +178,7 @@ export function refreshTimedStatus(panel) {
 }
 
 export function timedStructure(result) {
-  return [result?.available, result?.state_entity_id, result?.satellites?.map(item => [item.satellite_entity_id, item.name])];
+  return [result?.available, result?.state_entity_id, result?.satellites?.map(item => [item.satellite_entity_id, item.name]), result?.selection_issues, Object.keys(result?.config?.overrides || {})];
 }
 
 export function renderQuietHours(panel) {
@@ -160,7 +191,7 @@ export function renderQuietHours(panel) {
   }
   const savedConfig = result.config || {};
   const config = panel._quietHoursDraft || savedConfig;
-  const satellites = result.satellites || [];
+  const satellites = quietHourSatellites(panel);
   const maxPercent = Math.round(Number(config.max_volume ?? 0.2) * 100);
   return `<style>${QUIET_HOURS_STYLES}</style><section class="page-intro"><h1>Quiet Hours</h1><p>Schedule quieter Assist speakers and wake-word chimes.</p></section>
     <section class="content-card">
@@ -202,7 +233,7 @@ function refreshSatelliteSummary(panel, card, satellite) {
 }
 
 function satelliteFor(panel, id) {
-  return panel._result?.satellites?.find(item => item.satellite_entity_id === id);
+  return quietHourSatellites(panel).find(item => item.satellite_entity_id === id);
 }
 
 function pickerContext(satellite, media) {
@@ -238,6 +269,29 @@ function refreshSatelliteControls(panel, blurred) {
   }
 }
 
+async function useReplacement(panel, button) {
+  const selection = button.dataset.id;
+  const issue = bindingIssue(panel, selection);
+  const revision = panel._result?.revision;
+  if (issue?.status !== "replaced" || !issue.review_token || !revision) return;
+  if (JSON.stringify(panel._quietHoursDraft) !== JSON.stringify(panel._result.config)) {
+    panel._toast("Save or discard your Quiet Hours edits before using a replacement.", true);
+    return;
+  }
+  const owner = captureConfigurationOwner(panel);
+  const current = () => panel._viewKey?.() === VIEW && configurationSubmissionIsCurrent(panel, owner);
+  button.disabled = true;
+  try {
+    const result = await panel._call("quiet_hours", "rebind", {selection, revision, review_token:issue.review_token});
+    requireMutationAcknowledgement(typeof result?.revision === "string" && result.revision !== revision && result.config, "using the Quiet Hours replacement");
+    if (current()) await loadQuietHours(panel, true);
+  } catch (err) {
+    if (current()) panel._toast(`Unable to use replacement: ${err.message || String(err)}`, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 export function bindQuietHours(panel) {
   const root = panel.shadowRoot;
   if (!root.__eocQuietSummaryBound) {
@@ -256,6 +310,19 @@ export function bindQuietHours(panel) {
       refreshTimedStatus(panel);
     });
   }
+  root.querySelectorAll(".qh-rebind").forEach(button => {
+    button.addEventListener("click", () => void useReplacement(panel, button));
+  });
+  root.querySelectorAll(".qh-clear-override").forEach(button => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.id;
+      setOverride(panel, id, "media_player_entity_id", "");
+      setOverride(panel, id, "wake_sound_entity_id", "");
+      refreshSatelliteControls(panel);
+      button.disabled = true;
+      button.dispatchEvent(new Event("change", {bubbles:true}));
+    });
+  });
   root.querySelector("#qh-enabled")?.addEventListener("change", (event) => { panel._quietHoursDraft.enabled = event.target.checked; });
   root.querySelector("#qh-start")?.addEventListener("input", (event) => { panel._quietHoursDraft.start = event.target.value; });
   root.querySelector("#qh-end")?.addEventListener("input", (event) => { panel._quietHoursDraft.end = event.target.value; });

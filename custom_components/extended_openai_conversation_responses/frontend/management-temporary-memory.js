@@ -244,7 +244,7 @@ async function deleteTemporaryMemory(panel, memoryId, button = null) {
     });
     if (!panel._ownsRetainedMutation(owner)) return false;
     requireMutationAcknowledgement([0, 1].includes(response?.deleted), "deleting the temporary memory");
-    if (response.deleted === 0) return false;
+    if (response.deleted === 0) throw new Error("This memory is no longer available to delete. Refresh the list and try again if it is still present.");
     return await presentAcknowledgedMutation(panel, submission, "Temporary memory deleted", async () => {
       panel._result = {...panel._result, memories: (panel._result.memories || []).filter(item => item.memory_id !== memoryId)};
       if (panel._temporaryMemoryDraft?.memory_id === memoryId) {
@@ -299,6 +299,7 @@ export function renderTemporaryScopePicker(panel) {
 
 export {
   temporaryDialog,
+  deleteTemporaryMemory,
   CATEGORY_LIMIT,
   CONTENT_LIMIT,
   ensureTemporaryScope,

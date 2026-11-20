@@ -24,7 +24,7 @@ import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimest
 import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
 import {capturePageRead, acceptPageRead, hasPendingPageSaveRead, retryPageSaveReadsOnTransport} from "./page-save-acknowledgement.js";
-import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
+import {loadAgentsWithOverviewPrefetch, loadRoute, syncConversationSearchOwner, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetting} from "./frontend-navigation.js";
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
@@ -334,6 +334,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // These are operation lifetimes; keep authored drafts and their recovery
       // baselines intact across a temporary authentication transition.
       ++this._loadToken;
+      syncConversationSearchOwner(this);
       this._eocCatalogReadSequence = (this._eocCatalogReadSequence || 0) + 1;
       this._eocModelChangeToken = (this._eocModelChangeToken || 0) + 1;
       this._eocViewAssetToken = (this._eocViewAssetToken || 0) + 1;
@@ -1189,6 +1190,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const current = this._data.scopes.find((scope) => scope.is_current_user);
     if (!this._data.scopes.some((scope) => scope.scope_id === this._scopeId)) {
       this._scopeId = current?.scope_id || this._data.scopes[0]?.scope_id;
+      if (this._viewKey?.() === "data-memory/conversations") syncConversationSearchOwner(this);
     }
   }
 
