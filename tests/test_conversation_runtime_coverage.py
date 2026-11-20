@@ -246,15 +246,8 @@ def test_mid_request_guest_activation_is_pinned_for_remainder_of_turn() -> None:
     assert pinned is live_policy
 
 
-def test_guest_tool_group_filter_removes_disallowed_and_orphaned_members(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_guest_tool_group_filter_removes_disallowed_and_orphaned_members() -> None:
     """Guest filtering must keep only permitted tools and valid group membership."""
-    monkeypatch.setattr(
-        conversation_module,
-        "is_ha_tool",
-        lambda tool: tool.get("function", {}).get("type") == "ha_llm",
-    )
     tools = [
         {"spec": {"name": "allowed"}, "function": {"type": "script"}},
         {"spec": {"name": "policy_blocked"}, "function": {"type": "script"}},
