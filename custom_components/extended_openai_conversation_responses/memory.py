@@ -43,7 +43,7 @@ from .persistence_hardening import (
     _async_settle_transactional_save,
 )
 from .provider_errors import provider_failure_category, provider_log_remediation
-from .retrieval_text import _stem, bounded_phrase, ordered_term_phrase
+from .retrieval_text import _stem, bounded_phrase, ordered_term_phrase, word_tokens
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 from .storage_namespaces import MEMORY_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
@@ -2729,8 +2729,9 @@ def _subject_identity(value: str | None) -> str:
 @lru_cache(maxsize=20_000)
 def _normalize(value: str) -> str:
     return " ".join(
-        _TOKEN_PATTERN.findall(
-            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+        word_tokens(
+            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'"),
+            _TOKEN_PATTERN,
         )
     )
 

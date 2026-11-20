@@ -34,7 +34,11 @@ from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
-from .retrieval_text import _stem as _shared_stem
+from .retrieval_text import (
+    _stem as _shared_stem,
+    word_character_projection,
+    word_tokens,
+)
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .scope import ResolvedDataScope
 from .storage_namespaces import ARCHIVE_PREFIX as STORAGE_KEY_PREFIX
@@ -2431,8 +2435,9 @@ def _title(value: str) -> str:
 
 def _normalize(value: str) -> str:
     return " ".join(
-        _TOKEN_PATTERN.findall(
-            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+        word_tokens(
+            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'"),
+            _TOKEN_PATTERN,
         )
     )
 
@@ -2525,22 +2530,24 @@ def _excerpt_match_offset(value: str, query: str) -> int:
         folded_parts.append(folded)
         offsets.extend([index] * len(folded))
     folded_text = "".join(folded_parts)
-    words = list(_TOKEN_PATTERN.finditer(folded_text))
-    normalized = " ".join(word.group() for word in words)
+    words = [
+        (match.start(), folded_text[match.start() : match.end()])
+        for match in _TOKEN_PATTERN.finditer(word_character_projection(folded_text))
+    ]
+    normalized = " ".join(token for _, token in words)
     normalized_query = _normalize(query)
     # Prefer the same whole phrase bonus as the ranker, including punctuation
     # normalized to spaces. A substring inside a different word is not a match.
     phrase = f" {normalized} ".find(f" {normalized_query} ") if normalized_query else -1
     if phrase >= 0:
         position = 0
-        for word in words:
+        for start, token in words:
             if position == phrase:
-                return offsets[word.start()]
-            position += len(word.group()) + 1
+                return offsets[start]
+            position += len(token) + 1
 
     terms = _tokens_from_normalized(normalized_query)
-    for word in words:
-        token = word.group()
+    for start, token in words:
         if not (_tokens_from_normalized(token) & terms):
             continue
         # Compounds and possessives are indexed both whole and by component.
@@ -2562,7 +2569,7 @@ def _excerpt_match_offset(value: str, query: str) -> int:
                     if exact >= 0
                     else min(token.find(term) for term in cjk_matches)
                 )
-        return offsets[word.start() + min(positions, default=0)]
+        return offsets[start + min(positions, default=0)]
     return 0
 
 

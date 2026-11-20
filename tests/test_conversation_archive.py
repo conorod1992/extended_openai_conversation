@@ -1613,6 +1613,26 @@ async def test_archive_canonical_unicode_search_preserves_original_content(form)
     assert (await fresh.async_search("user:alice", "café résumé"))["results"]
 
 
+async def test_archive_search_keeps_combining_marks_in_matches_and_excerpts():
+    storage = CoverageArchiveStorage()
+    storage.metadata = {"sessions": [asdict(_session())], "partitions": ["2026-09"]}
+    storage.partitions["2026-09"] = {
+        "turns": [
+            asdict(_turn(user_text="खोलो", assistant_text="Saved")),
+            asdict(
+                _turn(
+                    turn_id="turn-2", user_text="Request " * 100 + "खेलो",
+                    assistant_text="Saved",
+                )
+            ),
+        ]
+    }
+    archive = await _coverage_archive(storage)
+    rows = (await archive.async_search("user:alice", "खेलो"))["results"]
+    assert [row["turn_id"] for row in rows] == ["turn-2"]
+    assert "खेलो" in rows[0]["excerpt"]
+
+
 async def test_record_repair_partition_failure_replays_durable_journal_without_partial_publication():
     storage = _RecoveringArchiveStorage()
     storage.metadata = {"sessions": [asdict(_session(turn_count=5))], "partitions": ["2026-09"]}

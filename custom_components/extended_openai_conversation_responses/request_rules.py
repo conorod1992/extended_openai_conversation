@@ -80,6 +80,7 @@ from .request_rule_patterns import (
     sentence_capture_names,
     validate_match_input,
 )
+from .retrieval_text import word_character_projection
 from .script_lifecycle import async_cleanup_script, async_run_script
 from .script_payload import (
     effective_service_payload,
@@ -4070,12 +4071,16 @@ _TEXT_PUNCTUATION = re.compile(
 
 
 def _basic_normalize(text: str) -> str:
-    """Normalize punctuation and spacing while preserving numeric values."""
+    """Normalize punctuation and spacing while preserving words and numbers."""
     value = unicodedata.normalize("NFKC", str(text)).casefold().replace("\u2019", "'")
-    value = _TEXT_PUNCTUATION.sub(
-        lambda match: match[1].replace("\u2212", "-") if match[1] else " ", value
-    )
-    return " ".join(value.split())
+    parts = []
+    start = 0
+    for match in _TEXT_PUNCTUATION.finditer(word_character_projection(value)):
+        parts.append(value[start : match.start()])
+        parts.append(match[1].replace("\u2212", "-") if match[1] else " ")
+        start = match.end()
+    parts.append(value[start:])
+    return " ".join("".join(parts).split())
 
 
 @lru_cache(maxsize=16)

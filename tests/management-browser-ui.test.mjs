@@ -41,3 +41,33 @@ assert.match(source, /memories", action/);
   assert.equal(searched._result.memories[0].memory_id, "unicode");
   assert.match(ui.renderPersistentMemories(searched), /data-memory-id="unicode" >/);
 }
+
+// In Turkish, distinct backend searches can have the same local projection.
+{
+  const requests = [];
+  const upper = {memory_id:"upper", content:"IŞIK"};
+  const dotless = {memory_id:"dotless", content:"ışık"};
+  const searched = {...panel, _query:" IŞIK ", _result:{memories:[upper, dotless]},
+    shadowRoot:{querySelector:() => null}, _toast(message) { throw new Error(message); },
+    _call:async (_section, action, payload) => {
+      assert.equal(action, "search");
+      requests.push(payload.query);
+      return {memories:[payload.query === "IŞIK" ? upper : dotless]};
+    }};
+  const lower = String.prototype.toLocaleLowerCase;
+  String.prototype.toLocaleLowerCase = function () { return lower.call(this, "tr"); };
+  try {
+    ui.prepareMemoryBrowser(searched);
+    await ui.finishMemoryBrowserLoad(searched);
+    assert.equal(ui.memorySearchProjection(upper), ui.memorySearchProjection(dotless));
+    searched._query = "ışık";
+    ui.filterPersistentMemories(searched);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.deepEqual(requests, ["IŞIK", "ışık"]);
+    const html = ui.renderPersistentMemories(searched);
+    assert.match(html, /data-memory-id="upper" hidden/);
+    assert.match(html, /data-memory-id="dotless" >/);
+  } finally {
+    String.prototype.toLocaleLowerCase = lower;
+  }
+}

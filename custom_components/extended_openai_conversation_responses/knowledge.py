@@ -25,7 +25,14 @@ from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
-from .retrieval_text import _CJK_RUN, _LEXICAL_TOKEN, bounded_phrase, cjk_terms
+from .retrieval_text import (
+    _CJK_RUN,
+    _LEXICAL_TOKEN,
+    bounded_phrase,
+    cjk_terms,
+    word_character_projection,
+    word_tokens,
+)
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .storage_namespaces import KNOWLEDGE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
@@ -1249,7 +1256,7 @@ def _tokens(value: str) -> set[str]:
 
 def _normalize(value: str) -> str:
     normalized = unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
-    return " ".join(_PHRASE_TOKEN_PATTERN.findall(normalized))
+    return " ".join(word_tokens(normalized, _PHRASE_TOKEN_PATTERN))
 
 
 def _normalize_catalog(value: str) -> str:
@@ -1266,12 +1273,7 @@ def _searchable_chunks(content: str) -> list[tuple[int, str, str, str]]:
 
     # Match lexical spans in coordinates of the original source. Combining
     # marks can compose with adjacent letters, so keep them within the span.
-    edges = content
-    if not content.isascii():
-        edges = "".join(
-            "x" if unicodedata.category(char).startswith("M") else char
-            for char in content.replace("\u2019", "'")
-        )
+    edges = word_character_projection(content.replace("\u2019", "'"))
 
     def word_boundaries(pattern: re.Pattern[str]) -> tuple[list[int], list[int]]:
         starts, ends = [], []

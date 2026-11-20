@@ -2664,6 +2664,7 @@
     "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_preserve_original_generation[user_text-42]",
     "tests/test_conversation_archive.py::test_loaded_private_session_cannot_retain_or_back_up_inconsistent_turns",
     "tests/test_conversation_archive.py::test_record_repair_partition_failure_replays_durable_journal_without_partial_publication",
+    "tests/test_conversation_archive.py::test_archive_search_keeps_combining_marks_in_matches_and_excerpts",
     "tests_real_ha/test_adversarial_metamorphic_coexistence.py::test_disabled_unrelated_rule_is_behaviorally_inert",
     "tests_real_ha/test_adversarial_metamorphic_coexistence.py::test_hostile_memory_text_does_not_cross_existing_owner_boundary",
     "tests_real_ha/test_adversarial_metamorphic_coexistence.py::test_unrelated_knowledge_source_does_not_change_retrieval_eligibility",

@@ -1558,9 +1558,19 @@ def test_unicode_normalization_distinguishes_dotless_i_from_ascii_i() -> None:
     assert normalize_text("I", settings) == "i"
     assert normalize_text("ı", settings) == "ı"
     assert normalize_text("I", settings) != normalize_text("ı", settings)
-    # Punctuation filtering turns an internal combining dot into a boundary.
-    assert normalize_text("\u0130STANBUL", settings) == "i stanbul"
+    assert normalize_text("\u0130STANBUL", settings) == "i\u0307stanbul"
     assert normalize_text("\u0130STANBUL", settings) != normalize_text("istanbul", settings)
+
+
+async def test_request_rules_distinguish_commands_with_combining_marks() -> None:
+    rules = await manager(
+        local_rule("Open", phrases=["खोलो"]),
+        local_rule("Play", phrases=["खेलो"], order=1),
+        defaults={**DEFAULT_MATCHING, "word_forms": False, "wording_alternatives": False},
+    )
+    assert rules.match("खोलो!").phrase == "खोलो"
+    assert rules.match("  खेलो।  ").phrase == "खेलो"
+    assert rules.match("ख ल") is None
 
 
 def test_session_identity_uses_continuity_or_actual_chat_log_id() -> None:

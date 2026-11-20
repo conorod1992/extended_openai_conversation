@@ -711,6 +711,23 @@ async def test_memory_canonical_unicode_ranking_dedup_and_reload(form):
     assert [item.memory_id for item in await fresh.async_search("owner", unicodedata.normalize("NFD", "pâtisserie"))] == [ident]
 
 
+async def test_memory_retrieval_and_management_preserve_unicode_distinctions():
+    memory = await _memory(FakeStorage())
+    for text in ("खोलो", "खेलो", "IŞIK", "ışık"):
+        assert (await memory.async_add("owner", text, "preferences", "explicit"))[
+            "status"
+        ] == "created"
+
+    assert [
+        item.content
+        for item in await memory.async_search("owner", "खेलो", allow_fuzzy_only=False)
+    ] == ["खेलो"]
+    for text in ("IŞIK", "ışık"):
+        records, total = await memory.async_browse("owner", text)
+        assert total == 1
+        assert [item.content for item in records] == [text]
+
+
 @pytest.mark.parametrize(
     "category",
     [

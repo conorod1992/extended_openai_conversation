@@ -98,7 +98,7 @@ export async function applyPersistentMemoryMutation(panel, response, {deletedId 
   if (remainsHere) collection.items.set(id, memory);
   else collection.items.delete(id);
   const query = browserState(panel).memoryQuery;
-  const matchesQuery = !query || memorySearchProjection(memory).includes(query);
+  const matchesQuery = !query || memorySearchProjection(memory).includes(query.toLocaleLowerCase());
   const oldPage = panel._result.memories || [];
   const wasInPage = oldPage.some(item => String(item.memory_id) === id);
   // Replace in place before a stable sort to retain backend order on equal instants.
@@ -117,15 +117,15 @@ export async function applyPersistentMemoryMutation(panel, response, {deletedId 
   collection.result = panel._result;
   // The backend owns Unicode casefold matching; JS lowercasing is insufficient.
   if (query) await runMemorySearch(panel);
-  if (panel._query.trim().toLocaleLowerCase() !== search.memoryQuery) scheduleMemorySearch(panel);
+  if (panel._query.trim() !== search.memoryQuery) scheduleMemorySearch(panel);
   return true;
 }
 
 function memoryCard(panel, memory) {
-  const query = panel._query.trim().toLocaleLowerCase();
+  const query = panel._query.trim();
   const matches = query === browserState(panel).memoryQuery
     ? (panel._result?.memories || []).some(item => item.memory_id === memory.memory_id)
-    : memorySearchProjection(memory).includes(query);
+    : memorySearchProjection(memory).includes(query.toLocaleLowerCase());
   return `<article class="list-card" data-memory-id="${panel._e(memory.memory_id)}" ${matches ? "" : "hidden"}><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}"><p class="primary-copy">${panel._e(memory.content)}</p><p class="meta">${panel._e(memory.category)} · ${panel._e(memory.source)} · Updated ${panel._e(panel._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${panel._e(memory.memory_id)}">Edit</button>${panel._data?.is_admin && panel._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${panel._e(memory.memory_id)}">Assign to user</button>` : ""}<button type="button" class="danger delete-memory" data-id="${panel._e(memory.memory_id)}">Delete</button></div></article>`;
 }
 
@@ -143,7 +143,7 @@ function applySearchResult(panel, result, query) {
   for (const memory of result.memories || []) collection.items.set(String(memory.memory_id), memory);
   panel._result = result;
   collection.result = result;
-  browserState(panel).memoryQuery = query.toLocaleLowerCase();
+  browserState(panel).memoryQuery = query;
   indexMemories(panel);
   // Use the renderer's existing editor-deferral mechanism, not a second editor
   // lifecycle. Search completion never enters the whole-route render path.
@@ -186,7 +186,7 @@ function scheduleMemorySearch(panel) {
   const sequence = state.memorySearchSequence;
   const collection = collectionState(panel);
   collection.searchError = null;
-  collection.searchPending = query.toLocaleLowerCase() !== state.memoryQuery;
+  collection.searchPending = query !== state.memoryQuery;
   if (!collection.searchPending) return;
   state.memorySearchTimer = setTimeout(() => {
     if (currentSearch(panel, identity, sequence, query)) void runMemorySearch(panel);
@@ -198,7 +198,7 @@ async function loadMoreMemories(panel, button) {
   const state = browserState(panel);
   const current = panel._result?.memories || [];
   const query = panel._query.trim();
-  if (query.toLocaleLowerCase() !== state.memoryQuery) return;
+  if (query !== state.memoryQuery) return;
   const sequence = state.memorySearchSequence, identity = memoryCollectionIdentity(panel);
   panel._setSaving(button, true, "Loading…");
   try {
@@ -219,7 +219,8 @@ async function loadMoreMemories(panel, button) {
 export async function finishMemoryBrowserLoad(panel) {
   if (panel._viewKey() === "data-memory/memories" && panel._memoryKind === "persistent" && !panel._busy && !panel._error) {
     indexMemories(panel);
-    if (panel._query.trim() && panel._query.trim().toLocaleLowerCase() !== browserState(panel).memoryQuery) await runMemorySearch(panel);
+    const query = panel._query.trim();
+    if (query && query !== browserState(panel).memoryQuery) await runMemorySearch(panel);
   }
 }
 
@@ -244,13 +245,14 @@ export function renderPersistentMemories(panel) {
 function applyMemoryFilter(panel) {
   const collection = collectionState(panel);
   if (!collection.host?.isConnected) return;
-  const query = panel._query.trim().toLocaleLowerCase();
+  const query = panel._query.trim();
+  const localQuery = query.toLocaleLowerCase();
   const backendQuery = browserState(panel).memoryQuery;
   const resultIds = new Set((panel._result?.memories || []).map(memory => String(memory.memory_id)));
   let visible = 0;
   for (const [id, record] of collection.cards) {
     const memory = collection.items.get(id);
-    const show = query === backendQuery ? resultIds.has(id) : memorySearchProjection(memory).includes(query);
+    const show = query === backendQuery ? resultIds.has(id) : memorySearchProjection(memory).includes(localQuery);
     if (record.node.hidden === show) record.node.hidden = !show;
     if (show) visible++;
   }
