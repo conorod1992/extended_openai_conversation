@@ -35,7 +35,7 @@ try {
       if (kind === "persistent") {
         await page.waitForFunction(() => dataCollectionBackend.calls.some(call => call.action === "search"));
         // This is an async completion barrier, not an elapsed-time measurement.
-        await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "memory 1");
+        await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "Memory 1");
       }
       results[`${kind}Search`] = await finishDataMeasure(page);
     }

@@ -71,7 +71,7 @@ for (const kind of ["knowledge", "persistent"]) {
     await beginDataMeasure(page);
     await search.fill(kind === "knowledge" ? "Source 1" : "Memory 1");
     await search.evaluate(node => node.setSelectionRange(2, 5));
-    if (kind === "persistent") await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "memory 1");
+    if (kind === "persistent") await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "Memory 1");
     await expect(list(panel, kind).locator("article:visible")).toHaveCount(11);
     expect(await search.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([2, 5]);
     expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 100, initialCards: 100, elementsAdded: 0, elementsRemoved: 0, routeRenders: 0, mainChildReplacements: 0, inputRetained: true, inputFocused: true});
@@ -186,7 +186,7 @@ test("Persistent Memory: category edits and pagination retain other loaded recor
   await expect(panel.locator("#load-more-memories")).toBeHidden();
   // Search beyond the initial page preserves the already-loaded card nodes.
   await beginDataMeasure(page); await panel.locator("#list-search").fill("Memory 220");
-  await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "memory 220");
+  await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "Memory 220");
   await expect(panel.locator(".memory-list article:visible")).toHaveCount(1);
   expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 230, elementsAdded: 0, elementsRemoved: 0, routeRenders: 0});
   await card(panel, "persistent", 220).locator(".memory-edit-button").click();
@@ -356,7 +356,7 @@ test("Persistent Memory: a late load-more response cannot replace a newer search
   await panel.locator("#load-more-memories").click();
   await page.waitForFunction(() => window.releaseMore);
   await panel.locator("#list-search").fill("Memory 220");
-  await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "memory 220");
+  await page.waitForFunction(() => browserHarness.panel._managementBrowserState.memoryQuery === "Memory 220");
   await page.evaluate(() => releaseMore());
   await expect(panel.locator(".memory-list article:visible")).toHaveCount(1);
   await expect(panel.locator(".memory-list article:visible")).toContainText("Memory 220");
