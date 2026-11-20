@@ -158,6 +158,8 @@
       "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Assistant loads only the selected section family (source)",
       "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Home Assistant route paints its intro while configuration assets are still pending",
       "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Memory Settings becomes usable while configuration guidance is pending",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Memory can load without Diagnostics assets (bundle)",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Memory can load without Diagnostics assets (source)",
       "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Overview navigation reuses a strong-intent read without reading on hover",
       "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Settings Search metadata loads only on first search interaction",
       "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Usage data loader remains behind the Usage route",
