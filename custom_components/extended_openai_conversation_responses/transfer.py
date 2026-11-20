@@ -1595,7 +1595,12 @@ def _prepared_restore_from_selection(
 
 
 async def _current_snapshot(
-    hass: HomeAssistant, entry: Any, subentry: Any, *, include_usage: bool = True
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    *,
+    include_usage: bool = True,
+    capture_usage_revision: bool = False,
 ) -> backup.PreparedRestore:
     """Read durable current state for selective planning without mutating it."""
     try:
@@ -1616,6 +1621,7 @@ async def _current_snapshot(
         subentry,
         provider=entry_api_provider(entry),
         include_usage=include_usage,
+        capture_usage_revision=capture_usage_revision,
     )
 
 

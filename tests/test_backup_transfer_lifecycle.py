@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import hashlib
 import os
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -648,12 +649,13 @@ async def test_cancelling_stalled_full_inspection_releases_maintenance_for_new_s
         backup_transfer._imports(hass)[name] = session
         sessions.append(session)
     started = asyncio.Event()
+    release = asyncio.Event()
     prepared = SimpleNamespace(available_sections=["memory"])
 
     async def load(_hass, path, *_args, **_kwargs):
         if path == sessions[0].path:
             started.set()
-            await asyncio.Event().wait()
+            await release.wait()
         return prepared
 
     monkeypatch.setattr(backup_transfer, "_async_load_prepared_restore", load)
@@ -693,9 +695,7 @@ async def test_cancelling_stalled_full_inspection_releases_maintenance_for_new_s
         backup_transfer._inspect_import(hass, "entry-1", "agent-1", {"session_id": "B"})
     )
     if termination == "cancel":
-        assert await asyncio.wait_for(
-            backup_transfer._discard_import(hass, "A"), timeout=1
-        )
+        cancel = asyncio.create_task(backup_transfer._discard_import(hass, "A"))
     expected = (
         "inspection was cancelled"
         if termination == "cancel"
@@ -703,9 +703,13 @@ async def test_cancelling_stalled_full_inspection_releases_maintenance_for_new_s
     )
     with pytest.raises(backup.BackupError, match=expected):
         await old
+    result = await asyncio.wait_for(new, timeout=1)
+    assert os.path.exists(sessions[0].path)
+    release.set()
     if termination == "timeout":
         assert await backup_transfer._discard_import(hass, "A")
-    result = await asyncio.wait_for(new, timeout=1)
+    else:
+        assert await asyncio.wait_for(cancel, timeout=1)
     assert result["preview_token"]
     assert backup_transfer._latest_previews(hass)[("entry-1", "agent-1")][0] == "B"
     assert not sessions[0].inspection_tasks
@@ -726,6 +730,49 @@ def _staged_export_session(path: str, **overrides) -> backup_transfer.ExportSess
     }
     values.update(overrides)
     return backup_transfer.ExportSession(**values)
+
+
+async def test_native_upload_worker_survives_timeout_without_blocking_agent(hass, tmp_path, monkeypatch):
+    path = tmp_path / "upload.json"
+    path.write_bytes(b"data")
+    session = _completed_import_session(str(path))
+    backup_transfer._imports(hass)[session.session_id] = session
+    entered, release = Event(), Event()
+    calls = []
+
+    def load(path, kind):
+        calls.append((path, kind))
+        entered.set()
+        assert release.wait(5)
+        return {}
+
+    monkeypatch.setattr(hass, "async_add_executor_job", asyncio.to_thread)
+    monkeypatch.setattr(backup_transfer, "_load_uploaded_document", load)
+    monkeypatch.setattr(transfer, "async_inspect_decoded_transfer", AsyncMock(return_value=object()))
+    monkeypatch.setattr(transfer, "inspection_for_frontend", lambda _: {"valid": True})
+    monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 0.05)
+    request = {"session_id": session.session_id, "inspect_only": True}
+    gate = backup_transfer.get_agent_maintenance_gate(hass, session.entry_id, session.subentry_id)
+    try:
+        for _ in range(3):
+            with pytest.raises(backup.BackupError, match="inspection timed out"):
+                await backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, request)
+            assert entered.is_set()
+            assert len(calls) == 1
+            async with asyncio.timeout(0.5), gate.shared():
+                assert not gate._writer_active
+        with pytest.raises(backup.BackupError, match="still pending"):
+            await backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, {**request, "inspect_only": False})
+        release.set()
+        monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 1)
+        assert await backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, request) == {
+            "valid": True, "preview_token": None,
+        }
+        assert len(calls) == 1
+    finally:
+        release.set()
+        await backup_transfer._discard_import(hass, session.session_id)
+    assert not path.exists()
 
 
 class _Exclusive:

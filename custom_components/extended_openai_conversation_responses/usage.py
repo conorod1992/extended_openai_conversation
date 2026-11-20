@@ -10,6 +10,8 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date as calendar_date, datetime, timedelta
 from functools import partial, wraps
+from hashlib import sha256
+import json
 import logging
 import time
 from typing import Any, Protocol
@@ -381,6 +383,7 @@ class UsageManager:
         self._totals_need_repair = False
         self._daily_needs_repair = False
         self._details_need_repair = False
+        self._detail_document_loaded = False
         self._detail_retention_dirty = False
         self._current_run: ContextVar[UsageRun | None] = ContextVar(
             f"usage_run_{id(self)}", default=None
@@ -460,6 +463,7 @@ class UsageManager:
             request_ids: set[str] = set()
             run_ids: set[str] = set()
             inline_run_dates = False
+            detail_document_loaded = False
             if self._detail_storage is not None:
                 loaded_details = None
                 try:
@@ -478,6 +482,7 @@ class UsageManager:
                     if not isinstance(error.__cause__, OSError):
                         raise
                     details_need_repair = True
+                detail_document_loaded = isinstance(loaded_details, dict)
                 detail_data = loaded_details if loaded_details is not None else {}
                 if not isinstance(detail_data, dict):
                     details_need_repair = True
@@ -545,6 +550,7 @@ class UsageManager:
             self._totals_need_repair = totals_need_repair
             self._daily_needs_repair = daily_needs_repair
             self._details_need_repair = details_need_repair
+            self._detail_document_loaded = detail_document_loaded
             if self._aggregates_need_repair:
                 _LOGGER.warning(
                     "Usage storage needs repair; original stores preserved and persistence disabled"
@@ -823,7 +829,6 @@ class UsageManager:
         self, requests: list[UsageRequest], runs: list[UsageRun]
     ) -> None:
         """Persist one candidate detail state before publishing it in memory."""
-        self._require_writable()
         if self._detail_storage is None:
             return
         details = await asyncio.to_thread(_serialize_usage_detail_store, requests, runs)
@@ -853,7 +858,14 @@ class UsageManager:
         if not confirm:
             raise ValueError("Explicit confirmation is required")
         async with async_storage_lock(self._storage, self._lock):
-            self._require_writable()
+            self._require_aggregates_writable()
+            if self._details_need_repair and (
+                not self._detail_document_loaded
+                or self._detail_storage is None
+                or getattr(self._detail_storage, "corruption_unavailable", False)
+                is True
+            ):
+                raise StorageRepairRequired("Usage")
             result = {
                 "deleted_requests": len(self.requests),
                 "deleted_runs": len(self.runs),
@@ -861,6 +873,8 @@ class UsageManager:
             await self._async_persist_detail_state([], [])
             self.requests = []
             self.runs = []
+            self._details_need_repair = False
+            self._detail_retention_dirty = False
         self._notify()
         return result
 
@@ -1067,6 +1081,16 @@ class UsageManager:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return accounting and unexpired details without in-flight run state."""
+        data, _ = await self._async_backup_snapshot(capture_revision=False)
+        return data
+
+    async def async_restore_preview_data(self) -> tuple[dict[str, Any], str | None]:
+        """Capture export data and a stable revision of the destination in one read."""
+        return await self._async_backup_snapshot(capture_revision=True)
+
+    async def _async_backup_snapshot(
+        self, *, capture_revision: bool
+    ) -> tuple[dict[str, Any], str | None]:
         if self.is_volatile:
             raise RuntimeError(
                 "Usage storage is unavailable; volatile accounting cannot provide a complete backup"
@@ -1078,8 +1102,26 @@ class UsageManager:
             # Export must enforce the same cutoff between scheduled prunes.
             requests, runs, _ = await asyncio.to_thread(self._pruned_detail_state)
             totals, daily = self.as_dict(), deepcopy(self.daily)
-            details = await asyncio.to_thread(_serialize_usage_details, requests, runs)
-            return {"totals": totals, "daily": daily, **details}
+
+            def snapshot() -> tuple[dict[str, Any], str | None]:
+                aggregates = {"totals": totals, "daily": daily}
+                revision = None
+                if capture_revision:
+                    authoritative = {
+                        **aggregates,
+                        **_serialize_usage_details(self.requests, self.runs),
+                    }
+                    revision = sha256(
+                        json.dumps(
+                            authoritative, sort_keys=True, separators=(",", ":")
+                        ).encode()
+                    ).hexdigest()
+                return {
+                    **aggregates,
+                    **_serialize_usage_details(requests, runs),
+                }, revision
+
+            return await asyncio.to_thread(snapshot)
 
     @staticmethod
     def validate_backup_data(

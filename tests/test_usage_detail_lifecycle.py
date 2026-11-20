@@ -2,6 +2,7 @@
 
 import asyncio
 from copy import deepcopy
+from dataclasses import asdict, replace
 from datetime import timedelta
 import logging
 
@@ -106,6 +107,94 @@ async def test_backup_filters_expired_details_before_daily_prune() -> None:
     assert [item.run_id for item in destination.runs] == ["run-recent"]
     assert destination.totals.conversation_count == 2
     assert len(source.requests) == len(source.runs) == 2
+    assert not details.saves
+
+
+async def test_restore_usage_revision_is_stable_across_export_cutoffs(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import backup_transfer, transfer
+    from tests.test_restore_recovery import _states
+
+    now = dt_util.utcnow()
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    manager = _manager(DetailStorage(), request_retention_days=7, run_retention_days=14)
+    await manager.async_initialize()
+    manager.requests = [_request("request", (now - timedelta(days=7) + timedelta(seconds=1)).isoformat())]
+    manager.runs = [_run("run", (now - timedelta(days=14) + timedelta(seconds=1)).isoformat())]
+    state = _states()[0]
+
+    async def revision():
+        exported, stable = await manager.async_restore_preview_data()
+        totals, daily, requests, runs = manager.validate_backup_data(exported, "agent")
+        snapshot = replace(state, usage_totals=totals, usage_daily=daily, usage_requests=requests,
+                           usage_runs=runs, usage_revision=stable)
+        return backup_transfer._snapshot_revision(snapshot, (transfer.SECTION_USAGE,)), exported
+
+    before, exported = await revision()
+    assert len(exported["requests"]) == len(exported["runs"]) == 1
+    now += timedelta(seconds=2)
+    after, exported = await revision()
+    assert exported["requests"] == exported["runs"] == []
+    assert before == after
+    await manager.async_record_conversation()
+    assert (await revision())[0] != after
+    before = (await revision())[0]
+    await manager.async_clear_details(confirm=True)
+    assert (await revision())[0] != before
+
+
+async def test_confirmed_clear_repairs_loaded_details_and_reloads_cleanly():
+    from custom_components.extended_openai_conversation_responses.persistence_hardening import StorageRepairRequired
+
+    now = dt_util.utcnow().isoformat()
+    detail = DetailStorage()
+    request = asdict(_request("request", now))
+    run = asdict(_run("run", now))
+    detail.data = {"requests": [request, request, {"broken": True}], "runs": [run, run]}
+    manager = _manager(detail)
+    await manager.async_initialize()
+    assert manager._details_need_repair
+    manager.totals.total_tokens = 21
+    before = manager.as_dict(), deepcopy(manager.daily)
+    with pytest.raises(StorageRepairRequired):
+        await manager.async_backup_data()
+    with pytest.raises(ValueError, match="confirmation"):
+        await manager.async_clear_details(confirm=False)
+    detail.fail_save = True
+    with pytest.raises(OSError, match="detail store"):
+        await manager.async_clear_details(confirm=True)
+    assert manager._details_need_repair and not detail.saves
+    detail.fail_save = False
+    assert await manager.async_clear_details(confirm=True) == {"deleted_requests": 1, "deleted_runs": 1}
+    assert (manager.as_dict(), manager.daily) == before
+    assert detail.data == {"requests": [], "runs": []}
+    reloaded = _manager(detail)
+    await reloaded.async_initialize()
+    assert not reloaded._details_need_repair
+    assert (await reloaded.async_backup_data())["requests"] == []
+    async with reloaded.async_run(home_assistant_conversation_id="conversation"):
+        await reloaded.async_record_request(successful=True, usage=RequestUsage(total_tokens=6),
+            provider="openai", model="gpt-test", api_mode="responses")
+    assert len((await reloaded.async_backup_data())["requests"]) == 1
+    assert len((await reloaded.async_backup_data())["runs"]) == 1
+
+
+@pytest.mark.parametrize("barrier", ["native", "aggregate"])
+async def test_confirmed_details_reset_respects_other_corruption_barriers(barrier):
+    from custom_components.extended_openai_conversation_responses.persistence_hardening import StorageRepairRequired
+
+    details = DetailStorage()
+    manager = _manager(details)
+    if barrier == "native":
+        async def unreadable():
+            raise StorageRepairRequired("Usage")
+        details.async_load = unreadable
+    else:
+        details.data = {"requests": ["broken"]}
+    await manager.async_initialize()
+    if barrier == "aggregate":
+        manager._daily_needs_repair = True
+    with pytest.raises(StorageRepairRequired):
+        await manager.async_clear_details(confirm=True)
     assert not details.saves
 
 
