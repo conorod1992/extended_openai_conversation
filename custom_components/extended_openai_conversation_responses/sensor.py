@@ -178,6 +178,11 @@ class UsageSensor(SensorEntity):
         return self._usage.totals.total_tokens
 
     @property
+    def available(self) -> bool:
+        """Keep incomplete counters out of Recorder during a storage outage."""
+        return self.state_class is None or not self._usage.is_volatile
+
+    @property
     def extra_state_attributes(self) -> dict:
         """Expose the distinct conversation, request, and token counters."""
         return self._usage.as_dict()
@@ -220,7 +225,7 @@ class UsageSensor(SensorEntity):
 class _PeriodObservation:
     reset: datetime
     tokens: int
-    lifetime_tokens: int | None
+    daily_total_tokens: int | None
     timestamp: float | None = None
 
 
@@ -256,19 +261,22 @@ def _saved_recorder_observation(data: object) -> _PeriodObservation | None:
         return None
     marker = dt_util.parse_datetime(reset)
     tokens = data.get("tokens")
-    lifetime = data.get("lifetime_tokens")
+    daily_total = data.get("daily_total_tokens")
     timestamp = data.get("timestamp")
     if (
         marker is None
         or marker.tzinfo is None
         or type(tokens) is not int
         or tokens < 0
-        or (lifetime is not None and (type(lifetime) is not int or lifetime < 0))
+        or (
+            daily_total is not None
+            and (type(daily_total) is not int or daily_total < 0)
+        )
         or type(timestamp) is not float
         or not isfinite(timestamp)
     ):
         return None
-    return _PeriodObservation(marker, tokens, lifetime, timestamp)
+    return _PeriodObservation(marker, tokens, daily_total, timestamp)
 
 
 class _PeriodUsageSensor(UsageSensor, RestoreEntity):
@@ -282,12 +290,14 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         self._observation: _PeriodObservation | None = None
         self._recorded_observation: _PeriodObservation | None = None
         self._legacy_recorded_state: State | None = None
+        self._legacy_prior_daily_total: int | None = None
+        self._recent_period_values: dict[date, int] = {}
         self._recorder_baseline: int | None = None
         self._initial_recording: (
             tuple[_PeriodObservation | None, State | None] | None
         ) = None
 
-    def _summary(self) -> dict:
+    def _summary(self, period: date | None = None) -> dict:
         raise NotImplementedError
 
     def _period_start(self, today: date) -> date:
@@ -312,17 +322,18 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
 
     @property
     def extra_restore_state_data(self) -> ExtraStoredData | None:
-        if self._observation is None:
-            return None
+        visible = self._observation
         recorded = self._recorded_observation
+        if visible is None and recorded is None:
+            return None
         return RestoredExtraData(
             {
-                "lifetime_tokens": self._observation.lifetime_tokens,
+                "daily_total_tokens": visible.daily_total_tokens if visible else None,
                 "recorded": (
                     {
                         "reset": recorded.reset.isoformat(),
                         "tokens": recorded.tokens,
-                        "lifetime_tokens": recorded.lifetime_tokens,
+                        "daily_total_tokens": recorded.daily_total_tokens,
                         "timestamp": recorded.timestamp,
                     }
                     if recorded is not None
@@ -379,9 +390,9 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         extra = await self.async_get_last_extra_data() if restored is not None else None
         data = extra.as_dict() if extra is not None else {}
         if observation is not None:
-            tokens = data.get("lifetime_tokens")
+            tokens = data.get("daily_total_tokens")
             if type(tokens) is int and tokens >= 0:
-                observation = replace(observation, lifetime_tokens=tokens)
+                observation = replace(observation, daily_total_tokens=tokens)
         recorded = _saved_recorder_observation(data.get("recorded"))
         live_state = self.hass.states.get(self.entity_id)
         if live := _period_observation(live_state):
@@ -389,7 +400,7 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                 observation.reset,
                 observation.tokens,
             ):
-                live = replace(live, lifetime_tokens=observation.lifetime_tokens)
+                live = replace(live, daily_total_tokens=observation.daily_total_tokens)
             observation, previous_state = live, live_state
         previous_visible = observation
 
@@ -404,14 +415,22 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                     history.get_last_state_changes, self.hass, 8, self.entity_id
                 )
                 for state in reversed(states.get(self.entity_id, [])):
-                    if historical := _period_observation(state):
-                        if (
-                            previous_state is None
-                            or state.last_updated > previous_state.last_updated
-                        ):
-                            observation, previous_state = historical, state
-                        break
-                    if legacy_state is None and _legacy_period_state(state):
+                    if sample := _period_observation(state):
+                        self._recent_period_values.setdefault(
+                            sample.reset.date(), sample.tokens
+                        )
+                        if historical is None:
+                            historical = sample
+                            if (
+                                previous_state is None
+                                or state.last_updated > previous_state.last_updated
+                            ):
+                                observation, previous_state = sample, state
+                    elif (
+                        historical is None
+                        and legacy_state is None
+                        and _legacy_period_state(state)
+                    ):
                         legacy_state = state
             except Exception:
                 _LOGGER.debug(
@@ -426,7 +445,9 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                 historical.reset,
                 historical.tokens,
             ):
-                historical = replace(historical, lifetime_tokens=known.lifetime_tokens)
+                historical = replace(
+                    historical, daily_total_tokens=known.daily_total_tokens
+                )
             recorded = historical
         elif recorded is None and "recorded" not in data and self._records_period():
             recorded = observation
@@ -438,6 +459,9 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
             # the prior release's saved explicit marker. Keep that marker for
             # display, but reconcile against the sample Recorder actually saw.
             self._legacy_recorded_state = legacy_state
+            self._legacy_prior_daily_total = (
+                recorded.daily_total_tokens if recorded is not None else None
+            )
             recorded = None
         self._observation = observation
         self._recorded_observation = recorded
@@ -508,10 +532,8 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                 self._observation.reset,
                 self._observation.tokens,
             ):
-                # Lifetime-only reconciliation does not change this period's
-                # Recorder sample and must not become usage at the next reset.
                 self._recorded_observation = replace(
-                    previous, lifetime_tokens=self._observation.lifetime_tokens
+                    previous, daily_total_tokens=self._observation.daily_total_tokens
                 )
                 return
             # The real gauge may already be visible from while Recorder was
@@ -527,18 +549,62 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                 self._legacy_recorded_state.last_updated_timestamp, None, sample
             )
             self._legacy_recorded_state = None
+            self._legacy_prior_daily_total = None
         sample = self.hass.states.get(self.entity_id) or sample
         self._recorded_observation = replace(
             self._observation, timestamp=sample.last_updated_timestamp
         )
+        self._recent_period_values.clear()
+
+    def _legacy_sample_overlaps_period(self, state: State, period: date) -> bool:
+        """Whether previously recorded tokens can overlap the current bucket."""
+        tokens = int(state.state)
+        if tokens == 0:
+            return False
+        # 6.8.3 stores the state timestamp in UTC, without its accounting date.
+        # Check all calendar buckets allowed by local offsets (UTC-12 to UTC+14).
+        utc = dt_util.as_utc(state.last_updated)
+        candidates = {
+            self._period_start((utc + timedelta(hours=offset)).date())
+            for offset in (-12, 0, 14)
+        }
+        if period not in candidates:
+            return False
+        if len(candidates) == 1:
+            return True
+        current = self._summary(period)["total_tokens"]
+        if current < tokens:
+            return False
+        prior_total = self._legacy_prior_daily_total
+        if prior_total is None:
+            return True
+        # A preceding durable checkpoint can rule out overlap if the current
+        # bucket had already exceeded the markerless sample before rollback.
+        growth = self._usage.daily_total_tokens - prior_total
+        return growth < 0 or current - tokens <= growth
+
+    def _period_delta(
+        self, previous: _PeriodObservation, period: date, tokens: int
+    ) -> int:
+        if previous.daily_total_tokens is not None:
+            return self._usage.daily_total_tokens - previous.daily_total_tokens
+        # Older RestoreEntity snapshots only knew lifetime tokens. Reuse a
+        # recorded value for a revisited bucket, or count the new bucket's value
+        # on an ordinary forward rollover.
+        if period in self._recent_period_values:
+            return tokens - self._recent_period_values[period]
+        return tokens if period > previous.reset.date() else 0
 
     @callback
     def _publish_period(
         self, *, initial: bool = False, previous_state: State | None = None
     ) -> None:
+        if not self.available:
+            if not initial:
+                self.async_write_ha_state()
+            return
         period = self._period_start(dt_util.now().date())
         tokens = self.native_value
-        lifetime = self._usage.totals.total_tokens
         visible = self._observation
         previous = self._recorded_observation
         before = self.hass.states.get(self.entity_id)
@@ -554,13 +620,7 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                 if reset == previous.reset:
                     # Opposite sides of the date line may share a UTC midnight.
                     reset += timedelta(microseconds=1)
-                delta = (
-                    lifetime - previous.lifetime_tokens
-                    if previous.lifetime_tokens is not None
-                    else lifetime - visible.lifetime_tokens
-                    if visible is not None and visible.lifetime_tokens is not None
-                    else 0
-                )
+                delta = self._period_delta(previous, period, tokens)
                 # Recorder adds the full state on a reset. Close the old cycle
                 # with a correction first when only part of the new bucket is
                 # new usage. The next write displays the actual bucket value.
@@ -569,12 +629,10 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
         elif (
             recording
             and (legacy := self._legacy_recorded_state) is not None
-            and int(legacy.state) > 0
-            and self._period_start(dt_util.as_local(legacy.last_updated).date())
-            == period
+            and self._legacy_sample_overlaps_period(legacy, period)
         ):
-            # Close the still-current markerless cycle before introducing a
-            # reset. Recorder then adds only the change since the old sample.
+            # Close the markerless cycle before resetting. If its calendar
+            # bucket is ambiguous, credit only the increase above the old sample.
             baseline = 0
         if baseline is not None:
             if initial and previous_state is not None:
@@ -588,7 +646,9 @@ class _PeriodUsageSensor(UsageSensor, RestoreEntity):
                     self.async_write_ha_state()
                 finally:
                     self._recorder_baseline = None
-        self._observation = _PeriodObservation(reset, tokens, lifetime)
+        self._observation = _PeriodObservation(
+            reset, tokens, self._usage.daily_total_tokens
+        )
         if not initial:
             self.async_write_ha_state()
         if recording:
@@ -641,7 +701,9 @@ class UsageTodaySensor(_PeriodUsageSensor):
         super().__init__(subentry, usage)
         self._attr_unique_id = f"{subentry.subentry_id}_usage_today"
 
-    def _summary(self) -> dict:
+    def _summary(self, period: date | None = None) -> dict:
+        if period is not None:
+            return self._usage.summary_for_date(period.isoformat())
         return self._usage.today_summary()
 
 
@@ -654,8 +716,8 @@ class UsageMonthSensor(_PeriodUsageSensor):
         super().__init__(subentry, usage)
         self._attr_unique_id = f"{subentry.subentry_id}_usage_month"
 
-    def _summary(self) -> dict:
-        return self._usage.month_summary()
+    def _summary(self, period: date | None = None) -> dict:
+        return self._usage.month_summary(period.strftime("%Y-%m") if period else None)
 
     def _period_start(self, today: date) -> date:
         return today.replace(day=1)

@@ -349,6 +349,7 @@ class UsageManager:
         self.run_retention_days = run_retention_days
         self.totals = UsageTotals()
         self.daily: dict[str, dict[str, Any]] = {}
+        self.daily_total_tokens = 0
         self.requests: list[UsageRequest] = []
         self.runs: list[UsageRun] = []
         self._listeners: set[Callable[[], None]] = set()
@@ -493,6 +494,9 @@ class UsageManager:
 
             self.totals = staged_totals
             self.daily = staged_daily
+            self.daily_total_tokens = sum(
+                day["total_tokens"] for day in staged_daily.values()
+            )
             self.requests = staged_requests
             self.runs = staged_runs
             # The next normal detail write also normalizes older inline dates.
@@ -660,6 +664,7 @@ class UsageManager:
                 model=model,
                 api_mode=api_mode,
             )
+            self.daily_total_tokens += usage.total_tokens
 
             run = self._current_run.get()
             if run is not None:
@@ -960,9 +965,14 @@ class UsageManager:
     def as_dict(self) -> dict[str, Any]:
         return asdict(self.totals)
 
+    @property
+    def is_volatile(self) -> bool:
+        """Whether this manager accounts for requests only in memory."""
+        return isinstance(self._storage, _VolatileUsageStorage)
+
     def persistence_status(self) -> dict[str, Any]:
         """Expose only persistence state, without request or conversation details."""
-        volatile = isinstance(self._storage, _VolatileUsageStorage)
+        volatile = self.is_volatile
         return {
             "mode": "volatile" if volatile else "durable",
             "survives_restart": not volatile and not self._repair_required,
@@ -975,7 +985,7 @@ class UsageManager:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return accounting and unexpired details without in-flight run state."""
-        if isinstance(self._storage, _VolatileUsageStorage):
+        if self.is_volatile:
             raise RuntimeError(
                 "Usage storage is unavailable; volatile accounting cannot provide a complete backup"
             )
@@ -1047,6 +1057,7 @@ class UsageManager:
         async with async_storage_lock(self._storage, self._lock):
             self.totals = totals
             self.daily = deepcopy(daily)
+            self.daily_total_tokens = sum(day["total_tokens"] for day in daily.values())
             self.requests = list(requests)
             self.runs = list(runs)
             await self._async_save_aggregates(replacing=True)

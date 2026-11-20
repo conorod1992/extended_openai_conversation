@@ -49,6 +49,17 @@ State-change automations and raw history can observe the correction, which can
 be negative. If Recorder was paused during the period change, the first recorded
 update reconciles with the last recorded period.
 
+During a Usage storage outage, the lifetime and period sensors are unavailable
+while the assistant continues with in-memory accounting. Their Recorder baselines
+are preserved until durable Usage is available again. **Last response usage**
+can still show a retained response from the current session.
+
+Rollover corrections use tokens attributed to stored calendar days. Upgrading
+from 6.8.3 may require a correction for a sample recorded without a reset marker.
+If the stored data allows the sample to overlap more than one calendar bucket,
+the migration preserves the previously recorded total and credits only the
+increase above the potentially overlapping sample.
+
 ## Management panel
 
 Open **Extended OpenAI → Usage & Maintenance → Usage** to see daily token charts, input/output/cached/reasoning splits, run counts, recent runs, request details, and provider/model/API-mode breakdowns. There are no costs or prices.

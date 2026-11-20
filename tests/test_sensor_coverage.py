@@ -44,6 +44,8 @@ class FakeUsage:
 
     def __init__(self) -> None:
         self.totals = SimpleNamespace(total_tokens=777)
+        self.daily_total_tokens = 777
+        self.is_volatile = False
         self.latest_run = None
         self.request_retention_days = None
         self.run_retention_days = None
@@ -55,7 +57,7 @@ class FakeUsage:
     def today_summary(self) -> dict:
         return {**SUMMARY, "total_tokens": 111}
 
-    def month_summary(self) -> dict:
+    def month_summary(self, month=None) -> dict:
         return {**SUMMARY, "total_tokens": 222}
 
     def async_add_listener(self, listener):
