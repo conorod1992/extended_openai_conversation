@@ -50,6 +50,10 @@ async def test_unavailable_control_retains_baseline_until_return(
     await manager._async_restore_locked()
     assert manager.active["controls"][entity_id]["restoration_pending"] is True
     persisted = deepcopy(manager._store.async_save.call_args.args[0]["active"])
+    manager._store.async_save.reset_mock()
+    await manager._async_retry_pending_restores_locked()
+    await manager._async_retry_pending_restores_locked()
+    manager._store.async_save.assert_not_awaited()
     manager._active = manager._normalize_active(persisted)
     assert manager.active["controls"][entity_id]["original_value"] == (
         0.8 if kind == "volume" else True
@@ -63,6 +67,31 @@ async def test_unavailable_control_retains_baseline_until_return(
     )
     method.assert_awaited_once_with(entity_id, 0.8 if kind == "volume" else True)
     assert manager.active is None
+    manager._store.async_save.assert_awaited()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_quiet_hours_services_translate_only_expected_value_errors(hass, monkeypatch, enabled):
+    from homeassistant.exceptions import HomeAssistantError
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+
+    name = quiet_hours.SERVICE_ENABLE_QUIET_HOURS if enabled else quiet_hours.SERVICE_DISABLE_QUIET_HOURS
+    manager = SimpleNamespace(async_set_enabled=AsyncMock())
+    hass.services.has_service.return_value = False
+    monkeypatch.setattr(quiet_hours, "async_get_quiet_hours", AsyncMock(return_value=manager))
+    quiet_hours._register_quiet_hours_actions(hass)
+    handler = next(call.args[2] for call in hass.services.async_register.call_args_list if call.args[:2] == (DOMAIN, name))
+    call = SimpleNamespace(context=SimpleNamespace(user_id=None))
+    await handler(call)
+    manager.async_set_enabled.assert_awaited_once_with(enabled)
+    manager.async_set_enabled.side_effect = ValueError("retry reconciliation")
+    with pytest.raises(HomeAssistantError, match="retry reconciliation"):
+        await handler(call)
+    original = HomeAssistantError("unavailable")
+    manager.async_set_enabled.side_effect = original
+    with pytest.raises(HomeAssistantError) as raised:
+        await handler(call)
+    assert raised.value is original
 
 
 async def test_failed_configuration_save_leaves_devices_and_active_baseline_untouched(

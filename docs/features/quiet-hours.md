@@ -38,6 +38,8 @@ New volume and wake-sound changes require a durable Home Assistant entity regist
 
 If discovery becomes ambiguous during a quiet period, EOAI retains verified existing ownership until that period ends, including after a restart. It does not transfer that ownership to a different automatic candidate or save the old association as a manual override. Your independent changes still release ownership, and explicit selection changes use the normal restoration and retargeting rules. The next quiet period uses the new discovery rules. An unavailable control's restoration obligation remains stored until restoration can be safely completed.
 
+Saved overrides remain editable if a satellite goes offline or loses its registry binding. A replacement that reuses a saved entity ID requires the **Use replacement** action on the satellite card. Use **Clear saved override** and save to remove an orphaned satellite override.
+
 ## Use the schedule in automations
 
 Quiet Hours exposes a read-only Home Assistant entity for the active period. It remains on for the whole scheduled window even when no speaker needs to be changed, so normal Home Assistant automations can use the same schedule for LEDs or other device-specific behaviour.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, time, timedelta, tzinfo
 from hashlib import sha256
@@ -644,6 +645,7 @@ class QuietHoursManager:
         self._config = config
         self._selection_identities = identities
         self._active = active
+        self._persisted_active = deepcopy(raw.get("active"))
         self._config_recovery_pending = False
         self._initialized = True
         return True
@@ -777,6 +779,33 @@ class QuietHoursManager:
     def discovery_snapshot(self) -> list[dict[str, Any]]:
         return [item.as_dict() for item in self._discover_capabilities()]
 
+    def _selection_issue(self, entity_id: str) -> dict[str, str] | None:
+        """Explain why one saved selection cannot currently be used."""
+        entry = er.async_get(self.hass).async_get(entity_id)
+        state = self.hass.states.get(entity_id)
+        identity = getattr(self, "_selection_identities", {}).get(entity_id)
+        if entry is None:
+            return {
+                "status": "missing"
+                if identity is not None or state is None
+                else "invalid"
+            }
+        current = [
+            getattr(entry, key, None) for key in ("domain", "platform", "unique_id")
+        ]
+        if getattr(entry, "disabled_by", None) is not None or not all(
+            isinstance(part, str) and part for part in current
+        ):
+            return {"status": "invalid"}
+        if identity is not None and current != identity:
+            return {
+                "status": "replaced",
+                "review_token": sha256(json.dumps(current).encode()).hexdigest(),
+            }
+        if state is None or state.state in {"unavailable", "unknown"}:
+            return {"status": "unavailable"}
+        return None
+
     def revision(self) -> str:
         """Identify the saved policy and its selected physical controls."""
         return sha256(
@@ -805,6 +834,11 @@ class QuietHoursManager:
             "owned_controls": sorted((self._active or {}).get("controls", {})),
             "state_entity_id": _STATE_ENTITY_ID,
             "satellites": self.discovery_snapshot(),
+            "selection_issues": {
+                entity_id: issue
+                for entity_id in sorted(self._selected_entity_ids())
+                if (issue := self._selection_issue(entity_id)) is not None
+            },
         }
 
     async def async_set_enabled(self, enabled: bool) -> dict[str, Any]:
@@ -829,8 +863,22 @@ class QuietHoursManager:
         # or a concurrent administrator's policy edit.
         return await self.async_update_config(config, expected_revision=revision)
 
+    async def async_rebind_selection(
+        self, entity_id: str, *, expected_revision: str, review_token: str
+    ) -> dict[str, Any]:
+        """Explicitly bind a saved selection to the reviewed replacement."""
+        return await self.async_update_config(
+            self.config.as_dict(),
+            expected_revision=expected_revision,
+            replacement=(entity_id, review_token),
+        )
+
     async def async_update_config(
-        self, value: Any, *, expected_revision: str | None = None
+        self,
+        value: Any,
+        *,
+        expected_revision: str | None = None,
+        replacement: tuple[str, str] | None = None,
     ) -> dict[str, Any]:
         self._require_startup_available()
         candidate = _config_from_data(value)
@@ -868,6 +916,24 @@ class QuietHoursManager:
                             "A Quiet Hours selection no longer exists; reload before saving"
                         )
             previous = self._config
+            previous_identities = getattr(self, "_selection_identities", {})
+            if replacement is not None:
+                entity_id, review_token = replacement
+                issue = (
+                    self._selection_issue(entity_id)
+                    if entity_id in self._selected_entity_ids()
+                    else None
+                )
+                if issue != {"status": "replaced", "review_token": review_token}:
+                    raise ValueError(
+                        "The reviewed replacement changed or is unavailable; reload Quiet Hours"
+                    )
+                entry = er.async_get(self.hass).async_get(entity_id)
+                assert entry is not None
+                self._selection_identities = {
+                    **previous_identities,
+                    entity_id: [entry.domain, entry.platform, entry.unique_id],
+                }
             self._config = candidate
             try:
                 # An explicit selection edit uses the existing departure/restore
@@ -892,6 +958,9 @@ class QuietHoursManager:
                         and (not new or getattr(new, field) != entity_id)
                     ):
                         control["restoration_pending"] = True
+                    if replacement is not None and satellite_id == replacement[0]:
+                        control["restoration_pending"] = True
+                        control["restore_before_apply"] = True
                 self._migrate_selected_entity_ids()
                 candidate = self._config
                 await self._async_save_locked()
@@ -957,7 +1026,9 @@ class QuietHoursManager:
                 if self._config_recovery_pending:
                     # Publish no speculative configuration while disk is unknown.
                     self._config = previous
+                    self._selection_identities = previous_identities
             needs_reconcile = failure is None or self._config != previous
+            needs_reconcile |= self._selection_identities != previous_identities
             needs_schedule = needs_reconcile or self._config_recovery_pending
         try:
             if needs_reconcile and not self._config_recovery_pending:
@@ -1013,6 +1084,7 @@ class QuietHoursManager:
         self._config = config
         self._selection_identities = identities
         self._active = active
+        self._persisted_active = deepcopy(raw.get("active"))
         self._mark_generation_available()
         # Installing a readback generation must also secure its callbacks before
         # deferred caller cancellation can leave the recovery operation.
@@ -2058,7 +2130,8 @@ class QuietHoursManager:
                 self._active["pending_controls"] = {}
             else:
                 self._active = None
-        await self._async_save_locked()
+        if self._active != getattr(self, "_persisted_active", None):
+            await self._async_save_locked()
 
     async def _async_retry_pending_restores_locked(self) -> None:
         if any(
@@ -2119,11 +2192,17 @@ class QuietHoursManager:
 
     async def _async_save_locked(self) -> None:
         self._require_startup_available()
+        saved_active = deepcopy(self._active)
+
+        def committed() -> None:
+            self._persisted_active = saved_active
+            self._mark_generation_available()
+
         await _async_settle_transactional_save(
             self._store.async_save(
                 {
                     "config": self._config.as_dict(),
-                    "active": self._active,
+                    "active": saved_active,
                     **(
                         {"selection_identities": self._selection_identities}
                         if getattr(self, "_selection_identities", {})
@@ -2132,7 +2211,7 @@ class QuietHoursManager:
                 }
             ),
             self._invalidate_generation,
-            self._mark_generation_available,
+            committed,
             self._async_reload_generation_locked,
             self._invalidate_generation,
             record_execution=False,

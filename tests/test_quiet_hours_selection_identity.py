@@ -29,7 +29,7 @@ def _manager(hass, monkeypatch, manager_type=runtime.QuietHoursManager):
     )
     entries = {
         entity_id: SimpleNamespace(
-            domain=entity_id.split(".")[0], platform="test", unique_id=entity_id
+            domain=entity_id.split(".")[0], platform="test", unique_id=entity_id, disabled_by=None
         )
         for entity_id in manager._selected_entity_ids()
     }
@@ -148,6 +148,54 @@ def test_removed_identity_never_falls_back_to_reused_id_or_another_control(
         )
         assert getattr(result[0], field) is None
         assert result[0].satellite_entity_id == manual.satellite_entity_id
+
+
+@pytest.mark.parametrize("domain", ["assist_satellite", "media_player", "switch"])
+async def test_replacement_binding_requires_an_explicit_reviewed_transaction(hass, monkeypatch, domain):
+    manager, entries, lookup = _manager(hass, monkeypatch)
+    manager._initialized = True
+    manager.async_reconcile = AsyncMock()
+    manager._reschedule = lambda: None
+    manager._migrate_selected_entity_ids()
+    entity_id = f"{domain}.selected"
+    initial = deepcopy(manager._selection_identities)
+    old_entry = entries.pop(entity_id)
+    lookup.pop(old_entry.unique_id)
+    assert manager._selection_issue(entity_id) == {"status": "missing"}
+    entries[entity_id] = SimpleNamespace(domain=domain, platform="test", unique_id="replacement", disabled_by="user")
+    lookup["replacement"] = entity_id
+    assert manager._selection_issue(entity_id) == {"status": "invalid"}
+    entries[entity_id].disabled_by = None
+    issue = manager.snapshot()["selection_issues"][entity_id]
+    assert issue["status"] == "replaced"
+
+    await manager.async_update_config(manager.config.as_dict(), expected_revision=manager.revision())
+    await manager.async_set_enabled(True)
+    await manager.async_set_enabled(False)
+    assert manager._selection_identities == initial
+    assert manager.snapshot()["selection_issues"][entity_id] == issue
+
+    if domain == "assist_satellite":
+        manager._active = {"controls": {"media_player.selected": {
+            "satellite_entity_id": entity_id, "kind": "volume",
+            "satellite_registry_identity": initial[entity_id],
+            "registry_identity": initial["media_player.selected"], "original_value": 0.8,
+        }}}
+    with pytest.raises(ValueError, match="reviewed replacement changed"):
+        await manager.async_rebind_selection(entity_id, expected_revision=manager.revision(), review_token="stale")
+    await manager.async_rebind_selection(entity_id, expected_revision=manager.revision(), review_token=issue["review_token"])
+    saved = manager._store.async_save.await_args.args[0]
+    assert saved["selection_identities"][entity_id] == [domain, "test", "replacement"]
+    assert entity_id not in manager.snapshot()["selection_issues"]
+    if domain == "assist_satellite":
+        control = saved["active"]["controls"]["media_player.selected"]
+        assert control["satellite_registry_identity"] == initial[entity_id]
+        assert control["restore_before_apply"] and control["restoration_pending"]
+
+    config = manager.config.as_dict()
+    config["overrides"] = {}
+    await manager.async_update_config(config, expected_revision=manager.revision())
+    assert not manager._selection_identities
 
 
 async def test_continuous_selection_churn_defers_actions_after_bounded_persistence(

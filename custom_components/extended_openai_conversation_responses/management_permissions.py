@@ -24,6 +24,27 @@ async def async_quiet_hours_command(
     action = message.get("action")
     if action in {"get", "discover"}:
         return manager.snapshot()
+    if action == "rebind":
+        selection, revision, review_token = (
+            message.get(key) for key in ("selection", "revision", "review_token")
+        )
+        if (
+            not isinstance(selection, str)
+            or not selection
+            or not isinstance(revision, str)
+            or not revision
+            or not isinstance(review_token, str)
+            or not review_token
+        ):
+            raise HomeAssistantError(
+                "Reload Quiet Hours before selecting the replacement"
+            )
+        try:
+            return await manager.async_rebind_selection(
+                selection, expected_revision=revision, review_token=review_token
+            )
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
     if action == "update":
         config = message.get("config")
         if not isinstance(config, dict):

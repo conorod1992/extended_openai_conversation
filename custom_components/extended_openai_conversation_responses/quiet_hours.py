@@ -229,7 +229,10 @@ def _register_quiet_hours_actions(hass: HomeAssistant) -> None:
         async def enable_quiet_hours(call: ServiceCall) -> None:
             await _async_require_admin(hass, call)
             manager = await async_get_quiet_hours(hass)
-            await manager.async_set_enabled(True)
+            try:
+                await manager.async_set_enabled(True)
+            except ValueError as err:
+                raise HomeAssistantError(str(err)) from err
 
         hass.services.async_register(
             DOMAIN,
@@ -242,7 +245,10 @@ def _register_quiet_hours_actions(hass: HomeAssistant) -> None:
         async def disable_quiet_hours(call: ServiceCall) -> None:
             await _async_require_admin(hass, call)
             manager = await async_get_quiet_hours(hass)
-            await manager.async_set_enabled(False)
+            try:
+                await manager.async_set_enabled(False)
+            except ValueError as err:
+                raise HomeAssistantError(str(err)) from err
 
         hass.services.async_register(
             DOMAIN,
