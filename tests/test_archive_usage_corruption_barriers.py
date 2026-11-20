@@ -180,8 +180,12 @@ async def test_usage_native_evidence_survives_immediate_delayed_and_shutdown_wri
                 "request aggregates", manager._async_save_aggregates
             )
             assert schedule.call_count == int(not aggregates_damaged)
-        with pytest.raises(ValueError, match="needs repair"):
-            await manager.async_clear_details(confirm=True)
+        if category in {"request", "duplicate"}:
+            with pytest.raises(ValueError, match="confirmation"):
+                await manager.async_clear_details(confirm=False)
+        else:
+            with pytest.raises(ValueError, match="needs repair"):
+                await manager.async_clear_details(confirm=True)
         retained = (len(manager.requests), len(manager.runs))
         async with manager.async_run():
             await manager.async_record_request(
@@ -196,3 +200,14 @@ async def test_usage_native_evidence_survives_immediate_delayed_and_shutdown_wri
             assert not paths[2].exists()
         if aggregates_damaged:
             assert [path.read_bytes() for path in paths[:2]] == original[:2]
+    if category in {"request", "duplicate"}:
+        manager = UsageManager(*stores)
+        await manager.async_initialize()
+        aggregates = [path.read_bytes() for path in paths[:2]]
+        await manager.async_clear_details(confirm=True)
+        assert [path.read_bytes() for path in paths[:2]] == aggregates
+        reloaded = UsageManager(*stores)
+        await reloaded.async_initialize()
+        assert reloaded.persistence_status()["survives_restart"]
+        assert reloaded.requests == reloaded.runs == []
+        assert reloaded.totals.total_tokens == 40

@@ -383,7 +383,7 @@ class UsageManager:
         self._totals_need_repair = False
         self._daily_needs_repair = False
         self._details_need_repair = False
-        self._detail_document_loaded = False
+        self._detail_records_repairable = False
         self._detail_retention_dirty = False
         self._current_run: ContextVar[UsageRun | None] = ContextVar(
             f"usage_run_{id(self)}", default=None
@@ -463,7 +463,7 @@ class UsageManager:
             request_ids: set[str] = set()
             run_ids: set[str] = set()
             inline_run_dates = False
-            detail_document_loaded = False
+            detail_records_repairable = False
             if self._detail_storage is not None:
                 loaded_details = None
                 try:
@@ -482,7 +482,6 @@ class UsageManager:
                     if not isinstance(error.__cause__, OSError):
                         raise
                     details_need_repair = True
-                detail_document_loaded = isinstance(loaded_details, dict)
                 detail_data = loaded_details if loaded_details is not None else {}
                 if not isinstance(detail_data, dict):
                     details_need_repair = True
@@ -518,8 +517,17 @@ class UsageManager:
                     except TypeError, ValueError:
                         details_need_repair = True
                         continue
-                details_need_repair |= not _restore_stored_run_dates(
+                valid_run_dates = _restore_stored_run_dates(
                     staged_runs, run_ids, detail_data.get(_RUN_ACCOUNTING_DATES, {})
+                )
+                details_need_repair |= not valid_run_dates
+                detail_records_repairable = (
+                    isinstance(loaded_details, dict)
+                    and detail_data.keys()
+                    <= {"requests", "runs", _RUN_ACCOUNTING_DATES}
+                    and ("requests" not in detail_data or isinstance(requests, list))
+                    and ("runs" not in detail_data or isinstance(runs, list))
+                    and valid_run_dates
                 )
 
             now = dt_util.utcnow()
@@ -550,7 +558,7 @@ class UsageManager:
             self._totals_need_repair = totals_need_repair
             self._daily_needs_repair = daily_needs_repair
             self._details_need_repair = details_need_repair
-            self._detail_document_loaded = detail_document_loaded
+            self._detail_records_repairable = detail_records_repairable
             if self._aggregates_need_repair:
                 _LOGGER.warning(
                     "Usage storage needs repair; original stores preserved and persistence disabled"
@@ -860,7 +868,7 @@ class UsageManager:
         async with async_storage_lock(self._storage, self._lock):
             self._require_aggregates_writable()
             if self._details_need_repair and (
-                not self._detail_document_loaded
+                not self._detail_records_repairable
                 or self._detail_storage is None
                 or getattr(self._detail_storage, "corruption_unavailable", False)
                 is True
