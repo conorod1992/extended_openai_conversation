@@ -1,27 +1,6 @@
 import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 
-export {embeddedFeatureStatusMarkup, selectedFeatureStatus} from "./management-feature-status-core.js";
-
-export function featureStatusMarkup(panel, title, status, configureTarget = null) {
-  if (!status) return "";
-  const positive = ["enabled", "available"].includes(status.state);
-  const configure = panel._data?.is_admin && configureTarget
-    ? `<button type="button" class="secondary inline-route" data-page="${panel._e(configureTarget.page)}" data-subsection="${panel._e(configureTarget.subsection)}">${panel._e(configureTarget.label)}</button>`
-    : "";
-  return `<section class="content-card feature-status-card"><div class="compact-status"><span><strong>${panel._e(title)}</strong><small>${panel._e(status.detail || status.summary || "")}</small></span><strong class="status-value ${positive ? "on" : ""}">${panel._e(status.label || "Unknown")}</strong></div>${configure}</section>`;
-}
-
-export function overviewAgentFeatureProjection(agent) {
-  const memory = agent?.feature_status?.memory;
-  const knowledge = agent?.feature_status?.knowledge;
-  if (!memory && !knowledge) return agent;
-  const memoryLabel = memory?.label || agent.memory_mode || "Unknown";
-  const labels = [memoryLabel];
-  if (knowledge?.label) labels.push(`Knowledge ${knowledge.label}`);
-  return {...agent, memory_mode: labels.join(" · ")};
-}
-
 export function diagnosticStatusMeta(status) {
   const normalized = String(status || "").toLowerCase();
   if (normalized === "passed") return {label: "Passed", icon: "✓", className: "passed"};
@@ -93,7 +72,7 @@ export async function testAgent(panel) {
   }
 }
 
-export const FEATURE_STATUS_STYLES = `
+const FEATURE_STATUS_STYLES = `
     .diagnostic-result{display:grid;gap:16px;margin:20px 0 14px}
     .diagnostic-loading{display:flex;align-items:center;gap:10px;min-height:52px;color:var(--secondary-text-color)}
     .diagnostic-summary,.diagnostic-check{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;border:1px solid var(--divider-color);border-radius:11px;padding:14px 16px}
