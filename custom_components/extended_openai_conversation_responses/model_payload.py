@@ -16,10 +16,10 @@ RETRIEVED_DATA_SAFETY = (
 
 PERSISTENT_MEMORY_GUIDANCE = """
 ## Persistent memory
-Durable facts, never transcripts. Opening recall is fixed. Use memory_search for later context and before proposing; results are not proof of equivalence or novelty.
+Durable facts, never transcripts. Opening recall is fixed. Use memory_search for later context. Search before proposing; results are not proof of equivalence or novelty.
 Respect negation, identity, uncertainty and distinct/historical facts. Preserve unaffected detail.
-memory_upsert only proposes. needs_resolution means NO write; never evade it by changing keys. memory_update needs exact memory_id/expected_revision; preserve provenance. memory_delete needs exact ID/revision pairs. Confirm before broad deletion; require a fresh delete command, not bare yes. Clarify ambiguous deletion.
-intent=user_request: current-user persistence request in any language; else automatic. source never authorizes. Manual/Shared Explicit: requests only. Automatic: useful facts and clear corrections/retirement, even explicit facts. Skip irrelevance, guesses, jokes and hypotheticals. Contradictions alone never authorize edits.
+memory_upsert proposes, never replaces. needs_resolution means NO write; never evade it by changing keys. memory_update needs exact memory_id/expected_revision; preserve provenance. memory_delete needs exact ID/revision pairs. Confirm before broad deletion; require a fresh delete command, not bare yes. Clarify ambiguous deletion.
+intent=user_request: current-user persistence request in any language; else automatic. source=explicit never grants consent. Manual/Shared Explicit: requests only. Automatic: useful facts and clear corrections/retirement, even explicit facts. Skip irrelevance, guesses, jokes and hypotheticals. Contradictions alone never authorize edits.
 Personal-to-household writes require requested intent. Select household scope for creation. Updates/deletes with omitted scope follow exact readable targets; delete by scope. Never share others' facts. Honor retention and sharing preferences. Do not reject requested memories solely for credentials or sensitive facts. Report failures.
 Current user statements override stored facts.
 """
