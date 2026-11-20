@@ -9,7 +9,6 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
     configured_function_tools_from_data,
-    function_tool_enabled,
     normalized_agent_integer,
     validate_function_groups,
 )
@@ -34,7 +33,7 @@ from .const import (
 from .function_groups import assemble_function_tools
 from .guest_function_tools import filter_guest_tools_and_groups
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
-from .ha_llm_tools import ToolSnapshot, async_discover, is_ha_tool
+from .ha_llm_tools import ToolSnapshot, async_discover
 from .helpers import get_exposed_entities
 from .knowledge import get_loaded_knowledge
 from .memory import memory_enabled
@@ -188,6 +187,15 @@ async def async_preview_effective_request(
             options, availability_tools, skill_manager, availability_groups
         ):
             grouped = assemble_function_tools(configured_tools, groups, set())
+            # Change only when on-demand schemas are sent. Keep all availability
+            # checks, including disabled groups, identical in both assemblies.
+            all_available_tools = (
+                assemble_function_tools(
+                    configured_tools, groups, {group["id"] for group in groups}
+                ).tools
+                if grouped.available_on_demand_groups
+                else grouped.tools
+            )
         custom_tools = [
             tool
             for tool in grouped.tools
@@ -307,17 +315,11 @@ async def async_preview_effective_request(
             for key, label, content, output_format in section_values
         ]
 
-        enabled_tools = [
-            tool
-            for tool in configured_tools
-            if function_tool_enabled(tool)
-            and (not is_ha_tool(tool) or tool.get("ha_available") is True)
-        ]
         grouped_payload = canonical_json(
             format_function_tools(grouped.tools, provider.api_mode)
         )
         ungrouped_payload = canonical_json(
-            format_function_tools(enabled_tools, provider.api_mode)
+            format_function_tools(all_available_tools, provider.api_mode)
         )
         raw_savings = len(ungrouped_payload) - len(grouped_payload)
         savings = max(0, raw_savings)

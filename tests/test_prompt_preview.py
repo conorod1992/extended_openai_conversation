@@ -510,9 +510,13 @@ async def test_preview_matches_production_builder_without_user_or_history(
     assert preview["prompt"] == production
     assert "not serialized" not in preview["prompt"]
     assert any("conversation history are excluded" in note for note in preview["notes"])
-    # The security boundary withholds the legacy/default Bash schema until explicit
-    # acknowledgement, so the effective request is smaller than the raw configured set.
-    assert preview["function_group_savings"]["characters"] > 0
+    function_tools = next(
+        section["content"]
+        for section in preview["sections"]
+        if section["key"] == "function_tools"
+    )
+    assert '"name":"bash"' not in function_tools
+    assert preview["function_group_savings"]["characters"] == 0
 
 
 async def test_preview_reads_temporary_context_without_mutation(
@@ -754,12 +758,10 @@ async def test_effective_request_preview_uses_first_request_tool_assembly(
         "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
         lambda _hass: [],
     )
+    entry = SimpleNamespace(entry_id="entry-1", data={})
+    subentry = SimpleNamespace(subentry_id="agent-1")
     result = await async_preview_effective_request(
-        hass,
-        SimpleNamespace(entry_id="entry-1", data={}),
-        SimpleNamespace(subentry_id="agent-1"),
-        options,
-        "admin",
+        hass, entry, subentry, options, "admin"
     )
 
     sections = {section["key"]: section for section in result["sections"]}
@@ -779,3 +781,76 @@ async def test_effective_request_preview_uses_first_request_tool_assembly(
         result["function_group_savings"]["grouped_characters"]
         < result["function_group_savings"]["without_on_demand_grouping_characters"]
     )
+    always_available = {
+        **options,
+        CONF_FUNCTION_GROUPS: [
+            {**group, "loading_mode": "always"}
+            for group in options[CONF_FUNCTION_GROUPS]
+        ],
+    }
+    always_preview = await async_preview_effective_request(
+        hass, entry, subentry, always_available, "admin"
+    )
+    assert (
+        result["function_group_savings"]["without_on_demand_grouping_characters"]
+        == always_preview["function_group_savings"]["grouped_characters"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("group_enabled", "budget"),
+    [(False, 5), (True, 0)],
+    ids=["disabled-group", "zero-budget"],
+)
+async def test_preview_counts_only_effective_tools_in_both_savings_estimates(
+    hass, monkeypatch, group_enabled, budget
+) -> None:
+    options = agent_config_defaults()
+    options.update(
+        {
+            CONF_PROMPT: "BASE",
+            CONF_FUNCTION_TOOLS: yaml.safe_dump(
+                [
+                    {
+                        "spec": {
+                            "name": "held_tool",
+                            "description": "This schema cannot be sent",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                        "function": {"type": "template", "value_template": "Done"},
+                    }
+                ]
+            ),
+            CONF_FUNCTION_GROUPS: [
+                {
+                    "id": "held",
+                    "name": "Held tools",
+                    "description": "For later use",
+                    "enabled": group_enabled,
+                    "loading_mode": "on_demand",
+                    "functions": ["held_tool"],
+                }
+            ],
+            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: budget,
+            CONF_TEMPORARY_MEMORY: "off",
+            CONF_CURRENT_DATETIME_ENABLED: False,
+            CONF_EXPOSED_ENTITIES_ENABLED: False,
+        }
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
+        lambda _hass: [],
+    )
+    result = await async_preview_effective_request(
+        hass,
+        SimpleNamespace(entry_id="entry-1", data={}),
+        SimpleNamespace(subentry_id="agent-1"),
+        options,
+        "admin",
+    )
+    assert result["function_group_savings"] == {
+        "characters": 0,
+        "percent": 0,
+        "grouped_characters": 2,
+        "without_on_demand_grouping_characters": 2,
+    }
