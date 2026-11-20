@@ -151,7 +151,8 @@ async def test_scripted_multilingual_manual_decisions(
     )
     for name in ("memory_upsert", "memory_update", "memory_delete"):
         schema = tools[name]["parameters"]
-        assert schema["properties"]["intent"]["enum"] == ["automatic", "user_request"]
+        assert schema["properties"]["intent"]["type"] == ["string", "null"]
+        assert schema["properties"]["intent"]["enum"] == ["automatic", "user_request", None]
         assert "intent" not in schema.get("required", [])
         if api == API_MODE_RESPONSES:
             assert tools[name]["strict"] is False
