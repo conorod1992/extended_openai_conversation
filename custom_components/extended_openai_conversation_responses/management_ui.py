@@ -1949,17 +1949,22 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             hass.config_entries.async_update_subentry(
                 entry, subentry, data=parsed["config"], title=parsed["title"]
             )
-            from .management_loading_performance import (
-                _snapshot_normalized_configuration,
-            )
-
-            snapshot = _snapshot_normalized_configuration(
-                parsed["config"], validated=True, provider=provider
-            )
             revision = saved_agent_config_revision(
                 subentry, parsed["config"], parsed["title"]
             )
-            seed_persisted_config_projection(entry, subentry, snapshot, revision)
+            try:
+                from .management_loading_performance import (
+                    _snapshot_normalized_configuration,
+                )
+
+                snapshot = _snapshot_normalized_configuration(
+                    parsed["config"], validated=True, provider=provider
+                )
+                seed_persisted_config_projection(entry, subentry, snapshot, revision)
+            except Exception:
+                _LOGGER.warning(
+                    "Committed configuration import could not seed its optional cache"
+                )
             await async_finish_usage_retention_write(
                 hass, entry_id, subentry_id, updated_fields=None
             )

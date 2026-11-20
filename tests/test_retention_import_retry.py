@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    management_loading_performance as loading,
     management_ui as ui,
     usage,
 )
@@ -58,6 +59,75 @@ async def test_configuration_overwrite_preserves_archive_retention(
     )
     assert result["status"] == "updated"
     assert subentry.data[field] == 365
+
+
+@pytest.mark.parametrize(
+    ("module", "method"),
+    [
+        (loading, "_snapshot_normalized_configuration"),
+        (ui, "seed_persisted_config_projection"),
+    ],
+    ids=["snapshot", "cache"],
+)
+@pytest.mark.parametrize("prune_fails", [False, True])
+async def test_current_import_enforces_retention_after_optional_cache_failure(
+    hass, management_agent, management_message, monkeypatch, module, method, prune_fails
+):
+    entry, subentry = management_agent
+    entry.state = ConfigEntryState.NOT_LOADED
+    monkeypatch.setattr(
+        ui,
+        "async_get_request_rules",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                revision=lambda: "rules-0",
+                async_backup_data=AsyncMock(return_value={"rules": []}),
+            )
+        ),
+    )
+    revision = ui.saved_agent_config_revision(subentry, subentry.data, subentry.title)
+    exported = await ui.async_management_command(
+        hass, "admin", True, management_message("configuration", "export")
+    )
+    document = exported["document"]
+    field = "usage_request_retention_days"
+    document["config"][field] = 0
+
+    def fail_cache(*_args, **_kwargs):
+        raise RuntimeError("optional cache failure")
+
+    async def prune(*_args):
+        assert subentry.data[field] == 0
+        if prune_fails:
+            raise OSError("required retention write failed")
+
+    prune_usage = AsyncMock(side_effect=prune)
+    monkeypatch.setattr(module, method, fail_cache)
+    monkeypatch.setattr(usage, "async_apply_usage_retention", prune_usage)
+    request = management_message(
+        "configuration",
+        "import",
+        document=json.dumps(document),
+        mode="current",
+        confirm=True,
+        confirm_retention=True,
+        revision=revision,
+    )
+    if prune_fails:
+        with pytest.raises(HomeAssistantError, match="Configuration saved") as failure:
+            await ui.async_management_command(hass, "admin", True, request)
+        assert mutation_error_code(failure.value) == "eoai_mutation_committed"
+    else:
+        result = await ui.async_management_command(hass, "admin", True, request)
+        assert result == {
+            "status": "updated",
+            "subentry_id": subentry.subentry_id,
+            "revision": ui.saved_agent_config_revision(
+                subentry, subentry.data, subentry.title
+            ),
+        }
+        assert result["revision"] != revision
+    prune_usage.assert_awaited_once_with(hass, entry.entry_id, subentry.subentry_id)
 
 
 @pytest.mark.parametrize(
