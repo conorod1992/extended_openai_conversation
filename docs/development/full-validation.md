@@ -29,8 +29,11 @@ lists intentional quick-mode exclusions. The parent has a six-hour deadline;
 a timeout cannot be mistaken for a passing validation.
 
 The parent uploads the completed `full-validation-cohort` proof used by release
-certification. Temporary refs are removed after completed cohorts; interrupted
-runs retain them for diagnosis. Quick runs never authorize a release.
+certification. Temporary refs are removed after completed cohorts. The hourly
+cleanup workflow also removes refs from cancelled attempts once the cancellation
+is at least an hour old and every workflow on the branch has finished. It verifies
+the ref still points to the cancelled attempt's commit. Quick runs never authorize
+a release.
 
 Full mode dispatches iOS and Enhanced first, then gives both heavy lifetime
 partitions up to ten minutes to start before dispatching the shorter workflows.
