@@ -1,0 +1,38 @@
+name: Clean up cancelled Full validation branches
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report eligible branches without deleting them
+        type: boolean
+        default: true
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: full-validation-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Clean up drained cancelled cohorts
+        shell: bash
+        env:
+          APPLY: ${{ github.event_name == 'schedule' || !inputs.dry_run }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=(--repo "$GITHUB_REPOSITORY")
+          if [[ "$APPLY" == "true" ]]; then
+            args+=(--apply)
+          fi
+          python3 ci/full_validation_cleanup.py "${args[@]}"

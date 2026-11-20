@@ -303,6 +303,7 @@ def test_full_validation_includes_specialists_and_accounts_for_all_workflows():
     excluded = {
         "full-validation.yml",
         "full-validation-collect.yml",
+        "full-validation-cleanup.yml",
         "pr-validation.yml",
         "release.yml",
         "ci-image-stable.yml",
