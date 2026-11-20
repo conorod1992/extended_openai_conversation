@@ -490,6 +490,23 @@ async def test_get_pagination_and_hard_limit() -> None:
         await library.async_get_section("missing")
 
 
+@pytest.mark.parametrize(("query", "metadata"), [
+    ("wifi", "Wi-Fi"), ("Wi-Fi", "wifi"), ("manuals", "manual"), ("boilers", "boiler"),
+    ("manu", "Manual"), ("水", "水"),
+])
+@pytest.mark.parametrize("field", ["title", "description"])
+async def test_catalog_expands_queries_only_against_metadata(query, metadata, field):
+    library = await _library()
+    candidate = await library.async_create(
+        metadata if field == "title" else "Matching title",
+        metadata if field == "description" else "Matching description",
+        "Ordinary content",
+    )
+    await library.async_create("Unrelated title", "Unrelated description", metadata)
+    result = await library.async_catalog(query)
+    assert [row["source_id"] for row in result["sources"]] == [candidate.source_id]
+
+
 async def test_storage_migration_hook() -> None:
     store = KnowledgeStore.__new__(KnowledgeStore)
     old = [{"source_id": "one"}]

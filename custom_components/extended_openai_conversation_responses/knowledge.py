@@ -428,7 +428,7 @@ class KnowledgeLibrary:
             limit = max(1, min(limit, MAX_CATALOG_LIMIT))
             offset = max(0, offset)
             normalized_query = _normalize_catalog(query or "")
-            query_tokens = _tokens(query or "")
+            query_tokens = _search_tokens(query or "")
 
             sources = [
                 source
