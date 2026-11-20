@@ -265,16 +265,16 @@ async def async_setup_entry(
     from .agent_deletion import KNOWN_AGENTS, async_delete_removed_subentries
     from .conversation_archive import async_start_archive_retention
     from .provider_errors import provider_authentication_snapshot
+    from .usage import async_retry_unused_volatile_usage
 
     initialize_global_runtime(hass)
     async_start_archive_retention(hass)
     async_start_model_catalog_refresh(hass)
-    authentication_snapshot = provider_authentication_snapshot(entry)
-
     # Re-enable can follow subentry deletion while the parent was unloaded.
     # Cleanup must not depend on successful provider authentication.
     await async_delete_removed_subentries(hass, entry)
 
+    authentication_snapshot = provider_authentication_snapshot(entry)
     try:
         client = await get_authenticated_client(
             hass=hass,
@@ -306,6 +306,7 @@ async def async_setup_entry(
     )
 
     entry.runtime_data = _wrap_provider_client(client, entry, authentication_snapshot)
+    await async_retry_unused_volatile_usage(hass, entry.entry_id)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     sync_entry_model_lifecycle(hass, entry)

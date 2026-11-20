@@ -430,7 +430,7 @@ async def _async_write_journal_verified(
 
 
 async def _durable_managers(
-    hass: HomeAssistant, entry_id: str, subentry_id: str
+    hass: HomeAssistant, entry_id: str, subentry_id: str, *, include_usage: bool = True
 ) -> backup.AgentDataParticipants:
     """Load the actual durable managers; restore must never target Usage fallback RAM."""
     from .conversation_archive import async_get_archive
@@ -446,7 +446,11 @@ async def _durable_managers(
         temporary=await async_get_temporary_memory(hass, entry_id, subentry_id),
         knowledge=await async_get_knowledge(hass, entry_id, subentry_id),
         archive=await async_get_archive(hass, entry_id, subentry_id),
-        usage=await async_get_durable_usage(hass, entry_id, subentry_id),
+        usage=(
+            await async_get_durable_usage(hass, entry_id, subentry_id)
+            if include_usage
+            else None
+        ),
         guest_mode=await async_get_guest_mode(hass, entry_id, subentry_id),
         request_rules=await async_get_request_rules(hass, entry_id, subentry_id),
     )
@@ -457,6 +461,8 @@ async def _apply_prepared(
 ) -> None:
     """Apply validated durable categories in a deterministic, idempotent order."""
     if prepared.restores("usage"):
+        if managers.usage is None:
+            raise RuntimeError("Usage restore requires a durable manager")
         retention = agent_retention_snapshot(prepared.config)
         managers.usage.request_retention_days = int(
             retention[CONF_USAGE_REQUEST_RETENTION_DAYS]
@@ -481,6 +487,7 @@ async def _apply_prepared(
             prepared.archive_sessions, prepared.archive_turns, **archive_kwargs
         )
     if prepared.restores("usage"):
+        assert managers.usage is not None
         await managers.usage.async_replace_backup(
             prepared.usage_totals,
             prepared.usage_daily,
@@ -510,9 +517,13 @@ async def _recovery_managers(
         raise RuntimeError("Recovery participants require exclusive maintenance")
     from .usage import async_verify_rejected_usage_stores
 
+    include_usage = selected.restores("usage")
     try:
-        managers = await _durable_managers(hass, entry_id, subentry_id)
-        await async_verify_rejected_usage_stores(hass, entry_id, subentry_id)
+        managers = await _durable_managers(
+            hass, entry_id, subentry_id, include_usage=include_usage
+        )
+        if include_usage:
+            await async_verify_rejected_usage_stores(hass, entry_id, subentry_id)
         return managers
     except ValueError as initial_error:
         from .conversation_archive import HomeAssistantArchiveStorage, async_get_archive
@@ -638,6 +649,8 @@ async def _recovery_managers(
                 ),
             ),
         ):
+            if section == "usage" and not include_usage:
+                continue
             try:
                 await recovery_getter(hass, entry_id, subentry_id)
             except StorageRepairRequired:
@@ -647,7 +660,9 @@ async def _recovery_managers(
                 repaired = True
         if not repaired:
             raise initial_error
-        return await _durable_managers(hass, entry_id, subentry_id)
+        return await _durable_managers(
+            hass, entry_id, subentry_id, include_usage=include_usage
+        )
 
 
 def _active_agent(hass: HomeAssistant, entry_id: str, subentry_id: str) -> Any | None:
@@ -784,6 +799,7 @@ def reset_restored_runtime(
     )
     if fallback is not None and managers is not None:
         durable_usage = managers.usage
+        assert durable_usage is not None
         if agent is not None and getattr(agent, "_usage", None) is fallback:
             agent._usage = durable_usage
         from .sensor import rebind_usage_sensors
@@ -970,23 +986,7 @@ async def _async_publish_provider_pair(
     """Publish one Core config snapshot with the matching runtime connection."""
     from homeassistant.config_entries import ConfigEntryState
 
-    from . import _wrap_provider_client
-    from .helpers import get_authenticated_client
-    from .provider_errors import provider_authentication_snapshot
-
-    client = None
-    if getattr(entry, "state", None) is ConfigEntryState.LOADED:
-        # Construct the replacement before touching Core. Credential validation
-        # remains the normal provider setup concern, independent of disk recovery.
-        client = await get_authenticated_client(
-            hass,
-            provider_data["api_key"],
-            provider_data.get("base_url"),
-            provider_data.get("api_version"),
-            provider_data.get("organization"),
-            skip_authentication=True,
-            api_provider=provider_data.get("api_provider"),
-        )
+    client = await _async_prepare_provider_runtime(hass, entry, provider_data)
     previous_config = dict(subentry.data)
     previous_title = subentry.title
     if getattr(entry, "state", None) is ConfigEntryState.LOADED and (
@@ -1022,9 +1022,84 @@ async def _async_publish_provider_pair(
         hass, entry.entry_id, subentry.subentry_id, prepared
     )
     if client is not None:
-        entry.runtime_data = _wrap_provider_client(
-            client, entry, provider_authentication_snapshot(entry)
+        _publish_provider_runtime(entry, client)
+
+
+async def _async_prepare_provider_runtime(
+    hass: HomeAssistant, entry: Any, provider_data: dict[str, Any]
+) -> Any:
+    """Construct the runtime for a provider generation before changing Core."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from .helpers import get_authenticated_client
+
+    if getattr(entry, "state", None) is not ConfigEntryState.LOADED:
+        return None
+    return await get_authenticated_client(
+        hass,
+        provider_data["api_key"],
+        provider_data.get("base_url"),
+        provider_data.get("api_version"),
+        provider_data.get("organization"),
+        skip_authentication=True,
+        api_provider=provider_data.get("api_provider"),
+    )
+
+
+def _publish_provider_runtime(entry: Any, client: Any) -> None:
+    from . import _wrap_provider_client
+    from .provider_errors import provider_authentication_snapshot
+
+    entry.runtime_data = _wrap_provider_client(
+        client, entry, provider_authentication_snapshot(entry)
+    )
+
+
+async def async_settle_deleted_agent_provider(
+    hass: HomeAssistant, entry: Any, subentry_id: str
+) -> None:
+    """Resolve the shared connection before the deleted agent's journal is erased."""
+    from .helpers import entry_api_provider
+
+    entry_id = entry.entry_id
+    store = _journal_store(hass, entry_id, subentry_id)
+    raw = await store.async_load()
+    if raw is None or "provider_connections" not in raw:
+        return
+    _claim_provider_restore(hass, entry_id, subentry_id)
+    provider = entry_api_provider(entry)
+    journal, _, _ = await _async_load_journal(
+        raw, entry_id, subentry_id, provider=provider
+    )
+    connections = _journal_provider_connections(
+        journal, _journal_providers(journal, provider)
+    )
+    assert connections is not None
+    if not any(entry.data == data for data in connections.values()):
+        raise backup.BackupError(
+            "Pending restore cannot establish the provider connection generation"
         )
+    side = "target" if journal["phase"] == _PHASE_COMMITTED else "rollback"
+    provider_data = connections[side]
+    client = await _async_prepare_provider_runtime(hass, entry, provider_data)
+    with live_subentry_update():
+        hass.config_entries.async_update_entry(entry, data=deepcopy(provider_data))
+
+    def matches(persisted: Any) -> bool:
+        entries = persisted.get("entries") if isinstance(persisted, Mapping) else None
+        return isinstance(entries, list) and any(
+            isinstance(item, Mapping)
+            and item.get("entry_id") == entry_id
+            and item.get("data") == provider_data
+            for item in entries
+        )
+
+    await async_persist_config_entries(
+        hass, matches, "Recovered provider connection could not be durably verified"
+    )
+    if client is not None:
+        _publish_provider_runtime(entry, client)
+    await store.async_remove()
 
 
 async def _rollback_transaction(
@@ -1163,7 +1238,10 @@ async def _async_restore_backup_recoverably(
                 "Assistant before starting another restore"
             )
 
-        managers = await _durable_managers(hass, entry_id, subentry_id)
+        include_usage = prepared.restores("usage")
+        managers = await _durable_managers(
+            hass, entry_id, subentry_id, include_usage=include_usage
+        )
         from .helpers import effective_api_provider, entry_api_provider
 
         rollback_provider = entry_api_provider(entry)
@@ -1181,7 +1259,10 @@ async def _async_restore_backup_recoverably(
                 "rollback": deepcopy(dict(entry.data)),
             }
         rollback = await backup._snapshot_for_restore(
-            managers, subentry, provider=entry_api_provider(entry)
+            managers,
+            subentry,
+            provider=entry_api_provider(entry),
+            include_usage=include_usage,
         )
         if not isinstance(value, backup.PreparedRestore):
             from .transfer import async_materialize_restore

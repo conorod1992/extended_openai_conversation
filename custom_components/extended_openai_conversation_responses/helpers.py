@@ -35,7 +35,13 @@ _LOGGER = logging.getLogger(__name__)
 AZURE_DOMAINS = ("openai.azure.com", "azure-api.net", "services.ai.azure.com")
 _OPENAI_ENDPOINT = urlsplit(DEFAULT_CONF_BASE_URL)
 _OPENAI_HOSTED_TOOL_HOSTS = frozenset(
-    {_OPENAI_ENDPOINT.hostname, "us.api.openai.com", "eu.api.openai.com"}
+    {
+        _OPENAI_ENDPOINT.hostname,
+        *(
+            f"{region}.api.openai.com"
+            for region in ("ae", "au", "ca", "eu", "gb", "in", "jp", "kr", "sg", "us")
+        ),
+    }
 )
 
 

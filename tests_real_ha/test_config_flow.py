@@ -28,6 +28,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
     CONF_ORGANIZATION,
+    CONF_REASONING_EFFORT,
     CONF_SHORTEN_TOOL_CALL_ID,
     CONF_SKIP_AUTHENTICATION,
     CONF_SKILLS,
@@ -631,6 +632,40 @@ async def test_ai_task_subentry_add_advanced_path(hass: HomeAssistant) -> None:
         assert result["data"][CONF_TEMPERATURE] == 0.3
         assert result["data"][CONF_SHORTEN_TOOL_CALL_ID] is True
         await _settle_entry(hass, entry)
+    finally:
+        await _unload_entry(hass, entry)
+
+
+async def test_ai_task_advanced_reasoning_efforts_follow_chat_completions(hass):
+    entry = _make_entry()
+    await _setup_entry(hass, entry)
+    try:
+        first = await hass.config_entries.subentries.async_init(
+            (entry.entry_id, "ai_task_data"), context={"source": SOURCE_USER}
+        )
+        advanced = await hass.config_entries.subentries.async_configure(
+            first["flow_id"],
+            {
+                CONF_NAME: "Chat Task",
+                CONF_CHAT_MODEL: "gpt-6.1-terra",
+                CONF_API_MODE: "chat_completions",
+                CONF_ADVANCED_OPTIONS: True,
+            },
+        )
+        assert advanced["step_id"] == "advanced"
+        schema = advanced["data_schema"]
+        selector = next(
+            value for key, value in schema.schema.items()
+            if str(key) == CONF_REASONING_EFFORT
+        )
+        options = {option["value"] for option in selector.config["options"]}
+        assert "xhigh" in options
+        assert "max" not in options
+        assert _suggested_values(schema)[CONF_REASONING_EFFORT] in options
+        result = await hass.config_entries.subentries.async_configure(
+            first["flow_id"], {CONF_REASONING_EFFORT: "xhigh"}
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
     finally:
         await _unload_entry(hass, entry)
 

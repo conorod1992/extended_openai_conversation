@@ -3,7 +3,7 @@
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -174,7 +174,7 @@ async def test_usage_native_evidence_survives_immediate_delayed_and_shutdown_wri
                 await manager._async_save_aggregates()
         # Routine telemetry schedules only the stores whose data can be replaced.
         with monkeypatch.context() as fault:
-            schedule = Mock(return_value=True)
+            schedule = AsyncMock(return_value=True)
             fault.setattr(manager, "_schedule_aggregate_snapshots", schedule)
             await manager._async_save_safely(
                 "request aggregates", manager._async_save_aggregates

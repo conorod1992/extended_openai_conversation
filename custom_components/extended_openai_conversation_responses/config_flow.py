@@ -987,9 +987,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         effective_options, _, _ = _ai_task_apply_form_edits(
             self.options, self._temp_data or {}
         )
-        chat_model = str(effective_options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
-        capability_model = str(effective_options.get("azure_model") or chat_model)
         entry_data = self._get_entry().data
+        capability_model = capability_model_identity(effective_options, entry_data)
         metadata = get_model_capabilities(
             capability_model,
             provider=effective_api_provider(
@@ -999,11 +998,19 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         recommended_effort = metadata.get("recommended_profile", {}).get(
             "reasoning_effort"
         )
+        reasoning = metadata["reasoning"]
+        api_mode = effective_options.get(CONF_API_MODE, DEFAULT_API_MODE)
+        efforts = reasoning.get("by_api", {}).get(api_mode, reasoning)["efforts"]
+        if recommended_effort not in efforts:
+            recommended_effort = next(iter(efforts), None)
         display_effort = _ai_task_display_reasoning_effort(
             capability_model,
             {**effective_options, CONF_CHAT_MODEL: capability_model},
             reconfigure=True,
-            metadata=metadata,
+            metadata={
+                "recommended_profile": {"reasoning_effort": recommended_effort},
+                "reasoning": {"efforts": efforts},
+            },
         )
 
         if user_input is not None:
@@ -1057,7 +1064,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 effective_options = (
                     final_data if self._is_new else {**self.options, **edited}
                 )
-                display_effort = effective_effort
+                if effective_effort in efforts:
+                    display_effort = effective_effort
             else:
                 if self._is_new:
                     title = final_data.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
@@ -1073,8 +1081,6 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
 
         schema: dict[Any, Any] = {}
-        reasoning = metadata["reasoning"]
-
         if parameter_is_allowed(capability_model, CONF_TOP_P, display_effort):
             schema[
                 vol.Optional(
@@ -1122,8 +1128,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     BooleanSelector()
                 )
 
-        if reasoning["supported"]:
-            default_effort = display_effort or reasoning["efforts"][0]
+        if efforts:
+            default_effort = display_effort or efforts[0]
             schema[
                 vol.Optional(
                     CONF_REASONING_EFFORT,
@@ -1133,7 +1139,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 SelectSelectorConfig(
                     options=[
                         SelectOptionDict(value=opt, label=opt.capitalize())
-                        for opt in reasoning["efforts"]
+                        for opt in efforts
                     ],
                     mode=SelectSelectorMode.DROPDOWN,
                 )

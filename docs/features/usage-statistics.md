@@ -6,6 +6,8 @@ Extended OpenAI records provider-reported token usage. It does not contain a pri
 
 A **provider request** is one API call. A **conversation run** is one complete user turn, from the start of processing until the final response or error. Tool loops and context summarisation can cause one run to contain several provider requests. Foreground requests, including a preflight context summary needed by the current turn, share that run’s ID. Deferred summaries after a reply remain detached from finalized runs and contribute to aggregate usage. Hybrid Memory embedding calls also count as provider requests, including failed attempts; provider-reported embedding input tokens are included.
 
+Usage is scoped to the conversation assistant. **Test assistant** counts toward that assistant's totals. AI Task entities and the provider-level `query_image` service have no conversation-assistant totals.
+
 Provider-request counters and tokens are committed when each real provider request finishes; the conversation-run counter is committed once when the complete user turn finishes. This keeps one user turn distinct from any additional provider rounds it triggers and preserves completed request usage even if the run is interrupted before its normal final response.
 
 Missing provider metadata is handled safely: the request and run are still counted, while unavailable token fields remain zero. Failed, cancelled, interrupted-stream, and exception paths finalize their run once.
@@ -53,13 +55,24 @@ outside the daily history. For automations that use `last_reset`, switch to the
 `period_start` date attribute. The integration's Usage dashboard continues to
 show totals from stored calendar buckets.
 
+Before rolling back to 6.8.3, disable **Usage today** and **Usage this month**,
+or exclude both from Recorder for the duration of the rollback. If a day or
+month boundary passed while a sensor was display-only, 6.8.3 can interpret the
+first value it records as a downward correction to that sensor's existing
+statistics. Restoring a Home Assistant backup that includes Recorder also
+restores the recorded statistics to the state in that backup.
+
 During a Usage storage outage, the lifetime and period sensors are unavailable
 while the assistant continues with in-memory accounting. **Last response usage**
-can still show a retained response from the current session. If an aggregate
-needs repair, its sensors are unavailable and the readable part of the snapshot
-stays at its last valid values until repair. Damage confined to request or run
-details leaves aggregate recording active. Damaged details are preserved for
-repair.
+can still show a retained response from the current session. Reloading the
+integration retries saved storage if the fallback has recorded no usage. An
+active fallback stays in place for the session, and the Usage page warns that
+its counts are temporary. If an aggregate
+needs repair, its sensors are unavailable and the Usage page labels readable
+figures as potentially incomplete. Damage confined to request or run details
+leaves aggregate recording active. **Last response usage** has no value during
+repair because the newest saved run may predate the latest response. Damaged
+details are preserved for repair.
 
 ## Management panel
 

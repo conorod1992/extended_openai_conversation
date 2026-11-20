@@ -229,7 +229,7 @@ async def test_scope_is_stable_and_different_sessions_are_not_joined() -> None:
 async def test_archive_scope_counts_include_only_retained_sessions() -> None:
     archive = await _archive()
     alice = user_scope("alice", source="authenticated_user")
-    await archive.async_begin_session(
+    first = await archive.async_begin_session(
         "a",
         alice,
         "one",
@@ -237,7 +237,7 @@ async def test_archive_scope_counts_include_only_retained_sessions() -> None:
         shared_archive_enabled=False,
         inactivity_minutes=30,
     )
-    await archive.async_begin_session(
+    second = await archive.async_begin_session(
         "b",
         alice,
         "two",
@@ -254,6 +254,12 @@ async def test_archive_scope_counts_include_only_retained_sessions() -> None:
         inactivity_minutes=30,
     )
 
+    assert archive.scope_counts() == {}
+    for session in (first, second):
+        await archive.async_record_turn(
+            session.session_id, run_id=None, user_text="Question",
+            assistant_text="Reply", successful=True,
+        )
     assert archive.scope_counts() == {"user:alice": 2}
 
 
@@ -641,9 +647,8 @@ async def test_later_session_publish_preserves_pending_transaction_for_restart()
     failed = await restarted.async_get("user:alice", failed_session.session_id)
     assert [turn["user_text"] for turn in failed["turns"]] == ["first turn"]
     listed = await restarted.async_list_sessions("user:bob")
-    assert [item["session_id"] for item in listed["sessions"]] == [
-        later_session.session_id
-    ]
+    assert listed["sessions"] == []
+    assert (await restarted.async_get("user:bob", later_session.session_id))["turns"] == []
     assert "pending_partitions" not in storage.metadata
     assert "pending_append" not in storage.metadata
 
@@ -691,6 +696,40 @@ async def _coverage_archive(storage: CoverageArchiveStorage | None = None) -> Co
     archive = ConversationArchive(storage or CoverageArchiveStorage(), "agent-1")
     await archive.async_initialize()
     return archive
+
+
+async def test_empty_session_is_hidden_after_reload_and_can_still_resume():
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.extended_openai_conversation_responses.management_history_queries import (
+        archive_list_page,
+    )
+
+    storage = CoverageArchiveStorage()
+    archive = await _coverage_archive(storage)
+    scope = user_scope("alice", source="authenticated_user")
+
+    async def begin(manager):
+        return await manager.async_begin_session(
+            "native-session", scope, "id", archive_enabled=True,
+            shared_archive_enabled=False, inactivity_minutes=30,
+        )
+
+    original = await begin(archive)
+    restarted = await _coverage_archive(storage)
+    day = dt_util.now().date().isoformat()
+    assert (await restarted.async_list_sessions(scope.scope_id))["sessions"] == []
+    assert (await archive_list_page(restarted, scope.scope_id))["sessions"] == []
+    preview = await restarted.async_preview_delete_date_range(scope.scope_id, day, day)
+    assert preview["session_count"] == 0
+    resumed = await begin(restarted)
+    assert resumed.session_id == original.session_id
+    await restarted.async_record_turn(
+        resumed.session_id, run_id=None, user_text="Question",
+        assistant_text="Reply", successful=True,
+    )
+    page = await archive_list_page(restarted, scope.scope_id)
+    assert [session["session_id"] for session in page["sessions"]] == [original.session_id]
 
 
 def _session(
@@ -891,11 +930,19 @@ async def test_list_sessions_clamps_orders_and_reports_more() -> None:
         shared_archive_enabled=False,
         inactivity_minutes=30,
     )
+    for session in (first, second):
+        await archive.async_record_turn(
+            session.session_id,
+            run_id=None,
+            user_text="Question",
+            assistant_text="Reply",
+            successful=True,
+        )
     archive._sessions[first.session_id] = replace(
-        first, last_message_at="2026-01-01T00:00:00+00:00"
+        archive._sessions[first.session_id], last_message_at="2026-01-01T00:00:00+00:00"
     )
     archive._sessions[second.session_id] = replace(
-        second, last_message_at="2026-02-01T00:00:00+00:00"
+        archive._sessions[second.session_id], last_message_at="2026-02-01T00:00:00+00:00"
     )
 
     page = await archive.async_list_sessions("user:alice", limit=1, offset=-3)

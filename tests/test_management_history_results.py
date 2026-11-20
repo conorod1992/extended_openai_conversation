@@ -245,7 +245,7 @@ async def test_archive_list_search_and_turn_reads_return_real_pages() -> None:
     archive = ConversationArchive(_Storage(), "agent")
     await archive.async_initialize()
     archive._sessions = {
-        _session(index).session_id: _session(index) for index in range(70)
+        item.session_id: item for item in (_session(index, turn_count=1) for index in range(70))
     }
 
     listed = await archive_list_page(archive, "user:alice", offset=40, limit=20)
@@ -572,14 +572,15 @@ async def test_archive_list_filters_scope_and_retention_without_displacing_newes
     """Bounded ranking ignores inaccessible sessions and does not admit older tail rows."""
     archive = ConversationArchive(_Storage(), "agent")
     await archive.async_initialize()
-    newest = _edge_session(30)
-    second = _edge_session(20)
-    older = _edge_session(10)
-    foreign = _edge_session(40, scope_id="user:bob")
-    expired = _edge_session(50, retention_state="expired")
+    newest = _edge_session(30, turn_count=1)
+    second = _edge_session(20, turn_count=1)
+    older = _edge_session(10, turn_count=1)
+    foreign = _edge_session(40, scope_id="user:bob", turn_count=1)
+    expired = _edge_session(50, retention_state="expired", turn_count=1)
+    empty = _edge_session(60)
     archive._sessions = {
         item.session_id: item
-        for item in (newest, second, older, foreign, expired)
+        for item in (newest, second, older, foreign, expired, empty)
     }
 
     result = await archive_list_page(archive, "user:alice", limit=2)

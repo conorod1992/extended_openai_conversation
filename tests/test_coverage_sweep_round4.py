@@ -628,29 +628,30 @@ def test_management_debug_bounded_text_untruncated_path() -> None:
 
 
 def test_archive_list_sync_filters_sorts_and_pages() -> None:
-    from dataclasses import dataclass
+    from dataclasses import replace
 
     from custom_components.extended_openai_conversation_responses import (
         management_history_queries as history,
     )
 
-    @dataclass
-    class Session:
-        session_id: str
-        scope_id: str
-        retention_state: str
-        last_message_at: str
+    from tests.test_conversation_archive import _session
+
+    def session(identity, scope_id, retention_state, last_message_at):
+        return replace(
+            _session(identity, scope_id=scope_id, retention_state=retention_state),
+            last_message_at=last_message_at,
+        )
 
     sessions = {
-        "old": Session("old", "user:one", "retained", "2026-01-01T00:00:00+00:00"),
-        "new": Session("new", "user:one", "retained", "2026-03-01T00:00:00+00:00"),
-        "middle": Session(
+        "old": session("old", "user:one", "retained", "2026-01-01T00:00:00+00:00"),
+        "new": session("new", "user:one", "retained", "2026-03-01T00:00:00+00:00"),
+        "middle": session(
             "middle", "user:one", "retained", "2026-02-01T00:00:00+00:00"
         ),
-        "private": Session(
+        "private": session(
             "private", "user:one", "private", "2026-04-01T00:00:00+00:00"
         ),
-        "other": Session(
+        "other": session(
             "other", "user:two", "retained", "2026-05-01T00:00:00+00:00"
         ),
     }

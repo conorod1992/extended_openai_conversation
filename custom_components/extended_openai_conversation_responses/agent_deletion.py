@@ -90,6 +90,10 @@ class _DelayedQueueCleanupDeferred(Exception):
     """The shared queue could not confirm that it erased a removed agent."""
 
 
+class _ProviderCleanupDeferred(Exception):
+    """Shared provider recovery must finish before the owner's journal is erased."""
+
+
 async def _async_reconcile_with_retry(hass: Any) -> None:
     hass.data.pop(_RETRY, lambda: None)()
     try:
@@ -149,6 +153,21 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                 async_remove_stored_agent_calls,
             )
             from .model_lifecycle import remove_retirement_issue
+            from .provider_credentials import PROVIDER_RESTORE_OWNERS
+            from .restore_recovery import async_settle_deleted_agent_provider
+
+            get_entry = getattr(
+                getattr(hass, "config_entries", None), "async_get_entry", None
+            )
+            entry = get_entry(entry_id) if get_entry is not None else None
+            if entry is not None:
+                try:
+                    await async_settle_deleted_agent_provider(hass, entry, subentry_id)
+                except (HomeAssistantError, OSError, ValueError, TypeError) as err:
+                    raise _ProviderCleanupDeferred(type(err).__name__) from err
+            owners = hass.data.get(PROVIDER_RESTORE_OWNERS, {})
+            if entry is not None and owners.get(entry_id) == subentry_id:
+                owners.pop(entry_id)
 
             delayed = hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
             try:
@@ -184,6 +203,8 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                 await PropagatingWriteStore(hass, 1, name).async_remove()
             for suffix in _MANAGER_KEYS:
                 hass.data.get(f"{DOMAIN}.{suffix}", {}).pop(key, None)
+            if owners.get(entry_id) == subentry_id:
+                owners.pop(entry_id)
             remove_retirement_issue(hass, entry_id=entry_id, subentry_id=subentry_id)
             gate.deleted = True
 
@@ -199,6 +220,11 @@ async def _async_delete_discovered_agent(
         _LOGGER.warning(
             "Private agent data cleanup deferred until the delayed tool queue "
             "can be read and updated (%s)",
+            err,
+        )
+    except _ProviderCleanupDeferred as err:
+        _LOGGER.warning(
+            "Private agent data cleanup deferred until shared provider recovery completes (%s)",
             err,
         )
     except OSError as err:

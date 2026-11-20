@@ -85,7 +85,7 @@ async def _quarantined_category(hass, monkeypatch, phase, category):
     evidence = path.with_name(path.name + ".corrupt.review")
     path.rename(evidence)
 
-    async def managers(hass, entry_id, subentry_id):
+    async def managers(hass, entry_id, subentry_id, *, include_usage=True):
         return participants(**{field: await getter(hass, entry_id, subentry_id)})
 
     async def apply(managers, prepared):

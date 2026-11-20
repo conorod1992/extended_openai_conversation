@@ -97,13 +97,19 @@ def usage_summary(manager: Any) -> dict[str, Any]:
     )
     lifetime["details"] = details
     lifetime["details_meta"] = details_meta
-    latest = asdict(manager.latest_run) if manager.latest_run is not None else None
+    latest = manager.latest_run
     return {
         "lifetime": lifetime,
         "today": _bounded_usage_day(manager.today_summary()),
         "month": _bounded_usage_day(manager.month_summary()),
-        "latest": latest,
+        "latest": asdict(latest) if latest is not None else None,
+        **_usage_storage_warning(manager),
     }
+
+
+def _usage_storage_warning(manager: Any) -> dict[str, str]:
+    warning = getattr(manager, "dashboard_storage_warning", None)
+    return {"storage_warning": warning} if isinstance(warning, str) else {}
 
 
 def _legacy_run_in_period(run: UsageRun, start_date: str, end_date: str) -> bool | None:
@@ -165,6 +171,7 @@ def usage_daily_page(
     return {
         "days": days,
         "local_run_summary": _local_run_summary(manager, start_date, end_date),
+        **_usage_storage_warning(manager),
         **page_metadata(
             offset=safe_offset,
             limit=safe_limit,
@@ -328,7 +335,7 @@ def _archive_list_sync(
     heap: list[tuple[datetime, str, Any]] = []
     total = 0
     for session in sessions.values():
-        if session.scope_id != scope_id or session.retention_state != "retained":
+        if session.scope_id != scope_id or not session.has_saved_history:
             continue
         total += 1
         candidate = (_parse_time(session.last_message_at), session.session_id, session)

@@ -957,6 +957,15 @@ def _minimal_backup(*, date: str) -> dict:
     }
 
 
+def test_backup_can_restore_more_than_ten_years_of_daily_usage() -> None:
+    value = _minimal_backup(date="2026-01-01")
+    first = datetime(2016, 1, 1).date()
+    dates = ((first + timedelta(days=offset)).isoformat() for offset in range(3661))
+    value["daily"] = {date: usage._empty_day(date) for date in dates}
+    _, restored, _, _ = usage.UsageManager.validate_backup_data(value, "target-agent")
+    assert restored == value["daily"]
+
+
 def test_backup_rejects_iso_length_date_that_is_not_a_real_calendar_date() -> None:
     """Reach the datetime parser failure after the length check succeeds."""
     with pytest.raises(ValueError, match="daily usage date is invalid"):

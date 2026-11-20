@@ -130,6 +130,11 @@ class ArchiveSession:
     retention_state: str
     last_activity_at: str | None = None
 
+    @property
+    def has_saved_history(self) -> bool:
+        """Whether the session contains at least one retained turn."""
+        return self.retention_state == "retained" and self.turn_count > 0
+
 
 @dataclass(slots=True, frozen=True, weakref_slot=True)
 class ArchiveTurn:
@@ -1330,7 +1335,7 @@ class ConversationArchive:
         sessions = [
             session
             for session in self._sessions.values()
-            if session.scope_id == scope_id and session.retention_state == "retained"
+            if session.scope_id == scope_id and session.has_saved_history
         ]
         sessions.sort(key=lambda item: _parse_time(item.last_message_at), reverse=True)
         page = sessions[max(0, offset) : max(0, offset) + limit]
@@ -1533,7 +1538,7 @@ class ConversationArchive:
         """Return retained session totals grouped by data scope."""
         counts: dict[str, int] = {}
         for session in self._sessions.values():
-            if session.retention_state != "retained":
+            if not session.has_saved_history:
                 continue
             counts[session.scope_id] = counts.get(session.scope_id, 0) + 1
         return counts
@@ -2146,7 +2151,7 @@ def _sessions_in_delete_range(
         session
         for session in sessions
         if session.scope_id == scope_id
-        and session.retention_state == "retained"
+        and session.has_saved_history
         and start <= _parse_time(session.last_message_at) < end
     ]
 

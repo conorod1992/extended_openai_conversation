@@ -28,6 +28,7 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
     async_get_knowledge,
 )
 from custom_components.extended_openai_conversation_responses.memory import async_get_memory
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
 def _entry() -> MockConfigEntry:
@@ -178,15 +179,26 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
 
 
 
-@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize("interrupted", [False, True, "deleted"])
+@pytest.mark.usefixtures("real_store_io")
 async def test_cross_provider_private_restore_and_committed_replay(hass, monkeypatch, interrupted):
     from custom_components.extended_openai_conversation_responses import restore_recovery, transfer
     from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry as setup
+    from homeassistant.config_entries import ConfigSubentry
     old_connection = {"api_provider": "azure", "base_url": "https://example.openai.azure.com", "api_version": "2025-04-01-preview", "api_key": "test-azure", "skip_authentication": True}
     new_connection = {"api_provider": "openai", "api_key": "test-openai", "skip_authentication": True}
     entry = _make_entry("Provider journal context", include_ai_task=False, data=old_connection, conversation_options={"chat_model": "o3-pro", "api_mode": "responses", "reasoning_effort": "high"})
     await setup(hass, entry)
     subentry = _conversation_subentry(entry)
+    if interrupted == "deleted":
+        sibling = ConfigSubentry(
+            data=dict(subentry.data),
+            subentry_type="conversation",
+            title="Surviving conversation",
+            unique_id=None,
+        )
+        hass.config_entries.async_add_subentry(entry, sibling)
+        await hass.async_block_till_done(wait_background_tasks=True)
     expected = dict(entry.data)
     source = await backup.async_collect_backup_snapshot(hass, entry, subentry)
     source["provider_connection"] = new_connection
@@ -217,6 +229,18 @@ async def test_cross_provider_private_restore_and_committed_replay(hass, monkeyp
 
         with pytest.raises(HomeAssistantError, match="shared provider connection is unavailable"):
             require_provider_restore_complete(hass, entry.entry_id)
+        if interrupted == "deleted":
+            assert hass.config_entries.async_remove_subentry(entry, subentry.subentry_id)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            require_provider_restore_complete(hass, entry.entry_id)
+            assert set(entry.subentries) == {sibling.subentry_id}
+            assert dict(entry.data) == new_connection
+            assert str(entry.runtime_data.base_url).startswith("https://api.openai.com/")
+            assert await restore_recovery._journal_store(
+                hass, entry.entry_id, subentry.subentry_id
+            ).async_load() is None
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            return
         assert await restore_recovery.async_recover_pending_restore(hass, entry, subentry)
         require_provider_restore_complete(hass, entry.entry_id)
     else:
@@ -228,6 +252,60 @@ async def test_cross_provider_private_restore_and_committed_replay(hass, monkeyp
     assert str(entry.runtime_data.base_url).startswith("https://api.openai.com/")
     assert await restore_recovery._journal_store(hass, entry.entry_id, subentry.subentry_id).async_load() is None
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("recover", [False, True])
+@pytest.mark.usefixtures("real_store_io")
+async def test_knowledge_restore_ignores_damaged_usage_details(hass, monkeypatch, recover):
+    from pathlib import Path
+
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery, transfer, usage,
+    )
+    from tests_real_ha.test_usage_period_statistics import _unload_recorded_usage
+
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    key = entry.entry_id, subentry.subentry_id
+    accounting = await usage.async_get_usage(hass, *key)
+    await accounting.async_record_request(successful=True, usage=usage.RequestUsage(total_tokens=85))
+    await accounting.async_shutdown()
+    document = backup.finalize_backup_snapshot(
+        await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    )["document"]
+    journal = restore_recovery._journal_store(hass, *key)
+    _, _, detail = usage._durable_usage_stores(hass, *key)
+    if recover:
+        with monkeypatch.context() as faults:
+            faults.setattr(
+                restore_recovery, "_update_configuration",
+                _raise_interrupted_usage_restore,
+            )
+            with pytest.raises(backup.BackupError, match="completion is pending"):
+                await transfer.async_restore_transfer(
+                    hass, entry, subentry, document, sections=[transfer.SECTION_KNOWLEDGE]
+                )
+        assert (await journal.async_load())["data_sections"] == ["knowledge"]
+    await _unload_recorded_usage(hass, key, accounting)
+    path = Path(detail.path)
+    if recover:
+        path.write_bytes(b"invalid Usage JSON")
+        assert await restore_recovery.async_recover_pending_restore(hass, entry, subentry)
+        assert path.read_bytes() == b"invalid Usage JSON"
+    else:
+        await detail.async_save({"requests": {"invalid": True}, "runs": []})
+        restored = await transfer.async_restore_transfer(
+            hass, entry, subentry, document, sections=[transfer.SECTION_KNOWLEDGE]
+        )
+        assert restored["status"] == "restored"
+        assert await detail.async_load() == {"requests": {"invalid": True}, "runs": []}
+    assert await journal.async_load() is None
+    assert (await usage.async_get_usage(hass, *key)).totals.total_tokens == 85
+
+
+async def _raise_interrupted_usage_restore(*args, **kwargs):
+    raise OSError("configuration publication interrupted")
 
 
 @pytest.mark.parametrize("case", ["same", "collision", "expired", "recovery"])

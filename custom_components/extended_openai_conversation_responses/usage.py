@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date as calendar_date, datetime, timedelta
-from functools import wraps
+from functools import partial, wraps
 import logging
 import time
 from typing import Any, Protocol
@@ -21,7 +21,10 @@ from homeassistant.exceptions import HomeAssistantError, UnsupportedStorageVersi
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
-from .agent_maintenance import get_agent_maintenance_gate
+from .agent_maintenance import (
+    _async_run_exclusive_operation,
+    get_agent_maintenance_gate,
+)
 from .const import (
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
@@ -973,6 +976,8 @@ class UsageManager:
 
     @property
     def latest_run(self) -> UsageRun | None:
+        if self._repair_required:
+            return None
         return next(
             (
                 run
@@ -1020,6 +1025,17 @@ class UsageManager:
             "survives_restart": not volatile and not self._repair_required,
             **({"storage_repair_required": True} if self._repair_required else {}),
         }
+
+    @property
+    def dashboard_storage_warning(self) -> str | None:
+        """Describe the reliability of the displayed counters and details."""
+        if self.is_volatile:
+            return "Usage storage is unavailable. Only usage recorded in memory is shown, and it will be lost on restart."
+        if self._aggregates_need_repair:
+            return "Usage totals need storage repair. The available figures can be incomplete, and new usage is not being recorded."
+        if self._details_need_repair:
+            return "Usage details need storage repair. Token totals are still recorded, but recent runs and requests can be incomplete."
+        return None
 
     def _require_writable(self) -> None:
         if self._repair_required:
@@ -1074,7 +1090,7 @@ class UsageManager:
         totals = UsageTotals(**{**totals_raw, "details": details})
 
         daily_raw = data["daily"]
-        if not isinstance(daily_raw, dict) or len(daily_raw) > 3660:
+        if not isinstance(daily_raw, dict):
             raise ValueError("daily usage data is invalid")
         daily: dict[str, dict[str, Any]] = {}
         for date, day in daily_raw.items():
@@ -1180,7 +1196,7 @@ class UsageManager:
         delay_save(data_func, _USAGE_SAVE_DELAY_SECONDS)
         return True
 
-    def _schedule_aggregate_snapshots(self) -> bool:
+    async def _schedule_aggregate_snapshots(self) -> bool:
         """Coalesce authoritative aggregates and their compatibility mirror."""
         totals_snapshot = self._usage_snapshot("totals")
         if self._daily_storage is None:
@@ -1191,8 +1207,10 @@ class UsageManager:
         if not callable(totals_delay_save) or not callable(daily_delay_save):
             return False
 
-        mirror, daily_snapshot = _serialize_usage_aggregate_snapshots(
-            totals_snapshot, self.daily
+        # The accounting lock keeps the source stable while the worker builds
+        # the two immutable snapshots. Copying old days must not block HA's loop.
+        mirror, daily_snapshot = await asyncio.to_thread(
+            _serialize_usage_aggregate_snapshots, totals_snapshot, self.daily
         )
         # Schedule the compatibility mirror first. If the authoritative daily
         # schedule then fails, immediate persistence below leaves daily state current.
@@ -1212,7 +1230,7 @@ class UsageManager:
                 await save()
                 return
             if aggregate:
-                if self._schedule_aggregate_snapshots():
+                if await self._schedule_aggregate_snapshots():
                     return
             elif (
                 label in {"request details", "run details"}
@@ -1869,6 +1887,38 @@ async def async_apply_usage_retention(
     durable.request_retention_days = policy["request_retention_days"]
     durable.run_retention_days = policy["run_retention_days"]
     await durable.async_prune_details()
+
+
+async def async_retry_unused_volatile_usage(hass: HomeAssistant, entry_id: str) -> None:
+    """Retry storage on reload when switching managers cannot lose accounting."""
+    fallbacks = hass.data.get(_VOLATILE_USAGE_MANAGERS, {})
+
+    async def retry(key: tuple[str, str]) -> None:
+        fallback = fallbacks.get(key)
+        if (
+            fallback is None
+            or fallback.totals != UsageTotals()
+            or fallback._active_runs
+        ):
+            return
+        durable = await async_get_durable_usage(hass, *key)
+        if durable.lifetime_available and durable.daily_available:
+            fallbacks.pop(key)
+            fallback.dispose_maintenance()
+
+    for key in tuple(fallbacks):
+        if key[0] != entry_id:
+            continue
+        gate = get_agent_maintenance_gate(hass, *key)
+        try:
+            await _async_run_exclusive_operation(gate, partial(retry, key))
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER,
+                "Usage storage retry during entry setup did not replace the fallback",
+                err,
+                level=logging.DEBUG,
+            )
 
 
 async def async_get_usage(

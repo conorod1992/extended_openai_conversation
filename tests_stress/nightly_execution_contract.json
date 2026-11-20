@@ -3369,6 +3369,7 @@
     "tests_real_ha/test_config_flow.py::test_basic_ai_task_model_round_trip_cleans_incompatible_sampling[gpt-4o-True]",
     "tests_real_ha/test_config_flow.py::test_basic_ai_task_model_round_trip_cleans_incompatible_sampling[gpt-5-mini-False]",
     "tests_real_ha/test_config_flow.py::test_openai_flow_creates_an_apim_unified_model_connection",
+    "tests_real_ha/test_config_flow.py::test_ai_task_advanced_reasoning_efforts_follow_chat_completions",
     "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_custom_replacements_preserve_literal_spacing_and_history[strong]",
     "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_speech_regressions_preserve_provider_history[literal-spacing]",
     "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_speech_regressions_preserve_provider_history[punctuation-attachment]",
@@ -3417,6 +3418,7 @@
     "tests_real_ha/test_usage_period_statistics.py::test_usage_aggregate_repair_preserves_recorder[details]",
     "tests_real_ha/test_usage_period_statistics.py::test_period_sensor_cutover_preserves_existing_statistics[False]",
     "tests_real_ha/test_usage_period_statistics.py::test_period_sensor_cutover_preserves_existing_statistics[True]",
+    "tests_real_ha/test_usage_period_statistics.py::test_reload_retries_unused_volatile_usage",
     "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_public_policy_skips_unregistered_control_and_retries_after_restart[switch]",
     "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_public_policy_skips_unregistered_control_and_retries_after_restart[volume]",
     "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_unregistered_no_change_observation_still_respects_manual_release[switch]",
@@ -3473,7 +3475,8 @@
     "tests_real_ha/test_native_automation_acceptance.py::test_native_add_automation_validates_reloads_and_triggers_once[False-True]",
     "tests_real_ha/test_native_automation_acceptance.py::test_native_add_automation_validates_reloads_and_triggers_once[True-False]",
     "tests_real_ha/test_native_automation_acceptance.py::test_native_add_automation_validates_reloads_and_triggers_once[True-True]",
-    "tests/test_conversation_archive.py::test_making_session_private_discards_failed_append_intent"
+    "tests/test_conversation_archive.py::test_making_session_private_discards_failed_append_intent",
+    "tests/test_conversation_archive.py::test_empty_session_is_hidden_after_reload_and_can_still_resume"
   ],
   "browser": {
     "browser": [

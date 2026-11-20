@@ -1563,19 +1563,27 @@ def _prepared_restore_from_selection(
 
 
 async def _current_snapshot(
-    hass: HomeAssistant, entry: Any, subentry: Any
+    hass: HomeAssistant, entry: Any, subentry: Any, *, include_usage: bool = True
 ) -> backup.PreparedRestore:
     """Read durable current state for selective planning without mutating it."""
     try:
         from .restore_recovery import _durable_managers
 
-        managers = await _durable_managers(hass, entry.entry_id, subentry.subentry_id)
+        managers = await _durable_managers(
+            hass,
+            entry.entry_id,
+            subentry.subentry_id,
+            include_usage=include_usage,
+        )
     except ImportError:
         managers = await backup._managers(hass, entry.entry_id, subentry.subentry_id)
     from .helpers import entry_api_provider
 
     return await backup._snapshot_for_restore(
-        managers, subentry, provider=entry_api_provider(entry)
+        managers,
+        subentry,
+        provider=entry_api_provider(entry),
+        include_usage=include_usage,
     )
 
 
@@ -1613,7 +1621,9 @@ async def async_materialize_restore(
     current = (
         current_snapshot
         if current_snapshot is not None
-        else await _current_snapshot(hass, entry, subentry)
+        else await _current_snapshot(
+            hass, entry, subentry, include_usage=SECTION_USAGE in selected
+        )
     )
     prepared = await asyncio.to_thread(_copy_transfer_categories, prepared)
     from .helpers import effective_api_provider, entry_api_provider
@@ -1735,6 +1745,24 @@ async def async_materialize_restore(
         if shortened:
             preview["shortened_usage_retention"] = shortened
     if "usage" in data_sections:
+        if not current.usage_snapshotted:
+            # A configuration-only restore can still change Usage retention.
+            # At that point it needs the same intact rollback data as an import.
+            from .usage import UsageManager, async_get_durable_usage
+
+            usage = await async_get_durable_usage(
+                hass, entry.entry_id, subentry.subentry_id
+            )
+            usage_data = await usage.async_backup_data()
+            if SECTION_USAGE not in selected:
+                (
+                    target.usage_totals,
+                    target.usage_daily,
+                    target.usage_requests,
+                    target.usage_runs,
+                ) = await asyncio.to_thread(
+                    UsageManager.validate_backup_data, usage_data, subentry.subentry_id
+                )
         preview.update(await asyncio.to_thread(_usage_restore_preview, target))
     target.journaled_sections = frozenset(data_sections)
     return target, preview

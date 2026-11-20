@@ -5,6 +5,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses.helpers import (
     effective_api_provider,
     is_azure_url,
+    supports_openai_hosted_tools,
 )
 
 
@@ -46,3 +47,16 @@ def test_apim_unified_model_route_respects_explicit_openai_selection():
         effective_api_provider("openai", "https://example.azure-api.net/team/openai/v1/")
         == "azure"
     )
+
+
+def test_hosted_web_search_accepts_documented_openai_residency_hosts():
+    for region in ("ae", "au", "ca", "eu", "gb", "in", "jp", "kr", "sg", "us"):
+        assert supports_openai_hosted_tools("openai", f"https://{region}.api.openai.com/v1/")
+    for url in (
+        "https://unknown.api.openai.com/v1",
+        "https://jp.api.openai.com.example.net/v1",
+        "https://jp.api.openai.com/other/v1",
+        "https://jp.api.openai.com/v1?key=value",
+        "http://jp.api.openai.com/v1",
+    ):
+        assert not supports_openai_hosted_tools("openai", url)

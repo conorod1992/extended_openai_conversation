@@ -755,6 +755,10 @@ async def test_usage_fallback_does_not_rewrite_recorder_history(hass, freezer, m
     fallback = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
     assert fallback.is_volatile
     await fallback.async_record_request(successful=True, usage=RequestUsage(total_tokens=7))
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert await async_get_usage(hass, entry.entry_id, subentry.subentry_id) is fallback
+    assert fallback.totals.total_tokens == 7
     assert {hass.states.get(entity_id).state for entity_id in ids.values()} == {"unavailable"}
     interim = await _latest_usage_statistics(hass, freezer, start, 10, {"usage": ids["usage"]})
     assert {row["sum"] for row in interim.values()} == {85}
@@ -777,6 +781,32 @@ async def test_usage_fallback_does_not_rewrite_recorder_history(hass, freezer, m
     assert {row["sum"] for row in final.values()} == {85}
 
 
+async def test_reload_retries_unused_volatile_usage(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import usage
+
+    agent = await _sensor_agent(hass, memory_mode="off")
+    key = agent.entry.entry_id, agent.subentry.subentry_id
+    durable = await usage.async_get_usage(hass, *key)
+    await durable.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
+    await durable.async_shutdown()
+
+    async def temporarily_unavailable(*_):
+        raise PermissionError("Usage file temporarily unreadable")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(usage, "async_get_durable_usage", temporarily_unavailable)
+        assert await hass.config_entries.async_reload(key[0])
+        await hass.async_block_till_done()
+    fallback = await usage.async_get_usage(hass, *key)
+    assert fallback.is_volatile
+    assert "only usage" in fallback.dashboard_storage_warning.lower()
+    assert await hass.config_entries.async_reload(key[0])
+    await hass.async_block_till_done()
+    recovered = await usage.async_get_usage(hass, *key)
+    assert not recovered.is_volatile
+    assert recovered.totals.total_tokens == 85
+
+
 async def _unload_recorded_usage(hass, key, manager):
     """Detach live Usage and allow the next setup to read its real files."""
     from custom_components.extended_openai_conversation_responses import usage
@@ -791,6 +821,10 @@ async def _unload_recorded_usage(hass, key, manager):
 @pytest.mark.parametrize("damaged_store", ["daily", "details"])
 async def test_usage_aggregate_repair_preserves_recorder(hass, freezer, damaged_store):
     from custom_components.extended_openai_conversation_responses import usage
+    from custom_components.extended_openai_conversation_responses.management_history_queries import (
+        usage_daily_page,
+        usage_summary,
+    )
 
     start = dt_util.parse_datetime("2026-06-30T23:40:00+00:00")
     await hass.config.async_set_time_zone("UTC")
@@ -802,7 +836,9 @@ async def test_usage_aggregate_repair_preserves_recorder(hass, freezer, damaged_
     manager = await async_get_usage(hass, *key)
     await hass.async_start()
     await _latest_usage_statistics(hass, freezer, start, 0, {"usage": ids["usage"]})
-    await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
+    async with manager.async_run():
+        await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
+    assert manager.latest_run.total_tokens == 85
     before = await _latest_usage_statistics(hass, freezer, start, 5, {"usage": ids["usage"]})
     assert {row["sum"] for row in before.values()} == {85}
     await _unload_recorded_usage(hass, key, manager)
@@ -820,6 +856,12 @@ async def test_usage_aggregate_repair_preserves_recorder(hass, freezer, damaged_
     await hass.async_block_till_done()
     manager = await async_get_usage(hass, *key)
     assert manager.persistence_status()["storage_repair_required"]
+    assert manager.latest_run is None
+    summary = usage_summary(manager)
+    assert summary["latest"] is None
+    assert "storage repair" in summary["storage_warning"]
+    chart = usage_daily_page(manager, start_date="2026-06-30", end_date="2026-06-30")
+    assert chart["storage_warning"] == summary["storage_warning"]
     assert hass.states.get(ids["usage"]).state == "85"
     assert {hass.states.get(ids[name]).state for name in ("usage_today", "usage_month")} == {
         "unavailable" if damaged_store == "daily" else "85"
