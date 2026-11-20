@@ -1,6 +1,10 @@
 import {filterHATools, isHALlmTool} from "./ha-llm-tools-list.js";
 import {captureConfigurationSubmission} from "./configuration-acknowledgement.js";
+import {cacheTimestampIsFresh} from "./management-cache.js";
 export {filterHATools, haToolName, isHALlmTool, renderHAToolCard, toolDescription} from "./ha-llm-tools-list.js";
+
+const HA_TOOL_CATALOG_TTL_MS = 30_000;
+
 export function bindHALlmTools(panel, acknowledge) {
   if (!panel?._draft) return;
   const root = panel.shadowRoot;
@@ -24,7 +28,9 @@ export function bindHALlmTools(panel, acknowledge) {
     panel._haCatalogLoad = {agentId, promise: tracked};
     return tracked;
   };
-  if ((panel._draft.functions || []).some(isHALlmTool) && (panel._haCatalogAgent !== agentId || Date.now() - (panel._haCatalogLoadedAt || 0) > 30000) && !panel._haCatalogLoading) {
+  const catalogFresh = panel._haCatalogAgent === agentId
+    && cacheTimestampIsFresh(panel._haCatalogLoadedAt, HA_TOOL_CATALOG_TTL_MS);
+  if ((panel._draft.functions || []).some(isHALlmTool) && !catalogFresh && !panel._haCatalogLoading) {
     panel._haCatalogLoading = true;
     load().then(() => { if (!root.querySelector("dialog[open]")) panel._render(); }).catch(err => panel._toast(err.message, true)).finally(() => { panel._haCatalogLoading = false; });
   }

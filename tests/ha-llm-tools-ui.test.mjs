@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { filterHATools, haToolName, isHALlmTool, renderHAToolCard } from "../custom_components/extended_openai_conversation_responses/frontend/ha-llm-tools.js";
+import { bindHALlmTools, filterHATools, haToolName, isHALlmTool, renderHAToolCard } from "../custom_components/extended_openai_conversation_responses/frontend/ha-llm-tools.js";
 import {categorizeFunctionTools, synchronizePersistedFunctions} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools-base.js";
 
 const tool = {spec: {name: "ha_reference_id"}, function: {type: "ha_llm", tool_name: "native_tool", source_id: "source", api_id: "assist"}, enabled: true};
@@ -27,3 +27,41 @@ synchronizePersistedFunctions(syncPanel, {functions: [tool], function_groups: gr
 assert.deepEqual(syncPanel._draft.functions, [tool]);
 assert.equal(syncPanel._draft.prompt, "unsaved");
 assert.equal(syncPanel.synced, true);
+
+{
+  const previousNow = Date.now;
+  const now = 100_000;
+  Date.now = () => now;
+  try {
+    for (const [age, sameAgent, refresh] of [
+      [null, true, true],
+      [-1, true, true],
+      [0, true, false],
+      [30_000, true, false],
+      [30_001, true, true],
+      [0, false, true],
+    ]) {
+      const calls = [];
+      const host = {};
+      const catalogPanel = {
+        _agentId: "agent",
+        _draft: {functions: [tool]},
+        _haCatalogAgent: sameAgent ? "agent" : "other",
+        _haCatalogLoadedAt: age === null ? undefined : now - age,
+        shadowRoot: {querySelector: selector => selector === ".tools-surface" ? host : null},
+        async _call(...args) { calls.push(args); return {}; },
+        _render() {},
+      };
+      bindHALlmTools(catalogPanel);
+      await catalogPanel._haCatalogLoad?.promise;
+      assert.deepEqual(calls, refresh ? [["tools", "ha_catalog"]] : [],
+        `catalogue refresh at age ${age} with matching owner ${sameAgent}`);
+      if (refresh) {
+        assert.equal(catalogPanel._haCatalogAgent, "agent");
+        assert.equal(catalogPanel._haCatalogLoadedAt, now);
+      }
+    }
+  } finally {
+    Date.now = previousNow;
+  }
+}
