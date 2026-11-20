@@ -3,7 +3,7 @@
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -12,6 +12,7 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
     HomeAssistantArchiveStorage,
 )
 from custom_components.extended_openai_conversation_responses.usage import (
+    RequestUsage,
     UsageManager,
     _UsageStore,
 )
@@ -121,7 +122,8 @@ async def test_archive_native_evidence_survives_mutation_and_restart(hass, damag
 
 
 @pytest.mark.parametrize(
-    "category", ["totals", "days", "request", "duplicate", "container"]
+    "category",
+    ["totals", "days", "request", "duplicate", "container", "unreadable", "envelope"],
 )
 async def test_usage_native_evidence_survives_immediate_delayed_and_shutdown_writes(
     hass, monkeypatch, category
@@ -150,31 +152,47 @@ async def test_usage_native_evidence_survives_immediate_delayed_and_shutdown_wri
     for store, data in zip(stores, [totals, daily, details], strict=True):
         await store.async_save(data)
     paths = [Path(store.path) for store in stores]
+    if category == "envelope":
+        paths[2].write_bytes(b'{"unexpected": 1}')
     original = [path.read_bytes() for path in paths]
-    for _ in range(2):
+    detail_evidence = paths[2]
+    if category == "unreadable":
+        detail_evidence = paths[2].with_name(f"{paths[2].name}.corrupt.test")
+        paths[2].rename(detail_evidence)
+    aggregates_damaged = category in {"totals", "days"}
+    for completed in range(2):
         manager = UsageManager(*stores)
         await manager.async_initialize()
         assert manager.persistence_status()["storage_repair_required"]
+        assert manager.totals.total_tokens == (0 if aggregates_damaged else 20 * completed)
         with pytest.raises(ValueError, match="needs repair"):
             await manager.async_backup_data()
-        for operation in [
-            manager._async_save_aggregates,
-            manager._async_save_details,
-        ]:
+        with pytest.raises(ValueError, match="needs repair"):
+            await manager._async_save_details()
+        if aggregates_damaged:
             with pytest.raises(ValueError, match="needs repair"):
-                await operation()
-        # Routine telemetry must neither schedule nor perform a destructive write.
+                await manager._async_save_aggregates()
+        # Routine telemetry schedules only the stores whose data can be replaced.
         with monkeypatch.context() as fault:
-            schedule = AsyncMock()
+            schedule = Mock(return_value=True)
             fault.setattr(manager, "_schedule_aggregate_snapshots", schedule)
             await manager._async_save_safely(
                 "request aggregates", manager._async_save_aggregates
             )
-            schedule.assert_not_called()
+            assert schedule.call_count == int(not aggregates_damaged)
         with pytest.raises(ValueError, match="needs repair"):
             await manager.async_clear_details(confirm=True)
-        await manager.async_record_request(successful=True)
+        retained = (len(manager.requests), len(manager.runs))
+        async with manager.async_run():
+            await manager.async_record_request(
+                successful=True, usage=RequestUsage(total_tokens=20)
+            )
+        assert (len(manager.requests), len(manager.runs)) == retained
         await manager.async_shutdown()
         assert manager._stopping
         assert not manager.persistence_status()["survives_restart"]
-        assert [path.read_bytes() for path in paths] == original
+        assert detail_evidence.read_bytes() == original[2]
+        if category == "unreadable":
+            assert not paths[2].exists()
+        if aggregates_damaged:
+            assert [path.read_bytes() for path in paths[:2]] == original[:2]

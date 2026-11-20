@@ -12,6 +12,7 @@ import logging
 import re
 from string import punctuation
 from typing import Any, Literal
+import unicodedata
 from urllib.parse import urlsplit
 
 from .const import (
@@ -48,10 +49,6 @@ _URL_TRAILING_PUNCTUATION = frozenset(".,;:!?")
 _URL_PROSE_DASHES = "\u2014\u2013"
 _URL_USERINFO = re.compile(r"[^/?#@]*@")
 type _BareUrlPhase = Literal["authority", "long_userinfo", "host", "path"]
-_WWW_ADDRESS = re.compile(
-    r"www\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+",
-    re.IGNORECASE,
-)
 _FORMAT_MARKERS = ("**", "__", "~~")
 _URL_MARKDOWN_WRAPPERS = (
     ("**_", "_**"),
@@ -109,6 +106,31 @@ _FORMAT_PREFIX_LIMIT = 32
 _QUOTE_MARKER = re.compile(r" {0,3}>[ \t]?")
 _QUOTE_PREFIX = re.compile(r"^(?: {0,3}>[ \t]?)+")
 _LIST_PREFIX = re.compile(r"[ ]{0,3}(?:[-+*]|[0-9]{1,9}[.)])[ \t]+")
+
+
+def _host_label_base(char: str) -> bool:
+    return char.isalpha() or char.isdecimal()
+
+
+def _looks_like_www_address(text: str, start: int, end: int | None = None) -> bool:
+    """Check for two domain labels after an already recognized www. prefix."""
+    first = start + len("www.")
+    end = len(text) if end is None else end
+    if first >= end or not _host_label_base(text[first]):
+        return False
+    for index in range(first + 1, end):
+        char = text[index]
+        if char == ".":
+            return (
+                text[index - 1] != "-"
+                and index + 1 < end
+                and _host_label_base(text[index + 1])
+            )
+        if _host_label_base(char) or char == "-":
+            continue
+        if text[index - 1] == "-" or not unicodedata.category(char).startswith("M"):
+            return False
+    return False
 
 
 class _InlineScope:
@@ -900,8 +922,8 @@ class StreamingSpeechSanitizer:
     @staticmethod
     def _is_url_start(text: str, index: int) -> bool:
         prefix = text[index : index + 8].casefold()
-        return prefix.startswith(("http://", "https://")) or bool(
-            prefix.startswith("www.") and _WWW_ADDRESS.match(text, index)
+        return prefix.startswith(("http://", "https://")) or (
+            prefix.startswith("www.") and _looks_like_www_address(text, index)
         )
 
     def _start_long_destination(
@@ -1158,7 +1180,8 @@ class StreamingSpeechSanitizer:
                 return "incomplete", index
             end = self._bare_url_end(text, start, end)
             if self._terminal_url_closer(text, end, closer) and (
-                prefix != "www." or _WWW_ADDRESS.match(text[start : end - len(closer)])
+                prefix != "www."
+                or _looks_like_www_address(text, start, end - len(closer))
             ):
                 return "complete", end
         return "none", index
@@ -1530,7 +1553,7 @@ class StreamingSpeechSanitizer:
                         and text[end] == closing
                         and (
                             wrapper_prefix != "www."
-                            or _WWW_ADDRESS.match(text[index + 1 : end])
+                            or _looks_like_www_address(text, index + 1, end)
                         )
                     ):
                         index = self._suppress(output, end + 1)
@@ -1616,7 +1639,8 @@ class StreamingSpeechSanitizer:
                     )
                     if pending or (end == len(text) and not final):
                         if len(text) - index > self.max_buffer_chars and (
-                            matching_prefix != "www." or _WWW_ADDRESS.match(text, index)
+                            matching_prefix != "www."
+                            or _looks_like_www_address(text, index, end)
                         ):
                             self._hold_preceding_whitespace(output)
                             self._long_url_phase = phase
@@ -1625,8 +1649,8 @@ class StreamingSpeechSanitizer:
                             break
                         held_whitespace = self._hold_preceding_whitespace(output)
                         break
-                    if matching_prefix == "www." and not _WWW_ADDRESS.match(
-                        text[index:end]
+                    if matching_prefix == "www." and not _looks_like_www_address(
+                        text, index, end
                     ):
                         self._emit(output, char)
                         index += 1

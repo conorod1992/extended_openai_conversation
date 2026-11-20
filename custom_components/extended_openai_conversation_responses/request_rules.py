@@ -559,6 +559,7 @@ class RequestRules:
                             candidate,
                             validate_sentence_pattern=False,
                             validate_script_schema=False,
+                            allow_empty_normalized_phrases=True,
                         )
                         if validated["id"] in seen_ids:
                             _LOGGER.warning(
@@ -720,6 +721,7 @@ class RequestRules:
                     candidate,
                     validate_sentence_pattern=False,
                     validate_script_schema=False,
+                    allow_empty_normalized_phrases=True,
                 )
             )
         if len({rule["id"] for rule in rules}) != len(rules):
@@ -750,6 +752,7 @@ class RequestRules:
                     _assign_missing_result_step_ids(rule),
                     validate_sentence_pattern=False,
                     validate_script_schema=False,
+                    allow_empty_normalized_phrases=True,
                 )
                 for rule in prepared["rules"]
             ]
@@ -839,10 +842,15 @@ class RequestRules:
     def preserves_inactive_pattern(
         self, rule_id: str, value: Mapping[str, Any]
     ) -> bool:
-        """Allow disabling an unchanged retained invalid pattern, never activation."""
-        if rule_id not in self._diagnostics:
+        """Allow disabling an unchanged rule with retained invalid triggers."""
+        if value.get("enabled") is not False:
             return False
         previous = self._rules[self._index(rule_id)]
+        if rule_id not in self._diagnostics and (
+            previous["match_type"] == "sentence_pattern"
+            or all(_basic_normalize(phrase) for phrase in previous["phrases"])
+        ):
+            return False
         try:
             action = _validate_action(
                 previous["action_type"],
@@ -854,7 +862,6 @@ class RequestRules:
         return (
             value.get("phrases") == previous["phrases"]
             and value.get("match_type", "equals") == previous["match_type"]
-            and value.get("enabled") is False
             and action == previous["action"]
             and all(
                 value.get(key, previous.get(key)) == previous.get(key)
@@ -893,6 +900,7 @@ class RequestRules:
                 _assign_missing_result_step_ids(raw),
                 validate_sentence_pattern=not preserve_inactive,
                 validate_script_schema=not preserve_inactive,
+                allow_empty_normalized_phrases=preserve_inactive,
             )
             self._require_group(rule)
             prospective = deepcopy(self._rules)
@@ -1331,12 +1339,14 @@ class RequestRules:
                     )
                     continue
             else:
-                phrases = [
-                    CompiledPhrase(
-                        item, normalize_text(item, settings, self._wording_groups)
-                    )
-                    for item in rule["phrases"]
-                ]
+                phrases = []
+                for item in rule["phrases"]:
+                    normalized = normalize_text(item, settings, self._wording_groups)
+                    if normalized:
+                        phrases.append(CompiledPhrase(item, normalized))
+                if not phrases:
+                    diagnostics[rule["id"]] = _EMPTY_NORMALIZED_PHRASE
+                    continue
 
             try:
                 _validate_action(
@@ -1720,6 +1730,7 @@ def validate_rule(
     *,
     validate_sentence_pattern: bool = True,
     validate_script_schema: bool = True,
+    allow_empty_normalized_phrases: bool = False,
 ) -> dict[str, Any]:
     """Validate and normalize the persisted rule contract."""
     if not isinstance(value, Mapping):
@@ -1785,6 +1796,10 @@ def validate_rule(
         slot_names = []
         if any(SLOT_REFERENCE.search(phrase) for phrase in phrases):
             raise ValueError("variable values require Sentence pattern matching")
+        if not allow_empty_normalized_phrases and any(
+            not _basic_normalize(phrase) for phrase in phrases
+        ):
+            raise ValueError(_EMPTY_NORMALIZED_PHRASE)
 
     action_type = value.get("action_type", "local_action")
     if action_type not in ACTION_TYPES:
@@ -4067,6 +4082,10 @@ async def _async_evaluate_matched_rule(
 # A hyphen after a word character is still a separator.
 _TEXT_PUNCTUATION = re.compile(
     r"(?<!\w)([\u2212-]?(?:\d+\.\d+|\.\d+)|[\u2212-]\d+)|[^\w\s']"
+)
+_EMPTY_NORMALIZED_PHRASE = (
+    "Enter a trigger with words or numbers, or use Sentence pattern matching "
+    "for literal symbols."
 )
 
 

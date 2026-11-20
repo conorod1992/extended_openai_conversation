@@ -13,13 +13,7 @@ from openai import APIConnectionError, AuthenticationError, OpenAIError
 
 from homeassistant.const import CONF_API_KEY
 
-from .const import (
-    CONF_API_PROVIDER,
-    CONF_API_VERSION,
-    CONF_BASE_URL,
-    CONF_ORGANIZATION,
-    DEFAULT_API_PROVIDER,
-)
+from .const import CONF_API_PROVIDER, CONF_API_VERSION, CONF_BASE_URL, CONF_ORGANIZATION
 
 _MAX_MESSAGE = 1000
 _MAX_FIELD = 200
@@ -261,7 +255,7 @@ def provider_authentication_snapshot(entry: Any) -> tuple[str, str]:
         data.get(CONF_BASE_URL),
         data.get(CONF_API_VERSION),
         data.get(CONF_ORGANIZATION),
-        data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+        data.get(CONF_API_PROVIDER),
     ]
     fingerprint = hashlib.sha256(json.dumps(authentication).encode()).hexdigest()
     return str(getattr(entry, "entry_id", "")), fingerprint

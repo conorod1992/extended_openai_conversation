@@ -36,34 +36,30 @@ to the normal sensor polling interval. The selectable management-panel history
 period does not change the Today or This month sensor periods.
 
 Lifetime usage uses Home Assistant's `total` state class without `last_reset`.
-Restoring an older backup can reduce the lifetime counter; HA records that as a
-correction rather than inventing a new consumption cycle. Today and This month
-retain their explicit calendar reset markers. This change prevents new restore
-inflation; it does not rewrite previously recorded HA statistics.
+Restoring an older backup can reduce its value, which Recorder treats as a correction.
+Today and This month show the current calendar bucket directly. Their
+`period_start` attribute is the local calendar date the bucket starts on, in
+`YYYY-MM-DD` format.
 
-Changing the timezone keeps the reset marker for the currently selected calendar
-period. When a period change selects a bucket that already contains tokens,
-Usage today or Usage this month can briefly publish a signed correction before
-the actual period total. This keeps Recorder from counting those tokens again.
-State-change automations and raw history can observe the correction, which can
-be negative. If Recorder was paused during the period change, the first recorded
-update reconciles with the last recorded period.
+### Upgrading period sensors
+
+Today and This month keep their entity IDs and continue to provide live values
+and ordinary state history when included in Recorder. Recorder stops creating
+new statistics for these two entities. Existing hourly statistics remain in
+Recorder, and Home Assistant may flag the discontinued series in Statistics.
+For new cumulative statistics, enable and record **Lifetime usage** and select
+it in affected statistics cards or queries. Its accounting can include tokens
+outside the daily history. For automations that use `last_reset`, switch to the
+`period_start` date attribute. The integration's Usage dashboard continues to
+show totals from stored calendar buckets.
 
 During a Usage storage outage, the lifetime and period sensors are unavailable
-while the assistant continues with in-memory accounting. Their Recorder baselines
-are preserved until durable Usage is available again. **Last response usage**
-can still show a retained response from the current session.
-The period sensors also become unavailable if the daily aggregates need repair.
-Lifetime usage stays available when its own counters are valid.
-
-Rollover corrections use tokens attributed to stored calendar days. Upgrading
-from 6.8.3 may require a correction for a sample recorded without a reset marker.
-If the stored data allows the sample to overlap more than one calendar bucket,
-the migration preserves the previously recorded total and credits only the
-increase above the potentially overlapping sample.
-If Usage is unavailable during migration, the integration saves the markerless
-baseline across reloads. It can reuse that baseline after Recorder purges the raw
-sample if Recorder still has matching compiled statistics.
+while the assistant continues with in-memory accounting. **Last response usage**
+can still show a retained response from the current session. If an aggregate
+needs repair, its sensors are unavailable and the readable part of the snapshot
+stays at its last valid values until repair. Damage confined to request or run
+details leaves aggregate recording active. Damaged details are preserved for
+repair.
 
 ## Management panel
 

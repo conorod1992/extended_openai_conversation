@@ -1272,12 +1272,13 @@ async def test_knowledge_canonical_unicode_scores_edits_and_reconstruction(form)
 
 async def test_knowledge_search_distinguishes_words_with_combining_marks():
     library = await _library(FakeStorage())
-    await library.async_create("Instructions", "", "खोलो")
+    await library.async_create("Instructions", "", "खोलो ☀️")
     expected = await library.async_create("Games", "", "खेलो")
 
     assert [item.source_id for item in await library.async_search("खेलो")] == [
         expected.source_id
     ]
+    assert await library.async_search("❤️") == []
 
 
 def test_phrase_normalization_equates_straight_and_curly_apostrophes():

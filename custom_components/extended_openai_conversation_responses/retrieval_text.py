@@ -156,12 +156,20 @@ _CJK_RUN = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+")
 
 
 def word_character_projection(value: str) -> str:
-    """Let re's word classes match combining marks without shifting offsets."""
+    """Match combining marks attached to letters or digits at their original offsets."""
     if value.isascii():
         return value
-    return "".join(
-        "x" if unicodedata.category(char).startswith("M") else char for char in value
-    )
+    projected = []
+    has_base = False
+    for char in value:
+        if unicodedata.category(char).startswith("M"):
+            # An emoji presentation selector after a symbol is no more a word
+            # character than the symbol itself. Keep the full span for offsets.
+            projected.append("x" if has_base else char)
+        else:
+            projected.append(char)
+            has_base = char.isalnum()
+    return "".join(projected)
 
 
 def word_tokens(value: str, pattern: re.Pattern[str]) -> list[str]:

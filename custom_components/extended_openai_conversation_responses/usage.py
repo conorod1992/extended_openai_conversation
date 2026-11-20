@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import CoreState, HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, UnsupportedStorageVersionError
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
@@ -349,16 +349,15 @@ class UsageManager:
         self.run_retention_days = run_retention_days
         self.totals = UsageTotals()
         self.daily: dict[str, dict[str, Any]] = {}
-        self.daily_total_tokens = 0
         self.requests: list[UsageRequest] = []
         self.runs: list[UsageRun] = []
         self._listeners: set[Callable[[], None]] = set()
         self._lock = asyncio.Lock()
         self._initialize_lock = asyncio.Lock()
         self._initialized = False
-        self._repair_required = False
         self._totals_need_repair = False
         self._daily_needs_repair = False
+        self._details_need_repair = False
         self._detail_retention_dirty = False
         self._current_run: ContextVar[UsageRun | None] = ContextVar(
             f"usage_run_{id(self)}", default=None
@@ -384,7 +383,6 @@ class UsageManager:
             if self._initialized:
                 return
 
-            repair_required = False
             daily_needs_repair = False
             totals_data: dict[str, Any] | None
             daily_data: dict[str, Any] = {}
@@ -402,7 +400,6 @@ class UsageManager:
                 totals_data = await self._storage.async_load()
                 staged_totals = _totals_from_storage(totals_data)
             totals_need_repair = _stored_totals_need_repair(totals_data)
-            repair_required |= totals_need_repair
             revision = daily_data.get(_TOTALS_REVISION)
             # Unmarked snapshots predate provenance. The flat mirror alone
             # cannot distinguish a legacy write from an incomplete modern write.
@@ -434,20 +431,36 @@ class UsageManager:
 
             staged_daily, invalid_days = _load_stored_usage_days(daily_data)
             daily_needs_repair |= invalid_days
-            repair_required |= daily_needs_repair
+            details_need_repair = False
             staged_requests: list[UsageRequest] = []
             staged_runs: list[UsageRun] = []
             request_ids: set[str] = set()
             run_ids: set[str] = set()
             inline_run_dates = False
             if self._detail_storage is not None:
-                loaded_details = await self._detail_storage.async_load()
+                loaded_details = None
+                try:
+                    loaded_details = await self._detail_storage.async_load()
+                except (
+                    KeyError,
+                    OSError,
+                    StorageRepairRequired,
+                    TypeError,
+                    UnsupportedStorageVersionError,
+                ):
+                    details_need_repair = True
+                except HomeAssistantError as error:
+                    # HA's JSON loader wraps file I/O failures. Maintenance
+                    # and other Home Assistant errors still abort the load.
+                    if not isinstance(error.__cause__, OSError):
+                        raise
+                    details_need_repair = True
                 detail_data = loaded_details if loaded_details is not None else {}
                 if not isinstance(detail_data, dict):
-                    repair_required = True
+                    details_need_repair = True
                     detail_data = {}
                 requests = detail_data.get("requests")
-                repair_required |= "requests" in detail_data and not isinstance(
+                details_need_repair |= "requests" in detail_data and not isinstance(
                     requests, list
                 )
                 for raw in requests if isinstance(requests, list) else []:
@@ -457,12 +470,14 @@ class UsageManager:
                             staged_requests.append(record)
                             request_ids.add(record.request_id)
                         else:
-                            repair_required = True
+                            details_need_repair = True
                     except TypeError, ValueError:
-                        repair_required = True
+                        details_need_repair = True
                         continue
                 runs = detail_data.get("runs")
-                repair_required |= "runs" in detail_data and not isinstance(runs, list)
+                details_need_repair |= "runs" in detail_data and not isinstance(
+                    runs, list
+                )
                 for raw in runs if isinstance(runs, list) else []:
                     try:
                         record_run = _usage_run_from_record(raw)
@@ -471,11 +486,11 @@ class UsageManager:
                             run_ids.add(record_run.run_id)
                             inline_run_dates |= "accounting_date" in raw
                         else:
-                            repair_required = True
+                            details_need_repair = True
                     except TypeError, ValueError:
-                        repair_required = True
+                        details_need_repair = True
                         continue
-                repair_required |= not _restore_stored_run_dates(
+                details_need_repair |= not _restore_stored_run_dates(
                     staged_runs, run_ids, detail_data.get(_RUN_ACCOUNTING_DATES, {})
                 )
 
@@ -498,28 +513,29 @@ class UsageManager:
 
             self.totals = staged_totals
             self.daily = staged_daily
-            self.daily_total_tokens = sum(
-                day["total_tokens"] for day in staged_daily.values()
-            )
             self.requests = staged_requests
             self.runs = staged_runs
             # The next normal detail write also normalizes older inline dates.
             self._detail_retention_dirty = inline_run_dates or loaded_detail_count != (
                 len(staged_requests) + len(staged_runs)
             )
-            self._repair_required = repair_required
             self._totals_need_repair = totals_need_repair
             self._daily_needs_repair = daily_needs_repair
-            if repair_required:
+            self._details_need_repair = details_need_repair
+            if self._aggregates_need_repair:
                 _LOGGER.warning(
                     "Usage storage needs repair; original stores preserved and persistence disabled"
+                )
+            elif details_need_repair:
+                _LOGGER.warning(
+                    "Usage detail storage needs repair; aggregate persistence continues"
                 )
             self._initialized = True
 
     async def async_record_conversation(self) -> None:
         """Compatibility API; new conversation code uses ``async_run``."""
         async with async_storage_lock(self._storage, self._lock):
-            self._require_writable()
+            self._require_aggregates_writable()
             self.totals.conversation_count += 1
             try:
                 await self._async_save_aggregates()
@@ -617,10 +633,10 @@ class UsageManager:
                         "Usage flush deferred while assistant restore recovery is pending"
                     )
                     return
-                if self._repair_required:
-                    return
-                await self._async_save_aggregates()
-                await self._async_save_details()
+                if not self._aggregates_need_repair:
+                    await self._async_save_aggregates()
+                if not self._repair_required:
+                    await self._async_save_details()
         except HomeAssistantError:
             if gate is None or not gate.deleted:
                 raise
@@ -653,24 +669,22 @@ class UsageManager:
         usage = usage or RequestUsage()
         completed_at = dt_util.utcnow()
         async with async_storage_lock(self._storage, self._lock):
-            self.totals.api_request_count += 1
-            if successful:
-                self.totals.successful_request_count += 1
-            else:
-                self.totals.failed_request_count += 1
-            self._add_tokens(self.totals, usage)
-
-            day_key = _local_day_key(completed_at)
-            day = self.daily.setdefault(day_key, _empty_day(day_key))
-            _add_request_to_day(
-                day,
-                successful=successful,
-                usage=usage,
-                provider=provider,
-                model=model,
-                api_mode=api_mode,
-            )
-            self.daily_total_tokens += usage.total_tokens
+            if not self._aggregates_need_repair:
+                self.totals.api_request_count += 1
+                if successful:
+                    self.totals.successful_request_count += 1
+                else:
+                    self.totals.failed_request_count += 1
+                self._add_tokens(self.totals, usage)
+                day_key = _local_day_key(completed_at)
+                _add_request_to_day(
+                    self.daily.setdefault(day_key, _empty_day(day_key)),
+                    successful=successful,
+                    usage=usage,
+                    provider=provider,
+                    model=model,
+                    api_mode=api_mode,
+                )
 
             run = self._current_run.get()
             if run is not None:
@@ -693,7 +707,9 @@ class UsageManager:
                 }:
                     run.successful = False
                     run.error_type = error_type or run.error_type or "provider_error"
-            retain_request = self.request_retention_days > 0
+            retain_request = (
+                self.request_retention_days > 0 and not self._repair_required
+            )
             if retain_request:
                 self.requests.append(
                     UsageRequest(
@@ -749,11 +765,13 @@ class UsageManager:
                         * 1000
                     ),
                 )
-                self.totals.conversation_count += 1
-                if self.run_retention_days > 0:
+                if self.run_retention_days > 0 and not self._repair_required:
                     self.runs.append(run)
-                day = self.daily.setdefault(day_key, _empty_day(day_key))
-                _add_run_to_day(day, run)
+                if not self._aggregates_need_repair:
+                    self.totals.conversation_count += 1
+                    _add_run_to_day(
+                        self.daily.setdefault(day_key, _empty_day(day_key)), run
+                    )
                 await self._async_save_safely(
                     "run aggregates", self._async_save_aggregates
                 )
@@ -983,8 +1001,16 @@ class UsageManager:
 
     @property
     def daily_available(self) -> bool:
-        """Whether the daily aggregates can safely advance Recorder."""
+        """Whether the daily aggregates are reliable enough to display."""
         return not self.is_volatile and not self._daily_needs_repair
+
+    @property
+    def _aggregates_need_repair(self) -> bool:
+        return self._totals_need_repair or self._daily_needs_repair
+
+    @property
+    def _repair_required(self) -> bool:
+        return self._aggregates_need_repair or self._details_need_repair
 
     def persistence_status(self) -> dict[str, Any]:
         """Expose only persistence state, without request or conversation details."""
@@ -997,6 +1023,10 @@ class UsageManager:
 
     def _require_writable(self) -> None:
         if self._repair_required:
+            raise StorageRepairRequired("Usage")
+
+    def _require_aggregates_writable(self) -> None:
+        if self._aggregates_need_repair:
             raise StorageRepairRequired("Usage")
 
     async def async_backup_data(self) -> dict[str, Any]:
@@ -1073,15 +1103,14 @@ class UsageManager:
         async with async_storage_lock(self._storage, self._lock):
             self.totals = totals
             self.daily = deepcopy(daily)
-            self.daily_total_tokens = sum(day["total_tokens"] for day in daily.values())
             self.requests = list(requests)
             self.runs = list(runs)
             await self._async_save_aggregates(replacing=True)
             if self._detail_storage is not None:
                 await self._async_save_details(replacing=True)
-            self._repair_required = False
             self._totals_need_repair = False
             self._daily_needs_repair = False
+            self._details_need_repair = False
         await self.async_prune_details()
 
     @staticmethod
@@ -1097,7 +1126,7 @@ class UsageManager:
 
     async def _async_save_totals(self, *, replacing: bool = False) -> None:
         if not replacing:
-            self._require_writable()
+            self._require_aggregates_writable()
         if not self._initialized:
             raise RuntimeError("usage statistics have not been initialized")
         await self._storage.async_save(self.as_dict())
@@ -1105,7 +1134,7 @@ class UsageManager:
     async def _async_save_aggregates(self, *, replacing: bool = False) -> None:
         """Persist lifetime and daily aggregates in one authoritative snapshot."""
         if not replacing:
-            self._require_writable()
+            self._require_aggregates_writable()
         if not self._initialized:
             raise RuntimeError("usage statistics have not been initialized")
         if self._daily_storage is None:
@@ -1173,14 +1202,16 @@ class UsageManager:
 
     async def _async_save_safely(self, label: str, save: Callable[[], Any]) -> None:
         """Coalesce routine telemetry writes without changing request outcomes."""
-        if self._repair_required:
+        aggregate = label in {"request aggregates", "run aggregates"}
+        if self._aggregates_need_repair or (
+            self._details_need_repair and not aggregate
+        ):
             return
         try:
-            self._require_writable()
             if self._stopping:
                 await save()
                 return
-            if label in {"request aggregates", "run aggregates"}:
+            if aggregate:
                 if self._schedule_aggregate_snapshots():
                     return
             elif (

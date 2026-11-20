@@ -98,15 +98,16 @@ function pickerHelp(satellite, media) {
 function satelliteCard(panel, satellite, config) {
   const presentation = quietHoursSatellitePresentation(panel, satellite, config);
   const speakerStatus = presentation.speaker;
+  const satelliteName = panel._e(satellite.name || satellite.satellite_entity_id);
   return `<article class="qh-satellite" data-qh-satellite="${panel._e(satellite.satellite_entity_id)}" ${presentation.needsAttention ? "data-qh-attention" : ""}>
     <div class="qh-satellite-heading">
-      <div><strong>${panel._e(satellite.name)}</strong><small>${panel._e(satellite.satellite_entity_id)}</small></div>
+      <div><strong>${satelliteName}</strong><small>${panel._e(satellite.satellite_entity_id)}</small></div>
       <span data-qh-speaker-status class="${speakerStatus.ready ? "availability-badge" : "disabled-badge"}">${speakerStatus.label}</span>
     </div>
     <div class="qh-satellite-summary"><span>Speaker: <span data-qh-media-summary>${panel._e(presentation.mediaSummary)}</span></span><span>Wake-word switch: <span data-qh-wake-summary>${panel._e(presentation.wakeSummary)}</span></span></div>
     <details class="qh-satellite-config eoc-details-base" ${presentation.needsAttention ? "open" : ""}><summary>Configure</summary><div class="qh-grid">
-      <label><span>Speaker volume entity</span><ha-entity-picker class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="media_player_entity_id" data-domain="media_player"></ha-entity-picker><small>${panel._e(pickerHelp(satellite, true))}</small></label>
-      <label><span>Wake-word sound switch</span><ha-entity-picker class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="wake_sound_entity_id" data-domain="switch"></ha-entity-picker><small>${panel._e(pickerHelp(satellite, false))}</small></label>
+      <div><ha-entity-picker class="qh-override" label="Speaker volume entity for ${satelliteName}" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="media_player_entity_id" data-domain="media_player"></ha-entity-picker><small>${panel._e(pickerHelp(satellite, true))}</small></div>
+      <div><ha-entity-picker class="qh-override" label="Wake-word sound switch for ${satelliteName}" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="wake_sound_entity_id" data-domain="switch"></ha-entity-picker><small>${panel._e(pickerHelp(satellite, false))}</small></div>
     </div></details>
   </article>`;
 }

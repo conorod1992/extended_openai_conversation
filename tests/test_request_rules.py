@@ -1573,6 +1573,44 @@ async def test_request_rules_distinguish_commands_with_combining_marks() -> None
     assert rules.match("ख ल") is None
 
 
+async def test_punctuation_only_triggers_are_rejected_or_retained_inactive(hass) -> None:
+    rules = await manager(
+        local_rule("Legacy punctuation", phrases=["!!!"]),
+        local_rule("Legacy emoji", phrases=["☀️"], order=1),
+        local_rule("Good night", phrases=["???", "good night"], order=2),
+    )
+    before = rules.snapshot()
+    assert set(before["diagnostics"]) == {"legacy-punctuation", "legacy-emoji"}
+    assert len(before["rules"]) == 3
+
+    for phrase in ("!!!", "???", "❤️"):
+        assert rules.match(phrase) is None
+        assert await rules.async_match(hass, phrase) is None
+        with pytest.raises(ValueError, match="Enter a trigger with words or numbers"):
+            await rules.async_create(local_rule("New rule", phrases=[phrase]))
+    assert rules.snapshot() == before
+    assert rules.match("good night ❤️").phrase == "good night"
+
+    restarted = await manager()
+    await restarted.async_replace_backup(await rules.async_backup_data())
+    assert restarted.match("???") is None
+    assert restarted.match("good night").phrase == "good night"
+    mixed = restarted.rule_snapshot("good-night")
+    await restarted.async_update(mixed["id"], {**mixed, "enabled": False})
+    assert restarted.match("good night") is None
+    with pytest.raises(ValueError, match="Enter a trigger with words or numbers"):
+        await restarted.async_update(mixed["id"], mixed)
+    legacy = restarted.rule_snapshot("legacy-emoji")
+    await restarted.async_update(legacy["id"], {**legacy, "enabled": False})
+    await restarted.async_update(legacy["id"], {**legacy, "phrases": ["hello"]})
+    assert restarted.match("hello").rule["id"] == "legacy-emoji"
+
+    literal = local_rule("Literal heart", phrases=["❤️"], match_type="sentence_pattern")
+    await restarted.async_create(literal)
+    assert restarted.match("❤️").rule["id"] == literal["id"]
+    assert restarted.match("☀️") is None
+
+
 def test_session_identity_uses_continuity_or_actual_chat_log_id() -> None:
     assert request_rule_session_id("device:kitchen", "core-id") == (
         "continuity:device:kitchen:conversation:core-id"

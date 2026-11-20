@@ -726,6 +726,8 @@ async def test_memory_retrieval_and_management_preserve_unicode_distinctions():
         records, total = await memory.async_browse("owner", text)
         assert total == 1
         assert [item.content for item in records] == [text]
+    await memory.async_add("owner", "Sunny forecast ☀️", "preferences", "explicit")
+    assert await memory.async_search("owner", "❤️", allow_fuzzy_only=False) == []
 
 
 @pytest.mark.parametrize(

@@ -583,107 +583,6 @@ async def test_cumulative_restore_oracle_detects_increasing_meter_fault(
         )
 
 
-@pytest.mark.parametrize(
-    "period,boundary",
-    [
-        ("today", "2026-03-29T23:00:00+00:00"),
-        ("today", "2026-10-26T00:00:00+00:00"),
-        ("month", "2026-03-31T23:00:00+00:00"),
-        ("month", "2026-11-01T00:00:00+00:00"),
-    ],
-)
-@pytest.mark.parametrize("reload_across_boundary", [False, True])
-async def test_period_rollover_keeps_recorder_sum_and_allows_corrections(
-    hass, freezer, period, boundary, reload_across_boundary
-):
-    await hass.config.async_set_time_zone("Europe/Dublin")
-    boundary = dt_util.parse_datetime(boundary)
-    start = boundary - timedelta(minutes=20)
-    freezer.move_to(start)
-    agent = await _sensor_agent(hass, memory_mode="off")
-    entry = agent.entry
-    subentry = agent.subentry
-    row = next(
-        row
-        for row in _registry_entries(hass, entry)
-        if row.unique_id == f"{subentry.subentry_id}_usage_{period}"
-    )
-    entity_id = row.entity_id
-    er.async_get(hass).async_update_entity(entity_id, disabled_by=None)
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-    await hass.async_start()
-    usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
-
-    async def compile_window(window, expected_state, expected_sum):
-        # Drain startup/state work at its original time before the five-minute
-        # jump lets Recorder's automatic backfill compile this same window.
-        await async_wait_recording_done(hass)
-        freezer.move_to(window + timedelta(minutes=5, seconds=1))
-        await async_wait_recording_done(hass)
-        do_adhoc_statistics(hass, start=window)
-        await async_wait_recording_done(hass)
-        rows = await hass.async_add_executor_job(
-            partial(
-                statistics_during_period,
-                hass,
-                start,
-                statistic_ids={entity_id},
-                period="5minute",
-                types={"state", "sum", "last_reset"},
-            )
-        )
-        assert entity_id in rows, rows
-        latest = rows[entity_id][-1]
-        assert latest["state"] == expected_state, latest
-        assert latest["sum"] == expected_sum, latest
-        return latest
-
-    assert hass.states.get(entity_id).state == "0"
-    original_reset = hass.states.get(entity_id).attributes["last_reset"]
-    await compile_window(start, 0, 0)
-    await usage.async_record_request(
-        successful=True, usage=RequestUsage(total_tokens=1000)
-    )
-    await compile_window(start + timedelta(minutes=5), 1000, 1000)
-    if reload_across_boundary:
-        assert await hass.config_entries.async_unload(entry.entry_id)
-    freezer.move_to(boundary)
-    async_fire_time_changed(hass, boundary)
-    if reload_across_boundary:
-        assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    state = hass.states.get(entity_id)
-    assert state.state == "0"  # No provider request is needed to publish the reset.
-    new_reset = state.attributes["last_reset"]
-    assert new_reset != original_reset
-    expected = dt_util.as_local(boundary).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    assert dt_util.parse_datetime(new_reset) == expected
-    # The previous period began before the local DST change.
-    assert (
-        dt_util.as_local(dt_util.parse_datetime(original_reset)).utcoffset()
-        != expected.utcoffset()
-    )
-    await compile_window(boundary, 0, 1000)
-    usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
-    await usage.async_record_request(
-        successful=True, usage=RequestUsage(total_tokens=200)
-    )
-    await compile_window(boundary + timedelta(minutes=5), 200, 1200)
-
-    # Reconcile a legitimate downward correction and recreate the sensor, as
-    # restore does. The period marker must stay unchanged, reducing the sum by 50.
-    daily = deepcopy(usage.daily)
-    daily[dt_util.now().date().isoformat()]["total_tokens"] = 150
-    await usage.async_replace_backup(usage.totals, daily, usage.requests, usage.runs)
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-    assert hass.states.get(entity_id).attributes["last_reset"] == new_reset
-    await compile_window(boundary + timedelta(minutes=10), 150, 1150)
-
-
 async def test_guest_sensor_recovers_boundary_timer_after_uncertain_save(
     hass, freezer, monkeypatch
 ):
@@ -751,6 +650,7 @@ async def test_period_sensors_refresh_and_rearm_after_timezone_change(hass, free
     await hass.async_block_till_done()
     for key in ("usage_today", "usage_month"):
         assert hass.states.get(entities[key].entity_id).state == "42"
+        assert hass.states.get(entities[key].entity_id).attributes["period_start"] == "2026-11-01"
     await hass.config.async_update(time_zone="America/Los_Angeles")
     await hass.async_block_till_done()
     # The current local date/month changed, without new usage or a poll.
@@ -777,428 +677,53 @@ async def test_period_sensors_refresh_and_rearm_after_timezone_change(hass, free
     assert all(not observer.called for observer in observers)
 
 
-@pytest.mark.parametrize("transition", ["same-period", "backward", "forward", "midnight"])
-@pytest.mark.parametrize("reload_at", ["never", "before-reentry", "across-reentry"])
-@pytest.mark.parametrize("paused", [False, True], ids=["recording", "paused"])
-async def test_timezone_changes_do_not_recount_period_sensor_usage(
-    hass, freezer, monkeypatch, transition, reload_at, paused
-):
-    from custom_components.extended_openai_conversation_responses.sensor import (
-        _PeriodUsageSensor,
-    )
-    from homeassistant.const import EVENT_STATE_CHANGED
-    from homeassistant.core import callback
+@pytest.mark.parametrize("marked", [False, True])
+async def test_period_sensor_cutover_preserves_existing_statistics(hass, freezer, marked):
+    """The same entities publish raw history after the last accumulated statistic."""
+    from homeassistant.components.recorder import history, statistics
 
-    start_text, other_zone = {
-        "same-period": ("2026-06-30T12:00:00+00:00", "Europe/Dublin"),
-        "backward": ("2026-06-01T00:00:00+00:00", "America/New_York"),
-        "forward": ("2026-06-30T12:00:00+00:00", "Pacific/Kiritimati"),
-        "midnight": ("2026-06-01T03:35:00+00:00", "America/New_York"),
-    }[transition]
-    start = dt_util.parse_datetime(start_text)
     await hass.config.async_set_time_zone("UTC")
-    freezer.move_to(start)
-    agent = await _sensor_agent(hass, memory_mode="off")
-    entities = await _enabled_usage_entities(hass, agent)
-    ids = {entities[key].entity_id for key in ("usage_today", "usage_month")}
-    usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
-    await hass.async_start()
-
-    async def compile_window(minutes, state, total):
-        window = start + timedelta(minutes=minutes)
-        await async_wait_recording_done(hass)
-        freezer.move_to(window + timedelta(minutes=5, seconds=1))
-        await async_wait_recording_done(hass)
-        do_adhoc_statistics(hass, start=window)
-        await async_wait_recording_done(hass)
-        rows = await hass.async_add_executor_job(
-            partial(
-                statistics_during_period, hass, start, statistic_ids=ids,
-                period="5minute", types={"state", "sum", "last_reset"},
-            )
-        )
-        assert set(rows) == ids
-        assert {row[-1]["state"] for row in rows.values()} == {state}
-        assert {row[-1]["sum"] for row in rows.values()} == {total}
-
-    def markers():
-        return {key: hass.states.get(key).attributes["last_reset"] for key in ids}
-
-    async def record(tokens):
-        await usage.async_record_request(
-            successful=True, usage=RequestUsage(total_tokens=tokens)
-        )
-
-    await compile_window(0, 0, 0)
-    await record(85)
-    await compile_window(5, 85, 85)
-    original_markers = markers()
-    if not paused and transition == "forward":
-        # A restored lifetime-only count changes no daily aggregate. It must
-        # never be carried into Recorder as usage on the new local date.
-        restored_totals = deepcopy(usage.totals)
-        restored_totals.total_tokens += 40
-        await usage.async_replace_backup(restored_totals, usage.daily, usage.requests, usage.runs)
-
-    await hass.config.async_update(time_zone=other_zone)
-    await hass.async_block_till_done()
-    same_period = transition == "same-period"
-    assert (markers() == original_markers) is same_period
-    await compile_window(10, 85 if same_period else 0, 85)
-    await record(20)
-    await compile_window(15, 105 if same_period else 20, 105)
-    if paused:
-        await hass.services.async_call("recorder", "disable", blocking=True)
-        if same_period:
-            await hass.config.async_update(time_zone="Pacific/Kiritimati")
-            await hass.async_block_till_done()
-    if reload_at == "before-reentry":
-        detour_markers = markers()
-        assert await hass.config_entries.async_reload(agent.entry.entry_id)
-        await hass.async_block_till_done()
-        usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
-        assert markers() == detour_markers
-    elif reload_at == "across-reentry":
-        assert await hass.config_entries.async_unload(agent.entry.entry_id)
-        await hass.async_block_till_done()
-
-    witnessed = {entity_id: [] for entity_id in ids}
-    queued_updates = set()
-    queue_during_registration = (
-        transition == "forward" and reload_at == "across-reentry" and not paused
-    )
-    if queue_during_registration:
-        publish = _PeriodUsageSensor._publish_period
-
-        def publish_with_queued_update(sensor, *, initial=False, previous_state=None):
-            if initial and sensor.entity_id in ids:
-                # A Usage notification can already be queued when Core writes
-                # the entity's first real state after a timezone re-entry.
-                def notify():
-                    queued_updates.add(sensor.entity_id)
-                    sensor._handle_usage_update()
-
-                hass.loop.call_soon(notify)
-            publish(sensor, initial=initial, previous_state=previous_state)
-
-        monkeypatch.setattr(
-            _PeriodUsageSensor, "_publish_period", publish_with_queued_update
-        )
-
-    @callback
-    def observe(event):
-        state = event.data["new_state"]
-        if state is not None and state.entity_id in ids and state.state.lstrip("-").isdigit():
-            witnessed[state.entity_id].append(int(state.state))
-
-    cancel = hass.bus.async_listen(EVENT_STATE_CHANGED, observe)
-    try:
-        if transition == "midnight":
-            midnight = start + timedelta(minutes=25)
-            freezer.move_to(midnight)
-            async_fire_time_changed(hass, midnight)
-        elif paused and same_period:
-            await hass.config.async_update(time_zone=other_zone)
-        else:
-            await hass.config.async_update(time_zone="UTC")
-        if reload_at == "across-reentry":
-            assert await hass.config_entries.async_setup(agent.entry.entry_id)
-            usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
-        await hass.async_block_till_done()
-    finally:
-        cancel()
-
-    value = 105 if same_period else 85
-    assert {hass.states.get(key).state for key in ids} == {str(value)}
-    for samples in witnessed.values():
-        assert samples.count(-65) == (0 if same_period or paused else 1)
-    if queue_during_registration:
-        assert queued_updates == ids
-        assert all(samples == [-65, 85] for samples in witnessed.values())
-    segment = 25 if transition == "midnight" else 20
-    pause_usage = 0
-    if paused:
-        # Keep the exact 85 + 20 + 17 witness in the backward cases and also
-        # exercise usage during the gap, as with an ordinary TOTAL meter.
-        if same_period or transition == "forward":
-            pause_usage = 4
-            await record(pause_usage)
-        await compile_window(segment, 105 if same_period else 20, 105)
-        await hass.services.async_call("recorder", "enable", blocking=True)
-        await record(17)
-        if same_period:
-            assert markers() == original_markers
-        await compile_window(segment + 5, value + pause_usage + 17, 122 + pause_usage)
-    else:
-        await compile_window(segment, value, 105)
-        await compile_window(segment + 5, value, 105)
-        await record(17)
-    await compile_window(segment + 10, value + pause_usage + 17, 122 + pause_usage)
-    current_markers = markers()
-    restored_daily = deepcopy(usage.daily)
-    restored_daily[dt_util.now().date().isoformat()]["total_tokens"] -= 7
-    await usage.async_replace_backup(usage.totals, restored_daily, usage.requests, usage.runs)
-    assert markers() == current_markers
-    await compile_window(segment + 15, value + pause_usage + 10, 115 + pause_usage)
-
-
-async def test_existing_period_recorder_marker_is_migrated_before_first_write(hass, freezer):
-    """An existing offset-bearing marker survives upgrade and a same-period rebase."""
-    await hass.config.async_set_time_zone("Europe/Dublin")
-    start = dt_util.parse_datetime("2026-06-12T12:00:00+00:00")
-    freezer.move_to(start)
-    agent = await _sensor_agent(hass, memory_mode="off")
-    await hass.async_start()
-    entry, subentry = agent.entry, agent.subentry
-    entity_id = next(
-        row.entity_id
-        for row in _registry_entries(hass, entry)
-        if row.unique_id == f"{subentry.subentry_id}_usage_today"
-    )
-    usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
-    marker = "2026-06-12T00:00:00+01:00"
-    attributes = {
-        "state_class": "total", "unit_of_measurement": "tokens", "last_reset": marker,
-    }
-
-    async def compile_window(minutes):
-        window = start + timedelta(minutes=minutes)
-        await async_wait_recording_done(hass)
-        freezer.move_to(window + timedelta(minutes=5, seconds=1))
-        await async_wait_recording_done(hass)
-        do_adhoc_statistics(hass, start=window)
-        await async_wait_recording_done(hass)
-        rows = await hass.async_add_executor_job(
-            partial(
-                statistics_during_period, hass, start, statistic_ids={entity_id},
-                period="5minute", types={"state", "sum", "last_reset"},
-            )
-        )
-        return rows[entity_id][-1]["sum"]
-
-    # This state represents the old entity, which did not use RestoreEntity.
-    hass.states.async_set(entity_id, 0, attributes)
-    assert await compile_window(0) == 0
-    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
-    hass.states.async_set(entity_id, 85, attributes)
-    assert await compile_window(5) == 85
-    hass.states.async_remove(entity_id)
-    await async_wait_recording_done(hass)
-
-    await hass.config.async_update(time_zone="UTC")
-    er.async_get(hass).async_update_entity(entity_id, disabled_by=None)
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-    current = hass.states.get(entity_id)
-    assert current.state == "85"
-    assert current.attributes["last_reset"] == marker
-    assert await compile_window(10) == 85
-
-
-@pytest.mark.parametrize("next_day", [False, True])
-async def test_release_period_samples_without_reset_are_migrated(hass, freezer, next_day):
-    """6.8.3 TOTAL sensors had no last_reset, even for existing Recorder sums."""
-    await hass.config.async_set_time_zone("UTC")
-    start = dt_util.parse_datetime(
-        "2026-06-12T23:45:00+00:00" if next_day else "2026-06-12T12:00:00+00:00"
-    )
+    start = dt_util.parse_datetime("2026-06-15T12:00:00+00:00")
     freezer.move_to(start)
     agent = await _sensor_agent(hass, memory_mode="off")
     ids = {
-        suffix: next(
+        name: next(
             row.entity_id for row in _registry_entries(hass, agent.entry)
-            if row.unique_id == f"{agent.subentry.subentry_id}_{suffix}"
+            if row.unique_id == f"{agent.subentry.subentry_id}_{name}"
         )
-        for suffix in ("usage_today", "usage_month")
+        for name in ("usage_today", "usage_month")
     }
-    usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
+    manager = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
     await hass.async_start()
-
-    def publish_release_state(value):
-        for entity_id in ids.values():
-            hass.states.async_set(
-                entity_id, str(value), {"state_class": "total", "unit_of_measurement": "tokens"}
-            )
-
-    async def compile_at(minutes):
-        window = start + timedelta(minutes=minutes)
-        await async_wait_recording_done(hass)
-        freezer.move_to(window + timedelta(minutes=5, seconds=1))
-        await async_wait_recording_done(hass)
-        do_adhoc_statistics(hass, start=window)
-        await async_wait_recording_done(hass)
-        rows = await hass.async_add_executor_job(
-            partial(
-                statistics_during_period, hass, start, statistic_ids=set(ids.values()),
-                period="5minute", types={"state", "sum", "last_reset"},
-            )
-        )
-        return {suffix: rows[entity_id][-1] for suffix, entity_id in ids.items()}
-
-    publish_release_state(0)
-    assert {item["sum"] for item in (await compile_at(0)).values()} == {0}
-    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
-    publish_release_state(85)
-    last = await compile_at(5)
-    assert {item["sum"] for item in last.values()} == {85}
-    assert {item["last_reset"] for item in last.values()} == {None}
-
+    legacy = {"state_class": "total", "unit_of_measurement": "tokens"}
+    if marked:
+        legacy["last_reset"] = start.replace(hour=0).isoformat()
     for entity_id in ids.values():
-        hass.states.async_remove(entity_id)
-    await hass.async_block_till_done()
-    if next_day:
-        freezer.move_to(start + timedelta(minutes=15, seconds=1))
-    await _enabled_usage_entities(hass, agent)
-    segment = 15 if next_day else 10
-    upgraded = await compile_at(segment)
-    assert upgraded["usage_today"]["state"] == (0 if next_day else 85)
-    assert upgraded["usage_month"]["state"] == 85
-    assert {item["sum"] for item in upgraded.values()} == {85}
-    assert all(item["last_reset"] is not None for item in upgraded.values())
-
-    usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
-    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=17))
-    assert {item["sum"] for item in (await compile_at(segment + 5)).values()} == {102}
-
-    # A real rollback can leave an older explicit reset in both Recorder and
-    # RestoreEntity, followed by newer markerless samples from the release.
-    assert await hass.config_entries.async_unload(agent.entry.entry_id)
-    await hass.async_block_till_done()
-    usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
-    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=11))
-    for suffix, entity_id in ids.items():
-        value = 28 if next_day and suffix == "usage_today" else 113
-        hass.states.async_set(
-            entity_id, str(value), {"state_class": "total", "unit_of_measurement": "tokens"}
-        )
-    rolled_back = await compile_at(segment + 10)
-    assert {item["sum"] for item in rolled_back.values()} == {113}
-    assert {item["last_reset"] for item in rolled_back.values()} == {None}
-    for entity_id in ids.values():
-        hass.states.async_remove(entity_id)
-    await hass.async_block_till_done()
-    assert await hass.config_entries.async_setup(agent.entry.entry_id)
-    await hass.async_block_till_done()
-    reupgraded = await compile_at(segment + 15)
-    assert {item["sum"] for item in reupgraded.values()} == {113}
-    assert reupgraded["usage_today"]["state"] == (28 if next_day else 113)
-    assert reupgraded["usage_month"]["state"] == 113
-
-
-@pytest.mark.parametrize("transition", ["same-zone", "new-zone", "ambiguous"])
-async def test_legacy_period_migration_uses_stored_bucket(hass, freezer, transition):
-    """New York's June sample was recorded after July had already begun in UTC."""
-    start = dt_util.parse_datetime("2026-07-01T00:00:00+00:00")
-    await hass.config.async_set_time_zone("America/New_York")
-    freezer.move_to(start)
-    agent = await _sensor_agent(hass, memory_mode="off")
-    ids = {
-        suffix: next(
-            row.entity_id for row in _registry_entries(hass, agent.entry)
-            if row.unique_id == f"{agent.subentry.subentry_id}_{suffix}"
-        )
-        for suffix in ("usage_today", "usage_month")
-    }
-    usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
-    await hass.async_start()
-
-    def publish_legacy():
-        for suffix, entity_id in ids.items():
-            result = usage.today_summary() if suffix == "usage_today" else usage.month_summary()
-            hass.states.async_set(
-                entity_id,
-                str(result["total_tokens"]),
-                {"state_class": "total", "unit_of_measurement": "tokens"},
-            )
-
-    publish_legacy()
-    await _latest_usage_statistics(hass, freezer, start, 0, ids)
-    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
-    publish_legacy()
-    before = await _latest_usage_statistics(hass, freezer, start, 5, ids)
-    assert {row["sum"] for row in before.values()} == {85}
-    assert all(row["last_reset"] is None for row in before.values())
-    for entity_id in ids.values():
-        hass.states.async_remove(entity_id)
-    if transition == "ambiguous":
-        # The old bucket may have grown while there was no numeric sensor sample.
-        # The new bucket will also match the old sensor value exactly.
-        await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=25))
-    if transition != "same-zone":
-        await hass.config.async_update(time_zone="UTC")
-    new_tokens = 85 if transition == "ambiguous" else 20
-    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=new_tokens))
-    await _enabled_usage_entities(hass, agent)
-    after = await _latest_usage_statistics(hass, freezer, start, 10, ids)
-    assert {row["state"] for row in after.values()} == {
-        105 if transition == "same-zone" else new_tokens
-    }
-    assert {row["sum"] for row in after.values()} == {
-        85 if transition == "ambiguous" else 85 + new_tokens
-    }
-
-
-@pytest.mark.usefixtures("real_store_io")
-@pytest.mark.parametrize("old_restore_state", [False, True])
-async def test_legacy_lifetime_only_usage_stays_out_of_period_statistics(
-    hass, freezer, monkeypatch, old_restore_state,
-):
-    """A 6.8.3 standalone request changes the mirror, but neither daily bucket."""
-    from homeassistant.helpers.restore_state import RestoredExtraData
-
-    from custom_components.extended_openai_conversation_responses import usage as owner
-    from custom_components.extended_openai_conversation_responses.sensor import _PeriodUsageSensor
-
-    start = dt_util.parse_datetime("2026-06-30T23:45:00+00:00")
-    await hass.config.async_set_time_zone("UTC")
-    freezer.move_to(start)
-    agent = await _sensor_agent(hass, memory_mode="off")
-    entities = await _enabled_usage_entities(hass, agent)
-    ids = {key: entities[key].entity_id for key in ("usage_today", "usage_month")}
-    key = (agent.entry.entry_id, agent.subentry.subentry_id)
-    manager = await async_get_usage(hass, *key)
-    await hass.async_start()
+        hass.states.async_set(entity_id, "0", legacy)
     await _latest_usage_statistics(hass, freezer, start, 0, ids)
     await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
+    for entity_id in ids.values():
+        hass.states.async_set(entity_id, "85", legacy)
     before = await _latest_usage_statistics(hass, freezer, start, 5, ids)
     assert {row["sum"] for row in before.values()} == {85}
+    for entity_id in ids.values():
+        hass.states.async_remove(entity_id)
+    await async_wait_recording_done(hass)
 
-    original_extra = _PeriodUsageSensor.extra_restore_state_data.fget
-
-    def release_extra(sensor):
-        data = original_extra(sensor).as_dict()
-        data["lifetime_tokens"] = data.pop("daily_total_tokens")
-        data["recorded"]["lifetime_tokens"] = data["recorded"].pop("daily_total_tokens")
-        return RestoredExtraData(data)
-
-    with monkeypatch.context() as scoped:
-        if old_restore_state:
-            scoped.setattr(_PeriodUsageSensor, "extra_restore_state_data", property(release_extra))
-        assert await hass.config_entries.async_unload(key[0])
-        await hass.async_block_till_done()
-    manager.dispose_maintenance()
-    hass.data[owner._USAGE_MANAGERS].pop(key)
-
-    mirror, _, _ = owner._durable_usage_stores(hass, *key)
-    flat = await mirror.async_load()
-    flat.pop("totals_revision")
-    flat["total_tokens"] += 19
-    flat["api_request_count"] += 1
-    flat["successful_request_count"] += 1
-    await mirror.async_save(flat)
-    freezer.move_to(start + timedelta(minutes=15, seconds=1))
-    assert await hass.config_entries.async_setup(key[0])
-    await hass.async_block_till_done()
-    manager = await async_get_usage(hass, *key)
-    assert manager.totals.total_tokens == 104
-    assert manager.daily_total_tokens == 85
-    after = await _latest_usage_statistics(hass, freezer, start, 15, ids)
-    assert {row["state"] for row in after.values()} == {0}
-    assert {row["sum"] for row in after.values()} == {85}
+    entities = await _enabled_usage_entities(hass, agent)
+    assert {name: entities[name].entity_id for name in ids} == ids
+    manager = entities["usage"]._usage
+    assert {hass.states.get(entity_id).state for entity_id in ids.values()} == {"85"}
     await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=20))
-    later = await _latest_usage_statistics(hass, freezer, start, 20, ids)
-    assert {row["state"] for row in later.values()} == {20}
-    assert {row["sum"] for row in later.values()} == {105}
+    assert await _latest_usage_statistics(hass, freezer, start, 10, ids) == before
+    issues = await hass.async_add_executor_job(statistics.validate_statistics, hass)
+    for entity_id in ids.values():
+        current = hass.states.get(entity_id)
+        assert current.state == "105"
+        assert "state_class" not in current.attributes and "last_reset" not in current.attributes
+        assert entity_id in issues
+        raw = await hass.async_add_executor_job(history.get_last_state_changes, hass, 5, entity_id)
+        assert raw[entity_id][-1].state == "105"
 
 
 async def test_usage_fallback_does_not_rewrite_recorder_history(hass, freezer, monkeypatch):
@@ -1213,9 +738,9 @@ async def test_usage_fallback_does_not_rewrite_recorder_history(hass, freezer, m
     entry, subentry = agent.entry, agent.subentry
     manager = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
     await hass.async_start()
-    await _latest_usage_statistics(hass, freezer, start, 0, ids)
+    await _latest_usage_statistics(hass, freezer, start, 0, {"usage": ids["usage"]})
     await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
-    before = await _latest_usage_statistics(hass, freezer, start, 5, ids)
+    before = await _latest_usage_statistics(hass, freezer, start, 5, {"usage": ids["usage"]})
     assert {row["sum"] for row in before.values()} == {85}
     snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
     document = backup.finalize_backup_snapshot(snapshot)["document"]
@@ -1231,67 +756,25 @@ async def test_usage_fallback_does_not_rewrite_recorder_history(hass, freezer, m
     assert fallback.is_volatile
     await fallback.async_record_request(successful=True, usage=RequestUsage(total_tokens=7))
     assert {hass.states.get(entity_id).state for entity_id in ids.values()} == {"unavailable"}
-    interim = await _latest_usage_statistics(hass, freezer, start, 10, ids)
+    interim = await _latest_usage_statistics(hass, freezer, start, 10, {"usage": ids["usage"]})
     assert {row["sum"] for row in interim.values()} == {85}
 
     next_month = start + timedelta(minutes=20, seconds=1)
     freezer.move_to(next_month)
     async_fire_time_changed(hass, next_month)
     await hass.async_block_till_done()
-    await _latest_usage_statistics(hass, freezer, start, 20, ids)
+    await _latest_usage_statistics(hass, freezer, start, 20, {"usage": ids["usage"]})
     result = await transfer.async_restore_transfer(
         hass, entry, subentry, document, sections=[transfer.SECTION_USAGE]
     )
     assert result["status"] == "restored"
     restored = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
     assert not restored.is_volatile
-    assert restored.totals.total_tokens == restored.daily_total_tokens == 85
-    final = await _latest_usage_statistics(hass, freezer, start, 25, ids)
+    assert restored.totals.total_tokens == 85
+    final = await _latest_usage_statistics(hass, freezer, start, 25, {"usage": ids["usage"]})
     assert final["usage"]["state"] == 85
-    assert final["usage_today"]["state"] == final["usage_month"]["state"] == 0
+    assert {hass.states.get(ids[name]).state for name in ("usage_today", "usage_month")} == {"0"}
     assert {row["sum"] for row in final.values()} == {85}
-
-
-@pytest.mark.parametrize("recording", ["excluded", "paused"])
-async def test_unrecorded_period_sensors_publish_no_correction(hass, freezer, recording):
-    from homeassistant.const import EVENT_STATE_CHANGED
-    from homeassistant.core import callback
-    from homeassistant.setup import async_setup_component
-
-    await hass.config.async_set_time_zone("UTC")
-    freezer.move_to("2026-06-01T00:15:00+00:00")
-    if recording == "excluded":
-        assert await async_setup_component(hass, "recorder", {
-            "recorder": {"exclude": {"entity_globs": ["sensor.*_usage_today", "sensor.*_usage_this_month"]}}
-        })
-    agent = await _sensor_agent(hass, memory_mode="off")
-    entities = await _enabled_usage_entities(hass, agent)
-    ids = {entities[key].entity_id for key in ("usage_today", "usage_month")}
-    usage = await async_get_usage(hass, agent.entry.entry_id, agent.subentry.subentry_id)
-    await hass.async_start()
-    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
-    await hass.config.async_update(time_zone="America/New_York")
-    await hass.async_block_till_done()
-    await usage.async_record_request(successful=True, usage=RequestUsage(total_tokens=20))
-    assert {hass.states.get(key).state for key in ids} == {"20"}
-    if recording == "paused":
-        await hass.services.async_call("recorder", "disable", blocking=True)
-
-    witnessed = []
-
-    @callback
-    def observe(event):
-        state = event.data["new_state"]
-        if state is not None and state.entity_id in ids:
-            witnessed.append(state.state)
-
-    cancel = hass.bus.async_listen(EVENT_STATE_CHANGED, observe)
-    try:
-        await hass.config.async_update(time_zone="UTC")
-        await hass.async_block_till_done()
-    finally:
-        cancel()
-    assert witnessed == ["85"] * len(ids)
 
 
 async def _unload_recorded_usage(hass, key, manager):
@@ -1318,9 +801,9 @@ async def test_usage_aggregate_repair_preserves_recorder(hass, freezer, damaged_
     key = (agent.entry.entry_id, agent.subentry.subentry_id)
     manager = await async_get_usage(hass, *key)
     await hass.async_start()
-    await _latest_usage_statistics(hass, freezer, start, 0, ids)
+    await _latest_usage_statistics(hass, freezer, start, 0, {"usage": ids["usage"]})
     await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
-    before = await _latest_usage_statistics(hass, freezer, start, 5, ids)
+    before = await _latest_usage_statistics(hass, freezer, start, 5, {"usage": ids["usage"]})
     assert {row["sum"] for row in before.values()} == {85}
     await _unload_recorded_usage(hass, key, manager)
 
@@ -1341,134 +824,33 @@ async def test_usage_aggregate_repair_preserves_recorder(hass, freezer, damaged_
     assert {hass.states.get(ids[name]).state for name in ("usage_today", "usage_month")} == {
         "unavailable" if damaged_store == "daily" else "85"
     }
-    interim = await _latest_usage_statistics(hass, freezer, start, 10, ids)
+    interim = await _latest_usage_statistics(hass, freezer, start, 10, {"usage": ids["usage"]})
     assert {row["sum"] for row in interim.values()} == {85}
+    await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=20))
+    expected = 85 if damaged_store == "daily" else 105
+    assert hass.states.get(ids["usage"]).state == str(expected)
+    await manager.async_shutdown()
+    await _unload_recorded_usage(hass, key, manager)
+    assert await store.async_load() == damaged
+    assert await hass.config_entries.async_setup(key[0])
+    await hass.async_block_till_done()
+    manager = await async_get_usage(hass, *key)
+    assert manager.totals.total_tokens == expected
+    assert hass.states.get(ids["usage"]).state == str(expected)
+    assert {hass.states.get(ids[name]).state for name in ("usage_today", "usage_month")} == {
+        "unavailable" if damaged_store == "daily" else "105"
+    }
     midnight = start + timedelta(minutes=20, seconds=1)
     freezer.move_to(midnight)
     async_fire_time_changed(hass, midnight)
     await hass.async_block_till_done()
-    await _latest_usage_statistics(hass, freezer, start, 20, ids)
+    await _latest_usage_statistics(hass, freezer, start, 20, {"usage": ids["usage"]})
 
     await _unload_recorded_usage(hass, key, manager)
     await store.async_save(saved)
     assert await hass.config_entries.async_setup(key[0])
     await hass.async_block_till_done()
-    after = await _latest_usage_statistics(hass, freezer, start, 25, ids)
-    assert after["usage"]["state"] == 85
-    assert after["usage_today"]["state"] == after["usage_month"]["state"] == 0
-    assert {row["sum"] for row in after.values()} == {85}
-
-
-@pytest.mark.usefixtures("real_store_io")
-@pytest.mark.parametrize("detour_requests", [3, 12])
-async def test_cold_usage_checkpoint_preserves_previous_timezone_bucket(
-    hass, freezer, monkeypatch, detour_requests
-):
-    from homeassistant.helpers import restore_state
-
-    start = dt_util.parse_datetime("2026-07-01T00:00:00+00:00")
-    await hass.config.async_set_time_zone("UTC")
-    freezer.move_to(start)
-    agent = await _sensor_agent(hass, memory_mode="off")
-    entities = await _enabled_usage_entities(hass, agent)
-    ids = {name: entities[name].entity_id for name in ("usage_today", "usage_month")}
-    key = (agent.entry.entry_id, agent.subentry.subentry_id)
-    manager = await async_get_usage(hass, *key)
-    await hass.async_start()
-    await _latest_usage_statistics(hass, freezer, start, 0, ids)
-    await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
-    before = await _latest_usage_statistics(hass, freezer, start, 5, ids)
-    assert {row["sum"] for row in before.values()} == {85}
-    await hass.config.async_update(time_zone="America/New_York")
-    await hass.async_block_till_done()
-    detour = dt_util.utcnow()
-    for index in range(detour_requests):
-        freezer.move_to(detour + timedelta(seconds=5 + 10 * index))
-        await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=1))
-        if index == 1:
-            await restore_state.RestoreStateData.async_save_persistent_states(hass)
-    recorded = await _latest_usage_statistics(hass, freezer, start, 10, ids)
-    assert {row["sum"] for row in recorded.values()} == {85 + detour_requests}
-    await _unload_recorded_usage(hass, key, manager)
-
-    # Replay the last native disk snapshot, as a cold process would. Recorder
-    # has already committed more observations than that snapshot captured.
-    cold = restore_state.RestoreStateData(hass)
-    await cold.async_load()
-    monkeypatch.setattr(restore_state, "async_get", lambda _: cold)
-    assert {cold.async_get_stored_state(entity_id).state.state for entity_id in ids.values()} == {"2"}
-    await hass.config.async_update(time_zone="UTC")
-    assert await hass.config_entries.async_setup(key[0])
-    await hass.async_block_till_done()
-    after = await _latest_usage_statistics(hass, freezer, start, 15, ids)
-    assert {row["state"] for row in after.values()} == {85}
-    assert {row["sum"] for row in after.values()} == {85 + detour_requests}
-
-
-@pytest.mark.parametrize("purge_raw", [False, True])
-async def test_markerless_month_baseline_survives_reload_during_usage_outage(
-    hass, freezer, monkeypatch, purge_raw
-):
-    from homeassistant.components import recorder
-    from homeassistant.components.recorder import history
-
-    from custom_components.extended_openai_conversation_responses import backup, transfer, usage
-
-    start = dt_util.parse_datetime("2026-06-01T12:00:00+00:00")
-    await hass.config.async_set_time_zone("UTC")
-    freezer.move_to(start)
-    agent = await _sensor_agent(hass, memory_mode="off")
-    entry, subentry = agent.entry, agent.subentry
-    key = (entry.entry_id, subentry.subentry_id)
-    entity_id = next(
-        row.entity_id for row in _registry_entries(hass, entry)
-        if row.unique_id == f"{subentry.subentry_id}_usage_month"
-    )
-    ids = {"month": entity_id}
-    manager = await async_get_usage(hass, *key)
-    await hass.async_start()
-    attributes = {"state_class": "total", "unit_of_measurement": "tokens"}
-    hass.states.async_set(entity_id, "0", attributes)
-    await _latest_usage_statistics(hass, freezer, start, 0, ids)
-    await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=85))
-    hass.states.async_set(entity_id, "85", attributes)
-    await _latest_usage_statistics(hass, freezer, start, 5, ids)
-    window = 9 * 24 * 60
-    freezer.move_to(start + timedelta(minutes=window))
-    legacy = (await _latest_usage_statistics(hass, freezer, start, window, ids))["month"]
-    assert legacy["sum"] == legacy["state"] == 85
-    assert legacy["last_reset"] is None
-    snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
-    document = backup.finalize_backup_snapshot(snapshot)["document"]
-
-    async def unavailable(*_):
-        raise PermissionError("Usage storage unavailable")
-
-    hass.states.async_remove(entity_id)
-    await async_wait_recording_done(hass)
-    with monkeypatch.context() as scoped:
-        scoped.setattr(usage, "async_get_durable_usage", unavailable)
-        er.async_get(hass).async_update_entity(entity_id, disabled_by=None)
-        assert await hass.config_entries.async_reload(entry.entry_id)
-        await hass.async_block_till_done()
-    assert hass.states.get(entity_id).state == "unavailable"
-    await async_wait_recording_done(hass)
-    if purge_raw:
-        await hass.services.async_call("recorder", "purge", {
-            "keep_days": 7, "repack": False, "apply_filter": False,
-        }, blocking=True)
-        await recorder.get_instance(hass).async_block_till_done()
-        await hass.async_block_till_done()
-    raw = await hass.async_add_executor_job(history.get_last_state_changes, hass, 10, entity_id)
-    assert any(row.state == "85" for row in raw.get(entity_id, [])) is not purge_raw
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-    stored = (await _latest_usage_statistics(hass, freezer, start, window + 5, ids))["month"]
-    assert stored["sum"] == 85
-
-    result = await transfer.async_restore_transfer(
-        hass, entry, subentry, document, sections=[transfer.SECTION_USAGE],
-    )
-    assert result["status"] == "restored"
-    after = (await _latest_usage_statistics(hass, freezer, start, window + 10, ids))["month"]
-    assert after["state"] == after["sum"] == 85
+    after = await _latest_usage_statistics(hass, freezer, start, 25, {"usage": ids["usage"]})
+    assert after["usage"]["state"] == expected
+    assert {hass.states.get(ids[name]).state for name in ("usage_today", "usage_month")} == {"0"}
+    assert {row["sum"] for row in after.values()} == {expected}

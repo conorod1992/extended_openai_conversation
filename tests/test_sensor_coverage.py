@@ -44,7 +44,6 @@ class FakeUsage:
 
     def __init__(self) -> None:
         self.totals = SimpleNamespace(total_tokens=777)
-        self.daily_total_tokens = 777
         self.lifetime_available = True
         self.daily_available = True
         self.latest_run = None
@@ -297,6 +296,7 @@ def test_period_sensors_use_distinct_summaries_and_attributes() -> None:
     assert today.native_value == 111
     assert month.native_value == 222
     assert today.extra_state_attributes == {
+        "period_start": sensor_module.dt_util.now().date().isoformat(),
         "input": 200,
         "output": 100,
         "cached_input": 15,
@@ -344,11 +344,11 @@ async def test_period_sensor_tracks_midnight_and_rollover_writes_state(
         "action": sensor._handle_period_rollover,
         "point": datetime(2026, 9, 14, tzinfo=UTC),
     }
-    assert sensor.last_reset == datetime(2026, 9, 13, tzinfo=UTC)
+    assert sensor.extra_state_attributes["period_start"] == "2026-09-13"
     now = datetime(2026, 9, 14, tzinfo=UTC)
     tracked["action"](now)
     write_state.assert_called_once_with()
-    assert sensor.last_reset == now
+    assert sensor.extra_state_attributes["period_start"] == "2026-09-14"
 
 
 def test_last_response_sensor_handles_absent_and_completed_run() -> None:

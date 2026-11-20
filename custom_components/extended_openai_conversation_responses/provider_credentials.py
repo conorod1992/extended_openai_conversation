@@ -205,7 +205,7 @@ async def async_replace_api_key(
             api_version=candidate.get(CONF_API_VERSION),
             organization=candidate.get(CONF_ORGANIZATION),
             skip_authentication=skip_authentication,
-            api_provider=candidate.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+            api_provider=candidate.get(CONF_API_PROVIDER),
         )
     except OpenAIError as err:
         log_handled_failure(

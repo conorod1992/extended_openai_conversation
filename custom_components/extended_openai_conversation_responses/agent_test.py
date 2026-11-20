@@ -30,7 +30,6 @@ from .const import (
     CONF_SKILLS,
     CONF_WEB_SEARCH,
     DEFAULT_API_MODE,
-    DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -163,7 +162,7 @@ async def async_test_agent(
         )
         return AgentTestResult(_overall(checks), checks)
     usage_provider = effective_api_provider(
-        entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+        entry.data.get(CONF_API_PROVIDER),
         entry.data.get(CONF_BASE_URL),
     )
     if subentry.data.get("azure_model") and usage_provider != "azure":

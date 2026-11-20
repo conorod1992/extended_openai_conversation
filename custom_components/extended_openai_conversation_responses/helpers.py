@@ -8,7 +8,7 @@ from inspect import isawaitable
 import logging
 import os
 from typing import Annotated, Any, cast, get_args, get_origin
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, parse_qsl, urlsplit
 
 from openai import AsyncAzureOpenAI, AsyncClient, AsyncOpenAI
 
@@ -109,11 +109,22 @@ def is_azure_url(base_url: str | None) -> bool:
 
 def effective_api_provider(api_provider: str | None, base_url: str | None) -> str:
     """Use the same Azure hostname inference for clients and capability consumers."""
-    return (
-        "azure"
-        if api_provider == "azure" or is_azure_url(base_url)
-        else (api_provider or DEFAULT_API_PROVIDER)
-    )
+    if api_provider == "azure":
+        return "azure"
+    if base_url and is_azure_url(base_url):
+        endpoint = urlsplit(base_url)
+        hostname = endpoint.hostname or ""
+        # API Management exposes an OpenAI-compatible unified model route on
+        # the same domain as its legacy Azure deployment routes. Keep hostname
+        # inference for older entries without an explicit provider.
+        if (
+            api_provider == DEFAULT_API_PROVIDER
+            and (hostname == "azure-api.net" or hostname.endswith(".azure-api.net"))
+            and endpoint.path.rstrip("/").endswith("/llm/v1")
+        ):
+            return DEFAULT_API_PROVIDER
+        return "azure"
+    return api_provider or DEFAULT_API_PROVIDER
 
 
 def entry_api_provider(entry: Any) -> str:
@@ -177,6 +188,26 @@ class ProviderEndpointError(HomeAssistantError):
     """A locally invalid provider endpoint."""
 
 
+def _endpoint_query(query: str) -> dict[str, str]:
+    """Parse the scalar parameters the SDK can send without changing their meaning."""
+    try:
+        pairs = parse_qsl(query, keep_blank_values=True, errors="strict")
+    except UnicodeDecodeError:
+        raise ProviderEndpointError(
+            "Provider base URL query parameters must use UTF-8."
+        ) from None
+    parameters = dict(pairs)
+    # The SDK rewrites lists as bracketed names and drops empty strings. Reject
+    # these inputs at setup and restore rather than silently changing the route.
+    if len(parameters) != len(pairs) or any(
+        not name or not value for name, value in pairs
+    ):
+        raise ProviderEndpointError(
+            "Provider base URL query parameters require unique names and non-empty values."
+        )
+    return parameters
+
+
 def resolve_provider_endpoint(
     api_provider: str | None, base_url: str | None, api_version: str | None
 ) -> tuple[str, str | None]:
@@ -185,11 +216,12 @@ def resolve_provider_endpoint(
         base_url = None
     if base_url is not None:
         try:
-            _absolute_http_endpoint(base_url)
+            endpoint = _absolute_http_endpoint(base_url)
         except ValueError:
             raise ProviderEndpointError(
                 "Provider field base_url must be an absolute HTTP or HTTPS URL."
             ) from None
+        _endpoint_query(endpoint.query)
 
     provider = effective_api_provider(api_provider, base_url)
     if provider == "azure":
@@ -209,11 +241,12 @@ def resolve_provider_endpoint(
         and (sdk_base_url := os.environ.get("OPENAI_BASE_URL")) is not None
     ):
         try:
-            _absolute_http_endpoint(sdk_base_url)
+            endpoint = _absolute_http_endpoint(sdk_base_url)
         except ValueError:
             raise ProviderEndpointError(
                 "OPENAI_BASE_URL must be an absolute HTTP or HTTPS URL."
             ) from None
+        _endpoint_query(endpoint.query)
     return provider, base_url
 
 
@@ -221,6 +254,11 @@ def is_native_openai_connection(data: Mapping[str, Any], *, client: Any = None) 
     """Classify the configured endpoint or the SDK's effective default."""
     base_url = data.get("base_url")
     if base_url is None or base_url == "":
+        # The SDK stores an environment endpoint's query independently of
+        # its base URL. Keep the same native-endpoint check in that case.
+        query = getattr(client, "default_query", None)
+        if isinstance(query, Mapping) and query:
+            return False
         sdk_url = getattr(client, "base_url", None)
         # SDK versions expose their own HTTPX URL types. Both have a string host.
         if isinstance(sdk_url, str) or isinstance(getattr(sdk_url, "host", None), str):
@@ -320,10 +358,26 @@ async def get_authenticated_client(
     """Validate OpenAI authentication."""
 
     provider, base_url = resolve_provider_endpoint(api_provider, base_url, api_version)
+    if base_url is None:
+        base_url = os.environ.get("OPENAI_BASE_URL")
+    legacy_azure = provider == "azure" and not _is_azure_v1_endpoint(base_url)
+    query_options: dict[str, Any] = {}
+    if base_url is not None:
+        endpoint = urlsplit(base_url)
+        # The SDK appends resource paths to its base URL. Keep query parameters
+        # out of that join, including the probe and every subsequent request.
+        if endpoint.query:
+            query_options["default_query"] = _endpoint_query(endpoint.query)
+        path = endpoint.path
+        if legacy_azure:
+            # AsyncAzureOpenAI appends /openai itself.
+            path = path.rstrip("/").removesuffix("/openai")
+        base_url = endpoint._replace(path=path, query="").geturl()
+
     # Match HA core: retain its shared HTTPX client and TLS/connection policy.
     # SDK 3 supports this client at runtime, while typing targets HTTPX2.
     client: AsyncClient
-    if provider == "azure" and not _is_azure_v1_endpoint(base_url):
+    if legacy_azure:
         assert base_url is not None  # Required by resolve_provider_endpoint.
         client = AsyncAzureOpenAI(
             api_key=api_key,
@@ -331,6 +385,7 @@ async def get_authenticated_client(
             api_version=api_version,
             organization=organization,
             http_client=cast(Any, get_async_client(hass)),
+            **query_options,
         )
     else:
         client = AsyncOpenAI(
@@ -338,6 +393,7 @@ async def get_authenticated_client(
             base_url=base_url,
             organization=organization,
             http_client=cast(Any, get_async_client(hass)),
+            **query_options,
         )
 
     # Prime SDK metadata and lazy resource imports in the existing executor job,

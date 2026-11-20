@@ -30,7 +30,6 @@ from .const import (
     CONF_MEMORY_RETRIEVAL_MODE,
     CONF_TEMPORARY_MEMORY,
     DEFAULT_API_MODE,
-    DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONVERSATION_CONTINUITY,
@@ -47,7 +46,7 @@ from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
 from .function_groups import get_function_group_runtime
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
-from .helpers import is_azure_url, is_native_openai_connection
+from .helpers import effective_api_provider, is_native_openai_connection
 from .knowledge import async_get_knowledge
 from .memory import async_get_memory, get_memory_mode
 from .model_catalog import BUNDLED_CATALOG
@@ -261,9 +260,9 @@ async def async_get_config_entry_diagnostics(
         sdk_version = None
     # Allowlist only: never serialize entry.data, catalogue models, prompts,
     # provider URLs, tool definitions or retained request-debug captures.
-    provider = parent_data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER)
+    provider = parent_data.get(CONF_API_PROVIDER)
     base_url = parent_data.get(CONF_BASE_URL)
-    if provider == "azure" or is_azure_url(base_url):
+    if effective_api_provider(provider, base_url) == "azure":
         provider_category = "azure"
     elif is_native_openai_connection(
         parent_data, client=getattr(entry, "runtime_data", None)

@@ -895,11 +895,33 @@ def test_bare_web_addresses_share_runtime_and_completed_cleanup(prefix, suffix) 
 
 
 @pytest.mark.parametrize(
+    ("address", "expected"),
+    [
+        ("www.exämple.com", "Visit for details."),
+        ("www.例子.测试", "Visit for details."),
+        ("www.e\u0301xample.test", "Visit for details."),
+        ("www.उदाहरण.परीक्षा/path?q=1,", "Visit, for details."),
+        ("**www.例子.测试/path**", "Visit for details."),
+        ("<www.exämple.com>", "Visit for details."),
+        ("www.例子.测试—", "Visit — for details."),
+    ],
+)
+def test_www_cleanup_handles_international_domains(address, expected) -> None:
+    text = f"Visit {address} for details."
+    assert process_speech_text(text, _config()) == expected
+    for split in range(len(text) + 1):
+        assert _stream([text[:split], text[split:]]) == expected
+    assert _stream(list(text)) == expected
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "Ordinary text with periods. Version 1.2.3.",
         "The www. prefix is ordinary text.",
         "Keep www.example and user@www.example.com unchanged.",
+        "Keep www.例子 and user@www.例子.测试 unchanged.",
+        "Keep www.例子-.测试 and www.\u0301例子.测试 unchanged.",
     ],
 )
 def test_www_cleanup_preserves_ordinary_text(text) -> None:

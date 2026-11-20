@@ -55,6 +55,56 @@ def _suggested_values(schema):
     }
 
 
+async def test_openai_flow_creates_an_apim_unified_model_connection(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import helpers
+
+    endpoint = "https://gateway.azure-api.net/llm/v1?tenant=kitchen"
+    sent = []
+
+    def respond(request):
+        sent.append(request)
+        assert request.url.params.get("tenant") == "kitchen"
+        assert request.headers["Authorization"] == "Bearer test-key"
+        assert "api-version" not in request.url.params
+        if request.method == "GET":
+            assert request.url.path == "/llm/v1/models"
+            return httpx.Response(200, json={"object": "list", "data": []})
+        assert request.url.path == "/llm/v1/chat/completions"
+        return httpx.Response(
+            200,
+            json={"object": "chat.completion", "id": "chat-1", "choices": []},
+        )
+
+    monkeypatch.delenv("OPENAI_API_VERSION", raising=False)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as shared:
+        monkeypatch.setattr(helpers, "get_async_client", lambda _hass: shared)
+        first = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        flow_id = first["flow_id"]
+        await hass.config_entries.flow.async_configure(
+            flow_id, {CONF_API_PROVIDER: "openai"}
+        )
+        advanced = await hass.config_entries.flow.async_configure(
+            flow_id, {CONF_API_KEY: "test-key", "advanced_provider_settings": True}
+        )
+        assert advanced["step_id"] == "openai_advanced"
+        result = await hass.config_entries.flow.async_configure(
+            flow_id, {CONF_BASE_URL: endpoint}
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+        entry = result["result"]
+        assert entry.state is ConfigEntryState.LOADED
+        assert entry.data[CONF_API_PROVIDER] == "openai"
+        assert entry.data[CONF_BASE_URL] == endpoint
+        assert not helpers.is_native_openai_connection(entry.data)
+        await entry.runtime_data.chat.completions.create(model="home-model", messages=[])
+
+    assert any(request.method == "GET" for request in sent)
+    assert sent[-1].method == "POST"
+
+
 @pytest.mark.parametrize("provider,step,submitted,corrected", [
     ("azure", "azure_credentials",
      {CONF_API_KEY: "bad", CONF_BASE_URL: "https://azure.example/", CONF_API_VERSION: "2026-01-01", CONF_SKIP_AUTHENTICATION: False},

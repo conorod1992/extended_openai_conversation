@@ -71,7 +71,6 @@ from .const import (
     CONFIG_ENTRY_VERSION,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_AI_TASK_OPTIONS,
-    DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
@@ -286,7 +285,7 @@ async def async_setup_entry(
             skip_authentication=entry.data.get(
                 CONF_SKIP_AUTHENTICATION, DEFAULT_SKIP_AUTHENTICATION
             ),
-            api_provider=entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+            api_provider=entry.data.get(CONF_API_PROVIDER),
         )
     except AuthenticationError as err:
         raise ConfigEntryAuthFailed("API credentials are invalid or expired") from err

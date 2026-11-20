@@ -567,6 +567,7 @@ def _prepare_request_rule(
         raw,
         validate_sentence_pattern=not preserve_inactive,
         validate_script_schema=not preserve_inactive,
+        allow_empty_normalized_phrases=preserve_inactive,
     )
 
 
