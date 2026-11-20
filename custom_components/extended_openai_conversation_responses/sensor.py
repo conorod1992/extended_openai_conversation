@@ -717,7 +717,9 @@ class UsageMonthSensor(_PeriodUsageSensor):
         self._attr_unique_id = f"{subentry.subentry_id}_usage_month"
 
     def _summary(self, period: date | None = None) -> dict:
-        return self._usage.month_summary(period.strftime("%Y-%m") if period else None)
+        if period is not None:
+            return self._usage.month_summary(period.strftime("%Y-%m"))
+        return self._usage.month_summary()
 
     def _period_start(self, today: date) -> date:
         return today.replace(day=1)
