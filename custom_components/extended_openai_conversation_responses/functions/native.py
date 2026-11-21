@@ -373,9 +373,10 @@ def _append_automation_atomic(
         combined = yaml.compose(updated, Loader=yaml.SafeLoader)
     except yaml.YAMLError:
         combined = None
-    if not isinstance(combined, yaml.SequenceNode) or len(combined.value) != len(
-        current
-    ) + 1:
+    if (
+        not isinstance(combined, yaml.SequenceNode)
+        or len(combined.value) != len(current) + 1
+    ):
         if not current:
             raise HomeAssistantError("Unable to append to the automations YAML")
         # Preserve existing nodes if appending a block to a nonempty flow list

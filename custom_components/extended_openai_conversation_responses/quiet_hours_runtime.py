@@ -1300,7 +1300,9 @@ class QuietHoursManager:
             or controls.get(entity_id, {}).get("registry_identity")
             for entity_id in selected
         }
-        claimed_identities = {tuple(identity) for identity in verified.values() if identity}
+        claimed_identities = {
+            tuple(identity) for identity in verified.values() if identity
+        }
         for entity_id in selected:
             identity = verified[entity_id]
             if identity is None:
@@ -1423,7 +1425,9 @@ class QuietHoursManager:
                 if key == "detached_controls":
                     # A live record already anchored here takes precedence over
                     # a duplicate detached record for the same physical control.
-                    destinations.setdefault(new_id, []).append(("controls", "", control))
+                    destinations.setdefault(new_id, []).append(
+                        ("controls", "", control)
+                    )
                     returned.add(new_id)
                 else:
                     destinations.setdefault(new_id, []).append((key, old_id, control))

@@ -1621,7 +1621,7 @@ def _restore_stored_run_dates(
             continue
         try:
             valid &= calendar_date.fromisoformat(day).isoformat() == day
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             valid = False
     for run in runs:
         if run.run_id not in stored_dates:

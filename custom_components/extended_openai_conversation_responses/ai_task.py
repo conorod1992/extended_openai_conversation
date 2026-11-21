@@ -338,7 +338,7 @@ def _require_serializable_response(data: Any) -> None:
     """Check the final result with Home Assistant's JSON encoder."""
     try:
         json_bytes(data)
-    except (TypeError, ValueError, RecursionError):
+    except TypeError, ValueError, RecursionError:
         raise HomeAssistantError(
             "AI Task result cannot be returned as Home Assistant JSON"
         ) from None
