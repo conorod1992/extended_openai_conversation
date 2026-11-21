@@ -2820,6 +2820,31 @@ class _SpeechDeltaListener:
 
 
 @contextmanager
+def defer_assistant_presentation(chat_log: Any, agent_config: Mapping[str, Any]):
+    """Let Assist synthesize the final reply when substitutions need all text."""
+    listener = getattr(chat_log, "delta_listener", None)
+    if listener is None or not has_custom_speech_replacements(agent_config):
+        yield
+        return
+
+    role = "assistant"
+
+    def guarded(log: Any, delta: dict[str, Any]) -> None:
+        nonlocal role
+        role = delta.get("role") or role
+        if role == "assistant" and "content" in delta:
+            delta = {key: value for key, value in delta.items() if key != "content"}
+        if delta:
+            listener(log, delta)
+
+    chat_log.delta_listener = guarded
+    try:
+        yield
+    finally:
+        chat_log.delta_listener = listener
+
+
+@contextmanager
 def async_streaming_speech_cleanup(
     chat_log: Any,
     agent_config: Mapping[str, Any],

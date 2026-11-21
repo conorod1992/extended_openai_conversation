@@ -251,6 +251,7 @@ from .scope import (
 from .skill_runtime_availability import effective_tool_runtime_scope
 from .skills import Skill, SkillManager
 from .speech import (
+    defer_assistant_presentation,
     has_custom_speech_replacements,
     needs_async_speech_cleanup,
     process_speech_text,
@@ -384,8 +385,8 @@ class ExtendedOpenAIAgentEntity(
     def __init__(self, entry: ExtendedOpenAIConfigEntry, subentry: Any) -> None:
         """Initialize the conversation agent and its streaming capability."""
         super().__init__(entry, subentry)
-        # Arbitrary regex can depend on future text. Home Assistant selects whether
-        # to attach its progressive listener from this per-agent capability flag.
+        # Arbitrary regex can depend on future text. Advertise the capability to
+        # clients and guard the shared Assist callback when processing a turn.
         self._attr_supports_streaming = not has_custom_speech_replacements(
             subentry.data
         )
@@ -396,7 +397,7 @@ class ExtendedOpenAIAgentEntity(
 
     @property
     def supports_streaming(self) -> bool:
-        """Expose live capability before HA attaches its progressive listener."""
+        """Expose whether this assistant can present text progressively."""
         return not has_custom_speech_replacements(self.subentry.data)
 
     @property
@@ -1016,6 +1017,7 @@ class ExtendedOpenAIAgentEntity(
                         and assist_chat_log.conversation_id == incoming_conversation_id
                     ),
                 ),
+                defer_assistant_presentation(chat_log, self.subentry.data),
                 processing_conversation_scope(
                     continuity, chat_log.conversation_id, resolution.conversation_id
                 ),
