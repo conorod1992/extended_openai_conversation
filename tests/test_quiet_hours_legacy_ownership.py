@@ -98,6 +98,27 @@ async def test_verified_version_two_generation_migrates_without_losing_baseline(
     assert saved["active"]["controls"][WAKE]["original_value"] is True
 
 
+@pytest.mark.parametrize("container", ["controls", "pending_controls"])
+async def test_malformed_verified_control_preserves_saved_baseline(
+    setup_controls, container
+):
+    s = setup_controls
+    saved = _generation(enabled=False)
+    saved["active"]["controls"] = {}
+    saved["active"][container] = {
+        MEDIA: {**_record(verified=True), "quiet_value": None},
+    }
+    manager = runtime.QuietHoursManager(s.hass)
+    with pytest.raises(ValueError, match="controls are invalid"):
+        await manager._store._async_migrate_func(2, 1, deepcopy(saved))
+    manager = _loading_manager(s, saved)
+    await manager.async_setup()
+    await manager.async_shutdown()
+    assert manager.startup_unavailable
+    assert saved["active"][container][MEDIA]["original_value"] == 0.8
+    manager._store.async_save.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "manager_type", [runtime.QuietHoursManager, public.QuietHoursManager]
 )

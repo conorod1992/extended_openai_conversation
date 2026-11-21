@@ -19,7 +19,6 @@ from .const import (
     CONF_KNOWLEDGE_ENABLED,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
-    CONF_SKILLS,
     CONF_TEMPORARY_MEMORY,
     CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_ARCHIVE_ENABLED,
@@ -157,16 +156,6 @@ async def async_preview_effective_request(
             )
 
     skill_manager = SkillManager.get_loaded_instance()
-    enabled_names = set(options.get(CONF_SKILLS, []) or [])
-    skills = (
-        [
-            skill
-            for skill in skill_manager.get_all_skills()
-            if skill.name in enabled_names
-        ]
-        if skill_manager is not None and guest_policy.skills
-        else []
-    )
     knowledge = get_loaded_knowledge(hass, entry.entry_id, subentry.subentry_id)
     knowledge_available = bool(
         guest_policy.knowledge_access
@@ -213,22 +202,6 @@ async def async_preview_effective_request(
                 for entity in exposed_entities
                 if guest_policy.allows_entity_read(str(entity.get("entity_id", "")))
             ]
-        preview = render_effective_prompt(
-            hass,
-            options,
-            exposed_entities=exposed_entities,
-            current_device_id=None,
-            user_input=None,
-            skills=skills,
-            memories=None,
-            temporary_memories=temporary_memories,
-            knowledge_available=knowledge_available,
-            guest_policy=guest_policy,
-            memory_scope_available=memory_available,
-            temporary_scope_available=temporary_available,
-            archive_available=archive_available,
-            archive_session_available=archive_session_available,
-        )
         availability_groups = groups
         availability_tools = configured_tools
         configured_tools, groups = filter_guest_tools_and_groups(
@@ -236,7 +209,7 @@ async def async_preview_effective_request(
         )
         with effective_tool_runtime_scope(
             options, availability_tools, skill_manager, availability_groups
-        ):
+        ) as skills:
             grouped = assemble_function_tools(configured_tools, groups, set())
             # Change only when on-demand schemas are sent. Keep all availability
             # checks, including disabled groups, identical in both assemblies.
@@ -247,6 +220,22 @@ async def async_preview_effective_request(
                 if grouped.available_on_demand_groups
                 else grouped.tools
             )
+        preview = render_effective_prompt(
+            hass,
+            options,
+            exposed_entities=exposed_entities,
+            current_device_id=None,
+            user_input=None,
+            skills=skills if guest_policy.skills else [],
+            memories=None,
+            temporary_memories=temporary_memories,
+            knowledge_available=knowledge_available,
+            guest_policy=guest_policy,
+            memory_scope_available=memory_available,
+            temporary_scope_available=temporary_available,
+            archive_available=archive_available,
+            archive_session_available=archive_session_available,
+        )
         custom_tools = [
             tool
             for tool in grouped.tools

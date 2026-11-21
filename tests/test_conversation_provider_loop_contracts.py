@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from openai import OpenAIError
+import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     conversation as conversation_module,
@@ -18,8 +19,11 @@ from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_CHAT_MODEL,
+    CONF_CONTINUE_CONVERSATION,
     CONF_FUNCTION_TOOL_ERROR_RECOVERY,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+    CONTINUE_CONVERSATION_CONDITIONAL,
+    SUBSYSTEM_STATUS_KEY,
 )
 from custom_components.extended_openai_conversation_responses.continuity import (
     ContinuityResolution,
@@ -617,7 +621,10 @@ async def test_archive_turn_write_failure_is_best_effort(hass) -> None:
     """Archive storage failure must not escape the agent persistence helper."""
     entity = object.__new__(ExtendedOpenAIAgentEntity)
     entity.hass = hass
+    entity.entry = SimpleNamespace(entry_id="entry")
+    entity.subentry = SimpleNamespace(subentry_id="agent", data={"archive_enabled": True})
     entity._archive = SimpleNamespace(
+        read_available=True,
         async_record_turn=AsyncMock(side_effect=RuntimeError("archive unavailable"))
     )
     entity._effective_guest_policy = MagicMock(
@@ -649,19 +656,48 @@ async def test_archive_turn_write_failure_is_best_effort(hass) -> None:
         assistant_text="Persisting is best effort.",
         successful=True,
     )
+    status = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent")]
+    assert status["archive"]["status"] == "failed"
+    assert status["archive"]["read_available"]
+
+    entity._archive.async_begin_session = AsyncMock(return_value=archive_session)
+    scope = user_scope("user", source="test")
+    await entity._async_begin_archive_session(
+        "key", scope, None, GuestCapabilityPolicy.unrestricted()
+    )
+    assert status["archive"]["status"] == "failed"
+
+    entity._archive.async_record_turn.side_effect = None
+    entity._archive.async_record_turn.return_value = None
+    await entity._async_archive_turn(
+        archive_session, "run-2", user_input, chat_log, successful=True
+    )
+    assert status["archive"]["status"] == "failed"
+
+    entity._archive.async_record_turn.return_value = object()
+    await entity._async_archive_turn(
+        archive_session, "run-3", user_input, chat_log, successful=True
+    )
+    assert status["archive"]["status"] == "healthy"
 
 
-async def test_provider_error_speech_is_archived(hass, monkeypatch):
+@pytest.mark.parametrize("conditional_retry", [False, True])
+async def test_provider_error_speech_is_archived(hass, monkeypatch, conditional_retry):
     usage = _UsageHarness()
     usage.mark_current_run_failed.side_effect = lambda _: setattr(
         usage.current_run(), "successful", False
     )
     archive = SimpleNamespace(async_record_turn=AsyncMock())
-    _, _, _, _, invoke = _provider_fixture(
+    events = [OpenAIError("provider failure")]
+    options = {"archive_enabled": True}
+    if conditional_retry:
+        options[CONF_CONTINUE_CONVERSATION] = CONTINUE_CONVERSATION_CONDITIONAL
+        events.insert(0, _final_stream("Draft withheld while awaiting finalizer."))
+    _, client, _, _, invoke = _provider_fixture(
         hass,
         monkeypatch,
-        [OpenAIError("provider failure")],
-        options={"archive_enabled": True},
+        events,
+        options=options,
         usage=usage,
         archive=archive,
         archive_session=SimpleNamespace(session_id="archive-1"),
@@ -670,6 +706,7 @@ async def test_provider_error_speech_is_archived(hass, monkeypatch):
     speech = result.response.speech["plain"]["speech"]
     assert result.response.error_code is not None
     assert speech
+    assert client.responses.create.await_count == len(events)
     archive.async_record_turn.assert_awaited_once_with(
         "archive-1",
         run_id="run-1",

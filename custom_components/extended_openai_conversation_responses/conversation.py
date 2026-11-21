@@ -690,6 +690,16 @@ class ExtendedOpenAIAgentEntity(
     def _archive_reads_available(self) -> bool:
         return self._archive is not None and self._archive.read_available
 
+    @property
+    def _archive_session_available(self) -> bool:
+        if _ACTIVE_TURN.get().archive is None:
+            return False
+        statuses = self.hass.data.get(SUBSYSTEM_STATUS_KEY, {})
+        agent_status = statuses.get(
+            (self.entry.entry_id, self.subentry.subentry_id), {}
+        )
+        return bool(agent_status.get("archive", {}).get("status") != "failed")
+
     async def _async_begin_archive_session(
         self,
         session_key: str,
@@ -726,6 +736,9 @@ class ExtendedOpenAIAgentEntity(
                     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
                     DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
                 ),
+                on_durable_write=lambda: self._set_subsystem_status(
+                    "archive", configured, healthy=True
+                ),
             )
         except Exception as err:
             self._set_subsystem_status("archive", configured, err)
@@ -734,7 +747,6 @@ class ExtendedOpenAIAgentEntity(
                 "archiving this turn"
             )
             return None
-        self._set_subsystem_status("archive", configured, healthy=True)
         return session
 
     async def async_will_remove_from_hass(self) -> None:
@@ -1651,21 +1663,30 @@ class ExtendedOpenAIAgentEntity(
             or not self._effective_guest_policy().archive_retention
         ):
             return
-        assistant_text = final_assistant_text(chat_log.content)
-        if not successful and not assistant_text:
-            assistant_text = public_reply
+        assistant_text = (
+            public_reply
+            if not successful and public_reply
+            else final_assistant_text(chat_log.content)
+        )
+        configured = bool(
+            self.subentry.data.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+        )
         try:
-            await self._archive.async_record_turn(
+            turn = await self._archive.async_record_turn(
                 archive_session.session_id,
                 run_id=run_id,
                 user_text=user_input.text,
                 assistant_text=assistant_text,
                 successful=successful,
             )
-        except Exception:
+        except Exception as err:
+            self._set_subsystem_status("archive", configured, err)
             _LOGGER.exception(
                 "Unable to persist completed conversation turn to the archive"
             )
+        else:
+            if turn is not None:
+                self._set_subsystem_status("archive", configured, healthy=True)
 
     async def _async_complete_local_rule(
         self,
@@ -1813,7 +1834,7 @@ class ExtendedOpenAIAgentEntity(
                 and _ACTIVE_TURN.get().temporary_scope is not None
             ),
             archive_available=self._archive_reads_available,
-            archive_session_available=_ACTIVE_TURN.get().archive is not None,
+            archive_session_available=self._archive_session_available,
         )
         record_prompt_render(effective, render_started)
         _PROMPT_CACHE_CONTEXT.set(prompt_cache_context(effective, self.subentry.data))
@@ -2109,21 +2130,18 @@ class ExtendedOpenAIAgentEntity(
             _ACTIVE_OWNER_SCOPE_ID.reset(token)
 
     def _get_enabled_skills(self) -> list[Skill]:
-        """Get enabled skills as list for template rendering."""
-        if not self._effective_guest_policy().skills:
-            return []
-        enabled_skill_names = self.skills
-        if not enabled_skill_names:
+        """Advertise only installed Skills reachable by this request's loader."""
+        if not self._effective_guest_policy().skills or not self.skills:
             return []
         manager = self.skill_manager or SkillManager.get_loaded_instance()
         if manager is None:
             return []
-
-        return [
-            skill
-            for skill in manager.get_all_skills()
-            if skill.name in enabled_skill_names
-        ]
+        tools = self._get_configured_function_tools()
+        groups = _request_function_groups(self, tools)
+        with effective_tool_runtime_scope(
+            self.subentry.data, tools, manager, groups
+        ) as skills:
+            return skills
 
     def _get_exposed_entities(self) -> list[dict[str, Any]]:
         started = time.monotonic()
@@ -2244,8 +2262,7 @@ class ExtendedOpenAIAgentEntity(
                         ),
                         knowledge_available=self._knowledge_available,
                         archive_available=self._archive_reads_available,
-                        archive_session_available=_ACTIVE_TURN.get().archive
-                        is not None,
+                        archive_session_available=self._archive_session_available,
                         guest_policy=policy,
                     )
                 )

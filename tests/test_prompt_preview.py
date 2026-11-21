@@ -28,10 +28,12 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MEMORY_MODE,
     CONF_PROMPT,
+    CONF_SKILLS,
     CONF_TEMPORARY_MEMORY,
     CONF_WEB_SEARCH,
     CONTINUE_CONVERSATION_CONDITIONAL,
     CONVERSATION_CONTINUITY_USER,
+    DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_PROMPT,
     LEGACY_DEFAULT_PROMPT_6_8_3,
     LEGACY_DEFAULT_PROMPT_WITH_SKILLS,
@@ -417,8 +419,8 @@ def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last
 
 
 @pytest.mark.parametrize("search_enabled", [False, True])
-@pytest.mark.parametrize("session_available", [False, True])
-def test_retention_guidance_matches_available_tools(hass, search_enabled, session_available):
+@pytest.mark.parametrize("session_state", ["missing", "writable", "read-only"])
+def test_retention_guidance_matches_available_tools(hass, search_enabled, session_state):
     from custom_components.extended_openai_conversation_responses import (
         conversation as runtime,
     )
@@ -433,10 +435,15 @@ def test_retention_guidance_matches_available_tools(hass, search_enabled, sessio
         "current_datetime_enabled": False,
         "exposed_entities_enabled": False,
     })
-    agent = _agent(hass, SimpleNamespace(entry_id="entry"), SimpleNamespace(data=options))
+    agent = _agent(
+        hass, SimpleNamespace(entry_id="entry"),
+        SimpleNamespace(subentry_id="agent", data=options),
+    )
     agent._temporary_memory = object()
+    if session_state == "read-only":
+        agent._set_subsystem_status("archive", True, OSError("storage unavailable"))
     token = runtime._ACTIVE_TURN.set(runtime.ConversationTurnContext(
-        archive=("key", "session") if session_available else None,
+        archive=("key", "session") if session_state != "missing" else None,
     ))
     try:
         context = SimpleNamespace(device_id="kitchen")
@@ -449,8 +456,8 @@ def test_retention_guidance_matches_available_tools(hass, search_enabled, sessio
     assert not any(name.startswith("temporary_memory_") for name in tools)
     assert ("Search it only when" in prompt) is search_enabled
     assert ("conversation_search" in tools) is search_enabled
-    assert ("privacy/deletion tools" in prompt) is session_available
-    assert ("conversation_private" in tools) is session_available
+    assert ("privacy/deletion tools" in prompt) is (session_state == "writable")
+    assert ("conversation_private" in tools) is (session_state == "writable")
 
 
 @pytest.mark.parametrize("loaded", [False, True])
@@ -555,8 +562,9 @@ def test_invalid_custom_context_template_is_rejected_cleanly() -> None:
         normalize_agent_config({CONF_CURRENT_DATETIME_TEMPLATE: "{% if %}"})
 
 
+@pytest.mark.parametrize("skill_loader_enabled", [None, False, True])
 async def test_preview_matches_production_builder_without_user_or_history(
-    hass, monkeypatch
+    hass, monkeypatch, skill_loader_enabled,
 ) -> None:
     _setup_area_template_registries(hass)
     """Preview and live execution share the same renderer and baseline assembly."""
@@ -567,6 +575,22 @@ async def test_preview_matches_production_builder_without_user_or_history(
     options[CONF_ARCHIVE_ENABLED] = False
     options[CONF_TEMPORARY_MEMORY] = "off"
     options[CONF_CURRENT_DATETIME_TEMPLATE] = "## Current date and time\nfixed"
+    skill_manager = SimpleNamespace(
+        get_all_skills=lambda: [SimpleNamespace(name="weather", description="Local forecast")]
+    )
+    if skill_loader_enabled is not None:
+        options[CONF_SKILLS] = ["weather"]
+        loader = next(
+            tool for tool in DEFAULT_CONF_FUNCTION_TOOLS
+            if tool["spec"]["name"] == "load_skill"
+        )
+        options[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+            [{**loader, "enabled": skill_loader_enabled}]
+        )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.skills.SkillManager.get_loaded_instance",
+        lambda: skill_manager,
+    )
     subentry = SimpleNamespace(subentry_id="agent-1", data=options)
     entry = SimpleNamespace(entry_id="entry-1")
     monkeypatch.setattr(
@@ -577,7 +601,7 @@ async def test_preview_matches_production_builder_without_user_or_history(
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.hass = hass
     entity.subentry = subentry
-    entity.skill_manager = SimpleNamespace(get_all_skills=lambda: [])
+    entity.skill_manager = skill_manager
     entity._knowledge = None
     entity._memory = object()
     production = entity._build_system_prompt(
@@ -590,6 +614,7 @@ async def test_preview_matches_production_builder_without_user_or_history(
     )
 
     assert preview["prompt"] == production
+    assert ("weather: Local forecast" in production) is (skill_loader_enabled is True)
     assert "not serialized" not in preview["prompt"]
     assert any("conversation history are excluded" in note for note in preview["notes"])
     function_tools = next(

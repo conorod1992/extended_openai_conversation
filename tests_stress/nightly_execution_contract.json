@@ -616,6 +616,8 @@
     "tests/test_conversation_archive.py::test_initialize_rejects_corrupted_pending_transaction[pending2]",
     "tests/test_conversation_archive.py::test_initialize_rejects_corrupted_pending_transaction[pending3]",
     "tests/test_conversation_archive.py::test_initialize_salvages_valid_state_around_malformed_records",
+    "tests/test_conversation_archive.py::test_failed_prune_masks_both_paging_directions[False]",
+    "tests/test_conversation_archive.py::test_failed_prune_masks_both_paging_directions[True]",
     "tests/test_conversation_archive.py::test_interrupted_backup_replacement_recovers_exact_target",
     "tests/test_conversation_archive.py::test_interrupted_deletion_commits_recover_deterministically[clear]",
     "tests/test_conversation_archive.py::test_interrupted_deletion_commits_recover_deterministically[date_range]",

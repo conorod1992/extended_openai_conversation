@@ -47,6 +47,31 @@ class _SpeechText(str):
 _URL_PREFIXES = ("http://", "https://", "www.")
 _URL_TRAILING_PUNCTUATION = frozenset(".,;:!?")
 _URL_PROSE_DASHES = "\u2014\u2013"
+_URL_CJK_PROSE_PUNCTUATION = "\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a"
+# A raw dash is legal URL content. Require a complete prose cue before
+# terminating an unwrapped path, and retain URI continuations such as —never.html.
+_URL_DASH_PROSE_CUES = (
+    "never",
+    "not",
+    "don't",
+    "doesn't",
+    "didn't",
+    "can't",
+    "cannot",
+    "won't",
+    "mustn't",
+    "shouldn't",
+    "do not",
+    "does not",
+    "did not",
+    "must not",
+    "should not",
+    "then",
+    "please",
+    "avoid",
+    "stop",
+)
+_URL_DASH_LOOKAHEAD = max(map(len, _URL_DASH_PROSE_CUES)) + 1
 _URL_USERINFO = re.compile(r"[^/?#@]*@")
 type _BareUrlPhase = Literal["authority", "long_userinfo", "host", "path"]
 _FORMAT_MARKERS = ("**", "__", "~~")
@@ -521,6 +546,7 @@ class StreamingSpeechSanitizer:
                 and not adjacent_opener
                 and not text[0].isspace()
                 and text[0] not in ",.;:!?)]}"
+                and text[0] not in _URL_CJK_PROSE_PUNCTUATION
                 and not (
                     self._inline_scope.opened
                     and text.startswith(self._inline_scope.opened[-1])
@@ -737,7 +763,7 @@ class StreamingSpeechSanitizer:
         final: bool,
         closer: str = "",
     ) -> tuple[int, _BareUrlPhase, bool]:
-        """Return the URL boundary and whether a possible userinfo dash needs more input."""
+        """Return the URL boundary and whether punctuation needs more input."""
         end = start
         while end < len(text):
             char = text[end]
@@ -747,7 +773,7 @@ class StreamingSpeechSanitizer:
                 phase = "path"
             elif phase in ("authority", "long_userinfo") and char == "@":
                 phase = "host"
-            elif char in _URL_PROSE_DASHES:
+            elif char in _URL_PROSE_DASHES or char in _URL_CJK_PROSE_PUNCTUATION:
                 if phase == "host":
                     break
                 closes_wrapper = self._wrapper_before_url_dash(
@@ -757,6 +783,21 @@ class StreamingSpeechSanitizer:
                     return end, phase, True
                 if closes_wrapper:
                     break
+                if phase == "path" and not closer:
+                    if char in _URL_CJK_PROSE_PUNCTUATION:
+                        break
+                    suffix = text[end + 1 : end + 1 + _URL_DASH_LOOKAHEAD]
+                    suffix = suffix.lower().replace("\u2019", "'")
+                    if any(
+                        suffix.startswith(cue)
+                        and suffix[len(cue) : len(cue) + 1].isspace()
+                        for cue in _URL_DASH_PROSE_CUES
+                    ):
+                        break
+                    if not final and any(
+                        cue.startswith(suffix) for cue in _URL_DASH_PROSE_CUES
+                    ):
+                        return end, phase, True
                 if phase == "authority":
                     # A raw @ before the path ends userinfo. Until this can be
                     # checked, releasing the dash and suffix could expose it.

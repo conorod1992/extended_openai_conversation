@@ -884,6 +884,7 @@ class ConversationArchive:
         shared_archive_enabled: bool,
         inactivity_minutes: int,
         live_logical_conversation: bool = False,
+        on_durable_write: Callable[[], None] | None = None,
     ) -> ArchiveSession | None:
         """Resolve the stable scope once and return the exact active session."""
         if not archive_enabled:
@@ -916,7 +917,9 @@ class ConversationArchive:
                     self._sessions[current.session_id] = current
                     # Persist only content-free metadata; private activity never
                     # rewrites transcript partitions or retains message text.
-                    await self._async_publish_session_locked(session_key, current)
+                    await self._async_publish_session_locked(
+                        session_key, current, on_durable_write=on_durable_write
+                    )
                 else:
                     self._sessions[current.session_id] = current
                 return current
@@ -937,7 +940,9 @@ class ConversationArchive:
                 turn_count=0,
                 retention_state="retained" if may_retain else "unretained",
             )
-            await self._async_publish_session_locked(session_key, session)
+            await self._async_publish_session_locked(
+                session_key, session, on_durable_write=on_durable_write
+            )
             return session
 
     async def async_record_turn(
@@ -1187,9 +1192,7 @@ class ConversationArchive:
         text_offset: int = 0,
     ) -> dict[str, Any]:
         """Return bounded turns only after exact ownership validation."""
-        if session_id in self._expired_pending_prune:
-            raise ValueError("conversation session not found")
-        session = self._require_owned_session(scope_id, session_id)
+        session = self._require_readable_session(scope_id, session_id)
         start_turn = max(0, start_turn)
         limit = max(1, min(limit, MAX_GET_LIMIT))
         turns = self._turns.get(session_id, [])
@@ -1270,7 +1273,7 @@ class ConversationArchive:
         backwards and return fragments in chronological order with an exact
         starting cursor for the next backwards request.
         """
-        session = self._require_owned_session(scope_id, session_id)
+        session = self._require_readable_session(scope_id, session_id)
         turns = self._turns.get(session_id, [])
         before_turn = max(0, int(before_turn))
         before_text_offset = max(0, int(before_text_offset))
@@ -1731,6 +1734,13 @@ class ConversationArchive:
             raise ValueError("conversation session not found")
         return session
 
+    def _require_readable_session(
+        self, scope_id: str, session_id: str
+    ) -> ArchiveSession:
+        if session_id in self._expired_pending_prune:
+            raise ValueError("conversation session not found")
+        return self._require_owned_session(scope_id, session_id)
+
     def _require_owned_session(self, scope_id: str, session_id: str) -> ArchiveSession:
         session = self._require_session(session_id)
         if session.scope_id != scope_id or session.retention_state != "retained":
@@ -1738,7 +1748,11 @@ class ConversationArchive:
         return session
 
     async def _async_publish_session_locked(
-        self, session_key: str | None, session: ArchiveSession
+        self,
+        session_key: str | None,
+        session: ArchiveSession,
+        *,
+        on_durable_write: Callable[[], None] | None = None,
     ) -> None:
         """Publish session metadata and an optional active binding."""
         self._require_writable()
@@ -1768,6 +1782,8 @@ class ConversationArchive:
                 self._active[session_key] = session.session_id
 
         await self._async_commit_metadata(metadata, publish)
+        if on_durable_write is not None:
+            on_durable_write()
 
     async def _async_write_metadata(self, metadata: dict[str, Any]) -> None:
         """Record the exact durable generation, independently of live activity."""

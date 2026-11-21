@@ -41,13 +41,19 @@ function titleCase(value) {
   return String(value || "").replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function activeConfiguration(panel, explicitData = null) {
-  if (panel._draft && panel._draftAgentId === panel._agentId) {
+function fullConfiguration(panel, explicitData = null) {
+  const cached = panel._settingsSearchConfigAgentId === panel._agentId ? panel._settingsSearchConfig : null;
+  return [explicitData, cached, panel._configData].find((data) =>
+    data?.config && data.projection !== "retention");
+}
+
+function activeConfiguration(panel, configKey, explicitData) {
+  if (panel._draft && panel._draftAgentId === panel._agentId
+      && (panel._configData?.projection !== "retention" || Object.hasOwn(panel._draft, configKey))) {
     return {data: panel._configData || explicitData || {}, config: panel._draft, title: panel._draftTitle, draft: true};
   }
-  const cached = panel._settingsSearchConfigAgentId === panel._agentId ? panel._settingsSearchConfig : null;
-  const data = explicitData || cached || panel._configData;
-  if (!data?.config) return null;
+  const data = fullConfiguration(panel, explicitData);
+  if (!data) return null;
   return {data, config: data.config, title: data.title, draft: false};
 }
 
@@ -72,7 +78,7 @@ export function settingCurrentState(item, panel, explicitData = null) {
   }
   if (!item.configKey) return null;
 
-  const active = activeConfiguration(panel, explicitData);
+  const active = activeConfiguration(panel, item.configKey, explicitData);
   if (!active) return null;
   if (item.capability && active.data?.model_capabilities?.[item.capability] === false) {
     return {label:"Current", value:"Not supported by current model"};
@@ -111,6 +117,10 @@ function pathLabel(item) {
 
 export const SEARCH_DEBOUNCE_MS = 80;
 
+function needsSearchConfiguration(panel, results) {
+  return results.some((item) => item.configKey && !activeConfiguration(panel, item.configKey));
+}
+
 function activeSearchRequest(panel) {
   const request = panel._settingsSearchConfigRequest;
   return request && configurationSubmissionIsCurrent(panel, request) ? request : null;
@@ -119,14 +129,14 @@ function activeSearchRequest(panel) {
 function settingsResultsMarkup(panel) {
   const query = String(panel._settingsSearchQuery || "");
   const results = visibleSettings(panel);
+  const missingValues = query && needsSearchConfiguration(panel, results);
   const configUnavailable = Boolean(
-    query
+    missingValues
       && panel._data?.is_admin !== false
-      && !activeConfiguration(panel)
       && panel._settingsSearchConfigError
       && panel._settingsSearchConfigErrorAgentId === panel._agentId
   );
-  const configLoading = Boolean(query && panel._data?.is_admin !== false && !activeConfiguration(panel) && activeSearchRequest(panel));
+  const configLoading = Boolean(missingValues && activeSearchRequest(panel));
   const loadError = configUnavailable
     ? '<div class="settings-load-error" role="status"><span>Current setting values couldn’t be loaded.</span><button id="settings-search-retry" type="button">Retry</button></div>'
     : "";
@@ -162,8 +172,8 @@ export function updateSettingsResults(panel) {
 }
 
 async function ensureSearchConfiguration(panel, {retry = false} = {}) {
-  if (panel._eocPresentationBlocked || panel._data?.is_admin === false || !panel._settingsSearchQuery || activeConfiguration(panel)) return;
-  if (!visibleSettings(panel).some((item) => item.configKey)) return;
+  if (panel._eocPresentationBlocked || panel._data?.is_admin === false || !panel._settingsSearchQuery) return;
+  if (!needsSearchConfiguration(panel, visibleSettings(panel))) return;
   const agentId = panel._agentId;
   if (!agentId) return;
   const pending = activeSearchRequest(panel);

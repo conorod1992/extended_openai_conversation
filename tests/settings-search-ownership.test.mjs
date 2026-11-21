@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {ensureSearchConfiguration} from "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
+import {ensureSearchConfiguration, settingCurrentState} from "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 
 function searchFixture() {
   const requests = [];
@@ -28,6 +28,29 @@ function searchFixture() {
 function configuration(minutes) {
   return {config:{conversation_timeout_minutes:minutes}};
 }
+
+test("Retention Search fills missing values from full settings and keeps draft values", async () => {
+  const {panel, requests, results} = searchFixture();
+  panel._draftAgentId = panel._agentId;
+  panel._configData = {projection:"retention", config:{usage_run_retention_days:20}};
+  panel._draft = {usage_run_retention_days:30};
+  panel._settingsSearchQuery = "run details retention";
+  await ensureSearchConfiguration(panel);
+  assert.equal(requests.length, 0);
+  panel._settingsSearchQuery = "conversation timeout";
+  const pending = ensureSearchConfiguration(panel);
+  assert.equal(requests.length, 1);
+  assert.match(results.innerHTML, /Current value loading/);
+  requests[0].resolve({config:{conversation_timeout_minutes:45, usage_run_retention_days:20}});
+  await pending;
+  assert.match(results.innerHTML, /Current: 45/);
+  panel._settingsSearchQuery = "usage run retention";
+  await ensureSearchConfiguration(panel);
+  assert.equal(requests.length, 1);
+  assert.deepEqual(settingCurrentState({configKey:"usage_run_retention_days"}, panel), {
+    label:"Current draft", value:"30",
+  });
+});
 
 for (const oldFails of [false, true]) {
   for (const oldFinishesFirst of [false, true]) {

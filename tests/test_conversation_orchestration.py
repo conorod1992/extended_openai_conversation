@@ -913,11 +913,13 @@ async def test_fresh_conversation_request_resets_owned_state_after_response(
     )
 
 
-async def test_archive_turn_with_empty_chat_log_records_empty_assistant_text() -> None:
+async def test_archive_turn_with_empty_chat_log_records_empty_assistant_text(hass) -> None:
     """Archive recording remains best-effort when the provider produced no text."""
     record_turn = AsyncMock()
     entity = object.__new__(ExtendedOpenAIAgentEntity)
-    entity.subentry = SimpleNamespace(data={})
+    entity.hass = hass
+    entity.entry = SimpleNamespace(entry_id="entry")
+    entity.subentry = SimpleNamespace(subentry_id="agent", data={})
     entity._archive = SimpleNamespace(async_record_turn=record_turn)
     entity._effective_guest_policy = MagicMock(
         return_value=SimpleNamespace(archive_retention=True)

@@ -2349,7 +2349,9 @@ class QuietHoursManager:
         normalized = self._normalize_active_values(value)
         if normalized is None:
             return None
-        raw_controls = value.get("controls") or {}
+        raw_controls = value.get("controls", {})
+        if normalized["controls"].keys() != raw_controls.keys():
+            raise ValueError("Quiet Hours saved controls are invalid")
         for entity_id, control in normalized["controls"].items():
             self._normalize_owned_control_context(
                 control, raw_controls.get(entity_id, {})
@@ -2402,21 +2404,24 @@ class QuietHoursManager:
         )
         observed = {item for item in raw_observed or [] if isinstance(item, str)}
         observed.update(normalized.get("controls", {}))
-        raw_pending = (
-            value.get("pending_controls") if isinstance(value, Mapping) else None
-        )
+        raw_pending = value.get("pending_controls")
+        if raw_pending is None:
+            raw_pending = {}
         pending_state = self._normalize_active_values(
-            {**value, "controls": raw_pending or {}}
+            {**value, "controls": raw_pending}
         )
+        if (
+            pending_state is None
+            or pending_state["controls"].keys() != raw_pending.keys()
+        ):
+            raise ValueError("Quiet Hours pending controls are invalid")
         pending = {
             entity_id: control
-            for entity_id, control in (pending_state or {}).get("controls", {}).items()
+            for entity_id, control in pending_state["controls"].items()
             if entity_id not in normalized["controls"]
         }
         for entity_id, control in pending.items():
-            self._normalize_baseline_context(
-                control, (raw_pending or {}).get(entity_id, {})
-            )
+            self._normalize_baseline_context(control, raw_pending[entity_id])
         observed.update(pending)
         normalized["observed_controls"] = sorted(observed)
         normalized["pending_controls"] = pending
@@ -2498,8 +2503,8 @@ class QuietHoursManager:
                 and not isinstance(original, bool)
                 and isinstance(quiet, (int, float))
                 and not isinstance(quiet, bool)
-                and 0.0 <= float(original) <= 1.0
-                and 0.0 <= float(quiet) <= 1.0
+                and 0.0 <= original <= 1.0
+                and 0.0 <= quiet <= 1.0
             ):
                 controls[entity_id] = {
                     "kind": "volume",

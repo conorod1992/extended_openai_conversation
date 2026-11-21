@@ -475,6 +475,31 @@ async def test_chat_log_retains_original_while_listener_gets_safe_deltas() -> No
     assert heard == [{"role": "assistant"}, {"content": "Answer."}]
 
 
+async def test_speech_listener_preserves_negation_after_url_path() -> None:
+    raw = "Router instructions: http://router.local:8080/manual—never press Reset."
+    heard = []
+    chat_log = conversation.ChatLog(SimpleNamespace(data={}), "conversation-id")
+    chat_log.delta_listener = lambda _chat_log, delta: heard.append(delta)
+
+    async def stream():
+        yield {"role": "assistant"}
+        for character in raw:
+            yield {"content": character}
+
+    with async_streaming_speech_cleanup(chat_log, _config()):
+        contents = [
+            content
+            async for content in chat_log.async_add_delta_content_stream(
+                "conversation.test", stream()
+            )
+        ]
+
+    assert contents[-1].content == raw
+    assert "".join(delta.get("content", "") for delta in heard) == (
+        "Router instructions: —never press Reset."
+    )
+
+
 def test_custom_regex_requires_completed_response_processing() -> None:
     assert has_custom_speech_replacements(
         _config(
