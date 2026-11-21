@@ -43,7 +43,11 @@ def test_adding_first_automation_preserves_comments_in_empty_list(tmp_path):
         assert text in updated
 
 
-@pytest.mark.parametrize("document", ["[ ]", "--- [ ]", "[\n  \n  ]"])
+@pytest.mark.parametrize(
+    "document",
+    ["[ ]", "--- [ ]", "[\n  \n  ]"],
+    ids=["inline", "explicit-document", "multiline"],
+)
 def test_adding_first_automation_to_whitespace_only_flow_list(tmp_path, document):
     path = tmp_path / "automations.yaml"
     path.write_text(document, encoding="utf-8")
