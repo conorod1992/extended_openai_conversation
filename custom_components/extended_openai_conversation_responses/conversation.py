@@ -637,6 +637,14 @@ class ExtendedOpenAIAgentEntity(
             self._archive = await async_get_archive(
                 self.hass, self.entry.entry_id, self.subentry.subentry_id
             )
+        except Exception as err:
+            self._archive = None
+            self._set_subsystem_status("archive", configured, err)
+            _LOGGER.exception(
+                "Unable to initialize conversation archive; archive features are unavailable"
+            )
+            return
+        try:
             await self._archive.async_prune(
                 normalized_agent_integer(
                     self.subentry.data,
@@ -645,11 +653,8 @@ class ExtendedOpenAIAgentEntity(
                 )
             )
         except Exception as err:
-            self._archive = None
             self._set_subsystem_status("archive", configured, err)
-            _LOGGER.exception(
-                "Unable to initialize conversation archive; archive features are unavailable"
-            )
+            _LOGGER.exception("Unable to prune the conversation archive at startup")
         else:
             self._set_subsystem_status("archive", configured, healthy=True)
 
@@ -672,6 +677,12 @@ class ExtendedOpenAIAgentEntity(
             "status": state,
             **({"error_type": type(error).__name__} if error is not None else {}),
         }
+        if subsystem == "archive" and error is not None and self._archive is not None:
+            agent[subsystem]["read_available"] = self._archive_reads_available
+
+    @property
+    def _archive_reads_available(self) -> bool:
+        return self._archive is not None and self._archive.read_available
 
     async def _async_begin_archive_session(
         self,
@@ -1795,7 +1806,8 @@ class ExtendedOpenAIAgentEntity(
                 getattr(self, "_temporary_memory", None) is not None
                 and _ACTIVE_TURN.get().temporary_scope is not None
             ),
-            archive_available=getattr(self, "_archive", None) is not None,
+            archive_available=self._archive_reads_available,
+            archive_session_available=_ACTIVE_TURN.get().archive is not None,
         )
         record_prompt_render(effective, render_started)
         _PROMPT_CACHE_CONTEXT.set(prompt_cache_context(effective, self.subentry.data))
@@ -2225,7 +2237,9 @@ class ExtendedOpenAIAgentEntity(
                             and _ACTIVE_TURN.get().temporary_scope is not None
                         ),
                         knowledge_available=self._knowledge_available,
-                        archive_available=self._archive is not None,
+                        archive_available=self._archive_reads_available,
+                        archive_session_available=_ACTIVE_TURN.get().archive
+                        is not None,
                         guest_policy=policy,
                     )
                 )

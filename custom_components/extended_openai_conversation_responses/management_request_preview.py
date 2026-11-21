@@ -94,18 +94,24 @@ async def async_preview_effective_request(
     memory_available = (
         subsystem_status.get("persistent_memory", {}).get("status") != "failed"
     )
-    archive_available = subsystem_status.get("archive", {}).get("status") != "failed"
+    archive_status = subsystem_status.get("archive", {})
+    archive_session_available = archive_status.get("status") != "failed"
+    archive_available = (
+        archive_session_available or archive_status.get("read_available") is True
+    )
     if not memory_available and memory_enabled(options):
         notes.append(
             "Persistent Memory is unavailable in the running assistant; its tools and instructions are excluded."
         )
     if (
-        not archive_available
+        not archive_session_available
         and options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
         and guest_policy.archive_access
     ):
         notes.append(
-            "Conversation Archive is unavailable in the running assistant; its tools and instructions are excluded."
+            "Conversation Archive cannot currently write sessions; the preview includes any enabled Archive read tools."
+            if archive_available
+            else "Conversation Archive is unavailable in the running assistant; its tools and instructions are excluded."
         )
     temporary = get_loaded_temporary_memory(hass, entry.entry_id, subentry.subentry_id)
     temporary_mode = options.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
@@ -221,6 +227,7 @@ async def async_preview_effective_request(
             memory_scope_available=memory_available,
             temporary_scope_available=temporary_available,
             archive_available=archive_available,
+            archive_session_available=archive_session_available,
         )
         availability_groups = groups
         availability_tools = configured_tools
@@ -262,6 +269,7 @@ async def async_preview_effective_request(
             temporary_scope_available=temporary_available,
             knowledge_available=knowledge_available,
             archive_available=archive_available,
+            archive_session_available=archive_session_available,
             guest_policy=guest_policy,
         )
         conditional_continue = (

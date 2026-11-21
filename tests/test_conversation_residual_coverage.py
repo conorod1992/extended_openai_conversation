@@ -313,6 +313,7 @@ def test_function_tool_assembly_records_runtime_and_maps_failures(
     agent._function_groups_runtime = runtime
     agent._temporary_memory = None
     agent._archive = None
+    agent._archive_reads_available = False
     agent._get_configured_function_tools = lambda: configured
     agent._filter_guest_tools_and_groups = lambda tools, groups, policy: (tools, groups)
     agent._current_memory_scope_id = lambda: None

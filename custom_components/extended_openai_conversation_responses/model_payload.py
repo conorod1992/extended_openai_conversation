@@ -43,9 +43,11 @@ do not claim the library lacks an answer until these discovery steps fail. If no
 relevant is found, say so rather than inventing an answer.
 """
 
-ARCHIVE_PRIVACY_GUIDANCE = """
+ARCHIVE_GUIDANCE = """
 ## Retained conversation archive
-The archive is separate from persistent memory. Use the privacy/deletion tools
+The archive is separate from persistent memory."""
+
+ARCHIVE_PRIVACY_GUIDANCE = """ Use the privacy/deletion tools
 when asked to stop or resume saving, or to delete retained conversations.
 """
 

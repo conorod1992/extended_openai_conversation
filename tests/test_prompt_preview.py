@@ -417,7 +417,8 @@ def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last
 
 
 @pytest.mark.parametrize("search_enabled", [False, True])
-def test_retention_guidance_matches_available_tools(hass, search_enabled):
+@pytest.mark.parametrize("session_available", [False, True])
+def test_retention_guidance_matches_available_tools(hass, search_enabled, session_available):
     from custom_components.extended_openai_conversation_responses import (
         conversation as runtime,
     )
@@ -434,7 +435,9 @@ def test_retention_guidance_matches_available_tools(hass, search_enabled):
     })
     agent = _agent(hass, SimpleNamespace(entry_id="entry"), SimpleNamespace(data=options))
     agent._temporary_memory = object()
-    token = runtime._ACTIVE_TURN.set(runtime.ConversationTurnContext(temporary_scope=None))
+    token = runtime._ACTIVE_TURN.set(runtime.ConversationTurnContext(
+        archive=("key", "session") if session_available else None,
+    ))
     try:
         context = SimpleNamespace(device_id="kitchen")
         prompt = agent._build_system_prompt([], context, None)
@@ -446,8 +449,8 @@ def test_retention_guidance_matches_available_tools(hass, search_enabled):
     assert not any(name.startswith("temporary_memory_") for name in tools)
     assert ("Search it only when" in prompt) is search_enabled
     assert ("conversation_search" in tools) is search_enabled
-    assert "privacy/deletion tools" in prompt
-    assert "conversation_private" in tools
+    assert ("privacy/deletion tools" in prompt) is session_available
+    assert ("conversation_private" in tools) is session_available
 
 
 @pytest.mark.parametrize("loaded", [False, True])
@@ -598,7 +601,7 @@ async def test_preview_matches_production_builder_without_user_or_history(
     assert preview["function_group_savings"]["characters"] == 0
 
 
-@pytest.mark.parametrize("status", ["failed", "healthy", "disabled"])
+@pytest.mark.parametrize("status", ["failed", "healthy", "disabled", "read-only"])
 async def test_preview_observes_retained_storage_failure_without_loading_it(
     hass, monkeypatch, status,
 ):
@@ -615,7 +618,10 @@ async def test_preview_observes_retained_storage_failure_without_loading_it(
     subentry = SimpleNamespace(subentry_id="assistant", data=options)
     hass.data[SUBSYSTEM_STATUS_KEY] = {
         ("entry", "assistant"): {
-            "archive": {"status": status},
+            "archive": (
+                {"status": "failed", "read_available": True}
+                if status == "read-only" else {"status": status}
+            ),
             "persistent_memory": {"status": status},
         },
         ("entry", "other-assistant"): {"archive": {"status": "failed"}},
@@ -630,6 +636,9 @@ async def test_preview_observes_retained_storage_failure_without_loading_it(
     assert ('"memory_search"' in tools) is (status != "failed")
     assert ("Retained conversation archive" in result["prompt"]) is (status != "failed")
     assert any("Conversation Archive is unavailable" in note for note in result["notes"]) is (status == "failed")
+    assert any("cannot currently write sessions" in note for note in result["notes"]) is (status == "read-only")
+    assert ('"conversation_private"' in tools) is (status not in {"failed", "read-only"})
+    assert ("Use the privacy/deletion tools" in result["prompt"]) is (status not in {"failed", "read-only"})
     assert any("Persistent Memory is unavailable" in note for note in result["notes"]) is (status == "failed")
 
 

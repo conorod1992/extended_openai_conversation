@@ -486,10 +486,19 @@ class ConversationArchive:
         self._active: dict[str, str] = {}
         self._partitions: set[str] = set()
         self._pending_partitions: set[str] = set()
+        self._expired_pending_prune: set[str] = set()
         self._durable_metadata: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
         self._initialized = False
         self._repair_required = False
+
+    @property
+    def read_available(self) -> bool:
+        """Whether a validated archive generation is available for reads."""
+        return self._initialized and not (
+            isinstance(self._storage, HomeAssistantArchiveStorage)
+            and self._storage._metadata.corruption_unavailable
+        )
 
     def private_continuity_bindings(self) -> dict[str, str]:
         """Return content-free identities under the caller's exclusive restore lease."""
@@ -1094,6 +1103,7 @@ class ConversationArchive:
                 for key, session in self._sessions.items()
                 if session.scope_id == scope_id
                 and session.retention_state == "retained"
+                and key not in self._expired_pending_prune
             }
             if include_turns:
                 turns = {key: tuple(self._turns.get(key, ())) for key in sessions}
@@ -1111,6 +1121,7 @@ class ConversationArchive:
                     current is None
                     or current.scope_id != scope_id
                     or current.retention_state != "retained"
+                    or session_id in self._expired_pending_prune
                 ):
                     raise HomeAssistantError(
                         "Archive changed during search; retry the query"
@@ -1171,6 +1182,8 @@ class ConversationArchive:
         text_offset: int = 0,
     ) -> dict[str, Any]:
         """Return bounded turns only after exact ownership validation."""
+        if session_id in self._expired_pending_prune:
+            raise ValueError("conversation session not found")
         session = self._require_owned_session(scope_id, session_id)
         start_turn = max(0, start_turn)
         limit = max(1, min(limit, MAX_GET_LIMIT))
@@ -1503,6 +1516,8 @@ class ConversationArchive:
                 chain.from_iterable(tuple(self._turns.values())),
                 retention_days,
             )
+            # Expiry takes effect for reads even if the journal cannot be written.
+            self._expired_pending_prune = targets
             if not targets:
                 return {"deleted_sessions": 0, "deleted_turns": 0}
             sessions = {
@@ -1525,6 +1540,7 @@ class ConversationArchive:
                 active=active,
                 changed_partitions=self._changed_partitions(removed),
             )
+            self._expired_pending_prune = set()
             return {
                 "deleted_sessions": len(targets),
                 "deleted_turns": len(removed),
@@ -1547,7 +1563,10 @@ class ConversationArchive:
         """Return retained session totals grouped by data scope."""
         counts: dict[str, int] = {}
         for session in self._sessions.values():
-            if not session.has_saved_history:
+            if (
+                not session.has_saved_history
+                or session.session_id in self._expired_pending_prune
+            ):
                 continue
             counts[session.scope_id] = counts.get(session.scope_id, 0) + 1
         return counts
@@ -1560,6 +1579,7 @@ class ConversationArchive:
                 session
                 for session in self._sessions.values()
                 if session.retention_state != "unretained"
+                and session.session_id not in self._expired_pending_prune
             ]
             retained_ids = {session.session_id for session in sessions}
             turns = [
@@ -1978,6 +1998,8 @@ class ConversationArchive:
             self._active = active
             self._partitions = partitions
             self._pending_partitions = set(pending_names)
+            if replacing:
+                self._expired_pending_prune.clear()
 
         await self._async_commit_metadata(intent, publish_intent, record_execution=True)
 
@@ -2010,6 +2032,7 @@ class ConversationArchive:
         self._active.clear()
         self._partitions.clear()
         self._pending_partitions.clear()
+        self._expired_pending_prune.clear()
         self._durable_metadata = None
         self._initialized = False
 

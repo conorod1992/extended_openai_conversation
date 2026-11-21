@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import json
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_SHARED_ARCHIVE_ENABLED,
     CONF_TEMPORARY_MEMORY,
     MEMORY_MODE_MANUAL,
+    SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
@@ -291,21 +293,54 @@ async def test_model_date_range_cannot_delete_turns_outside_requested_dates(
             conversation._ACTIVE_TURN.reset(token)
 
 
-async def test_archive_read_tools_survive_unavailable_session_storage() -> None:
+async def test_archive_read_tools_survive_unavailable_session_storage(
+    hass, monkeypatch
+) -> None:
     entity = _agent(
         {CONF_ARCHIVE_ENABLED: True, CONF_ARCHIVE_MODEL_SEARCH_ENABLED: True}
     )
-    entity._set_subsystem_status = lambda *args, **kwargs: None
-    entity._archive = ConversationArchive(
-        ArchiveFixtureStorage(_fixture("archive_mixed_corrupt.json")), "agent-1"
+    entity.hass = hass
+    entity.entry = SimpleNamespace(entry_id="entry")
+    entity.subentry.subentry_id = "agent-1"
+    payload = _fixture("archive_mixed_corrupt.json")
+    session = payload["metadata"]["sessions"][0]
+    turn = payload["partitions"]["2026-09"]["turns"][0]
+    now = dt_util.utcnow()
+    expired = now - timedelta(days=90)
+    old_session, old_turn = deepcopy(session), deepcopy(turn)
+    session.update(started_at=now.isoformat(), last_message_at=now.isoformat())
+    turn["timestamp"] = now.isoformat()
+    old_session.update(
+        session_id="session-expired",
+        started_at=expired.isoformat(),
+        last_message_at=expired.isoformat(),
     )
-    await entity._archive.async_initialize()
+    old_turn.update(
+        turn_id="turn-expired",
+        session_id="session-expired",
+        timestamp=expired.isoformat(),
+    )
+    payload["metadata"]["sessions"].append(old_session)
+    payload["partitions"] = {
+        now.strftime("%Y-%m"): {"turns": [turn, "broken-turn"]},
+        expired.strftime("%Y-%m"): {"turns": [old_turn]},
+    }
+    payload["metadata"]["partitions"] = list(payload["partitions"])
+    archive = ConversationArchive(ArchiveFixtureStorage(payload), "agent-1")
+    await archive.async_initialize()
+    monkeypatch.setattr(conversation, "async_get_archive", AsyncMock(return_value=archive))
+    await entity._async_initialize_archive(True)
+    assert entity._archive is archive
+    assert archive.scope_counts() == {"user:alice": 1}
     scope = user_scope("alice", source="authenticated_user")
     session = await entity._async_begin_archive_session(
         "conversation:new-chat", scope, "new-chat", SimpleNamespace(archive_retention=True)
     )
     assert session is None
     assert entity._archive.stats()["storage_repair_required"]
+    status = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent-1")]["archive"]
+    assert status["status"] == "failed"
+    assert status["read_available"] is True
 
     token = conversation._ACTIVE_TURN.set(conversation.ConversationTurnContext(scope=scope))
     try:
@@ -313,6 +348,8 @@ async def test_archive_read_tools_survive_unavailable_session_storage() -> None:
         assert fetched["turns"][0]["turn_id"] == "turn-good"
         searched = await entity._async_execute_archive_tool("search", {"query": "Hello"})
         assert [match["session_id"] for match in searched["results"]] == ["session-good"]
+        with pytest.raises(ValueError, match="conversation session not found"):
+            await entity._async_execute_archive_tool("get", {"session_id": "session-expired"})
         with pytest.raises(RuntimeError, match="active conversation session is unavailable"):
             await entity._async_execute_archive_tool("private", {})
     finally:

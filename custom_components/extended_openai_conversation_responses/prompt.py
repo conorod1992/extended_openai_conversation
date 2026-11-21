@@ -54,6 +54,7 @@ from .exposed_attributes import (
 from .guest_mode import GuestCapabilityPolicy
 from .memory import MemoryRecord, automatic_memory_enabled, memory_revision
 from .model_payload import (
+    ARCHIVE_GUIDANCE,
     ARCHIVE_PRIVACY_GUIDANCE,
     ARCHIVE_SEARCH_GUIDANCE,
     CONTINUATION_GUIDANCE,
@@ -326,6 +327,7 @@ def render_effective_prompt(
     memory_scope_available: bool | None = None,
     temporary_scope_available: bool = True,
     archive_available: bool = True,
+    archive_session_available: bool = True,
 ) -> EffectivePrompt:
     """Render and assemble the production system prompt in deterministic order."""
     if guest_policy is not None and guest_policy.guest_active:
@@ -430,17 +432,20 @@ def render_effective_prompt(
         )
         retrieval_safety_added = True
 
+    archive_search_available = options.get(
+        CONF_ARCHIVE_MODEL_SEARCH_ENABLED, DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED
+    )
     if (
         function_tools_available
         and archive_available
+        and (archive_session_available or archive_search_available)
         and options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
         and policy.archive_access
     ):
-        search_available = options.get(
-            CONF_ARCHIVE_MODEL_SEARCH_ENABLED, DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED
+        archive_guidance = ARCHIVE_GUIDANCE + (
+            ARCHIVE_PRIVACY_GUIDANCE if archive_session_available else "\n"
         )
-        archive_guidance = ARCHIVE_PRIVACY_GUIDANCE
-        if search_available:
+        if archive_search_available:
             archive_guidance = _with_retrieved_data_safety(
                 f"{archive_guidance.rstrip()}\n\n{ARCHIVE_SEARCH_GUIDANCE}",
                 not retrieval_safety_added,
