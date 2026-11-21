@@ -208,6 +208,18 @@ def test_empty_link_destination_preserves_label_with_markdown_only():
             assert _stream(source, split, urls=urls) == result
 
 
+def test_long_link_title_backtick_cannot_hide_the_next_link():
+    source = (
+        'Open [one](https://example.com "a ` title") and [second](/view-docs) then `code`. '
+        + "Other relevant detail. " * 200
+    )
+    cleaned = _final_whitespace_cleanup(
+        StreamingSpeechSanitizer().process_complete(source)
+    )
+    assert cleaned.startswith("Open one and second then code.")
+    assert cleaned == _stream(source, 25)
+
+
 def test_many_malformed_titled_links_do_not_rescan_the_remaining_answer():
     """Repeated malformed candidates cannot make completed cleanup quadratic."""
     text = ('[bad](a "unclosed ) ' * 1600) + "Tail."

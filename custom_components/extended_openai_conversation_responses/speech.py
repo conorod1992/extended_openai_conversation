@@ -1870,9 +1870,6 @@ class StreamingSpeechSanitizer:
         text: str,
     ) -> tuple[dict[int, int], array, dict[int, int]]:
         """Index matching closures for long completed messages in a single pass."""
-        brackets = dict(
-            StreamingSpeechSanitizer._label_brackets(text, 0, final=True, indexed=True)
-        )
         invalid_url = array("I")
         open_parens = array("I")
         closed_parens: dict[int, int] = {}
@@ -1938,9 +1935,9 @@ class StreamingSpeechSanitizer:
         # recognise. Bound those speculative probes so malformed bulk text
         # cannot turn complete-response cleanup into quadratic rescanning.
         remaining_probe_chars = max(16_384, len(text) * 4)
-        for label_end in brackets.values():
-            opening = label_end + 1
-            if opening >= len(text) or text[opening] != "(" or opening in closed_parens:
+        for candidate in re.finditer(r"\]\(", text):
+            opening = candidate.end() - 1
+            if opening in closed_parens:
                 continue
             url_start = opening + 1
             if url_start >= len(text) or remaining_probe_chars <= 0:
@@ -1963,6 +1960,11 @@ class StreamingSpeechSanitizer:
             remaining_probe_chars -= window
             if status == "complete":
                 closed_parens[opening] = end - 1
+        brackets = dict(
+            StreamingSpeechSanitizer._label_brackets(
+                text, 0, final=True, destinations=closed_parens
+            )
+        )
         return brackets, invalid_url, closed_parens
 
     @staticmethod
@@ -2062,11 +2064,15 @@ class StreamingSpeechSanitizer:
 
     @staticmethod
     def _label_brackets(
-        text: str, start: int, *, final: bool, indexed: bool = False
+        text: str,
+        start: int,
+        *,
+        final: bool,
+        destinations: Mapping[int, int] | None = None,
     ) -> Iterator[tuple[int, int]]:
         """Pair structural brackets, treating matched code spans as atoms."""
         backticks: dict[int, list[int]] = {}
-        if indexed:
+        if destinations is not None:
             for run in _BACKTICK_RUN.finditer(text, start):
                 backticks.setdefault(run.end() - run.start(), []).append(run.start())
         openings: list[int] = []
@@ -2082,7 +2088,7 @@ class StreamingSpeechSanitizer:
                 width = token.end() - opener
                 if not width:
                     continue
-                if indexed:
+                if destinations is not None:
                     candidates = backticks.get(width, [])
                     following = bisect_right(candidates, opener)
                     closer = (
@@ -2106,6 +2112,10 @@ class StreamingSpeechSanitizer:
                     openings.append(position)
                 elif openings:
                     yield openings.pop(), position
+                    if destinations is not None and position + 1 in destinations:
+                        # A parsed link's destination is opaque. Its title
+                        # cannot start a code span that consumes later prose.
+                        skip_to = destinations[position + 1] + 1
 
     @staticmethod
     def _markdown_label_end(
