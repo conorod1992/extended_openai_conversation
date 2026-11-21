@@ -27,6 +27,8 @@ class EntityNotExposed(HomeAssistantError):
 
     def __str__(self) -> str:
         """Return string representation."""
+        if self.reason == "invalid_target":
+            return "An entity target is invalid. Use a fully qualified entity ID."
         if self.reason == "permission":
             return (
                 "The Home Assistant user does not have permission to access this "

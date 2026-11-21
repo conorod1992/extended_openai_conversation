@@ -5,12 +5,21 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_CHAT_MODEL,
+    CONF_GUEST_KNOWLEDGE_POLICY,
+    CONF_GUEST_KNOWLEDGE_SOURCE_IDS,
+    CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
+    GUEST_POLICY_VERSION,
+)
+from custom_components.extended_openai_conversation_responses.live_subentry_updates import (
+    update_live_subentry,
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
@@ -114,7 +123,7 @@ def _responses_sse_tool_call(
     return "".join(f"data: {json.dumps(event)}\n\n" for event in events).encode()
 
 
-async def _knowledge_agent(hass: HomeAssistant, api_mode: str):
+async def _knowledge_agent(hass: HomeAssistant, api_mode: str, **options: Any):
     """Load a genuine conversation agent with Knowledge enabled."""
     entry = _make_entry(
         "Knowledge Provider Wire",
@@ -123,6 +132,7 @@ async def _knowledge_agent(hass: HomeAssistant, api_mode: str):
             CONF_API_MODE: api_mode,
             CONF_CHAT_MODEL: "gpt-5.6",
             CONF_KNOWLEDGE_ENABLED: True,
+            **options,
         },
     )
     await _setup_entry(hass, entry)
@@ -184,8 +194,8 @@ def _chat_tool_result(body: dict[str, Any], call_id: str) -> dict[str, Any]:
         for item in body["messages"]
         if item.get("role") == "tool" and item.get("tool_call_id") == call_id
     )
-    outer = json.loads(tool_message["content"])
-    return json.loads(outer["result"])
+    result = json.loads(tool_message["content"])["result"]
+    return json.loads(result) if isinstance(result, str) else result
 
 
 def _responses_tool_result(body: dict[str, Any], call_id: str) -> dict[str, Any]:
@@ -195,8 +205,8 @@ def _responses_tool_result(body: dict[str, Any], call_id: str) -> dict[str, Any]
         for item in body["input"]
         if item.get("type") == "function_call_output" and item.get("call_id") == call_id
     )
-    outer = json.loads(tool_item["output"])
-    return json.loads(outer["result"])
+    result = json.loads(tool_item["output"])["result"]
+    return json.loads(result) if isinstance(result, str) else result
 
 
 def _chat_tool_arguments(
@@ -317,3 +327,58 @@ async def test_responses_knowledge_search_executes_through_real_sdk_wire(
     assert search_result["results"][0]["start_character"] == 0
     assert _RELEVANT_MARKER in search_result["results"][0]["excerpt"]
     assert _IRRELEVANT_MARKER not in json.dumps(search_result, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+async def test_knowledge_search_requires_array_source_filter_at_provider_boundary(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, api_mode: str
+) -> None:
+    agent = await _knowledge_agent(hass, api_mode, function_tool_error_recovery=True)
+    allowed = await _seed_knowledge(agent)
+    blocked = await agent._knowledge.async_create(
+        "Private observatory handbook",
+        "Reference for the observatory calibration token",
+        "Observatory calibration token is private-orion.",
+    )
+    update_live_subentry(
+        hass,
+        agent.entry,
+        agent.subentry,
+        data={
+            **agent.subentry.data,
+            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
+            CONF_GUEST_KNOWLEDGE_POLICY: "custom",
+            CONF_GUEST_KNOWLEDGE_SOURCE_IDS: [allowed.source_id],
+        },
+    )
+    await agent._guest_mode.async_update_trusted(indefinite=True)
+
+    chat = api_mode == API_MODE_CHAT_COMPLETIONS
+    call = _chat_sse_tool_call if chat else _responses_sse_tool_call
+    text = _chat_sse_text if chat else _responses_sse_text
+    decode = _chat_tool_result if chat else _responses_tool_result
+    for source_ids in ("", " \t", "0", [], ["0"], [blocked.source_id]):
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            [
+                call(
+                    _SEARCH_CALL_ID,
+                    "knowledge_search",
+                    {"query": "observatory calibration token", "source_ids": source_ids},
+                ),
+                text("Search complete"),
+            ],
+        )
+        assert _speech(await _say(hass, agent, "Check the calibration token")) == (
+            "Search complete"
+        )
+        result = decode(wire.requests[1]["body"], _SEARCH_CALL_ID)
+        if isinstance(source_ids, str):
+            assert result.get("code") == "invalid_arguments", (source_ids, result)
+            assert "source_ids" in result["error"]
+        else:
+            assert [item["source_id"] for item in result["results"]] == (
+                [] if source_ids else [allowed.source_id]
+            )
+        assert "private-orion" not in json.dumps(result)

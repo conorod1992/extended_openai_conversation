@@ -20,7 +20,9 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
 )
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+from homeassistant.const import EVENT_CALL_SERVICE
 from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.common import async_capture_events
 from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _say, _speech
 from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
@@ -97,6 +99,33 @@ def _arguments(*, equivalent=False, service="increment"):
             "entity_id": ["counter.receipt"] if equivalent else "counter.receipt"
         },
     }
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize(
+    "target",
+    ["missing-domain", "counter.receipt, counter."],
+    ids=["missing-domain", "mixed-missing-object"],
+)
+async def test_malformed_entity_target_returns_assist_error_without_dispatch(
+    hass, monkeypatch, mode, target
+):
+    agent, call, text = await _counter(hass, monkeypatch, mode)
+    events = async_capture_events(hass, EVENT_CALL_SERVICE)
+    arguments = _arguments()
+    arguments["data"]["entity_id"] = target
+    wire = _install_wire(monkeypatch, agent, [call("invalid", "effect", arguments)])
+
+    result = await _say(hass, agent, "Increment the counter")
+    assert result.response.error_code is not None
+    assert len(wire.requests) == 1
+    assert hass.states.get("counter.receipt").state == "0"
+    assert not any(event.data["domain"] == "counter" for event in events)
+
+    _install_wire(monkeypatch, agent, [call("valid", "effect", _arguments()), text("Done")])
+    assert _speech(await _say(hass, agent, "Increment the counter")) == "Done"
+    assert hass.states.get("counter.receipt").state == "1"
+    assert sum(event.data["domain"] == "counter" for event in events) == 1
 
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])

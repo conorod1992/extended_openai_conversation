@@ -390,6 +390,15 @@ async def _async_validate_recoverable_call(
         return tool_input
 
     try:
+        # The configured-tool validator also accepts comma-separated arrays for
+        # compatibility. A blank scalar must never become an unfiltered lookup.
+        function = function_tool.get("function", {})
+        if (
+            function.get("type") == "knowledge"
+            and function.get("operation") == "search"
+            and isinstance(tool_input.tool_args.get("source_ids"), str)
+        ):
+            raise HomeAssistantError("Function input `source_ids` must be an array")
         arguments = await async_validate_function_arguments(
             entity.hass,
             function_tool.get("spec", {}),
