@@ -236,7 +236,11 @@ async def async_get_config_entry_diagnostics(
             diagnostics["knowledge_storage_error"] = type(err).__name__
         try:
             _require_readable_store("archive", recovery, recovery_pending)
-            if subsystem_status.get("archive", {}).get("status") == "failed":
+            archive_status = subsystem_status.get("archive", {})
+            if (
+                archive_status.get("status") == "failed"
+                and archive_status.get("read_available") is not True
+            ):
                 raise RuntimeError("disabled after initialization failure")
             archive = await async_get_archive(
                 hass, entry.entry_id, subentry.subentry_id
