@@ -1,4 +1,4 @@
-"""Auto-recall padding weights must not alter explicit search or safety gates."""
+"""Test Memory recall framing and its topic and scope gates."""
 
 from __future__ import annotations
 
@@ -51,6 +51,41 @@ _VERBOSE = (
 _CORE = "Where does Mira keep the cobalt observatory emergency key?"
 _PREFIX = "I was hoping you could help me remember something we discussed previously. "
 _SUFFIX = " Please tell me what you remember, as I cannot recall the details right now."
+
+
+@pytest.mark.parametrize("automatic_recall", [False, True])
+async def test_standalone_reminder_request_preserves_topic_matches(automatic_recall):
+    memory = PersistentMemory(_Storage())
+    await memory.async_initialize()
+    target = "The Selene indigo laboratory envelope is in the locked lower drawer."
+    for user, fact in (
+        ("alice", target),
+        ("alice", "Selene catalogues indigo dyes."),
+        ("alice", "Envelopes are available at reception."),
+        ("bob", "The Selene indigo laboratory envelope is in the red cabinet."),
+    ):
+        await memory.async_add(user, fact, "general", "explicit")
+
+    question = "Where is the Selene indigo laboratory envelope?"
+    reminder = "I would appreciate a quick reminder of something from before"
+    short = await memory.async_search(
+        "alice", question, automatic_recall=automatic_recall, allow_fuzzy_only=False
+    )
+    assert short[0].content == target
+    for query in (
+        f"{question} {reminder}.",
+        f"{reminder}: {question}",
+        f"{question.removesuffix('?')} I’d appreciate a reminder about something from before",
+    ):
+        results = await memory.async_search(
+            "alice", query, automatic_recall=automatic_recall, allow_fuzzy_only=False
+        )
+        assert [item.content for item in results] == [target]
+
+    for query in (reminder, f"{reminder}: where is Selene's turquoise compass?"):
+        assert not await memory.async_search(
+            "alice", query, automatic_recall=automatic_recall, allow_fuzzy_only=False
+        )
 
 
 async def test_phrase_discount_preserves_admitted_score_with_surviving_anchors():

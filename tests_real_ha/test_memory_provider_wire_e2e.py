@@ -149,8 +149,18 @@ def _request_text(body: dict[str, Any]) -> str:
     return json.dumps(body, ensure_ascii=False)
 
 
-def _memory_tool_result(body: dict[str, Any]) -> dict[str, Any]:
+def _memory_tool_result(
+    body: dict[str, Any], api_mode: str = API_MODE_CHAT_COMPLETIONS
+) -> dict[str, Any]:
     """Decode the production Memory tool result from the second provider request."""
+    if api_mode == API_MODE_RESPONSES:
+        output = next(
+            item["output"]
+            for item in body["input"]
+            if item.get("type") == "function_call_output"
+            and item.get("call_id") == _TOOL_CALL_ID
+        )
+        return json.loads(json.loads(output)["result"])
     tool_message = next(
         item
         for item in body["messages"]
@@ -393,20 +403,55 @@ async def test_memory_search_with_only_query_remains_optional_on_provider_wire(
     else:
         assert "strict" not in memory_search
     assert memory_search["parameters"]["required"] == ["query"]
-    second_request = wire.requests[1]["body"]
-    if api_mode == API_MODE_CHAT_COMPLETIONS:
-        returned = _memory_tool_result(second_request)
-    else:
-        output = next(
-            item["output"]
-            for item in second_request["input"]
-            if item.get("type") == "function_call_output"
-            and item.get("call_id") == _TOOL_CALL_ID
-        )
-        returned = json.loads(json.loads(output)["result"])
+    returned = _memory_tool_result(wire.requests[1]["body"], api_mode)
     assert [item["content"] for item in returned["memories"]] == [
         "The lounge heating target is 19 C."
     ]
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+@pytest.mark.parametrize("tool_search", [False, True], ids=["automatic", "tool"])
+@pytest.mark.parametrize("with_reminder", [False, True], ids=["short", "padded"])
+async def test_reminder_request_preserves_memory_recall_on_provider_wire(
+    hass: HomeAssistant,
+    monkeypatch: Any,
+    api_mode: str,
+    tool_search: bool,
+    with_reminder: bool,
+) -> None:
+    """Recall finds the authored fact even with a standalone reminder request."""
+    MockUser(id=_USER_ID, name="Memory Recall Wire User", is_owner=True).add_to_hass(
+        hass
+    )
+    _, agent = await _memory_agent(hass, api_mode)
+    fact = "The Selene indigo laboratory envelope is in the locked lower drawer."
+    await agent._memory.async_add(_USER_ID, fact, "general", "explicit")
+
+    query = "Where is the Selene indigo laboratory envelope?"
+    if with_reminder:
+        query += " I would appreciate a quick reminder of something from before."
+    text_reply, tool_reply = (
+        (_chat_sse_text, _chat_sse_tool_call)
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else (_responses_sse_text, _responses_sse_tool_call)
+    )
+    answer = "It's in the locked lower drawer."
+    final = text_reply(answer)
+    if tool_search:
+        first = tool_reply(_TOOL_CALL_ID, "memory_search", {"query": query})
+        wire = _install_wire(monkeypatch, agent, [first, final])
+        result = await _say(hass, agent, "Find my saved records.")
+        assert _speech(result) == answer
+        first_request, second_request = wire.requests
+        assert fact not in _request_text(first_request["body"])
+        returned = _memory_tool_result(second_request["body"], api_mode)
+        assert [item["content"] for item in returned["memories"]] == [fact]
+    else:
+        wire = _install_wire(monkeypatch, agent, [final])
+        result = await _say(hass, agent, query)
+        assert _speech(result) == answer
+        (request,) = wire.requests
+        assert fact in _request_text(request["body"])
 
 
 @pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])

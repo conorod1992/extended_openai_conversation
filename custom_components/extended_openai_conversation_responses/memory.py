@@ -172,6 +172,17 @@ _AUTOMATIC_MEMORY_FILLER_TERMS = frozenset(
 )
 
 
+_RECALL_REQUEST_CLAUSE = (
+    r"i(?:\s+would|['\u2019]d)\s+appreciate\s+a\s+(?:quick\s+)?"
+    r"reminder\s+(?:of|about)\s+something\s+from\s+before"
+)
+_RECALL_REQUEST_FRAMING = re.compile(
+    rf"^\s*{_RECALL_REQUEST_CLAUSE}\s*[.!?,:;]\s*"
+    rf"|(?<=[\s.!?,:;]){_RECALL_REQUEST_CLAUSE}(?:\s*[.!?])?\s*\Z",
+    re.IGNORECASE,
+)
+
+
 @dataclass(slots=True, frozen=True)
 class MemoryRecord:
     """A concise durable fact."""
@@ -2298,15 +2309,18 @@ def _rank_memory_snapshot(
     )
     if not corpus or (not query_tokens and not (hybrid and query_embedding)):
         return []
+    topic = _RECALL_REQUEST_FRAMING.sub("", query)
+    topic_terms = _token_list(topic) if topic != query else []
+    topic_weights = _bm25_term_weights(topic_terms)
     document_data: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
-    document_frequency = {token: 0 for token in query_tokens}
+    document_frequency = dict.fromkeys(query_tokens | topic_weights.keys(), 0)
     total_length = 0
     for memory in corpus:
         terms = _cached_memory_record_terms(memory)
         token_set = _cached_memory_record_token_set(memory)
         document_data[memory.memory_id] = (terms, token_set)
         total_length += len(terms)
-        for token in query_tokens:
+        for token in document_frequency:
             if token in token_set:
                 document_frequency[token] += 1
     average_length = max(1.0, total_length / len(corpus))
@@ -2373,6 +2387,27 @@ def _rank_memory_snapshot(
             previous_lexical += phrase_bonus
             if previous_lexical >= MIN_LEXICAL_RELEVANCE_SCORE:
                 lexical = max(lexical, previous_lexical)
+        # A standalone reminder request can drown out a strong topic match.
+        # Retry the lexical score with just the topic when the full query
+        # missed. Compound aliases count collectively as one anchor.
+        if (
+            lexical < MIN_LEXICAL_RELEVANCE_SCORE
+            and topic_weights
+            and sum(
+                weight for term, weight in topic_weights.items() if term in token_set
+            )
+            >= 2.5
+        ):
+            topic_lexical = _bm25_score(
+                topic_terms,
+                terms,
+                document_frequency,
+                len(corpus),
+                average_length,
+                query_weights=topic_weights,
+            )
+            if topic_lexical >= MIN_LEXICAL_RELEVANCE_SCORE:
+                lexical = topic_lexical
         genuine_lexical = lexical
         if lexical <= 0:
             lexical = _fuzzy_relevance(query_tokens, token_set)
