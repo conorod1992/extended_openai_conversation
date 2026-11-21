@@ -174,17 +174,22 @@ export function bindHALlmTools(panel, acknowledge) {
         try {
           if (!ownsAgent()) throw new Error("The selected agent changed");
           const submission = captureConfigurationSubmission(panel);
+          const previewDevice = device.value;
           const result = await panel._call("tools", "ha_add", {
             tools: [...selected.values()], group_id: group.value,
-            ...(device.value ? {preview_device_id: device.value} : {}),
+            ...(previewDevice ? {preview_device_id: previewDevice} : {}),
           });
           await acknowledge(result, submission, () => {
-            if (result.ha_saved) {
+            dialog.close();
+            if (previewDevice) {
+              panel._haCatalogLoad = null;
+              panel._haCatalogLoadedAt = null;
+            } else if (result.ha_saved) {
               const latest = panel._haCatalogAgent === agentId ? panel._haCatalog : catalog;
               panel._haCatalog = {...latest, saved: {...latest?.saved, ...result.ha_saved}};
             }
-            dialog.close();
             panel._render();
+            if (previewDevice && !panel._haCatalogLoad?.current()) void refresh();
           });
         } catch (err) {
           status.textContent = err.message || String(err);

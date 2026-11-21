@@ -50,8 +50,12 @@ _LosslessSafeDumper.add_representer(str, _represent_string)
 _LosslessSafeDumper.add_representer(SecretReference, _represent_secret)
 
 
-def dump_yaml(value: Any, *, sort_keys: bool = False) -> str:
+def dump_yaml(value: Any, *, sort_keys: bool = False, flow_style: bool = False) -> str:
     """Serialize safe YAML types without folding credential or template text."""
     return yaml.dump(
-        value, Dumper=_LosslessSafeDumper, sort_keys=sort_keys, allow_unicode=True
+        value,
+        Dumper=_LosslessSafeDumper,
+        sort_keys=sort_keys,
+        allow_unicode=True,
+        default_flow_style=flow_style,
     )

@@ -95,7 +95,7 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
         async_update=AsyncMock(return_value=record),
         async_delete=AsyncMock(return_value=1),
     )
-    entity._async_search_memories = AsyncMock(return_value=[record])
+    entity._async_search_memories = AsyncMock(return_value=([record], "lexical"))
     llm_context = _llm_context()
 
     searched = await entity._async_execute_memory_tool(
@@ -124,7 +124,7 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
     )
 
     entity._async_search_memories.assert_awaited_once_with(
-        ["user-1"], "dog", 4, "pets"
+        ["user-1"], "dog", 4, "pets", offset=0, ranking=None
     )
     entity._memory.async_list_page.assert_awaited_once_with(
         ["user-1"], "pets", 4, 2
@@ -588,3 +588,56 @@ async def test_conversation_lifecycle_tool_captures_active_session_ids() -> None
     assert reset is not None
     assert reset.state_session_id == "state-session"
     assert reset.memory_session_id == "memory-session"
+
+
+async def test_hybrid_memory_pagination_keeps_the_first_pages_ranking():
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_MEMORY_RETRIEVAL_MODE,
+        MEMORY_RETRIEVAL_HYBRID,
+    )
+    from custom_components.extended_openai_conversation_responses.memory import (
+        EmbeddingBatch,
+        PersistentMemory,
+    )
+    from tests.test_memory import FakeStorage
+    from tests.test_memory_search_performance import _Storage, _record
+
+    contents = ["The bin is in the kitchen", "The cat is in the kitchen"]
+    contents += [f"Semaphore serial value {i}" for i in range(255)]
+    records = [_record(f"m{i:03}", "user-1", text, "home") for i, text in enumerate(contents)]
+    memory = PersistentMemory(_Storage(records), FakeStorage())
+    await memory.async_initialize()
+
+    async def embed(batch):
+        return EmbeddingBatch(
+            [[1.0, 0.0] if text == "kitchen" or "cat is" in text else [-1.0, 0.0] for text in batch],
+            "fixture-model",
+        )
+
+    memory.set_embedding_provider(embed, "fixture-model")
+    entity = _agent({CONF_MEMORY_RETRIEVAL_MODE: MEMORY_RETRIEVAL_HYBRID})
+    entity._memory = memory
+    arguments = {"query": "kitchen", "limit": 1}
+    context = _llm_context()
+    first = await entity._async_execute_memory_tool("search", arguments, context)
+    assert first["ranking"] == "lexical"
+    assert first["memories"][0]["memory_id"] == "m000"
+
+    # A separate fresh search finishes warming the same unchanged corpus.
+    fresh = await entity._async_execute_memory_tool("search", arguments, context)
+    assert fresh["ranking"] == "hybrid"
+    assert fresh["memories"][0]["memory_id"] == "m001"
+    with pytest.raises(ValueError, match="previous page"):
+        await entity._async_execute_memory_tool("search", {**arguments, "offset": 1}, context)
+    second = await entity._async_execute_memory_tool(
+        "search", {**arguments, "offset": first["next_offset"], "ranking": first["ranking"]}, context
+    )
+    assert second["ranking"] == "lexical"
+    assert second["memories"][0]["memory_id"] == "m001"
+    assert not second["has_more"]
+
+    memory.set_embedding_provider(None, "fixture-model")
+    with pytest.raises(ValueError, match="Hybrid ranking is unavailable"):
+        await entity._async_execute_memory_tool(
+            "search", {**arguments, "offset": fresh["next_offset"], "ranking": fresh["ranking"]}, context
+        )

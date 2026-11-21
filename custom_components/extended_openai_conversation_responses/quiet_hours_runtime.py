@@ -1030,6 +1030,14 @@ class QuietHoursManager:
                             ].items()
                             if key in observed
                         }
+                    if detached_observations := self._active.get(
+                        "detached_observations"
+                    ):
+                        self._active["detached_observations"] = {
+                            key: identity
+                            for key, identity in detached_observations.items()
+                            if identity[0] not in changed_domains
+                        }
                     self._active["pending_controls"] = {
                         key: intent
                         for key, intent in self._active.get(
@@ -1191,6 +1199,7 @@ class QuietHoursManager:
                             restoration_pending=True, restore_before_apply=True
                         )
                     self._active["observed_controls"] = sorted(controls)
+                    self._active.pop("detached_observations", None)
                     self._active["pending_controls"] = {}
                     self._active["observed_identities"] = {
                         key: identity
@@ -1463,6 +1472,15 @@ class QuietHoursManager:
         observed = []
         identities = {}
         previous_identities = self._active.get("observed_identities", {})
+        previous_detached_observations = self._active.get("detached_observations", {})
+        detached_observations = {}
+        for key, identity in previous_detached_observations.items():
+            returned_id = er.async_get(self.hass).async_get_entity_id(*identity)
+            if isinstance(returned_id, str):
+                observed.append(returned_id)
+                identities[returned_id] = identity
+            else:
+                detached_observations[key] = identity
         for old_id in self._active.get("observed_controls", []):
             identity = previous_identities.get(old_id)
             if identity is None:
@@ -1481,6 +1499,10 @@ class QuietHoursManager:
                 else moves.get(old_id, old_id)
             )
             if not isinstance(observed_destination, str):
+                if has_identity and old_id not in moves:
+                    # A released observation still belongs to this physical
+                    # control, even while it has no registered entity ID.
+                    detached_observations[_detached_control_key(identity)] = identity
                 continue
             observed.append(observed_destination)
             if has_identity:
@@ -1500,9 +1522,14 @@ class QuietHoursManager:
             or retained != detached
             or self._active.get("observed_controls", []) != observed
             or previous_identities != identities
+            or previous_detached_observations != detached_observations
         )
         if changed:
             self._active.update(rebuilt, observed_controls=observed)
+            if detached_observations:
+                self._active["detached_observations"] = detached_observations
+            else:
+                self._active.pop("detached_observations", None)
             if retained:
                 self._active["detached_controls"] = retained
             else:
@@ -2212,7 +2239,13 @@ class QuietHoursManager:
                 control["restoration_pending"] = True
                 if period_ended:
                     control["restore_before_apply"] = True
-            if retained_observations or detached:
+            if not preserve_released:
+                self._active.pop("detached_observations", None)
+            if (
+                retained_observations
+                or detached
+                or self._active.get("detached_observations")
+            ):
                 self._active["observed_controls"] = sorted(retained_observations)
                 self._active["pending_controls"] = {}
             else:
@@ -2346,6 +2379,24 @@ class QuietHoursManager:
                     control, raw_detached[identity_key]
                 )
             normalized["detached_controls"] = detached
+        raw_detached_observations = value.get("detached_observations", {})
+        if not isinstance(raw_detached_observations, Mapping):
+            raise ValueError("Quiet Hours detached observations are invalid")
+        if raw_detached_observations:
+            detached_observations = {}
+            for key, identity in raw_detached_observations.items():
+                if (
+                    not isinstance(identity, list)
+                    or len(identity) != 3
+                    or not all(isinstance(part, str) and part for part in identity)
+                    or identity[0] not in {"media_player", "switch"}
+                    or key != _detached_control_key(identity)
+                ):
+                    raise ValueError(
+                        "Quiet Hours detached observation identity is invalid"
+                    )
+                detached_observations[key] = list(identity)
+            normalized["detached_observations"] = detached_observations
         raw_observed = (
             value.get("observed_controls") if isinstance(value, Mapping) else None
         )

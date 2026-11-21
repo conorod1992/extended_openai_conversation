@@ -592,3 +592,28 @@ async def test_ambiguous_unavailable_owner_does_not_carry_into_next_occurrence(
     await s.manager.async_reconcile(now=NEXT)
     assert s.calls[-2:] == [(MEDIA, 0.8), (WAKE, "turn_on")]
     assert s.manager.active["controls"] == {}
+
+
+async def test_released_control_observation_survives_registry_removal_and_restart(setup_controls):
+    s = setup_controls
+    await s.manager.async_reconcile(now=START)
+    s.report(MEDIA, 0.45)
+    await s.manager.async_reconcile(now=MID)
+    assert MEDIA not in s.manager.active["controls"]
+
+    original = s.entries.pop(MEDIA)
+    s.states.pop(MEDIA)
+    await s.manager.async_reconcile(now=MID)
+    restarted = type(s.manager)(s.hass)
+    restarted._store = s.manager._store
+    assert await restarted._async_load_initial_state_locked()
+
+    returned = "media_player.returned"
+    original.entity_id = returned
+    s.entries[returned] = original
+    s.report(returned, 0.45)
+    await restarted.async_reconcile(now=MID)
+    assert s.states[returned].attributes["volume_level"] == 0.45
+    assert (returned, 0.2) not in s.calls
+    await restarted.async_reconcile(now=NEXT)
+    assert (returned, 0.2) in s.calls

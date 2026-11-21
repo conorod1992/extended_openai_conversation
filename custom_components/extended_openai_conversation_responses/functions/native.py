@@ -10,6 +10,7 @@ from io import StringIO
 import logging
 import os
 from pathlib import Path
+from textwrap import indent
 from typing import Any, cast
 from uuid import uuid4
 
@@ -318,75 +319,120 @@ def _atomic_write_text(
             temp_path.unlink()
 
 
+def _append_yaml_block(prefix: str, body: str) -> str:
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    return prefix + body
+
+
+def _disambiguate_yaml_anchors(body: str, reserved: set[str]) -> str:
+    """Keep aliases in the new entry from colliding with existing anchors."""
+    if not reserved:
+        return body
+    references = [
+        token
+        for token in yaml.scan(body, Loader=yaml.SafeLoader)
+        if isinstance(token, (yaml.AnchorToken, yaml.AliasToken))
+    ]
+    used = reserved | {token.value for token in references}
+    renamed: dict[str, str] = {}
+    for token in references:
+        name = token.value
+        if name not in reserved or name in renamed:
+            continue
+        candidate = f"eoc_{name}"
+        while candidate in used:
+            candidate = f"eoc_{candidate}"
+        used.add(candidate)
+        renamed[name] = candidate
+    for token in reversed(references):
+        if token.value in renamed:
+            start, end = token.start_mark.index + 1, token.end_mark.index
+            body = body[:start] + renamed[token.value] + body[end:]
+    return body
+
+
 def _append_automation_atomic(
     path: Path, config: dict[str, Any]
 ) -> tuple[str | None, str, str]:
     """Append one automation without overwriting a concurrent external edit."""
     previous = _read_optional_text(path)
     existing_text = previous or ""
-    current_node = None
-    if existing_text.strip():
-        try:
-            current_node = yaml.compose(existing_text, Loader=yaml.SafeLoader)
-        except yaml.YAMLError as err:
-            raise HomeAssistantError(
-                f"Existing automations YAML is invalid: {err}"
-            ) from err
-        if current_node is not None and not isinstance(current_node, yaml.SequenceNode):
-            raise HomeAssistantError("Existing automations YAML must contain a list")
-        current = current_node.value if current_node is not None else []
-    else:
-        current = []
+    try:
+        current_node = yaml.compose(existing_text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError as err:
+        raise HomeAssistantError(
+            f"Existing automations YAML is invalid: {err}"
+        ) from err
+    if current_node is not None and not isinstance(current_node, yaml.SequenceNode):
+        raise HomeAssistantError("Existing automations YAML must contain a list")
+    current = current_node.value if current_node is not None else []
 
     raw_config = dump_yaml([config], sort_keys=False)
     if current_node is None:
-        prefix = existing_text
-        if prefix and not prefix.endswith("\n"):
-            prefix += "\n"
-        updated = prefix + raw_config
-    elif not current:
-        tokens = yaml.scan(existing_text, Loader=yaml.SafeLoader)
-        start = next(
-            token for token in tokens if isinstance(token, yaml.FlowSequenceStartToken)
-        )
-        end = next(
-            token for token in tokens if isinstance(token, yaml.FlowSequenceEndToken)
-        )
-        prefix = existing_text[: start.start_mark.index]
-        comments = existing_text[start.end_mark.index : end.start_mark.index]
-        suffix = existing_text[end.end_mark.index :]
-        # Keep document markers, anchors and comments on their own lines.
-        if prefix and not prefix.endswith("\n"):
-            prefix += "\n"
-        if not comments.strip():
-            comments = ""
-        elif not comments.endswith("\n"):
-            comments += "\n"
-        updated = prefix + comments + raw_config + suffix
+        updated = _append_yaml_block(existing_text, raw_config)
     else:
-        prefix = existing_text
-        if not prefix.endswith("\n"):
-            prefix += "\n"
-        updated = prefix + raw_config
+        tokens = list(yaml.scan(existing_text, Loader=yaml.SafeLoader))
+        reserved_anchors = {
+            token.value for token in tokens if isinstance(token, yaml.AnchorToken)
+        }
+        if current_node.flow_style:
+            closing = next(
+                index
+                for index in reversed(range(len(tokens)))
+                if isinstance(tokens[index], yaml.FlowSequenceEndToken)
+            )
+            end = tokens[closing].start_mark.index
+            separator = (
+                ","
+                if current and not isinstance(tokens[closing - 1], yaml.FlowEntryToken)
+                else ""
+            )
+            new_entry = _disambiguate_yaml_anchors(
+                dump_yaml(config, flow_style=True), reserved_anchors
+            ).rstrip()
+            updated = (
+                existing_text[:end]
+                + separator
+                + " "
+                + new_entry
+                + "\n"
+                + existing_text[end:]
+            )
+        else:
+            indentation = next(
+                token.start_mark.column
+                for token in tokens
+                if isinstance(token, yaml.BlockSequenceStartToken)
+            )
+            end = next(
+                (
+                    token.start_mark.index
+                    for token in tokens
+                    if isinstance(token, yaml.DocumentEndToken)
+                ),
+                len(existing_text),
+            )
+            updated = (
+                _append_yaml_block(
+                    existing_text[:end],
+                    indent(
+                        _disambiguate_yaml_anchors(raw_config, reserved_anchors),
+                        " " * indentation,
+                    ),
+                )
+                + existing_text[end:]
+            )
 
     try:
         combined = yaml.compose(updated, Loader=yaml.SafeLoader)
-    except yaml.YAMLError:
-        combined = None
+    except yaml.YAMLError as err:
+        raise HomeAssistantError("Unable to append to the automations YAML") from err
     if (
         not isinstance(combined, yaml.SequenceNode)
         or len(combined.value) != len(current) + 1
     ):
-        if not current:
-            raise HomeAssistantError("Unable to append to the automations YAML")
-        # Preserve existing nodes if appending a block to a nonempty flow list
-        # or to a document with an explicit end marker requires reserialization.
-        new_node = yaml.compose(raw_config, Loader=yaml.SafeLoader)
-        assert isinstance(new_node, yaml.SequenceNode)
-        updated = yaml.serialize(
-            yaml.SequenceNode("tag:yaml.org,2002:seq", [*current, *new_node.value]),
-            allow_unicode=True,
-        )
+        raise HomeAssistantError("Unable to append to the automations YAML")
 
     _atomic_write_text(path, updated, expected_previous=previous)
     return previous, raw_config, updated

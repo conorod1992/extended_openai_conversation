@@ -968,3 +968,42 @@ async def test_preview_counts_only_effective_tools_in_both_savings_estimates(
         "grouped_characters": 2,
         "without_on_demand_grouping_characters": 2,
     }
+
+
+@pytest.mark.parametrize("cached", [False, True], ids=["saved-store", "failed-manager"])
+async def test_preview_degrades_when_temporary_memory_generation_is_damaged(hass, cached):
+    from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+        StorageRepairRequired,
+    )
+    from custom_components.extended_openai_conversation_responses.temporary_memory import (
+        _temporary_memory_store,
+        async_get_temporary_memory,
+    )
+
+    options = _options()
+    options.update({
+        CONF_PROMPT: "BASE",
+        CONF_KNOWLEDGE_ENABLED: False,
+        CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED,
+        CONF_EXPOSED_ENTITIES_ENABLED: False,
+        CONF_CURRENT_DATETIME_ENABLED: False,
+    })
+    entry = SimpleNamespace(entry_id="entry-1", data={})
+    subentry = SimpleNamespace(subentry_id="agent-1", data=options)
+    store = _temporary_memory_store(hass, entry.entry_id, subentry.subentry_id)
+    damaged = {"records": [None]}
+    await store.async_save(damaged)
+    if cached:
+        with pytest.raises(StorageRepairRequired):
+            await async_get_temporary_memory(hass, entry.entry_id, subentry.subentry_id)
+        hass.data[SUBSYSTEM_STATUS_KEY] = {
+            (entry.entry_id, subentry.subentry_id): {"temporary_memory": {"status": "failed"}}
+        }
+
+    result = await async_preview_effective_request(hass, entry, subentry, options, "admin")
+    tools = next(section["content"] for section in result["sections"] if section["key"] == "integration_tools")
+    assert "BASE" in result["prompt"]
+    assert '"memory_search"' in tools
+    assert "temporary_memory_" not in tools
+    assert any("Temporary Memory is unavailable" in note for note in result["notes"])
+    assert await store.async_load() == damaged

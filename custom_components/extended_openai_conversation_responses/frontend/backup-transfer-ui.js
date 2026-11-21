@@ -62,6 +62,18 @@ export async function callBackupTransfer(panel, action, data = {}, owner = selec
   return result;
 }
 
+async function inspectBackup(panel, data, owner, requireCurrent) {
+  for (;;) {
+    requireCurrent();
+    try {
+      return await callBackupTransfer(panel, "import_inspect", data, owner);
+    } catch (error) {
+      if (error.code !== "inspection_pending") throw error;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+}
+
 export function bytesToBase64(bytes) {
   const source = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   let binary = "";
@@ -202,7 +214,7 @@ export async function uploadFullBackup(panel, file, isCurrent = () => true, owne
       }
     }
     if (sent !== file.size) throw new Error("The selected transfer file was not uploaded completely");
-    const inspection = await callBackupTransfer(panel, "import_inspect", {session_id: sessionId, inspect_only: true}, owner);
+    const inspection = await inspectBackup(panel, {session_id: sessionId, inspect_only: true}, owner, requireCurrent);
     requireCurrent();
     if (!inspection?.valid) throw new Error("The transfer could not be validated");
     return {...inspection, session_id: sessionId, session: transferSession(sessionId, owner)};
@@ -438,7 +450,9 @@ function sendLatestImportPreview(panel) {
     const status = panel.shadowRoot?.querySelector(`#${RESTORE_STATUS_ID}`);
     const apply = panel.shadowRoot?.querySelector(`#${APPLY_ID}`);
     try {
-      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.session.session_id, sections: request.sections, user_scope_mappings: request.userScopeMappings, ...(request.restoreProvider ? {restore_provider_connection:true} : {})}, request.session.owner);
+      const result = await inspectBackup(panel, {session_id: request.session.session_id, sections: request.sections, user_scope_mappings: request.userScopeMappings, ...(request.restoreProvider ? {restore_provider_connection:true} : {})}, request.session.owner, () => {
+        if (!current()) throw new Error("The backup preview was superseded");
+      });
       if (!current()) return;
       panel._backupTransferPreview = result.preview;
       panel._backupTransferPreviewToken = result.preview_token;

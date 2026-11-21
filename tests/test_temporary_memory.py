@@ -740,7 +740,7 @@ def test_store_factory_uses_private_atomic_non_loop_serialization(monkeypatch) -
     }
 
 
-async def test_cold_snapshot_skips_corruption_without_creating_manager(
+async def test_cold_snapshot_reports_corruption_without_creating_manager(
     monkeypatch,
 ) -> None:
     store = ValidationStorage(
@@ -760,15 +760,14 @@ async def test_cold_snapshot_skips_corruption_without_creating_manager(
     )
     hass = SimpleNamespace(data={})
 
-    result = await temporary_memory.async_read_temporary_memory_snapshot(
-        hass,
-        "entry",
-        "agent",
-        "conversation:kitchen",
-        owner_scope_id="user:alice",
-    )
-
-    assert [record.memory_id for record in result] == ["visible"]
+    with pytest.raises(ValueError, match="needs repair"):
+        await temporary_memory.async_read_temporary_memory_snapshot(
+            hass,
+            "entry",
+            "agent",
+            "conversation:kitchen",
+            owner_scope_id="user:alice",
+        )
     assert temporary_memory.get_loaded_temporary_memory(hass, "entry", "agent") is None
     assert store.save_count == 0
 

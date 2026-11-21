@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, UnsupportedStorageVersionError
 
 from .agent_config import (
     configured_function_tools_from_data,
@@ -113,24 +113,42 @@ async def async_preview_effective_request(
     # Assist continuity. A preview has no conversation/device ID, but does know
     # the authenticated Personal owner whose context a fresh request can use.
     temporary_scope = f"user:{user_id}"
-    if temporary_mode != TEMPORARY_MEMORY_OFF and guest_policy.temporary_memory:
-        temporary_memories = (
-            await temporary.async_active_snapshot(
-                temporary_scope, owner_scope_id=f"user:{user_id}"
-            )
-            if temporary is not None
-            else await async_read_temporary_memory_snapshot(
-                hass,
-                entry.entry_id,
-                subentry.subentry_id,
-                temporary_scope,
-                owner_scope_id=f"user:{user_id}",
-            )
-        )
-    elif temporary_mode != TEMPORARY_MEMORY_OFF:
+    temporary_available = temporary_mode != TEMPORARY_MEMORY_OFF
+    if temporary_available and not guest_policy.temporary_memory:
+        temporary_available = False
         notes.append(
             "Active temporary memories are excluded by the current Guest Mode policy."
         )
+    elif temporary_available:
+        temporary_available = (
+            subsystem_status.get("temporary_memory", {}).get("status") != "failed"
+        )
+        if temporary_available:
+            try:
+                temporary_memories = (
+                    await temporary.async_active_snapshot(
+                        temporary_scope, owner_scope_id=temporary_scope
+                    )
+                    if temporary is not None
+                    else await async_read_temporary_memory_snapshot(
+                        hass,
+                        entry.entry_id,
+                        subentry.subentry_id,
+                        temporary_scope,
+                        owner_scope_id=temporary_scope,
+                    )
+                )
+            except (
+                UnsupportedStorageVersionError,
+                HomeAssistantError,
+                OSError,
+                ValueError,
+            ):
+                temporary_available = False
+        if not temporary_available:
+            notes.append(
+                "Temporary Memory is unavailable; its context, tools and instructions are excluded."
+            )
 
     skill_manager = SkillManager.get_loaded_instance()
     enabled_names = set(options.get(CONF_SKILLS, []) or [])
@@ -201,7 +219,7 @@ async def async_preview_effective_request(
             knowledge_available=knowledge_available,
             guest_policy=guest_policy,
             memory_scope_available=memory_available,
-            temporary_scope_available=True,
+            temporary_scope_available=temporary_available,
             archive_available=archive_available,
         )
         availability_groups = groups
@@ -241,7 +259,7 @@ async def async_preview_effective_request(
             options,
             configured_names,
             memory_scope_available=memory_available,
-            temporary_scope_available=(temporary_mode != TEMPORARY_MEMORY_OFF),
+            temporary_scope_available=temporary_available,
             knowledge_available=knowledge_available,
             archive_available=archive_available,
             guest_policy=guest_policy,

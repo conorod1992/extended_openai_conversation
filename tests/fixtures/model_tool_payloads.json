@@ -96,6 +96,18 @@
             "minimum": 0,
             "default": 0
           },
+          "ranking": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "lexical",
+              "hybrid",
+              null
+            ],
+            "description": "For the next page, copy the prior result's ranking and use its next_offset."
+          },
           "category": {
             "type": [
               "string",
@@ -979,6 +991,18 @@
               ],
               "minimum": 0,
               "default": 0
+            },
+            "ranking": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "lexical",
+                "hybrid",
+                null
+              ],
+              "description": "For the next page, copy the prior result's ranking and use its next_offset."
             },
             "category": {
               "type": [

@@ -1945,7 +1945,7 @@ def memory_revision(memory: MemoryRecord) -> str:
 MEMORY_OPTIONAL_ARGUMENTS = {
     "add": frozenset({"subject", "key", "valid_from", "scope", "intent"}),
     "upsert": frozenset({"subject", "key", "valid_from", "scope", "intent"}),
-    "search": frozenset({"category", "scope", "offset", "limit"}),
+    "search": frozenset({"category", "scope", "offset", "limit", "ranking"}),
     "list": frozenset({"category", "scope", "offset", "limit"}),
     "update": frozenset(
         {
@@ -2056,6 +2056,11 @@ def memory_tools() -> list[dict[str, Any]]:
                     "properties": {
                         "query": {"type": "string", "minLength": 1},
                         "offset": {"type": "integer", "minimum": 0, "default": 0},
+                        "ranking": {
+                            "type": "string",
+                            "enum": ["lexical", "hybrid"],
+                            "description": "For the next page, copy the prior result's ranking and use its next_offset.",
+                        },
                         "category": {"type": "string"},
                         "scope": {"type": "string", "enum": ["personal", "household"]},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 50},

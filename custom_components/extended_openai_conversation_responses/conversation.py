@@ -1877,13 +1877,14 @@ class ExtendedOpenAIAgentEntity(
     ) -> list[MemoryRecord]:
         if not query.strip():
             return []
-        return await self._async_search_memories(
+        memories, _ = await self._async_search_memories(
             readable_scope_ids,
             query,
             limit,
             allow_fuzzy_only=False,
             automatic_recall=True,
         )
+        return memories
 
     async def _async_search_memories(
         self,
@@ -1895,17 +1896,22 @@ class ExtendedOpenAIAgentEntity(
         offset: int = 0,
         allow_fuzzy_only: bool = True,
         automatic_recall: bool = False,
-    ) -> list[MemoryRecord]:
-        """Search using the configured lexical or Hybrid retrieval semantics."""
+        ranking: str | None = None,
+    ) -> tuple[list[MemoryRecord], str]:
+        """Search and report the ranking used for subsequent pages."""
         assert self._memory is not None
         if not readable_scope_ids:
-            return []
+            return [], "lexical"
         hybrid = (
             self.subentry.data.get(
                 CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE
             )
             == MEMORY_RETRIEVAL_HYBRID
         )
+        if hybrid and offset and ranking is None:
+            raise ValueError(
+                "Continue memory_search with the previous page's ranking, or restart at offset 0"
+            )
         query_embedding = (
             await self._memory.async_prepare_hybrid(
                 readable_scope_ids,
@@ -1913,9 +1919,13 @@ class ExtendedOpenAIAgentEntity(
                 category=category,
                 automatic_recall=automatic_recall,
             )
-            if hybrid
+            if hybrid and ranking != "lexical"
             else None
         )
+        if ranking == "hybrid" and query_embedding is None:
+            raise ValueError(
+                "Hybrid ranking is unavailable; restart memory_search at offset 0"
+            )
         search_scope: str | list[str] = (
             readable_scope_ids[0]
             if not hybrid and len(readable_scope_ids) == 1
@@ -1928,15 +1938,16 @@ class ExtendedOpenAIAgentEntity(
             search_options["allow_fuzzy_only"] = False
         if automatic_recall:
             search_options["automatic_recall"] = True
-        return await self._memory.async_search(
+        memories = await self._memory.async_search(
             search_scope,
             query,
             category,
             limit,
             query_embedding=query_embedding,
-            hybrid=hybrid and query_embedding is not None,
+            hybrid=query_embedding is not None,
             **search_options,
         )
+        return memories, "hybrid" if query_embedding is not None else "lexical"
 
     async def _async_create_embeddings(
         self, inputs: list[str], *, model: str | None = None
@@ -2912,13 +2923,17 @@ class ExtendedOpenAIAgentEntity(
             offset = arguments.get("offset", 0)
             if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
                 raise ValueError("offset must be a nonnegative integer")
+            ranking = arguments.get("ranking")
+            if ranking is not None and ranking not in ("lexical", "hybrid"):
+                raise ValueError("ranking must be lexical or hybrid")
             limit = max(1, min(limit, 50))
-            memories = await self._async_search_memories(
+            memories, ranking = await self._async_search_memories(
                 search_scopes,
                 query,
                 limit + 1,
                 category,
-                **cast(dict[str, Any], {"offset": offset} if offset else {}),
+                offset=offset,
+                ranking=ranking,
             )
             personal_id = self._personal_memory_scope_id(llm_context)
             return bounded_record_page(
@@ -2930,6 +2945,7 @@ class ExtendedOpenAIAgentEntity(
                         for memory in memories[:limit]
                     ],
                     "offset": offset,
+                    "ranking": ranking,
                     "has_more": len(memories) > limit,
                 },
                 "memories",

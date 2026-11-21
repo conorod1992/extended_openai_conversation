@@ -415,3 +415,25 @@ async def test_automation_update_finishes_before_propagating_cancellation() -> N
     with pytest.raises(asyncio.CancelledError):
         await task
     assert completed
+
+
+@pytest.mark.parametrize(
+    ("document", "closing"),
+    [
+        ("---\n- &id001 {id: first} # Entry\n# Keep instructions\n...\n# Footer\n", "...\n# Footer\n"),
+        ("---\n  - &id001 {id: first} # Entry\n# Keep instructions\n", ""),
+        ("--- [\n  &id001 {id: first}, # Entry\n  # Keep instructions\n] # Footer\n", "] # Footer\n"),
+        ("--- [\n  &id001 {id: first} # Entry\n  # Keep instructions\n] # Footer\n", "] # Footer\n"),
+    ],
+    ids=["document-end", "indented-block", "flow-trailing-comma", "flow"],
+)
+def test_append_automation_preserves_nonempty_yaml_document(tmp_path, document, closing):
+    path = tmp_path / "automations.yaml"
+    path.write_text(document, encoding="utf-8")
+    reused = ["step"]
+    record = {"id": "second", "alias": "Line one\nLine two", "actions": reused, "triggers": reused}
+    previous, _, updated = _append_automation_atomic(path, record)
+    assert previous == document
+    assert updated.startswith(document.removesuffix(closing) if closing else document)
+    assert updated.endswith(closing)
+    assert yaml.safe_load(updated) == [{"id": "first"}, record]

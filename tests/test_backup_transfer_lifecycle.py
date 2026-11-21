@@ -701,17 +701,17 @@ async def test_cancelling_stalled_full_inspection_releases_maintenance_for_new_s
     expected = (
         "inspection was cancelled"
         if termination == "cancel"
-        else "inspection timed out"
+        else "inspection is still running"
     )
     with pytest.raises(backup.BackupError, match=expected):
         await old
     result = await asyncio.wait_for(new, timeout=1)
     assert os.path.exists(sessions[0].path)
-    release.set()
     if termination == "timeout":
-        assert await backup_transfer._discard_import(hass, "A")
-    else:
-        assert await asyncio.wait_for(cancel, timeout=1)
+        cancel = asyncio.create_task(backup_transfer._discard_import(hass, "A"))
+        await asyncio.sleep(0)
+    release.set()
+    assert await asyncio.wait_for(cancel, timeout=1)
     assert result["preview_token"]
     assert backup_transfer._latest_previews(hass)[("entry-1", "agent-1")][0] == "B"
     assert not sessions[0].inspection_tasks
@@ -757,27 +757,24 @@ async def test_native_upload_worker_survives_timeout_without_blocking_agent(hass
     gate = backup_transfer.get_agent_maintenance_gate(hass, session.entry_id, session.subentry_id)
     try:
         for _ in range(3):
-            with pytest.raises(backup.BackupError, match="inspection timed out"):
+            with pytest.raises(backup.BackupError, match="inspection is still running"):
                 await backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, request)
             assert entered.is_set()
             assert len(calls) == 1
             async with asyncio.timeout(0.5), gate.shared():
                 assert not gate._writer_active
-        with pytest.raises(backup.BackupError, match="still pending"):
-            await backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, {**request, "inspect_only": False})
-        retry_started = asyncio.Event()
-        prepare = backup_transfer._async_prepare_import
-
-        async def observe_retry(*args, **kwargs):
-            retry_started.set()
-            return await prepare(*args, **kwargs)
-
-        monkeypatch.setattr(backup_transfer, "_async_prepare_import", observe_retry)
-        monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 1)
-        retry = asyncio.create_task(backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, request))
-        await asyncio.wait_for(retry_started.wait(), timeout=1)
+        # Let validation finish without any waiting caller. A later retry
+        # retrieves the inspection result and never reparses the upload.
+        inspection = session.inspection
+        assert inspection is not None
         release.set()
-        assert await retry == {"valid": True, "preview_token": None}
+        await asyncio.wait_for(asyncio.shield(inspection), timeout=1)
+        assert session.preparation is None
+        assert not session.inspection_tasks
+        assert await backup_transfer._inspect_import(
+            hass, session.entry_id, session.subentry_id, request
+        ) == {"valid": True, "preview_token": None}
+        assert session.inspection is None
         assert len(calls) == 1
         assert session.preparation is None
 
@@ -785,7 +782,7 @@ async def test_native_upload_worker_survives_timeout_without_blocking_agent(hass
         # the parsed document while keeping the upload available for another try.
         release.clear()
         monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 0.05)
-        with pytest.raises(backup.BackupError, match="inspection timed out"):
+        with pytest.raises(backup.BackupError, match="inspection is still running"):
             await backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, request)
         abandoned = session.preparation
         assert abandoned is not None

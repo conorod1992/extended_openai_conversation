@@ -61,6 +61,12 @@ MAX_TRANSFER_TEMP_BYTES = 512 * 1024 * 1024
 TRANSFER_TTL_SECONDS = 15 * 60
 IMPORT_INSPECTION_TIMEOUT_SECONDS = 60
 _MAX_BASE64_CHUNK_CHARS = 4 * math.ceil(BACKUP_CHUNK_BYTES / 3) + 4
+
+
+class _InspectionPending(backup.BackupError):
+    """The same upload can be inspected again when its work is ready."""
+
+
 _EXPORTS_KEY = f"{DOMAIN}.backup_transfer_exports"
 _IMPORTS_KEY = f"{DOMAIN}.backup_transfer_imports"
 _REGISTRY_LOCK_KEY = f"{DOMAIN}.backup_transfer_registry_lock"
@@ -140,6 +146,8 @@ class ImportSession:
     preview_restore_provider: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     inspection_tasks: set[asyncio.Task[Any]] = field(default_factory=set, repr=False)
+    inspection: asyncio.Task[dict[str, Any]] | None = field(default=None, repr=False)
+    inspection_data: dict[str, Any] | None = field(default=None, repr=False)
     preparation: asyncio.Task[transfer.PreparedTransfer] | None = field(
         default=None, repr=False
     )
@@ -954,7 +962,7 @@ async def _async_prepare_import(
             raise backup.BackupError("The backup upload has expired or was cancelled")
         task = session.preparation
         if task is not None and not task.done() and key != session.preparation_key:
-            raise backup.BackupError(
+            raise _InspectionPending(
                 "Backup validation is still pending; retry after it completes"
             )
         if task is None or key != session.preparation_key:
@@ -1293,21 +1301,33 @@ async def _inspect_import(
 ) -> dict[str, Any]:
     await _async_cleanup_expired(hass)
     session = _completed_import(hass, data.get("session_id"), entry_id, subentry_id)
-    task = asyncio.create_task(_inspect_import_owned(hass, session, data))
-    session.inspection_tasks.add(task)
-    try:
-        async with asyncio.timeout(IMPORT_INSPECTION_TIMEOUT_SECONDS):
-            return await task
-    except TimeoutError as err:
-        raise backup.BackupError(
-            "Backup inspection timed out; retry validation"
-        ) from err
-    except asyncio.CancelledError as err:
-        if (caller := asyncio.current_task()) is not None and caller.cancelling():
-            raise
-        raise backup.BackupError("The backup inspection was cancelled") from err
-    finally:
-        session.inspection_tasks.discard(task)
+    task = session.inspection
+    if task is None or data != session.inspection_data:
+        if task is not None and not task.done():
+            task.cancel()
+        task = asyncio.create_task(_inspect_import_owned(hass, session, data))
+        session.inspection = task
+        session.inspection_data = data
+        session.inspection_tasks.add(task)
+
+        def release(completed: asyncio.Task[dict[str, Any]]) -> None:
+            session.inspection_tasks.discard(completed)
+            if not completed.cancelled():
+                completed.exception()
+
+        task.add_done_callback(release)
+
+    # Waiting callers may disconnect or time out. A matching retry can collect
+    # the compact result even after the parsed document has been released.
+    done, _ = await asyncio.wait({task}, timeout=IMPORT_INSPECTION_TIMEOUT_SECONDS)
+    if not done:
+        raise _InspectionPending("Backup inspection is still running")
+    if session.inspection is task:
+        session.inspection = None
+        session.inspection_data = None
+    if task.cancelled():
+        raise backup.BackupError("The backup inspection was cancelled")
+    return task.result()
 
 
 async def _inspect_import_owned(
@@ -1677,6 +1697,9 @@ async def websocket_backup_transfer(
 
     try:
         result = await async_backup_transfer_command(hass, msg)
+    except _InspectionPending as err:
+        connection.send_error(msg["id"], "inspection_pending", str(err))
+        return
     except (HomeAssistantError, RuntimeError, ValueError, OSError) as err:
         if isinstance(err, OSError) and mutation_failure(err) is None:
             raise

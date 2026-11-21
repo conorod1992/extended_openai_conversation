@@ -260,7 +260,9 @@ test("Functions: a satellite tool can be added without rebinding existing cards"
         catalogReads.push(message.preview_device_id ?? null);
         return Promise.resolve({
           tools: message.preview_device_id === "kitchen" ? [{name: "new_ha_tool", source: "fixture", description: "Fixture live tool", reference}] : [],
-          saved: {},
+          saved: addDevice && !message.preview_device_id
+            ? {new_ha_tool: {description: "Unavailable in this preview context", available: false, source: "fixture"}}
+            : {},
           preview_devices: [{device_id: "kitchen", name: "Kitchen satellite"}],
         });
       }
@@ -280,10 +282,11 @@ test("Functions: a satellite tool can be added without rebinding existing cards"
   await dialog.locator("[data-tools] input").check();
   await dialog.locator("[data-add]").click();
   await expect(dialog).toHaveCount(0);
-  await expect(tool(panel, "new_ha_tool")).toContainText("Saved tool metadata");
+  await expect(tool(panel, "new_ha_tool")).toContainText("Unavailable in preview");
+  await expect(tool(panel, "new_ha_tool")).not.toContainText("Saved tool metadata");
   await expectRetained(page, '[data-tool-key="tool_0"]');
   expect(await page.evaluate(() => ({catalogReads, addDevice}))).toEqual({
-    catalogReads: [null, "kitchen"],
+    catalogReads: [null, "kitchen", null],
     addDevice: "kitchen",
   });
 });
