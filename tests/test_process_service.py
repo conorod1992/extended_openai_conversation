@@ -444,6 +444,8 @@ async def test_finished_event_distinguishes_provider_success_and_local_rule():
 
 async def test_locally_consumed_rule_has_zero_usage_run_and_archive_turn():
     entity, user_input, chat_log = _message_entity_and_input()
+    entity.hass.data = {}
+    entity.entry = SimpleNamespace(entry_id="provider")
     usage = UsageManager(
         MemoryStorage(), MemoryStorage(), MemoryStorage(), agent_subentry_id="agent"
     )

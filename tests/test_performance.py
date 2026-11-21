@@ -483,6 +483,7 @@ def test_system_prompt_sets_context_from_final_render(monkeypatch) -> None:
         _get_enabled_skills=lambda: [],
         _knowledge_available=False,
         _archive_reads_available=False,
+        _archive_session_available=False,
     )
     token = performance._PROMPT_CACHE_CONTEXT.set(None)
     try:
