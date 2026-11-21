@@ -3348,11 +3348,10 @@ class ExtendedOpenAIAgentEntity(
                 raise RuntimeError("conversation archive is disabled")
             if self._archive is None:
                 raise RuntimeError("conversation archive is unavailable")
-            scope = _ACTIVE_TURN.get().scope
-            active = _ACTIVE_TURN.get().archive
-            if scope is None or active is None:
+            turn = _ACTIVE_TURN.get()
+            scope = turn.scope
+            if scope is None:
                 raise RuntimeError("active conversation session is unavailable")
-            session_key, session_id = active
             if operation == "search":
                 if not self.subentry.data.get(
                     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -3379,6 +3378,9 @@ class ExtendedOpenAIAgentEntity(
                     int(arguments.get("limit", 6)),
                     text_offset=int(arguments.get("text_offset", 0)),
                 )
+            if turn.archive is None:
+                raise RuntimeError("active conversation session is unavailable")
+            session_key, session_id = turn.archive
             if operation == "private":
                 # Do this before awaiting persistence: a failed privacy write must
                 # not cause finalization to save the current private request.

@@ -18,6 +18,7 @@ from custom_components.extended_openai_conversation_responses.functions.native i
     _restore_automation_file,
 )
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util.yaml import load_yaml
 from tests.lock_probe import LockProbe
 
 
@@ -437,3 +438,23 @@ def test_append_automation_preserves_nonempty_yaml_document(tmp_path, document, 
     assert updated.startswith(document.removesuffix(closing) if closing else document)
     assert updated.endswith(closing)
     assert yaml.safe_load(updated) == [{"id": "first"}, record]
+
+
+@pytest.mark.parametrize(
+    "scalar",
+    ["| # Keep this comment\n    away", ">+2 # Keep this comment\n    away\n    "],
+    ids=["literal-clip", "folded-keep"],
+)
+def test_append_preserves_existing_eof_block_scalar(tmp_path, scalar):
+    path = tmp_path / "automations.yaml"
+    original = f"- id: first\n  alias: &label {scalar}"
+    path.write_text(original, encoding="utf-8")
+    existing = load_yaml(str(path))[0]
+    next_entry = {"id": "second", "alias": "New automation"}
+
+    previous, _, updated = _append_automation_atomic(path, next_entry)
+
+    assert previous == original
+    assert "# Keep this comment" in updated
+    assert "alias: &label" in updated
+    assert load_yaml(str(path)) == [existing, next_entry]

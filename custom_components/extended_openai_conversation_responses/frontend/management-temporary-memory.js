@@ -4,9 +4,6 @@ import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, s
 import {ensureTemporaryScope, memoryCollectionIdentity} from "./management-data-state.js";
 import {embeddedFeatureStatusMarkup} from "./management-feature-status-core.js";
 import {friendlySettingValue} from "./management-setting-metadata.js";
-const CONTENT_LIMIT = 500;
-const CATEGORY_LIMIT = 64;
-
 function validOwnerScope(scope) {
   return scope?.scope_type === "user" || scope?.scope_type === "shared";
 }
@@ -115,8 +112,8 @@ function temporaryDialog(panel) {
     <form id="temporary-memory-form">
       <div class="dialog-header"><h2 id="temporary-memory-dialog-title">Edit short-term memory</h2><button type="button" class="icon close-temporary-editor" aria-label="Close">×</button></div>
       <div class="dialog-body">
-        <label>Memory<textarea id="temporary-memory-content" maxlength="${CONTENT_LIMIT}" required spellcheck="true"></textarea></label>
-        <label>Category<input id="temporary-memory-category" maxlength="${CATEGORY_LIMIT}" required></label>
+        <label>Memory<textarea id="temporary-memory-content" required spellcheck="true"></textarea></label>
+        <label>Category<input id="temporary-memory-category" required></label>
         <label>Type<input value="Short-term" readonly></label><label>Expires<input id="temporary-memory-expiry" type="datetime-local" step="1" required></label>
         <p class="help">Home Assistant local time. Choose a future time within one year.</p>
         <p id="temporary-memory-meta" class="meta"></p>
@@ -300,8 +297,6 @@ export function renderTemporaryScopePicker(panel) {
 export {
   temporaryDialog,
   deleteTemporaryMemory,
-  CATEGORY_LIMIT,
-  CONTENT_LIMIT,
   ensureTemporaryScope,
   ownerLabel,
   renderTemporaryMemories,

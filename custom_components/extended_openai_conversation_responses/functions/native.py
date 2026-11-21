@@ -10,6 +10,7 @@ from io import StringIO
 import logging
 import os
 from pathlib import Path
+import re
 from textwrap import indent
 from typing import Any, cast
 from uuid import uuid4
@@ -325,6 +326,43 @@ def _append_yaml_block(prefix: str, body: str) -> str:
     return prefix + body
 
 
+def _preserve_yaml_eof_scalar(prefix: str, tokens: list[yaml.Token]) -> str:
+    """Keep an existing block scalar's value when its EOF becomes a line break."""
+    if prefix.endswith("\n"):
+        return prefix
+    scalar = next(
+        (token for token in reversed(tokens) if isinstance(token, yaml.ScalarToken)),
+        None,
+    )
+    if (
+        scalar is None
+        or scalar.style not in {"|", ">"}
+        or prefix[scalar.end_mark.index :].strip(" \t")
+    ):
+        return prefix
+
+    start = scalar.start_mark.index
+    terminated = next(
+        token
+        for token in yaml.scan(prefix + "\n", Loader=yaml.SafeLoader)
+        if isinstance(token, yaml.ScalarToken) and token.start_mark.index == start
+    )
+    if terminated.value == scalar.value:
+        return prefix
+
+    # A quoted scalar encodes the exact line breaks, including keep chomping
+    # with whitespace on the final line. Keep any comment on the original header.
+    header = prefix[start:].splitlines()[0]
+    comment = re.search(r"[ \t]+#.*", header)
+    quoted = yaml.safe_dump(
+        scalar.value,
+        default_style='"',
+        allow_unicode=False,
+        width=max(80, len(scalar.value) * 12 + 2),
+    ).rstrip()
+    return prefix[:start] + quoted + (comment.group() if comment else "")
+
+
 def _disambiguate_yaml_anchors(body: str, reserved: set[str]) -> str:
     """Keep aliases in the new entry from colliding with existing anchors."""
     if not reserved:
@@ -413,9 +451,12 @@ def _append_automation_atomic(
                 ),
                 len(existing_text),
             )
+            prefix = existing_text[:end]
+            if end == len(existing_text):
+                prefix = _preserve_yaml_eof_scalar(prefix, tokens)
             updated = (
                 _append_yaml_block(
-                    existing_text[:end],
+                    prefix,
                     indent(
                         _disambiguate_yaml_anchors(raw_config, reserved_anchors),
                         " " * indentation,

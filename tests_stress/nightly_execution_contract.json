@@ -456,6 +456,8 @@
     "tests/functions/test_native_automation_concurrency.py::test_append_automation_preserves_nonempty_yaml_document[flow]",
     "tests/functions/test_native_automation_concurrency.py::test_append_automation_preserves_nonempty_yaml_document[flow-trailing-comma]",
     "tests/functions/test_native_automation_concurrency.py::test_append_automation_preserves_nonempty_yaml_document[indented-block]",
+    "tests/functions/test_native_automation_concurrency.py::test_append_preserves_existing_eof_block_scalar[folded-keep]",
+    "tests/functions/test_native_automation_concurrency.py::test_append_preserves_existing_eof_block_scalar[literal-clip]",
     "tests/functions/test_native_automation_concurrency.py::test_automation_update_finishes_before_propagating_cancellation",
     "tests/functions/test_native_automation_concurrency.py::test_concurrent_add_automation_calls_preserve_both_entries",
     "tests/functions/test_native_automation_concurrency.py::test_reload_failure_preserves_external_edit_during_rollback",

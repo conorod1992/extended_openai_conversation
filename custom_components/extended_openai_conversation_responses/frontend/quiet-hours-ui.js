@@ -183,6 +183,12 @@ export function timedStructure(result) {
   return [result?.available, result?.state_entity_id, result?.satellites?.map(item => [item.satellite_entity_id, item.name]), result?.selection_issues, Object.keys(result?.config?.overrides || {})];
 }
 
+export function reconcileSavedPolicy(panel, previous) {
+  if (!same(timedStructure(previous), timedStructure(panel._result))) return false;
+  refreshTimedStatus(panel);
+  return true;
+}
+
 export function renderQuietHours(panel) {
   const result = panel._result || {};
   if (result.available === false) {

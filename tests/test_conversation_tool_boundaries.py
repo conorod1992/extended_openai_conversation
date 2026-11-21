@@ -25,6 +25,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
+from custom_components.extended_openai_conversation_responses.conversation_archive import (
+    ConversationArchive,
+)
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
 )
@@ -36,6 +39,7 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
 from homeassistant.helpers import llm
 from homeassistant.util import dt as dt_util
 from tests.test_conversation_archive import _archive
+from tests.test_persistence_compatibility_fixtures import ArchiveFixtureStorage, _fixture
 
 
 def _agent(options: dict | None = None) -> ExtendedOpenAIAgentEntity:
@@ -285,6 +289,44 @@ async def test_model_date_range_cannot_delete_turns_outside_requested_dates(
             assert allowed == {"deleted_sessions": 1, "deleted_turns": 2}
         finally:
             conversation._ACTIVE_TURN.reset(token)
+
+
+async def test_archive_read_tools_survive_unavailable_session_storage() -> None:
+    entity = _agent(
+        {CONF_ARCHIVE_ENABLED: True, CONF_ARCHIVE_MODEL_SEARCH_ENABLED: True}
+    )
+    entity._set_subsystem_status = lambda *args, **kwargs: None
+    entity._archive = ConversationArchive(
+        ArchiveFixtureStorage(_fixture("archive_mixed_corrupt.json")), "agent-1"
+    )
+    await entity._archive.async_initialize()
+    scope = user_scope("alice", source="authenticated_user")
+    session = await entity._async_begin_archive_session(
+        "conversation:new-chat", scope, "new-chat", SimpleNamespace(archive_retention=True)
+    )
+    assert session is None
+    assert entity._archive.stats()["storage_repair_required"]
+
+    token = conversation._ACTIVE_TURN.set(conversation.ConversationTurnContext(scope=scope))
+    try:
+        fetched = await entity._async_execute_archive_tool("get", {"session_id": "session-good"})
+        assert fetched["turns"][0]["turn_id"] == "turn-good"
+        searched = await entity._async_execute_archive_tool("search", {"query": "Hello"})
+        assert [match["session_id"] for match in searched["results"]] == ["session-good"]
+        with pytest.raises(RuntimeError, match="active conversation session is unavailable"):
+            await entity._async_execute_archive_tool("private", {})
+    finally:
+        conversation._ACTIVE_TURN.reset(token)
+
+    other_scope = user_scope("bob", source="authenticated_user")
+    token = conversation._ACTIVE_TURN.set(conversation.ConversationTurnContext(scope=other_scope))
+    try:
+        with pytest.raises(ValueError, match="conversation session not found"):
+            await entity._async_execute_archive_tool("get", {"session_id": "session-good"})
+        searched = await entity._async_execute_archive_tool("search", {"query": "Hello"})
+        assert searched["results"] == []
+    finally:
+        conversation._ACTIVE_TURN.reset(token)
 
 
 async def test_archive_dispatcher_routes_session_operations_and_resume_boundary() -> None:

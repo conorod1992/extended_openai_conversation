@@ -62,6 +62,23 @@ test("Quiet Hours page save preserves DOM and patches saved status", async ({pag
   await expectHarnessClean(page, errors);
 });
 
+for (const bundled of [false, true]) {
+  test(`Quiet Hours removes a cleared orphaned override after saving (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/quiet-hours", `&quiet_replacement=1&bundle=${Number(bundled)}`));
+    const panel = page.locator("extended-openai-management-panel");
+    const clear = panel.getByRole("button", {name:"Clear saved override"});
+    await expect(clear).toBeVisible();
+    const orphan = await clear.getAttribute("data-id");
+    await clear.click();
+    await panel.locator("#save-page").click();
+    await expect(panel.locator(".save-bar")).toHaveCount(0);
+    await expect(panel.locator(`[data-qh-satellite="${orphan}"]`)).toHaveCount(0);
+    await expect(clear).toHaveCount(0);
+    await expectHarnessClean(page, errors);
+  });
+}
+
 test("Guest Mode policy save preserves DOM", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/guest-mode"));
