@@ -500,6 +500,54 @@ async def test_speech_listener_preserves_negation_after_url_path() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Run `cd ..` next.", "Run cd .. next."),
+        ("Run `find . -type f` next.", "Run find . -type f next."),
+        ("Run `grep . file` next.", "Run grep . file next."),
+        ('Keep `print("a  b")`.', 'Keep print("a  b").'),
+        ("[https://example.com — do not reset the router](https://example.com)", "— do not reset the router"),
+        ("[Visit https://example.com for help](https://example.com/docs)", "Visit for help"),
+        ("[**https://example.com**](https://example.com)", ""),
+        ("[`[title](page)`](https://example.com/docs)", "[title](page)"),
+        ("[a [nested] label](https://example.com/docs)", "a [nested] label"),
+        ("*[Run `cd ..`](https://example.com/docs) next*", "Run cd .. next"),
+        ("[# Heading](https://example.com/docs)", "# Heading"),
+        ("[1) literal](https://example.com/docs)", "1) literal"),
+        ("Before http://router.local/manual—no reset is required.", "Before —no reset is required."),
+    ],
+)
+async def test_public_speech_preserves_literal_meaning_at_every_split(raw, expected):
+    config = _config()
+    assert process_speech_text(raw, config) == expected
+    # Trigger the completed label index as well as the short-input scanner.
+    prefix = "Previous sentence. " * 230
+    completed = process_speech_text(prefix + raw, config)
+    assert completed == (prefix + expected).rstrip()
+
+    async def present(parts):
+        heard = []
+        chat_log = conversation.ChatLog(SimpleNamespace(data={}), "typed-speech")
+        chat_log.delta_listener = lambda _log, delta: heard.append(delta.get("content", ""))
+
+        async def stream():
+            yield {"role": "assistant"}
+            for part in parts:
+                if part:
+                    yield {"content": part}
+
+        with async_streaming_speech_cleanup(chat_log, config):
+            async for _ in chat_log.async_add_delta_content_stream("conversation.test", stream()):
+                pass
+        assert chat_log.content[-1].content == raw
+        return "".join(heard)
+
+    assert await present(raw) == expected
+    for split in range(len(raw) + 1):
+        assert await present((raw[:split], raw[split:])) == expected, split
+
+
 def test_custom_regex_requires_completed_response_processing() -> None:
     assert has_custom_speech_replacements(
         _config(

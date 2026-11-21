@@ -214,6 +214,8 @@ def test_unspaced_dash_ends_overlong_bare_url(wrapper):
         "https://example.invalid/device—red/details",
         "https://example.invalid?search=Boston–Washington",
         "https://example.invalid#Boston–Washington",
+        "https://example.invalid/path?sig=opaque—value",
+        "https://example.invalid/path#part—name",
         "https://example.invalid/機器—never.html",
         "https://example.invalid/日本語?場所=東京–大阪#取扱説明",
         '"https://example.invalid/案内、注意"',
@@ -227,6 +229,9 @@ def test_bare_url_keeps_path_query_and_fragment_dashes_hidden(url):
     ("tail", "expected"),
     [
         ("—never press Reset.", "Read —never press Reset."),
+        ("—no reset is required.", "Read —no reset is required."),
+        ("—no, leave it on.", "Read —no, leave it on."),
+        ("—consult the manual.", "Read —consult the manual."),
         ("—don't reset the router.", "Read —don't reset the router."),
         ("—don’t reset the router.", "Read —don’t reset the router."),
         ("—do not reset.", "Read —do not reset."),

@@ -110,13 +110,13 @@ def test_replacements_run_after_fence_info_cleanup():
 @pytest.mark.parametrize(
     "source,expected",
     [
-        ("- ```python\n  print('hello')\n  ```", "print('hello')"),
-        ("1. Example:\n   ```yaml\n   value: 1\n   ```", "1. Example:\n value: 1"),
+        ("- ```python\n  print('hello')\n  ```", "  print('hello')"),
+        ("1. Example:\n   ```yaml\n   value: 1\n   ```", "1. Example:\n   value: 1"),
         ("> ```python\n> print('hello')\n> ```", "print('hello')"),
         ("> ```text\n>code\n> >> 2\n>```", "code\n>> 2"),
         (
             "- Example:\n\n    ```python title=demo\n    x = 1 > 0\n    y = 8 >> 2\n    ```",
-            "Example:\n x = 1 > 0\n y = 8 >> 2",
+            "Example:\n    x = 1 > 0\n    y = 8 >> 2",
         ),
         (
             "> > ```text\n> > > operator\n> > >> shift\n> > https://example.com\n> > 123\n> > - **literal**\n> > ```",
@@ -124,15 +124,15 @@ def test_replacements_run_after_fence_info_cleanup():
         ),
         (
             "> - ```python\n>   `inline` and \\literal\n>   ```",
-            "`inline` and \\literal",
+            "  `inline` and \\literal",
         ),
-        ("Literal:\n    ```yaml\n    value: 1\n    ```", "Literal:\n yaml\n value: 1"),
+        ("Literal:\n    ```yaml\n    value: 1\n    ```", "Literal:\n yaml\n    value: 1\n    "),
         ("https://example.com > ```yaml\nbody\n```", "yaml\nbody"),
         ("- https://example.com ```yaml\nbody\n```", "yaml\nbody"),
         (r"- \```yaml" + "\nbody\n", "`yaml\nbody"),
         (
             "- Example:\n    ```text\n    # heading\n    1. numbered\n    > quote\n    ---\n    https://example.com\n    ```\nAfter",
-            "Example:\n # heading\n 1. numbered\n > quote\n ---\n https://example.com\nAfter",
+            "Example:\n    # heading\n    1. numbered\n    > quote\n    ---\n    https://example.com\nAfter",
         ),
     ],
 )
@@ -162,11 +162,11 @@ def test_container_fences_disabled_and_bounded_fallback():
         ),
         (
             "- Example:\n    ```text\n    valid **code**\n\n    https://inside.example\n**More info** https://example.com",
-            "Example:\n valid **code**\n https://inside.example\nMore info",
+            "Example:\n    valid **code**\n\n    https://inside.example\nMore info",
         ),
         (
             "> - ```text\n>   **code**\n> **More info** https://example.com",
-            "**code**\nMore info",
+            "  **code**\nMore info",
         ),
         (
             "> > ```text\n> > 2 >> 1\n> **More info** https://example.com",
