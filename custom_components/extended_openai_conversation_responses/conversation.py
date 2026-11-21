@@ -2936,7 +2936,7 @@ class ExtendedOpenAIAgentEntity(
                 ranking=ranking,
             )
             personal_id = self._personal_memory_scope_id(llm_context)
-            return bounded_record_page(
+            page = bounded_record_page(
                 {
                     "memories": [
                         model_memory_as_dict(
@@ -2950,6 +2950,9 @@ class ExtendedOpenAIAgentEntity(
                 },
                 "memories",
             )
+            if not page["has_more"]:
+                page.pop("ranking")
+            return page
         if operation == "list":
             category = arguments.get("category")
             limit = arguments.get("limit", 50)
