@@ -56,16 +56,22 @@ const bindingStatus = {
   unavailable: "Temporarily unavailable",
 };
 
-function quietHourSatellites(panel) {
-  const result = panel._result || {};
-  const discovered = result.satellites || [];
+function quietHourSatellites(result) {
+  const discovered = result?.satellites || [];
   const ids = new Set(discovered.map(item => item.satellite_entity_id));
-  const orphaned = Object.keys(result.config?.overrides || {}).filter(id => !ids.has(id));
+  const orphaned = Object.keys(result?.config?.overrides || {}).filter(id => !ids.has(id));
   return [...discovered, ...orphaned.map(id => ({satellite_entity_id:id, orphaned:true}))];
 }
 
 function bindingIssue(panel, entityId) {
   return panel._result?.selection_issues?.[entityId];
+}
+
+function replacementBindings(result, satelliteId) {
+  const saved = manualOverride(result?.config, satelliteId);
+  return [
+    [satelliteId, "satellite"], [saved.media_player_entity_id, "speaker"], [saved.wake_sound_entity_id, "wake-word switch"],
+  ].filter(([id]) => result?.selection_issues?.[id]?.status === "replaced");
 }
 
 // Summaries use the draft's selected entities. Clearing a saved manual override
@@ -125,10 +131,7 @@ function satelliteCard(panel, satellite, config) {
   const satelliteId = satellite.satellite_entity_id;
   const satelliteName = panel._e(satellite.name || satelliteId);
   const status = bindingStatus[bindingIssue(panel, satelliteId)?.status] || (satellite.orphaned ? "Temporarily unavailable" : "");
-  const saved = manualOverride(panel._result?.config, satelliteId);
-  const replacementButtons = [
-    [satelliteId, "satellite"], [saved.media_player_entity_id, "speaker"], [saved.wake_sound_entity_id, "wake-word switch"],
-  ].filter(([id]) => bindingIssue(panel, id)?.status === "replaced")
+  const replacementButtons = replacementBindings(panel._result, satelliteId)
     .map(([id, name]) => `<button type="button" class="secondary qh-rebind" data-id="${panel._e(id)}">Use replacement ${name}</button>`).join("");
   const clearOverride = satellite.orphaned && Object.hasOwn(config.overrides || {}, satelliteId)
     ? `<button type="button" class="secondary qh-clear-override" data-id="${panel._e(satelliteId)}">Clear saved override</button>` : "";
@@ -180,7 +183,9 @@ export function refreshTimedStatus(panel) {
 }
 
 export function timedStructure(result) {
-  return [result?.available, result?.state_entity_id, result?.satellites?.map(item => [item.satellite_entity_id, item.name]), result?.selection_issues, Object.keys(result?.config?.overrides || {})];
+  const cards = quietHourSatellites(result).map(({satellite_entity_id, name, orphaned}) =>
+    [satellite_entity_id, name, orphaned, replacementBindings(result, satellite_entity_id)]);
+  return [result?.available, result?.state_entity_id, cards, result?.selection_issues];
 }
 
 export function reconcileSavedPolicy(panel, previous) {
@@ -199,7 +204,7 @@ export function renderQuietHours(panel) {
   }
   const savedConfig = result.config || {};
   const config = panel._quietHoursDraft || savedConfig;
-  const satellites = quietHourSatellites(panel);
+  const satellites = quietHourSatellites(result);
   const maxPercent = Math.round(Number(config.max_volume ?? 0.2) * 100);
   return `<style>${QUIET_HOURS_STYLES}</style><section class="page-intro"><h1>Quiet Hours</h1><p>Schedule quieter Assist speakers and wake-word chimes.</p></section>
     <section class="content-card">
@@ -241,7 +246,7 @@ function refreshSatelliteSummary(panel, card, satellite) {
 }
 
 function satelliteFor(panel, id) {
-  return quietHourSatellites(panel).find(item => item.satellite_entity_id === id);
+  return quietHourSatellites(panel._result).find(item => item.satellite_entity_id === id);
 }
 
 function pickerContext(satellite, media) {
