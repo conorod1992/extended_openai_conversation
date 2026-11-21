@@ -14,6 +14,7 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_API_MODE,
     CONF_ARCHIVE_ENABLED,
+    CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
     CONF_CHAT_MODEL,
     CONF_CONTINUE_CONVERSATION,
     CONF_CONVERSATION_CONTINUITY,
@@ -35,6 +36,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     LEGACY_DEFAULT_PROMPT_6_8_3,
     LEGACY_DEFAULT_PROMPT_WITH_SKILLS,
     MEMORY_MODE_AUTOMATIC,
+    SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
@@ -448,6 +450,26 @@ def test_retention_guidance_matches_available_tools(hass, search_enabled):
     assert "conversation_private" in tools
 
 
+@pytest.mark.parametrize("loaded", [False, True])
+def test_live_persistent_memory_guidance_and_tools_require_manager(hass, loaded):
+    from tests.test_runtime_readiness import _agent
+
+    options = normalize_agent_config({
+        CONF_PROMPT: "BASE",
+        CONF_MEMORY_MODE: MEMORY_MODE_AUTOMATIC,
+        CONF_CURRENT_DATETIME_ENABLED: False,
+        CONF_EXPOSED_ENTITIES_ENABLED: False,
+    })
+    agent = _agent(hass, SimpleNamespace(entry_id="entry"), SimpleNamespace(data=options))
+    agent._memory = object() if loaded else None
+    context = SimpleNamespace(device_id=None)
+    prompt = agent._build_system_prompt([], context, None)
+    tools = {tool["spec"]["name"] for tool in agent._get_function_tools()}
+    assert ("Personal mode: Automatic" in prompt) is loaded
+    assert ("memory_add" in tools) is loaded
+    assert ("memory_search" in tools) is loaded
+
+
 def test_zero_budget_omits_tool_guidance_but_keeps_memory_context(hass):
     result = render_effective_prompt(
         hass, {
@@ -554,6 +576,7 @@ async def test_preview_matches_production_builder_without_user_or_history(
     entity.subentry = subentry
     entity.skill_manager = SimpleNamespace(get_all_skills=lambda: [])
     entity._knowledge = None
+    entity._memory = object()
     production = entity._build_system_prompt(
         _entity_context(),
         SimpleNamespace(device_id=None),
@@ -573,6 +596,41 @@ async def test_preview_matches_production_builder_without_user_or_history(
     )
     assert '"name":"bash"' not in function_tools
     assert preview["function_group_savings"]["characters"] == 0
+
+
+@pytest.mark.parametrize("status", ["failed", "healthy", "disabled"])
+async def test_preview_observes_retained_storage_failure_without_loading_it(
+    hass, monkeypatch, status,
+):
+    _setup_area_template_registries(hass)
+    options = _options()
+    options.update({
+        CONF_PROMPT: "BASE",
+        CONF_ARCHIVE_MODEL_SEARCH_ENABLED: True,
+        CONF_KNOWLEDGE_ENABLED: False,
+        CONF_TEMPORARY_MEMORY: "off",
+        CONF_EXPOSED_ENTITIES_ENABLED: False,
+    })
+    entry = SimpleNamespace(entry_id="entry", data={})
+    subentry = SimpleNamespace(subentry_id="assistant", data=options)
+    hass.data[SUBSYSTEM_STATUS_KEY] = {
+        ("entry", "assistant"): {
+            "archive": {"status": status},
+            "persistent_memory": {"status": status},
+        },
+        ("entry", "other-assistant"): {"archive": {"status": "failed"}},
+    }
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
+        lambda _hass: [],
+    )
+    result = await async_preview_effective_request(hass, entry, subentry, options, "admin")
+    tools = next(section["content"] for section in result["sections"] if section["key"] == "integration_tools")
+    assert ('"conversation_search"' in tools) is (status != "failed")
+    assert ('"memory_search"' in tools) is (status != "failed")
+    assert ("Retained conversation archive" in result["prompt"]) is (status != "failed")
+    assert any("Conversation Archive is unavailable" in note for note in result["notes"]) is (status == "failed")
+    assert any("Persistent Memory is unavailable" in note for note in result["notes"]) is (status == "failed")
 
 
 async def test_preview_reads_temporary_context_without_mutation(

@@ -358,7 +358,9 @@ def _append_automation_atomic(
         # Keep document markers, anchors and comments on their own lines.
         if prefix and not prefix.endswith("\n"):
             prefix += "\n"
-        if comments.strip() and not comments.endswith("\n"):
+        if not comments.strip():
+            comments = ""
+        elif not comments.endswith("\n"):
             comments += "\n"
         updated = prefix + comments + raw_config + suffix
     else:
@@ -366,24 +368,24 @@ def _append_automation_atomic(
         if not prefix.endswith("\n"):
             prefix += "\n"
         updated = prefix + raw_config
-        try:
-            combined_node = yaml.compose(updated, Loader=yaml.SafeLoader)
-            combined = (
-                combined_node.value
-                if isinstance(combined_node, yaml.SequenceNode)
-                else None
-            )
-        except yaml.YAMLError:
-            combined = None
-        if not isinstance(combined, list) or len(combined) != len(current) + 1:
-            # Non-standard flow-style list: correctness is more important than
-            # preserving formatting, so fall back to serializing the complete list.
-            new_node = yaml.compose(raw_config, Loader=yaml.SafeLoader)
-            assert isinstance(new_node, yaml.SequenceNode)
-            updated = yaml.serialize(
-                yaml.SequenceNode("tag:yaml.org,2002:seq", [*current, *new_node.value]),
-                allow_unicode=True,
-            )
+
+    try:
+        combined = yaml.compose(updated, Loader=yaml.SafeLoader)
+    except yaml.YAMLError:
+        combined = None
+    if not isinstance(combined, yaml.SequenceNode) or len(combined.value) != len(
+        current
+    ) + 1:
+        if not current:
+            raise HomeAssistantError("Unable to append to the automations YAML")
+        # Preserve existing nodes if appending a block to a nonempty flow list
+        # or to a document with an explicit end marker requires reserialization.
+        new_node = yaml.compose(raw_config, Loader=yaml.SafeLoader)
+        assert isinstance(new_node, yaml.SequenceNode)
+        updated = yaml.serialize(
+            yaml.SequenceNode("tag:yaml.org,2002:seq", [*current, *new_node.value]),
+            allow_unicode=True,
+        )
 
     _atomic_write_text(path, updated, expected_previous=previous)
     return previous, raw_config, updated

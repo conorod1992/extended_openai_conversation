@@ -1788,6 +1788,9 @@ class ExtendedOpenAIAgentEntity(
             temporary_memories=temporary_memories,
             knowledge_available=self._knowledge_available,
             guest_policy=policy,
+            memory_scope_available=(
+                False if getattr(self, "_memory", None) is None else None
+            ),
             temporary_scope_available=(
                 getattr(self, "_temporary_memory", None) is not None
                 and _ACTIVE_TURN.get().temporary_scope is not None
@@ -2202,8 +2205,10 @@ class ExtendedOpenAIAgentEntity(
                     assemble_integration_function_tools(
                         self.subentry.data,
                         configured_names,
-                        memory_scope_available=self._current_memory_scope_id()
-                        is not None,
+                        memory_scope_available=(
+                            getattr(self, "_memory", None) is not None
+                            and self._current_memory_scope_id() is not None
+                        ),
                         temporary_scope_available=(
                             self._temporary_memory is not None
                             and _ACTIVE_TURN.get().temporary_scope is not None

@@ -198,6 +198,46 @@ async def test_confirmed_details_reset_respects_other_corruption_barriers(barrie
     assert not details.saves
 
 
+@pytest.mark.parametrize("date_entry", ["intact", "invalid", "orphaned"])
+async def test_clear_damaged_run_with_separate_accounting_date(date_entry):
+    from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+        StorageRepairRequired,
+    )
+
+    details = DetailStorage()
+    manager = _manager(details)
+    await manager.async_initialize()
+    async with manager.async_run(home_assistant_conversation_id="conversation"):
+        await manager.async_record_request(
+            successful=True, usage=RequestUsage(total_tokens=6),
+            provider="openai", model="gpt-test", api_mode="responses",
+        )
+    before = deepcopy(details.data)
+    run = details.data["runs"][0]
+    run["duration_ms"] = "invalid"
+    dates = details.data["run_accounting_dates"]
+    assert run["run_id"] in dates
+    if date_entry == "invalid":
+        dates[run["run_id"]] = "invalid"
+    elif date_entry == "orphaned":
+        dates["unknown-run"] = dates.pop(run["run_id"])
+
+    reloaded = _manager(details)
+    await reloaded.async_initialize()
+    assert reloaded._details_need_repair
+    aggregates = reloaded.as_dict(), deepcopy(reloaded.daily)
+    if date_entry == "intact":
+        await reloaded.async_clear_details(confirm=True)
+        assert (reloaded.as_dict(), reloaded.daily) == aggregates
+        assert details.data == {"requests": [], "runs": []}
+        assert (await reloaded.async_backup_data())["runs"] == []
+    else:
+        with pytest.raises(StorageRepairRequired):
+            await reloaded.async_clear_details(confirm=True)
+        assert details.data["requests"] == before["requests"]
+        assert details.data["runs"][0]["duration_ms"] == "invalid"
+
+
 async def test_prune_applies_independent_retention_windows_and_persists_survivors() -> None:
     """Request and run detail retention are evaluated independently."""
     details = DetailStorage()

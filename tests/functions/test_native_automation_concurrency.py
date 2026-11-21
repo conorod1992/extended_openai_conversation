@@ -43,6 +43,17 @@ def test_adding_first_automation_preserves_comments_in_empty_list(tmp_path):
         assert text in updated
 
 
+@pytest.mark.parametrize("document", ["[ ]", "--- [ ]", "[\n  \n  ]"])
+def test_adding_first_automation_to_whitespace_only_flow_list(tmp_path, document):
+    path = tmp_path / "automations.yaml"
+    path.write_text(document, encoding="utf-8")
+    record = {"id": "first", "alias": "First automation", "triggers": [], "actions": []}
+    previous, _, updated = _append_automation_atomic(path, record)
+    assert previous == document
+    assert yaml.safe_load(updated) == [record]
+    assert path.read_text(encoding="utf-8") == updated
+
+
 def _symlink(path: Path, target: Path) -> None:
     try:
         path.symlink_to(target)

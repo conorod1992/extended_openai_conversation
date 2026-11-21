@@ -462,6 +462,7 @@ class UsageManager:
             staged_runs: list[UsageRun] = []
             request_ids: set[str] = set()
             run_ids: set[str] = set()
+            discarded_run_ids: set[str] = set()
             inline_run_dates = False
             detail_records_repairable = False
             if self._detail_storage is not None:
@@ -516,9 +517,17 @@ class UsageManager:
                             details_need_repair = True
                     except TypeError, ValueError:
                         details_need_repair = True
-                        continue
+                        if (
+                            isinstance(raw, dict)
+                            and isinstance(raw_id := raw.get("run_id"), str)
+                            and raw_id
+                        ):
+                            discarded_run_ids.add(raw_id)
                 valid_run_dates = _restore_stored_run_dates(
-                    staged_runs, run_ids, detail_data.get(_RUN_ACCOUNTING_DATES, {})
+                    staged_runs,
+                    run_ids,
+                    detail_data.get(_RUN_ACCOUNTING_DATES, {}),
+                    discarded_run_ids=discarded_run_ids,
                 )
                 details_need_repair |= not valid_run_dates
                 detail_records_repairable = (
@@ -1591,14 +1600,29 @@ def _validate_run_accounting_date(day: str, completed_at: str | None) -> None:
 
 
 def _restore_stored_run_dates(
-    runs: list[UsageRun], run_ids: set[str], stored_dates: Any
+    runs: list[UsageRun],
+    run_ids: set[str],
+    stored_dates: Any,
+    *,
+    discarded_run_ids: set[str],
 ) -> bool:
     """Apply valid metadata while keeping readable runs when metadata needs repair."""
     if not isinstance(stored_dates, dict):
         return False
     if not stored_dates:
         return True
-    valid = stored_dates.keys() <= run_ids
+    valid = True
+    for run_id in stored_dates.keys() - run_ids:
+        # An identifiable damaged row owns its date entry. It cannot be
+        # restored, but a well-formed date can be cleared with the row.
+        day = stored_dates[run_id]
+        if run_id not in discarded_run_ids:
+            valid = False
+            continue
+        try:
+            valid &= calendar_date.fromisoformat(day).isoformat() == day
+        except (TypeError, ValueError):
+            valid = False
     for run in runs:
         if run.run_id not in stored_dates:
             continue

@@ -378,25 +378,6 @@ class TemporaryMemory:
             await self._async_initialize_locked()
             await self._async_prune_locked()
             current = self._owned(scope_id, memory_id, owner_scope_id)
-            if (
-                source == "automatic"
-                and current.source == "manual"
-                and (
-                    content is None
-                    or _clean(content, MAX_CONTENT_LENGTH, "content") == current.content
-                )
-                and (
-                    category is None
-                    or _clean(category, MAX_CATEGORY_LENGTH, "category")
-                    == current.category
-                )
-                and (
-                    expires_at is None
-                    or _parse_future_expiry(expires_at).isoformat()
-                    == current.expires_at
-                )
-            ):
-                return current
             new_content = (
                 _clean(content, MAX_CONTENT_LENGTH, "content")
                 if content is not None
@@ -413,6 +394,13 @@ class TemporaryMemory:
                 if expires_at is not None
                 else current.expires_at
             )
+            if (
+                new_content == current.content
+                and new_category == current.category
+                and new_expiry == current.expires_at
+                and effective_source == current.source
+            ):
+                return current
             updated = TemporaryMemoryRecord(
                 current.memory_id,
                 current.scope_id,

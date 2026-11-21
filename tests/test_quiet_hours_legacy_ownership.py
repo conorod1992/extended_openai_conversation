@@ -85,6 +85,19 @@ def _loading_manager(s, saved, manager_type=public.QuietHoursManager):
     return manager
 
 
+async def test_verified_version_two_generation_migrates_without_losing_baseline(
+    setup_controls,
+):
+    s = setup_controls
+    await s.manager.async_reconcile(now=START)
+    saved = deepcopy(s.stored)
+    manager = runtime.QuietHoursManager(s.hass)
+    assert manager._store.version == 3
+    assert await manager._store._async_migrate_func(2, 1, saved) == saved
+    assert saved["active"]["controls"][MEDIA]["original_value"] == 0.8
+    assert saved["active"]["controls"][WAKE]["original_value"] is True
+
+
 @pytest.mark.parametrize(
     "manager_type", [runtime.QuietHoursManager, public.QuietHoursManager]
 )

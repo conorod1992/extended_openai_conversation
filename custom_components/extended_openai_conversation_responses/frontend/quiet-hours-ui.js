@@ -1,6 +1,7 @@
 import {ensureNativePicker} from "./native-picker-loader.js";
 import {captureConfigurationOwner, configurationSubmissionIsCurrent, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
+import {same} from "./unsaved-state.js";
 
 export async function loadQuietHours(panel, silent = false) {
   const token = ++panel._loadToken;
@@ -50,6 +51,7 @@ function volumeStatus(panel, satellite) {
 const bindingStatus = {
   missing: "Saved binding missing",
   replaced: "Replacement requires confirmation",
+  rename_conflict: "Rename conflicts with another saved binding",
   invalid: "Saved binding invalid",
   unavailable: "Temporarily unavailable",
 };
@@ -274,7 +276,7 @@ async function useReplacement(panel, button) {
   const issue = bindingIssue(panel, selection);
   const revision = panel._result?.revision;
   if (issue?.status !== "replaced" || !issue.review_token || !revision) return;
-  if (JSON.stringify(panel._quietHoursDraft) !== JSON.stringify(panel._result.config)) {
+  if (!same(panel._quietHoursDraft, panel._result.config)) {
     panel._toast("Save or discard your Quiet Hours edits before using a replacement.", true);
     return;
   }

@@ -124,11 +124,20 @@ async def test_failed_configuration_save_leaves_devices_and_active_baseline_unto
     manager._reschedule.assert_not_called()
 
 
-async def test_disabled_schedule_keeps_only_restoration_retry_timer(hass, monkeypatch):
+@pytest.mark.parametrize("detached", [False, True])
+async def test_disabled_schedule_keeps_only_restoration_retry_timer(
+    hass, monkeypatch, detached,
+):
     manager = _stateful_public_manager(hass)
     manager._publish_state = Mock()
     manager._active = _active("media_player.bedroom", "volume")
     manager._active["controls"]["media_player.bedroom"]["restoration_pending"] = True
+    if detached:
+        control = manager._active["controls"].pop("media_player.bedroom")
+        control["registry_identity"] = ["media_player", "test", "bedroom-speaker"]
+        manager._active["detached_controls"] = {
+            runtime._detached_control_key(control["registry_identity"]): control
+        }
     interval = Mock(return_value=Mock())
     clock = Mock()
     monkeypatch.setattr(runtime, "async_track_time_interval", interval)

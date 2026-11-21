@@ -13,6 +13,7 @@ from .agent_config import (
     validate_function_groups,
 )
 from .const import (
+    CONF_ARCHIVE_ENABLED,
     CONF_CONTINUE_CONVERSATION,
     CONF_FUNCTION_GROUPS,
     CONF_KNOWLEDGE_ENABLED,
@@ -21,6 +22,7 @@ from .const import (
     CONF_SKILLS,
     CONF_TEMPORARY_MEMORY,
     CONTINUE_CONVERSATION_CONDITIONAL,
+    DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -28,6 +30,7 @@ from .const import (
     DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
     FUNCTION_GROUP_LOADER_TOOL_NAME,
+    SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_OFF,
 )
 from .function_groups import assemble_function_tools
@@ -85,6 +88,25 @@ async def async_preview_effective_request(
         "User input and conversation history are excluded.",
         "Query-derived persistent memories are excluded because there is no user query.",
     ]
+    subsystem_status = hass.data.get(SUBSYSTEM_STATUS_KEY, {}).get(
+        (entry.entry_id, subentry.subentry_id), {}
+    )
+    memory_available = (
+        subsystem_status.get("persistent_memory", {}).get("status") != "failed"
+    )
+    archive_available = subsystem_status.get("archive", {}).get("status") != "failed"
+    if not memory_available and memory_enabled(options):
+        notes.append(
+            "Persistent Memory is unavailable in the running assistant; its tools and instructions are excluded."
+        )
+    if (
+        not archive_available
+        and options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+        and guest_policy.archive_access
+    ):
+        notes.append(
+            "Conversation Archive is unavailable in the running assistant; its tools and instructions are excluded."
+        )
     temporary = get_loaded_temporary_memory(hass, entry.entry_id, subentry.subentry_id)
     temporary_mode = options.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
     # Temporary Memory is authorized by its retained owner, independently of
@@ -178,7 +200,9 @@ async def async_preview_effective_request(
             temporary_memories=temporary_memories,
             knowledge_available=knowledge_available,
             guest_policy=guest_policy,
+            memory_scope_available=memory_available,
             temporary_scope_available=True,
+            archive_available=archive_available,
         )
         availability_groups = groups
         availability_tools = configured_tools
@@ -216,9 +240,10 @@ async def async_preview_effective_request(
         integration_tools = assemble_integration_function_tools(
             options,
             configured_names,
-            memory_scope_available=memory_enabled(options),
+            memory_scope_available=memory_available,
             temporary_scope_available=(temporary_mode != TEMPORARY_MEMORY_OFF),
             knowledge_available=knowledge_available,
+            archive_available=archive_available,
             guest_policy=guest_policy,
         )
         conditional_continue = (

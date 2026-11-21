@@ -144,6 +144,24 @@ async def test_active_records_are_owned_persisted_and_bounded() -> None:
     )
 
 
+async def test_noop_automatic_update_keeps_prompt_order_and_storage():
+    records = [stored_record(index) for index in range(31)]
+    storage = Storage({"records": records})
+    memory = TemporaryMemory(storage)
+    await memory.async_initialize()
+    owner = {"owner_scope_id": "user:alice"}
+    before = await memory.async_active("device:kitchen", **owner)
+    assert len(before) == 30
+    oldest = records[0]
+    assert all(record.memory_id != oldest["memory_id"] for record in before)
+    await memory.async_update(
+        "device:kitchen", oldest["memory_id"], None, None, None,
+        source="automatic", **owner,
+    )
+    assert await memory.async_active("device:kitchen", **owner) == before
+    assert storage.data == {"records": records}
+
+
 async def test_same_continuity_scope_is_isolated_by_resolved_owner() -> None:
     memory = TemporaryMemory(Storage())
     await memory.async_initialize()

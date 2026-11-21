@@ -20,6 +20,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.json import json_bytes
 
 from .assistant_response import final_assistant_text
 from .debug import record_current_provider_failure
@@ -333,6 +334,16 @@ def _finite_json_float(value: str) -> float:
     return number
 
 
+def _require_serializable_response(data: Any) -> None:
+    """Check the final result with Home Assistant's JSON encoder."""
+    try:
+        json_bytes(data)
+    except (TypeError, ValueError, RecursionError):
+        raise HomeAssistantError(
+            "AI Task result cannot be returned as Home Assistant JSON"
+        ) from None
+
+
 def _validate_with_caller_cleanup(data: Any, structure: SchemaValidator | None) -> Any:
     """Resolve projection ambiguities against the caller on the HA event loop."""
     try:
@@ -489,6 +500,7 @@ class ExtendedOpenAITaskEntity(
             original_schema=original_schema,
         )
         data = _validate_with_caller_cleanup(data, task.structure)
+        await asyncio.to_thread(_require_serializable_response, data)
 
         return ai_task.GenDataTaskResult(
             conversation_id=chat_log.conversation_id,

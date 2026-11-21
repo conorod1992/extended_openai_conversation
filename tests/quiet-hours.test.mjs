@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {renderQuietHours} from "../custom_components/extended_openai_conversation_responses/frontend/quiet-hours-ui.js";
+import {bindQuietHours, renderQuietHours} from "../custom_components/extended_openai_conversation_responses/frontend/quiet-hours-ui.js";
 
 function panel(result, draft = null, states = {}) {
   return {
@@ -26,6 +26,44 @@ const baseConfig = {
   wake_sound: "off",
   overrides: {},
 };
+
+test("replacement accepts a clean draft after override key order changes", async () => {
+  const first = "assist_satellite.first", second = "assist_satellite.second";
+  const firstSpeaker = {media_player_entity_id:"media_player.first"};
+  const secondSpeaker = {media_player_entity_id:"media_player.second"};
+  const config = {...baseConfig, overrides:{[first]:firstSpeaker, [second]:secondSpeaker}};
+  const draft = {...baseConfig, overrides:{[second]:secondSpeaker, [first]:firstSpeaker}};
+  const snapshot = {config, revision:"before", satellites:[], selection_issues:{
+    [second]:{status:"replaced", review_token:"reviewed"},
+  }};
+  const calls = [], toasts = [];
+  let click;
+  const button = {dataset:{id:second}, addEventListener(_event, listener) {click = listener;}};
+  const result = {config, revision:"after", satellites:[]};
+  const p = Object.assign(panel(snapshot, draft), {
+    _viewKey:() => "capabilities/quiet-hours",
+    _loadToken:0, _cacheGeneration:0,
+    _call:async (...args) => {calls.push(args); return result;},
+    _render() {},
+    _toast(message) {toasts.push(message);},
+    shadowRoot:{
+      addEventListener() {},
+      querySelector() {return null;},
+      querySelectorAll(selector) {return selector === ".qh-rebind" ? [button] : [];},
+    },
+  });
+  bindQuietHours(p);
+  p._quietHoursDraft = {...draft, max_volume:0.1};
+  click();
+  assert.equal(calls.length, 0);
+  assert.match(toasts.pop(), /Save or discard/);
+  p._quietHoursDraft = draft;
+  click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls[0], ["quiet_hours", "rebind", {selection:second, revision:"before", review_token:"reviewed"}]);
+  assert.equal(p._result.revision, "after");
+  assert.deepEqual(toasts, []);
+});
 
 test("renders orphaned bindings independently of temporarily unavailable controls", () => {
   const satellite = "assist_satellite.reused", speaker = "media_player.reused", wake = "switch.missing";

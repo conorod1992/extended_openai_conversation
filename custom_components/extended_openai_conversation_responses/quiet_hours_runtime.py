@@ -9,11 +9,13 @@ can use the integration-global Quiet Hours binary-sensor state as their trigger.
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict, deque
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, time, timedelta, tzinfo
 from hashlib import sha256
+from itertools import chain
 import json
 import logging
 import math
@@ -38,7 +40,7 @@ from .operational_errors import log_handled_failure
 from .persistence_hardening import _async_settle_transactional_save
 from .strict_store import PropagatingWriteStore, _async_settle_store_io
 
-_STORAGE_VERSION = 2
+_STORAGE_VERSION = 3
 _STORAGE_KEY = f"{DOMAIN}.quiet_hours"
 _RUNTIME_KEY = "quiet_hours_manager"
 _STATE_ENTITY_ID = "binary_sensor.extended_openai_quiet_hours"
@@ -314,6 +316,11 @@ def _override_map(config: QuietHoursConfig) -> dict[str, SatelliteOverride]:
     return {item.satellite_entity_id: item for item in config.overrides}
 
 
+def _detached_control_key(identity: list[str]) -> str:
+    """Key pending restoration by physical identity, independently of its last ID."""
+    return json.dumps(identity, separators=(",", ":"))
+
+
 def _pick_media_player(entries: list[er.RegistryEntry]) -> str | None:
     """Select only a unique registered, enabled player, irrespective of state."""
     candidates = [
@@ -471,18 +478,19 @@ class _QuietHoursStore(PropagatingWriteStore):
     """Check historical ownership before HA's load-time migration can write."""
 
     def __init__(
-        self, hass: HomeAssistant, ownership_check: Callable[[Any], bool]
+        self, hass: HomeAssistant, validate_generation: Callable[[Any], Any]
     ) -> None:
         super().__init__(hass, _STORAGE_VERSION, _STORAGE_KEY)
-        self._ownership_check = ownership_check
+        self._validate_generation = validate_generation
 
     async def _async_migrate_func(
         self, old_major_version: int, old_minor_version: int, old_data: Any
     ) -> Any:
-        if isinstance(old_data, Mapping) and not self._ownership_check(
-            old_data.get("active")
-        ):
-            raise HomeAssistantError("Quiet Hours saved ownership requires review")
+        self._validate_generation(old_data)
+        if old_major_version == 2:
+            # Version 3 adds detached restoration records. Older readers would
+            # discard them; use a major version to protect them on downgrade.
+            return old_data
         return await super()._async_migrate_func(
             old_major_version, old_minor_version, old_data
         )
@@ -494,10 +502,11 @@ class QuietHoursManager:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
         self._store: Store[dict[str, Any]] = _QuietHoursStore(
-            hass, self._check_saved_ownership
+            hass, self._decode_generation
         )
         self._config = QuietHoursConfig()
         self._selection_identities: dict[str, list[str]] = {}
+        self._deferred_selection_renames: dict[str, str] = {}
         self._active: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -567,14 +576,13 @@ class QuietHoursManager:
     def active(self) -> dict[str, Any] | None:
         if self._active is None:
             return None
-        return {
-            **self._active,
-            "controls": {
-                key: dict(value)
-                for key, value in self._active.get("controls", {}).items()
-                if isinstance(value, Mapping)
-            },
+        active = deepcopy(self._active)
+        active["controls"] = {
+            key: value
+            for key, value in active.get("controls", {}).items()
+            if isinstance(value, Mapping)
         }
+        return active
 
     async def async_setup(self) -> None:
         async with self._lock:
@@ -607,21 +615,11 @@ class QuietHoursManager:
         # must never become default configuration with lost restore baselines.
         try:
             stored = await _async_settle_store_io(self._store.async_load())
-            if stored is not None and not isinstance(stored, Mapping):
-                raise ValueError("Quiet Hours storage must be an object")
-            raw = stored if stored is not None else {}
-            if not self._check_saved_ownership(raw.get("active")):
-                return False
-            config = _config_from_data(raw.get("config"))
-            identities = self._normalize_selection_identities(
-                raw.get("selection_identities"), config
-            )
-            active = self._normalize_active(raw.get("active"))
-            if raw.get("active") is not None and active is None:
-                raise ValueError("Quiet Hours saved ownership is invalid")
+            config, identities, active = self._decode_generation(stored)
         except (
             HomeAssistantError,
             OSError,
+            NotImplementedError,
             ValueError,
             TypeError,
             AttributeError,
@@ -645,7 +643,7 @@ class QuietHoursManager:
         self._config = config
         self._selection_identities = identities
         self._active = active
-        self._persisted_active = deepcopy(raw.get("active"))
+        self._persisted_active = deepcopy((stored or {}).get("active"))
         self._config_recovery_pending = False
         self._initialized = True
         return True
@@ -747,12 +745,16 @@ class QuietHoursManager:
     ) -> list[SatelliteCapabilities]:
         """Do not redirect a removed manual selection to an ID's new owner."""
         identities = getattr(self, "_selection_identities", {})
-        if not identities:
+        deferred = getattr(self, "_deferred_selection_renames", {})
+        conflicts = set(deferred) | set(deferred.values())
+        if not identities and not conflicts:
             return discovered
         registry = er.async_get(self.hass)
 
-        def matches(entity_id: str | None) -> bool:
-            identity = identities.get(entity_id)
+        def matches(entity_id: str | None, *, manual: bool = True) -> bool:
+            if entity_id in conflicts:
+                return False
+            identity = identities.get(entity_id) if manual else None
             return (
                 identity is None or registry.async_get_entity_id(*identity) == entity_id
             )
@@ -765,12 +767,16 @@ class QuietHoursManager:
                 replace(
                     item,
                     media_player_entity_id=item.media_player_entity_id
-                    if item.media_player_source != "manual"
-                    or matches(item.media_player_entity_id)
+                    if matches(
+                        item.media_player_entity_id,
+                        manual=item.media_player_source == "manual",
+                    )
                     else None,
                     wake_sound_entity_id=item.wake_sound_entity_id
-                    if item.wake_sound_source != "manual"
-                    or matches(item.wake_sound_entity_id)
+                    if matches(
+                        item.wake_sound_entity_id,
+                        manual=item.wake_sound_source == "manual",
+                    )
                     else None,
                 )
             )
@@ -781,9 +787,14 @@ class QuietHoursManager:
 
     def _selection_issue(self, entity_id: str) -> dict[str, str] | None:
         """Explain why one saved selection cannot currently be used."""
-        entry = er.async_get(self.hass).async_get(entity_id)
+        registry = er.async_get(self.hass)
+        entry = registry.async_get(entity_id)
         state = self.hass.states.get(entity_id)
-        identity = getattr(self, "_selection_identities", {}).get(entity_id)
+        identities = getattr(self, "_selection_identities", {})
+        identity = identities.get(entity_id)
+        deferred = getattr(self, "_deferred_selection_renames", {})
+        if entity_id in deferred or entity_id in deferred.values():
+            return {"status": "rename_conflict"}
         if entry is None:
             return {
                 "status": "missing"
@@ -798,6 +809,8 @@ class QuietHoursManager:
         ):
             return {"status": "invalid"}
         if identity is not None and current != identity:
+            if current in identities.values():
+                return {"status": "rename_conflict"}
             return {
                 "status": "replaced",
                 "review_token": sha256(json.dumps(current).encode()).hexdigest(),
@@ -941,8 +954,10 @@ class QuietHoursManager:
                 # ambiguous. Persist that intent atomically with the new policy.
                 previous_overrides = _override_map(previous)
                 candidate_overrides = _override_map(candidate)
-                for entity_id, control in (
-                    (self._active or {}).get("controls", {}).items()
+                active = self._active or {}
+                for control_key, control in chain(
+                    active.get("controls", {}).items(),
+                    active.get("detached_controls", {}).items(),
                 ):
                     satellite_id = control["satellite_entity_id"]
                     old = previous_overrides.get(satellite_id)
@@ -952,11 +967,13 @@ class QuietHoursManager:
                         if control["kind"] == "volume"
                         else "wake_sound_entity_id"
                     )
-                    if (
-                        old
-                        and getattr(old, field) == entity_id
-                        and (not new or getattr(new, field) != entity_id)
-                    ):
+                    selected = getattr(old, field, None)
+                    identity = previous_identities.get(selected) if selected else None
+                    same_selection = selected == control_key or (
+                        identity is not None
+                        and _detached_control_key(identity) == control_key
+                    )
+                    if same_selection and selected != getattr(new, field, None):
                         control["restoration_pending"] = True
                     if replacement is not None and satellite_id == replacement[0]:
                         control["restoration_pending"] = True
@@ -1071,16 +1088,7 @@ class QuietHoursManager:
         ):
             raise ValueError("Quiet Hours saved ownership is unavailable")
         raw = stored or {}
-        if not self._check_saved_ownership(raw.get("active")):
-            # A failed-save readback can encounter a historical generation too.
-            self._require_startup_available()
-        config = _config_from_data(raw.get("config"))
-        active = self._normalize_active(raw.get("active"))
-        if raw.get("active") is not None and active is None:
-            raise ValueError("Quiet Hours saved ownership is invalid")
-        identities = self._normalize_selection_identities(
-            raw.get("selection_identities"), config
-        )
+        config, identities, active = self._decode_generation(stored)
         self._config = config
         self._selection_identities = identities
         self._active = active
@@ -1090,6 +1098,23 @@ class QuietHoursManager:
         # deferred caller cancellation can leave the recovery operation.
         if recovering:
             self._reschedule()
+
+    def _decode_generation(
+        self, stored: Any
+    ) -> tuple[QuietHoursConfig, dict[str, list[str]], dict[str, Any] | None]:
+        if stored is not None and not isinstance(stored, Mapping):
+            raise ValueError("Quiet Hours storage must be an object")
+        raw = stored if stored is not None else {}
+        if not self._check_saved_ownership(raw.get("active")):
+            self._require_startup_available()
+        config = _config_from_data(raw.get("config"))
+        identities = self._normalize_selection_identities(
+            raw.get("selection_identities"), config
+        )
+        active = self._normalize_active(raw.get("active"))
+        if raw.get("active") is not None and active is None:
+            raise ValueError("Quiet Hours saved ownership is invalid")
+        return config, identities, active
 
     def _mark_generation_available(self) -> None:
         self._config_recovery_pending = False
@@ -1158,7 +1183,10 @@ class QuietHoursManager:
                     # Discovery below decides which controls can carry forward
                     # and which must restore before a fresh application.
                     controls = self._active.get("controls", {})
-                    for control in controls.values():
+                    for control in chain(
+                        controls.values(),
+                        self._active.get("detached_controls", {}).values(),
+                    ):
                         control.update(
                             restoration_pending=True, restore_before_apply=True
                         )
@@ -1258,21 +1286,23 @@ class QuietHoursManager:
         selected = self._selected_entity_ids()
         if not selected:
             self._selection_identities = {}
+            self._deferred_selection_renames = {}
             return bool(previous)
         registry = er.async_get(self.hass)
-        identities: dict[str, list[str]] = {}
+        bound: dict[str, list[str]] = {}
         destinations: dict[str, str] = {}
+        sources_by_destination: dict[str, list[str]] = defaultdict(list)
+        controls = (self._active or {}).get("controls", {})
+        # Upgrade old selections from verified ownership before looking up a
+        # current ID. The lookup may already belong to another saved selection.
+        verified = {
+            entity_id: previous.get(entity_id)
+            or controls.get(entity_id, {}).get("registry_identity")
+            for entity_id in selected
+        }
+        claimed_identities = {tuple(identity) for identity in verified.values() if identity}
         for entity_id in selected:
-            identity = previous.get(entity_id)
-            if identity is None:
-                # Upgrade an old policy from its existing ownership before trying
-                # the current ID, which might already have been renamed/reused.
-                identity = (
-                    (self._active or {})
-                    .get("controls", {})
-                    .get(entity_id, {})
-                    .get("registry_identity")
-                )
+            identity = verified[entity_id]
             if identity is None:
                 entry = registry.async_get(entity_id)
                 parts = [
@@ -1282,13 +1312,41 @@ class QuietHoursManager:
                 identity = (
                     parts
                     if all(isinstance(part, str) and part for part in parts)
+                    and tuple(parts) not in claimed_identities
                     else None
                 )
             current = registry.async_get_entity_id(*identity) if identity else entity_id
             destination = current if isinstance(current, str) else entity_id
             destinations[entity_id] = destination
+            sources_by_destination[destination].append(entity_id)
             if identity:
-                identities[destination] = list(cast(list[str], identity))
+                bound[entity_id] = list(cast(list[str], identity))
+
+        # Keep colliding selections at their saved IDs. A move into any
+        # retained ID must defer as well, so a rename chain cannot overwrite it.
+        blocked = {
+            entity_id
+            for sources in sources_by_destination.values()
+            if len(sources) > 1
+            for entity_id in sources
+        }
+        unresolved = deque(blocked)
+        while unresolved:
+            entity_id = unresolved.popleft()
+            for source in sources_by_destination.get(entity_id, ()):
+                if source not in blocked:
+                    blocked.add(source)
+                    unresolved.append(source)
+        self._deferred_selection_renames = {
+            entity_id: destinations[entity_id]
+            for entity_id in blocked
+            if destinations[entity_id] != entity_id
+        }
+        for entity_id in blocked:
+            destinations[entity_id] = entity_id
+        identities = {
+            destinations[entity_id]: identity for entity_id, identity in bound.items()
+        }
 
         def selected_id(entity_id: str | None) -> str | None:
             return destinations.get(entity_id, entity_id) if entity_id else None
@@ -1331,8 +1389,11 @@ class QuietHoursManager:
             return False
         destinations: dict[str, list[tuple[str, str, dict[str, Any]]]] = {}
         moves: dict[str, str | None] = {}
+        detached = self._active.get("detached_controls", {})
+        retained: dict[str, dict[str, Any]] = {}
+        returned: set[str] = set()
         associations_changed = False
-        for key in ("controls", "pending_controls"):
+        for key in ("controls", "pending_controls", "detached_controls"):
             controls = self._active.get(key, {})
             if not isinstance(controls, Mapping):
                 continue
@@ -1353,10 +1414,19 @@ class QuietHoursManager:
                     if isinstance(identity, list) and len(identity) == 3
                     else old_id
                 )
-                moves[old_id] = new_id if isinstance(new_id, str) else None
+                if key != "detached_controls":
+                    moves[old_id] = new_id if isinstance(new_id, str) else None
                 if not isinstance(new_id, str):
+                    if key != "pending_controls" and identity:
+                        retained[_detached_control_key(identity)] = control
                     continue
-                destinations.setdefault(new_id, []).append((key, old_id, control))
+                if key == "detached_controls":
+                    # A live record already anchored here takes precedence over
+                    # a duplicate detached record for the same physical control.
+                    destinations.setdefault(new_id, []).append(("controls", "", control))
+                    returned.add(new_id)
+                else:
+                    destinations.setdefault(new_id, []).append((key, old_id, control))
         rebuilt: dict[str, dict[str, Any]] = {"controls": {}, "pending_controls": {}}
         ambiguous = []
         for destination, records in destinations.items():
@@ -1416,15 +1486,23 @@ class QuietHoursManager:
                 identities[observed_destination] = owner.get(
                     "registry_identity", identity
                 )
+        for entity_id in sorted(returned & rebuilt["controls"].keys()):
+            observed.append(entity_id)
+            identities[entity_id] = rebuilt["controls"][entity_id]["registry_identity"]
         observed = list(dict.fromkeys(observed + ambiguous))
         changed = (
             associations_changed
             or any(self._active.get(key, {}) != value for key, value in rebuilt.items())
+            or retained != detached
             or self._active.get("observed_controls", []) != observed
             or previous_identities != identities
         )
         if changed:
             self._active.update(rebuilt, observed_controls=observed)
+            if retained:
+                self._active["detached_controls"] = retained
+            else:
+                self._active.pop("detached_controls", None)
             if identities or "observed_identities" in self._active:
                 self._active["observed_identities"] = identities
         return changed
@@ -2125,7 +2203,12 @@ class QuietHoursManager:
             retained_observations = set(controls)
             if preserve_released:
                 retained_observations.update(released)
-            if retained_observations:
+            detached = self._active.get("detached_controls", {})
+            for control in detached.values():
+                control["restoration_pending"] = True
+                if period_ended:
+                    control["restore_before_apply"] = True
+            if retained_observations or detached:
                 self._active["observed_controls"] = sorted(retained_observations)
                 self._active["pending_controls"] = {}
             else:
@@ -2163,7 +2246,12 @@ class QuietHoursManager:
         # moved while it was being persisted.
         for selected, binding in getattr(self, "_selection_identities", {}).items():
             current = er.async_get(self.hass).async_get_entity_id(*binding)
-            if isinstance(current, str) and current != selected:
+            if (
+                isinstance(current, str)
+                and current != selected
+                and current
+                != getattr(self, "_deferred_selection_renames", {}).get(selected)
+            ):
                 raise HomeAssistantError(
                     "Quiet Hours selection changed; retry reconciliation"
                 )
@@ -2226,35 +2314,34 @@ class QuietHoursManager:
             return None
         raw_controls = value.get("controls") or {}
         for entity_id, control in normalized["controls"].items():
-            self._normalize_baseline_context(control, raw_controls.get(entity_id, {}))
-            phase = raw_controls.get(entity_id, {}).get("application_state")
-            if phase is not None:
-                if phase not in {"prepared", "applied"}:
-                    raise ValueError("Quiet Hours control application state is invalid")
-                control["application_state"] = phase
-                context_id = raw_controls.get(entity_id, {}).get(
-                    "application_context_id"
-                )
-                if context_id is not None:
-                    if not isinstance(context_id, str) or not context_id:
-                        raise ValueError("Quiet Hours application context is invalid")
-                    control["application_context_id"] = context_id
-                pending_context = raw_controls.get(entity_id, {}).get(
-                    "pending_application_context_id"
-                )
-                if pending_context is not None:
-                    if not isinstance(pending_context, str) or not pending_context:
-                        raise ValueError(
-                            "Quiet Hours pending application context is invalid"
-                        )
-                    control["pending_application_context_id"] = pending_context
-            attained_context = raw_controls.get(entity_id, {}).get(
-                "attained_context_id"
+            self._normalize_owned_control_context(
+                control, raw_controls.get(entity_id, {})
             )
-            if control["kind"] == "volume" and attained_context is not None:
-                if not isinstance(attained_context, str) or not attained_context:
-                    raise ValueError("Quiet Hours attained context is invalid")
-                control["attained_context_id"] = attained_context
+        raw_detached = value.get("detached_controls", {})
+        if not isinstance(raw_detached, Mapping):
+            raise ValueError("Quiet Hours detached controls are invalid")
+        if raw_detached:
+            detached_state = self._normalize_active_values(
+                {**value, "controls": raw_detached}
+            )
+            assert detached_state is not None
+            detached = detached_state["controls"]
+            if detached.keys() != raw_detached.keys():
+                raise ValueError("Quiet Hours detached controls are invalid")
+            for identity_key, control in detached.items():
+                identity = control.get("registry_identity")
+                domain = "media_player" if control["kind"] == "volume" else "switch"
+                if (
+                    not identity
+                    or identity[0] != domain
+                    or not all(identity)
+                    or _detached_control_key(identity) != identity_key
+                ):
+                    raise ValueError("Quiet Hours detached control identity is invalid")
+                self._normalize_owned_control_context(
+                    control, raw_detached[identity_key]
+                )
+            normalized["detached_controls"] = detached
         raw_observed = (
             value.get("observed_controls") if isinstance(value, Mapping) else None
         )
@@ -2296,6 +2383,30 @@ class QuietHoursManager:
         if identities:
             normalized["observed_identities"] = identities
         return normalized
+
+    def _normalize_owned_control_context(
+        self, control: dict[str, Any], raw: Mapping[str, Any]
+    ) -> None:
+        self._normalize_baseline_context(control, raw)
+        phase = raw.get("application_state")
+        if phase is not None:
+            if phase not in {"prepared", "applied"}:
+                raise ValueError("Quiet Hours control application state is invalid")
+            control["application_state"] = phase
+            for field, label in (
+                ("application_context_id", "application context"),
+                ("pending_application_context_id", "pending application context"),
+            ):
+                context_id = raw.get(field)
+                if context_id is not None:
+                    if not isinstance(context_id, str) or not context_id:
+                        raise ValueError(f"Quiet Hours {label} is invalid")
+                    control[field] = context_id
+        attained_context = raw.get("attained_context_id")
+        if control["kind"] == "volume" and attained_context is not None:
+            if not isinstance(attained_context, str) or not attained_context:
+                raise ValueError("Quiet Hours attained context is invalid")
+            control["attained_context_id"] = attained_context
 
     def _normalize_active_values(self, value: Any) -> dict[str, Any] | None:
         if not isinstance(value, Mapping):
@@ -2394,7 +2505,7 @@ class QuietHoursManager:
 
     @staticmethod
     def _normalize_baseline_context(
-        control: dict[str, Any], raw: dict[str, Any]
+        control: dict[str, Any], raw: Mapping[str, Any]
     ) -> None:
         context_id = raw.get("baseline_context_id")
         if context_id is not None:
@@ -2461,7 +2572,10 @@ class QuietHoursManager:
         # callbacks are unnecessary.
         if not self._config.enabled:
             self._publish_state(None)
-            if not (self._active or {}).get("controls"):
+            if not any(
+                (self._active or {}).get(key)
+                for key in ("controls", "detached_controls")
+            ):
                 return
         for value in (
             (self._config.start, self._config.end) if self._config.enabled else ()

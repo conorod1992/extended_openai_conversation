@@ -14,6 +14,7 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from homeassistant.components import ai_task, conversation
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.json import json_bytes
 
 
 def _subentry(
@@ -34,8 +35,18 @@ def _entity() -> ai_task_platform.ExtendedOpenAITaskEntity:
     )
 
 
-async def test_structured_task_preserves_integer_above_uint64(monkeypatch):
-    identifier = 123456789012345678901
+@pytest.mark.parametrize(
+    ("identifier", "serializable"),
+    [
+        (-(2**63) - 1, False),
+        (-(2**63), True),
+        (2**64 - 1, True),
+        (2**64, False),
+    ],
+)
+async def test_structured_task_checks_home_assistant_integer_limits(
+    monkeypatch, identifier, serializable
+):
     entity = _entity()
     task = ai_task.GenDataTask(
         name="Read an identifier",
@@ -53,8 +64,14 @@ async def test_structured_task_preserves_integer_above_uint64(monkeypatch):
         )
 
     monkeypatch.setattr(entity, "_async_handle_chat_log", respond)
-    result = await entity._async_generate_data(task, chat_log)
-    assert result.data == {"identifier": identifier}
+    if serializable:
+        result = await entity._async_generate_data(task, chat_log)
+        assert result.data == {"identifier": identifier}
+        assert str(identifier).encode() in json_bytes(result.as_dict())
+    else:
+        with pytest.raises(HomeAssistantError, match="cannot be returned") as error:
+            await entity._async_generate_data(task, chat_log)
+        assert str(identifier) not in str(error.value)
 
 
 @pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity", "1e400"])

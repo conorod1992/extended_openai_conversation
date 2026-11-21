@@ -339,11 +339,14 @@ def test_memory_tools_are_opt_in() -> None:
     """Existing agents do not receive persistent-memory tools."""
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.subentry = SimpleNamespace(data={CONF_FUNCTION_TOOLS: "[]"})
+    entity._memory = None
     assert entity._get_function_tools() == []
 
     entity.subentry = SimpleNamespace(
         data={CONF_FUNCTION_TOOLS: "[]", CONF_MEMORY_ENABLED: True}
     )
+    assert entity._get_function_tools() == []
+    entity._memory = object()
     assert {tool["spec"]["name"] for tool in entity._get_function_tools()} == (
         MEMORY_TOOL_NAMES
     )
@@ -564,6 +567,7 @@ def test_prompt_frames_memories_as_potentially_relevant_untrusted_data(hass) -> 
     """Retrieved data cannot claim relevance, authority, or action permission."""
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.hass = hass
+    entity._memory = object()
     entity.skill_manager = SimpleNamespace(get_all_skills=lambda: [])
     llm_context = SimpleNamespace(device_id=None)
     user_input = SimpleNamespace(extra_system_prompt=None)
@@ -627,6 +631,7 @@ def test_prompt_covers_preference_applicability_to_another_person(hass) -> None:
     """A user's preference is not presumed to apply to an American friend."""
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.hass = hass
+    entity._memory = object()
     entity.skill_manager = SimpleNamespace(get_all_skills=lambda: [])
     entity.subentry = SimpleNamespace(
         data={CONF_PROMPT: "Base prompt", CONF_MEMORY_ENABLED: True}
