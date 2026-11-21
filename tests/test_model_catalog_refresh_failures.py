@@ -92,6 +92,37 @@ async def test_clock_rollback_expires_future_refresh_timestamp(
     request.assert_called_once()
 
 
+async def test_scheduled_catalogue_refresh_recovers_from_live_clock_rollback(
+    check_manager, monkeypatch
+) -> None:
+    from datetime import timedelta
+
+    hass = check_manager.hass
+    now = 1_900_000_000
+    monkeypatch.setattr(runtime, "time", SimpleNamespace(time=lambda: now))
+    track = Mock(return_value=Mock())
+    monkeypatch.setattr(runtime, "async_track_time_interval", track)
+    check_manager.etag = '"v3"'
+    get = _chunked_transport(monkeypatch, b"", status=304)
+    await check_manager.async_check()
+    hass.data[runtime.DATA_MANAGER] = check_manager
+    runtime.async_start_model_catalog_refresh(hass)
+    try:
+        _, scheduled, interval = track.call_args.args
+        assert interval == timedelta(hours=1)
+        now -= 3600
+        assert check_manager.last_checked > now
+        await scheduled(None)
+        assert get.call_count == 2
+        assert get.call_args.kwargs["headers"] == {"If-None-Match": '"v3"'}
+        assert check_manager.last_checked == now
+        assert check_manager.store.saved["last_checked"] == now
+        await scheduled(None)
+        assert get.call_count == 2
+    finally:
+        runtime.async_stop_model_catalog_refresh(hass)
+
+
 def _stored_manager(hass) -> runtime.ModelCatalogManager:
     manager = runtime.ModelCatalogManager(hass)
     manager.store = MemoryStore()
