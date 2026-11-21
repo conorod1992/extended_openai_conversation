@@ -57,7 +57,6 @@ MAX_EXCERPT_CHARACTERS = 2_000
 KNOWLEDGE_TOOL_NAMES = {"knowledge_search", "knowledge_list", "knowledge_get"}
 
 _SPACE_PATTERN = re.compile(r"\s+")
-_LINE_END_PATTERN = re.compile(r"[ \t]+$", re.MULTILINE)
 _PHRASE_TOKEN_PATTERN = re.compile(r"[\w'-]+[+#]*")
 
 # English question scaffolding has little retrieval value in a mixed query.
@@ -1215,7 +1214,7 @@ def _clean_content(value: str) -> str:
     if not isinstance(value, str):
         raise ValueError("content must be a string")
     value = value.replace("\r\n", "\n").replace("\r", "\n")
-    value = _LINE_END_PATTERN.sub("", value).strip()
+    value = "\n".join(line.rstrip(" \t") for line in value.split("\n")).strip()
     if not value or len(value) > MAX_CONTENT_LENGTH:
         raise ValueError(f"content must be 1 to {MAX_CONTENT_LENGTH} characters")
     return value

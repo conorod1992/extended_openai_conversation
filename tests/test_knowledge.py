@@ -266,6 +266,17 @@ async def test_agent_isolation() -> None:
     assert await second.async_search("cupboard fridge") == []
 
 
+def test_knowledge_normalizes_unicode_boundaries_and_preserves_long_indentation() -> None:
+    title = "a" * MAX_TITLE_LENGTH
+    description = "b" * MAX_DESCRIPTION_LENGTH
+    content = "A" + " " * 39_999 + "B"
+    assert knowledge._validated_fields(
+        title + "\u0085",
+        description + "\u001f",
+        "\u0085" + content + " \t\r\n \tC\u0085",
+    ) == (title, description, content + "\n \tC")
+
+
 async def test_search_ranking_and_description_and_phrase_boost() -> None:
     library = await _library()
     title = await library.async_create(

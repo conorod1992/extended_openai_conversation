@@ -46,6 +46,9 @@ const REQUEST_RULE_CACHE_KEY = "capabilities/request-rules";
 
 const KNOWLEDGE_TITLE_LIMIT = 120;
 const KNOWLEDGE_DESCRIPTION_LIMIT = 500;
+// Python includes the four information separators in its Unicode whitespace.
+const KNOWLEDGE_SPACE = /[\p{White_Space}\x1c-\x1f]+/u;
+const KNOWLEDGE_SPACE_RUNS = new RegExp(KNOWLEDGE_SPACE, "gu");
 
 function knowledgeCharacterCount(value) {
   let length = value.length;
@@ -59,7 +62,18 @@ function knowledgeCharacterCount(value) {
 }
 
 function normalizedKnowledgeContent(value) {
-  return value.replace(/\r\n?/g, "\n").replace(/[ \t]+$/gm, "").trim();
+  const normalized = value.replace(/\r\n?/g, "\n").replace(/[ \t]+/g, (spaces, offset, text) => {
+    const next = text[offset + spaces.length];
+    return next === "\n" || next === undefined ? "" : spaces;
+  });
+  let first = 0, last = normalized.length;
+  while (first < last && KNOWLEDGE_SPACE.test(normalized[first])) first++;
+  while (last > first && KNOWLEDGE_SPACE.test(normalized[last - 1])) last--;
+  return normalized.slice(first, last);
+}
+
+function normalizedKnowledgeLine(value) {
+  return value.replace(KNOWLEDGE_SPACE_RUNS, " ").replace(/^ | $/g, "");
 }
 const KNOWLEDGE_LIMIT = 100000;
 const NAVIGATION_MARK_PREFIX = "extended-openai:navigation";
@@ -2631,8 +2645,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         || !["create", "edit"].includes(this._knowledgeMode)) return;
     const values = this._knowledgeValues();
     for (const [label, value, limit] of [
-      ["Title", values.title.trim().replace(/\s+/g, " "), KNOWLEDGE_TITLE_LIMIT],
-      ["Description", values.description.trim().replace(/\s+/g, " "), KNOWLEDGE_DESCRIPTION_LIMIT],
+      ["Title", normalizedKnowledgeLine(values.title), KNOWLEDGE_TITLE_LIMIT],
+      ["Description", normalizedKnowledgeLine(values.description), KNOWLEDGE_DESCRIPTION_LIMIT],
       ["Content", normalizedKnowledgeContent(values.content), KNOWLEDGE_LIMIT],
     ]) {
       if (knowledgeCharacterCount(value) > limit) {
