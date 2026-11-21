@@ -1,3 +1,4 @@
+import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {pageMetadata, focusManagementSetting} from "./frontend-navigation.js";
@@ -110,6 +111,11 @@ function pathLabel(item) {
 
 export const SEARCH_DEBOUNCE_MS = 80;
 
+function activeSearchRequest(panel) {
+  const request = panel._settingsSearchConfigRequest;
+  return request && configurationSubmissionIsCurrent(panel, request) ? request : null;
+}
+
 function settingsResultsMarkup(panel) {
   const query = String(panel._settingsSearchQuery || "");
   const results = visibleSettings(panel);
@@ -120,7 +126,7 @@ function settingsResultsMarkup(panel) {
       && panel._settingsSearchConfigError
       && panel._settingsSearchConfigErrorAgentId === panel._agentId
   );
-  const configLoading = Boolean(query && panel._data?.is_admin !== false && !activeConfiguration(panel) && panel._settingsSearchConfigLoading);
+  const configLoading = Boolean(query && panel._data?.is_admin !== false && !activeConfiguration(panel) && activeSearchRequest(panel));
   const loadError = configUnavailable
     ? '<div class="settings-load-error" role="status"><span>Current setting values couldn’t be loaded.</span><button id="settings-search-retry" type="button">Retry</button></div>'
     : "";
@@ -156,23 +162,25 @@ export function updateSettingsResults(panel) {
 }
 
 async function ensureSearchConfiguration(panel, {retry = false} = {}) {
-  if (panel._data?.is_admin === false || !panel._settingsSearchQuery || activeConfiguration(panel)) return;
+  if (panel._eocPresentationBlocked || panel._data?.is_admin === false || !panel._settingsSearchQuery || activeConfiguration(panel)) return;
   if (!visibleSettings(panel).some((item) => item.configKey)) return;
   const agentId = panel._agentId;
   if (!agentId) return;
-  if (panel._settingsSearchConfigAgentId === agentId && panel._settingsSearchConfig?.config) return;
-  if (panel._settingsSearchConfigPromise && panel._settingsSearchConfigPromiseAgentId === agentId) return panel._settingsSearchConfigPromise;
+  const pending = activeSearchRequest(panel);
+  if (pending) return pending.promise;
   if (panel._settingsSearchConfigError && panel._settingsSearchConfigErrorAgentId === agentId && !retry) return;
 
   if (retry && panel._settingsSearchConfigErrorAgentId === agentId) {
     panel._settingsSearchConfigError = null;
     panel._settingsSearchConfigErrorAgentId = null;
   }
-  panel._settingsSearchConfigLoading = true;
-  panel._settingsSearchConfigPromiseAgentId = agentId;
-  panel._settingsSearchConfigPromise = panel._call("configuration", "get")
+  const request = captureConfigurationOwner(panel);
+  const current = () => activeSearchRequest(panel) === request
+    && !panel._eocPresentationBlocked && panel._data?.is_admin !== false;
+  panel._settingsSearchConfigRequest = request;
+  request.promise = panel._call("configuration", "get")
     .then((data) => {
-      if (panel._agentId !== agentId) return;
+      if (!current()) return;
       if (!data?.config) throw new Error("Configuration response did not include config");
       panel._settingsSearchConfig = data;
       panel._settingsSearchConfigAgentId = agentId;
@@ -180,18 +188,16 @@ async function ensureSearchConfiguration(panel, {retry = false} = {}) {
       panel._settingsSearchConfigErrorAgentId = null;
     })
     .catch(() => {
-      if (panel._agentId !== agentId) return;
+      if (!current()) return;
       panel._settingsSearchConfig = null;
       panel._settingsSearchConfigAgentId = null;
       panel._settingsSearchConfigError = true;
       panel._settingsSearchConfigErrorAgentId = agentId;
     })
     .finally(() => {
-      if (panel._settingsSearchConfigPromiseAgentId === agentId) {
-        panel._settingsSearchConfigLoading = false;
-        panel._settingsSearchConfigPromise = null;
-        panel._settingsSearchConfigPromiseAgentId = null;
-        if (panel._settingsSearchQuery) {
+      if (panel._settingsSearchConfigRequest === request) {
+        panel._settingsSearchConfigRequest = null;
+        if (!panel._eocPresentationBlocked && panel._settingsSearchQuery) {
           updateSettingsResults(panel);
         }
       }
@@ -199,7 +205,7 @@ async function ensureSearchConfiguration(panel, {retry = false} = {}) {
   if (panel._settingsSearchQuery) {
     updateSettingsResults(panel);
   }
-  return panel._settingsSearchConfigPromise;
+  return request.promise;
 }
 
 function bindSearch(panel, search) {
@@ -252,7 +258,7 @@ export function enhanceNavigationSearch(panel) {
   // The input/debounce and asynchronous fetch paths still update independently.
   const searchState = panel._settingsSearchQuery ? JSON.stringify([
     visibleSettings(panel).map((item) => [item.target, settingCurrentState(item, panel)]),
-    panel._settingsSearchConfigLoading, panel._settingsSearchConfigError,
+    Boolean(activeSearchRequest(panel)), panel._settingsSearchConfigError,
     panel._settingsSearchConfigErrorAgentId,
   ]) : "";
   if (!enhancementChanged(panel, "navigation-search", [panel._page, panel._subsection, panel._agentId, panel._data?.is_admin, panel._settingsSearchQuery || "", searchState])) return;
