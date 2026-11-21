@@ -582,6 +582,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._draftTitle = null;
     this._draftAgentId = null;
     this._configSearchQuery = "";
+    this._clearSearchData();
+  }
+
+  _clearSearchData() {
     this._settingsSearchConfig = null;
     this._settingsSearchConfigAgentId = null;
     this._settingsSearchConfigError = null;
@@ -668,11 +672,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _invalidateCleanConfiguration(agentId) {
     if (!agentId) return;
     if (agentId === this._draftAgentId) this._configDataStale = true;
+    if (agentId === this._settingsSearchConfigAgentId || agentId === this._settingsSearchConfigErrorAgentId) {
+      this._clearSearchData();
+    }
+    if (agentId === this._settingsSearchConfigRequest?.agentId) {
+      this._settingsSearchConfigRequest = null;
+    }
     for (const projection of ["full", "retention"]) {
       const key = this._configurationSnapshotKey(agentId, projection);
       if (key) this._cleanConfigSnapshots.delete(key);
     }
     if (agentId === this._agentId) {
+      void navigationSearchModule?.ensureSearchConfiguration(this);
       this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
       this._eocLiveMetadataCache?.clear();
       this._eocLiveMetadataPending?.clear();

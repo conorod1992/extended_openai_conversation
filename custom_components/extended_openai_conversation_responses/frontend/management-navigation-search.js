@@ -43,12 +43,13 @@ function titleCase(value) {
 
 function fullConfiguration(panel, explicitData = null) {
   const cached = panel._settingsSearchConfigAgentId === panel._agentId ? panel._settingsSearchConfig : null;
-  return [explicitData, cached, panel._configData].find((data) =>
+  return [explicitData, cached, panel._configDataStale ? null : panel._configData].find((data) =>
     data?.config && data.projection !== "retention");
 }
 
 function activeConfiguration(panel, configKey, explicitData) {
   if (panel._draft && panel._draftAgentId === panel._agentId
+      && (!panel._configDataStale || panel._eocDirtyConfigKeys?.has(configKey))
       && (panel._configData?.projection !== "retention" || Object.hasOwn(panel._draft, configKey))) {
     return {data: panel._configData || explicitData || {}, config: panel._draft, title: panel._draftTitle, draft: true};
   }

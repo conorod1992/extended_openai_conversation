@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {ExtendedOpenAIManagementPanel} from "./management-ownership-harness.mjs";
 
 import {ensureSearchConfiguration, settingCurrentState} from "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 
@@ -28,6 +29,31 @@ function searchFixture() {
 function configuration(minutes) {
   return {config:{conversation_timeout_minutes:minutes}};
 }
+
+test("an acknowledged Knowledge toggle invalidates cached Search values", async () => {
+  const {panel, requests, results} = searchFixture();
+  Object.assign(panel, {
+    _settingsSearchQuery:"knowledge library access",
+    _cleanConfigSnapshots:new Map(),
+    _configurationSnapshotKey:() => null,
+    _clearSearchData:ExtendedOpenAIManagementPanel.prototype._clearSearchData,
+  });
+  const invalidate = () => ExtendedOpenAIManagementPanel.prototype._invalidateCleanConfiguration.call(panel, "A");
+  const before = ensureSearchConfiguration(panel);
+  requests[0].resolve({config:{knowledge_enabled:true}});
+  await before;
+  assert.match(results.innerHTML, /Current: On/);
+
+  invalidate();
+  const obsolete = ensureSearchConfiguration(panel);
+  invalidate();
+  const after = ensureSearchConfiguration(panel);
+  requests[2].resolve({config:{knowledge_enabled:false}});
+  await after;
+  requests[1].resolve({config:{knowledge_enabled:true}});
+  await obsolete;
+  assert.match(results.innerHTML, /Current: Off/);
+});
 
 test("Retention Search fills missing values from full settings and keeps draft values", async () => {
   const {panel, requests, results} = searchFixture();

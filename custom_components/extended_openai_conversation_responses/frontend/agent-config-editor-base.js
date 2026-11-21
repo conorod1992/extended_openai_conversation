@@ -8,7 +8,7 @@ export {matchesFunctionSearch} from "./function-search.js";
 import {beginOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
 import {ensureCompactChoiceStyle} from "./compact-choice-styles.js";
-import {readConfigurationDraft as readConfig, recordReasoningChoice} from "./configuration-controls.js";
+import {readConfigurationDraft as readConfig, readConfigurationPreview, recordReasoningChoice} from "./configuration-controls.js";
 import {bindConfigurationInputs, updateConfigurationControl} from "./configuration-inputs.js";
 import {modelFieldPresentation, modelFieldNotes, webSearchControlState, modelCapabilitiesForDraft} from "./agent-config-model-presentation.js";
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
@@ -338,7 +338,7 @@ export function bindConfiguration(panel) {
       && root.querySelector("#prompt-preview-dialog")===dialog;
     root.querySelector("#request-footprint").textContent="Calculating..."; root.querySelector("#function-group-savings").textContent=""; sections.innerHTML=""; notes.innerHTML=""; status.textContent="Assembling current Home Assistant request..."; status.className="validation"; copyButton.disabled=true; dialog.showModal();
     try {
-      const result=await panel._call("configuration","request_preview",{config:readConfig(panel,false)});
+      const result=await panel._call("configuration","request_preview",{config:readConfigurationPreview(panel)});
       if(!current())return;
       panel._effectiveRequestPreview=result;
       root.querySelector("#request-footprint").textContent=`Previewed Request Content: ${Number(result.total_character_count||0).toLocaleString()} characters`;

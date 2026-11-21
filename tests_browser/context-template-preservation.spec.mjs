@@ -33,7 +33,7 @@ for(const bundled of [false,true]) for(const mixed of [false,true]) for(const ac
       expect(await panel.evaluate(host=>({draft:structuredClone(host._draft),dirty:host._configDirty,keys:[...host._eocDirtyConfigKeys||[]]}))).toEqual(before);
       expect(await panel.evaluate(host=>host._draft===window.previewDraft)).toBe(true);
       const previews=await page.evaluate(()=>previewPayloads);
-      for(const preview of previews) expect(preview.config).toMatchObject({...original,...action==="edit"?{prompt:"Edited instructions\nwith a new line"}:{}});
+      for(const preview of previews) expect(preview.config).toEqual(action==="edit"?{prompt:"Edited instructions\nwith a new line"}:{});
       await panel.locator('[data-config="current_datetime_enabled"]').uncheck();
       expected={current_datetime_enabled:false,...action==="edit"?{prompt:"Edited instructions\nwith a new line"}:{}};
     }
