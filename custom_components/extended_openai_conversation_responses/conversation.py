@@ -207,6 +207,7 @@ from .model_tool_results import (
 )
 from .operation_settlement import async_settle_owned_operation, async_wait_owned_cleanup
 from .operational_errors import log_handled_failure
+from .persistence_hardening import StorageRepairRequired
 from .prompt import render_effective_prompt
 from .prompt_cache import _PROMPT_CACHE_CONTEXT, prompt_cache_context
 from .regex_execution import async_process_speech_text
@@ -656,7 +657,12 @@ class ExtendedOpenAIAgentEntity(
             self._set_subsystem_status("archive", configured, err)
             _LOGGER.exception("Unable to prune the conversation archive at startup")
         else:
-            self._set_subsystem_status("archive", configured, healthy=True)
+            if self._archive.needs_storage_repair is True:
+                self._set_subsystem_status(
+                    "archive", configured, StorageRepairRequired("Conversation Archive")
+                )
+            else:
+                self._set_subsystem_status("archive", configured, healthy=True)
 
     def _set_subsystem_status(
         self,

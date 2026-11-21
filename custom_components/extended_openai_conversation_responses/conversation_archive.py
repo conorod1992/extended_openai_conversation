@@ -500,6 +500,11 @@ class ConversationArchive:
             and self._storage._metadata.corruption_unavailable
         )
 
+    @property
+    def needs_storage_repair(self) -> bool:
+        """Whether the archive requires repair before another ordinary write."""
+        return self._repair_required
+
     def private_continuity_bindings(self) -> dict[str, str]:
         """Return content-free identities under the caller's exclusive restore lease."""
         return self._continuity_bindings("private")

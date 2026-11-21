@@ -31,6 +31,7 @@ from .const import (
     DEFAULT_MEMORY_RETRIEVAL_MODE,
     DEFAULT_TEMPORARY_MEMORY,
     MEMORY_RETRIEVAL_HYBRID,
+    SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_OFF,
 )
 from .helpers import effective_api_provider
@@ -368,7 +369,13 @@ async def async_reconcile_runtime_configuration(
             and getattr(entity, "_archive", None) is not None
             and not _manager_needs_recovery(entity, "_archive")
         ):
-            _set_subsystem_status(entity, "archive", archive_enabled, healthy=True)
+            statuses = getattr(entity.hass, "data", {}).get(SUBSYSTEM_STATUS_KEY, {})
+            archive_status = statuses.get((entry_id, subentry_id), {}).get(
+                "archive", {}
+            )
+            # A live settings change does not prove that Archive writes recovered.
+            if not archive_enabled or archive_status.get("status") != "failed":
+                _set_subsystem_status(entity, "archive", archive_enabled, healthy=True)
 
         knowledge_enabled = bool(
             options.get(CONF_KNOWLEDGE_ENABLED, DEFAULT_KNOWLEDGE_ENABLED)

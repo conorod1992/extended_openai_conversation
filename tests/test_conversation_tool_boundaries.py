@@ -293,8 +293,9 @@ async def test_model_date_range_cannot_delete_turns_outside_requested_dates(
             conversation._ACTIVE_TURN.reset(token)
 
 
+@pytest.mark.parametrize("include_expired", [False, True])
 async def test_archive_read_tools_survive_unavailable_session_storage(
-    hass, monkeypatch
+    hass, monkeypatch, include_expired
 ) -> None:
     entity = _agent(
         {CONF_ARCHIVE_ENABLED: True, CONF_ARCHIVE_MODEL_SEARCH_ENABLED: True}
@@ -320,11 +321,12 @@ async def test_archive_read_tools_survive_unavailable_session_storage(
         session_id="session-expired",
         timestamp=expired.isoformat(),
     )
-    payload["metadata"]["sessions"].append(old_session)
     payload["partitions"] = {
         now.strftime("%Y-%m"): {"turns": [turn, "broken-turn"]},
-        expired.strftime("%Y-%m"): {"turns": [old_turn]},
     }
+    if include_expired:
+        payload["metadata"]["sessions"].append(old_session)
+        payload["partitions"][expired.strftime("%Y-%m")] = {"turns": [old_turn]}
     payload["metadata"]["partitions"] = list(payload["partitions"])
     archive = ConversationArchive(ArchiveFixtureStorage(payload), "agent-1")
     await archive.async_initialize()
@@ -332,6 +334,13 @@ async def test_archive_read_tools_survive_unavailable_session_storage(
     await entity._async_initialize_archive(True)
     assert entity._archive is archive
     assert archive.scope_counts() == {"user:alice": 1}
+    statuses = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent-1")]
+    assert statuses["archive"] == {
+        "configured": True,
+        "status": "failed",
+        "error_type": "StorageRepairRequired",
+        "read_available": True,
+    }
     scope = user_scope("alice", source="authenticated_user")
     session = await entity._async_begin_archive_session(
         "conversation:new-chat", scope, "new-chat", SimpleNamespace(archive_retention=True)

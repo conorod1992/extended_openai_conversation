@@ -146,7 +146,7 @@ def _patch_startup_dependencies(
         request_rules=object(),
         request_rule_runtime=object(),
         temporary_memory=object(),
-        archive=SimpleNamespace(async_prune=AsyncMock()),
+        archive=SimpleNamespace(async_prune=AsyncMock(), needs_storage_repair=False),
         knowledge=object(),
         memory=SimpleNamespace(set_embedding_provider=MagicMock()),
         skill_manager=object(),
