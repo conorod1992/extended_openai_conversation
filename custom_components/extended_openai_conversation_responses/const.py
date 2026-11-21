@@ -303,6 +303,7 @@ DEFAULT_KNOWLEDGE_ENABLED = False
 # Backend-enforced Guest Mode. Integration-owned schedule state is stored separately.
 CONF_GUEST_MODE_ENABLED = "guest_mode_enabled"
 DEFAULT_GUEST_MODE_ENABLED = True
+DEFAULT_PERSISTED_GUEST_MODE_ENABLED = False
 # Version 2 is the exclusion-based Guest policy.  Its presence is deliberately
 # used as the migration marker; configurations without it retain legacy
 # allow-list behavior until an administrator explicitly saves the new policy.

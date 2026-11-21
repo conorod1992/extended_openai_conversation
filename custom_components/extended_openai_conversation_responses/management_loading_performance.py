@@ -13,7 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
-    LEGACY_CONTEXT_DEFAULTS,
+    PERSISTED_AGENT_DEFAULT_OVERRIDES,
     agent_config_value_snapshot,
     validate_function_groups,
     validate_function_tools,
@@ -656,7 +656,7 @@ def _snapshot_normalized_configuration(
     """Project decoded Functions; raw persisted sources use agent_config_snapshot."""
     snapshot = agent_config_value_snapshot(
         {
-            **LEGACY_CONTEXT_DEFAULTS,
+            **PERSISTED_AGENT_DEFAULT_OVERRIDES,
             **{
                 key: value
                 for key, value in config.items()

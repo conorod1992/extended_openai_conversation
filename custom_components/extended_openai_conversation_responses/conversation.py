@@ -87,6 +87,7 @@ from .const import (
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_MEMORY_EMBEDDING_MODEL,
     DEFAULT_MEMORY_RETRIEVAL_MODE,
+    DEFAULT_PERSISTED_GUEST_MODE_ENABLED,
     DEFAULT_SHARED_ARCHIVE_ENABLED,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_TEMPORARY_MEMORY,
@@ -2673,7 +2674,10 @@ class ExtendedOpenAIAgentEntity(
     ) -> dict[str, Any]:
         if (
             self._guest_mode is None
-            or self.subentry.data.get(CONF_GUEST_MODE_ENABLED, False) is not True
+            or self.subentry.data.get(
+                CONF_GUEST_MODE_ENABLED, DEFAULT_PERSISTED_GUEST_MODE_ENABLED
+            )
+            is not True
         ):
             raise RuntimeError("Guest Mode is unavailable")
         return await self._guest_mode.async_restrict(

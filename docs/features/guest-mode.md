@@ -29,8 +29,9 @@ and **Read & write** modes and defaults to Off. Personal memory is unavailable.
 
 **Allow the assistant to activate Guest Mode** exposes the one-way
 `guest_mode_restrict` model tool and defaults on for new agents. It controls only
-the availability of that restriction tool. Turning it off never cancels,
-shortens, deactivates, or weakens an active or scheduled Guest restriction.
+the availability of that restriction tool. Existing agents with no saved value
+omit the tool. Turning it off never cancels, shortens, deactivates, or weakens an
+active or scheduled Guest restriction.
 
 ### Existing configurations
 

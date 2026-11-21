@@ -40,6 +40,7 @@ from .const import (
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
     DEFAULT_CHAT_MODEL,
     DEFAULT_MAX_TOKENS,
+    DEFAULT_PERSISTED_GUEST_MODE_ENABLED,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_SERVICE_TIER,
     DEFAULT_TEMPERATURE,
@@ -887,7 +888,7 @@ def assemble_integration_function_tools(
                 + ", ".join(sorted(conflicts))
             )
         result.extend(knowledge_tools())
-    if options.get(CONF_GUEST_MODE_ENABLED, False):
+    if options.get(CONF_GUEST_MODE_ENABLED, DEFAULT_PERSISTED_GUEST_MODE_ENABLED):
         if "guest_mode_restrict" in configured_names:
             raise HomeAssistantError(
                 "Reserved Guest Mode tool name configured: guest_mode_restrict"

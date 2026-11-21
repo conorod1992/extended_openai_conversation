@@ -52,6 +52,7 @@ from .const import (
     CONF_GUEST_SHARED_MEMORY_POLICY,
     CONF_GUEST_SHARED_MEMORY_READ,
     CONF_GUEST_SHARED_MEMORY_WRITE,
+    DEFAULT_PERSISTED_GUEST_MODE_ENABLED,
     DOMAIN,
     GUEST_POLICY_VERSION,
 )
@@ -908,6 +909,9 @@ def guest_policy_editor_snapshot(
     exposed_entities: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a v2 editor draft, conservatively translating legacy settings."""
+    activation_enabled = options.get(
+        CONF_GUEST_MODE_ENABLED, DEFAULT_PERSISTED_GUEST_MODE_ENABLED
+    )
     keys = (
         CONF_GUEST_EXCLUDED_ENTITIES,
         CONF_GUEST_EXCLUDED_DOMAINS,
@@ -924,7 +928,7 @@ def guest_policy_editor_snapshot(
     if options.get(CONF_GUEST_POLICY_VERSION) == GUEST_POLICY_VERSION:
         return {
             CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
-            CONF_GUEST_MODE_ENABLED: options.get(CONF_GUEST_MODE_ENABLED, True),
+            CONF_GUEST_MODE_ENABLED: activation_enabled,
             CONF_GUEST_WEB_SEARCH: bool(
                 options.get(CONF_GUEST_WEB_SEARCH, DEFAULT_GUEST_WEB_SEARCH)
             ),
@@ -956,7 +960,7 @@ def guest_policy_editor_snapshot(
     shared_write = bool(options.get(CONF_GUEST_SHARED_MEMORY_WRITE, False))
     return {
         CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
-        CONF_GUEST_MODE_ENABLED: options.get(CONF_GUEST_MODE_ENABLED, True),
+        CONF_GUEST_MODE_ENABLED: activation_enabled,
         CONF_GUEST_WEB_SEARCH: False,
         CONF_GUEST_EXCLUDED_ENTITIES: sorted(baseline - readable),
         CONF_GUEST_EXCLUDED_DOMAINS: [],
