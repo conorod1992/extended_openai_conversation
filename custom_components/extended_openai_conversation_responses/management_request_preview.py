@@ -36,7 +36,7 @@ from .function_groups import assemble_function_tools
 from .guest_function_tools import filter_guest_tools_and_groups
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
 from .ha_llm_tools import ToolSnapshot, async_discover
-from .helpers import entry_api_provider, get_exposed_entities
+from .helpers import get_exposed_entities
 from .knowledge import get_loaded_knowledge
 from .memory import memory_enabled
 from .prompt import render_effective_prompt
@@ -298,8 +298,7 @@ async def async_preview_effective_request(
             + len(formatted_loader)
             + len(formatted_integration)
             + len(formatted_provider),
-            entry_api_provider(entry),
-            provider.api_mode,
+            provider.tool_limit,
         )
         request_settings = {"api_mode": provider.api_mode, **provider.api_kwargs}
         if (

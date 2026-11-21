@@ -356,7 +356,7 @@ def test_function_group_loader_requires_session_and_routes_active_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent = _agent()
-    assert Agent._load_function_groups(agent, ["group-1"])["status"] == "error"
+    assert Agent._load_function_groups(agent, ["group-1"], None)["status"] == "error"
 
     configured = [{"spec": {"name": "demo"}}]
     groups = [{"id": "group-1", "functions": ["demo"]}]
@@ -373,7 +373,7 @@ def test_function_group_loader_requires_session_and_routes_active_request(
         replace(conversation_module._ACTIVE_TURN.get(), function_group_session=session)
     )
     try:
-        assert Agent._load_function_groups(agent, ["group-1"]) is expected
+        assert Agent._load_function_groups(agent, ["group-1"], None) is expected
     finally:
         conversation_module._ACTIVE_TURN.reset(token)
     loader.assert_called_once_with(session, ["group-1"], groups, configured, max_tools=None, extra_tool_count=0)

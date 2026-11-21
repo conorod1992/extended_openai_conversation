@@ -317,7 +317,7 @@ async def _dispatch(agent, *, conditional=False):
         ("azure", "chat_completions", 126, True, True),
         ("azure", "responses", 127, True, True),
         ("azure", "auto", 127, True, True),
-        ("openai", "chat_completions", 127, True, True),
+        ("openai", "chat_completions", 127, True, False),
         ("openai", "responses", 127, True, True),
         ("openai", "auto", 127, True, True),
         ("custom", "chat_completions", 127, True, True),
@@ -418,9 +418,7 @@ def test_readiness_is_independent_of_ambient_runtime_and_defers_dynamic_tools(ha
     assert options == before
     dynamic = [_tool(f"discovered_{i}") for i in range(10)]
     with pytest.raises(HomeAssistantError, match="128-tool limit"):
-        request.validate_provider_tool_count(
-            128 + len(dynamic), "azure", "chat_completions"
-        )
+        request.validate_provider_tool_count(128 + len(dynamic), 128)
 
 
 @pytest.mark.parametrize("group", [False, True])
@@ -565,7 +563,7 @@ async def test_dynamic_group_growth_is_checked_at_real_runtime_boundary(
     )
     lifecycle = begin_conversation_lifecycle()
     try:
-        refused = agent._load_function_groups(["later"])
+        refused = agent._load_function_groups(["later"], 128)
         assert refused["status"] == "error" and not session.loaded_group_ids
         # Even unexpected retained growth cannot bypass the final dispatch guard.
         session.loaded_group_ids.add("later")

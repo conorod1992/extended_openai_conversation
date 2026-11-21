@@ -194,7 +194,7 @@ async def test_function_group_loader_failure_appends_unresolved_results(
         entity_module, "append_unresolved_tool_results", append_unresolved
     )
 
-    def failing_loader(_groups):
+    def failing_loader(_groups, _max_tools):
         raise RuntimeError("loader failed")
 
     with pytest.raises(RuntimeError, match="loader failed"):

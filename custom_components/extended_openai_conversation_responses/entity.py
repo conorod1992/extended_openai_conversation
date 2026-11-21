@@ -999,7 +999,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         structure: SchemaValidator | None = None,
         conditional_continue: bool = False,
         function_tools_factory: Callable[[], list[dict[str, Any]]] | None = None,
-        function_group_loader: Callable[[Any], dict[str, Any]] | None = None,
+        function_group_loader: Callable[[Any, int | None], dict[str, Any]]
+        | None = None,
         request_options: Mapping[str, Any] | None = None,
         structure_schema: dict[str, Any] | None = None,
     ) -> bool | None:
@@ -1012,7 +1013,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             require_provider_restore_complete(hass, entry_id)
         provider_client = self._client
         provider_entry_data = getattr(self.entry, "data", {})
-        provider = entry_api_provider(self.entry)
         await async_prepare_tool_results(chat_log.content)
         async with (
             context_summary_request(self, chat_log),
@@ -1341,7 +1341,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if force_finalizer_only:
                     tools = _format_tools([CONTINUE_CONVERSATION_TOOL], api_mode)
                     tool_choice = "required"
-                validate_provider_tool_count(len(tools), provider, api_mode)
+                validate_provider_tool_count(len(tools), provider_snapshot.tool_limit)
                 tool_kwargs: dict[str, Any] = {}
                 if tools:
                     tool_kwargs.update(tools=tools, tool_choice=tool_choice)
@@ -1704,7 +1704,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 }
                             else:
                                 loader_result = function_group_loader(
-                                    loader_call.tool_args.get("groups")
+                                    loader_call.tool_args.get("groups"),
+                                    provider_snapshot.tool_limit,
                                 )
                         except BaseException as err:
                             append_unresolved_tool_results(

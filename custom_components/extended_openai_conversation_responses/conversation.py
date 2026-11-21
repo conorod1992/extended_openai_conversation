@@ -182,7 +182,7 @@ from .ha_llm_tools import (
 )
 from .ha_permissions import bind_active_ha_context
 from .ha_tool_result_compat import make_tool_result_content
-from .helpers import effective_api_provider, get_exposed_entities
+from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
@@ -212,12 +212,7 @@ from .persistence_hardening import StorageRepairRequired
 from .prompt import render_effective_prompt
 from .prompt_cache import _PROMPT_CACHE_CONTEXT, prompt_cache_context
 from .regex_execution import async_process_speech_text
-from .request import (
-    assemble_integration_function_tools,
-    build_provider_request_snapshot,
-    ha_tool_discovery_references,
-    provider_tool_limit,
-)
+from .request import assemble_integration_function_tools, ha_tool_discovery_references
 from .request_context import (
     _ACTIVE_INVOCATION,
     _ACTIVE_TURN,
@@ -2295,7 +2290,9 @@ class ExtendedOpenAIAgentEntity(
         """Parse configured tools from one current or persisted data mapping."""
         return configured_function_tools_from_data(data)
 
-    def _load_function_groups(self, requested: Any) -> dict[str, Any]:
+    def _load_function_groups(
+        self, requested: Any, max_tools: int | None
+    ) -> dict[str, Any]:
         """Apply an integration-owned loader call to the active conversation."""
         session = _ACTIVE_TURN.get().function_group_session
         if session is None:
@@ -2315,23 +2312,11 @@ class ExtendedOpenAIAgentEntity(
             configured_tools, groups = self._filter_guest_tools_and_groups(
                 configured_tools, groups, policy
             )
-            entry_data = getattr(getattr(self, "entry", None), "data", {})
-            limit = None
-            if (
-                effective_api_provider(
-                    entry_data.get("api_provider"), entry_data.get("base_url")
-                )
-                == "azure"
-            ):
-                snapshot = build_provider_request_snapshot(
-                    self.subentry.data, entry_data, tools_required=True
-                )
-                limit = provider_tool_limit("azure", snapshot.api_mode)
             extra = 0
             available_tools = tools_for_available_skills(
                 configured_tools, policy.skills
             )
-            if limit is not None:
+            if max_tools is not None:
                 current = assemble_function_tools(
                     available_tools, groups, set(session.loaded_group_ids)
                 )
@@ -2345,7 +2330,7 @@ class ExtendedOpenAIAgentEntity(
                 requested,
                 groups,
                 available_tools,
-                max_tools=limit,
+                max_tools=max_tools,
                 extra_tool_count=extra,
             )
 

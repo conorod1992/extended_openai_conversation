@@ -630,9 +630,10 @@ async def test_function_group_loader_refreshes_tools_without_using_real_call_quo
     def tool_factory() -> list[dict[str, Any]]:
         return [reminder_tool] if loaded else [loader_tool]
 
-    def loader(groups: Any) -> dict[str, Any]:
+    def loader(groups: Any, max_tools: int | None) -> dict[str, Any]:
         nonlocal loaded
         assert groups == ["reminders"]
+        assert max_tools is None
         loaded = True
         return {"status": "success", "loaded": ["reminders"]}
 
@@ -779,7 +780,7 @@ async def test_function_group_loader_has_an_independent_hard_round_limit(hass) -
     }
     handled = 0
 
-    def loader(_groups: Any) -> dict[str, Any]:
+    def loader(_groups: Any, _max_tools: int | None) -> dict[str, Any]:
         nonlocal handled
         handled += 1
         return {"status": "error"}

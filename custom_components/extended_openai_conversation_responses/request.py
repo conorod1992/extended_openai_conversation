@@ -124,18 +124,22 @@ CONTINUE_CONVERSATION_TOOL = {
 START_FRESH_CONVERSATION_TOOL_NAME = "start_fresh_conversation"
 
 
-def provider_tool_limit(provider: str | None, api_mode: str) -> int | None:
+def _provider_tool_limit(
+    entry_data: Mapping[str, Any], api_mode: str, *, client: Any
+) -> int | None:
     """Return only a known applicable provider/API tool-array limit."""
-    return (
-        128 if provider == "azure" and api_mode == API_MODE_CHAT_COMPLETIONS else None
+    if api_mode != API_MODE_CHAT_COMPLETIONS:
+        return None
+    provider = effective_api_provider(
+        entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
     )
+    if provider == "azure" or is_native_openai_connection(entry_data, client=client):
+        return 128
+    return None
 
 
-def validate_provider_tool_count(
-    count: int, provider: str | None, api_mode: str
-) -> None:
+def validate_provider_tool_count(count: int, limit: int | None) -> None:
     """Enforce the same provider constraint before saves and live dispatch."""
-    limit = provider_tool_limit(provider, api_mode)
     if limit is not None and count > limit:
         raise HomeAssistantError(f"Provider request exceeds the {limit}-tool limit")
 
@@ -193,6 +197,7 @@ class ProviderRequestSnapshot:
     structured_outputs: bool = False
     reasoning_items_supported: bool = False
     reasoning_current_turn_only: bool = False
+    tool_limit: int | None = None
 
 
 def canonical_json(value: Any) -> str:
@@ -782,6 +787,7 @@ def build_provider_request_snapshot(
         api_kwargs,
         (provider_tool,) if provider_tool is not None else (),
         capabilities["structured_outputs"],
+        tool_limit=_provider_tool_limit(entry_data, api_mode, client=client),
         reasoning_items_supported=reasoning_items_supported,
         reasoning_current_turn_only=(
             api_mode == API_MODE_RESPONSES
@@ -920,16 +926,8 @@ def validate_runtime_readiness(
     snapshot = build_provider_request_snapshot(
         options, entry_data, tools_required=conversation_tools_required(options)
     )
-    # Unbounded providers need no catalogue traversal at mutation boundaries.
-    if (
-        provider_tool_limit(
-            effective_api_provider(
-                entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-            ),
-            snapshot.api_mode,
-        )
-        is None
-    ):
+    # Routes without a known tool limit need no catalogue traversal here.
+    if snapshot.tool_limit is None:
         return snapshot
     state = function_configuration_repair_state(dict(options))
     configured = state.valid if state else configured_function_tools_from_data(options)
@@ -972,10 +970,6 @@ def validate_runtime_readiness(
         == CONTINUE_CONVERSATION_CONDITIONAL,
     )
     validate_provider_tool_count(
-        len(tools) + len(snapshot.provider_tools),
-        effective_api_provider(
-            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-        ),
-        snapshot.api_mode,
+        len(tools) + len(snapshot.provider_tools), snapshot.tool_limit
     )
     return snapshot

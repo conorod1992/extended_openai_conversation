@@ -486,7 +486,7 @@ async def test_mixed_group_prompt_tracks_actual_provider_rounds(hass):
     def factory():
         return assemble_function_tools(projected, [group(saved)], loaded).tools
 
-    def load(groups):
+    def load(groups, _max_tools):
         loaded.update(groups)
         return {"loaded": groups}
 

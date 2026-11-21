@@ -84,6 +84,11 @@ If an on-demand group is disabled or loses all executable members while it is lo
 
 Setting **Tool-call limit per request** to zero makes configured Functions and the Group loader dormant; their configuration is preserved. Conditional continuation can still expose its own finalizer. When the allowance is positive, the loader does not consume it because it performs no user action. It has a separate hard limit of five loader rounds within one model run, while the existing overall tool-loop bound remains in place. The normal Function Tool allowance resets for the next conversation turn.
 
+Native OpenAI and Azure OpenAI Chat Completions requests can include up to 128
+tools. The limit counts built-in tools and the Group loader alongside the
+configured Functions sent on that request. Request Preview reports an oversize
+request, and group loading rejects additions that would exceed the limit.
+
 ## Token-use example
 
 **Before**
