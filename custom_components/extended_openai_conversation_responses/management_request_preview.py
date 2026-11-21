@@ -94,7 +94,10 @@ async def async_preview_effective_request(
         subsystem_status.get("persistent_memory", {}).get("status") != "failed"
     )
     archive_status = subsystem_status.get("archive", {})
-    archive_session_available = archive_status.get("status") != "failed"
+    archive_session_available = (
+        archive_status.get("status") != "failed"
+        or archive_status.get("write_available") is True
+    )
     archive_available = (
         archive_session_available or archive_status.get("read_available") is True
     )

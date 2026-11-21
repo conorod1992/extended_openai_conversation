@@ -1526,7 +1526,9 @@ class ConversationArchive:
             )
             # Expiry takes effect for reads even if the journal cannot be written.
             self._expired_pending_prune = targets
-            if not targets:
+            # A previous prune can have committed its deletion intent before
+            # a partition write failed. Retry that work even with no new targets.
+            if not targets and not self._pending_partitions:
                 return {"deleted_sessions": 0, "deleted_turns": 0}
             sessions = {
                 session_id: session

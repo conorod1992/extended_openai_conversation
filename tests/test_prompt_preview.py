@@ -419,7 +419,7 @@ def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last
 
 
 @pytest.mark.parametrize("search_enabled", [False, True])
-@pytest.mark.parametrize("session_state", ["missing", "writable", "read-only"])
+@pytest.mark.parametrize("session_state", ["missing", "writable", "read-only", "transient"])
 def test_retention_guidance_matches_available_tools(hass, search_enabled, session_state):
     from custom_components.extended_openai_conversation_responses import (
         conversation as runtime,
@@ -440,7 +440,8 @@ def test_retention_guidance_matches_available_tools(hass, search_enabled, sessio
         SimpleNamespace(subentry_id="agent", data=options),
     )
     agent._temporary_memory = object()
-    if session_state == "read-only":
+    if session_state in {"read-only", "transient"}:
+        agent._archive.needs_storage_repair = session_state == "read-only"
         agent._set_subsystem_status("archive", True, OSError("storage unavailable"))
     token = runtime._ACTIVE_TURN.set(runtime.ConversationTurnContext(
         archive=("key", "session") if session_state != "missing" else None,
@@ -456,8 +457,9 @@ def test_retention_guidance_matches_available_tools(hass, search_enabled, sessio
     assert not any(name.startswith("temporary_memory_") for name in tools)
     assert ("Search it only when" in prompt) is search_enabled
     assert ("conversation_search" in tools) is search_enabled
-    assert ("privacy/deletion tools" in prompt) is (session_state == "writable")
-    assert ("conversation_private" in tools) is (session_state == "writable")
+    controls_available = session_state in {"writable", "transient"}
+    assert ("privacy/deletion tools" in prompt) is controls_available
+    assert ("conversation_private" in tools) is controls_available
 
 
 @pytest.mark.parametrize("loaded", [False, True])

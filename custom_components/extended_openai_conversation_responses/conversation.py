@@ -682,20 +682,27 @@ class ExtendedOpenAIAgentEntity(
         }
         if subsystem == "archive" and error is not None and self._archive is not None:
             agent[subsystem]["read_available"] = self._archive_reads_available
+            if self._archive_can_write:
+                agent[subsystem]["write_available"] = True
 
     @property
     def _archive_reads_available(self) -> bool:
         return self._archive is not None and self._archive.read_available
 
     @property
-    def _archive_session_available(self) -> bool:
-        if _ACTIVE_TURN.get().archive is None:
-            return False
-        statuses = self.hass.data.get(SUBSYSTEM_STATUS_KEY, {})
-        agent_status = statuses.get(
-            (self.entry.entry_id, self.subentry.subentry_id), {}
+    def _archive_can_write(self) -> bool:
+        archive = self._archive
+        return bool(
+            archive is not None
+            and archive.read_available
+            and getattr(archive, "needs_storage_repair", False) is not True
         )
-        return bool(agent_status.get("archive", {}).get("status") != "failed")
+
+    @property
+    def _archive_session_available(self) -> bool:
+        # A transient failure does not close a live session. Give the user the
+        # same opportunity to retry privacy controls that turn recording has.
+        return _ACTIVE_TURN.get().archive is not None and self._archive_can_write
 
     async def _async_begin_archive_session(
         self,

@@ -30,6 +30,9 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
 )
+from custom_components.extended_openai_conversation_responses.guest_mode import (
+    GuestCapabilityPolicy,
+)
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
 )
@@ -40,7 +43,7 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
 )
 from homeassistant.helpers import llm
 from homeassistant.util import dt as dt_util
-from tests.test_conversation_archive import _archive
+from tests.test_conversation_archive import _RecoveringArchiveStorage, _archive
 from tests.test_persistence_compatibility_fixtures import ArchiveFixtureStorage, _fixture
 
 
@@ -291,6 +294,58 @@ async def test_model_date_range_cannot_delete_turns_outside_requested_dates(
             assert allowed == {"deleted_sessions": 1, "deleted_turns": 2}
         finally:
             conversation._ACTIVE_TURN.reset(token)
+
+
+async def test_reused_archive_session_can_go_private_after_a_failed_append(hass):
+    entity = _agent({CONF_ARCHIVE_ENABLED: True})
+    entity.hass = hass
+    entity.entry = SimpleNamespace(entry_id="entry")
+    entity.subentry.subentry_id = "agent-1"
+    policy = GuestCapabilityPolicy.unrestricted()
+    entity._effective_guest_policy = lambda: policy
+    storage = _RecoveringArchiveStorage()
+    entity._archive = archive = ConversationArchive(storage, "agent-1")
+    await archive.async_initialize()
+    scope = user_scope("alice", source="authenticated_user")
+    key = "conversation:open"
+    session = await entity._async_begin_archive_session(key, scope, "open", policy)
+    assert session is not None
+    storage.fail_next_partition = True
+    await entity._async_archive_turn(
+        session,
+        None,
+        SimpleNamespace(text="previous turn"),
+        None,
+        successful=False,
+        public_reply="Reply",
+    )
+    status = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent-1")]["archive"]
+    assert status["status"] == "failed"
+    assert status["write_available"] is True
+
+    current = await entity._async_begin_archive_session(key, scope, "open", policy)
+    assert current is not None and current.session_id == session.session_id
+    token = conversation._ACTIVE_TURN.set(
+        conversation.ConversationTurnContext(
+            scope=scope, archive=(key, current.session_id)
+        )
+    )
+    try:
+        assert entity._archive_session_available
+        await entity._async_execute_archive_tool("private", {})
+        await entity._async_archive_turn(
+            current,
+            None,
+            SimpleNamespace(text="Stop saving this conversation"),
+            None,
+            successful=False,
+            public_reply="Now private",
+        )
+    finally:
+        conversation._ACTIVE_TURN.reset(token)
+    assert archive.active_session(key).retention_state == "private"
+    assert archive.stats()["turn_count"] == 0
+    assert "Stop saving this conversation" not in str(storage.partitions)
 
 
 @pytest.mark.parametrize("include_expired", [False, True])

@@ -674,6 +674,23 @@ async def test_loaded_archive_converges_after_partition_failure_without_restart(
     assert result["session"]["turn_count"] == 2
 
 
+async def test_prune_retries_committed_deletion_without_new_expirations(monkeypatch):
+    archive, storage, _session = await _archive_with_failed_turn()
+    assert await archive.async_prune(30) == {"deleted_sessions": 0, "deleted_turns": 0}
+    assert "first turn" in str(storage.partitions)
+    future = dt_util.utcnow() + timedelta(days=31)
+    monkeypatch.setattr(dt_util, "utcnow", lambda: future)
+    storage.fail_next_partition = True
+    with pytest.raises(OSError, match="partition write failed"):
+        await archive.async_prune(30)
+    assert "pending_partitions" in storage.metadata
+    assert "first turn" in str(storage.partitions)
+
+    assert await archive.async_prune(30) == {"deleted_sessions": 0, "deleted_turns": 0}
+    assert "pending_partitions" not in storage.metadata
+    assert "first turn" not in str(storage.partitions)
+
+
 async def test_later_session_publish_preserves_pending_transaction_for_restart() -> None:
     """Unrelated metadata writes cannot erase an unfinished partition journal."""
     archive, storage, failed_session = await _archive_with_failed_turn()
