@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass, field
-from json import JSONDecodeError
+import json
 import logging
+import math
+import re
 from typing import TYPE_CHECKING, Any
 
 from openai import OpenAIError
@@ -18,7 +20,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.util.json import json_loads
+from homeassistant.helpers.json import json_bytes
 
 from .assistant_response import final_assistant_text
 from .debug import record_current_provider_failure
@@ -39,6 +41,7 @@ from .schema_normalization import normalize_exclusive_bounds
 from .tool_replay_guard import clear_unacknowledged_calls, remember_unacknowledged_calls
 
 _LOGGER = logging.getLogger(__name__)
+_JSON_SURROGATE = re.compile(r"[\ud800-\udfff]|\\u[dD][89a-fA-F][0-9a-fA-F]{2}")
 
 
 @dataclass(slots=True)
@@ -305,13 +308,40 @@ def parse_ai_task_structured_response(
 ) -> Any:
     """Parse and validate the caller's contract without exposing task contents."""
     try:
-        data = json_loads(text)
-    except JSONDecodeError as err:
-        _LOGGER.error("Failed to parse structured AI Task JSON response: %s", err)
-        raise HomeAssistantError("Error with structured response") from err
+        data = json.loads(
+            text, parse_constant=_reject_json_constant, parse_float=_finite_json_float
+        )
+        if _JSON_SURROGATE.search(text):
+            # The standard decoder combines valid pairs but otherwise preserves
+            # lone surrogates, which cannot be sent back through HA's UTF-8 API.
+            json.dumps(data, ensure_ascii=False).encode("utf-8")
+    except ValueError, RecursionError:
+        _LOGGER.error("Failed to parse structured AI Task JSON response")
+        raise HomeAssistantError("Error with structured response") from None
     if original_schema is not None:
         data = _omit_optional_nulls(data, original_schema)
     return _validate_with_caller_cleanup(data, structure)
+
+
+def _reject_json_constant(_value: str) -> Any:
+    raise ValueError("Non-finite value in structured AI Task JSON")
+
+
+def _finite_json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        _reject_json_constant(value)
+    return number
+
+
+def _require_serializable_response(data: Any) -> None:
+    """Check the final result with Home Assistant's JSON encoder."""
+    try:
+        json_bytes(data)
+    except TypeError, ValueError, RecursionError:
+        raise HomeAssistantError(
+            "AI Task result cannot be returned as Home Assistant JSON"
+        ) from None
 
 
 def _validate_with_caller_cleanup(data: Any, structure: SchemaValidator | None) -> Any:
@@ -470,6 +500,7 @@ class ExtendedOpenAITaskEntity(
             original_schema=original_schema,
         )
         data = _validate_with_caller_cleanup(data, task.structure)
+        await asyncio.to_thread(_require_serializable_response, data)
 
         return ai_task.GenDataTaskResult(
             conversation_id=chat_log.conversation_id,

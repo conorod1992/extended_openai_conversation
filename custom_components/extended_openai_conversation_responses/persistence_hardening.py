@@ -12,6 +12,7 @@ from typing import Any
 from homeassistant.helpers.storage import Store
 
 from .mutation_outcomes import mark_mutation_failure
+from .operation_settlement import async_wait_owned_cleanup
 
 _PRIVATE_STORE_MODE = 0o600
 
@@ -79,15 +80,9 @@ async def _async_settle_transactional_save(
         task = asyncio.ensure_future(operation)
         # The lock owner must observe both surviving writes and readbacks. A
         # second cancellation cannot abandon recovery or release the lock early.
-        while not task.done():
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError as err:
-                if task.cancelled():
-                    break
-                cancellation = cancellation or err
-            except Exception:
-                break
+        interrupted = await async_wait_owned_cleanup(task)
+        if cancellation is None:
+            cancellation = interrupted
         task.result()
 
     try:

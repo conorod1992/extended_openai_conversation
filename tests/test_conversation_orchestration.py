@@ -151,6 +151,45 @@ def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
     return entity, user_input, chat_log, policy, process
 
 
+@pytest.mark.parametrize(("mode", "expected"), [
+    ("native-live", True), ("native-recreated", False), ("native-expired", False),
+    ("managed-resumed", True), ("managed-new", False),
+])
+async def test_archive_liveness_checks_the_preexisting_conversation(monkeypatch, mode, expected):
+    from datetime import timedelta
+    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
+    from homeassistant.helpers.chat_session import CONVERSATION_TIMEOUT, DATA_CHAT_SESSION
+    from homeassistant.util import dt as dt_util
+    from custom_components.extended_openai_conversation_responses import conversation_id_ownership
+
+    entity, request, log, policy, _ = _pipeline_fixture(monkeypatch)
+    scope = user_scope("alice", source="test")
+    conversation_id = log.conversation_id
+    now = dt_util.utcnow()
+    prior = SimpleNamespace(conversation_id=conversation_id, last_updated=now, async_on_cleanup=lambda _: None)
+    active = prior
+    if mode == "native-expired":
+        prior.last_updated -= CONVERSATION_TIMEOUT + timedelta(seconds=1)
+    if mode == "native-recreated":
+        active = SimpleNamespace(conversation_id=conversation_id, last_updated=now, async_on_cleanup=lambda _: None)
+    entity.hass.data[DATA_CHAT_SESSION] = {conversation_id: active}
+    entity.hass.data[DATA_CHAT_LOGS] = {conversation_id: log}
+    conversation_id_ownership.claim_conversation_id(entity.hass, "agent", scope, conversation_id, guest_active=False)
+    conversation_id_ownership.register_conversation_id_cleanup(prior, entity.hass, conversation_id, ("agent", scope.scope_id))
+
+    def enter(*_args, **_kwargs):
+        active.last_updated = now
+        return nullcontext(active)
+
+    monkeypatch.setattr(conversation_module, "async_get_chat_session", enter)
+    resolution = ContinuityResolution(conversation_id, scope.scope_id if mode.startswith("managed") else None,
+        [], mode == "managed-resumed")
+    entity._async_begin_archive_session.side_effect = RuntimeError("archive admission witness")
+    with pytest.raises(RuntimeError, match="archive admission witness"):
+        await entity._async_process_claimed(request, SimpleNamespace(context=request.context), policy, scope, None, 30, resolution)
+    assert entity._async_begin_archive_session.call_args.kwargs["live_logical_conversation"] is expected
+
+
 @pytest.mark.parametrize(
     "mode",
     [
@@ -874,11 +913,13 @@ async def test_fresh_conversation_request_resets_owned_state_after_response(
     )
 
 
-async def test_archive_turn_with_empty_chat_log_records_empty_assistant_text() -> None:
+async def test_archive_turn_with_empty_chat_log_records_empty_assistant_text(hass) -> None:
     """Archive recording remains best-effort when the provider produced no text."""
     record_turn = AsyncMock()
     entity = object.__new__(ExtendedOpenAIAgentEntity)
-    entity.subentry = SimpleNamespace(data={})
+    entity.hass = hass
+    entity.entry = SimpleNamespace(entry_id="entry")
+    entity.subentry = SimpleNamespace(subentry_id="agent", data={})
     entity._archive = SimpleNamespace(async_record_turn=record_turn)
     entity._effective_guest_policy = MagicMock(
         return_value=SimpleNamespace(archive_retention=True)

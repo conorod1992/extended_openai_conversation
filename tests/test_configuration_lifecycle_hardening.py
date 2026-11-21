@@ -352,6 +352,24 @@ async def test_archive_search_enablement_initializes_runtime_without_retention()
 
 
 @pytest.mark.asyncio
+async def test_reconciling_live_settings_keeps_known_archive_write_failure() -> None:
+    entity = RuntimeEntity({**_disabled_runtime_config(), CONF_ARCHIVE_ENABLED: True})
+    entity._archive = entity.archive_result
+    entity.hass.data = {
+        const.SUBSYSTEM_STATUS_KEY: {
+            ("entry", "agent"): {
+                "archive": {"status": "failed", "read_available": True},
+            },
+        },
+    }
+
+    await async_reconcile_runtime_configuration(entity, force=True)
+
+    assert entity._archive is entity.archive_result
+    assert not any(name == "archive" and healthy for name, _, healthy, _ in entity.statuses)
+
+
+@pytest.mark.asyncio
 async def test_usage_retention_and_streaming_capability_follow_live_config() -> None:
     entity = RuntimeEntity(
         {

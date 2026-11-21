@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from dataclasses import replace
 import json
 import threading
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
+    API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_CHAT_MODEL,
     CONF_FUNCTION_TOOLS,
@@ -21,11 +24,17 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_SPEECH_STRIP_URLS,
     DEFAULT_CONF_FUNCTION_TOOLS,
 )
-from homeassistant.components import conversation
+from homeassistant.components import conversation, tts
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
-from tests_real_ha.test_provider_wire_e2e import _install_wire
+from tests_real_ha.test_provider_wire_e2e import (
+    _chat_sse_tool_call,
+    _install_wire,
+    _response_object,
+    _response_text_item,
+    _responses_sse_text,
+)
 
 _RAW_RESPONSE = (
     "**Hello** see https://example.com/path and "
@@ -94,10 +103,118 @@ async def test_assist_custom_replacements_preserve_literal_spacing_and_history(
     events = await _run_assist(await hass_ws_client(hass), pipeline_id=agent.entity_id,
                                conversation_id="literal-spacing-replacements")
     assert _final_speech(events) == "off now. !image!"
-    # HA still exposes raw visual deltas when this agent disables progressive
-    # TTS for custom replacements. The final speech above uses the cleaned text.
     assert agent.supports_streaming is False
-    assert _progressive_text(events) == raw
+    assert _progressive_text(events) == ""
+    assert any(
+        item.content == raw
+        for log in hass.data[DATA_CHAT_LOGS].values()
+        for item in log.content
+        if isinstance(item, conversation.AssistantContent)
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["chat", "responses", "completed-responses", "nonstreaming-tts", "short", "tool", "built-ins"],
+)
+async def test_assist_tts_engine_receives_cleaned_text(hass, hass_ws_client, monkeypatch, case):
+    """Observe the actual ResultStream input instead of the intent or TTS event."""
+    from custom_components.extended_openai_conversation_responses import request
+    from homeassistant.components.assist_pipeline import websocket_api
+    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
+
+    use_replacements = case != "built-ins"
+    raw = "**HA** says the window is closed. See https://example.invalid/manual for more information about the kitchen sensor."
+    spoken = "HA says the window is closed. See for more information about the kitchen sensor."
+    if case in {"short", "tool"}:
+        raw, spoken = "**HA** is ready.", "HA is ready."
+    if use_replacements:
+        spoken = spoken.replace("HA", "Home Assistant", 1)
+    api = API_MODE_RESPONSES if case in {"responses", "completed-responses"} else API_MODE_CHAT_COMPLETIONS
+    agent = await _speech_agent(hass, **{
+        CONF_API_MODE: api,
+        CONF_SPEECH_REGEX_REPLACEMENTS: (
+            [{"pattern": "HA", "replacement": "Home Assistant"}] if use_replacements else []
+        ),
+        CONF_FUNCTION_TOOLS: [{
+            "spec": {"name": "check_window", "description": "Check window", "parameters": {"type": "object", "properties": {}}},
+            "function": {"type": "template", "value_template": "closed"},
+        }],
+    })
+    assert await async_setup_component(hass, "assist_pipeline", {})
+
+    if case == "completed-responses":
+        capabilities = request.request_model_capabilities
+        monkeypatch.setattr(
+            request, "request_model_capabilities",
+            lambda *args, **kwargs: {**capabilities(*args, **kwargs), "streaming": False},
+        )
+        replies = [(200, _response_object("completed-speech", [_response_text_item(raw)]))]
+    elif api == API_MODE_RESPONSES:
+        replies = [_responses_sse_text(raw)]
+    else:
+        replies = [_chat_sse_deltas(list(raw))]
+    if case == "tool":
+        tool = _chat_sse_tool_call(name="check_window", arguments={})
+        tool = tool.replace(b'"tool_calls": [', b'"content": "**HA** is checking. ", "tool_calls": [', 1)
+        replies.insert(0, tool)
+    wire = _install_wire(monkeypatch, agent, replies)
+
+    original_pipeline_lookup = websocket_api.async_get_pipeline
+
+    def pipeline_with_tts(hass, pipeline_id=None):
+        return replace(
+            original_pipeline_lookup(hass, pipeline_id=pipeline_id),
+            tts_engine="tts.recording", tts_language="en",
+        )
+
+    spoken_inputs = []
+    collect_tasks = []
+
+    def record_completed(*, message, **_kwargs):
+        spoken_inputs.append(("complete", message))
+        return object()
+
+    def record_stream(*, message_stream, **_kwargs):
+        async def collect():
+            spoken_inputs.append(("stream", "".join([part async for part in message_stream])))
+        collect_tasks.append(asyncio.create_task(collect()))
+        return object()
+
+    monkeypatch.setattr(websocket_api, "async_get_pipeline", pipeline_with_tts)
+    monkeypatch.setattr(
+        tts, "async_create_stream",
+        lambda **_kwargs: tts.ResultStream(
+            hass=hass, token="speech-test", extension="wav", content_type="audio/wav",
+            engine="tts.recording", use_file_cache=False, language="en", options={},
+            supports_streaming_input=case != "nonstreaming-tts",
+            _manager=SimpleNamespace(
+                async_cache_message_in_memory=record_completed,
+                async_cache_message_stream_in_memory=record_stream,
+                token_to_stream={},
+                token_to_stream_cleanup=SimpleNamespace(schedule=lambda: None),
+            ),
+        ),
+    )
+    try:
+        events = await _run_assist(
+            await hass_ws_client(hass), pipeline_id=agent.entity_id,
+            conversation_id="actual-tts-speech", end_stage="tts",
+        )
+        async with asyncio.timeout(5):
+            await asyncio.gather(*collect_tasks)
+    finally:
+        for task in collect_tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*collect_tasks, return_exceptions=True)
+
+    assert not [event for event in events if event["type"] == "error"]
+    assert _final_speech(events) == spoken
+    assert spoken_inputs == [("stream" if case == "built-ins" else "complete", spoken)]
+    assert wire.requests[-1]["body"]["stream"] is (case != "completed-responses")
+    assert len(wire.requests) == (2 if case == "tool" else 1)
+    assert _progressive_text(events) == ("" if use_replacements else spoken)
     assert any(
         item.content == raw
         for log in hass.data[DATA_CHAT_LOGS].values()
@@ -286,13 +403,14 @@ async def _run_assist(
     pipeline_id: str,
     conversation_id: str,
     text: str = "Give me the streaming speech test response",
+    end_stage: str = "intent",
 ) -> list[dict[str, Any]]:
     """Run the public HA Assist websocket pipeline and collect its real events."""
     await client.send_json_auto_id(
         {
             "type": "assist_pipeline/run",
             "start_stage": "intent",
-            "end_stage": "intent",
+            "end_stage": end_stage,
             "pipeline": pipeline_id,
             "input": {"text": text},
             "conversation_id": conversation_id,

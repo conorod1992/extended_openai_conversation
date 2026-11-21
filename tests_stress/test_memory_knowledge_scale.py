@@ -112,9 +112,10 @@ async def test_shuffled_embedding_indices_preserve_semantic_ranking_and_cache(
         ],
     )
     for _ in range(2):
-        result = await agent._async_search_memories(
+        result, ranking = await agent._async_search_memories(
             [_USER_ID], "Locate the credential", 1
         )
+        assert ranking == "hybrid"
         assert [item.content for item in result] == [
             "Saffron key rests inside the pantry."
         ]
@@ -184,7 +185,8 @@ async def test_malformed_embedding_wire_falls_back_and_recovers(
             _embedding_reply([[1.0, 0.0]]),
         ],
     )
-    fallback = await agent._async_search_memories([_USER_ID], "Saffron key", 1)
+    fallback, ranking = await agent._async_search_memories([_USER_ID], "Saffron key", 1)
+    assert ranking == "lexical"
     assert [item.content for item in fallback] == [
         "Saffron key rests inside the pantry."
     ]
@@ -193,7 +195,7 @@ async def test_malformed_embedding_wire_falls_back_and_recovers(
     # Malformed/transient providers enter a bounded retry cooldown. Prove that
     # another lookup cannot hit the wire early, then cross that clock boundary
     # deterministically before checking healthy semantic retrieval.
-    assert await agent._async_search_memories([_USER_ID], "Locate the credential", 1) == []
+    assert await agent._async_search_memories([_USER_ID], "Locate the credential", 1) == ([], "lexical")
     assert len(wire.requests) == failure_count
     from custom_components.extended_openai_conversation_responses import (
         memory as memory_module,
@@ -201,9 +203,10 @@ async def test_malformed_embedding_wire_falls_back_and_recovers(
 
     retry_at = agent._memory._hybrid_retry_at
     monkeypatch.setattr(memory_module, "monotonic", lambda: retry_at)
-    recovered = await agent._async_search_memories(
+    recovered, ranking = await agent._async_search_memories(
         [_USER_ID], "Locate the credential", 1
     )
+    assert ranking == "hybrid"
     assert [item.content for item in recovered] == [
         "Saffron key rests inside the pantry."
     ]

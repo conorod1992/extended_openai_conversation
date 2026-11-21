@@ -375,6 +375,7 @@ async def test_successful_restore_reports_cleanup_pending_without_repeating(
     session = bt.ImportSession(
         "upload", "entry", "agent", str(path), "backup.json", 7, "legacy_json", 10**12
     )
+    session.preview_token = "token"
     bt._imports(hass)[session.session_id] = session
     monkeypatch.setattr(bt, "_async_cleanup_expired", AsyncMock())
     monkeypatch.setattr(bt, "_completed_import", lambda *_: session)

@@ -36,6 +36,7 @@ from .const import (
     MEMORY_MODE_OFF,
     MEMORY_MODES,
 )
+from .memory_tool_arguments import nullable_memory_tool_arguments
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .persistence_hardening import (
@@ -55,6 +56,7 @@ STORAGE_VERSION = 2
 EMBEDDING_CACHE_VERSION = 1
 EMBEDDING_CACHE_BATCH_SIZE = 64
 AUTO_RECALL_EMBEDDING_BATCHES = 2
+INTERACTIVE_SEARCH_EMBEDDING_BATCHES = 4
 HYBRID_RETRY_INITIAL_SECONDS = 30.0
 HYBRID_RETRY_MAX_SECONDS = 300.0
 EMBEDDING_CACHE_RETRY_SECONDS = 60
@@ -760,11 +762,24 @@ class PersistentMemory:
             return None
         if monotonic() < self._hybrid_retry_at:
             return None
+        allowed_scopes = set(scope_ids)
+        async with async_storage_lock(self._storage, self._lock):
+            self._ensure_initialized()
+            if not any(
+                memory.user_id in allowed_scopes
+                and (category_filter is None or memory.category == category_filter)
+                for memory in self._memories.values()
+            ):
+                return None
         attempt_identity = self._embedding_retry_identity
         attempt_provider = self._embedding_provider
         migrated_model = None
-        batch_budget = (
-            iter(range(AUTO_RECALL_EMBEDDING_BATCHES)) if automatic_recall else None
+        batch_budget = iter(
+            range(
+                AUTO_RECALL_EMBEDDING_BATCHES
+                if automatic_recall
+                else INTERACTIVE_SEARCH_EMBEDDING_BATCHES
+            )
         )
         try:
             if not await self._async_refresh_missing_embeddings(
@@ -796,7 +811,6 @@ class PersistentMemory:
                 )
             vector = _clean_embedding(batch.vectors[0])
             width = len(vector)
-            allowed_scopes = set(scope_ids)
             readable = [
                 entry
                 for memory_id, entry in self._embedding_cache.items()
@@ -1928,9 +1942,31 @@ def memory_revision(memory: MemoryRecord) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+MEMORY_OPTIONAL_ARGUMENTS = {
+    "add": frozenset({"subject", "key", "valid_from", "scope", "intent"}),
+    "upsert": frozenset({"subject", "key", "valid_from", "scope", "intent"}),
+    "search": frozenset({"category", "scope", "offset", "limit", "ranking"}),
+    "list": frozenset({"category", "scope", "offset", "limit"}),
+    "update": frozenset(
+        {
+            "source",
+            "content",
+            "category",
+            "subject",
+            "key",
+            "valid_from",
+            "scope",
+            "intent",
+            "clear_fields",
+        }
+    ),
+    "delete": frozenset({"scope", "intent"}),
+}
+
+
 def memory_tools() -> list[dict[str, Any]]:
     """Return internal function definitions for persistent memory."""
-    return [
+    tools = [
         {
             "spec": {
                 "name": "memory_add",
@@ -2020,6 +2056,11 @@ def memory_tools() -> list[dict[str, Any]]:
                     "properties": {
                         "query": {"type": "string", "minLength": 1},
                         "offset": {"type": "integer", "minimum": 0, "default": 0},
+                        "ranking": {
+                            "type": "string",
+                            "enum": ["lexical", "hybrid"],
+                            "description": "For the next page, copy the prior result's ranking and use its next_offset.",
+                        },
                         "category": {"type": "string"},
                         "scope": {"type": "string", "enum": ["personal", "household"]},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 50},
@@ -2053,7 +2094,8 @@ def memory_tools() -> list[dict[str, Any]]:
                 "description": (
                     "Correct a scoped record using its exact ID and current revision. "
                     "Use intent=user_request for a current user correction request, or automatic "
-                    "for clear corrections in Automatic mode. Never guess missing fields."
+                    "for clear corrections in Automatic mode. If scope is omitted, the exact readable "
+                    "record determines the scope. Use personal or household to select it explicitly."
                 ),
                 "parameters": {
                     "type": "object",
@@ -2102,7 +2144,9 @@ def memory_tools() -> list[dict[str, Any]]:
                 "description": (
                     "Delete only specifically identified scoped records using their exact "
                     "IDs and fresh revisions. Set intent=user_request for current user requests, "
-                    "or automatic for clear obsolete facts in Automatic mode. Confirm before broad deletion."
+                    "or automatic for clear obsolete facts in Automatic mode. Omitted scope follows the exact "
+                    "readable targets. Use separate calls for personal and household targets. "
+                    "Confirm before broad deletion."
                 ),
                 "parameters": {
                     "type": "object",
@@ -2134,6 +2178,7 @@ def memory_tools() -> list[dict[str, Any]]:
             "function": {"type": "memory", "operation": "delete"},
         },
     ]
+    return nullable_memory_tool_arguments(tools, MEMORY_OPTIONAL_ARGUMENTS)
 
 
 def _memory_intent_schema() -> dict[str, Any]:

@@ -404,6 +404,7 @@ async def test_meaningful_retry_identity_change_retries_immediately(monkeypatch)
     from unittest.mock import AsyncMock
 
     memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea", "preferences", "explicit")
     provider = AsyncMock(side_effect=OSError("unavailable"))
     memory.set_embedding_provider(
         provider, "model", space_id="space", retry_identity="client-a"
@@ -434,6 +435,7 @@ async def test_backoff_is_bounded_and_cancellation_does_not_start_it(monkeypatch
     clock = [100.0]
     monkeypatch.setattr(module, "monotonic", lambda: clock[0])
     memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea", "preferences", "explicit")
     provider = AsyncMock(side_effect=asyncio.CancelledError())
     memory.set_embedding_provider(provider)
     with pytest.raises(asyncio.CancelledError):
@@ -498,10 +500,12 @@ async def test_oscillating_embedding_alias_limits_rebuilds_and_recovers(monkeypa
     assert len(document_calls) == 3
 
 
-async def test_automatic_embedding_preparation_saves_batches_and_resumes(monkeypatch):
+@pytest.mark.parametrize("automatic", [True, False])
+async def test_embedding_preparation_saves_batches_and_resumes(monkeypatch, automatic):
     from custom_components.extended_openai_conversation_responses import memory as module
 
     monkeypatch.setattr(module, "EMBEDDING_CACHE_BATCH_SIZE", 1)
+    monkeypatch.setattr(module, "INTERACTIVE_SEARCH_EMBEDDING_BATCHES", 2)
     cache = CountingCacheStorage()
     memory = await _memory(cache)
     for name in ("green", "black", "herbal"):
@@ -514,13 +518,42 @@ async def test_automatic_embedding_preparation_saves_batches_and_resumes(monkeyp
         return EmbeddingBatch([[1.0, 0.0] for _ in texts], "a")
 
     memory.set_embedding_provider(provider, "alias")
-    assert await memory.async_prepare_hybrid(["alice"], "tea", automatic_recall=True) is None
+    assert await memory.async_prepare_hybrid(["alice"], "tea", automatic_recall=automatic) is None
     assert memory.hybrid_status()["reason"] == "embedding_preparation_budget_exhausted"
     assert len(cache.data["embeddings"]) == 2
     assert len(calls) == 2
     assert await memory.async_search("alice", "tea")
-    assert await memory.async_prepare_hybrid(["alice"], "tea", automatic_recall=True) == [1.0, 0.0]
+    assert await memory.async_prepare_hybrid(["alice"], "tea", automatic_recall=automatic) == [1.0, 0.0]
     assert len(cache.data["embeddings"]) == 3
     assert len(calls) == 4
     assert calls[-1] == "tea"
     assert not any("Bob" in text for text in calls)
+
+
+async def test_interactive_backfill_and_model_migration_share_allowance(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import memory as module
+
+    monkeypatch.setattr(module, "EMBEDDING_CACHE_BATCH_SIZE", 1)
+    monkeypatch.setattr(module, "INTERACTIVE_SEARCH_EMBEDDING_BATCHES", 2)
+    cache = CountingCacheStorage()
+    memory = await _memory(cache)
+    await memory.async_add("alice", "Black tea", "general", "explicit")
+    backend, calls = "old", []
+
+    async def provider(texts):
+        calls.extend(texts)
+        return EmbeddingBatch([[1.0, 0.0] for _ in texts], backend)
+
+    memory.set_embedding_provider(provider, "alias")
+    assert await memory.async_prepare_hybrid(["alice"], "tea")
+    for content in ("Green tea", "White tea"):
+        await memory.async_add("alice", content, "general", "explicit")
+    backend = "new"
+    calls.clear()
+    assert await memory.async_prepare_hybrid(["alice"], "tea") is None
+    assert calls == ["general | Green tea", "general | White tea", "tea"]
+    assert len(cache.data["embeddings"]) == 3
+    assert len(await memory.async_search("alice", "tea")) == 3
+    calls.clear()
+    assert await memory.async_prepare_hybrid(["alice"], "tea")
+    assert calls == ["tea", "general | Black tea"]

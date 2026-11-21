@@ -482,6 +482,7 @@ async def test_keyed_upsert_embedding_invalidation_tracks_embedded_fields_only()
 async def test_hybrid_status_reports_configuration_fallback_and_recovery(monkeypatch) -> None:
     monkeypatch.setattr(memory_module, "monotonic", lambda: 100.0)
     memory = await _memory()
+    await memory.async_add("alice", "Oscar is a Cavachon", "pets", "explicit")
     assert memory.hybrid_status() == {
         "configured": False,
         "status": "lexical_fallback",

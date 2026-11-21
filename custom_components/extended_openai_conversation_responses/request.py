@@ -800,6 +800,7 @@ def assemble_integration_function_tools(
     temporary_scope_available: bool,
     knowledge_available: bool,
     archive_available: bool = True,
+    archive_session_available: bool = True,
     guest_policy: GuestCapabilityPolicy | None = None,
     lifecycle_active: bool | None = None,
 ) -> list[dict[str, Any]]:
@@ -865,17 +866,19 @@ def assemble_integration_function_tools(
         and options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
         and guest_policy.archive_access
     ):
-        configured_archive_tools = archive_tools()
-        if not options.get(
+        search_available = options.get(
             CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
             DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
-        ):
-            configured_archive_tools = [
-                tool
-                for tool in configured_archive_tools
-                if tool["function"]["operation"] not in {"search", "get"}
-            ]
-        result.extend(configured_archive_tools)
+        )
+        result.extend(
+            tool
+            for tool in archive_tools()
+            if (
+                search_available
+                if tool["function"]["operation"] in {"search", "get"}
+                else archive_session_available
+            )
+        )
     if knowledge_available and guest_policy.knowledge_access:
         conflicts = configured_names & KNOWLEDGE_TOOL_NAMES
         if conflicts:

@@ -339,7 +339,7 @@ async def test_hybrid_provider_change_and_wrong_vector_count_fall_back(
     async def provider_disappears(
         _: list[str], *, category_filter=None, batch_budget=None
     ) -> bool:
-        assert category_filter is None and batch_budget is None
+        assert category_filter is None and batch_budget is not None
         manager.set_embedding_provider(None)
         return True
 

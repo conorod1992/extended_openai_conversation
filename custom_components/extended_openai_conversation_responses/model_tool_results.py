@@ -18,6 +18,7 @@ from .ha_tool_result_compat import (
     tool_result_data,
 )
 from .memory import MemoryRecord, memory_as_dict
+from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 
 _OPTIONAL_MEMORY_FIELDS = {
     "subject",
@@ -253,14 +254,19 @@ def model_memory_as_dict(
     personal_scope_id: str | None = None,
 ) -> dict[str, Any]:
     """Project a memory for the model while omitting only absent optional fields."""
-    return _sparse_memory_mapping(
-        memory_as_dict(
-            memory,
-            include_scope=include_scope,
-            personal_scope_id=personal_scope_id,
-            include_revision=True,
-        )
+    result = memory_as_dict(
+        memory,
+        include_scope=include_scope,
+        personal_scope_id=personal_scope_id,
+        include_revision=True,
     )
+    if include_scope:
+        result["scope"] = (
+            "household"
+            if result["scope_id"] == SHARED_HOUSEHOLD_SCOPE_ID
+            else "personal"
+        )
+    return _sparse_memory_mapping(result)
 
 
 def _sparse_memory_mapping(value: dict[str, Any]) -> dict[str, Any]:
@@ -272,13 +278,17 @@ def _sparse_memory_mapping(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _compact_memory_result(result: dict[str, Any]) -> dict[str, Any]:
+def _compact_memory_result(
+    result: dict[str, Any], *, scope: str | None = None
+) -> dict[str, Any]:
     """Sparsify only recognized memory-record containers."""
     compacted = dict(result)
     for key in ("memory", "candidate"):
         record = compacted.get(key)
         if isinstance(record, dict):
-            compacted[key] = _sparse_memory_mapping(record)
+            compacted[key] = _sparse_memory_mapping(
+                {**record, "scope": scope} if scope is not None else record
+            )
     records = compacted.get("memories")
     if isinstance(records, list):
         compacted["memories"] = [

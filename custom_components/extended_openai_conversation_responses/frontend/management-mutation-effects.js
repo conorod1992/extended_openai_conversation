@@ -9,7 +9,7 @@ const memories = Object.freeze({scopeCatalog:true});
 
 const commands = {
   backup: {restore:Object.freeze({configuration:true, restore:true})},
-  quiet_hours: {update:Object.freeze({global:true})},
+  quiet_hours: {update:Object.freeze({global:true}), rebind:Object.freeze({global:true})},
   configuration: {update:configurationAndRules, save:configurationAndRules, import:configurationAndRules, duplicate:mutation},
   function_repair: {save:configurationAndRules, save_one:configurationAndRules, delete_one:configurationAndRules, save_groups:tools, configuration_save:configurationAndRules},
   conversations: {delete:mutation, end_active:mutation},

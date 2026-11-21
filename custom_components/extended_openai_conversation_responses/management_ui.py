@@ -1949,17 +1949,22 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             hass.config_entries.async_update_subentry(
                 entry, subentry, data=parsed["config"], title=parsed["title"]
             )
-            from .management_loading_performance import (
-                _snapshot_normalized_configuration,
-            )
-
-            snapshot = _snapshot_normalized_configuration(
-                parsed["config"], validated=True, provider=provider
-            )
             revision = saved_agent_config_revision(
                 subentry, parsed["config"], parsed["title"]
             )
-            seed_persisted_config_projection(entry, subentry, snapshot, revision)
+            try:
+                from .management_loading_performance import (
+                    _snapshot_normalized_configuration,
+                )
+
+                snapshot = _snapshot_normalized_configuration(
+                    parsed["config"], validated=True, provider=provider
+                )
+                seed_persisted_config_projection(entry, subentry, snapshot, revision)
+            except Exception:
+                _LOGGER.warning(
+                    "Committed configuration import could not seed its optional cache"
+                )
             await async_finish_usage_retention_write(
                 hass, entry_id, subentry_id, updated_fields=None
             )
@@ -2074,7 +2079,27 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
     action = request.message["action"]
     _require_admin(is_admin)
     if action in {"ha_catalog", "ha_add"}:
-        from homeassistant.helpers import llm
+        from homeassistant.helpers import entity_registry as er, llm
+
+        preview_devices: dict[str, str] = {}
+        satellites = hass.states.async_all("assist_satellite")
+        if satellites:
+            registry = er.async_get(hass)
+            for satellite_state in satellites:
+                satellite = registry.async_get(satellite_state.entity_id)
+                if (
+                    satellite is not None
+                    and satellite.device_id
+                    and not satellite.disabled_by
+                ):
+                    preview_devices.setdefault(
+                        satellite.device_id, satellite_state.name
+                    )
+        device_id = message.get("preview_device_id")
+        if device_id is not None and (
+            not isinstance(device_id, str) or device_id not in preview_devices
+        ):
+            raise HomeAssistantError("The selected Assist satellite is unavailable")
 
         references = None
         if action == "ha_add":
@@ -2092,7 +2117,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 context=Context(user_id=user_id),
                 language=hass.config.language,
                 assistant="conversation",
-                device_id=None,
+                device_id=device_id,
             ),
             references,
         )
@@ -2109,6 +2134,13 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         }
         if action == "ha_catalog":
             return {
+                "preview_devices": [
+                    {"device_id": device_id, "name": name}
+                    for device_id, name in sorted(
+                        preview_devices.items(),
+                        key=lambda item: (item[1].casefold(), item[0]),
+                    )
+                ],
                 "tools": [
                     {
                         "reference": live.reference,
@@ -2171,16 +2203,13 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         )
         result["ha_saved"] = {
             tool["spec"]["name"]: {
-                "available": key in ha_catalog_snapshot.tools,
+                "available": True,
                 "name": tool["function"]["tool_name"],
-                "source": ha_catalog_snapshot.tools[key].source_label
-                if key in ha_catalog_snapshot.tools
-                else tool["function"]["source_id"],
-                "description": ha_catalog_snapshot.tools[key].tool.description or ""
-                if key in ha_catalog_snapshot.tools
-                else "Unavailable in this preview context",
+                "source": ha_catalog_snapshot.tools[key].source_label,
+                "description": ha_catalog_snapshot.tools[key].tool.description or "",
             }
             for key, tool in ha_existing.items()
+            if key in ha_catalog_snapshot.tools
         }
         return result
     if action == "validate":
@@ -3416,6 +3445,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("original_id"): str,
         vol.Optional("repair"): bool,
         vol.Optional("group_id"): vol.Any(None, str),
+        vol.Optional("preview_device_id"): str,
         vol.Optional("rule_id"): str,
         vol.Optional("rule"): dict,
         vol.Optional("revision"): str,

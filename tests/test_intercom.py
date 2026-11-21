@@ -273,6 +273,32 @@ async def test_announcement_completion_outlives_old_timeout_and_queue_ttl(hass, 
     assert entity_id not in manager._queues
 
 
+async def test_cancelled_announcement_releases_the_queue(hass, monkeypatch) -> None:
+    manager = IntercomManager(hass)
+    manager._enabled = True
+    entity_id = "assist_satellite.kitchen"
+    first = _coverage_message(entity_id)
+    second = _coverage_message(entity_id)
+    second.id = "next-message"
+    manager._queues[entity_id] = deque([first, second])
+    hass.states.get.return_value = SimpleNamespace(state="idle")
+    hass.async_create_task.side_effect = asyncio.create_task
+    hass.services.async_call.side_effect = [asyncio.CancelledError(), None]
+    monkeypatch.setattr(intercom, "IDLE_STABILITY_SECONDS", 0)
+
+    manager._schedule_drain(entity_id)
+    [first_drain] = manager._drain_tasks
+    with pytest.raises(asyncio.CancelledError):
+        await first_drain
+    [second_drain] = manager._drain_tasks
+    await second_drain
+
+    assert first.deliveries[entity_id].status == "failed"
+    assert second.deliveries[entity_id].status == "delivered"
+    assert hass.services.async_call.await_count == 2
+    assert entity_id not in manager._queues
+
+
 def test_aliases_are_filtered_trimmed_sorted_and_unique() -> None:
     value = SimpleNamespace(aliases=[" kitchen ", "", None, "Bedroom", "kitchen"])
     assert intercom._aliases(value) == ["Bedroom", "kitchen"]

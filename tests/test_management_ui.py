@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -75,6 +76,7 @@ def _hass(entry=None):
         config_entries=config_entries,
         auth=SimpleNamespace(),
         config=SimpleNamespace(language="en", time_zone="UTC"),
+        states=SimpleNamespace(async_all=lambda *_: []),
         data={},
         services=SimpleNamespace(async_call=AsyncMock()),
     )
@@ -167,11 +169,6 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
         lambda *_: GuestCapabilityPolicy.unrestricted(),
     )
     monkeypatch.setattr(management_request_preview, "validate_function_groups", lambda *_: [])
-    monkeypatch.setattr(
-        management_request_preview,
-        "assemble_function_tools",
-        lambda tools, *_args: SimpleNamespace(tools=tools),
-    )
     monkeypatch.setattr(management_request_preview, "get_exposed_entities", lambda _hass: [])
 
     trusted = await management_request_preview.async_preview_effective_request(
@@ -191,8 +188,18 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
         temporary_memory=False,
     )
     groups = [
-        {"id": "public", "guest_allowed": True, "functions": ["allowed", "blocked"]},
-        {"id": "private", "guest_allowed": False, "functions": ["private"]},
+        {
+            "id": "public",
+            "guest_allowed": True,
+            "loading_mode": "always",
+            "functions": ["allowed", "blocked"],
+        },
+        {
+            "id": "private",
+            "guest_allowed": False,
+            "loading_mode": "always",
+            "functions": ["private"],
+        },
     ]
     guest_tools = [custom, _tool("blocked"), _tool("private"), ha_tool]
     monkeypatch.setattr(
@@ -213,6 +220,12 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     guest = await management_request_preview.async_preview_effective_request(
         hass, entry, subentry, options, "user"
     )
+    guest_tools_content = next(
+        section["content"]
+        for section in guest["sections"]
+        if section["key"] == "function_tools"
+    )
+    assert [tool["spec"]["name"] for tool in json.loads(guest_tools_content)] == ["allowed"]
     assert any("temporary memories are excluded" in note for note in guest["notes"])
     assert temporary_snapshot.await_count == 1, "Guest policy excludes owner memory reads"
     assert discover.await_count == 1

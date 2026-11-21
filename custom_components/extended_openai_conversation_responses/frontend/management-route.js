@@ -136,7 +136,7 @@ function routeFeatureKeys(view) {
   // Configuration guidance is additive and never blocks route readiness.
   if (["data-memory/memories", "capabilities/guest-mode"].includes(view)) keys.push("memory-browser");
   if (["capabilities/home-assistant", "capabilities/web-skills"].includes(view)) keys.push("capabilities");
-  if (["data-memory/memories", "usage-maintenance/diagnostics"].includes(view)) keys.push("status");
+  if (view === "usage-maintenance/diagnostics") keys.push("status");
   return keys;
 }
 
@@ -401,20 +401,42 @@ export function loadSectionAlongsideAsset(
   });
 }
 
+export function resetConversationSearch(panel) {
+  panel._eocHistoryLoadToken = (panel._eocHistoryLoadToken || 0) + 1;
+  panel._eocHistoryPagePending = false;
+  panel._eocHistoryPageError = null;
+  panel._eocHistoryResult = null;
+  panel._eocHistoryMode = "list";
+  panel._eocHistoryQuery = "";
+  panel._eocHistoryDraft = "";
+  const input = panel.shadowRoot?.querySelector?.("#archive-query");
+  if (input) input.value = "";
+}
+
 async function loadRouteData(panel, silent, view, token) {
   const feature = getRouteFeature(view);
   if (view === "capabilities/quiet-hours") return feature.loadQuietHours(panel, silent);
   if (view === "usage-maintenance/request-debug") return feature.loadRequestDebug(panel, silent);
-  if (view === "data-memory/conversations") {
-    panel._eocHistoryMode = "list";
-    panel._eocHistoryQuery = "";
-  }
-  return panel._loadSectionData(silent);
+  const result = await panel._loadSectionData(silent);
+  if (view === "data-memory/conversations" && panel._eocHistoryMode === "search"
+      && isCurrentLazyLoad(panel, view, token)) await feature?.loadConversationPage(panel, 0);
+  return result;
 }
 
 // One native route entry point owns lazy assets and stale completion handling.
+export function syncConversationSearchOwner(panel, view = panel._viewKey?.()) {
+  const historyOwner = view === "data-memory/conversations"
+    ? JSON.stringify([panel._selectedAgent?.()?.entry_id, panel._agentId, panel._scopeId, panel._eocAuthenticationGeneration])
+    : null;
+  if (panel._eocHistoryOwner !== historyOwner) {
+    if (historyOwner !== null || panel._eocHistoryOwner != null) resetConversationSearch(panel);
+    panel._eocHistoryOwner = historyOwner;
+  }
+}
+
 export function loadRoute(panel, silent = false) {
   const view = panel._viewKey();
+  syncConversationSearchOwner(panel, view);
   if (view !== "overview") panel._eocOverviewBroadcastPromise = null;
   const token = (panel._eocViewAssetToken || 0) + 1;
   panel._eocViewAssetToken = token;

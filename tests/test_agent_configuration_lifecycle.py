@@ -78,7 +78,7 @@ def startup(monkeypatch):
         "guest_mode": object(),
         "request_rules": object(),
         "temporary_memory": object(),
-        "archive": SimpleNamespace(async_prune=AsyncMock()),
+        "archive": SimpleNamespace(async_prune=AsyncMock(), needs_storage_repair=False),
         "knowledge": object(),
         "memory": persistent,
     }.items():

@@ -5,6 +5,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses.speech import (
     StreamingSpeechSanitizer,
     _final_whitespace_cleanup,
+    process_speech_text,
 )
 
 
@@ -213,10 +214,39 @@ def test_unspaced_dash_ends_overlong_bare_url(wrapper):
         "https://example.invalid/device—red/details",
         "https://example.invalid?search=Boston–Washington",
         "https://example.invalid#Boston–Washington",
+        "https://example.invalid/path?sig=opaque—value",
+        "https://example.invalid/path#part—name",
+        "https://example.invalid/機器—never.html",
+        "https://example.invalid/日本語?場所=東京–大阪#取扱説明",
+        '"https://example.invalid/案内、注意"',
     ],
 )
 def test_bare_url_keeps_path_query_and_fragment_dashes_hidden(url):
     assert_all_splits(f"See {url} for details.", "See for details.")
+
+
+@pytest.mark.parametrize(
+    ("tail", "expected"),
+    [
+        ("—never press Reset.", "Read —never press Reset."),
+        ("—no reset is required.", "Read —no reset is required."),
+        ("—no, leave it on.", "Read —no, leave it on."),
+        ("—consult the manual.", "Read —consult the manual."),
+        ("—don't reset the router.", "Read —don't reset the router."),
+        ("—don’t reset the router.", "Read —don’t reset the router."),
+        ("—do not reset.", "Read —do not reset."),
+        ("，然后不要重置路由器。", "Read，然后不要重置路由器。"),
+        (
+            "。ルーターをリセットしないでください。",
+            "Read。ルーターをリセットしないでください。",
+        ),
+    ],
+)
+@pytest.mark.parametrize("path", ["manual", "a" * 160])
+def test_bare_url_preserves_following_instruction(tail, expected, path):
+    source = f"Read https://router.local:8080/{path}{tail}"
+    assert process_speech_text(source, {"speech_processing_enabled": True}) == expected
+    assert_all_splits(source, expected, max_buffer_chars=64)
 
 
 def test_overlong_bare_url_keeps_query_dash_hidden_across_buffers():
@@ -290,9 +320,13 @@ def test_overlong_readable_link_preserves_spacing_at_the_buffer_boundary(
         ), width
 
 
-def assert_all_splits(source, expected):
+def assert_all_splits(source, expected, *, max_buffer_chars=4096):
     assert (
-        _final_whitespace_cleanup(StreamingSpeechSanitizer().process_complete(source))
+        _final_whitespace_cleanup(
+            StreamingSpeechSanitizer(
+                max_buffer_chars=max_buffer_chars
+            ).process_complete(source)
+        )
         == expected
     )
     for chunks in (
@@ -300,7 +334,7 @@ def assert_all_splits(source, expected):
         list(source),
         *[[source[:i], source[i:]] for i in range(len(source) + 1)],
     ):
-        sanitizer = StreamingSpeechSanitizer()
+        sanitizer = StreamingSpeechSanitizer(max_buffer_chars=max_buffer_chars)
         actual = "".join(
             [*(sanitizer.feed(chunk) for chunk in chunks), sanitizer.finish()]
         )

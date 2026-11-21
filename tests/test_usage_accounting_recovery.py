@@ -56,6 +56,65 @@ class FlakyLoadStorage(FakeStorage):
         return deepcopy(self.data)
 
 
+async def test_continuous_accounting_keeps_a_fixed_checkpoint_deadline(hass, monkeypatch):
+    clock = 10.0
+    hass.loop = SimpleNamespace(time=lambda: clock)
+
+    def delay_save(store, callback, delay):
+        store.pending = callback
+        store.due = clock + delay
+
+    async def write_data(store, data):
+        store.data = data["data"]
+
+    class DelayedStorage(usage_module._UsageStore):
+        def __init__(self):
+            self.hass = hass
+            self.data = None
+
+        async def async_load(self):
+            return deepcopy(self.data)
+
+    monkeypatch.setattr(usage_module.PropagatingWriteStore, "async_delay_save", delay_save)
+    monkeypatch.setattr(usage_module.PropagatingWriteStore, "_async_write_data", write_data)
+    totals, daily, details = (DelayedStorage() for _ in range(3))
+    manager = UsageManager(totals, daily, details)
+    await manager.async_initialize()
+    for timestamp in (10.0, 12.0, 14.0):
+        clock = timestamp
+        await manager.async_record_request(
+            successful=True, usage=RequestUsage(total_tokens=5)
+        )
+        assert [store.due for store in (totals, daily, details)] == [15.0] * 3
+        # Reading pending data must leave the original checkpoint scheduled.
+        details.pending()
+
+    clock = 15.0
+    for store in (totals, daily, details):
+        await store._async_write_data({"data": store.pending()})
+    recovered = UsageManager(totals, daily, details)
+    await recovered.async_initialize()
+    assert recovered.totals.total_tokens == 15
+    assert len(recovered.requests) == 3
+
+    clock = 16.0
+    await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=5))
+    assert [store.due for store in (totals, daily, details)] == [21.0] * 3
+
+
+@pytest.mark.parametrize("damaged", ["totals", "daily"])
+async def test_partial_aggregate_damage_marks_both_usage_projections_unavailable(damaged):
+    date = dt_util.now().date().isoformat()
+    totals = {"total_tokens": "bad" if damaged == "totals" else 12}
+    day = {**usage_module._empty_day(date), "total_tokens": 12}
+    daily = {"days": {date: "bad" if damaged == "daily" else day}}
+    manager = UsageManager(FakeStorage(totals), FakeStorage(daily))
+    await manager.async_initialize()
+    await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=8))
+    assert not manager.lifetime_available
+    assert not manager.daily_available
+
+
 def _request(timestamp: str, request_id: str = "request-1") -> dict:
     return asdict(
         UsageRequest(

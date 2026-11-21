@@ -6,15 +6,14 @@ import pytest
 from custom_components.extended_openai_conversation_responses.speech import (
     StreamingSpeechSanitizer as Sanitizer,
     _final_whitespace_cleanup as clean,
+    _join_speech,
 )
 
 
 def streamed(source, width=1, **options):
     z = Sanitizer(**options)
-    return clean(
-        "".join(z.feed(source[i : i + width]) for i in range(0, len(source), width))
-        + z.finish()
-    )
+    parts = [z.feed(source[i : i + width]) for i in range(0, len(source), width)]
+    return clean(_join_speech([*parts, z.finish()], {}))
 
 
 def all_splits(source, expected, **options):
@@ -23,7 +22,7 @@ def all_splits(source, expected, **options):
     for split in range(len(source) + 1):
         z = Sanitizer(**options)
         assert (
-            clean(z.feed(source[:split]) + z.feed(source[split:]) + z.finish())
+            clean(_join_speech([z.feed(source[:split]), z.feed(source[split:]), z.finish()], {}))
             == expected
         ), (source, split)
 
@@ -136,3 +135,15 @@ def test_incomplete_prefixes_keep_source_order_at_every_split(source):
 def test_removed_link_whitespace_can_be_pending_in_either_stage():
     source = "*. \n2. https://example.com*"
     all_splits(source, clean(Sanitizer().process_complete(source)))
+
+
+def test_rendered_labels_are_counted_in_the_pending_buffer():
+    sanitizer = Sanitizer(max_buffer_chars=64)
+    label = "Read the complete label"
+    sanitizer.feed("*Before ")
+    heard = []
+    for _ in range(80):
+        heard.append(sanitizer.feed(f"[{label}](https://example.com) "))
+        assert sanitizer.buffered_chars <= 128
+    heard.append(sanitizer.finish())
+    assert "".join(heard).count(label) == 80

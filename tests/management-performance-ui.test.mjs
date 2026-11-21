@@ -1211,6 +1211,7 @@ for (const failedKind of ["usage", "memory", "knowledge", "guest_mode", "setup_h
   const panel = panelFor("data-memory", "conversations");
   panel._eocHistoryMode = "search";
   panel._eocHistoryQuery = "battery";
+  panel._eocHistoryDraft = "unsubmitted boiler query";
   const others = Array.from({length:40}, (_, i) => ({session_id:`other-${i}`, turn_id:`turn-${i}`}));
   panel._contentData = {sessions:{sessions:[{session_id:"deleted"}, ...others.slice(0,19)],
     offset:20, returned:20, has_more:true, next_offset:40}};
@@ -1227,6 +1228,7 @@ for (const failedKind of ["usage", "memory", "knowledge", "guest_mode", "setup_h
   };
   await panel._deleteSession("deleted");
   assert.deepEqual(offsets, [0], "deleting a multi-page conversation restarts the search");
+  assert.equal(panel._eocHistoryDraft, "unsubmitted boiler query");
   const first = panel._contentData.sessions.sessions;
   await loadConversationPage(panel, panel._contentData.sessions.next_offset);
   assert.deepEqual([...first, ...panel._contentData.sessions.sessions].map(row => row.turn_id),

@@ -14,6 +14,7 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_API_MODE,
     CONF_ARCHIVE_ENABLED,
+    CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
     CONF_CHAT_MODEL,
     CONF_CONTINUE_CONVERSATION,
     CONF_CONVERSATION_CONTINUITY,
@@ -27,14 +28,17 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MEMORY_MODE,
     CONF_PROMPT,
+    CONF_SKILLS,
     CONF_TEMPORARY_MEMORY,
     CONF_WEB_SEARCH,
     CONTINUE_CONVERSATION_CONDITIONAL,
     CONVERSATION_CONTINUITY_USER,
+    DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_PROMPT,
     LEGACY_DEFAULT_PROMPT_6_8_3,
     LEGACY_DEFAULT_PROMPT_WITH_SKILLS,
     MEMORY_MODE_AUTOMATIC,
+    SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
@@ -414,6 +418,90 @@ def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last
     )
 
 
+@pytest.mark.parametrize("search_enabled", [False, True])
+@pytest.mark.parametrize("session_state", ["missing", "writable", "read-only"])
+def test_retention_guidance_matches_available_tools(hass, search_enabled, session_state):
+    from custom_components.extended_openai_conversation_responses import (
+        conversation as runtime,
+    )
+    from tests.test_runtime_readiness import _agent
+
+    options = normalize_agent_config({
+        "prompt": "BASE",
+        "temporary_memory": "eager",
+        "voice_scope_policy": "unretained",
+        "archive_enabled": True,
+        "archive_model_search_enabled": search_enabled,
+        "current_datetime_enabled": False,
+        "exposed_entities_enabled": False,
+    })
+    agent = _agent(
+        hass, SimpleNamespace(entry_id="entry"),
+        SimpleNamespace(subentry_id="agent", data=options),
+    )
+    agent._temporary_memory = object()
+    if session_state == "read-only":
+        agent._set_subsystem_status("archive", True, OSError("storage unavailable"))
+    token = runtime._ACTIVE_TURN.set(runtime.ConversationTurnContext(
+        archive=("key", "session") if session_state != "missing" else None,
+    ))
+    try:
+        context = SimpleNamespace(device_id="kitchen")
+        prompt = agent._build_system_prompt([], context, None)
+        tools = {item["spec"]["name"] for item in agent._get_function_tools()}
+    finally:
+        runtime._ACTIVE_TURN.reset(token)
+
+    assert "Silently store concise facts" not in prompt
+    assert not any(name.startswith("temporary_memory_") for name in tools)
+    assert ("Search it only when" in prompt) is search_enabled
+    assert ("conversation_search" in tools) is search_enabled
+    assert ("privacy/deletion tools" in prompt) is (session_state == "writable")
+    assert ("conversation_private" in tools) is (session_state == "writable")
+
+
+@pytest.mark.parametrize("loaded", [False, True])
+def test_live_persistent_memory_guidance_and_tools_require_manager(hass, loaded):
+    from tests.test_runtime_readiness import _agent
+
+    options = normalize_agent_config({
+        CONF_PROMPT: "BASE",
+        CONF_MEMORY_MODE: MEMORY_MODE_AUTOMATIC,
+        CONF_CURRENT_DATETIME_ENABLED: False,
+        CONF_EXPOSED_ENTITIES_ENABLED: False,
+    })
+    agent = _agent(hass, SimpleNamespace(entry_id="entry"), SimpleNamespace(data=options))
+    agent._memory = object() if loaded else None
+    context = SimpleNamespace(device_id=None)
+    prompt = agent._build_system_prompt([], context, None)
+    tools = {tool["spec"]["name"] for tool in agent._get_function_tools()}
+    assert ("Personal mode: Automatic" in prompt) is loaded
+    assert ("memory_add" in tools) is loaded
+    assert ("memory_search" in tools) is loaded
+
+
+def test_zero_budget_omits_tool_guidance_but_keeps_memory_context(hass):
+    result = render_effective_prompt(
+        hass, {
+            CONF_PROMPT: "BASE",
+            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: 0,
+            CONF_MEMORY_MODE: MEMORY_MODE_AUTOMATIC,
+            CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED,
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_CURRENT_DATETIME_ENABLED: False,
+            CONF_EXPOSED_ENTITIES_ENABLED: False,
+        },
+        exposed_entities=[], current_device_id=None, user_input=None, skills=[],
+        memories=[_memory()], temporary_memories=[_temporary()], knowledge_available=True,
+    )
+    keys = {section.key for section in result.sections}
+    assert {"persistent_memory_context", "temporary_memory_context"} <= keys
+    assert not {
+        "persistent_memory_instructions", "temporary_memory_instructions",
+        "archive_instructions", "knowledge_instructions",
+    } & keys
+
+
 def _entity_context() -> list[dict]:
     return [
         {
@@ -474,8 +562,9 @@ def test_invalid_custom_context_template_is_rejected_cleanly() -> None:
         normalize_agent_config({CONF_CURRENT_DATETIME_TEMPLATE: "{% if %}"})
 
 
+@pytest.mark.parametrize("skill_loader_enabled", [None, False, True])
 async def test_preview_matches_production_builder_without_user_or_history(
-    hass, monkeypatch
+    hass, monkeypatch, skill_loader_enabled,
 ) -> None:
     _setup_area_template_registries(hass)
     """Preview and live execution share the same renderer and baseline assembly."""
@@ -486,6 +575,22 @@ async def test_preview_matches_production_builder_without_user_or_history(
     options[CONF_ARCHIVE_ENABLED] = False
     options[CONF_TEMPORARY_MEMORY] = "off"
     options[CONF_CURRENT_DATETIME_TEMPLATE] = "## Current date and time\nfixed"
+    skill_manager = SimpleNamespace(
+        get_all_skills=lambda: [SimpleNamespace(name="weather", description="Local forecast")]
+    )
+    if skill_loader_enabled is not None:
+        options[CONF_SKILLS] = ["weather"]
+        loader = next(
+            tool for tool in DEFAULT_CONF_FUNCTION_TOOLS
+            if tool["spec"]["name"] == "load_skill"
+        )
+        options[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+            [{**loader, "enabled": skill_loader_enabled}]
+        )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.skills.SkillManager.get_loaded_instance",
+        lambda: skill_manager,
+    )
     subentry = SimpleNamespace(subentry_id="agent-1", data=options)
     entry = SimpleNamespace(entry_id="entry-1")
     monkeypatch.setattr(
@@ -496,8 +601,9 @@ async def test_preview_matches_production_builder_without_user_or_history(
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.hass = hass
     entity.subentry = subentry
-    entity.skill_manager = SimpleNamespace(get_all_skills=lambda: [])
+    entity.skill_manager = skill_manager
     entity._knowledge = None
+    entity._memory = object()
     production = entity._build_system_prompt(
         _entity_context(),
         SimpleNamespace(device_id=None),
@@ -508,11 +614,57 @@ async def test_preview_matches_production_builder_without_user_or_history(
     )
 
     assert preview["prompt"] == production
+    assert ("weather: Local forecast" in production) is (skill_loader_enabled is True)
     assert "not serialized" not in preview["prompt"]
     assert any("conversation history are excluded" in note for note in preview["notes"])
-    # The security boundary withholds the legacy/default Bash schema until explicit
-    # acknowledgement, so the effective request is smaller than the raw configured set.
-    assert preview["function_group_savings"]["characters"] > 0
+    function_tools = next(
+        section["content"]
+        for section in preview["sections"]
+        if section["key"] == "function_tools"
+    )
+    assert '"name":"bash"' not in function_tools
+    assert preview["function_group_savings"]["characters"] == 0
+
+
+@pytest.mark.parametrize("status", ["failed", "healthy", "disabled", "read-only"])
+async def test_preview_observes_retained_storage_failure_without_loading_it(
+    hass, monkeypatch, status,
+):
+    _setup_area_template_registries(hass)
+    options = _options()
+    options.update({
+        CONF_PROMPT: "BASE",
+        CONF_ARCHIVE_MODEL_SEARCH_ENABLED: True,
+        CONF_KNOWLEDGE_ENABLED: False,
+        CONF_TEMPORARY_MEMORY: "off",
+        CONF_EXPOSED_ENTITIES_ENABLED: False,
+    })
+    entry = SimpleNamespace(entry_id="entry", data={})
+    subentry = SimpleNamespace(subentry_id="assistant", data=options)
+    hass.data[SUBSYSTEM_STATUS_KEY] = {
+        ("entry", "assistant"): {
+            "archive": (
+                {"status": "failed", "read_available": True}
+                if status == "read-only" else {"status": status}
+            ),
+            "persistent_memory": {"status": status},
+        },
+        ("entry", "other-assistant"): {"archive": {"status": "failed"}},
+    }
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
+        lambda _hass: [],
+    )
+    result = await async_preview_effective_request(hass, entry, subentry, options, "admin")
+    tools = next(section["content"] for section in result["sections"] if section["key"] == "integration_tools")
+    assert ('"conversation_search"' in tools) is (status != "failed")
+    assert ('"memory_search"' in tools) is (status != "failed")
+    assert ("Retained conversation archive" in result["prompt"]) is (status != "failed")
+    assert any("Conversation Archive is unavailable" in note for note in result["notes"]) is (status == "failed")
+    assert any("cannot currently write sessions" in note for note in result["notes"]) is (status == "read-only")
+    assert ('"conversation_private"' in tools) is (status not in {"failed", "read-only"})
+    assert ("Use the privacy/deletion tools" in result["prompt"]) is (status not in {"failed", "read-only"})
+    assert any("Persistent Memory is unavailable" in note for note in result["notes"]) is (status == "failed")
 
 
 async def test_preview_reads_temporary_context_without_mutation(
@@ -754,12 +906,10 @@ async def test_effective_request_preview_uses_first_request_tool_assembly(
         "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
         lambda _hass: [],
     )
+    entry = SimpleNamespace(entry_id="entry-1", data={})
+    subentry = SimpleNamespace(subentry_id="agent-1")
     result = await async_preview_effective_request(
-        hass,
-        SimpleNamespace(entry_id="entry-1", data={}),
-        SimpleNamespace(subentry_id="agent-1"),
-        options,
-        "admin",
+        hass, entry, subentry, options, "admin"
     )
 
     sections = {section["key"]: section for section in result["sections"]}
@@ -779,3 +929,115 @@ async def test_effective_request_preview_uses_first_request_tool_assembly(
         result["function_group_savings"]["grouped_characters"]
         < result["function_group_savings"]["without_on_demand_grouping_characters"]
     )
+    always_available = {
+        **options,
+        CONF_FUNCTION_GROUPS: [
+            {**group, "loading_mode": "always"}
+            for group in options[CONF_FUNCTION_GROUPS]
+        ],
+    }
+    always_preview = await async_preview_effective_request(
+        hass, entry, subentry, always_available, "admin"
+    )
+    assert (
+        result["function_group_savings"]["without_on_demand_grouping_characters"]
+        == always_preview["function_group_savings"]["grouped_characters"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("group_enabled", "budget"),
+    [(False, 5), (True, 0)],
+    ids=["disabled-group", "zero-budget"],
+)
+async def test_preview_counts_only_effective_tools_in_both_savings_estimates(
+    hass, monkeypatch, group_enabled, budget
+) -> None:
+    options = agent_config_defaults()
+    options.update(
+        {
+            CONF_PROMPT: "BASE",
+            CONF_FUNCTION_TOOLS: yaml.safe_dump(
+                [
+                    {
+                        "spec": {
+                            "name": "held_tool",
+                            "description": "This schema cannot be sent",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                        "function": {"type": "template", "value_template": "Done"},
+                    }
+                ]
+            ),
+            CONF_FUNCTION_GROUPS: [
+                {
+                    "id": "held",
+                    "name": "Held tools",
+                    "description": "For later use",
+                    "enabled": group_enabled,
+                    "loading_mode": "on_demand",
+                    "functions": ["held_tool"],
+                }
+            ],
+            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: budget,
+            CONF_TEMPORARY_MEMORY: "off",
+            CONF_CURRENT_DATETIME_ENABLED: False,
+            CONF_EXPOSED_ENTITIES_ENABLED: False,
+        }
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
+        lambda _hass: [],
+    )
+    result = await async_preview_effective_request(
+        hass,
+        SimpleNamespace(entry_id="entry-1", data={}),
+        SimpleNamespace(subentry_id="agent-1"),
+        options,
+        "admin",
+    )
+    assert result["function_group_savings"] == {
+        "characters": 0,
+        "percent": 0,
+        "grouped_characters": 2,
+        "without_on_demand_grouping_characters": 2,
+    }
+
+
+@pytest.mark.parametrize("cached", [False, True], ids=["saved-store", "failed-manager"])
+async def test_preview_degrades_when_temporary_memory_generation_is_damaged(hass, cached):
+    from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+        StorageRepairRequired,
+    )
+    from custom_components.extended_openai_conversation_responses.temporary_memory import (
+        _temporary_memory_store,
+        async_get_temporary_memory,
+    )
+
+    options = _options()
+    options.update({
+        CONF_PROMPT: "BASE",
+        CONF_KNOWLEDGE_ENABLED: False,
+        CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED,
+        CONF_EXPOSED_ENTITIES_ENABLED: False,
+        CONF_CURRENT_DATETIME_ENABLED: False,
+    })
+    entry = SimpleNamespace(entry_id="entry-1", data={})
+    subentry = SimpleNamespace(subentry_id="agent-1", data=options)
+    store = _temporary_memory_store(hass, entry.entry_id, subentry.subentry_id)
+    damaged = {"records": [None]}
+    await store.async_save(damaged)
+    if cached:
+        with pytest.raises(StorageRepairRequired):
+            await async_get_temporary_memory(hass, entry.entry_id, subentry.subentry_id)
+        hass.data[SUBSYSTEM_STATUS_KEY] = {
+            (entry.entry_id, subentry.subentry_id): {"temporary_memory": {"status": "failed"}}
+        }
+
+    result = await async_preview_effective_request(hass, entry, subentry, options, "admin")
+    tools = next(section["content"] for section in result["sections"] if section["key"] == "integration_tools")
+    assert "BASE" in result["prompt"]
+    assert '"memory_search"' in tools
+    assert "temporary_memory_" not in tools
+    assert any("Temporary Memory is unavailable" in note for note in result["notes"])
+    assert await store.async_load() == damaged

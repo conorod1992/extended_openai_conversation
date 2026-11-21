@@ -146,7 +146,7 @@ def _patch_startup_dependencies(
         request_rules=object(),
         request_rule_runtime=object(),
         temporary_memory=object(),
-        archive=SimpleNamespace(async_prune=AsyncMock()),
+        archive=SimpleNamespace(async_prune=AsyncMock(), needs_storage_repair=False),
         knowledge=object(),
         memory=SimpleNamespace(set_embedding_provider=MagicMock()),
         skill_manager=object(),
@@ -664,6 +664,35 @@ async def test_failed_optional_stores_are_not_reopened_by_diagnostics(
     collectors.memory.assert_not_awaited()
     collectors.archive.assert_not_awaited()
     collectors.knowledge.assert_not_awaited()
+
+
+async def test_archive_write_failure_keeps_readable_repair_diagnostics(
+    hass, monkeypatch
+) -> None:
+    collectors = _patch_healthy_collectors(monkeypatch)
+    status = {
+        "configured": True,
+        "status": "failed",
+        "error_type": "StorageRepairRequired",
+        "read_available": True,
+    }
+    hass.data[SUBSYSTEM_STATUS_KEY] = {("entry", "agent"): {"archive": status}}
+    archive_stats = {
+        "session_count": 2,
+        "turn_count": 3,
+        "storage_repair_required": True,
+    }
+    collectors.archive.return_value.stats = lambda: archive_stats
+
+    result = await async_get_config_entry_diagnostics(
+        hass, _entry(_conversation_subentry())
+    )
+
+    agent = result["conversation_agents"][0]
+    assert agent["optional_subsystems"]["archive"] == status
+    assert agent["archive"] == archive_stats
+    assert "archive_storage_error" not in agent
+    collectors.archive.assert_awaited_once()
 
 
 async def test_usage_failure_is_reported_without_losing_other_diagnostics(

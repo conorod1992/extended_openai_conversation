@@ -37,7 +37,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 
 def test_management_panel_knowledge_limits_match_backend() -> None:
-    """Keep browser maxlength constraints aligned with backend validation."""
+    """Use backend limits without the browser's UTF-16 truncation."""
     panel = (
         Path(__file__).parents[1]
         / "custom_components"
@@ -49,9 +49,9 @@ def test_management_panel_knowledge_limits_match_backend() -> None:
     assert f"const KNOWLEDGE_TITLE_LIMIT = {MAX_TITLE_LENGTH};" in panel
     assert f"const KNOWLEDGE_DESCRIPTION_LIMIT = {MAX_DESCRIPTION_LENGTH};" in panel
     assert f"const KNOWLEDGE_LIMIT = {MAX_CONTENT_LENGTH};" in panel
-    assert 'maxlength="${KNOWLEDGE_TITLE_LIMIT}"' in panel
-    assert 'maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}"' in panel
-    assert 'maxlength="${KNOWLEDGE_LIMIT}"' in panel
+    assert 'maxlength="${KNOWLEDGE_TITLE_LIMIT}"' not in panel
+    assert 'maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}"' not in panel
+    assert 'maxlength="${KNOWLEDGE_LIMIT}"' not in panel
 
 
 class FakeStorage:
@@ -264,6 +264,17 @@ async def test_agent_isolation() -> None:
     second = await _library(FakeStorage())
     await first.async_create("Private layout", "", "Cupboard above fridge")
     assert await second.async_search("cupboard fridge") == []
+
+
+def test_knowledge_normalizes_unicode_boundaries_and_preserves_long_indentation() -> None:
+    title = "a" * MAX_TITLE_LENGTH
+    description = "b" * MAX_DESCRIPTION_LENGTH
+    content = "A" + " " * 39_999 + "B"
+    assert knowledge._validated_fields(
+        title + "\u0085",
+        description + "\u001f",
+        "\u0085" + content + " \t\r\n \tC\u0085",
+    ) == (title, description, content + "\n \tC")
 
 
 async def test_search_ranking_and_description_and_phrase_boost() -> None:
@@ -488,6 +499,23 @@ async def test_get_pagination_and_hard_limit() -> None:
     assert second["next_start_character"] == 26_000
     with pytest.raises(ValueError, match="not found"):
         await library.async_get_section("missing")
+
+
+@pytest.mark.parametrize(("query", "metadata"), [
+    ("wifi", "Wi-Fi"), ("Wi-Fi", "wifi"), ("manuals", "manual"), ("boilers", "boiler"),
+    ("manu", "Manual"), ("水", "水"),
+])
+@pytest.mark.parametrize("field", ["title", "description"])
+async def test_catalog_expands_queries_only_against_metadata(query, metadata, field):
+    library = await _library()
+    candidate = await library.async_create(
+        metadata if field == "title" else "Matching title",
+        metadata if field == "description" else "Matching description",
+        "Ordinary content",
+    )
+    await library.async_create("Unrelated title", "Unrelated description", metadata)
+    result = await library.async_catalog(query)
+    assert [row["source_id"] for row in result["sources"]] == [candidate.source_id]
 
 
 async def test_storage_migration_hook() -> None:

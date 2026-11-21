@@ -144,6 +144,24 @@ async def test_active_records_are_owned_persisted_and_bounded() -> None:
     )
 
 
+async def test_noop_automatic_update_keeps_prompt_order_and_storage():
+    records = [stored_record(index) for index in range(31)]
+    storage = Storage({"records": records})
+    memory = TemporaryMemory(storage)
+    await memory.async_initialize()
+    owner = {"owner_scope_id": "user:alice"}
+    before = await memory.async_active("device:kitchen", **owner)
+    assert len(before) == 30
+    oldest = records[0]
+    assert all(record.memory_id != oldest["memory_id"] for record in before)
+    await memory.async_update(
+        "device:kitchen", oldest["memory_id"], None, None, None,
+        source="automatic", **owner,
+    )
+    assert await memory.async_active("device:kitchen", **owner) == before
+    assert storage.data == {"records": records}
+
+
 async def test_same_continuity_scope_is_isolated_by_resolved_owner() -> None:
     memory = TemporaryMemory(Storage())
     await memory.async_initialize()
@@ -338,11 +356,18 @@ def test_balanced_prompt_infers_weekend_expiry_without_clarification() -> None:
             CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED,
         }
     )
-    prompt = entity._build_system_prompt(
-        [],
-        SimpleNamespace(device_id=None),
-        SimpleNamespace(extra_system_prompt=None),
+    entity._temporary_memory = TemporaryMemory(Storage())
+    token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), temporary_scope="user:alice")
     )
+    try:
+        prompt = entity._build_system_prompt(
+            [],
+            SimpleNamespace(device_id=None),
+            SimpleNamespace(extra_system_prompt=None),
+        )
+    finally:
+        _ACTIVE_TURN.reset(token)
     assert "instead of asking unnecessary clarification" in prompt
     assert 'for "this weekend" use the end of Sunday' in prompt
     assert "Europe/Dublin" in prompt
@@ -715,7 +740,7 @@ def test_store_factory_uses_private_atomic_non_loop_serialization(monkeypatch) -
     }
 
 
-async def test_cold_snapshot_skips_corruption_without_creating_manager(
+async def test_cold_snapshot_reports_corruption_without_creating_manager(
     monkeypatch,
 ) -> None:
     store = ValidationStorage(
@@ -735,15 +760,14 @@ async def test_cold_snapshot_skips_corruption_without_creating_manager(
     )
     hass = SimpleNamespace(data={})
 
-    result = await temporary_memory.async_read_temporary_memory_snapshot(
-        hass,
-        "entry",
-        "agent",
-        "conversation:kitchen",
-        owner_scope_id="user:alice",
-    )
-
-    assert [record.memory_id for record in result] == ["visible"]
+    with pytest.raises(ValueError, match="needs repair"):
+        await temporary_memory.async_read_temporary_memory_snapshot(
+            hass,
+            "entry",
+            "agent",
+            "conversation:kitchen",
+            owner_scope_id="user:alice",
+        )
     assert temporary_memory.get_loaded_temporary_memory(hass, "entry", "agent") is None
     assert store.save_count == 0
 
@@ -824,7 +848,7 @@ async def test_unretained_request_has_no_active_temporary_memory_scope(monkeypat
     active.assert_not_awaited()
 
 
-async def test_model_sensitive_update_uses_automatic_provenance(monkeypatch):
+async def test_model_update_preserves_manual_provenance_and_duplicate_protection(monkeypatch):
     from custom_components.extended_openai_conversation_responses.conversation import (
     _ACTIVE_TURN,
 )
@@ -864,11 +888,15 @@ async def test_model_sensitive_update_uses_automatic_provenance(monkeypatch):
         )
         records = await memory.async_active("user:alice", owner_scope_id="user:alice")
         assert records[0].content == "My medical diagnosis is diabetes"
-        assert records[0].source == "automatic"
+        assert records[0].source == "manual"
         updated = await agent._async_execute_temporary_memory_tool("update", {
             "memory_id": created["memory"]["memory_id"], "content": "Visitors arrive Friday",
         })
-        assert updated["memory"]["source"] == "automatic"
+        assert updated["memory"]["source"] == "manual"
+        duplicate = await agent._async_execute_temporary_memory_tool("add", {
+            "content": "Visitors arrive Friday", "expires_at": future(48), "category": "changed",
+        })
+        assert duplicate["memory"] == updated["memory"]
         explicit = await memory.async_update("user:alice", created["memory"]["memory_id"],
             "My medical diagnosis is diabetes", None, None, owner_scope_id="user:alice", source="manual")
         assert explicit.source == "manual"

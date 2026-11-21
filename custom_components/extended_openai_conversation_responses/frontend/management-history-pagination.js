@@ -95,7 +95,8 @@ function decorateConversationPager(panel) {
   const input = panel.shadowRoot?.querySelector("#archive-query");
   const card = input?.closest(".content-card");
   if (!input || !card) return;
-  input.value = panel._eocHistoryMode === "search" ? (panel._eocHistoryQuery || "") : "";
+  const draft = panel._eocHistoryDraft || "";
+  if (input.value !== draft) input.value = draft;
 
   const sessions = conversationResult(panel).sessions || {};
   const target = conversationResult(panel);
@@ -135,6 +136,7 @@ function decorateConversationPager(panel) {
     clear.addEventListener("click", () => {
       panel._eocHistoryMode = "list";
       panel._eocHistoryQuery = "";
+      panel._eocHistoryDraft = "";
       void loadConversationPage(panel, 0);
     });
     pager.append(clear);
@@ -242,12 +244,15 @@ export function bindConversationActions(panel) {
   host.__eocHistoryActionsBound = true;
   root.querySelectorAll(".open-session, .view-session").forEach(element => panel._activate(element, () => openSession(panel, element.dataset.id, element.dataset.startTurn, element.dataset.textOffset)));
   root.querySelector("#archive-search")?.addEventListener("click", () => searchArchive(panel));
-  root.querySelector("#archive-query")?.addEventListener("keydown", event => { if (event.key === "Enter") void searchArchive(panel); });
+  const input = root.querySelector("#archive-query");
+  input?.addEventListener("input", () => { panel._eocHistoryDraft = input.value; });
+  input?.addEventListener("keydown", event => { if (event.key === "Enter") void searchArchive(panel); });
 }
 
-async function searchArchive(panel, offset = 0) {
+async function searchArchive(panel) {
   const input = panel.shadowRoot.querySelector("#archive-query");
-  const query = (offset ? panel._eocHistoryQuery : input?.value || "").trim();
+  panel._eocHistoryDraft = input?.value || "";
+  const query = panel._eocHistoryDraft.trim();
   if (!query) {
     panel._eocHistoryMode = "list";
     panel._eocHistoryQuery = "";
@@ -256,7 +261,7 @@ async function searchArchive(panel, offset = 0) {
   }
   panel._eocHistoryMode = "search";
   panel._eocHistoryQuery = query;
-  await loadConversationPage(panel, offset);
+  await loadConversationPage(panel, 0);
 }
 
 async function openSession(panel, sessionId, startTurn = 0, textOffset = 0, history = [], future = [], mode = "get") {

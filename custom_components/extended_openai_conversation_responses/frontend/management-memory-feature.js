@@ -16,7 +16,7 @@ export function hasMemoryCollection(panel) {
 export {memoryExpiryISO, memoryLocalDateTime} from "./memory-datetime.js";
 export function memoryMetadataFields() {
   return `<label>Type<select id="memory-type"><option value="persistent">Long-term</option><option value="temporary">Short-term</option></select></label>
-    <label>Category<input id="memory-category" value="general" maxlength="64" required></label>
+    <label>Category<input id="memory-category" value="general" required></label>
     <label>Owner<select id="memory-owner"></select></label>
     <label id="memory-expiry-field" hidden>Expires<input id="memory-expiry" type="datetime-local" step="1" disabled><small>Home Assistant local time. Choose a future time within one year.</small></label>
     <details id="memory-advanced" class="eoc-details-base" hidden><summary>Advanced metadata</summary><label>Subject<input id="memory-subject"></label><label>Key<input id="memory-key"></label>
@@ -52,7 +52,6 @@ export function populateMemoryMetadata(panel, memory) {
     root.querySelector("#memory-expiry-field").hidden = !temporary;
     root.querySelector("#memory-expiry").required = temporary;
     root.querySelector("#memory-expiry").disabled = !temporary;
-    root.querySelector("#memory-content").maxLength = temporary ? 500 : 1000;
   };
   type.onchange = updateType;
   updateType();

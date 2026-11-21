@@ -14,16 +14,7 @@ async def async_settle_owned_operation[T](operation: Awaitable[T]) -> T:
     Transaction reconciliation and best-effort cleanup can need other policies.
     """
     task = asyncio.ensure_future(operation)
-    cancellation: asyncio.CancelledError | None = None
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as err:
-            if task.cancelled():
-                raise
-            cancellation = cancellation or err
-        except Exception:
-            break
+    cancellation = await async_wait_owned_cleanup(task)
     result = task.result()
     if cancellation is not None:
         raise cancellation

@@ -8,6 +8,7 @@ const frontend = (name) => new URL(
 
 const pagination = await import(frontend("management-history-pagination.js"));
 const {loadConversationPage} = pagination;
+const {syncConversationSearchOwner} = await import(frontend("management-route.js"));
 // Search hits identify an exact turn, not a fixed-size page boundary. Serialized
 // page budgets can return fewer than TURN_PAGE_LIMIT turns (or part of one turn).
 for (const turnIndex of [19, 39, undefined]) {
@@ -116,6 +117,72 @@ function historyPanel() {
     _toast() {},
     calls,
   };
+}
+
+{
+  class Element {
+    listeners = {};
+    children = [];
+    dataset = {};
+    style = {};
+    value = "";
+    setAttribute() {}
+    addEventListener(name, callback) { this.listeners[name] = callback; }
+    append(...children) { this.children.push(...children); }
+    contains() { return false; }
+    remove() {}
+    closest() { return card; }
+    querySelector() { return null; }
+  }
+  const card = new Element();
+  let input = new Element();
+  const originalDocument = globalThis.document;
+  globalThis.document = {createElement: () => new Element()};
+  try {
+    const panel = historyPanel();
+    panel.shadowRoot = {querySelector: selector => selector === "#archive-query" ? input : null,
+      querySelectorAll: () => [], activeElement: input};
+    panel._render = () => pagination.decorateConversationPager(panel);
+    syncConversationSearchOwner(panel);
+    pagination.bindConversationActions(panel);
+    input.value = "solar";
+    const submitted = pagination.searchArchive(panel);
+    input.value = "  unsent text  ";
+    input.listeners.input();
+    panel._render();
+    assert.equal(input.value, "  unsent text  ", "focused draft");
+    panel.shadowRoot.activeElement = null;
+    panel.calls[0].request.resolve({results: [], has_more: true, next_offset: 20});
+    await submitted;
+    assert.equal(input.value, "  unsent text  ", "asynchronous page completion preserves blurred draft");
+    input = new Element();
+    panel._render();
+    assert.equal(input.value, "  unsent text  ", "replacement node restores draft");
+    const next = card.children.at(-1).children.find(item => item.textContent === "Next");
+    next.listeners.click();
+    assert.equal(panel.calls[1].extra.query, "solar");
+    panel.calls[1].request.resolve({results: [], has_more: false});
+    await new Promise(resolve => setImmediate(resolve));
+    const clear = card.children.at(-1).children.find(item => item.textContent === "Clear search");
+    clear.listeners.click();
+    assert.equal(input.value, "");
+    assert.equal(panel.calls[2].action, "list");
+    panel.calls[2].request.resolve({sessions: []});
+    await new Promise(resolve => setImmediate(resolve));
+    for (const change of [
+      () => { panel._scopeId = "user:new"; },
+      () => { panel._agentId = "agent-2"; },
+      () => { panel._eocAuthenticationGeneration = 1; },
+      () => { panel._viewKey = () => "overview"; },
+    ]) {
+      panel._eocHistoryDraft = "private text";
+      change();
+      syncConversationSearchOwner(panel);
+      assert.equal(panel._eocHistoryDraft, "");
+    }
+  } finally {
+    globalThis.document = originalDocument;
+  }
 }
 
 {

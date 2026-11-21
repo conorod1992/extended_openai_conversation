@@ -111,6 +111,7 @@ from .conversation_id_ownership import (
     ProvisionalConversationIDClaim,
     bind_parent_conversation_id,
     claim_conversation_id,
+    has_live_conversation_owner,
     register_conversation_id_cleanup,
     resolve_parent_conversation_id,
 )
@@ -185,6 +186,7 @@ from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_d
 from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
 from .memory import (
+    MEMORY_OPTIONAL_ARGUMENTS,
     EmbeddingBatch,
     MemoryRecord,
     PersistentMemory,
@@ -193,6 +195,7 @@ from .memory import (
     memory_enabled,
     memory_user_id,
 )
+from .memory_tool_arguments import normalise_memory_tool_arguments
 from .model_lifecycle import clear_entity_retirement_failure
 from .model_search_hardening import _require_nonblank_query
 from .model_tool_results import (
@@ -204,6 +207,7 @@ from .model_tool_results import (
 )
 from .operation_settlement import async_settle_owned_operation, async_wait_owned_cleanup
 from .operational_errors import log_handled_failure
+from .persistence_hardening import StorageRepairRequired
 from .prompt import render_effective_prompt
 from .prompt_cache import _PROMPT_CACHE_CONTEXT, prompt_cache_context
 from .regex_execution import async_process_speech_text
@@ -247,12 +251,14 @@ from .scope import (
 from .skill_runtime_availability import effective_tool_runtime_scope
 from .skills import Skill, SkillManager
 from .speech import (
+    defer_assistant_presentation,
     has_custom_speech_replacements,
     needs_async_speech_cleanup,
     process_speech_text,
 )
 from .temporary_memory import (
     _ACTIVE_OWNER_SCOPE_ID,
+    TEMPORARY_MEMORY_OPTIONAL_ARGUMENTS,
     TemporaryMemory,
     TemporaryMemoryRecord,
     _owner_from_resolved_scope,
@@ -379,8 +385,8 @@ class ExtendedOpenAIAgentEntity(
     def __init__(self, entry: ExtendedOpenAIConfigEntry, subentry: Any) -> None:
         """Initialize the conversation agent and its streaming capability."""
         super().__init__(entry, subentry)
-        # Arbitrary regex can depend on future text. Home Assistant selects whether
-        # to attach its progressive listener from this per-agent capability flag.
+        # Arbitrary regex can depend on future text. Advertise the capability to
+        # clients and guard the shared Assist callback when processing a turn.
         self._attr_supports_streaming = not has_custom_speech_replacements(
             subentry.data
         )
@@ -391,7 +397,7 @@ class ExtendedOpenAIAgentEntity(
 
     @property
     def supports_streaming(self) -> bool:
-        """Expose live capability before HA attaches its progressive listener."""
+        """Expose whether this assistant can present text progressively."""
         return not has_custom_speech_replacements(self.subentry.data)
 
     @property
@@ -633,6 +639,14 @@ class ExtendedOpenAIAgentEntity(
             self._archive = await async_get_archive(
                 self.hass, self.entry.entry_id, self.subentry.subentry_id
             )
+        except Exception as err:
+            self._archive = None
+            self._set_subsystem_status("archive", configured, err)
+            _LOGGER.exception(
+                "Unable to initialize conversation archive; archive features are unavailable"
+            )
+            return
+        try:
             await self._archive.async_prune(
                 normalized_agent_integer(
                     self.subentry.data,
@@ -641,13 +655,15 @@ class ExtendedOpenAIAgentEntity(
                 )
             )
         except Exception as err:
-            self._archive = None
             self._set_subsystem_status("archive", configured, err)
-            _LOGGER.exception(
-                "Unable to initialize conversation archive; archive features are unavailable"
-            )
+            _LOGGER.exception("Unable to prune the conversation archive at startup")
         else:
-            self._set_subsystem_status("archive", configured, healthy=True)
+            if self._archive.needs_storage_repair is True:
+                self._set_subsystem_status(
+                    "archive", configured, StorageRepairRequired("Conversation Archive")
+                )
+            else:
+                self._set_subsystem_status("archive", configured, healthy=True)
 
     def _set_subsystem_status(
         self,
@@ -668,6 +684,22 @@ class ExtendedOpenAIAgentEntity(
             "status": state,
             **({"error_type": type(error).__name__} if error is not None else {}),
         }
+        if subsystem == "archive" and error is not None and self._archive is not None:
+            agent[subsystem]["read_available"] = self._archive_reads_available
+
+    @property
+    def _archive_reads_available(self) -> bool:
+        return self._archive is not None and self._archive.read_available
+
+    @property
+    def _archive_session_available(self) -> bool:
+        if _ACTIVE_TURN.get().archive is None:
+            return False
+        statuses = self.hass.data.get(SUBSYSTEM_STATUS_KEY, {})
+        agent_status = statuses.get(
+            (self.entry.entry_id, self.subentry.subentry_id), {}
+        )
+        return bool(agent_status.get("archive", {}).get("status") != "failed")
 
     async def _async_begin_archive_session(
         self,
@@ -675,6 +707,8 @@ class ExtendedOpenAIAgentEntity(
         scope: ResolvedDataScope,
         home_assistant_conversation_id: str | None,
         request_policy: GuestCapabilityPolicy,
+        *,
+        live_logical_conversation: bool = False,
     ) -> ArchiveSession | None:
         """Begin optional archive retention without taking down the conversation."""
         if self._archive is None or not request_policy.archive_retention:
@@ -688,6 +722,11 @@ class ExtendedOpenAIAgentEntity(
                 scope,
                 home_assistant_conversation_id,
                 archive_enabled=configured,
+                **(
+                    {"live_logical_conversation": True}
+                    if live_logical_conversation
+                    else {}
+                ),
                 shared_archive_enabled=bool(
                     self.subentry.data.get(
                         CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED
@@ -698,6 +737,9 @@ class ExtendedOpenAIAgentEntity(
                     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
                     DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
                 ),
+                on_durable_write=lambda: self._set_subsystem_status(
+                    "archive", configured, healthy=True
+                ),
             )
         except Exception as err:
             self._set_subsystem_status("archive", configured, err)
@@ -706,7 +748,6 @@ class ExtendedOpenAIAgentEntity(
                 "archiving this turn"
             )
             return None
-        self._set_subsystem_status("archive", configured, healthy=True)
         return session
 
     async def async_will_remove_from_hass(self) -> None:
@@ -928,12 +969,22 @@ class ExtendedOpenAIAgentEntity(
         assist_chat_log = current_chat_log.get()
         incoming_conversation_id = user_input.conversation_id
         user_input.conversation_id = resolution.conversation_id
+        subentry_id = getattr(getattr(self, "subentry", None), "subentry_id", None)
+        live_managed = resolution.key is not None and resolution.resumed
+        live_native = (
+            resolution.key is None
+            and not request_policy.guest_active
+            and isinstance(subentry_id, str)
+            and isinstance(resolution.conversation_id, str)
+            and has_live_conversation_owner(
+                self.hass, subentry_id, resolution.conversation_id, scope.scope_id
+            )
+        )
         with async_get_chat_session(
             self.hass, resolution.conversation_id, context=user_input.context
         ) as session:
             # Native admission has authorized this session. Protect its actual
             # ID before ChatLog admission or later context entry can fail.
-            subentry_id = getattr(getattr(self, "subentry", None), "subentry_id", None)
             claimed_id = session.conversation_id
             if claimed_id is not None and isinstance(subentry_id, str):
                 claim_conversation_id(
@@ -966,6 +1017,7 @@ class ExtendedOpenAIAgentEntity(
                         and assist_chat_log.conversation_id == incoming_conversation_id
                     ),
                 ),
+                defer_assistant_presentation(chat_log, self.subentry.data),
                 processing_conversation_scope(
                     continuity, chat_log.conversation_id, resolution.conversation_id
                 ),
@@ -999,6 +1051,8 @@ class ExtendedOpenAIAgentEntity(
                     scope,
                     chat_log.conversation_id,
                     request_policy,
+                    live_logical_conversation=(live_managed or live_native)
+                    and chat_log.conversation_id == resolution.conversation_id,
                 )
                 rule_session_key = request_rule_session_id(
                     resolution.key, chat_log.conversation_id
@@ -1202,6 +1256,13 @@ class ExtendedOpenAIAgentEntity(
                             user_input,
                             chat_log,
                             successful=run.successful,
+                            public_reply=(
+                                result.response.speech.get("plain", {}).get(
+                                    "speech", ""
+                                )
+                                if result.response.error_code is not None
+                                else ""
+                            ),
                         )
                         if run.successful:
                             await continuity.async_record_success(
@@ -1594,6 +1655,7 @@ class ExtendedOpenAIAgentEntity(
         chat_log: ChatLog,
         *,
         successful: bool,
+        public_reply: str = "",
     ) -> None:
         """Archive a completed turn without changing its user-facing outcome."""
         if (
@@ -1603,19 +1665,30 @@ class ExtendedOpenAIAgentEntity(
             or not self._effective_guest_policy().archive_retention
         ):
             return
-        assistant_text = final_assistant_text(chat_log.content)
+        assistant_text = (
+            public_reply
+            if not successful and public_reply
+            else final_assistant_text(chat_log.content)
+        )
+        configured = bool(
+            self.subentry.data.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+        )
         try:
-            await self._archive.async_record_turn(
+            turn = await self._archive.async_record_turn(
                 archive_session.session_id,
                 run_id=run_id,
                 user_text=user_input.text,
                 assistant_text=assistant_text,
                 successful=successful,
             )
-        except Exception:
+        except Exception as err:
+            self._set_subsystem_status("archive", configured, err)
             _LOGGER.exception(
                 "Unable to persist completed conversation turn to the archive"
             )
+        else:
+            if turn is not None:
+                self._set_subsystem_status("archive", configured, healthy=True)
 
     async def _async_complete_local_rule(
         self,
@@ -1755,6 +1828,15 @@ class ExtendedOpenAIAgentEntity(
             temporary_memories=temporary_memories,
             knowledge_available=self._knowledge_available,
             guest_policy=policy,
+            memory_scope_available=(
+                False if getattr(self, "_memory", None) is None else None
+            ),
+            temporary_scope_available=(
+                getattr(self, "_temporary_memory", None) is not None
+                and _ACTIVE_TURN.get().temporary_scope is not None
+            ),
+            archive_available=self._archive_reads_available,
+            archive_session_available=self._archive_session_available,
         )
         record_prompt_render(effective, render_started)
         _PROMPT_CACHE_CONTEXT.set(prompt_cache_context(effective, self.subentry.data))
@@ -1836,13 +1918,14 @@ class ExtendedOpenAIAgentEntity(
     ) -> list[MemoryRecord]:
         if not query.strip():
             return []
-        return await self._async_search_memories(
+        memories, _ = await self._async_search_memories(
             readable_scope_ids,
             query,
             limit,
             allow_fuzzy_only=False,
             automatic_recall=True,
         )
+        return memories
 
     async def _async_search_memories(
         self,
@@ -1854,17 +1937,22 @@ class ExtendedOpenAIAgentEntity(
         offset: int = 0,
         allow_fuzzy_only: bool = True,
         automatic_recall: bool = False,
-    ) -> list[MemoryRecord]:
-        """Search using the configured lexical or Hybrid retrieval semantics."""
+        ranking: str | None = None,
+    ) -> tuple[list[MemoryRecord], str]:
+        """Search and report the ranking used for subsequent pages."""
         assert self._memory is not None
         if not readable_scope_ids:
-            return []
+            return [], "lexical"
         hybrid = (
             self.subentry.data.get(
                 CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE
             )
             == MEMORY_RETRIEVAL_HYBRID
         )
+        if hybrid and offset and ranking is None:
+            raise ValueError(
+                "Continue memory_search with the previous page's ranking, or restart at offset 0"
+            )
         query_embedding = (
             await self._memory.async_prepare_hybrid(
                 readable_scope_ids,
@@ -1872,9 +1960,13 @@ class ExtendedOpenAIAgentEntity(
                 category=category,
                 automatic_recall=automatic_recall,
             )
-            if hybrid
+            if hybrid and ranking != "lexical"
             else None
         )
+        if ranking == "hybrid" and query_embedding is None:
+            raise ValueError(
+                "Hybrid ranking is unavailable; restart memory_search at offset 0"
+            )
         search_scope: str | list[str] = (
             readable_scope_ids[0]
             if not hybrid and len(readable_scope_ids) == 1
@@ -1887,15 +1979,16 @@ class ExtendedOpenAIAgentEntity(
             search_options["allow_fuzzy_only"] = False
         if automatic_recall:
             search_options["automatic_recall"] = True
-        return await self._memory.async_search(
+        memories = await self._memory.async_search(
             search_scope,
             query,
             category,
             limit,
             query_embedding=query_embedding,
-            hybrid=hybrid and query_embedding is not None,
+            hybrid=query_embedding is not None,
             **search_options,
         )
+        return memories, "hybrid" if query_embedding is not None else "lexical"
 
     async def _async_create_embeddings(
         self, inputs: list[str], *, model: str | None = None
@@ -2039,21 +2132,18 @@ class ExtendedOpenAIAgentEntity(
             _ACTIVE_OWNER_SCOPE_ID.reset(token)
 
     def _get_enabled_skills(self) -> list[Skill]:
-        """Get enabled skills as list for template rendering."""
-        if not self._effective_guest_policy().skills:
-            return []
-        enabled_skill_names = self.skills
-        if not enabled_skill_names:
+        """Advertise only installed Skills reachable by this request's loader."""
+        if not self._effective_guest_policy().skills or not self.skills:
             return []
         manager = self.skill_manager or SkillManager.get_loaded_instance()
         if manager is None:
             return []
-
-        return [
-            skill
-            for skill in manager.get_all_skills()
-            if skill.name in enabled_skill_names
-        ]
+        tools = self._get_configured_function_tools()
+        groups = _request_function_groups(self, tools)
+        with effective_tool_runtime_scope(
+            self.subentry.data, tools, manager, groups
+        ) as skills:
+            return skills
 
     def _get_exposed_entities(self) -> list[dict[str, Any]]:
         started = time.monotonic()
@@ -2164,14 +2254,17 @@ class ExtendedOpenAIAgentEntity(
                     assemble_integration_function_tools(
                         self.subentry.data,
                         configured_names,
-                        memory_scope_available=self._current_memory_scope_id()
-                        is not None,
+                        memory_scope_available=(
+                            getattr(self, "_memory", None) is not None
+                            and self._current_memory_scope_id() is not None
+                        ),
                         temporary_scope_available=(
                             self._temporary_memory is not None
                             and _ACTIVE_TURN.get().temporary_scope is not None
                         ),
                         knowledge_available=self._knowledge_available,
-                        archive_available=self._archive is not None,
+                        archive_available=self._archive_reads_available,
+                        archive_session_available=self._archive_session_available,
                         guest_policy=policy,
                     )
                 )
@@ -2805,6 +2898,9 @@ class ExtendedOpenAIAgentEntity(
         llm_context: llm.LLMContext | None,
     ) -> dict[str, Any]:
         """Execute a scoped persistent-memory operation."""
+        arguments = normalise_memory_tool_arguments(
+            arguments, MEMORY_OPTIONAL_ARGUMENTS.get(operation, frozenset())
+        )
         if operation == "search":
             _require_nonblank_query(arguments)
         if not memory_enabled(self.subentry.data):
@@ -2842,7 +2938,12 @@ class ExtendedOpenAIAgentEntity(
             # including duplicate/conflict metadata returned by the memory store.
             if write_scope_id not in readable_scope_ids:
                 return {"status": result["status"]}
-            return _compact_memory_result(result)
+            return _compact_memory_result(
+                result,
+                scope="household"
+                if write_scope_id == SHARED_HOUSEHOLD_SCOPE_ID
+                else "personal",
+            )
         if operation == "search":
             query = arguments.get("query")
             category = arguments.get("category")
@@ -2861,16 +2962,20 @@ class ExtendedOpenAIAgentEntity(
             offset = arguments.get("offset", 0)
             if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
                 raise ValueError("offset must be a nonnegative integer")
+            ranking = arguments.get("ranking")
+            if ranking is not None and ranking not in ("lexical", "hybrid"):
+                raise ValueError("ranking must be lexical or hybrid")
             limit = max(1, min(limit, 50))
-            memories = await self._async_search_memories(
+            memories, ranking = await self._async_search_memories(
                 search_scopes,
                 query,
                 limit + 1,
                 category,
-                **cast(dict[str, Any], {"offset": offset} if offset else {}),
+                offset=offset,
+                ranking=ranking,
             )
             personal_id = self._personal_memory_scope_id(llm_context)
-            return bounded_record_page(
+            page = bounded_record_page(
                 {
                     "memories": [
                         model_memory_as_dict(
@@ -2879,10 +2984,14 @@ class ExtendedOpenAIAgentEntity(
                         for memory in memories[:limit]
                     ],
                     "offset": offset,
+                    "ranking": ranking,
                     "has_more": len(memories) > limit,
                 },
                 "memories",
             )
+            if not page["has_more"]:
+                page.pop("ranking")
+            return page
         if operation == "list":
             category = arguments.get("category")
             limit = arguments.get("limit", 50)
@@ -2949,7 +3058,9 @@ class ExtendedOpenAIAgentEntity(
             if source is not None and source not in ("explicit", "implicit"):
                 raise ValueError("source must be explicit or implicit")
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"),
+                await self._async_memory_mutation_scope(
+                    arguments.get("scope"), [memory_id], readable_scope_ids
+                ),
                 llm_context,
                 intent=arguments.get("intent", "automatic"),
             )
@@ -3002,7 +3113,9 @@ class ExtendedOpenAIAgentEntity(
                 raise ValueError("legacy memory_ids cannot authorize model deletion")
             requested = arguments.get("intent", "automatic") == "user_request"
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"),
+                await self._async_memory_mutation_scope(
+                    arguments.get("scope"), ids, readable_scope_ids
+                ),
                 llm_context,
                 intent=arguments.get("intent", "automatic"),
             )
@@ -3018,6 +3131,32 @@ class ExtendedOpenAIAgentEntity(
             )
             return {"status": "deleted", "deleted": deleted}
         raise ValueError("unknown memory operation")
+
+    async def _async_memory_mutation_scope(
+        self, selector: Any, ids: list[str], readable_scope_ids: list[str]
+    ) -> Any:
+        """Infer scope from exact readable targets; leave admission to the writer."""
+        if len(readable_scope_ids) < 2 or (selector is not None and len(ids) == 1):
+            return selector
+        assert self._memory is not None
+        records = await self._memory.async_get_many(
+            [
+                (scope_id, memory_id)
+                for scope_id in readable_scope_ids
+                for memory_id in ids
+            ],
+            readable_scope_ids,
+        )
+        owners = {record.user_id for record in records}
+        if len(owners) > 1:
+            raise ValueError(
+                "Use separate scope-specific calls to delete personal and household memories"
+            )
+        if selector is not None:
+            return selector
+        if len(records) != len(ids):
+            raise ValueError("memory not found or changed; search again")
+        return "household" if SHARED_HOUSEHOLD_SCOPE_ID in owners else "personal"
 
     def _current_memory_scope_id(
         self, llm_context: llm.LLMContext | None = None
@@ -3164,6 +3303,9 @@ class ExtendedOpenAIAgentEntity(
         self, operation: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Execute a narrow operation within the request-derived scope."""
+        arguments = normalise_memory_tool_arguments(
+            arguments, TEMPORARY_MEMORY_OPTIONAL_ARGUMENTS.get(operation, frozenset())
+        )
         owner = (
             _owner_from_resolved_scope(_ACTIVE_TURN.get().scope)
             if _ACTIVE_TURN.get().temporary_scope is not None
@@ -3245,11 +3387,10 @@ class ExtendedOpenAIAgentEntity(
                 raise RuntimeError("conversation archive is disabled")
             if self._archive is None:
                 raise RuntimeError("conversation archive is unavailable")
-            scope = _ACTIVE_TURN.get().scope
-            active = _ACTIVE_TURN.get().archive
-            if scope is None or active is None:
+            turn = _ACTIVE_TURN.get()
+            scope = turn.scope
+            if scope is None:
                 raise RuntimeError("active conversation session is unavailable")
-            session_key, session_id = active
             if operation == "search":
                 if not self.subentry.data.get(
                     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -3276,6 +3417,9 @@ class ExtendedOpenAIAgentEntity(
                     int(arguments.get("limit", 6)),
                     text_offset=int(arguments.get("text_offset", 0)),
                 )
+            if turn.archive is None:
+                raise RuntimeError("active conversation session is unavailable")
+            session_key, session_id = turn.archive
             if operation == "private":
                 # Do this before awaiting persistence: a failed privacy write must
                 # not cause finalization to save the current private request.

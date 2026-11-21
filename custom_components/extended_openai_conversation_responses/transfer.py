@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
+from datetime import datetime
 import json
 import math
 from pathlib import Path
@@ -263,7 +264,10 @@ def _portable_user_id(value: Any, *, prefixed_only: bool = False) -> str | None:
 
 
 def transfer_user_scope_ids(
-    prepared: PreparedTransfer, selected: Iterable[str]
+    prepared: PreparedTransfer,
+    selected: Iterable[str],
+    *,
+    expired_archive_sessions: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
     """Return source-installation HA users referenced by selected portable sections."""
     selected_set = frozenset(selected)
@@ -283,6 +287,11 @@ def transfer_user_scope_ids(
 
     if SECTION_CONVERSATION_ARCHIVE in selected_set:
         for session in prepared.archive_sessions or ():
+            if (
+                expired_archive_sessions
+                and session.session_id in expired_archive_sessions
+            ):
+                continue
             if user_id := _portable_user_id(session.scope_id, prefixed_only=True):
                 user_ids.add(user_id)
 
@@ -305,9 +314,26 @@ async def async_user_scope_mapping_plan(
     prepared: PreparedTransfer,
     selected: Iterable[str],
     supplied: Any = None,
+    *,
+    archive_config: Mapping[str, Any] | None = None,
+    archive_retention_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Resolve portable source-user ownership against destination HA users."""
-    source_ids = transfer_user_scope_ids(prepared, selected)
+    selected = frozenset(selected)
+    expired: frozenset[str] = frozenset()
+    if archive_config is not None and SECTION_CONVERSATION_ARCHIVE in selected:
+        expired = frozenset(
+            await asyncio.to_thread(
+                archive_sessions_past_retention,
+                prepared.archive_sessions or (),
+                prepared.archive_turns or (),
+                _archive_retention_days(archive_config),
+                now=archive_retention_at,
+            )
+        )
+    source_ids = transfer_user_scope_ids(
+        prepared, selected, expired_archive_sessions=expired
+    )
     users = await hass.auth.async_get_users()
     destinations = {
         str(user.id): str(user.name or user.id)
@@ -1366,13 +1392,19 @@ def _copy_transfer_categories(prepared: PreparedTransfer) -> PreparedTransfer:
     return replace(prepared, **dict(zip(fields, copied, strict=True)))
 
 
-def _apply_archive_restore_retention(target: backup.PreparedRestore) -> dict[str, Any]:
-    """Filter only the incoming archive and count the state the restore will write."""
-    days = normalized_agent_integer(
-        target.config, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+def _archive_retention_days(config: Mapping[str, Any]) -> int:
+    return normalized_agent_integer(
+        config, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
     )
+
+
+def _apply_archive_restore_retention(
+    target: backup.PreparedRestore, *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Filter only the incoming archive and count the state the restore will write."""
+    days = _archive_retention_days(target.config)
     expired = archive_sessions_past_retention(
-        target.archive_sessions, target.archive_turns, days
+        target.archive_sessions, target.archive_turns, days, now=now
     )
     original_turns = len(target.archive_turns)
     if expired:
@@ -1563,7 +1595,12 @@ def _prepared_restore_from_selection(
 
 
 async def _current_snapshot(
-    hass: HomeAssistant, entry: Any, subentry: Any, *, include_usage: bool = True
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    *,
+    include_usage: bool = True,
+    capture_usage_revision: bool = False,
 ) -> backup.PreparedRestore:
     """Read durable current state for selective planning without mutating it."""
     try:
@@ -1584,6 +1621,7 @@ async def _current_snapshot(
         subentry,
         provider=entry_api_provider(entry),
         include_usage=include_usage,
+        capture_usage_revision=capture_usage_revision,
     )
 
 
@@ -1596,6 +1634,7 @@ async def async_materialize_restore(
     sections: Iterable[str] | None = None,
     current_snapshot: backup.PreparedRestore | None = None,
     provider_connection: Mapping[str, Any] | None = None,
+    archive_retention_at: datetime | None = None,
 ) -> tuple[backup.PreparedRestore, dict[str, Any]]:
     """Build and validate a complete restore target from a selective transfer."""
     prepared = await async_inspect_transfer(
@@ -1716,10 +1755,14 @@ async def async_materialize_restore(
     )
     if SECTION_CONVERSATION_ARCHIVE in selected:
         preview.update(
-            await asyncio.to_thread(_apply_archive_restore_retention, target)
+            await asyncio.to_thread(
+                _apply_archive_restore_retention, target, now=archive_retention_at
+            )
         )
     target.preserve_retained_continuity = (
-        selected == {SECTION_KNOWLEDGE} and provider_connection is None
+        bool(selected)
+        and selected <= {SECTION_KNOWLEDGE, SECTION_USAGE}
+        and provider_connection is None
     )
     target.replaces_usage = SECTION_USAGE in selected
     data_sections = {
@@ -1779,6 +1822,7 @@ async def async_restore_transfer(
     provider_connection: dict[str, Any] | None = None,
     expected_provider_data: dict[str, Any] | None = None,
     confirm_retention: bool = False,
+    archive_retention_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Preserve unselected state and commit under one shielded exclusive lease."""
     from homeassistant.config_entries import ConfigEntryState
@@ -1818,6 +1862,7 @@ async def async_restore_transfer(
             subentry,
             imported,
             sections=sections,
+            archive_retention_at=archive_retention_at,
             **provider_options,
         )
         if preview.get("shortened_usage_retention") and not confirm_retention:

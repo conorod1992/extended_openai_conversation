@@ -8,6 +8,7 @@ import binascii
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, is_dataclass
+from datetime import datetime
 from decimal import Decimal
 import hashlib
 import io
@@ -33,13 +34,14 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
+from homeassistant.util import dt as dt_util
 
 from . import backup, transfer
 from .agent_maintenance import get_agent_maintenance_gate
 from .bounded_json import JSONBudgetExceeded, check_redaction_budget, iter_bounded_json
 from .const import DOMAIN
 from .ha_schema import websocket_command as ha_websocket_command
-from .operation_settlement import async_settle_owned_operation
+from .operation_settlement import async_settle_owned_operation, async_wait_owned_cleanup
 
 WS_BACKUP_TRANSFER = f"{DOMAIN}/management/backup_transfer"
 ARCHIVE_FORMAT = "extended_openai_conversation_backup_archive"
@@ -59,6 +61,12 @@ MAX_TRANSFER_TEMP_BYTES = 512 * 1024 * 1024
 TRANSFER_TTL_SECONDS = 15 * 60
 IMPORT_INSPECTION_TIMEOUT_SECONDS = 60
 _MAX_BASE64_CHUNK_CHARS = 4 * math.ceil(BACKUP_CHUNK_BYTES / 3) + 4
+
+
+class _InspectionPending(backup.BackupError):
+    """The same upload can be inspected again when its work is ready."""
+
+
 _EXPORTS_KEY = f"{DOMAIN}.backup_transfer_exports"
 _IMPORTS_KEY = f"{DOMAIN}.backup_transfer_imports"
 _REGISTRY_LOCK_KEY = f"{DOMAIN}.backup_transfer_registry_lock"
@@ -80,6 +88,7 @@ class PendingDeletion:
     size: int
     attempts: int = 0
     retry_at: float = 0
+    reader: asyncio.Task[Any] | None = None
 
 
 def _pending(hass: HomeAssistant) -> dict[str, PendingDeletion]:
@@ -94,7 +103,9 @@ def _pending_scans(hass: HomeAssistant) -> dict[str, PendingDeletion]:
 
 def _retire(hass: HomeAssistant, session: ExportSession | ImportSession) -> None:
     size = session.expected_size if isinstance(session, ImportSession) else session.size
-    _pending(hass).setdefault(session.path, PendingDeletion(size))
+    pending = _pending(hass).setdefault(session.path, PendingDeletion(size))
+    if isinstance(session, ImportSession) and session.preparation is not None:
+        pending.reader = session.preparation
 
 
 @dataclass(slots=True)
@@ -130,10 +141,17 @@ class ImportSession:
     preview_revision: str | None = None
     preview_sections: tuple[str, ...] | None = None
     preview_user_scope_mappings: tuple[tuple[str, str], ...] | None = None
+    preview_archive_retention_at: datetime | None = None
     preview_provider_data: dict[str, Any] | None = None
     preview_restore_provider: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     inspection_tasks: set[asyncio.Task[Any]] = field(default_factory=set, repr=False)
+    inspection: asyncio.Task[dict[str, Any]] | None = field(default=None, repr=False)
+    inspection_data: dict[str, Any] | None = field(default=None, repr=False)
+    preparation: asyncio.Task[transfer.PreparedTransfer] | None = field(
+        default=None, repr=False
+    )
+    preparation_key: tuple[tuple[str, ...] | None, bool] | None = None
 
 
 def _exports(hass: HomeAssistant) -> dict[str, ExportSession]:
@@ -185,7 +203,13 @@ def _snapshot_revision(
         transfer.SECTION_GUEST_MODE: ("guest_mode_schedule",),
     }
     for section, names in category_fields.items():
-        if section in selected:
+        if (
+            section == transfer.SECTION_USAGE
+            and section in selected
+            and value.usage_revision is not None
+        ):
+            snapshot["usage_revision"] = value.usage_revision
+        elif section in selected:
             snapshot.update((name, getattr(value, name)) for name in names)
     canonical = json.dumps(
         snapshot,
@@ -267,12 +291,20 @@ async def _async_delete_session_file(
 ) -> None:
     _retire(hass, session)
     if isinstance(session, ImportSession):
-        # Inspection owns only reads and preview metadata. Retiring the session
-        # cancels those reads before waiting for its lock/maintenance lease.
+        # Cancel preview planning before waiting for its lease. Preparation
+        # owns its native readers separately and must settle before unlinking.
         for task in tuple(session.inspection_tasks):
             task.cancel()
     async with session.lock:
+        pending = _pending(hass).get(session.path)
+        cancellation = None
+        if pending is not None and pending.reader is not None:
+            # A native reader cannot be cancelled by cancelling its asyncio wrapper.
+            # Retain the staging file and its quota until preparation settles.
+            cancellation = await async_wait_owned_cleanup(pending.reader)
         await _async_remove_path(hass, session.path)
+        if cancellation is not None:
+            raise cancellation
 
 
 async def _async_delete_sessions(
@@ -309,7 +341,7 @@ def _schedule_expiry(hass: HomeAssistant) -> None:
     deadlines.extend(
         item.retry_at
         for item in [*_pending(hass).values(), *_pending_scans(hass).values()]
-        if item.attempts < 5
+        if item.attempts < 5 and (item.reader is None or item.reader.done())
     )
     if not deadlines:
         return
@@ -356,7 +388,7 @@ async def _async_cleanup_expired(hass: HomeAssistant) -> None:
         if item.retry_at <= now:
             await _async_own_unregistered_files(hass, Path(directory))
     for path, item in tuple(_pending(hass).items()):
-        if item.retry_at <= now:
+        if item.retry_at <= now and (item.reader is None or item.reader.done()):
             try:
                 await _async_remove_path(hass, path)
             except OSError:
@@ -913,6 +945,56 @@ async def _async_load_prepared_restore(
     )
 
 
+async def _async_prepare_import(
+    hass: HomeAssistant, session: ImportSession, sections: Any, *, inspect_only: bool
+) -> transfer.PreparedTransfer:
+    """Reuse one session-owned read/validation task across timed-out callers."""
+    section_key = None
+    if sections is not None:
+        if not isinstance(sections, (list, tuple)) or not all(
+            isinstance(section, str) for section in sections
+        ):
+            raise backup.BackupError("Restore sections must be a list of names")
+        section_key = tuple(sections)
+    key = (section_key, inspect_only)
+    async with session.lock:
+        if _imports(hass).get(session.session_id) is not session:
+            raise backup.BackupError("The backup upload has expired or was cancelled")
+        task = session.preparation
+        if task is not None and not task.done() and key != session.preparation_key:
+            raise _InspectionPending(
+                "Backup validation is still pending; retry after it completes"
+            )
+        if task is None or key != session.preparation_key:
+            task = asyncio.create_task(
+                _async_load_prepared_restore(
+                    hass,
+                    session.path,
+                    session.kind,
+                    session.subentry_id,
+                    sections=section_key,
+                    inspect_only=inspect_only,
+                )
+            )
+
+            def release(completed: asyncio.Task[transfer.PreparedTransfer]) -> None:
+                # Waiters keep their task reference. A timed-out caller may
+                # never return, so the session only holds work while it runs.
+                if not completed.cancelled():
+                    completed.exception()
+                if session.preparation is completed:
+                    session.preparation = None
+                    session.preparation_key = None
+                pending = _pending(hass).get(session.path)
+                if pending is not None and pending.reader is completed:
+                    pending.reader = None
+
+            task.add_done_callback(release)
+            session.preparation = task
+            session.preparation_key = key
+    return await asyncio.shield(task)
+
+
 async def _discard_export(hass: HomeAssistant, session_id: str) -> bool:
     async with _registry_lock(hass):
         session = _exports(hass).pop(session_id, None)
@@ -1219,21 +1301,33 @@ async def _inspect_import(
 ) -> dict[str, Any]:
     await _async_cleanup_expired(hass)
     session = _completed_import(hass, data.get("session_id"), entry_id, subentry_id)
-    task = asyncio.create_task(_inspect_import_owned(hass, session, data))
-    session.inspection_tasks.add(task)
-    try:
-        async with asyncio.timeout(IMPORT_INSPECTION_TIMEOUT_SECONDS):
-            return await task
-    except TimeoutError as err:
-        raise backup.BackupError(
-            "Backup inspection timed out; retry validation"
-        ) from err
-    except asyncio.CancelledError as err:
-        if (caller := asyncio.current_task()) is not None and caller.cancelling():
-            raise
-        raise backup.BackupError("The backup inspection was cancelled") from err
-    finally:
-        session.inspection_tasks.discard(task)
+    task = session.inspection
+    if task is None or data != session.inspection_data:
+        if task is not None and not task.done():
+            task.cancel()
+        task = asyncio.create_task(_inspect_import_owned(hass, session, data))
+        session.inspection = task
+        session.inspection_data = data
+        session.inspection_tasks.add(task)
+
+        def release(completed: asyncio.Task[dict[str, Any]]) -> None:
+            session.inspection_tasks.discard(completed)
+            if not completed.cancelled():
+                completed.exception()
+
+        task.add_done_callback(release)
+
+    # Waiting callers may disconnect or time out. A matching retry can collect
+    # the compact result even after the parsed document has been released.
+    done, _ = await asyncio.wait({task}, timeout=IMPORT_INSPECTION_TIMEOUT_SECONDS)
+    if not done:
+        raise _InspectionPending("Backup inspection is still running")
+    if session.inspection is task:
+        session.inspection = None
+        session.inspection_data = None
+    if task.cancelled():
+        raise backup.BackupError("The backup inspection was cancelled")
+    return task.result()
 
 
 async def _inspect_import_owned(
@@ -1241,23 +1335,24 @@ async def _inspect_import_owned(
 ) -> dict[str, Any]:
     """Hold inspection locks only for the lifetime of this session-owned task."""
     entry_id, subentry_id = session.entry_id, session.subentry_id
-    gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
-    async with gate.exclusive(), session.lock:
-        if _imports(hass).get(session.session_id) is not session:
-            raise backup.BackupError("The backup upload has expired or was cancelled")
-        prepared = await _async_load_prepared_restore(
-            hass,
-            session.path,
-            session.kind,
-            subentry_id,
-            sections=data.get("sections"),
-            inspect_only=data.get("inspect_only") is True,
-        )
-        if data.get("inspect_only") is True:
+    inspect_only = data.get("inspect_only") is True
+    prepared = await _async_prepare_import(
+        hass, session, data.get("sections"), inspect_only=inspect_only
+    )
+    if inspect_only:
+        async with session.lock:
+            if _imports(hass).get(session.session_id) is not session:
+                raise backup.BackupError(
+                    "The backup upload has expired or was cancelled"
+                )
             _forget_preview(hass, session)
             session.preview_token = None
             session.preview_revision = None
             return {**transfer.inspection_for_frontend(prepared), "preview_token": None}
+    gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
+    async with gate.exclusive(), session.lock:
+        if _imports(hass).get(session.session_id) is not session:
+            raise backup.BackupError("The backup upload has expired or was cancelled")
         entry, subentry = _resolve_agent(hass, entry_id, subentry_id)
         selected = transfer.validate_section_selection(
             data.get("sections"),
@@ -1273,14 +1368,35 @@ async def _inspect_import_owned(
             raise backup.BackupError(
                 "Provider restoration requires private configuration"
             )
-        mapping_plan = await transfer.async_user_scope_mapping_plan(
-            hass,
-            prepared,
-            selected,
-            data.get("user_scope_mappings"),
+        # These reads can offload work. Keep destination ownership until it
+        # settles even when the inspection caller stops waiting.
+        current = await async_settle_owned_operation(
+            transfer._current_snapshot(
+                hass,
+                entry,
+                subentry,
+                include_usage=transfer.SECTION_USAGE in selected,
+                capture_usage_revision=True,
+            )
         )
-        current = await transfer._current_snapshot(
-            hass, entry, subentry, include_usage=transfer.SECTION_USAGE in selected
+        archive_retention_at = None
+        archive_config = None
+        if transfer.SECTION_CONVERSATION_ARCHIVE in selected:
+            archive_retention_at = dt_util.utcnow()
+            archive_config = (
+                (prepared.config or {})
+                if transfer.SECTION_CONFIGURATION in selected
+                else current.config
+            )
+        mapping_plan = await async_settle_owned_operation(
+            transfer.async_user_scope_mapping_plan(
+                hass,
+                prepared,
+                selected,
+                data.get("user_scope_mappings"),
+                archive_config=archive_config,
+                archive_retention_at=archive_retention_at,
+            )
         )
         if mapping_plan["missing_source_user_ids"]:
             preview = {
@@ -1300,30 +1416,41 @@ async def _inspect_import_owned(
                 session.preview_revision = None
                 session.preview_sections = tuple(preview["selected_sections"])
                 session.preview_user_scope_mappings = None
+                session.preview_archive_retention_at = None
                 session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
                 _schedule_expiry(hass)
             token = None
         else:
-            mapped = await transfer.async_apply_user_scope_mappings(
-                prepared, selected, mapping_plan["resolved"]
+            mapped = await async_settle_owned_operation(
+                transfer.async_apply_user_scope_mappings(
+                    prepared, selected, mapping_plan["resolved"]
+                )
             )
-            _target, preview = await transfer.async_materialize_restore(
-                hass,
-                entry,
-                subentry,
-                mapped,
-                sections=selected,
-                current_snapshot=current,
-                **(
-                    {"provider_connection": prepared.provider_connection}
-                    if restore_provider
-                    else {}
-                ),
+            _target, preview = await async_settle_owned_operation(
+                transfer.async_materialize_restore(
+                    hass,
+                    entry,
+                    subentry,
+                    mapped,
+                    sections=selected,
+                    current_snapshot=current,
+                    archive_retention_at=archive_retention_at,
+                    **(
+                        {"provider_connection": prepared.provider_connection}
+                        if restore_provider
+                        else {}
+                    ),
+                )
             )
             preview["user_scope_mapping"] = mapping_plan
             token = uuid4().hex
-            revision = await asyncio.to_thread(
-                _snapshot_revision, current, selected, dict(getattr(entry, "data", {}))
+            revision = await async_settle_owned_operation(
+                asyncio.to_thread(
+                    _snapshot_revision,
+                    current,
+                    selected,
+                    dict(getattr(entry, "data", {})),
+                )
             )
             async with _registry_lock(hass):
                 if _imports(hass).get(session.session_id) is not session:
@@ -1341,6 +1468,7 @@ async def _inspect_import_owned(
                 session.preview_user_scope_mappings = tuple(
                     sorted(mapping_plan["resolved"].items())
                 )
+                session.preview_archive_retention_at = archive_retention_at
                 session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
                 _schedule_expiry(hass)
                 _latest_previews(hass)[(entry_id, subentry_id)] = (
@@ -1386,17 +1514,23 @@ async def _restore_import(
     async with session.lock:
         if _imports(hass).get(session.session_id) is not session:
             raise backup.BackupError("The backup upload has expired or was cancelled")
-        prepared = await _async_load_prepared_restore(
-            hass,
-            session.path,
-            session.kind,
-            subentry.subentry_id,
-            sections=session.preview_sections,
-        )
+        if session.preview_token != token:
+            raise backup.BackupError("The backup preview is stale; preview again")
         selected_sections = tuple(session.preview_sections or ())
+        archive_retention_at = session.preview_archive_retention_at
         resolved_user_mappings = dict(session.preview_user_scope_mappings or ())
-        prepared = await transfer.async_apply_user_scope_mappings(
-            prepared, selected_sections, resolved_user_mappings
+    prepared = await _async_prepare_import(
+        hass, session, selected_sections, inspect_only=False
+    )
+    async with session.lock:
+        if _imports(hass).get(session.session_id) is not session:
+            raise backup.BackupError("The backup upload has expired or was cancelled")
+        if session.preview_token != token:
+            raise backup.BackupError("The backup preview is stale; preview again")
+        prepared = await async_settle_owned_operation(
+            transfer.async_apply_user_scope_mappings(
+                prepared, selected_sections, resolved_user_mappings
+            )
         )
 
     async def validate_preview() -> None:
@@ -1430,6 +1564,7 @@ async def _restore_import(
             entry,
             subentry,
             include_usage=transfer.SECTION_USAGE in (session.preview_sections or ()),
+            capture_usage_revision=True,
         )
         revision = await asyncio.to_thread(
             _snapshot_revision,
@@ -1444,6 +1579,10 @@ async def _restore_import(
                 raise backup.BackupError(
                     "The backup upload has expired or was cancelled"
                 )
+            if session.preview_token != token or _latest_previews(hass).get(
+                (entry.entry_id, subentry.subentry_id)
+            ) != (session.session_id, token):
+                raise backup.BackupError("The backup preview is stale; preview again")
             _imports(hass).pop(session.session_id, None)
             _forget_preview(hass, session)
             _retire(hass, session)
@@ -1470,6 +1609,7 @@ async def _restore_import(
             else session.preview_sections,
             precondition=validate_preview,
             confirm_retention=data.get("confirm_retention") is True,
+            archive_retention_at=archive_retention_at,
             provider_connection=prepared.provider_connection
             if restore_provider
             else None,
@@ -1557,6 +1697,9 @@ async def websocket_backup_transfer(
 
     try:
         result = await async_backup_transfer_command(hass, msg)
+    except _InspectionPending as err:
+        connection.send_error(msg["id"], "inspection_pending", str(err))
+        return
     except (HomeAssistantError, RuntimeError, ValueError, OSError) as err:
         if isinstance(err, OSError) and mutation_failure(err) is None:
             raise
@@ -1592,6 +1735,10 @@ async def _async_cleanup_all_settled(hass: HomeAssistant) -> None:
     finally:
         from .transfer_staging import async_close_transfer_staging
 
+        # A concurrent cancel may have detached its upload before shutdown.
+        for item in tuple(_pending(hass).values()):
+            if item.reader is not None:
+                await async_wait_owned_cleanup(item.reader)
         await async_close_transfer_staging(hass)
         paths = tuple(set(_pending(hass)) | set(_pending_scans(hass)))
 

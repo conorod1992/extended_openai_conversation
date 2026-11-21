@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import base64
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 import hashlib
 import os
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -130,7 +132,9 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert target_subentry_id == "agent-1"
         return prepared
 
-    async def current_snapshot(*_args, include_usage=True):
+    async def current_snapshot(*_args, include_usage=True, capture_usage_revision=False):
+        assert not include_usage
+        assert capture_usage_revision
         return object()
 
     async def materialize(
@@ -141,17 +145,19 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         *,
         sections,
         current_snapshot,
+        archive_retention_at,
     ):
         assert actual_entry is entry
         assert actual_subentry is subentry
         assert actual_prepared is prepared
         assert sections == frozenset({"memory"})
         assert current_snapshot is not None
+        assert archive_retention_at is None
         return object(), {"changes": 1, "selected_sections": ["memory"]}
 
     async def restore(
         _hass, actual_entry, actual_subentry, actual_prepared, *, sections, precondition,
-        confirm_retention, provider_connection, expected_provider_data,
+        confirm_retention, provider_connection, expected_provider_data, archive_retention_at,
     ):
         assert actual_entry is entry
         assert actual_subentry is subentry
@@ -159,6 +165,7 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert sections == ["memory"]
         assert not confirm_retention
         assert provider_connection is expected_provider_data is None
+        assert archive_retention_at is None
         await precondition()
         return {"restored": True}
 
@@ -294,6 +301,80 @@ async def test_inspection_with_missing_user_mapping_requires_selection_before_pr
     session = backup_transfer._imports(hass)[session_id]
     assert session.preview_sections == (selected_section,)
     assert session.preview_user_scope_mappings is None
+
+
+async def test_expired_archive_owner_does_not_block_restore_preview(hass, monkeypatch):
+    from tests.test_restore_recovery import _states
+    from tests.test_transfer_user_mapping import _prepared
+
+    selected = transfer.SECTION_CONVERSATION_ARCHIVE
+    prepared = _prepared()
+    now = datetime(2026, 11, 20, tzinfo=UTC)
+    original = prepared.archive_sessions[0]
+    stamp = (now - timedelta(days=2)).isoformat()
+    prepared.archive_sessions.append(
+        replace(
+            original,
+            session_id="recent",
+            home_assistant_conversation_id="recent-conversation",
+            scope_id="user:current-user",
+            started_at=stamp,
+            last_message_at=stamp,
+            last_activity_at=stamp,
+        )
+    )
+    prepared.archive_turns = []
+    entry = SimpleNamespace(entry_id="entry-1", data={})
+    subentry = SimpleNamespace(subentry_id="agent-1")
+    hass.auth.async_get_users = AsyncMock(
+        return_value=[SimpleNamespace(id="current-user", name="Current user")]
+    )
+    monkeypatch.setattr(backup_transfer.dt_util, "utcnow", lambda: now)
+    monkeypatch.setattr(backup_transfer, "_resolve_agent", lambda *_: (entry, subentry))
+    monkeypatch.setattr(
+        backup_transfer, "_async_load_prepared_restore", AsyncMock(return_value=prepared)
+    )
+    current = replace(_states()[0], config={"archive_retention_days": 30})
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))
+
+    started = await backup_transfer._start_import(
+        hass, entry.entry_id, subentry.subentry_id, {"filename": "backup.json", "size": 4}
+    )
+    session_id = started["session_id"]
+    await backup_transfer._import_chunk(
+        hass, entry.entry_id, subentry.subentry_id,
+        {"session_id": session_id, "index": 0, "data": base64.b64encode(b"data").decode()},
+    )
+    result = await backup_transfer._inspect_import(
+        hass, entry.entry_id, subentry.subentry_id,
+        {"session_id": session_id, "sections": [selected]},
+    )
+    assert result["preview_token"]
+    assert result["preview"]["archive_sessions"] == 1
+    assert result["preview"]["archive_retention"]["expired_sessions"] == 1
+    assert result["preview"]["user_scope_mapping"]["resolved"] == {
+        "current-user": "current-user"
+    }
+
+    # A backwards wall-clock correction between preview and confirmation
+    # must not make a session with no approved owner mapping eligible again.
+    async def commit(hass, entry, subentry, imported, *, precondition, sections,
+                     archive_retention_at, **kwargs):
+        await precondition()
+        target, _ = await transfer.async_materialize_restore(
+            hass, entry, subentry, imported, sections=sections,
+            archive_retention_at=archive_retention_at,
+        )
+        return {"owners": [session.scope_id for session in target.archive_sessions]}
+
+    monkeypatch.setattr(transfer, "async_restore_transfer", commit)
+    monkeypatch.setattr(backup_transfer.dt_util, "utcnow", lambda: now - timedelta(days=30))
+    restored = await backup_transfer._restore_import(
+        hass, entry, subentry, {
+            "session_id": session_id, "preview_token": result["preview_token"],
+        }
+    )
+    assert restored == {"owners": ["user:current-user"]}
 
 
 async def test_restore_failure_still_consumes_and_deletes_completed_upload(
@@ -570,12 +651,13 @@ async def test_cancelling_stalled_full_inspection_releases_maintenance_for_new_s
         backup_transfer._imports(hass)[name] = session
         sessions.append(session)
     started = asyncio.Event()
+    release = asyncio.Event()
     prepared = SimpleNamespace(available_sections=["memory"])
 
     async def load(_hass, path, *_args, **_kwargs):
         if path == sessions[0].path:
             started.set()
-            await asyncio.Event().wait()
+            await release.wait()
         return prepared
 
     monkeypatch.setattr(backup_transfer, "_async_load_prepared_restore", load)
@@ -615,19 +697,21 @@ async def test_cancelling_stalled_full_inspection_releases_maintenance_for_new_s
         backup_transfer._inspect_import(hass, "entry-1", "agent-1", {"session_id": "B"})
     )
     if termination == "cancel":
-        assert await asyncio.wait_for(
-            backup_transfer._discard_import(hass, "A"), timeout=1
-        )
+        cancel = asyncio.create_task(backup_transfer._discard_import(hass, "A"))
     expected = (
         "inspection was cancelled"
         if termination == "cancel"
-        else "inspection timed out"
+        else "inspection is still running"
     )
     with pytest.raises(backup.BackupError, match=expected):
         await old
-    if termination == "timeout":
-        assert await backup_transfer._discard_import(hass, "A")
     result = await asyncio.wait_for(new, timeout=1)
+    assert os.path.exists(sessions[0].path)
+    if termination == "timeout":
+        cancel = asyncio.create_task(backup_transfer._discard_import(hass, "A"))
+        await asyncio.sleep(0)
+    release.set()
+    assert await asyncio.wait_for(cancel, timeout=1)
     assert result["preview_token"]
     assert backup_transfer._latest_previews(hass)[("entry-1", "agent-1")][0] == "B"
     assert not sessions[0].inspection_tasks
@@ -648,6 +732,68 @@ def _staged_export_session(path: str, **overrides) -> backup_transfer.ExportSess
     }
     values.update(overrides)
     return backup_transfer.ExportSession(**values)
+
+
+async def test_native_upload_worker_survives_timeout_without_blocking_agent(hass, tmp_path, monkeypatch):
+    path = tmp_path / "upload.json"
+    path.write_bytes(b"data")
+    session = _completed_import_session(str(path))
+    backup_transfer._imports(hass)[session.session_id] = session
+    entered, release = Event(), Event()
+    calls = []
+
+    def load(path, kind):
+        calls.append((path, kind))
+        entered.set()
+        assert release.wait(5)
+        return {}
+
+    monkeypatch.setattr(hass, "async_add_executor_job", asyncio.to_thread)
+    monkeypatch.setattr(backup_transfer, "_load_uploaded_document", load)
+    monkeypatch.setattr(transfer, "async_inspect_decoded_transfer", AsyncMock(return_value=object()))
+    monkeypatch.setattr(transfer, "inspection_for_frontend", lambda _: {"valid": True})
+    monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 0.05)
+    request = {"session_id": session.session_id, "inspect_only": True}
+    gate = backup_transfer.get_agent_maintenance_gate(hass, session.entry_id, session.subentry_id)
+    try:
+        for _ in range(3):
+            with pytest.raises(backup.BackupError, match="inspection is still running"):
+                await backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, request)
+            assert entered.is_set()
+            assert len(calls) == 1
+            async with asyncio.timeout(0.5), gate.shared():
+                assert not gate._writer_active
+        # Let validation finish without any waiting caller. A later retry
+        # retrieves the inspection result and never reparses the upload.
+        inspection = session.inspection
+        assert inspection is not None
+        release.set()
+        await asyncio.wait_for(asyncio.shield(inspection), timeout=1)
+        assert session.preparation is None
+        assert not session.inspection_tasks
+        assert await backup_transfer._inspect_import(
+            hass, session.entry_id, session.subentry_id, request
+        ) == {"valid": True, "preview_token": None}
+        assert session.inspection is None
+        assert len(calls) == 1
+        assert session.preparation is None
+
+        # A worker that finishes after its final waiter times out also releases
+        # the parsed document while keeping the upload available for another try.
+        release.clear()
+        monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 0.05)
+        with pytest.raises(backup.BackupError, match="inspection is still running"):
+            await backup_transfer._inspect_import(hass, session.entry_id, session.subentry_id, request)
+        abandoned = session.preparation
+        assert abandoned is not None
+        release.set()
+        await asyncio.wait_for(asyncio.shield(abandoned), timeout=1)
+        assert session.preparation is None
+        assert path.exists() and len(calls) == 2
+    finally:
+        release.set()
+        await backup_transfer._discard_import(hass, session.session_id)
+    assert not path.exists()
 
 
 class _Exclusive:

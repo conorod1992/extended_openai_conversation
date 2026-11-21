@@ -1488,7 +1488,7 @@ def test_normalize_active_migrates_legacy_targets_and_filters_invalid() -> None:
         is None
     )
 
-    active = manager._normalize_active(
+    active = manager._normalize_active_values(
         {
             "period_started_at": "2026-09-13T22:00:00+00:00",
             "period_ends_at": "2026-09-14T07:00:00+00:00",
@@ -1504,7 +1504,7 @@ def test_normalize_active_migrates_legacy_targets_and_filters_invalid() -> None:
     assert active is not None
     assert active["controls"]["media_player.bedroom"]["original_value"] == 0.8
 
-    active = manager._normalize_active(
+    active = manager._normalize_active_values(
         {
             "period_started_at": "2026-09-13T22:00:00+00:00",
             "period_ends_at": "2026-09-14T07:00:00+00:00",
@@ -1861,7 +1861,7 @@ def test_normalize_active_rejects_invalid_controls(
         "controls": raw_controls,
     }
 
-    normalized = manager._normalize_active(value)
+    normalized = manager._normalize_active_values(value)
 
     if expected_ids is None:
         assert normalized is None

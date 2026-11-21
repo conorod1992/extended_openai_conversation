@@ -10,6 +10,8 @@ In **Functions**, choose **+ Add**, then **Home Assistant tool**. Search by name
 select individual tools, or filter sources and choose **Select all shown**. You can
 assign the selected tools to an existing Function Group in the same dialog.
 Already-added tools are marked and cannot be added twice.
+Choose an Assist satellite under **Preview device** to discover tools that
+Home Assistant exposes only for that device, such as satellite timers.
 
 Bulk addition saves **only those individual tools selected at that time**. Tools
 introduced by future updates are never automatically exposed. A source is not

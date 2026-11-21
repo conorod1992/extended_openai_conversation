@@ -153,7 +153,7 @@ async def test_retrieval_short_circuits_and_isolates_temporary_store_failures() 
     agent._current_readable_memory_scope_ids = lambda _context: []
     assert await Agent._async_retrieve_memories(agent, object(), "query") == []
     assert await Agent._async_select_memories(agent, object(), "query") == []
-    assert await Agent._async_search_memories(agent, [], "query", 3) == []
+    assert await Agent._async_search_memories(agent, [], "query", 3) == ([], "lexical")
 
     agent._current_readable_memory_scope_ids = lambda _context: ["user:one"]
     agent.subentry.data[conversation_module.CONF_MEMORY_AUTO_RETRIEVE_LIMIT] = 2
@@ -239,7 +239,8 @@ def test_simple_properties_skill_and_entity_filters(
     agent._effective_guest_policy = lambda: GuestCapabilityPolicy(True, skills=False)
     assert Agent._get_enabled_skills(agent) == []
     agent._effective_guest_policy = GuestCapabilityPolicy.unrestricted
-    assert [skill.name for skill in Agent._get_enabled_skills(agent)] == ["weather"]
+    agent._get_configured_function_tools = lambda: []
+    assert Agent._get_enabled_skills(agent) == []
 
     entities = [
         {"entity_id": "sensor.allowed"},
@@ -269,7 +270,7 @@ def test_simple_properties_skill_and_entity_filters(
 async def test_archive_opt_out_and_assistant_text_recording(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    archive = SimpleNamespace(async_record_turn=AsyncMock())
+    archive = SimpleNamespace(async_record_turn=AsyncMock(return_value=None))
     agent = _agent()
     agent._archive = archive
     request_policy = GuestCapabilityPolicy(False, archive_retention=False)
@@ -313,6 +314,8 @@ def test_function_tool_assembly_records_runtime_and_maps_failures(
     agent._function_groups_runtime = runtime
     agent._temporary_memory = None
     agent._archive = None
+    agent._archive_reads_available = False
+    agent._archive_session_available = False
     agent._get_configured_function_tools = lambda: configured
     agent._filter_guest_tools_and_groups = lambda tools, groups, policy: (tools, groups)
     agent._current_memory_scope_id = lambda: None

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import json
 from types import SimpleNamespace
@@ -20,10 +21,14 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_SHARED_ARCHIVE_ENABLED,
     CONF_TEMPORARY_MEMORY,
     MEMORY_MODE_MANUAL,
+    SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
+)
+from custom_components.extended_openai_conversation_responses.conversation_archive import (
+    ConversationArchive,
 )
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
@@ -36,6 +41,7 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
 from homeassistant.helpers import llm
 from homeassistant.util import dt as dt_util
 from tests.test_conversation_archive import _archive
+from tests.test_persistence_compatibility_fixtures import ArchiveFixtureStorage, _fixture
 
 
 def _agent(options: dict | None = None) -> ExtendedOpenAIAgentEntity:
@@ -95,7 +101,7 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
         async_update=AsyncMock(return_value=record),
         async_delete=AsyncMock(return_value=1),
     )
-    entity._async_search_memories = AsyncMock(return_value=[record])
+    entity._async_search_memories = AsyncMock(return_value=([record], "lexical"))
     llm_context = _llm_context()
 
     searched = await entity._async_execute_memory_tool(
@@ -124,7 +130,7 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
     )
 
     entity._async_search_memories.assert_awaited_once_with(
-        ["user-1"], "dog", 4, "pets"
+        ["user-1"], "dog", 4, "pets", offset=0, ranking=None
     )
     entity._memory.async_list_page.assert_awaited_once_with(
         ["user-1"], "pets", 4, 2
@@ -285,6 +291,88 @@ async def test_model_date_range_cannot_delete_turns_outside_requested_dates(
             assert allowed == {"deleted_sessions": 1, "deleted_turns": 2}
         finally:
             conversation._ACTIVE_TURN.reset(token)
+
+
+@pytest.mark.parametrize("include_expired", [False, True])
+async def test_archive_read_tools_survive_unavailable_session_storage(
+    hass, monkeypatch, include_expired
+) -> None:
+    entity = _agent(
+        {CONF_ARCHIVE_ENABLED: True, CONF_ARCHIVE_MODEL_SEARCH_ENABLED: True}
+    )
+    entity.hass = hass
+    entity.entry = SimpleNamespace(entry_id="entry")
+    entity.subentry.subentry_id = "agent-1"
+    payload = _fixture("archive_mixed_corrupt.json")
+    session = payload["metadata"]["sessions"][0]
+    turn = payload["partitions"]["2026-09"]["turns"][0]
+    now = dt_util.utcnow()
+    expired = now - timedelta(days=90)
+    old_session, old_turn = deepcopy(session), deepcopy(turn)
+    session.update(started_at=now.isoformat(), last_message_at=now.isoformat())
+    turn["timestamp"] = now.isoformat()
+    old_session.update(
+        session_id="session-expired",
+        started_at=expired.isoformat(),
+        last_message_at=expired.isoformat(),
+    )
+    old_turn.update(
+        turn_id="turn-expired",
+        session_id="session-expired",
+        timestamp=expired.isoformat(),
+    )
+    payload["partitions"] = {
+        now.strftime("%Y-%m"): {"turns": [turn, "broken-turn"]},
+    }
+    if include_expired:
+        payload["metadata"]["sessions"].append(old_session)
+        payload["partitions"][expired.strftime("%Y-%m")] = {"turns": [old_turn]}
+    payload["metadata"]["partitions"] = list(payload["partitions"])
+    archive = ConversationArchive(ArchiveFixtureStorage(payload), "agent-1")
+    await archive.async_initialize()
+    monkeypatch.setattr(conversation, "async_get_archive", AsyncMock(return_value=archive))
+    await entity._async_initialize_archive(True)
+    assert entity._archive is archive
+    assert archive.scope_counts() == {"user:alice": 1}
+    statuses = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent-1")]
+    assert statuses["archive"] == {
+        "configured": True,
+        "status": "failed",
+        "error_type": "StorageRepairRequired",
+        "read_available": True,
+    }
+    scope = user_scope("alice", source="authenticated_user")
+    session = await entity._async_begin_archive_session(
+        "conversation:new-chat", scope, "new-chat", SimpleNamespace(archive_retention=True)
+    )
+    assert session is None
+    assert entity._archive.stats()["storage_repair_required"]
+    status = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent-1")]["archive"]
+    assert status["status"] == "failed"
+    assert status["read_available"] is True
+
+    token = conversation._ACTIVE_TURN.set(conversation.ConversationTurnContext(scope=scope))
+    try:
+        fetched = await entity._async_execute_archive_tool("get", {"session_id": "session-good"})
+        assert fetched["turns"][0]["turn_id"] == "turn-good"
+        searched = await entity._async_execute_archive_tool("search", {"query": "Hello"})
+        assert [match["session_id"] for match in searched["results"]] == ["session-good"]
+        with pytest.raises(ValueError, match="conversation session not found"):
+            await entity._async_execute_archive_tool("get", {"session_id": "session-expired"})
+        with pytest.raises(RuntimeError, match="active conversation session is unavailable"):
+            await entity._async_execute_archive_tool("private", {})
+    finally:
+        conversation._ACTIVE_TURN.reset(token)
+
+    other_scope = user_scope("bob", source="authenticated_user")
+    token = conversation._ACTIVE_TURN.set(conversation.ConversationTurnContext(scope=other_scope))
+    try:
+        with pytest.raises(ValueError, match="conversation session not found"):
+            await entity._async_execute_archive_tool("get", {"session_id": "session-good"})
+        searched = await entity._async_execute_archive_tool("search", {"query": "Hello"})
+        assert searched["results"] == []
+    finally:
+        conversation._ACTIVE_TURN.reset(token)
 
 
 async def test_archive_dispatcher_routes_session_operations_and_resume_boundary() -> None:
@@ -588,3 +676,56 @@ async def test_conversation_lifecycle_tool_captures_active_session_ids() -> None
     assert reset is not None
     assert reset.state_session_id == "state-session"
     assert reset.memory_session_id == "memory-session"
+
+
+async def test_hybrid_memory_pagination_keeps_the_first_pages_ranking():
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_MEMORY_RETRIEVAL_MODE,
+        MEMORY_RETRIEVAL_HYBRID,
+    )
+    from custom_components.extended_openai_conversation_responses.memory import (
+        EmbeddingBatch,
+        PersistentMemory,
+    )
+    from tests.test_memory import FakeStorage
+    from tests.test_memory_search_performance import _Storage, _record
+
+    contents = ["The bin is in the kitchen", "The cat is in the kitchen"]
+    contents += [f"Semaphore serial value {i}" for i in range(255)]
+    records = [_record(f"m{i:03}", "user-1", text, "home") for i, text in enumerate(contents)]
+    memory = PersistentMemory(_Storage(records), FakeStorage())
+    await memory.async_initialize()
+
+    async def embed(batch):
+        return EmbeddingBatch(
+            [[1.0, 0.0] if text == "kitchen" or "cat is" in text else [-1.0, 0.0] for text in batch],
+            "fixture-model",
+        )
+
+    memory.set_embedding_provider(embed, "fixture-model")
+    entity = _agent({CONF_MEMORY_RETRIEVAL_MODE: MEMORY_RETRIEVAL_HYBRID})
+    entity._memory = memory
+    arguments = {"query": "kitchen", "limit": 1}
+    context = _llm_context()
+    first = await entity._async_execute_memory_tool("search", arguments, context)
+    assert first["ranking"] == "lexical"
+    assert first["memories"][0]["memory_id"] == "m000"
+
+    # A separate fresh search finishes warming the same unchanged corpus.
+    fresh = await entity._async_execute_memory_tool("search", arguments, context)
+    assert fresh["ranking"] == "hybrid"
+    assert fresh["memories"][0]["memory_id"] == "m001"
+    with pytest.raises(ValueError, match="previous page"):
+        await entity._async_execute_memory_tool("search", {**arguments, "offset": 1}, context)
+    second = await entity._async_execute_memory_tool(
+        "search", {**arguments, "offset": first["next_offset"], "ranking": first["ranking"]}, context
+    )
+    assert second["memories"][0]["memory_id"] == "m001"
+    assert not second["has_more"]
+    assert "ranking" not in second
+
+    memory.set_embedding_provider(None, "fixture-model")
+    with pytest.raises(ValueError, match="Hybrid ranking is unavailable"):
+        await entity._async_execute_memory_tool(
+            "search", {**arguments, "offset": fresh["next_offset"], "ranking": fresh["ranking"]}, context
+        )

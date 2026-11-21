@@ -126,7 +126,7 @@ class PreparedRestore:
     archive_active: dict[str, str] | None = None
     # Internal provenance, never accepted as an import-document switch.
     authoritative_config: bool = False
-    # Live Knowledge-only commits may retain untouched conversation state.
+    # Live Knowledge and Usage restores may retain untouched conversation state.
     # Deliberately absent from journal/portable documents: recovery resets safely.
     preserve_retained_continuity: bool = False
     # A retention-only rewrite of durable Usage does not replace live accounting.
@@ -135,6 +135,8 @@ class PreparedRestore:
     journaled_sections: frozenset[str] | None = None
     # Selective planning may omit Usage until configuration changes require it.
     usage_snapshotted: bool = True
+    # Destination preview only, captured before export retention filtering.
+    usage_revision: str | None = None
 
     def restores(self, section: str) -> bool:
         return self.journaled_sections is None or section in self.journaled_sections
@@ -702,22 +704,28 @@ async def _snapshot_for_restore(
     *,
     provider: str | None = None,
     include_usage: bool = True,
+    capture_usage_revision: bool = False,
 ) -> PreparedRestore:
     usage = participants.usage
     if include_usage and usage is None:
         raise RuntimeError("Usage rollback requires a durable manager")
+    archive = await participants.archive.async_recovery_data()
+    usage_revision = None
+    if include_usage and usage is not None:
+        if capture_usage_revision:
+            usage_data, usage_revision = await usage.async_restore_preview_data()
+        else:
+            usage_data = await usage.async_backup_data()
+    else:
+        usage_data = {
+            "totals": asdict(UsageTotals()),
+            "daily": {},
+            "requests": [],
+            "runs": [],
+        }
     raw_categories = {
-        "archive": await participants.archive.async_recovery_data(),
-        "usage": (
-            await usage.async_backup_data()
-            if include_usage and usage is not None
-            else {
-                "totals": asdict(UsageTotals()),
-                "daily": {},
-                "requests": [],
-                "runs": [],
-            }
-        ),
+        "archive": archive,
+        "usage": usage_data,
         "memories": await participants.memory.async_backup_data(),
         "temporary_memories": await participants.temporary.async_backup_data(),
         "knowledge": await participants.knowledge.async_backup_data(),
@@ -758,4 +766,5 @@ async def _snapshot_for_restore(
         archive_active=archive_active,
         authoritative_config=True,
         usage_snapshotted=include_usage,
+        usage_revision=usage_revision,
     )

@@ -1,6 +1,7 @@
 """Accepted configuration must reach the actual initial provider/tool boundary."""
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, date, datetime
 import json
 from types import SimpleNamespace
@@ -33,6 +34,12 @@ from custom_components.extended_openai_conversation_responses.function_groups im
 )
 from custom_components.extended_openai_conversation_responses.function_tool_quarantine import (
     _runtime_configured_function_tools,
+)
+from custom_components.extended_openai_conversation_responses.management_request_preview import (
+    async_preview_effective_request,
+)
+from custom_components.extended_openai_conversation_responses.request_context import (
+    _ACTIVE_TURN,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -72,11 +79,25 @@ def _agent(hass, entry, subentry):
     agent._guest_mode = agent.skill_manager = agent._function_groups_runtime = None
     agent._temporary_memory = agent._knowledge = agent._memory = agent._archive = None
     if subentry.data.get("archive_enabled"):
-        agent._archive = (
-            object()
-        )  # Healthy manager; this probe requests no archive operation.
+        agent._archive = SimpleNamespace(read_available=True)
     agent._usage = None
     return agent
+
+
+async def test_request_preview_rejects_azure_tool_count_for_signed_in_caller(hass):
+    options = _options(
+        126,
+        azure_model="gpt-4o",
+        memory_mode="manual",
+        current_datetime_enabled=False,
+        exposed_entities_enabled=False,
+        prompt="Usage test",
+    )
+    entry = SimpleNamespace(entry_id="entry", data={"api_provider": "azure"})
+    subentry = SimpleNamespace(subentry_id="agent", data=options)
+    request.validate_runtime_readiness(options, entry.data)
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        await async_preview_effective_request(hass, entry, subentry, options, "admin")
 
 
 @pytest.fixture
@@ -269,6 +290,12 @@ async def _dispatch(agent, *, conditional=False):
         chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
     )
     lifecycle = begin_conversation_lifecycle()
+    turn = _ACTIVE_TURN.set(
+        replace(
+            _ACTIVE_TURN.get(),
+            archive=("key", "session") if agent._archive is not None else None,
+        )
+    )
     try:
         log = _chat_log(agent.hass)
         tools = agent._get_function_tools()
@@ -277,6 +304,7 @@ async def _dispatch(agent, *, conditional=False):
         )
         assert final_assistant_text(log.content) == "Done"
     finally:
+        _ACTIVE_TURN.reset(turn)
         end_conversation_lifecycle(lifecycle)
     return create.call_args.kwargs
 

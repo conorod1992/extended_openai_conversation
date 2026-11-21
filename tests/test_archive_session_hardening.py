@@ -43,6 +43,44 @@ class FailingArchiveStorage:
         self.partitions[partition] = deepcopy(data)
 
 
+async def test_only_verified_live_private_marker_crosses_archive_inactivity(monkeypatch):
+    from datetime import timedelta
+    from homeassistant.util import dt as dt_util
+
+    now = dt_util.utcnow()
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    storage = FailingArchiveStorage()
+    archive = ConversationArchive(storage, "agent")
+    await archive.async_initialize()
+    scope = user_scope("alice", source="test")
+    flags = dict(archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=5)
+    private = await archive.async_begin_session("continuity:user:alice", scope, "original", **flags)
+    await archive.async_make_private(private.session_id)
+    now += timedelta(minutes=10)
+    reused = await archive.async_begin_session("continuity:user:alice", scope, "original",
+        live_logical_conversation=True, **flags)
+    assert reused.session_id == private.session_id and reused.retention_state == "private"
+    retained = await archive.async_resume_saving("continuity:user:alice", reused.session_id, scope,
+        shared_archive_enabled=False)
+    now += timedelta(minutes=10)
+    next_session = await archive.async_begin_session("continuity:user:alice", scope, "original",
+        live_logical_conversation=True, **flags)
+    assert next_session.session_id != retained.session_id and next_session.retention_state == "retained"
+    await archive.async_make_private(next_session.session_id)
+    now += timedelta(minutes=4)
+    restarted = ConversationArchive(storage, "agent")
+    await restarted.async_initialize()
+    fallback = await restarted.async_begin_session("continuity:user:alice", scope, "original", **flags)
+    assert fallback.session_id == next_session.session_id
+    now += timedelta(minutes=6)
+    expired = await restarted.async_begin_session("continuity:user:alice", scope, "original", **flags)
+    assert expired.session_id != fallback.session_id and expired.retention_state == "retained"
+    await restarted.async_make_private(expired.session_id)
+    recreated = await restarted.async_begin_session("continuity:user:alice", scope, "new",
+        live_logical_conversation=True, **flags)
+    assert recreated.session_id != expired.session_id and recreated.retention_state == "retained"
+
+
 @pytest.mark.parametrize("pending", [False, True])
 @pytest.mark.parametrize("committed", [False, True])
 async def test_archive_failed_intent_compares_the_actual_durable_generation(

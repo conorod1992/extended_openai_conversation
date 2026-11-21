@@ -4,6 +4,7 @@ import asyncio
 from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta
+from functools import partial
 from threading import get_ident
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -511,6 +512,58 @@ async def test_interrupted_deletion_commits_recover_deterministically(
     await restarted.async_initialize()
     assert restarted.stats()["session_count"] == 0
     assert restarted.stats()["turn_count"] == 0
+
+
+@pytest.mark.parametrize("explicit_delete", [False, True])
+async def test_failed_prune_masks_both_paging_directions(monkeypatch, explicit_delete):
+    from custom_components.extended_openai_conversation_responses.management_history_queries import (
+        archive_get_before_page,
+    )
+
+    storage = FakeArchiveStorage()
+    archive = ConversationArchive(storage, "agent-1")
+    await archive.async_initialize()
+    scope = user_scope("alice", source="test")
+    recent_time = dt_util.utcnow()
+    sessions = []
+    for age, key in [(2, "expired"), (0, "recent")]:
+        now = recent_time - timedelta(days=age)
+        monkeypatch.setattr(dt_util, "utcnow", lambda now=now: now)
+        session = await archive.async_begin_session(
+            key,
+            scope,
+            key,
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
+        await archive.async_record_turn(
+            session.session_id,
+            run_id=None,
+            user_text=f"{key} transcript",
+            assistant_text="answer",
+            successful=True,
+        )
+        sessions.append(session.session_id)
+    expired, recent = sessions
+    storage.fail_metadata_on = storage.metadata_save_count + 1
+    with pytest.raises(OSError, match="metadata write failed"):
+        await archive.async_prune(1)
+    read_before = partial(archive_get_before_page, archive, before_turn=1)
+    for read in (archive.async_get, read_before):
+        with pytest.raises(ValueError, match="conversation session not found"):
+            await read(scope.scope_id, expired)
+        current = await read(scope.scope_id, recent)
+        assert current["turns"][0]["user_text"] == "recent transcript"
+    assert archive.scope_counts() == {scope.scope_id: 1}
+    assert (await archive.async_search(scope.scope_id, "expired"))["results"] == []
+    if explicit_delete:
+        removed = await archive.async_delete_session(scope.scope_id, expired)
+    else:
+        removed = await archive.async_prune(1)
+    assert removed == {"deleted_sessions": 1, "deleted_turns": 1}
+    with pytest.raises(ValueError, match="conversation session not found"):
+        await read_before(scope.scope_id, expired)
 
 
 async def test_interrupted_backup_replacement_recovers_exact_target() -> None:

@@ -567,6 +567,10 @@ class IntercomManager:
         text = message.strip()
         if not text:
             raise HomeAssistantError("Broadcast message cannot be empty")
+        if not any(character.isalnum() for character in text):
+            raise HomeAssistantError(
+                "Broadcast message must contain a letter or number"
+            )
         authorized = await async_authorized_broadcast_targets(
             self.hass,
             self,
@@ -741,19 +745,24 @@ class IntercomManager:
                             blocking=True,
                             context=item.context,
                         )
+                except asyncio.CancelledError:
+                    if delivery.status == "delivering":
+                        delivery.set("failed", "CancelledError")
+                    raise
                 except Exception as err:
                     delivery.set("failed", type(err).__name__)
                 else:
                     delivery.set("delivered")
-                self._release_completed_message(item)
-                if queue and queue[0] is item:
-                    queue.popleft()
-            if queue is not None and not queue and self._queues.get(entity_id) is queue:
-                self._queues.pop(entity_id, None)
+                finally:
+                    self._release_completed_message(item)
+                    if queue and queue[0] is item:
+                        queue.popleft()
         finally:
             self._draining.discard(entity_id)
             queue = self._queues.get(entity_id)
-            if queue:
+            if queue is not None and not queue:
+                self._queues.pop(entity_id, None)
+            elif queue:
                 queued_delivery = queue[0].deliveries.get(entity_id)
                 state = self.hass.states.get(entity_id)
                 if (

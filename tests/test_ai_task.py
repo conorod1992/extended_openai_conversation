@@ -14,6 +14,7 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from homeassistant.components import ai_task, conversation
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.json import json_bytes
 
 
 def _subentry(
@@ -32,6 +33,58 @@ def _entity() -> ai_task_platform.ExtendedOpenAITaskEntity:
         cast(Any, SimpleNamespace(data={}, runtime_data=object())),
         cast(Any, _subentry()),
     )
+
+
+@pytest.mark.parametrize(
+    ("identifier", "serializable"),
+    [
+        (-(2**63) - 1, False),
+        (-(2**63), True),
+        (2**64 - 1, True),
+        (2**64, False),
+    ],
+)
+async def test_structured_task_checks_home_assistant_integer_limits(
+    monkeypatch, identifier, serializable
+):
+    entity = _entity()
+    task = ai_task.GenDataTask(
+        name="Read an identifier",
+        instructions="Extract the numeric identifier",
+        structure=vol.Schema({vol.Required("identifier"): int}),
+    )
+    chat_log = SimpleNamespace(llm_api=None, content=[], conversation_id="task")
+
+    async def respond(log, *, structure_schema, **kwargs):
+        assert structure_schema["properties"]["identifier"]["type"] == "integer"
+        log.content.append(
+            conversation.AssistantContent(
+                agent_id="task", content=f'{{"identifier": {identifier}}}'
+            )
+        )
+
+    monkeypatch.setattr(entity, "_async_handle_chat_log", respond)
+    if serializable:
+        result = await entity._async_generate_data(task, chat_log)
+        assert result.data == {"identifier": identifier}
+        assert str(identifier).encode() in json_bytes(result.as_dict())
+    else:
+        with pytest.raises(HomeAssistantError, match="cannot be returned") as error:
+            await entity._async_generate_data(task, chat_log)
+        assert str(identifier) not in str(error.value)
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_structured_task_rejects_nonfinite_json(literal):
+    with pytest.raises(HomeAssistantError, match="Error with structured response"):
+        ai_task_platform.parse_ai_task_structured_response(f'{{"value": {literal}}}')
+
+
+def test_structured_task_accepts_unicode_pairs_and_rejects_unpaired_surrogates():
+    parse = ai_task_platform.parse_ai_task_structured_response
+    assert parse(r'{"value":"\ud83d\ude00"}') == {"value": "😀"}
+    with pytest.raises(HomeAssistantError, match="Error with structured response"):
+        parse(r'{"value":"\ud800"}')
 
 
 @pytest.mark.asyncio
