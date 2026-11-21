@@ -88,6 +88,8 @@ Native OpenAI and Azure OpenAI Chat Completions requests can include up to 128
 tools. The limit counts built-in tools and the Group loader alongside the
 configured Functions sent on that request. Request Preview reports an oversize
 request, and group loading rejects additions that would exceed the limit.
+If tools added between turns make the loaded groups exceed the limit, the
+conversation clears its loaded groups and offers the loader again.
 
 ## Token-use example
 

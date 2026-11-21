@@ -8,6 +8,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     FUNCTION_GROUP_LOADER_TOOL_NAME,
 )
 from homeassistant.components import conversation
+from homeassistant.core import Context
 from tests.test_function_groups import _group, _tool
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_management_backend_acceptance import (
@@ -185,3 +186,66 @@ async def test_group_loading_obeys_effective_provider_budget(
     assert len(second["tools"]) == 82
     assert len(final["tools"]) == (82 if limited else 161)
     assert ("128-tool limit" in json.dumps(final)) is limited
+
+
+async def test_loaded_groups_are_reset_when_knowledge_tools_fill_the_budget(
+    hass, monkeypatch
+):
+    tools = [_tool(f"tool_{index}") for index in range(127)]
+    entry = _make_entry(
+        include_ai_task=False,
+        conversation_options={
+            "chat_model": "gpt-4o",
+            "api_mode": "chat_completions",
+            "archive_enabled": False,
+            "guest_mode_enabled": False,
+            "memory_mode": "off",
+            "temporary_memory": "off",
+            "knowledge_enabled": True,
+            "functions": tools,
+            "function_groups": [
+                _group("large", [tool["spec"]["name"] for tool in tools])
+            ],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call(
+                "first-call", FUNCTION_GROUP_LOADER_TOOL_NAME, {"groups": ["large"]}
+            ),
+            _chat_sse_text("Finished"),
+            _chat_sse_tool_call(
+                "second-call", FUNCTION_GROUP_LOADER_TOOL_NAME, {"groups": ["large"]}
+            ),
+            _chat_sse_text("Still available"),
+        ],
+    )
+    first = await _say(hass, agent)
+    assert _speech(first) == "Finished"
+    assert len(wire.requests[-1]["body"]["tools"]) == 128
+    await agent._knowledge.async_create("Manual", "Test source", "New instructions.")
+
+    reply = await conversation.async_converse(
+        hass=hass,
+        text="Continue the previous discussion",
+        conversation_id=first.conversation_id,
+        context=Context(),
+        language="en",
+        agent_id=entry.entry_id,
+    )
+    assert _speech(reply) == "Still available"
+    assert reply.conversation_id == first.conversation_id
+    follow_up, final = [request["body"] for request in wire.requests[2:]]
+    names = {tool["function"]["name"] for tool in follow_up["tools"]}
+    assert names == {
+        FUNCTION_GROUP_LOADER_TOOL_NAME,
+        "knowledge_search",
+        "knowledge_list",
+        "knowledge_get",
+        "start_fresh_conversation",
+    }
+    assert "128-tool limit" in json.dumps(final)

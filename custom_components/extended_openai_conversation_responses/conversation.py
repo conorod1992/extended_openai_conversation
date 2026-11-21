@@ -1492,6 +1492,7 @@ class ExtendedOpenAIAgentEntity(
                     if _ACTIVE_TURN.get().function_group_session is not None
                     else None
                 ),
+                reset_loaded_function_groups=self._reset_loaded_function_groups,
                 request_options=request_options,
             )
             continuation_accepted = True
@@ -2340,6 +2341,14 @@ class ExtendedOpenAIAgentEntity(
                 max_tools=max_tools,
                 extra_tool_count=extra,
             )
+
+    @staticmethod
+    def _reset_loaded_function_groups() -> bool:
+        session = _ACTIVE_TURN.get().function_group_session
+        if session is None or not session.loaded_group_ids:
+            return False
+        session.loaded_group_ids.clear()
+        return True
 
     @staticmethod
     def _filter_guest_tools_and_groups(

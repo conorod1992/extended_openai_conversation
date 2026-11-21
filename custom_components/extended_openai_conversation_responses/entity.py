@@ -1001,6 +1001,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         function_tools_factory: Callable[[], list[dict[str, Any]]] | None = None,
         function_group_loader: Callable[[Any, int | None], dict[str, Any]]
         | None = None,
+        reset_loaded_function_groups: Callable[[], bool] | None = None,
         request_options: Mapping[str, Any] | None = None,
         structure_schema: dict[str, Any] | None = None,
     ) -> bool | None:
@@ -1284,50 +1285,70 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             integration_loader_seen = False
             force_finalizer_only = False
 
+            def prepare_round_tools(
+                candidates: list[dict[str, Any]],
+            ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+                if loader_rounds >= MAX_FUNCTION_GROUP_LOAD_ROUNDS:
+                    candidates = [
+                        tool
+                        for tool in candidates
+                        if tool.get("function", {}).get("type")
+                        != "function_group_loader"
+                    ]
+                if function_call_budget.exhausted:
+                    # The loader and finalizer do not execute ordinary tools.
+                    candidates = [
+                        tool
+                        for tool in candidates
+                        if tool.get("function", {}).get("type")
+                        == "function_group_loader"
+                    ]
+                return candidates, _format_tools(
+                    provider_request_function_tools(
+                        candidates, conditional_continue=conditional_continue
+                    ),
+                    api_mode,
+                )
+
             for n_requests in range(MAX_TOOL_ITERATIONS):
                 from .function_tool_resolution import current_configuration_data
 
                 request_config_data = current_configuration_data(self)
-                request_function_tools = (
+                candidates = (
                     initial_tools
                     if n_requests == 0
                     else function_tools_factory()
                     if function_tools_factory is not None
                     else function_tools
                 )
-                integration_loader_seen = integration_loader_seen or any(
-                    tool.get("function", {}).get("type") == "function_group_loader"
-                    for tool in request_function_tools
-                )
-                if loader_rounds >= MAX_FUNCTION_GROUP_LOAD_ROUNDS:
-                    request_function_tools = [
-                        tool
-                        for tool in request_function_tools
-                        if tool.get("function", {}).get("type")
-                        != "function_group_loader"
-                    ]
-                if function_call_budget.exhausted:
-                    # The Function Group loader and Conditional finalizer are control
-                    # operations, not model-requested Function Tool executions. Keep the
-                    # loader available while suppressing ordinary functions; the
-                    # finalizer is appended separately below.
-                    request_function_tools = [
-                        tool
-                        for tool in request_function_tools
-                        if tool.get("function", {}).get("type")
-                        == "function_group_loader"
-                    ]
-                formatted_function_tools = _format_tools(
-                    provider_request_function_tools(
-                        request_function_tools,
-                        conditional_continue=conditional_continue,
-                    ),
-                    api_mode,
+                request_function_tools, formatted_function_tools = prepare_round_tools(
+                    candidates
                 )
                 allowed_web_search = (
                     web_search_tool
                     if web_search_tool and self._provider_tool_allowed("web_search")
                     else None
+                )
+                limit = provider_snapshot.tool_limit
+                if (
+                    not force_finalizer_only
+                    and limit is not None
+                    and len(formatted_function_tools)
+                    + int(allowed_web_search is not None)
+                    > limit
+                    and function_tools_factory is not None
+                    and reset_loaded_function_groups is not None
+                    and reset_loaded_function_groups()
+                ):
+                    # A new built-in capability or route can make the previous
+                    # turn's loaded groups too large. Offer the current loader
+                    # again so this turn can select a set that fits.
+                    request_function_tools, formatted_function_tools = (
+                        prepare_round_tools(function_tools_factory())
+                    )
+                integration_loader_seen = integration_loader_seen or any(
+                    tool.get("function", {}).get("type") == "function_group_loader"
+                    for tool in request_function_tools
                 )
                 # Keep the request-local formatted list intact when there is no
                 # provider-owned tool so its exact serialized footprint can be reused
@@ -1341,7 +1362,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if force_finalizer_only:
                     tools = _format_tools([CONTINUE_CONVERSATION_TOOL], api_mode)
                     tool_choice = "required"
-                validate_provider_tool_count(len(tools), provider_snapshot.tool_limit)
+                validate_provider_tool_count(len(tools), limit)
                 tool_kwargs: dict[str, Any] = {}
                 if tools:
                     tool_kwargs.update(tools=tools, tool_choice=tool_choice)
