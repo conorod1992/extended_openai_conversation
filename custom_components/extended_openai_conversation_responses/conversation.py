@@ -1478,6 +1478,7 @@ class ExtendedOpenAIAgentEntity(
             if callable(check_aba):
                 check_aba()
             continue_mode = _get_continue_conversation_mode(self.subentry.data)
+            group_session_active = _ACTIVE_TURN.get().function_group_session is not None
             conditional_decision = await self._async_handle_chat_log(
                 chat_log,
                 function_tools=[],
@@ -1488,11 +1489,11 @@ class ExtendedOpenAIAgentEntity(
                 ),
                 function_tools_factory=self._get_function_tools,
                 function_group_loader=(
-                    self._load_function_groups
-                    if _ACTIVE_TURN.get().function_group_session is not None
-                    else None
+                    self._load_function_groups if group_session_active else None
                 ),
-                reset_loaded_function_groups=self._reset_loaded_function_groups,
+                reset_loaded_function_groups=(
+                    self._reset_loaded_function_groups if group_session_active else None
+                ),
                 request_options=request_options,
             )
             continuation_accepted = True
