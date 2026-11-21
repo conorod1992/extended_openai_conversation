@@ -129,7 +129,11 @@ from .operation_settlement import async_settle_owned_operation
 from .prompt_cache import PerformanceOpenAIClientProxy
 from .provider_credentials import setup_provider_credentials_websocket
 from .quiet_hours import async_get_quiet_hours, async_restore_saved_quiet_hours
-from .restore_recovery import async_recover_pending_restores
+from .restore_recovery import (
+    RESTORE_RELOAD_PENDING,
+    async_recover_pending_provider_restore,
+    async_recover_pending_restores,
+)
 from .services import async_setup_services
 from .template import async_setup_templates, async_unload_templates
 
@@ -273,6 +277,14 @@ async def async_setup_entry(
     # Re-enable can follow subentry deletion while the parent was unloaded.
     # Cleanup must not depend on successful provider authentication.
     await async_delete_removed_subentries(hass, entry)
+    # The integration-wide recovery pass runs on cold setup. A reload must
+    # settle its own shared transaction before clients or entities initialize.
+    try:
+        await async_recover_pending_provider_restore(hass, entry)
+    except Exception as err:
+        raise ConfigEntryNotReady(
+            "Shared provider restore recovery is pending"
+        ) from err
 
     authentication_snapshot = provider_authentication_snapshot(entry)
     try:
@@ -328,6 +340,7 @@ async def async_setup_entry(
     with suppress(Exception):
         # Optional cache preparation must never affect integration setup.
         _schedule_sole_agent_prewarm(hass, entry)
+    hass.data.get(RESTORE_RELOAD_PENDING, set()).discard(entry.entry_id)
     return True
 
 

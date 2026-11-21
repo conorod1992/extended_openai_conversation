@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
@@ -52,6 +53,7 @@ from .strict_store import PropagatingWriteStore
 _LOGGER = logging.getLogger(__name__)
 
 RESTORE_JOURNAL_VERSION = 1
+RESTORE_RELOAD_PENDING = f"{DOMAIN}.restore_reload_pending"
 
 _PHASE_APPLYING = "applying"
 _PHASE_COMMITTED = "committed"
@@ -958,9 +960,7 @@ async def _update_configuration(
         ),
         title_changed=subentry.title != prepared.title,
     ):
-        hass.data.setdefault(f"{DOMAIN}.restore_reload_pending", set()).add(
-            entry.entry_id
-        )
+        hass.data.setdefault(RESTORE_RELOAD_PENDING, set()).add(entry.entry_id)
     update_live_subentry(
         hass, entry, subentry, data=prepared.config, title=prepared.title
     )
@@ -1002,9 +1002,7 @@ async def _async_publish_provider_pair(
             title_changed=previous_title != prepared.title,
         )
     ):
-        hass.data.setdefault(f"{DOMAIN}.restore_reload_pending", set()).add(
-            entry.entry_id
-        )
+        hass.data.setdefault(RESTORE_RELOAD_PENDING, set()).add(entry.entry_id)
     # Core queues both updates on the same Store. Neither setter yields, so
     # persistence observes the complete pair in one config entry snapshot.
     with live_subentry_update():
@@ -1712,12 +1710,31 @@ async def async_recover_pending_restores(hass: HomeAssistant) -> None:
                 )
 
 
+async def async_recover_pending_provider_restore(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Settle this entry's shared provider transaction before it loads platforms."""
+    from .provider_credentials import (
+        PROVIDER_RESTORE_OWNERS,
+        require_provider_restore_complete,
+    )
+
+    owner_id = hass.data.get(PROVIDER_RESTORE_OWNERS, {}).get(entry.entry_id)
+    if owner_id is None:
+        return
+    if (subentry := entry.subentries.get(owner_id)) is not None:
+        await async_recover_pending_restore(hass, entry, subentry)
+    # Entry setup already ran orphan cleanup. If a deleted owner's journal
+    # could not be settled there, keep the shared provider quarantined.
+    require_provider_restore_complete(hass, entry.entry_id)
+
+
 async def async_finish_restore_reload(
     hass: HomeAssistant, entry: Any, subentry: Any
 ) -> None:
     """Refresh setup-owned metadata only after the outer restore lease is released."""
     gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
-    pending = hass.data.get(f"{DOMAIN}.restore_reload_pending", set())
+    pending = hass.data.get(RESTORE_RELOAD_PENDING, set())
     if gate.owns_exclusive() or entry.entry_id not in pending:
         return
     from homeassistant.config_entries import ConfigEntryState

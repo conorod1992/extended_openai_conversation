@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from typing import Any
 
@@ -252,6 +253,161 @@ async def test_cross_provider_private_restore_and_committed_replay(hass, monkeyp
     assert str(entry.runtime_data.base_url).startswith("https://api.openai.com/")
     assert await restore_recovery._journal_store(hass, entry.entry_id, subentry.subentry_id).async_load() is None
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("failed_writes", [1, 2], ids=["first-reload", "ha-retry"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_provider_restore_reloads_assistants_after_committed_write_failure(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, failed_writes: int
+) -> None:
+    """Recover the shared credentials before loading any assistant on that entry."""
+    from homeassistant.components import conversation
+    from homeassistant.core import Context, callback
+    from homeassistant.exceptions import HomeAssistantError
+    from homeassistant.helpers import entity_registry as er
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+        transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.const import (
+        API_MODE_CHAT_COMPLETIONS,
+        CONF_API_MODE,
+        CONF_CHAT_MODEL,
+    )
+    from custom_components.extended_openai_conversation_responses.provider_credentials import (
+        require_provider_restore_complete,
+    )
+    from tests_real_ha.test_acceptance_lifecycle import _make_entry, _subentry
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _install_wire,
+        _raw_client,
+    )
+
+    config = {CONF_API_MODE: API_MODE_CHAT_COMPLETIONS, CONF_CHAT_MODEL: "gpt-4o-mini"}
+    previous = {
+        CONF_API_KEY: "previous-key",
+        CONF_SKIP_AUTHENTICATION: True,
+    }
+    restored = {**previous, CONF_API_KEY: "restored-key"}
+    shared = MockConfigEntry(
+        domain=DOMAIN,
+        title="Shared provider recovery",
+        data=previous,
+        version=CONFIG_ENTRY_VERSION,
+        subentries_data=[
+            _subentry("conversation", title, config)
+            for title in ("Restore target", "First sibling", "Second sibling")
+        ],
+    )
+    other = _make_entry(
+        "Independent provider", include_ai_task=False, conversation_options=config
+    )
+    await _setup_entry(hass, shared)
+    await _setup_entry(hass, other)
+    target, *siblings = shared.subentries.values()
+    sibling_subentry_ids = {sibling.subentry_id for sibling in siblings}
+    sibling_ids = [
+        entity.entity_id
+        for entity in er.async_entries_for_config_entry(
+            er.async_get(hass), shared.entry_id
+        )
+        if entity.domain == "conversation"
+        and entity.config_subentry_id in sibling_subentry_ids
+    ]
+    assert len(sibling_ids) == 2
+
+    async def say(agent_id: str) -> str:
+        result = await conversation.async_converse(
+            hass, "Give me the provider response", None, Context(), "en", agent_id
+        )
+        assert result.response.error_code is None
+        return result.response.speech["plain"]["speech"]
+
+    source = await backup.async_collect_backup_snapshot(hass, shared, target)
+    source["provider_connection"] = restored
+    artifact = backup.finalize_backup_snapshot(source)["document"]
+    persist = restore_recovery.async_persist_config_entries
+    writes = 0
+
+    async def fail_writes(*args: Any) -> None:
+        nonlocal writes
+        writes += 1
+        if writes <= failed_writes:
+            raise OSError("injected configuration persistence failure")
+        await persist(*args)
+
+    monkeypatch.setattr(restore_recovery, "async_persist_config_entries", fail_writes)
+    with pytest.raises(backup.BackupError, match="completion is pending"):
+        await transfer.async_restore_transfer(
+            hass,
+            shared,
+            target,
+            artifact,
+            sections=[transfer.SECTION_CONFIGURATION],
+            provider_connection=restored,
+            expected_provider_data=previous,
+        )
+    journal = restore_recovery._journal_store(hass, shared.entry_id, target.subentry_id)
+    assert (await journal.async_load())["phase"] == "committed"
+    with pytest.raises(HomeAssistantError, match="shared provider connection is unavailable"):
+        require_provider_restore_complete(hass, shared.entry_id)
+
+    other_agent = conversation.async_get_agent(hass, other.entry_id)
+    unrelated_wire = _install_wire(
+        monkeypatch, other_agent, [_chat_sse_text("Independent provider replied")]
+    )
+    assert await say(other_agent.entity_id) == "Independent provider replied"
+    assert len(unrelated_wire.requests) == 1
+
+    reloaded = await hass.config_entries.async_reload(shared.entry_id)
+    if failed_writes == 2:
+        assert not reloaded
+        assert shared.state is ConfigEntryState.SETUP_RETRY
+        assert (await journal.async_load())["phase"] == "committed"
+        with pytest.raises(
+            HomeAssistantError, match="shared provider connection is unavailable"
+        ):
+            require_provider_restore_complete(hass, shared.entry_id)
+        loaded = asyncio.Event()
+
+        @callback
+        def on_state_change() -> None:
+            if shared.state is ConfigEntryState.LOADED:
+                loaded.set()
+
+        remove_listener = shared.async_on_state_change(on_state_change)
+        try:
+            async_fire_time_changed(hass, fire_all=True)
+            await asyncio.wait_for(loaded.wait(), timeout=10)
+        finally:
+            remove_listener()
+    else:
+        assert reloaded
+    await hass.async_block_till_done()
+    assert shared.state is ConfigEntryState.LOADED
+
+    agent = conversation.async_get_agent(hass, sibling_ids[0])
+    assert agent is not None
+    assert _raw_client(agent).api_key == restored[CONF_API_KEY]
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [_chat_sse_text("First reply"), _chat_sse_text("Second reply")],
+    )
+    assert [await say(agent_id) for agent_id in sibling_ids] == [
+        "First reply",
+        "Second reply",
+    ]
+    assert len(wire.requests) == 2
+    assert writes == failed_writes + 1
+    assert await journal.async_load() is None
+    require_provider_restore_complete(hass, shared.entry_id)
+    assert shared.entry_id not in hass.data.get(
+        restore_recovery.RESTORE_RELOAD_PENDING, set()
+    )
 
 
 @pytest.mark.parametrize("recover", [False, True])
