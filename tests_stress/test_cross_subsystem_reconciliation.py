@@ -6,6 +6,9 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses import agent_config
+from custom_components.extended_openai_conversation_responses.const import (
+    CONF_GUEST_MODE_ENABLED,
+)
 from custom_components.extended_openai_conversation_responses.knowledge import (
     HomeAssistantKnowledgeStorage,
     KnowledgeLibrary,
@@ -111,9 +114,13 @@ async def test_management_runtime_and_durable_state_reconcile(
         client, entry=entry, section="request_rules", action="list"
     )
 
-    # Management and active runtime must describe the same configuration.
-    assert agent_config.normalize_agent_config(config_ws["config"]) == (
-        agent_config.normalize_agent_config(dict(subentry.data))
+    # Compare against the effective persisted state. An omitted Guest setting
+    # stays disabled for an existing assistant without materializing the field.
+    management_config = config_ws["config"]
+    assert CONF_GUEST_MODE_ENABLED not in subentry.data
+    assert management_config[CONF_GUEST_MODE_ENABLED] is False
+    assert agent_config.normalize_agent_config(management_config) == (
+        agent_config.normalize_persisted_agent_config(dict(subentry.data))
     )
 
     memory_id = memory_result["memory"]["memory_id"]

@@ -107,9 +107,11 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
     )
     guest = await async_get_guest_mode(hass, entry.entry_id, subentry.subentry_id)
     usage = await async_get_durable_usage(hass, entry.entry_id, subentry.subentry_id)
-    await memory.async_add(
-        "owner", "Distinct private memory 東京", "acceptance", "explicit"
-    )
+    owner = await hass.auth.async_create_user("Backup Memory owner")
+    owner_scope_id = f"user:{owner.id}"
+    private_memory = "The 東京 backup marker is cedar-blue-71."
+    query = "What is the 東京 backup marker?"
+    await memory.async_add(owner.id, private_memory, "acceptance", "explicit")
     await knowledge.async_create(
         "Reference 🎯", "multiline description", 'Line one\n{"json": true}\nLine three'
     )
@@ -123,11 +125,11 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
         }
     )
     await temporary.async_add(
-        "user:owner",
+        owner_scope_id,
         "Temporary round-trip marker 🕒",
         (dt_util.utcnow() + timedelta(hours=2)).isoformat(),
         "acceptance",
-        owner_scope_id="user:owner",
+        owner_scope_id=owner_scope_id,
     )
     await guest.async_update_trusted(indefinite=True)
     async with usage.async_run(home_assistant_conversation_id="backup-journey"):
@@ -231,7 +233,7 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
     monkeypatch.setattr(_raw_client(agent)._client, "send", send)
     guest_result = await conversation.async_converse(
         hass=hass,
-        text="Confirm backup marker",
+        text=query,
         conversation_id=None,
         context=Context(),
         language="en",
@@ -244,20 +246,22 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
     assert agent._guest_mode.is_active()
     guest_request = wire.requests[0]["body"]
     assert "load_function_groups" not in str(guest_request)
-    assert "Distinct private memory" not in str(guest_request)
+    assert private_memory not in str(guest_request)
+    assert not embedding_requests
     await agent._guest_mode.async_disable_trusted()
     owner_result = await conversation.async_converse(
         hass=hass,
-        text="Confirm backup marker",
+        text=query,
         conversation_id=None,
-        context=Context(),
+        context=Context(user_id=owner.id),
         language="en",
         agent_id=entry.entry_id,
     )
     assert _speech(owner_result) == "Owner backup restored"
     assert len(wire.requests) == 2
-    assert embedding_requests
+    assert any(private_memory in str(request["input"]) for request in embedding_requests)
     owner_request = wire.requests[1]["body"]
+    assert private_memory in str(owner_request)
     assert "Preserve café 🎯" in str(owner_request)
     assert "load_function_groups" in str(owner_request)
     record(

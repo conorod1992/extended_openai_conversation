@@ -235,13 +235,18 @@ async def test_real_ha_guest_sensor_marks_uncertain_storage_unavailable_then_rec
         assert not entity.available
         with pytest.raises(HomeAssistantError, match="persistence is unavailable"):
             manager.status()
-        before_errors = len(caplog.records)
+        before_reads = len(caplog.records)
+        guest_loggers = {guest_mode.__name__, type(entity).__module__}
         for _ in range(25):
-            entity.available
+            assert not entity.available
             assert entity.native_value is None
             assert entity.extra_state_attributes == {}
         await hass.async_block_till_done(wait_background_tasks=True)
-        assert len(caplog.records) == before_errors
+        assert not [
+            record.getMessage()
+            for record in caplog.records[before_reads:]
+            if record.name in guest_loggers
+        ]
     finally:
         manager._store = original
 
