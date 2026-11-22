@@ -32,7 +32,7 @@ REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "tests" / "fixtures" / "frontend" / "rule-enabled-wire.mjs"
 
 
-@pytest.mark.parametrize("frontend", ["request-rules-ui-core.js", "shipped"])
+@pytest.mark.parametrize("frontend", ["request-rules-ui.js", "shipped"])
 @pytest.mark.parametrize(
     "credential",
     [
@@ -100,7 +100,7 @@ async def test_restored_rule_numeric_credential_toggle(
         frontend = "dist/" + next(
             item["file"]
             for item in manifest.values()
-            if item["file"].startswith("assets/request-rules-ui-core-")
+            if item.get("src", "").endswith("/request-rules-ui.js")
         )
     result = subprocess.run(
         [

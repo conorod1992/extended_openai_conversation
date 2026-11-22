@@ -383,6 +383,8 @@ jobs:
           pytest tests/ tests_stress/test_management_ws_contract.py \
             tests_real_ha/test_agent_private_data_deletion.py \
             tests_real_ha/test_archive_record_integrity.py \
+            tests_real_ha/test_backup_transfer_protocol.py::test_private_backup_moves_request_rules_between_installations \
+            tests_real_ha/test_backup_transfer_protocol.py::test_cold_provider_validation_reads_legacy_sibling_rules_without_migrating \
             tests_real_ha/test_usage_period_statistics.py \
             tests_real_ha/test_archive_private_activity.py::test_native_private_archive_follows_core_session_cleanup \
             tests_real_ha/test_ai_task_provider_wire.py::test_structured_task_returns_selector_normalized_data \

@@ -6,8 +6,8 @@ import {fileURLToPath} from "node:url";
 
 const frontend = new URL("../custom_components/extended_openai_conversation_responses/frontend/", import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL("dist/manifest.json", frontend), "utf8"));
-const shipped = Object.values(manifest).find(item => item.file.startsWith("assets/request-rules-ui-core-")).file;
-for (const module of ["request-rules-ui-core.js", `dist/${shipped}`]) {
+const shipped = Object.values(manifest).find(item => item.src?.endsWith("/request-rules-ui.js")).file;
+for (const module of ["request-rules-ui.js", `dist/${shipped}`]) {
   test(`enabled patch excludes credential-bearing action data: ${module}`, () => {
     const result = spawnSync(process.execPath, [
       fileURLToPath(new URL("./fixtures/frontend/rule-enabled-wire.mjs", import.meta.url)),

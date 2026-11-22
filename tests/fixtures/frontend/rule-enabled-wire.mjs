@@ -10,9 +10,10 @@ const toggle={dataset:{id:rule.id},checked:false,disabled:false,matches:selector
 const root={contains:control=>[list,node,toggle].includes(control),querySelector:selector=>selector==='.rule-list'?list:null,querySelectorAll:()=>[],addEventListener:()=>{}};
 let sent;
 const panel={shadowRoot:root,_result:result,_call:async(section,action,payload)=>{assert.equal(section,'request_rules');assert.equal(action,'update');sent=payload;return {};},_toast:()=>{}};
-const module=await import(pathToFileURL(process.argv[2]).href);
-const bindRequestRulesCore=module.bindRequestRulesCore ?? module.r;
-bindRequestRulesCore(panel);
+const {bindRequestRules}=await import(pathToFileURL(process.argv[2]).href);
+// The checkbox works before the browser's idle editor preload runs.
+globalThis.requestIdleCallback=()=>{};
+bindRequestRules(panel);
 await handlers.change({target:toggle});
 assert.ok(sent);
 process.stdout.write(JSON.stringify(sent));

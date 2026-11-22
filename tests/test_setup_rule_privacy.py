@@ -35,3 +35,23 @@ async def test_unclassified_rule_content_requires_review(hass):
     assert rules[0]["phrases"] == [secret]
     assert "canonical_signature" not in rules[0]["action"]
     assert rules[0]["enabled"] is False
+
+
+async def test_reviewed_setup_omits_rules_when_group_metadata_contains_a_secret(hass):
+    secret = "fabricated-group-credential"
+    group = {"id": "private", "name": f"https://example.invalid/?api_key={secret}"}
+    rule = {**local_rule(), "group_id": group["id"]}
+    manager = RequestRules(MemoryStore({"rules": [rule], "groups": [group]}))
+    await manager.async_initialize()
+    before = await manager.async_backup_data()
+
+    setup = rule_setup_artifact(before, reviewed=True)
+    public_rules = setup["document"]["sections"]["request_rules"]
+
+    assert secret not in setup["json"]
+    assert public_rules["groups"] == []
+    assert public_rules["rules"] == []
+    assert any(
+        item["field"] == "rule_metadata" for item in setup["security"]["omitted"]
+    )
+    assert await manager.async_backup_data() == before
