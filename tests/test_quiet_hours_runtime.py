@@ -1572,11 +1572,12 @@ def test_publish_snapshot_and_reschedule(monkeypatch) -> None:
     manager._reschedule()
     assert len(manager._unsubscribers) == 3
     assert time_change.call_count == 2
-    interval.assert_called_once_with(
-        manager.hass,
-        manager._handle_discovery_tick,
-        runtime._DISCOVERY_INTERVAL,
-    )
+    interval.assert_called_once()
+    hass, discovery_callback, cadence = interval.call_args.args
+    assert hass is manager.hass
+    assert cadence == runtime._DISCOVERY_INTERVAL
+    assert discovery_callback.func == manager._handle_discovery_tick
+    assert discovery_callback.keywords["_schedule"] is manager._callback_schedule
 
 
 async def test_async_get_quiet_hours_reuses_global_manager(monkeypatch) -> None:

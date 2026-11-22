@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict, deque
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, time, timedelta, tzinfo
+from functools import partial
 from hashlib import sha256
 from itertools import chain
 import json
@@ -98,6 +100,17 @@ class QuietHoursConfig:
 class QuietPeriod:
     start: datetime
     end: datetime
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _CallbackSchedule:
+    """Own one set of timer registrations in its original HA timezone."""
+
+    time_zone: str
+
+
+class _ObsoleteQuietHoursCallback(Exception):
+    """A scheduled reconciliation lost ownership before dispatching an effect."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,6 +530,8 @@ class QuietHoursManager:
         self._startup_unavailable_reason: str | None = None
         self._unsubscribers: list[Callable[[], None]] = []
         self._timezone_unsubscribe: Callable[[], None] | None = None
+        self._callback_schedule: _CallbackSchedule | None = None
+        self._reconciling_schedule: _CallbackSchedule | None = None
 
     @property
     def startup_unavailable(self) -> bool:
@@ -1071,7 +1086,11 @@ class QuietHoursManager:
                     self._active = previous_active
             needs_reconcile = failure is None or self._config != previous
             needs_reconcile |= self._selection_identities != previous_identities
-            needs_schedule = needs_reconcile or self._config_recovery_pending
+            if needs_reconcile or self._config_recovery_pending:
+                # A queued callback may acquire the lock immediately after
+                # this update. Give the authoritative policy its own timers
+                # before exposing it, including after committed cancellation.
+                self._reschedule()
         try:
             if needs_reconcile and not self._config_recovery_pending:
                 await self.async_reconcile()
@@ -1079,10 +1098,6 @@ class QuietHoursManager:
             if failure is not None:
                 raise failure from recovery_error
             raise
-        finally:
-            if needs_schedule:
-                async with self._lock:
-                    self._reschedule()
         if failure is not None:
             raise failure
         return self.snapshot()
@@ -1165,12 +1180,50 @@ class QuietHoursManager:
             and period.start <= end
         )
 
-    async def async_reconcile(self, *, now: datetime | None = None) -> None:
-        """Reconcile the scheduled policy using cross-version-safe discovery."""
-        now = dt_util.now() if now is None else dt_util.as_local(now)
+    @asynccontextmanager
+    async def _own_reconciliation(
+        self, schedule: _CallbackSchedule | None
+    ) -> AsyncIterator[bool]:
         async with self._lock:
+            if schedule is not None and not self._owns_callback_schedule(schedule):
+                yield False
+                return
+            self._reconciling_schedule = schedule
+            try:
+                yield True
+            except _ObsoleteQuietHoursCallback:
+                pass
+            finally:
+                self._reconciling_schedule = None
+
+    def _configured_time_zone(self) -> str:
+        return getattr(getattr(self.hass, "config", None), "time_zone", "UTC")
+
+    def _owns_callback_schedule(self, schedule: _CallbackSchedule) -> bool:
+        return (
+            schedule is getattr(self, "_callback_schedule", None)
+            and schedule.time_zone == self._configured_time_zone()
+            and not getattr(self, "_stopping", False)
+            and not self.startup_unavailable
+            and global_runtime_available(self.hass)
+        )
+
+    def _require_current_callback_schedule(self) -> None:
+        schedule = getattr(self, "_reconciling_schedule", None)
+        if schedule is not None and not self._owns_callback_schedule(schedule):
+            raise _ObsoleteQuietHoursCallback
+
+    async def async_reconcile(
+        self,
+        *,
+        now: datetime | None = None,
+        _schedule: _CallbackSchedule | None = None,
+    ) -> None:
+        """Reconcile the scheduled policy using cross-version-safe discovery."""
+        async with self._own_reconciliation(_schedule) as admitted:
             if (
-                getattr(self, "_stopping", False)
+                not admitted
+                or getattr(self, "_stopping", False)
                 or self.startup_unavailable
                 or not global_runtime_available(self.hass)
             ):
@@ -1180,8 +1233,21 @@ class QuietHoursManager:
                 return
             if not await self._async_recover_configuration_locked():
                 return
+            if recovering and _schedule is not None:
+                # A current recovery tick can finish under the authoritative
+                # schedule it just rearmed, provided its timezone is still valid.
+                recovered_schedule = self._callback_schedule
+                if (
+                    recovered_schedule is None
+                    or recovered_schedule.time_zone != _schedule.time_zone
+                ):
+                    return
+                self._reconciling_schedule = recovered_schedule
+            self._require_current_callback_schedule()
             if not await self._async_resolve_control_identities_locked():
                 return
+            self._require_current_callback_schedule()
+            now = dt_util.now() if now is None else dt_util.as_local(now)
             period = (
                 quiet_period_for(now, self._config.start, self._config.end)
                 if self._config.enabled
@@ -1234,6 +1300,7 @@ class QuietHoursManager:
                         }
                     )
                     await self._async_save_locked()
+            self._require_current_callback_schedule()
             capabilities = self._discover_capabilities()
             # A newly recognisable automatic candidate must not displace a
             # verified current-period owner either. Blank only the application
@@ -1251,6 +1318,7 @@ class QuietHoursManager:
                 capabilities[index] = item
             await self._async_reconcile_controls_locked(capabilities)
             await self._async_retry_pending_restores_locked()
+            self._require_current_callback_schedule()
 
             if self._active is None:
                 self._active = {
@@ -1264,6 +1332,7 @@ class QuietHoursManager:
 
             controls = self._active.setdefault("controls", {})
             for capability in capabilities:
+                self._require_current_callback_schedule()
                 if capability.media_player_entity_id:
                     await self._async_apply_volume_locked(
                         capability.satellite_entity_id,
@@ -1274,6 +1343,7 @@ class QuietHoursManager:
                     capability.wake_sound_entity_id
                     and self._config.wake_sound != "unchanged"
                 ):
+                    self._require_current_callback_schedule()
                     await self._async_apply_switch_locked(
                         capability.satellite_entity_id,
                         capability.wake_sound_entity_id,
@@ -1623,6 +1693,7 @@ class QuietHoursManager:
                 )
         controls = self._active.get("controls", {})
         for entity_id, control in list(controls.items()):
+            self._require_current_callback_schedule()
             if control.get("restore_before_apply"):
                 # A changed return value belongs to neither our old effect nor
                 # a current-period observation. Let the pending restore settle
@@ -1764,6 +1835,8 @@ class QuietHoursManager:
                     await self._async_set_volume(entity_id, value)
                 else:
                     await self._async_set_switch(entity_id, bool(value))
+            except _ObsoleteQuietHoursCallback:
+                raise
             except Exception as err:
                 self._log_control_failure(
                     "retarget", entity_id, kind, err, ownership="retained"
@@ -1881,6 +1954,8 @@ class QuietHoursManager:
         observed = self._active["observed_controls"]
         try:
             await self._async_set_volume(entity_id, self._config.max_volume)
+        except _ObsoleteQuietHoursCallback:
+            raise
         except Exception as err:
             # A service error does not prove that the device stayed unchanged.
             # Keep the persisted baseline unless HA confirms no change occurred.
@@ -1940,6 +2015,8 @@ class QuietHoursManager:
         observed = self._active["observed_controls"]
         try:
             await self._async_set_switch(entity_id, desired)
+        except _ObsoleteQuietHoursCallback:
+            raise
         except Exception as err:
             unchanged = (
                 _current_switch(self.hass, entity_id) is control["original_value"]
@@ -2158,6 +2235,7 @@ class QuietHoursManager:
             settle_pending=False
         ):
             return
+        self._require_current_callback_schedule()
         # Manager replacement does not start a new policy period. Retain only
         # independently released choices; successfully restored controls must
         # remain eligible for the replacement manager's cold-start catch-up.
@@ -2191,6 +2269,7 @@ class QuietHoursManager:
             controls = {}
         if isinstance(controls, dict):
             for entity_id, raw in list(controls.items()):
+                self._require_current_callback_schedule()
                 if not isinstance(entity_id, str) or not isinstance(raw, dict):
                     controls.pop(entity_id)
                     continue
@@ -2243,6 +2322,8 @@ class QuietHoursManager:
                         observed = self._active.get("observed_controls", [])
                         if entity_id in observed:
                             observed.remove(entity_id)
+                except _ObsoleteQuietHoursCallback:
+                    raise
                 except Exception as err:
                     self._log_control_failure(
                         "restore", entity_id, str(kind), err, ownership="retained"
@@ -2294,6 +2375,7 @@ class QuietHoursManager:
         self, domain: str, service: str, entity_id: str, data: dict[str, Any]
     ) -> None:
         """Associate an observable HA effect with its persisted prepared intent."""
+        self._require_current_callback_schedule()
         self._require_startup_available()
         # Discovery can yield to storage after choosing a target. Never perform
         # a restoration or application from that snapshot if a manual selection
@@ -2626,6 +2708,7 @@ class QuietHoursManager:
         self.hass.states.async_remove(_STATE_ENTITY_ID)
 
     def _cancel_scheduled_callbacks(self) -> None:
+        self._callback_schedule = None
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
@@ -2638,11 +2721,12 @@ class QuietHoursManager:
             or not global_runtime_available(self.hass)
         ):
             return
+        schedule = _CallbackSchedule(self._configured_time_zone())
+        self._callback_schedule = schedule
+        discovery = partial(self._handle_discovery_tick, _schedule=schedule)
         if getattr(self, "_config_recovery_pending", False):
             self._unsubscribers.append(
-                async_track_time_interval(
-                    self.hass, self._handle_discovery_tick, _DISCOVERY_INTERVAL
-                )
+                async_track_time_interval(self.hass, discovery, _DISCOVERY_INTERVAL)
             )
             return
         # Even when disabled we publish the entity immediately; only scheduled
@@ -2661,7 +2745,7 @@ class QuietHoursManager:
             self._unsubscribers.append(
                 async_track_time_change(
                     self.hass,
-                    self._handle_time_transition,
+                    partial(self._handle_time_transition, _schedule=schedule),
                     hour=clock.hour,
                     minute=clock.minute,
                     second=0,
@@ -2672,8 +2756,7 @@ class QuietHoursManager:
             # move them to a later wall minute. Supplement it only on anomalous
             # dates with cancellable UTC timers using quiet_period_for's exact
             # gap/fold resolution, without changing ordinary daily scheduling.
-            zone_name = getattr(getattr(self.hass, "config", None), "time_zone", "UTC")
-            zone = dt_util.get_time_zone(zone_name)
+            zone = dt_util.get_time_zone(schedule.time_zone)
             if zone is not None:
                 now_utc = dt_util.utcnow()
                 deadlines = {
@@ -2692,27 +2775,38 @@ class QuietHoursManager:
                 for instant in sorted(deadlines):
                     self._unsubscribers.append(
                         async_track_point_in_utc_time(
-                            self.hass, self._handle_dst_transition, instant
+                            self.hass,
+                            partial(self._handle_dst_transition, _schedule=schedule),
+                            instant,
                         )
                     )
         self._unsubscribers.append(
             async_track_time_interval(
                 self.hass,
-                self._handle_discovery_tick,
+                discovery,
                 _DISCOVERY_INTERVAL,
             )
         )
 
-    async def _handle_time_transition(self, now: datetime) -> None:
-        await self.async_reconcile(now=now)
-
-    async def _handle_dst_transition(self, now: datetime) -> None:
-        """Reconcile the exact resolved instant and own the next anomaly timer."""
-        try:
+    async def _handle_time_transition(
+        self, now: datetime, *, _schedule: _CallbackSchedule | None = None
+    ) -> None:
+        if _schedule is None:
             await self.async_reconcile(now=now)
+        else:
+            await self.async_reconcile(_schedule=_schedule)
+
+    async def _handle_dst_transition(
+        self, now: datetime, *, _schedule: _CallbackSchedule | None = None
+    ) -> None:
+        """Reconcile a due anomaly and rearm only while its schedule is current."""
+        try:
+            await self._handle_time_transition(now, _schedule=_schedule)
         finally:
             async with self._lock:
-                if not self._stopping:
+                if not self._stopping and (
+                    _schedule is None or self._owns_callback_schedule(_schedule)
+                ):
                     self._reschedule()
 
     async def _handle_core_config_update(self, event: Event) -> None:
@@ -2732,8 +2826,10 @@ class QuietHoursManager:
                 err,
             )
 
-    async def _handle_discovery_tick(self, now: datetime) -> None:
-        await self.async_reconcile(now=now)
+    async def _handle_discovery_tick(
+        self, now: datetime, *, _schedule: _CallbackSchedule | None = None
+    ) -> None:
+        await self._handle_time_transition(now, _schedule=_schedule)
 
 
 async def async_get_quiet_hours(hass: HomeAssistant) -> QuietHoursManager:

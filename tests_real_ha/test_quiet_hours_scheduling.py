@@ -134,7 +134,7 @@ def _install_control_services(
 
 @pytest.mark.asyncio
 async def test_real_ha_clock_callbacks_activate_and_restore(
-    hass: HomeAssistant,
+    hass: HomeAssistant, freezer
 ) -> None:
     """Prove HA's local wall-clock callbacks drive start and end transitions."""
     # This case expects ordinary daily listeners. A DST zone can legitimately
@@ -172,6 +172,7 @@ async def test_real_ha_clock_callbacks_activate_and_restore(
         assert quiet_state.state == "off"
         assert len(manager._unsubscribers) == 3
 
+        freezer.move_to(start_at.astimezone(UTC))
         async_fire_time_changed(hass, start_at.astimezone(UTC))
         # HA timer callbacks are background tasks; include their settled writes.
         await hass.async_block_till_done(wait_background_tasks=True)
@@ -186,6 +187,7 @@ async def test_real_ha_clock_callbacks_activate_and_restore(
         assert wake_state.state == "off"
         assert quiet_state.state == "on"
 
+        freezer.move_to(end_at.astimezone(UTC))
         async_fire_time_changed(hass, end_at.astimezone(UTC))
         await hass.async_block_till_done(wait_background_tasks=True)
 
@@ -205,7 +207,7 @@ async def test_real_ha_clock_callbacks_activate_and_restore(
 
 @pytest.mark.asyncio
 async def test_timer_waits_for_generation_persistence_before_device_effect(
-    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, freezer
 ) -> None:
     """A registered background callback cannot act before its write settles."""
     _, media, wake = _install_satellite_entities(hass, slug="blocked-write")
@@ -232,6 +234,7 @@ async def test_timer_waits_for_generation_persistence_before_device_effect(
             await original_save(data)
 
         monkeypatch.setattr(manager._store, "async_save", blocked_save)
+        freezer.move_to(start.astimezone(UTC))
         async_fire_time_changed(hass, start.astimezone(UTC))
         await asyncio.wait_for(entered.wait(), 5)
         assert manager._lock.locked()
@@ -264,9 +267,10 @@ async def test_real_ha_registered_listeners_reconcile_forward_and_backward_clock
 
     now = dt_util.utcnow().replace(second=0, microsecond=0)
     wall_clock = now
-    # HA's interval listener reads utcnow itself; firing timer handles alone
-    # changes the daily callback timestamp but leaves discovery on the real clock.
+    # Firing timer handles changes HA's daily callback timestamp alone. Keep
+    # the clocks used by interval discovery and reconciliation in step too.
     monkeypatch.setattr(dt_util, "utcnow", lambda: wall_clock)
+    monkeypatch.setattr(dt_util, "now", lambda zone=UTC: wall_clock.astimezone(zone))
     start_at = now + timedelta(minutes=20)
     end_at = now + timedelta(minutes=50)
     manager = await async_get_quiet_hours(hass)
