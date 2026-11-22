@@ -1167,3 +1167,25 @@ async def test_function_reference_rename_rejects_stale_revision() -> None:
     ]
     assert manager.function_references("new_tool") == []
     store.async_save.assert_not_awaited()
+
+
+def test_native_result_alias_tracks_order_and_variables_rebinding(hass):
+    previous = local_rule()
+    previous["action"]["actions"] = [
+        {
+            "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
+            "data": {"function": "read_sensor", "result_alias": "lookup"},
+        },
+        {"set_conversation_response": "{{ lookup.level }}"},
+    ]
+    candidate = deepcopy(previous)
+    candidate["action"]["actions"].reverse()
+    with pytest.raises(HomeAssistantError, match="earlier step: lookup"):
+        rr.validate_result_alias_template_update(hass, previous, candidate)
+
+    candidate = deepcopy(previous)
+    candidate["action"]["actions"][0] = {
+        "variables": {"lookup": {"level": 42}, "label": "{{ lookup.level }}"},
+    }
+    candidate["action"]["actions"][1] = {"set_conversation_response": "{{ label }}"}
+    rr.validate_result_alias_template_update(hass, previous, candidate)

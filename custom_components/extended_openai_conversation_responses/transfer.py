@@ -1697,10 +1697,28 @@ async def async_materialize_restore(
         if provider_connection is not None
         else getattr(entry, "data", {})
     )
+    from .ha_permissions import get_active_ha_context
+    from .request import async_capacity_ha_snapshot
+
     try:
-        validate_routed_request_options(target.config, provider_data)
+        ha_snapshot = None
+        if selected & SETUP_SECTIONS or provider_connection is not None:
+            context = get_active_ha_context()
+            ha_snapshot = await async_capacity_ha_snapshot(
+                hass,
+                entry,
+                target.config,
+                context.user_id if context is not None else None,
+                provider_data=provider_connection,
+            )
+        validate_routed_request_options(
+            target.config, provider_data, ha_snapshot=ha_snapshot
+        )
         validate_saved_model_routes(
-            target.request_rules.get("rules", []), target.config, provider_data
+            target.request_rules.get("rules", []),
+            target.config,
+            provider_data,
+            ha_snapshot=ha_snapshot,
         )
     except HomeAssistantError as err:
         raise backup.BackupError(

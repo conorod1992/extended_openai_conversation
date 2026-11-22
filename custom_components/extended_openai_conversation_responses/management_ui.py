@@ -56,8 +56,6 @@ from .backup import async_create_backup, async_inspect_backup, async_restore_bac
 from .built_in_functions import built_in_function_catalog
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
-    API_MODE_CHAT_COMPLETIONS,
-    API_MODE_RESPONSES,
     CONF_API_PROVIDER,
     CONF_CHAT_MODEL,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
@@ -173,8 +171,8 @@ from .memory import ANONYMOUS_USER_ID, async_get_memory
 from .model_catalog import active_catalog_version, catalog_generation
 from .regex_execution import async_process_speech_text
 from .request import (
+    async_capacity_ha_snapshot as _async_capacity_ha_snapshot,
     ha_tool_discovery_references,
-    provider_tool_limit,
     validate_runtime_readiness,
 )
 from .request_rule_match_preview import async_request_rule_match_preview
@@ -342,51 +340,6 @@ def _validated_model_request(
     except HomeAssistantError as err:
         raise AgentConfigError("api_mode", str(err)) from err
     return config
-
-
-async def _async_capacity_ha_snapshot(
-    hass: HomeAssistant, entry: Any, config: Mapping[str, Any], user_id: str | None
-) -> ToolSnapshot | None:
-    """Resolve eligible HA definitions when a management edit can hit a cap."""
-    if (
-        user_id is None
-        or config.get("api_mode") == API_MODE_RESPONSES
-        or provider_tool_limit(
-            getattr(entry, "data", {}),
-            API_MODE_CHAT_COMPLETIONS,
-            client=getattr(entry, "runtime_data", None),
-        )
-        is None
-    ):
-        return None
-    try:
-        configured = parse_configured_function_tools(config)
-    except yaml.YAMLError:
-        # Unreadable definitions have no discoverable HA references.
-        return None
-    if not isinstance(configured, list) or not any(
-        isinstance(tool, Mapping) and is_ha_tool(tool) for tool in configured
-    ):
-        return None
-    tools = inspect_function_tools(config)
-    groups = inspect_function_groups(config.get(CONF_FUNCTION_GROUPS, []), tools)
-    references = ha_tool_discovery_references(tools, groups, config)
-    if not references:
-        return None
-
-    from homeassistant.helpers import llm
-
-    return await async_discover(
-        hass,
-        llm.LLMContext(
-            platform=DOMAIN,
-            context=Context(user_id=user_id),
-            language=hass.config.language,
-            assistant="conversation",
-            device_id=None,
-        ),
-        references,
-    )
 
 
 async def _async_validate_configuration_request(
@@ -1080,6 +1033,9 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         check_configuration = await _async_validate_request_rule_mutation(
             hass, candidate, request.entry, subentry
         )
+        from .request_rules import validate_result_alias_template_update
+
+        validate_result_alias_template_update(hass, None, candidate)
         rule = await rules.async_create(
             candidate,
             expected_revision=message.get("revision"),
@@ -1939,7 +1895,13 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             title=title,
             unique_id=None,
         )
-        _validated_model_request(dict(duplicate.data), entry.data)
+        _validated_model_request(
+            dict(duplicate.data),
+            entry.data,
+            ha_snapshot=await _async_capacity_ha_snapshot(
+                hass, entry, duplicate.data, request.user_id
+            ),
+        )
         hass.config_entries.async_add_subentry(entry, duplicate)
         return {
             "status": "created",
@@ -1965,7 +1927,13 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             if message.get("mode", "current") == "current"
             else None,
         )
-        _validated_model_request(parsed["config"], entry.data)
+        _validated_model_request(
+            parsed["config"],
+            entry.data,
+            ha_snapshot=await _async_capacity_ha_snapshot(
+                hass, entry, parsed["config"], request.user_id
+            ),
+        )
         if message.get("mode", "current") == "current":
             parsed["config"] = preserve_unselected_archive_retention(
                 subentry.data, parsed["config"]
@@ -2006,7 +1974,13 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             if message.get("mode", "current") == "current"
             else None,
         )
-        _validated_model_request(parsed["config"], entry.data)
+        _validated_model_request(
+            parsed["config"],
+            entry.data,
+            ha_snapshot=await _async_capacity_ha_snapshot(
+                hass, entry, parsed["config"], request.user_id
+            ),
+        )
         mode = message.get("mode", "current")
         if mode == "current":
             parsed["config"] = preserve_unselected_archive_retention(

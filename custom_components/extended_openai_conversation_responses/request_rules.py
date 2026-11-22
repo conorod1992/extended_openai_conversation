@@ -2300,13 +2300,12 @@ def _is_function_action(step: Mapping[str, Any]) -> bool:
 
 
 def validate_result_alias_template_update(
-    hass: HomeAssistant, previous: Mapping[str, Any], candidate: Mapping[str, Any]
+    hass: HomeAssistant,
+    previous: Mapping[str, Any] | None,
+    candidate: Mapping[str, Any],
 ) -> None:
-    """Require review of native templates still using a removed result name."""
-    if (
-        previous.get("action_type") != "local_action"
-        or candidate.get("action_type") != "local_action"
-    ):
+    """Check native templates against the order of explicit result bindings."""
+    if candidate.get("action_type") != "local_action":
         return
 
     def aliases(rule: Mapping[str, Any]) -> set[str]:
@@ -2319,8 +2318,21 @@ def validate_result_alias_template_update(
             and isinstance(alias := data.get("result_alias"), str)
         }
 
-    removed = aliases(previous) - aliases(candidate)
-    if not removed:
+    if (
+        previous is not None
+        and previous.get("action_type") == "local_action"
+        and previous["action"]["actions"] == candidate["action"]["actions"]
+    ):
+        return
+
+    current = aliases(candidate)
+    removed = (
+        aliases(previous) - current
+        if previous is not None and previous.get("action_type") == "local_action"
+        else set()
+    )
+    unbound = removed | current
+    if not unbound:
         return
 
     from jinja2 import meta
@@ -2341,18 +2353,35 @@ def validate_result_alias_template_update(
 
     missing: set[str] = set()
     for step in candidate["action"]["actions"]:
-        missing.update(references(step, removed))
+        if isinstance(step, Mapping) and isinstance(
+            variables := step.get("variables"), Mapping
+        ):
+            # Home Assistant renders variable definitions in insertion order.
+            for name, value in variables.items():
+                missing.update(references(value, unbound))
+                unbound.discard(name)
+        else:
+            missing.update(references(step, unbound))
         if isinstance(step, Mapping):
-            if isinstance(variables := step.get("variables"), Mapping):
-                removed.difference_update(variables)
+            if (
+                _is_function_action(step)
+                and isinstance(data := effective_service_payload(step), Mapping)
+                and isinstance(alias := data.get("result_alias"), str)
+            ):
+                unbound.discard(alias)
             if isinstance(response := step.get("response_variable"), str):
-                removed.discard(response)
-        if not removed:
+                unbound.discard(response)
+        if not unbound:
             break
-    if missing:
+    if missing & removed:
         raise HomeAssistantError(
             "Update the Home Assistant action templates that still use the removed "
-            "Function result aliases: " + ", ".join(sorted(missing))
+            "Function result aliases: " + ", ".join(sorted(missing & removed))
+        )
+    if missing:
+        raise HomeAssistantError(
+            "Function result must be produced by an earlier step: "
+            + ", ".join(sorted(missing))
         )
 
 

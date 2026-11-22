@@ -80,6 +80,7 @@ from .provider_errors import (
     request_reauthentication,
 )
 from .request import (
+    async_capacity_ha_snapshot,
     query_image_request_settings,
     request_model_capabilities,
     validate_runtime_readiness,
@@ -266,6 +267,8 @@ async def async_set_function_tools_enabled(
     agent_reference: str,
     function_names: list[str],
     enabled: bool,
+    *,
+    user_id: str | None = None,
 ) -> None:
     """Persist the authoritative enabled state for selected Function Tools."""
     _, subentry_id = resolve_memory_agent(hass, entry_id, agent_reference)
@@ -279,7 +282,21 @@ async def async_set_function_tools_enabled(
         persisted = function_mutations.prepare_function_tools_enabled(
             subentry.data, function_names, enabled, provider=entry_api_provider(entry)
         )
-        validate_runtime_readiness(persisted, entry.data)
+        from .ha_permissions import get_active_ha_context
+
+        context = get_active_ha_context()
+        snapshot = await async_capacity_ha_snapshot(
+            hass,
+            entry,
+            persisted,
+            user_id if user_id is not None or context is None else context.user_id,
+        )
+        validate_runtime_readiness(
+            persisted,
+            entry.data,
+            ha_snapshot=snapshot,
+            client=getattr(entry, "runtime_data", None),
+        )
         update_live_subentry(hass, entry, subentry, data=persisted)
 
 
@@ -289,6 +306,8 @@ async def async_set_function_groups_enabled(
     agent_reference: str,
     group_ids: list[str],
     enabled: bool,
+    *,
+    user_id: str | None = None,
 ) -> None:
     """Persist Function Group state without changing member Function Tool state."""
     _, subentry_id = resolve_memory_agent(hass, entry_id, agent_reference)
@@ -302,7 +321,21 @@ async def async_set_function_groups_enabled(
         persisted = function_mutations.prepare_function_groups_enabled(
             subentry.data, group_ids, enabled, provider=entry_api_provider(entry)
         )
-        validate_runtime_readiness(persisted, entry.data)
+        from .ha_permissions import get_active_ha_context
+
+        context = get_active_ha_context()
+        snapshot = await async_capacity_ha_snapshot(
+            hass,
+            entry,
+            persisted,
+            user_id if user_id is not None or context is None else context.user_id,
+        )
+        validate_runtime_readiness(
+            persisted,
+            entry.data,
+            ha_snapshot=snapshot,
+            client=getattr(entry, "runtime_data", None),
+        )
         update_live_subentry(hass, entry, subentry, data=persisted)
 
 
@@ -775,6 +808,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             call.data["agent_id"],
             call.data["functions"],
             True,
+            user_id=call.context.user_id,
         )
 
     async def rebuild_memory_embeddings(call: ServiceCall) -> None:
@@ -796,6 +830,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             call.data["agent_id"],
             call.data["functions"],
             False,
+            user_id=call.context.user_id,
         )
 
     async def enable_function_groups(call: ServiceCall) -> None:
@@ -807,6 +842,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             call.data["agent_id"],
             call.data["function_groups"],
             True,
+            user_id=call.context.user_id,
         )
 
     async def disable_function_groups(call: ServiceCall) -> None:
@@ -818,6 +854,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             call.data["agent_id"],
             call.data["function_groups"],
             False,
+            user_id=call.context.user_id,
         )
 
     async def guest_mode_update(call: ServiceCall) -> ServiceResponse:

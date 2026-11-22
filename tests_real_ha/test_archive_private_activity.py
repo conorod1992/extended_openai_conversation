@@ -758,3 +758,73 @@ async def test_ha_default_knowledge_restore_keeps_only_verified_runtime(
     if retained:
         assert followup.conversation_id == chat_id
         assert "Switch models and remember this turn" in json.dumps(sent[1]["messages"])
+
+
+async def test_archive_restore_preserves_live_unretained_privacy(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import transfer
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_ARCHIVE_ENABLED,
+        CONF_CONVERSATION_CONTINUITY,
+        CONF_SHARED_ARCHIVE_ENABLED,
+        CONF_VOICE_SCOPE_POLICY,
+        CONVERSATION_CONTINUITY_HA_DEFAULT,
+        VOICE_POLICY_SHARED,
+    )
+    from homeassistant.components import conversation
+    from homeassistant.helpers.chat_session import DATA_CHAT_SESSION
+    from tests_real_ha.test_conversation_runtime_lifecycle import _tool
+    from tests_real_ha.test_cross_feature_acceptance import (
+        _agent,
+        _provider,
+        _say,
+        _speech,
+    )
+
+    agent = await _agent(
+        hass,
+        **{
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_HA_DEFAULT,
+            CONF_SHARED_ARCHIVE_ENABLED: False,
+            CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_SHARED,
+        },
+    )
+    _provider(monkeypatch, agent, ["Opened", _tool("conversation_private"), "Private"])
+
+    first = await _say(hass, agent, "Open conversation")
+    conversation_id = first.conversation_id
+    assert (
+        _speech(await _say(hass, agent, "Make this private", conversation_id))
+        == "Private"
+    )
+    native = hass.data[DATA_CHAT_SESSION][conversation_id]
+    archive = agent._archive
+    assert (
+        archive.active_session(f"conversation:{conversation_id}").retention_state
+        == "unretained_private"
+    )
+    selected = frozenset(
+        {transfer.SECTION_CONFIGURATION, transfer.SECTION_CONVERSATION_ARCHIVE}
+    )
+    imported = transfer.PreparedTransfer(
+        source_kind="custom_backup",
+        mode="custom",
+        title=agent.subentry.title,
+        available_sections=selected,
+        created_at=None,
+        integration_version=None,
+        config={**agent.subentry.data, CONF_SHARED_ARCHIVE_ENABLED: True},
+        archive_sessions=[],
+        archive_turns=[],
+    )
+    await transfer.async_restore_transfer(
+        hass, agent.entry, agent.subentry, imported, sections=selected
+    )
+
+    agent = conversation.async_get_agent(hass, agent.entry.entry_id)
+    _provider(monkeypatch, agent, ["Answer"])
+    result = await _say(hass, agent, "Private follow-up", conversation_id)
+    assert _speech(result) == "Answer"
+    assert result.conversation_id == conversation_id
+    assert hass.data[DATA_CHAT_SESSION][conversation_id] is native
+    assert "Private follow-up" not in str(await agent._archive.async_backup_data())

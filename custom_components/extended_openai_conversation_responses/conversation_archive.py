@@ -517,7 +517,7 @@ class ConversationArchive:
 
     def private_continuity_bindings(self) -> dict[str, str]:
         """Return content-free identities under the caller's exclusive restore lease."""
-        return self._continuity_bindings("private")
+        return self._continuity_bindings("private", "unretained_private")
 
     def retained_continuity_bindings(self) -> dict[str, str]:
         """Identify unchanged retained conversations under exclusive maintenance."""
@@ -535,13 +535,13 @@ class ConversationArchive:
             and key == f"conversation:{session.home_assistant_conversation_id}"
         }
 
-    def _continuity_bindings(self, retention_state: str) -> dict[str, str]:
+    def _continuity_bindings(self, *retention_states: str) -> dict[str, str]:
         return {
             key.removeprefix("continuity:"): session.home_assistant_conversation_id
             for key, session_id in self._active.items()
             if key.startswith("continuity:")
             and (session := self._sessions.get(session_id)) is not None
-            and session.retention_state == retention_state
+            and session.retention_state in retention_states
             and session.home_assistant_conversation_id is not None
         }
 
@@ -1752,6 +1752,17 @@ class ConversationArchive:
                 else session
                 for session in sessions
             }
+            # Portable and journal data omit these process-local markers.
+            # Keep the destination's choice while its live conversation exists.
+            for key, session_id in self._active.items():
+                prior = self._sessions[session_id]
+                if prior.retention_state != "unretained_private":
+                    continue
+                if session_id in session_map:
+                    session_id = uuid4().hex
+                    prior = replace(prior, session_id=session_id)
+                session_map[session_id] = prior
+                bindings[key] = session_id
             turn_map = _replacement_turn_map(turns)
             new_partitions = {turn.timestamp[:7] for turn in turns}
             await self._async_commit_state_locked(

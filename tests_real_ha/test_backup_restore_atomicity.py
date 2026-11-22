@@ -552,3 +552,71 @@ async def test_archive_restore_keeps_only_active_destination_privacy_markers(
         assert resumed.retention_state == "retained"
         assert resumed.session_id != marker.session_id
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.usefixtures("real_store_io")
+async def test_private_backup_rejects_oversized_live_ha_catalogue(hass, monkeypatch):
+    from copy import deepcopy
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+    )
+    from homeassistant.components import conversation
+    from tests.test_ha_llm_tools import TestAPI, context, register
+    from tests.test_runtime_readiness import _options, _tool
+    from tests_real_ha.test_acceptance_lifecycle import (
+        _conversation_subentry,
+        _make_entry,
+        _setup_entry,
+    )
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _install_wire,
+        _say,
+        _speech,
+    )
+
+    register(hass, TestAPI(hass))
+    live = await async_discover(hass, context())
+    ref = new_reference_tool(next(iter(live.tools.values())).reference, set())
+    neutral = {
+        "exposed_entities_enabled": False,
+        "current_datetime_enabled": False,
+        "prompt": "Plain prompt",
+    }
+    existing = _options(126, **neutral)
+    functions = [*[_tool(f"marker_{i}") for i in range(127)], ref]
+    incoming = _options(functions=functions, **neutral)
+    entry = _make_entry(
+        "Private restore limit", include_ai_task=False, conversation_options=existing
+    )
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    before = conversation.async_get_agent(hass, entry.entry_id)
+    baseline_wire = _install_wire(
+        monkeypatch, before, [_chat_sse_text("Baseline working")]
+    )
+    assert _speech(await _say(hass, before)) == "Baseline working"
+    assert len(baseline_wire.requests) == 1
+    source = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    source["agent"]["config"] = deepcopy(incoming)
+    artifact = backup.finalize_backup_snapshot(source)["document"]
+    sections = [transfer.SECTION_CONFIGURATION]
+    with pytest.raises(backup.BackupError, match="128-tool limit"):
+        await transfer.async_materialize_restore(
+            hass, entry, subentry, artifact, sections=sections
+        )
+    with pytest.raises(backup.BackupError, match="128-tool limit"):
+        await transfer.async_restore_transfer(
+            hass, entry, subentry, artifact, sections=sections
+        )
+    assert subentry.data["functions"] == existing["functions"]
+    wire = _install_wire(monkeypatch, before, [_chat_sse_text("Still working")])
+    assert _speech(await _say(hass, before)) == "Still working"
+    assert len(wire.requests) == 1
+    assert await hass.config_entries.async_unload(entry.entry_id)

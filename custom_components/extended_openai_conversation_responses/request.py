@@ -10,6 +10,7 @@ import re
 from typing import Any
 from urllib.parse import unquote
 
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .capabilities import resolve_effective_capabilities
@@ -31,6 +32,7 @@ from .const import (
     CONF_MEMORY_ENABLED,
     CONF_REASONING_EFFORT,
     CONF_SERVICE_TIER,
+    CONF_SKILLS,
     CONF_TEMPERATURE,
     CONF_TEMPORARY_MEMORY,
     CONF_TOP_P,
@@ -49,6 +51,7 @@ from .const import (
     DEFAULT_TOP_P,
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_CONTEXT,
+    DOMAIN,
     TEMPORARY_MEMORY_OFF,
 )
 from .conversation_archive import archive_tools
@@ -906,6 +909,68 @@ def assemble_integration_function_tools(
     return result
 
 
+async def async_capacity_ha_snapshot(
+    hass: HomeAssistant,
+    entry: Any,
+    config: Mapping[str, Any],
+    user_id: str | None,
+    *,
+    provider_data: Mapping[str, Any] | None = None,
+) -> ToolSnapshot | None:
+    """Resolve eligible HA definitions when a management edit can hit a cap."""
+    import yaml
+
+    from homeassistant.core import Context
+
+    from .agent_config import parse_configured_function_tools
+    from .ha_llm_tools import async_discover
+    from .management_function_quarantine import (
+        inspect_function_groups,
+        inspect_function_tools,
+    )
+
+    if (
+        config.get("api_mode") == API_MODE_RESPONSES
+        or provider_tool_limit(
+            provider_data if provider_data is not None else getattr(entry, "data", {}),
+            API_MODE_CHAT_COMPLETIONS,
+            client=getattr(entry, "runtime_data", None)
+            if provider_data is None
+            else None,
+        )
+        is None
+    ):
+        return None
+    try:
+        configured = parse_configured_function_tools(config)
+    except yaml.YAMLError:
+        # Unreadable definitions have no discoverable HA references.
+        return None
+    if not isinstance(configured, list) or not any(
+        isinstance(tool, Mapping) and is_ha_tool(tool) for tool in configured
+    ):
+        return None
+    tools = inspect_function_tools(config)
+    groups = inspect_function_groups(config.get(CONF_FUNCTION_GROUPS, []), tools)
+    references = ha_tool_discovery_references(tools, groups, config)
+    if not references:
+        return None
+
+    from homeassistant.helpers import llm
+
+    return await async_discover(
+        hass,
+        llm.LLMContext(
+            platform=DOMAIN,
+            context=Context(user_id=user_id),
+            language=hass.config.language,
+            assistant="conversation",
+            device_id=None,
+        ),
+        references,
+    )
+
+
 def validate_runtime_readiness(
     options: Mapping[str, Any],
     entry_data: Mapping[str, Any],
@@ -917,8 +982,9 @@ def validate_runtime_readiness(
     """Validate the initial Conversation catalogue for supported request scopes.
 
     Reserve enabled built-ins for a request with an eligible owner and data.
-    Loaded groups, external HA tools and installed Skills still need live
-    validation. Existing damaged definitions use the established repair projection.
+    Dynamically available HA tools are counted when a catalogue is supplied.
+    Loaded groups and later availability changes still need live validation.
+    Existing damaged definitions use the established repair projection.
     """
     from .agent_config import (
         configured_function_tools_from_data,
@@ -926,8 +992,16 @@ def validate_runtime_readiness(
     )
     from .const import CONF_CONTINUE_CONVERSATION, CONTINUE_CONVERSATION_CONDITIONAL
     from .function_configuration_repair import function_configuration_repair_state
-    from .function_groups import ToolRuntimeAvailability, assemble_function_tools
-    from .skill_availability import is_canonical_skill_loader
+    from .function_groups import (
+        ToolRuntimeAvailability,
+        admit_function_group_loader,
+        assemble_function_tools,
+    )
+    from .skill_availability import (
+        is_canonical_skill_loader,
+        selected_installed_skill_names,
+    )
+    from .skills import SkillManager
 
     snapshot = build_provider_request_snapshot(
         options,
@@ -950,10 +1024,18 @@ def validate_runtime_readiness(
     if ha_snapshot is not None:
         configured = ha_snapshot.project(configured)
 
+    selected_skills = options.get(CONF_SKILLS, []) or []
+    manager = SkillManager.get_loaded_instance() if selected_skills else None
+    skill_available = manager is not None and bool(
+        selected_installed_skill_names(
+            selected_skills, (skill.name for skill in manager.get_all_skills())
+        )
+    )
+
     def guaranteed(tool: dict[str, Any]) -> bool:
         if is_ha_tool(tool):
             return ha_snapshot is not None and tool.get("ha_available") is True
-        return not is_canonical_skill_loader(tool)
+        return not is_canonical_skill_loader(tool) or skill_available
 
     assembly = assemble_function_tools(
         configured,
@@ -980,11 +1062,15 @@ def validate_runtime_readiness(
                 lifecycle_active=True,
             )
         )
-    tools = request_function_tools(
-        tools,
-        conditional_continue=options.get(CONF_CONTINUE_CONVERSATION)
-        == CONTINUE_CONVERSATION_CONDITIONAL,
+    conditional_continue = (
+        options.get(CONF_CONTINUE_CONVERSATION) == CONTINUE_CONVERSATION_CONDITIONAL
     )
+    tools = admit_function_group_loader(
+        tools,
+        snapshot.tool_limit,
+        extra_tool_count=int(conditional_continue) + len(snapshot.provider_tools),
+    )
+    tools = request_function_tools(tools, conditional_continue=conditional_continue)
     validate_provider_tool_count(
         count_model_function_tools(tools) + len(snapshot.provider_tools),
         snapshot.tool_limit,

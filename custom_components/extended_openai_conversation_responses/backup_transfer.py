@@ -1696,7 +1696,12 @@ async def websocket_backup_transfer(
     from .mutation_outcomes import mutation_error_code, mutation_failure
 
     try:
-        result = await async_backup_transfer_command(hass, msg)
+        from homeassistant.core import Context
+
+        from .ha_permissions import bind_active_ha_context
+
+        with bind_active_ha_context(Context(user_id=connection.user.id)):
+            result = await async_backup_transfer_command(hass, msg)
     except _InspectionPending as err:
         connection.send_error(msg["id"], "inspection_pending", str(err))
         return

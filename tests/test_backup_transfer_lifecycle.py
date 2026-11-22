@@ -1196,7 +1196,7 @@ async def test_websocket_translates_expected_error_and_returns_success(
     hass, monkeypatch
 ):
     connection = SimpleNamespace(
-        user=SimpleNamespace(is_admin=True),
+        user=SimpleNamespace(is_admin=True, id="admin"),
         send_error=MagicMock(),
         send_result=MagicMock(),
     )
