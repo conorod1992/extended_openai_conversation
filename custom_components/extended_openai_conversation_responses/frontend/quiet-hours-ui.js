@@ -297,12 +297,12 @@ async function useReplacement(panel, button) {
   try {
     const result = await panel._call("quiet_hours", "rebind", {selection, revision, review_token:issue.review_token});
     requireMutationAcknowledgement(completePolicyResponse(result, true, panel._result?.config)
-      && result.revision !== revision, "using the Quiet Hours replacement");
+      && result.revision !== revision, "saving the replacement");
     if (current()) {
       panel._result = result;
       panel._error = null;
       panel._render();
-      panel._toast("Quiet Hours replacement saved.");
+      panel._toast("Replacement saved.");
     }
   } catch (err) {
     if (current()) panel._toast(`Unable to use replacement: ${err.message || String(err)}`, true);

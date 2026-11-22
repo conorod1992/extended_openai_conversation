@@ -83,7 +83,7 @@ for (const bundled of [false, true]) {
     });
     await rebind.click();
     await expect(rebind).toHaveCount(0);
-    await expect(panel.getByText("Quiet Hours replacement saved.")).toBeVisible();
+    await expect(panel.getByText("Replacement saved.")).toBeVisible();
     expect(await panel.evaluate(host => host._result.revision)).toBe("replacement-saved");
     await expectHarnessClean(page, errors);
   });

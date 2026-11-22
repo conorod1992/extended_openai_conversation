@@ -67,7 +67,7 @@ test("replacement accepts a clean draft after override key order changes", async
   assert.deepEqual(calls[0], ["quiet_hours", "rebind", {selection:second, revision:"before", review_token:"reviewed"}]);
   assert.equal(calls.length, 1);
   assert.equal(p._result.revision, "after");
-  assert.deepEqual(toasts, ["Quiet Hours replacement saved."]);
+  assert.deepEqual(toasts, ["Replacement saved."]);
 });
 
 test("renders orphaned bindings independently of temporarily unavailable controls", () => {
