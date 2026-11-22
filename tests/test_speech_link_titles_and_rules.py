@@ -322,3 +322,28 @@ def test_completed_index_does_not_rescan_tail_without_closing_parentheses():
 
     assert destinations == {}
     assert source.looked_at <= 2 * len(source)
+
+
+@pytest.mark.parametrize(
+    ("prose_chars", "malformed"),
+    [
+        (2303, "[bad](" * 14 + "x" * 2231 + ' "malformed ) and then '),
+        (
+            2122,
+            "[bad](" * 22 + "x" * 1900 + '\u00a0"malformed ) ' + "q" * 150 + " and then ",
+        ),
+    ],
+    ids=["long-destinations", "unsupported-whitespace"],
+)
+def test_malformed_destinations_preserve_later_short_titled_link(prose_chars, malformed):
+    prose = ("Details " * 500)[:prose_chars] + " "
+    prefix = prose + malformed
+    source = prefix + '[Good](https://example.com "More ( info").'
+    expected = prefix + "Good."
+
+    for split in (None, 0, len(prose), len(prefix), len(prefix) + 25, len(source)):
+        assert _stream(source, split) == expected, split
+    assert (
+        _final_whitespace_cleanup(StreamingSpeechSanitizer().process_complete(source))
+        == expected
+    )

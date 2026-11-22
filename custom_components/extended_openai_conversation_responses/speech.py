@@ -88,8 +88,11 @@ def _join_speech(parts: list[str], kinds: Mapping[int, _LiteralKind]) -> str:
 _BACKTICK_RUN = re.compile(r"`+")
 _LABEL_SYNTAX = re.compile(r"`+|[\[\]]")
 _LINK_WHITESPACE = " \t\r\n"
-_LINK_WHITESPACE_RUN = re.compile(r"\s+")
+# Bare destinations stop at any whitespace, but only these separators can
+# start or precede a Markdown destination or title.
+_LINK_WHITESPACE_RUN = re.compile(rf"(?P<link>[{re.escape(_LINK_WHITESPACE)}]+)|\s+")
 _LINK_TITLE_DELIMITERS = ('"', "'", "(")
+_LEGACY_LINK_PROBE_PREFIX = 2048
 
 
 def _link_whitespace_end(text: str, start: int, end: int) -> int:
@@ -1958,12 +1961,13 @@ class StreamingSpeechSanitizer:
         # Probe only complex candidates that the old fast index could not
         # recognise. Bound those speculative probes so malformed bulk text
         # cannot turn complete-response cleanup into quadratic rescanning.
-        remaining_probe_chars = max(16_384, len(text) * 4)
+        probe_budget = max(16_384, len(text) * 4)
+        remaining_short_probe_chars = remaining_extended_probe_chars = probe_budget
         whitespace_runs = _LINK_WHITESPACE_RUN.finditer(text)
         whitespace = next(whitespace_runs, None)
         next_closer = -1
         for candidate in re.finditer(r"\]\(", text):
-            if remaining_probe_chars <= 0:
+            if remaining_short_probe_chars <= 0 and remaining_extended_probe_chars <= 0:
                 break
             opening = candidate.end() - 1
             if opening in closed_parens:
@@ -1971,8 +1975,6 @@ class StreamingSpeechSanitizer:
             url_start = opening + 1
             if url_start >= len(text):
                 continue
-            window = min(16_384, len(text) - url_start, remaining_probe_chars)
-            window_end = url_start + window
             # Walk candidate starts and whitespace runs in order. For a bare
             # destination the shared scanner checks for a title at its first
             # whitespace boundary, even if the destination is very long.
@@ -1980,15 +1982,35 @@ class StreamingSpeechSanitizer:
                 whitespace = next(whitespace_runs, None)
             destination = url_start
             if whitespace is not None and whitespace.start() == url_start:
+                if whitespace.lastgroup is None:
+                    continue
                 destination = whitespace.end()
                 whitespace = next(whitespace_runs, None)
-            if destination >= window_end:
+            if destination >= len(text):
                 continue
-            if text[destination] != "<" and (
-                whitespace is None
-                or whitespace.end() >= window_end
-                or text[whitespace.end()] not in _LINK_TITLE_DELIMITERS
-            ):
+            marker = destination
+            if text[destination] != "<":
+                if (
+                    whitespace is None
+                    or whitespace.lastgroup is None
+                    or whitespace.end() >= len(text)
+                ):
+                    continue
+                marker = whitespace.end()
+                if text[marker] not in _LINK_TITLE_DELIMITERS:
+                    continue
+            # Reserve the original probe budget for angle openings and title
+            # delimiters the legacy prefix could see. Newly discoverable ones
+            # can overlap heavily and must not exhaust that budget.
+            extended = marker - url_start >= _LEGACY_LINK_PROBE_PREFIX
+            remaining = (
+                remaining_extended_probe_chars
+                if extended
+                else remaining_short_probe_chars
+            )
+            window = min(16_384, len(text) - url_start, remaining)
+            window_end = url_start + window
+            if marker >= window_end:
                 continue
             # Cache the next possible closer across overlapping windows.
             if next_closer < url_start:
@@ -2000,7 +2022,10 @@ class StreamingSpeechSanitizer:
             status, end = StreamingSpeechSanitizer._scan_markdown_destination(
                 text, url_start, True, limit=url_start + window - 1
             )
-            remaining_probe_chars -= window
+            if extended:
+                remaining_extended_probe_chars -= window
+            else:
+                remaining_short_probe_chars -= window
             if status == "complete":
                 closed_parens[opening] = end - 1
         brackets = dict(
