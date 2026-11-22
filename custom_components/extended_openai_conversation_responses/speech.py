@@ -87,6 +87,22 @@ def _join_speech(parts: list[str], kinds: Mapping[int, _LiteralKind]) -> str:
 
 _BACKTICK_RUN = re.compile(r"`+")
 _LABEL_SYNTAX = re.compile(r"`+|[\[\]]")
+_LINK_WHITESPACE = " \t\r\n"
+_LINK_TITLE_PREFIX = re.compile(r"""[ \t\r\n]["'(]""")
+
+
+def _link_whitespace_end(text: str, start: int, end: int) -> int:
+    """Consume a link separator, rejecting a blank line even with indentation."""
+    line_ended = False
+    while start < end and text[start] in _LINK_WHITESPACE:
+        if text[start] in "\r\n":
+            if line_ended:
+                return -1
+            line_ended = True
+            if text[start] == "\r" and start + 1 < end and text[start + 1] == "\n":
+                start += 1
+        start += 1
+    return start
 
 
 _URL_PREFIXES = ("http://", "https://", "www.")
@@ -1024,6 +1040,10 @@ class StreamingSpeechSanitizer:
         if markdown and (label_end < 0 or text[label_end + 1 : label_end + 2] != "("):
             return None
         position = label_end + 2 if markdown else start + 1
+        if markdown:
+            position = _link_whitespace_end(text, position, len(text))
+            if position < 0:
+                return None
         angle = text[position : position + 1] == "<" if markdown else text[start] == "<"
         url_start = position + int(markdown and angle)
         if not self._is_url_start(text, url_start):
@@ -1311,18 +1331,21 @@ class StreamingSpeechSanitizer:
     @staticmethod
     def _markdown_link_destination(raw: str) -> str:
         """Extract only the destination, excluding standard simple link titles."""
-        if raw.startswith("<"):
-            end = raw.find(">", 1)
-            return raw[1:end] if end >= 0 else raw
-        position = 0
+        raw = raw.lstrip(_LINK_WHITESPACE)
+        angle = raw.startswith("<")
+        start = position = int(angle)
         while position < len(raw):
-            if raw[position] == "\\" and position + 1 < len(raw):
+            if (
+                raw[position] == "\\"
+                and position + 1 < len(raw)
+                and raw[position + 1] in punctuation
+            ):
                 position += 2
                 continue
-            if raw[position].isspace():
+            if raw[position] == ">" if angle else raw[position].isspace():
                 break
             position += 1
-        return raw[:position]
+        return raw[start:position]
 
     def _emit_link_label(self, output: list[str], label: str, destination: str) -> bool:
         """Render the label as inline content and omit address-only citations."""
@@ -1944,11 +1967,8 @@ class StreamingSpeechSanitizer:
                 continue
             prefix = text[url_start : url_start + 2048]
             if not (
-                prefix.startswith("<")
-                or any(
-                    marker in prefix
-                    for marker in (' "', " '", " (", '\t"', "\t'", "\t(")
-                )
+                prefix.lstrip(_LINK_WHITESPACE).startswith("<")
+                or _LINK_TITLE_PREFIX.search(prefix)
             ):
                 continue
             window = min(16_384, len(text) - url_start, remaining_probe_chars)
@@ -1983,18 +2003,23 @@ class StreamingSpeechSanitizer:
         def unfinished() -> tuple[str, int]:
             return ("no", start) if final else ("incomplete", start)
 
-        position = start
+        position = _link_whitespace_end(text, start, end)
+        if position < 0:
+            return "no", start
+        if position >= end:
+            return unfinished()
+
+        def escaped(at: int) -> bool:
+            return text[at] == "\\" and at + 1 < end and text[at + 1] in punctuation
+
         if text[position] == "<":
             position += 1
-            destination_start = position
             while position < end:
                 char = text[position]
-                if char == "\\":
-                    if position + 1 >= end:
-                        return unfinished()
+                if escaped(position):
                     position += 2
                     continue
-                if char == ">" and position > destination_start:
+                if char == ">":
                     position += 1
                     break
                 if char in "<\r\n":
@@ -2006,12 +2031,10 @@ class StreamingSpeechSanitizer:
             depth = 0
             while position < end:
                 char = text[position]
-                if char == "\\":
-                    if position + 1 >= end:
-                        return unfinished()
+                if escaped(position):
                     position += 2
                     continue
-                if char in "<>\r\n":
+                if char in "<>":
                     return "no", start
                 if char.isspace():
                     if depth:
@@ -2027,13 +2050,12 @@ class StreamingSpeechSanitizer:
                 position += 1
             if position == end:
                 return unfinished()
-            if position == start:
-                return "no", start
 
         # Whitespace before the optional title is required by Markdown.
         whitespace_start = position
-        while position < end and text[position] in " \t":
-            position += 1
+        position = _link_whitespace_end(text, position, end)
+        if position < 0:
+            return "no", start
         if position >= end:
             return unfinished()
         if text[position] == ")":
@@ -2043,21 +2065,25 @@ class StreamingSpeechSanitizer:
         closing = ")" if text[position] == "(" else text[position]
         position += 1
         while position < end:
-            if text[position] == "\\":
-                if position + 1 >= end:
-                    return unfinished()
+            if escaped(position):
                 position += 2
                 continue
             if text[position] in "\r\n":
-                return "no", start
+                position = _link_whitespace_end(text, position, end)
+                if position < 0:
+                    return "no", start
+                continue
             if text[position] == closing:
                 position += 1
                 break
+            if closing == ")" and text[position] == "(":
+                return "no", start
             position += 1
         else:
             return unfinished()
-        while position < end and text[position] in " \t":
-            position += 1
+        position = _link_whitespace_end(text, position, end)
+        if position < 0:
+            return "no", start
         if position >= end:
             return unfinished()
         return ("complete", position + 1) if text[position] == ")" else ("no", start)

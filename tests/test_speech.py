@@ -1156,6 +1156,74 @@ def test_url_only_speech_cleanup_keeps_boundary_after_long_whitespace() -> None:
         ) == expected, split
 
 
+@pytest.mark.parametrize(
+    "link,label",
+    [
+        ("[Guide]( /manual )", "Guide"),
+        ("[Guide](\n  https://example.org\n)", "Guide"),
+        (
+            '[Guide](https://example.org "a title\n  with an unmatched ( in it")',
+            "Guide",
+        ),
+        ('[Guide](\r\n</user guide>\r\n"Keep me\r\n private"\r\n )', "Guide"),
+        ("[Guide](/manual\n 'a title with ]( in it' \n )", "Guide"),
+        (r"[Guide]( /manual (a title with \( and \) in it) )", "Guide"),
+        ("[Guide](  <>  )", "Guide"),
+        ("[example.org]( \n https://example.org )", ""),
+        ('![Map](\n /map.png "hidden\n details")', ""),
+    ],
+)
+def test_markdown_link_whitespace_preserves_labels_across_speech_chunks(link, label):
+    source = f"See {link} now."
+    expected = f"See {label} now." if label else "See now."
+    assert process_speech_text(source, _config()) == expected
+    prefix = "Intro. " * 1_000
+    assert process_speech_text(prefix + source, _config()) == prefix + expected
+    for parts in ([source], list(source)):
+        assert speech._final_whitespace_cleanup(_stream(parts)) == expected
+    for split in range(len(source) + 1):
+        assert (
+            speech._final_whitespace_cleanup(_stream([source[:split], source[split:]]))
+            == expected
+        ), split
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "\n \n/manual)",
+        "/manual\n \n)",
+        '/manual "first\n \nsecond")',
+        "<first\nsecond>)",
+        "/manual (title (nested))",
+    ],
+)
+def test_markdown_link_does_not_consume_blank_lines_or_malformed_titles(destination):
+    assert (
+        StreamingSpeechSanitizer._scan_markdown_destination(destination, 0, final=True)[
+            0
+        ]
+        == "no"
+    )
+
+
+def test_long_link_consumes_whitespace_and_multiline_title_with_bounded_buffer():
+    source = (
+        "See [Guide](\r\n https://example.org/"
+        + "a" * 1_000
+        + '\r\n "private\r\n title"\r\n ) now.'
+    )
+    assert process_speech_text(source, _config()) == "See Guide now."
+    for width in (1, 7, 61):
+        sanitizer = StreamingSpeechSanitizer(max_buffer_chars=64)
+        parts = []
+        for offset in range(0, len(source), width):
+            parts.append(sanitizer.feed(source[offset : offset + width]))
+            assert sanitizer.buffered_chars <= sanitizer.max_buffer_chars
+        parts.append(sanitizer.finish())
+        assert speech._final_whitespace_cleanup("".join(parts)) == "See Guide now."
+
+
 def test_long_unmatched_speech_delimiter_has_bounded_fallback() -> None:
     sanitizer = StreamingSpeechSanitizer(max_buffer_chars=64)
     source = "before **" + ("x" * 80)
