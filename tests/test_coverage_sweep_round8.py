@@ -133,7 +133,7 @@ async def test_model_catalog_candidate_defers_values_but_checks_fixed_requiremen
         "async_get_request_rules",
         AsyncMock(return_value=rules),
     )
-    build = Mock(return_value=SimpleNamespace())
+    build = Mock(return_value=SimpleNamespace(tool_limit=None))
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.request.build_provider_request_snapshot",
         build,
@@ -211,7 +211,7 @@ async def test_model_catalog_candidate_rejects_concrete_routed_request(
         calls += 1
         if calls == 2:
             raise ValueError("routed request invalid")
-        return SimpleNamespace()
+        return SimpleNamespace(tool_limit=None)
 
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.request.build_provider_request_snapshot",

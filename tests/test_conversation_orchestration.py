@@ -152,7 +152,7 @@ def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
 
 
 @pytest.mark.parametrize(("mode", "expected"), [
-    ("native-live", True), ("native-recreated", False), ("native-expired", False),
+    ("native-live", True), ("native-recreated", False), ("native-awaiting-cleanup", True),
     ("managed-resumed", True), ("managed-new", False),
 ])
 async def test_archive_liveness_checks_the_preexisting_conversation(monkeypatch, mode, expected):
@@ -168,7 +168,7 @@ async def test_archive_liveness_checks_the_preexisting_conversation(monkeypatch,
     now = dt_util.utcnow()
     prior = SimpleNamespace(conversation_id=conversation_id, last_updated=now, async_on_cleanup=lambda _: None)
     active = prior
-    if mode == "native-expired":
+    if mode == "native-awaiting-cleanup":
         prior.last_updated -= CONVERSATION_TIMEOUT + timedelta(seconds=1)
     if mode == "native-recreated":
         active = SimpleNamespace(conversation_id=conversation_id, last_updated=now, async_on_cleanup=lambda _: None)

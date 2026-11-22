@@ -131,7 +131,7 @@ async def test_catalog_checks_single_field_routing_without_losing_other_options(
             )
         ),
     )
-    build = Mock()
+    build = Mock(return_value=SimpleNamespace(tool_limit=None))
     monkeypatch.setattr(request, "build_provider_request_snapshot", build)
     manager = models.ModelCatalogManager(hass)
     assert await manager._candidate_preserves_saved_requests(catalog.BUNDLED_CATALOG)
