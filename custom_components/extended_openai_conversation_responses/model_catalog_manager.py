@@ -805,7 +805,9 @@ class ModelCatalogManager:
                 require_provider_restore_complete(self.hass, connection.entry.entry_id)
                 for assistant in connection.assistants:
                     get_agent_maintenance_gate(
-                        self.hass, connection.entry.entry_id, assistant.subentry.subentry_id
+                        self.hass,
+                        connection.entry.entry_id,
+                        assistant.subentry.subentry_id,
                     ).require_idle()
             self.hass.data[_DATA_PUBLICATION] = True
             try:
