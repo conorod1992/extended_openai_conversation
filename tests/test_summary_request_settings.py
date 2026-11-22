@@ -1,6 +1,8 @@
 """Auxiliary summaries keep effective reasoning and have a bounded recovery budget."""
 
 import asyncio
+from contextvars import ContextVar
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -214,7 +216,9 @@ async def test_model_ceiling_prevents_a_pointless_retry(monkeypatch, mode):
 
     capabilities = deepcopy(request.get_model_capabilities("gpt-5"))
     capabilities["limits"]["max_output_tokens"] = 1024
-    monkeypatch.setattr(request, "request_model_capabilities", lambda *_, **_kwargs: capabilities)
+    monkeypatch.setattr(
+        request, "request_model_capabilities", lambda *_, **_kwargs: capabilities
+    )
     entity, create = _entity(
         mode, _response(mode, exhausted=True), {"reasoning_effort": "minimal"}
     )
@@ -288,3 +292,137 @@ async def test_live_provider_loop_hands_effective_options_to_compaction(
     assert call.args[1:] == ("gpt-5", mode)
     assert call.kwargs["request_options"]["reasoning_effort"] == "minimal"
     assert entity.subentry.data["chat_model"] != "gpt-5"
+
+
+@pytest.mark.parametrize("mode", ["responses", "chat_completions"])
+@pytest.mark.parametrize("deferred", [False, True])
+async def test_parent_summary_retries_on_captured_provider(
+    hass, monkeypatch, mode, deferred
+):
+    from custom_components.extended_openai_conversation_responses import request
+    from tests import (
+        test_provider_tool_protocol as chat,
+        test_tool_exchange_protocol as responses,
+    )
+
+    fixture = responses if mode == "responses" else chat
+    stream = fixture._final_stream("Current reply")
+    if deferred:
+        if mode == "responses":
+            stream.events[-1].response.usage.input_tokens = 5000
+        else:
+            stream._chunks[-1].usage = SimpleNamespace(
+                prompt_tokens=5000, completion_tokens=5, total_tokens=5005
+            )
+    entity = fixture._entity(hass, [])
+    entity.entry.data = {
+        "api_provider": "azure",
+        "base_url": "https://azure.invalid/openai/v1",
+    }
+    entity.entry.async_create_task = lambda _hass, coroutine: asyncio.create_task(
+        coroutine
+    )
+    original_catalogue = request.get_model_capabilities
+    current_catalogue = original_catalogue
+    monkeypatch.setattr(
+        request, "get_model_capabilities", lambda *a, **kw: current_catalogue(*a, **kw)
+    )
+    first_summary = asyncio.Event()
+    release = asyncio.Event()
+    summary_calls = []
+
+    async def send(**kwargs):
+        if kwargs.get("stream"):
+            return stream
+        summary_calls.append(kwargs)
+        if len(summary_calls) == 1:
+            first_summary.set()
+            await release.wait()
+            return _response(mode, exhausted=True)
+        return _response(mode)
+
+    old_client = entity.entry.runtime_data
+    if mode == "responses":
+        old_client.responses.create = send
+    else:
+        old_client.chat.completions.create = send
+    new_create = AsyncMock(return_value=_response(mode))
+    next_client = SimpleNamespace(
+        responses=SimpleNamespace(create=new_create),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=new_create)),
+    )
+    account = ContextVar("summary_test_run", default="parent")
+    accounting_contexts = []
+
+    async def record(**kwargs):
+        if kwargs["request_stage"] == "context_summary":
+            accounting_contexts.append(account.get())
+
+    old_usage = SimpleNamespace(
+        _current_run=account,
+        current_run=account.get,
+        async_record_request=AsyncMock(side_effect=record),
+    )
+    next_usage = SimpleNamespace(async_record_request=AsyncMock())
+    entity._usage = old_usage
+    options = {
+        **entity.subentry.data,
+        "chat_model": "primary-deployment",
+        "azure_model": "gpt-5",
+        "reasoning_effort": "minimal",
+        "context_truncate_strategy": "summarize",
+        "context_threshold": 1000 if deferred else 100,
+    }
+    log = fixture._chat_log(hass)
+    log.content[1:1] = _normal_history(3)[1:]
+    task = asyncio.create_task(
+        entity._async_handle_chat_log(log, [], [], request_options=options)
+    )
+    try:
+        async with asyncio.timeout(5):
+            await first_summary.wait()
+            entity.entry.runtime_data = next_client
+            entity.entry.data = {"api_provider": "openai"}
+            entity._usage = next_usage
+
+            def replacement(*args, **kwargs):
+                capabilities = deepcopy(original_catalogue(*args, **kwargs))
+                capabilities["limits"]["max_output_tokens"] = 1024
+                return capabilities
+
+            current_catalogue = replacement
+            options["reasoning_effort"] = "high"
+            release.set()
+            await task
+            if deferred:
+                await entity._deferred_context_summary_manager.async_apply(
+                    log.conversation_id, log.content
+                )
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    new_create.assert_not_awaited()
+    next_usage.async_record_request.assert_not_awaited()
+    field = "max_output_tokens" if mode == "responses" else "max_completion_tokens"
+    assert [call[field] for call in summary_calls] == [8192, 16384]
+    assert [call["model"] for call in summary_calls] == ["primary-deployment"] * 2
+    assert [
+        ((call.get("reasoning") or {}).get("effort", call.get("reasoning_effort")))
+        for call in summary_calls
+    ] == ["minimal"] * 2
+    records = [
+        c.kwargs
+        for c in old_usage.async_record_request.await_args_list
+        if c.kwargs["request_stage"] == "context_summary"
+    ]
+    assert [(r["provider"], r["successful"]) for r in records] == [
+        ("azure", False),
+        ("azure", True),
+    ]
+    assert accounting_contexts == [None if deferred else "parent"] * 2
+    assert any(
+        "The user prefers Celsius." in (item.content or "") for item in log.content
+    )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import logging
 import re
@@ -204,6 +204,9 @@ class ProviderRequestSnapshot:
     reasoning_items_supported: bool = False
     reasoning_current_turn_only: bool = False
     tool_limit: int | None = None
+    model_capabilities: Mapping[str, Any] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 def canonical_json(value: Any) -> str:
@@ -555,10 +558,15 @@ def auxiliary_output_token_limit(
     entry_data: Mapping[str, Any],
     *,
     client: Any = None,
+    model_capabilities: Mapping[str, Any] | None = None,
 ) -> tuple[str, int]:
     """Select a small auxiliary request's token field using live provider rules."""
-    capabilities = request_model_capabilities(
-        {**options, CONF_CHAT_MODEL: model}, entry_data, client=client
+    capabilities = (
+        model_capabilities
+        if model_capabilities is not None
+        else request_model_capabilities(
+            {**options, CONF_CHAT_MODEL: model}, entry_data, client=client
+        )
     )
     with model_capability_snapshot(model, capabilities):
         try:
@@ -614,10 +622,13 @@ def context_summary_request_settings(
     entry_data: Mapping[str, Any],
     *,
     retry: bool = False,
+    model_capabilities: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Bound auxiliary output deliberately, including the model's hidden reasoning."""
-    capabilities = request_model_capabilities(
-        {**options, CONF_CHAT_MODEL: model}, entry_data
+    capabilities = (
+        model_capabilities
+        if model_capabilities is not None
+        else request_model_capabilities({**options, CONF_CHAT_MODEL: model}, entry_data)
     )
     with model_capability_snapshot(model, capabilities):
         effort = None
@@ -636,7 +647,7 @@ def context_summary_request_settings(
             limit * (2 if retry else 1), capabilities["limits"]["max_output_tokens"]
         )
         field, value = auxiliary_output_token_limit(
-            model, api_mode, limit, options, entry_data
+            model, api_mode, limit, options, entry_data, model_capabilities=capabilities
         )
     kwargs: dict[str, Any] = {field: value}
     if effort is not None:
@@ -802,6 +813,7 @@ def build_provider_request_snapshot(
             and reasoning_context_model in _CURRENT_TURN_REASONING_MODELS
             and is_native_openai_connection(entry_data, client=client)
         ),
+        model_capabilities=capabilities,
     )
 
 

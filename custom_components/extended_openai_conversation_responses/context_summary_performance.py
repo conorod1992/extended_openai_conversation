@@ -6,7 +6,8 @@ import asyncio
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
 
 from .const import (
     CONF_CONTEXT_THRESHOLD,
@@ -18,9 +19,24 @@ from .const import (
 from .context import HistoryEstimator
 from .context_summary import ContextSummaryResult, DeferredContextSummaryManager
 
+if TYPE_CHECKING:
+    from openai import AsyncClient
+
+    from .usage import UsageManager
+
 _DEFER_CONTEXT_SUMMARY: ContextVar[bool] = ContextVar(
     "extended_openai_defer_context_summary", default=False
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSummaryProvider:
+    """The parent route's transport, capability resolution and accounting owner."""
+
+    client: AsyncClient
+    provider: str
+    capabilities: Mapping[str, Any]
+    usage: UsageManager | None
 
 
 def _manager(entity: Any) -> DeferredContextSummaryManager:
@@ -37,15 +53,22 @@ async def _summarize_detached(
     model: str,
     api_mode: str,
     request_options: Mapping[str, Any] | None = None,
+    provider_binding: ContextSummaryProvider | None = None,
 ) -> str | None:
     """Account background summary cost without mutating an already-finalized run."""
-    usage = getattr(entity, "_usage", None)
+    usage = (
+        provider_binding.usage
+        if provider_binding is not None
+        else getattr(entity, "_usage", None)
+    )
     run_context = getattr(usage, "_current_run", None) if usage is not None else None
     token = run_context.set(None) if run_context is not None else None
     try:
-        kwargs = (
-            {"request_options": request_options} if request_options is not None else {}
-        )
+        kwargs: dict[str, Any] = {}
+        if request_options is not None:
+            kwargs["request_options"] = request_options
+        if provider_binding is not None:
+            kwargs["provider_binding"] = provider_binding
         result = await entity._async_summarize_history(older, model, api_mode, **kwargs)
         return cast(str | None, result)
     finally:
@@ -81,6 +104,7 @@ async def schedule_context_summary(
     api_mode: str | None = None,
     estimate: HistoryEstimator | None = None,
     request_options: Mapping[str, Any] | None = None,
+    provider_binding: ContextSummaryProvider | None = None,
 ) -> bool:
     """Schedule eligible optional maintenance, leaving direct truncation synchronous."""
     options = dict(
@@ -119,7 +143,12 @@ async def schedule_context_summary(
             api_mode=api_mode,
             summarize=lambda older, summary_model, summary_api_mode: (
                 _summarize_detached(
-                    self, older, summary_model, summary_api_mode, options
+                    self,
+                    older,
+                    summary_model,
+                    summary_api_mode,
+                    options,
+                    provider_binding,
                 )
             ),
             scheduler=schedule,
