@@ -70,8 +70,23 @@ CATALOG_URL = (
 UPDATE_INTERVAL = 24 * 60 * 60
 DATA_MANAGER = f"{DOMAIN}.model_catalog"
 _DATA_REFRESH = f"{DOMAIN}.model_catalog_refresh"
+_DATA_PUBLICATION = f"{DOMAIN}.model_catalog_publication"
 WS_CATALOG = f"{DOMAIN}/model_catalog"
 _LOGGER = logging.getLogger(__name__)
+
+
+def require_current_configuration_catalogue(
+    hass: HomeAssistant, generation: int
+) -> None:
+    """Check model-dependent validation before a synchronous configuration write."""
+    if _DATA_PUBLICATION in hass.data:
+        raise HomeAssistantError(
+            "Model data is being updated. Wait for it to finish and retry saving."
+        )
+    if generation != catalog_generation():
+        raise HomeAssistantError(
+            "Model data changed during validation. Review the settings and retry saving."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -782,14 +797,22 @@ class ModelCatalogManager:
                 )
             for connection in inventory:
                 require_provider_restore_complete(self.hass, connection.entry.entry_id)
-            await self._save(
-                catalog, available, etag, self.last_checked, self.incompatible_catalog
-            )
-            activate_catalog(catalog)
-            self.catalog = catalog
-            self.available_catalog = available
-            self.etag = etag
-            self.last_error = None
+            self.hass.data[_DATA_PUBLICATION] = True
+            try:
+                await self._save(
+                    catalog,
+                    available,
+                    etag,
+                    self.last_checked,
+                    self.incompatible_catalog,
+                )
+                activate_catalog(catalog)
+                self.catalog = catalog
+                self.available_catalog = available
+                self.etag = etag
+                self.last_error = None
+            finally:
+                del self.hass.data[_DATA_PUBLICATION]
             try:
                 sync_all_model_lifecycles(self.hass)
             except Exception as err:

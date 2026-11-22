@@ -167,6 +167,7 @@ from .management_request_preview import (
 )
 from .memory import ANONYMOUS_USER_ID, async_get_memory
 from .model_catalog import active_catalog_version, catalog_generation
+from .model_catalog_manager import require_current_configuration_catalogue
 from .regex_execution import async_process_speech_text
 from .request import (
     async_capacity_ha_snapshot as _async_capacity_ha_snapshot,
@@ -1178,6 +1179,7 @@ async def _async_prepare_configuration_write(
     The direct update route uses the strict merge and propagates validation errors.
     """
     hass, entry, subentry = request.hass, request.entry, request.subentry
+    model_generation = catalog_generation()
     phase = perf_counter()
     revision = request.message.get("revision")
     if not isinstance(revision, str):
@@ -1246,6 +1248,8 @@ async def _async_prepare_configuration_write(
             hass, entry, subentry, normalized
         )
         _require_agent_config_revision(subentry, revision)
+    # Both callers persist synchronously after preparation returns.
+    require_current_configuration_catalogue(hass, model_generation)
     persisted = project_agent_config_updates(
         subentry.data, updates, normalized, provider=provider
     )

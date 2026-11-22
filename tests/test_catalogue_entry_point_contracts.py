@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    management_ui as ui,
     model_catalog as data,
     model_catalog_manager as runtime,
 )
@@ -24,6 +25,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     RequestRules,
 )
 from homeassistant.exceptions import HomeAssistantError
+from tests.test_management_ui import _entry_pair
 from tests.test_model_catalog import MemoryStore as RuleStore
 from tests.test_model_catalog_transitions import MemoryStore
 
@@ -272,6 +274,111 @@ async def test_catalogue_freshness_is_checked_inside_the_owned_save(
     assert manager.catalog == expanded
 
 
+@pytest.mark.parametrize("action", ["save", "update"])
+@pytest.mark.parametrize("overlap", ["publishing", "validated", "save_failed"])
+async def test_configuration_write_cannot_commit_against_a_resetting_catalogue(
+    hass, monkeypatch, catalogue_publication, action, overlap
+):
+    manager, expanded, _ = catalogue_publication
+    entry, child = _entry_pair()
+    child.data.update(chat_model="gpt-4o", api_mode="responses", max_tokens=500)
+    original = dict(child.data)
+    hass.config_entries.async_entries.return_value = [entry]
+    rules = RequestRules(RuleStore())
+    await rules.async_initialize()
+    monkeypatch.setattr(
+        runtime, "async_get_request_rules", AsyncMock(return_value=rules)
+    )
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
+
+    def update_subentry(_entry, subentry, *, data, **_):
+        subentry.data = data
+
+    hass.config_entries.async_update_subentry.side_effect = update_subentry
+    request = ui._ManagementRequest(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "configuration",
+            "action": action,
+            "config": {"max_tokens": 20000},
+            "revision": ui.persisted_config_projection(child).revision,
+        },
+        entry.entry_id,
+        child.subentry_id,
+        entry,
+        child,
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    if overlap == "validated":
+        validate = ui._async_validate_configuration_request
+
+        async def pause_validation(*args):
+            result = await validate(*args)
+            entered.set()
+            await release.wait()
+            return result
+
+        monkeypatch.setattr(
+            ui, "_async_validate_configuration_request", pause_validation
+        )
+        edit = asyncio.create_task(ui.async_configuration_command(request))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            assert (await manager.async_reset())["source"] == "bundled"
+        finally:
+            release.set()
+            result = (await asyncio.gather(edit, return_exceptions=True))[0]
+    else:
+        save = manager.store.async_save
+
+        async def pause_save(value):
+            entered.set()
+            await release.wait()
+            if overlap == "save_failed":
+                raise OSError("save failed")
+            await save(value)
+
+        monkeypatch.setattr(manager.store, "async_save", pause_save)
+        reset = asyncio.create_task(manager.async_reset())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            assert manager.catalog == expanded
+            result = (
+                await asyncio.gather(
+                    ui.async_configuration_command(request), return_exceptions=True
+                )
+            )[0]
+        finally:
+            release.set()
+            reset_status = await reset
+        if overlap == "save_failed":
+            assert reset_status["last_error"]
+            assert manager.catalog == manager.store.saved["catalog"] == expanded
+        else:
+            assert reset_status["source"] == "bundled"
+
+    assert isinstance(result, HomeAssistantError)
+    assert "Model data" in str(result) and "retry" in str(result)
+    hass.config_entries.async_update_subentry.assert_not_called()
+    assert child.data == original
+    if overlap == "save_failed":
+        assert (await ui.async_configuration_command(request))["valid"] is True
+        assert child.data["max_tokens"] == 20000
+    else:
+        assert manager.catalog is manager.store.saved["catalog"] is None
+        request.message["config"]["max_tokens"] = 600
+        assert (await ui.async_configuration_command(request))["valid"] is True
+        assert child.data["max_tokens"] == 600
+    assert (
+        build_provider_request_snapshot(child.data, entry.data).api_kwargs[
+            "max_output_tokens"
+        ]
+        == child.data["max_tokens"]
+    )
+
+
 @pytest.mark.parametrize("route", ["apply", "reset"])
 async def test_catalogue_writers_settle_save_and_activation_on_cancellation(
     hass, monkeypatch, catalogue_publication, route
@@ -299,6 +406,10 @@ async def test_catalogue_writers_settle_save_and_activation_on_cancellation(
         await asyncio.sleep(0)
         assert manager._lock.locked()
         assert not task.done()
+        with pytest.raises(HomeAssistantError, match="Model data is being updated"):
+            runtime.require_current_configuration_catalogue(
+                hass, data.catalog_generation()
+            )
         task.cancel()
     finally:
         release.set()
@@ -313,6 +424,7 @@ async def test_catalogue_writers_settle_save_and_activation_on_cancellation(
         else data.BUNDLED_CATALOG["catalog_version"]
     )
     assert manager.last_error is None
+    runtime.require_current_configuration_catalogue(hass, data.catalog_generation())
 
 
 @pytest.mark.parametrize("route", ["apply", "reset"])
