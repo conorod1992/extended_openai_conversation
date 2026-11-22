@@ -12,6 +12,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+    get_agent_maintenance_gate,
+)
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.conversation import (
     _ACTIVE_FUNCTION_CONFIG,
@@ -832,6 +835,47 @@ async def test_waiter_uses_maintenance_gate_and_stops_after_execution(
 
     execute_due.assert_awaited_once_with(record.call_id)
     assert record.call_id not in manager._tasks
+
+
+@pytest.mark.parametrize("expired", [False, True])
+async def test_delayed_call_keeps_waiter_alive_during_restore_recovery(
+    hass, monkeypatch, expired
+):
+    manager = DelayedToolManager(hass)
+    manager._started = True
+    record = replace(
+        _record(),
+        expires_at=(
+            dt_util.utcnow() + timedelta(seconds=-1 if expired else 60)
+        ).isoformat(),
+    )
+    manager._records = {record.call_id: record}
+    manager._tasks = {record.call_id: asyncio.current_task()}
+    gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
+    gate.recovery_required = True
+    execute = AsyncMock(return_value=False)
+    discard = AsyncMock(return_value=True)
+    monkeypatch.setattr(manager, "_async_execute_due_detached", execute)
+    monkeypatch.setattr(manager, "_async_discard", discard)
+
+    async def recover_after_delay(seconds):
+        if seconds == _AGENT_RETRY_SECONDS:
+            gate.recovery_required = False
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.delayed_tools.asyncio.sleep",
+        recover_after_delay,
+    )
+    await manager._async_wait_and_execute(record.call_id)
+    assert record.call_id not in manager._tasks
+    if expired:
+        execute.assert_not_awaited()
+        discard.assert_awaited_once_with(
+            record.call_id, "execution grace period expired"
+        )
+    else:
+        execute.assert_awaited_once_with(record.call_id)
+        discard.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

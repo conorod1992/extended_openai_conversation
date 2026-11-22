@@ -21,6 +21,10 @@ if TYPE_CHECKING:
 _AGENT_MAINTENANCE_GATES = f"{DOMAIN}.agent_maintenance_gates"
 
 
+class AgentRestoreRecoveryRequired(HomeAssistantError):
+    """An unsettled restore temporarily blocks normal agent work."""
+
+
 class AgentMaintenanceGate:
     """Writer-preferring reader/writer gate for one conversation agent."""
 
@@ -71,7 +75,7 @@ class AgentMaintenanceGate:
             and self._exclusive_owner.get() is self._active_owner
             and self._recovery_owner is self._active_owner
         ):
-            raise HomeAssistantError(
+            raise AgentRestoreRecoveryRequired(
                 "Assistant restore recovery is required; retry after recovery completes"
             )
 

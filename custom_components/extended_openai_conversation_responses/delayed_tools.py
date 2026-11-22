@@ -6,7 +6,7 @@ import asyncio
 from contextvars import Context as TaskContext
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 import hashlib
 import json
 import logging
@@ -25,7 +25,7 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .agent_config import function_tool_enabled
-from .agent_maintenance import get_agent_maintenance_gate
+from .agent_maintenance import AgentRestoreRecoveryRequired, get_agent_maintenance_gate
 from .const import DOMAIN
 from .function_tool_quarantine import (
     _runtime_configured_function_tools as configured_function_tools_from_data,
@@ -714,8 +714,25 @@ class DelayedToolManager:
         # Establish the lease inside the new context so nested tool execution can
         # reenter it safely even when a restore is waiting for exclusive access.
         with detached_execution():
-            async with gate.shared():
-                return await self._async_execute_due_detached(call_id)
+            try:
+                async with gate.shared():
+                    return await self._async_execute_due_detached(call_id)
+            except AgentRestoreRecoveryRequired:
+                current = self._records.get(call_id)
+                if current is None or current.status != _PENDING:
+                    return False
+                if self._execution_grace_expired(current, dt_util.utcnow()):
+                    return not await self._async_discard(
+                        call_id, "execution grace period expired"
+                    )
+                return True
+
+    @staticmethod
+    def _execution_grace_expired(record: DelayedToolCall, now: datetime) -> bool:
+        if record.expires_at is None:
+            return False
+        expiry = dt_util.parse_datetime(record.expires_at)
+        return expiry is None or now >= dt_util.as_utc(expiry)
 
     async def _async_execute_due_detached(self, call_id: str) -> bool:
         """Re-authorize a due call against live configuration and execute it once."""
@@ -729,12 +746,10 @@ class DelayedToolManager:
         now = dt_util.utcnow()
         if dt_util.as_utc(due_at) > now:
             return True
-        if record.expires_at is not None:
-            expiry = dt_util.parse_datetime(record.expires_at)
-            if expiry is None or now >= dt_util.as_utc(expiry):
-                return not await self._async_discard(
-                    call_id, "execution grace period expired"
-                )
+        if self._execution_grace_expired(record, now):
+            return not await self._async_discard(
+                call_id, "execution grace period expired"
+            )
 
         with bind_active_ha_context(Context(user_id=record.user_id)):
             entry = self.hass.config_entries.async_get_entry(record.entry_id)
