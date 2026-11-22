@@ -1598,6 +1598,7 @@ async def _restore_import(
         raise backup.BackupError(
             "Select private configuration and preview the shared provider connection before restoring it"
         )
+    restore_cancelled = False
     try:
         restored = await transfer.async_restore_transfer(
             hass,
@@ -1617,15 +1618,24 @@ async def _restore_import(
             if restore_provider
             else None,
         )
+    except asyncio.CancelledError:
+        restore_cancelled = True
+        raise
     finally:
         if _imports(hass).get(session.session_id) is not session:
             _retire(hass, session)
+            # Another inspection can start reading after restore's preparation
+            # finishes. Drain that reader and unlink outside the assistant lease.
+            cleanup = asyncio.create_task(_async_delete_session_file(hass, session))
+            cancellation = await async_wait_owned_cleanup(cleanup)
             try:
-                await _async_remove_path(hass, session.path)
+                cleanup.result()
             except OSError:
                 _LOGGER.warning("Restore upload cleanup is pending")
                 if restored is not None:
                     restored = {**restored, "cleanup_pending": True}
+            if cancellation is not None and not restore_cancelled:
+                raise cancellation
     return restored
 
 

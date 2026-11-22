@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import hashlib
 import os
+from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -18,6 +19,9 @@ from custom_components.extended_openai_conversation_responses import (
     backup,
     backup_transfer,
     transfer,
+)
+from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+    _async_run_exclusive_operation,
 )
 
 
@@ -794,6 +798,168 @@ async def test_native_upload_worker_survives_timeout_without_blocking_agent(hass
         release.set()
         await backup_transfer._discard_import(hass, session.session_id)
     assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    "retirement", ["restore", "cancelled-restore", "cancelled-commit", "expiry"]
+)
+async def test_retired_upload_keeps_file_and_quota_until_native_reader_settles(
+    hass, tmp_path, monkeypatch, retirement
+):
+    """An overlapping inspection owns its staged file through restore or expiry."""
+    path = tmp_path / "overlapping-upload.json"
+    path.write_bytes(b"data")
+    session = _completed_import_session(
+        str(path),
+        preview_token="preview",
+        preview_revision="current",
+        preview_sections=(transfer.SECTION_CONFIGURATION,),
+    )
+    backup_transfer._imports(hass)[session.session_id] = session
+    backup_transfer._latest_previews(hass)[(session.entry_id, session.subentry_id)] = (
+        session.session_id,
+        "preview",
+    )
+    gate = backup_transfer.get_agent_maintenance_gate(
+        hass, session.entry_id, session.subentry_id
+    )
+    loop = asyncio.get_running_loop()
+    restore_ready, commit_release = asyncio.Event(), asyncio.Event()
+    commit_started, finish_commit = asyncio.Event(), asyncio.Event()
+    reader_started, reader_draining = asyncio.Event(), asyncio.Event()
+    reader_release = Event()
+    reads = []
+    loaded = []
+
+    def read_upload(filename, kind):
+        reads.append((filename, kind))
+        if len(reads) == 2:
+            loop.call_soon_threadsafe(reader_started.set)
+            assert reader_release.wait(10)
+        loaded.append(Path(filename).read_bytes())
+        return {}
+
+    async def commit_restore(*_args, precondition, **_kwargs):
+        restore_ready.set()
+        await commit_release.wait()
+
+        async def commit():
+            await precondition()
+            if retirement == "cancelled-commit":
+                commit_started.set()
+                await finish_commit.wait()
+            return {"status": "restored"}
+
+        return await _async_run_exclusive_operation(gate, commit)
+
+    wait_owned_cleanup = backup_transfer.async_wait_owned_cleanup
+
+    async def observe_reader_wait(task):
+        if task is session.preparation:
+            reader_draining.set()
+        return await wait_owned_cleanup(task)
+
+    monkeypatch.setattr(hass, "async_add_executor_job", asyncio.to_thread)
+    monkeypatch.setattr(backup_transfer, "_load_uploaded_document", read_upload)
+    monkeypatch.setattr(
+        transfer, "async_inspect_decoded_transfer", AsyncMock(return_value=object())
+    )
+    monkeypatch.setattr(backup_transfer, "_snapshot_revision", lambda *_: "current")
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        transfer,
+        "async_apply_user_scope_mappings",
+        AsyncMock(side_effect=lambda value, *_: value),
+    )
+    monkeypatch.setattr(transfer, "async_restore_transfer", commit_restore)
+    monkeypatch.setattr(
+        backup_transfer, "async_wait_owned_cleanup", observe_reader_wait
+    )
+
+    restore = asyncio.create_task(
+        backup_transfer._restore_import(
+            hass,
+            SimpleNamespace(entry_id=session.entry_id),
+            SimpleNamespace(subentry_id=session.subentry_id),
+            {"session_id": session.session_id, "preview_token": "preview"},
+        )
+    )
+    tasks = [restore]
+    request = {"session_id": session.session_id, "inspect_only": True}
+    try:
+        await asyncio.wait_for(restore_ready.wait(), timeout=5)
+        inspect = asyncio.create_task(
+            backup_transfer._inspect_import(
+                hass, session.entry_id, session.subentry_id, request
+            )
+        )
+        tasks.append(inspect)
+        await asyncio.wait_for(reader_started.wait(), timeout=5)
+        preparation = session.preparation
+        assert preparation is not None
+
+        owner = restore
+        if retirement == "expiry":
+            session.expires_at = 0
+            owner = asyncio.create_task(backup_transfer._async_cleanup_expired(hass))
+            tasks.append(owner)
+        else:
+            commit_release.set()
+        if retirement == "cancelled-commit":
+            await asyncio.wait_for(commit_started.wait(), timeout=5)
+            restore.cancel("first cancellation")
+            await asyncio.sleep(0)
+            finish_commit.set()
+        waiting = asyncio.create_task(reader_draining.wait())
+        tasks.append(waiting)
+        done, _ = await asyncio.wait(
+            {owner, waiting}, timeout=5, return_when=asyncio.FIRST_COMPLETED
+        )
+        assert waiting in done and owner not in done
+        assert session.session_id not in backup_transfer._imports(hass)
+        assert path.read_bytes() == b"data"
+        assert backup_transfer._temporary_bytes(hass) == session.expected_size
+        assert backup_transfer._pending(hass)[session.path].reader is preparation
+        async with asyncio.timeout(5), gate.shared():
+            assert not preparation.done()
+
+        if retirement == "expiry":
+            with pytest.raises(backup.BackupError, match="expired or does not exist"):
+                await backup_transfer._inspect_import(
+                    hass, session.entry_id, session.subentry_id, request
+                )
+        elif retirement in {"cancelled-restore", "cancelled-commit"}:
+            if retirement == "cancelled-restore":
+                restore.cancel("first cancellation")
+                await asyncio.sleep(0)
+            restore.cancel("second cancellation")
+            await asyncio.sleep(0)
+            assert not restore.done()
+            assert path.exists()
+
+        reader_release.set()
+        if retirement == "expiry":
+            await asyncio.wait_for(owner, timeout=5)
+            commit_release.set()
+            with pytest.raises(backup.BackupError, match="expired or was cancelled"):
+                await asyncio.wait_for(restore, timeout=5)
+        elif retirement in {"cancelled-restore", "cancelled-commit"}:
+            with pytest.raises(asyncio.CancelledError, match="first cancellation"):
+                await asyncio.wait_for(restore, timeout=5)
+        else:
+            assert await asyncio.wait_for(restore, timeout=5) == {"status": "restored"}
+        with pytest.raises(backup.BackupError, match="inspection was cancelled"):
+            await asyncio.wait_for(inspect, timeout=5)
+        assert len(reads) == 2
+        assert loaded == [b"data", b"data"]
+        assert not path.exists()
+        assert backup_transfer._temporary_bytes(hass) == 0
+    finally:
+        commit_release.set()
+        finish_commit.set()
+        reader_release.set()
+        reader_draining.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class _Exclusive:
