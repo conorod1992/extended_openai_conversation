@@ -384,6 +384,9 @@ jobs:
             tests_real_ha/test_agent_private_data_deletion.py \
             tests_real_ha/test_archive_record_integrity.py \
             tests_real_ha/test_usage_period_statistics.py \
+            tests_real_ha/test_archive_private_activity.py::test_native_private_archive_follows_core_session_cleanup \
+            tests_real_ha/test_ai_task_provider_wire.py::test_structured_task_returns_selector_normalized_data \
+            tests_real_ha/test_provider_group_budget.py \
             -n 2 \
             --dist=loadscope \
             -v \
