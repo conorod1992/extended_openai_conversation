@@ -75,7 +75,7 @@ export function bindHALlmTools(panel, acknowledge) {
     dialog.dataset.haLlmToolsDialog = "";
     dialog.setAttribute("aria-label", "Add Home Assistant tools");
     dialog.innerHTML = `<div class="dialog-header"><h2>Add Home Assistant tools</h2></div><div class="dialog-body">
-      <p>These tools are provided by Home Assistant or installed integrations. Only selected tools are added. Use Function Groups to limit request size. These tools are unavailable in Guest Mode.</p>
+      <p>These tools are provided by Home Assistant or installed integrations. Only selected tools are added. Function Groups can help by loading tools only when needed. These tools are unavailable in Guest Mode.</p>
       <p role="status" data-status>Loading available tools…</p>
       <label>Preview device<select data-device><option value="">No device</option></select></label>
       <label>Search<input type="search" data-search></label><label>Sources<select multiple data-sources aria-label="Filter by sources"></select><small>Leave sources unselected to show all sources.</small></label>
