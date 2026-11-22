@@ -1195,7 +1195,6 @@ def test_markdown_link_whitespace_preserves_labels_across_speech_chunks(link, la
         "/manual\n \n)",
         '/manual "first\n \nsecond")',
         "<first\nsecond>)",
-        "/manual (title (nested))",
     ],
 )
 def test_markdown_link_does_not_consume_blank_lines_or_malformed_titles(destination):

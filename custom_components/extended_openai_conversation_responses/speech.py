@@ -2076,8 +2076,6 @@ class StreamingSpeechSanitizer:
             if text[position] == closing:
                 position += 1
                 break
-            if closing == ")" and text[position] == "(":
-                return "no", start
             position += 1
         else:
             return unfinished()
