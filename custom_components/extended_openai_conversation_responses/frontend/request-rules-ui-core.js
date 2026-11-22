@@ -7,19 +7,6 @@ import {captureConfigurationOwner, configurationSubmissionIsCurrent, presentAckn
 import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
 
-const sharingGroupOptions = new WeakMap();
-export function refreshRuleSharingGroups(panel) {
-  const select = panel.shadowRoot?.querySelector("#rule-pack-group");
-  if (!select) return;
-  const groups = [{id:"",name:"Ungrouped"},...(panel._result?.groups || [])];
-  const signature = JSON.stringify(groups.map(group => [group.id,group.name]));
-  if (sharingGroupOptions.get(select) === signature) return;
-  const selected = select.value;
-  select.innerHTML = groups.map(group => `<option value="${panel._e(group.id)}">${panel._e(group.name)}</option>`).join("");
-  select.value = groups.some(group => group.id === selected) ? selected : "";
-  sharingGroupOptions.set(select,signature);
-}
-
 const matchLabel = (value) => ({equals:"Equals",starts_with:"Starts with",ends_with:"Ends with",contains:"Contains",sentence_pattern:"Sentence pattern"}[value] || value);
 const titleCase = (value) => String(value || "").replaceAll("_"," ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 
@@ -179,7 +166,6 @@ function renderRulesPage(panel, {query = panel._query || "", inPlaceSearch = fal
     <section class="content-card rule-settings" aria-labelledby="rule-matching-title"><div class="section-heading"><div><h2 id="rule-matching-title">Matching defaults</h2><p>Used by rules that have not chosen custom matching.</p></div></div><details class="eoc-details-base"><summary>Show default settings</summary><p class="help">Matching uses normalized text and explicitly authored alternatives.</p>${matchingControls("rules-default",defaults)}</details></section>
     <section class="content-card rule-wording" aria-labelledby="rule-wording-title"><div class="section-heading"><div><h2 id="rule-wording-title">Wording alternatives</h2><p>Manage different ways of saying the same thing.</p></div></div>${wordingEditor(panel,(panel._rulesSettingsDraft || result).wording_groups || [])}</section>
     <section class="content-card rule-test-tools" aria-labelledby="rule-test-title"><div class="section-heading"><div><h2 id="rule-test-title">Test rules</h2><p>Preview a match safely before choosing to run a live request.</p></div></div>${SAFE_TESTER}${LIVE_TESTER}</section>
-    <details id="rule-sharing" class="content-card eoc-details-base rule-sharing"><summary>Sharing</summary><p class="help">Import or export Request Rules for reuse or sharing.</p><div id="rule-sharing-content"></div></details>
     ${groupManager(panel,result)}`;
 }
 export function renderRequestRules(panel, presentation = {query:panel._query || "",inPlaceSearch:Boolean(panel._eocInPlaceRequestRuleSearch)}) { return renderRulesPage(panel,presentation); }
@@ -195,7 +181,6 @@ function prepareRequestRulesCollection(panel) {
   reconcileRequestRules(panel);
 }
 export function reconcileRequestRules(panel) {
-  refreshRuleSharingGroups(panel);
   const list=panel.shadowRoot.querySelector(".rule-list"), state=ruleCollections.get(list);
   if (!state || state.settings !== ruleSettingsSignature(panel)) return false;
   const result=panel._result || {}, rules=result.rules || [], filter=panel._ruleGroupFilter || "all", query=String(panel._query || "").trim().toLowerCase();
@@ -231,21 +216,6 @@ function syncScopeRevision(panel, result) {
     scope.revision=result.revision;
     scope.result=panel._result;
   }
-}
-export function applyRulePackImportMutation(panel, result) {
-  panel._result={...panel._result,
-    rules:[...(panel._result?.rules||[]),...result.rules],
-    groups:result.groups,
-    revision:result.revision};
-  syncScopeRevision(panel,panel._result);
-  const root=panel.shadowRoot;
-  const filter=root?.querySelector("#rule-group-filter");
-  if(filter){filter.innerHTML=groupFilterOptions(panel,result.groups);filter.value=panel._ruleGroupFilter||"all";}
-  const rows=root?.querySelector(".rule-group-manager-rows");
-  if(rows)rows.innerHTML=groupManagerRows(panel,result.groups,panel._result.rules);
-  const collection=ruleCollections.get(root?.querySelector(".rule-list"));
-  if(collection)collection.settings=ruleSettingsSignature(panel);
-  reconcileRequestRules(panel);
 }
 function finishMutation(panel,result,rules){
   panel._result={...(panel._result||{}),rules,revision:result.revision,...(result.diagnostics ? {diagnostics:result.diagnostics} : {})};
@@ -305,38 +275,8 @@ function bindWordingEditor(panel){
   bindOwnedEvent(add,"click","wording-add",()=>{const wrapper=document.createElement("div");wrapper.className="wording-group";wrapper.innerHTML='<label>Main phrase<textarea class="wording-canonical" rows="2" maxlength="100"></textarea></label><label>Other ways to say it<textarea class="wording-alternatives" rows="2" placeholder="Comma-separated alternatives"></textarea></label><button type="button" class="icon wording-remove" aria-label="Remove wording alternative">×</button>';root.querySelector("#wording-groups")?.append(wrapper);bindRemove();});
 }
 
-const sharingInitializations = new WeakMap();
-async function initializeRuleSharing(panel, sharing) {
-  let state = sharingInitializations.get(sharing);
-  if (!state) sharingInitializations.set(sharing, state = {ready:false, pending:null});
-  if (state.ready || state.pending) return state.pending;
-  const content = sharing.querySelector("#rule-sharing-content");
-  state.pending = import("./request-rule-sharing-ui.js").then(({bindRuleSharing}) => {
-    // A detached disclosure has no presentation owner. A later visit gets its
-    // own initialization and must not receive the old controls or authored data.
-    if (!sharing.isConnected) return;
-    bindRuleSharing(panel, sharing);
-    state.ready = true;
-  }).catch(error => {
-    if (!sharing.isConnected || !content) return;
-    content.replaceChildren();
-    const status = content.ownerDocument.createElement("p");
-    status.setAttribute("role", "alert");
-    status.textContent = `Unable to load Rule Sharing: ${error.message || String(error)}`;
-    const retry = content.ownerDocument.createElement("button");
-    retry.type = "button"; retry.className = "secondary";
-    retry.dataset.retryRuleSharing = "";
-    retry.textContent = "Retry Rule Sharing";
-    bindOwnedEvent(retry, "click", "rule-sharing-retry", () => { void initializeRuleSharing(panel, sharing); });
-    content.append(status, retry);
-  }).finally(() => { state.pending = null; });
-  return state.pending;
-}
 export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activateLiveTester}={}) {
   const root=panel.shadowRoot,list=root.querySelector(".rule-list"); prepareRequestRulesCollection(panel);
-  const sharing=root.querySelector("#rule-sharing");
-  bindOwnedEvent(sharing,"toggle","rule-sharing",()=>{if(sharing.open)void initializeRuleSharing(panel,sharing);});
-  if(sharing?.open)void initializeRuleSharing(panel,sharing);
   bindWordingEditor(panel);
   const filter=root.querySelector("#rule-group-filter");
   bindOwnedEvent(filter,"change","rule-group-filter",()=>{panel._ruleGroupFilter=filter.value;reconcileRequestRules(panel);root.querySelector("#rule-search")?.dispatchEvent(new Event("input",{bubbles:true}));});

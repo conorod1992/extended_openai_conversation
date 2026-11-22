@@ -6,10 +6,9 @@ from collections.abc import Callable, Iterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
-from hashlib import sha256
 import json
 import logging
-from time import monotonic, perf_counter
+from time import perf_counter
 from types import MappingProxyType
 from typing import Any, Final, cast
 from uuid import uuid4
@@ -87,7 +86,6 @@ from .function_configuration_repair import (
     has_unavailable_native_tool,
 )
 from .function_dependency_integrity import (
-    _rule_script_actions,
     async_finish_function_rename,
     async_validate_request_rule_functions,
     group_reference_updates,
@@ -176,13 +174,6 @@ from .request import (
     validate_runtime_readiness,
 )
 from .request_rule_match_preview import async_request_rule_match_preview
-from .request_rule_packs import (
-    async_append_rule_pack,
-    export_rule_pack,
-    prepare_rule_pack,
-    serialize_rule_pack,
-    validate_prepared_rule_pack as validate_rule_pack,
-)
 from .request_rules import (
     async_get_request_rules,
     get_request_rule_runtime,
@@ -190,7 +181,7 @@ from .request_rules import (
     validate_rule,
 )
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
-from .script_payload import is_function_service_action, set_effective_service_field
+from .script_payload import set_effective_service_field
 from .secret_redaction import is_redacted_secret, redact_secrets
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_finish_usage_retention_write, async_get_usage
@@ -699,152 +690,6 @@ async def _validate_request_rule_conditions(
     return list(dict.fromkeys(issues))
 
 
-async def _review_rule_pack(
-    hass: HomeAssistant,
-    prepared: Mapping[str, Any],
-    rules: Any,
-    configured_tools: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Inspect dependencies without executing or saving imported rules."""
-    snapshot = rules.snapshot()
-    if len(snapshot["rules"]) + len(prepared["rules"]) > 500:
-        raise HomeAssistantError("Request Rule limit reached")
-    new_group_names = {group["name"].casefold() for group in snapshot["groups"]}
-    added_group_names = {
-        group["name"].casefold()
-        for group in prepared["groups"]
-        if group["name"].casefold() not in new_group_names
-    }
-    if len(snapshot["groups"]) + len(added_group_names) > 100:
-        raise HomeAssistantError("Group limit reached")
-    group_names = {group["id"]: group["name"] for group in prepared["groups"]}
-    available = {
-        tool["spec"]["name"] for tool in configured_tools if function_tool_enabled(tool)
-    }
-    summaries = []
-    for rule in prepared["rules"]:
-        condition_issues = await _validate_request_rule_conditions(
-            hass, rule, require_available=False
-        )
-        actions = list(_rule_script_actions(rule))
-        function_names = sorted(
-            {
-                str(reference.payload["function"])
-                for reference in inspect_function_references(actions)
-                if reference.operation == "call"
-                and reference.payload is not None
-                and isinstance(reference.payload.get("function"), str)
-            }
-        )
-        missing_functions = sorted(set(function_names) - available)
-        await async_validate_request_rule_functions(
-            hass, rule, configured_tools, quarantined_names=missing_functions
-        )
-        entities = sorted(
-            {
-                entity
-                for action in actions
-                for value in (
-                    [action.get("target", {}).get("entity_id")]
-                    if isinstance(action.get("target"), Mapping)
-                    else []
-                )
-                for entity in (value if isinstance(value, list) else [value])
-                if isinstance(entity, str) and "{{" not in entity
-            }
-        )
-        missing_entities = [
-            entity for entity in entities if hass.states.get(entity) is None
-        ]
-        services = sorted(
-            {
-                service
-                for action in actions
-                if isinstance(
-                    service := action.get("action", action.get("service")), str
-                )
-                and "." in service
-                and not is_function_service_action(action)
-            }
-        )
-        missing_services = [
-            service
-            for service in services
-            if not hass.services.has_service(*service.split(".", 1))
-        ]
-        summaries.append(
-            {
-                "name": rule["name"],
-                "triggers": rule["phrases"][:3],
-                "group": group_names.get(rule["group_id"], "Ungrouped"),
-                "action_type": rule["action_type"],
-                "conditions": len(rule["conditions"]),
-                "function_tools": function_names,
-                "entities": entities,
-                "services": services,
-                "missing_dependencies": [
-                    *missing_functions,
-                    *missing_entities,
-                    *missing_services,
-                    *condition_issues,
-                ],
-                "continue_to_ai": rule["action"]["continue_to_ai"],
-                "continue_matching": rule["continue_matching"],
-                "ai_input_mode": rule["ai_input_mode"],
-                "ai_input_capture": rule["ai_input_capture"],
-                "status": "needs_attention"
-                if missing_functions
-                or missing_entities
-                or missing_services
-                or condition_issues
-                else "ready",
-            }
-        )
-    return {
-        "count": len(summaries),
-        "ready": sum(item["status"] == "ready" for item in summaries),
-        "needs_attention": sum(item["status"] != "ready" for item in summaries),
-        "rules": summaries,
-        "will_append": True,
-        "will_disable": True,
-        "new_groups": len(added_group_names),
-        "security": prepared.get("security"),
-        "revision": snapshot["revision"],
-    }
-
-
-def _rule_pack_digest(prepared: Mapping[str, Any]) -> str:
-    return sha256(
-        json.dumps(prepared, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-
-
-def _register_rule_pack_review(
-    rules: Any, prepared: Mapping[str, Any], revision: str
-) -> str:
-    reviews = getattr(rules, "_rule_pack_reviews", {})
-    now = monotonic()
-    reviews = {token: record for token, record in reviews.items() if record[2] > now}
-    token = uuid4().hex
-    reviews[token] = (_rule_pack_digest(prepared), revision, now + 600)
-    rules._rule_pack_reviews = dict(list(reviews.items())[-16:])
-    return token
-
-
-def _consume_rule_pack_review(
-    rules: Any, token: Any, prepared: Mapping[str, Any], revision: Any
-) -> None:
-    reviews = getattr(rules, "_rule_pack_reviews", {})
-    record = reviews.pop(token, None) if isinstance(token, str) else None
-    if (
-        record is None
-        or record[0] != _rule_pack_digest(prepared)
-        or record[1] != revision
-        or record[2] <= monotonic()
-    ):
-        raise HomeAssistantError("Review this exact Rule Pack before importing")
-
-
 @dataclass(frozen=True)
 class _ManagementRequest:
     """One validated agent selection shared by explicit section handlers."""
@@ -930,46 +775,6 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         rules = await async_get_request_rules(hass, entry_id, subentry_id)
         return await async_request_rule_match_preview(hass, rules, text)
     rules = await async_get_request_rules(hass, entry_id, subentry_id)
-    if action == "rule_pack_export":
-        pack = export_rule_pack(
-            rules,
-            message.get("selection"),
-            message.get("group_id"),
-            message.get("rule_ids"),
-            reviewed=message.get("reviewed_custom") is True,
-        )
-        if message.get("export_text") is True:
-            return {"json": serialize_rule_pack(pack)}
-        return pack
-    if action in {"rule_pack_review", "rule_pack_import"}:
-        parsed = await hass.async_add_executor_job(
-            prepare_rule_pack, message.get("pack")
-        )
-        prepared = validate_rule_pack(parsed)
-        from .request_rules import validate_rule_model_request
-
-        for candidate in prepared["rules"]:
-            validate_rule_model_request(
-                candidate, subentry.data, getattr(request.entry, "data", {})
-            )
-        tools = inspect_function_tools(subentry.data)
-        review = await _review_rule_pack(hass, prepared, rules, tools)
-        if action == "rule_pack_review":
-            review["review_token"] = _register_rule_pack_review(
-                rules, prepared, review["revision"]
-            )
-            return review
-        if message.get("confirm") is not True:
-            raise HomeAssistantError("Review and confirm the Rule Pack before import")
-        if message.get("revision") != review["revision"]:
-            raise HomeAssistantError("Request Rules changed after review; review again")
-        _consume_rule_pack_review(
-            rules, message.get("review_token"), prepared, review["revision"]
-        )
-        imported = await async_append_rule_pack(
-            rules, prepared, expected_revision=message.get("revision")
-        )
-        return {**imported, "review": review}
     if action == "list":
         snapshot = rules.snapshot()
         snapshot["rules"] = [
@@ -3532,15 +3337,10 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("wording_groups"): list,
         vol.Optional("groups"): vol.Any(str, list),
         vol.Optional(CONF_GUEST_ALLOWED_GROUP_IDS): list,
-        vol.Optional("selection"): str,
-        vol.Optional("rule_ids"): vol.Any(None, list),
-        vol.Optional("pack"): vol.Any(str, dict),
-        vol.Optional("review_token"): str,
         vol.Optional("enabled"): bool,
         vol.Optional("yaml"): str,
         vol.Optional("document"): vol.Any(str, dict),
         vol.Optional("reviewed_custom"): bool,
-        vol.Optional("export_text"): bool,
         vol.Optional("sample_text"): str,
         vol.Optional("mode"): str,
         vol.Optional("subject"): str,

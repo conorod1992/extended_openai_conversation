@@ -24,9 +24,6 @@ const panel = {
 };
 
 const html = renderRequestRules(panel);
-assert.match(html, /<details id="rule-sharing"/);
-assert.ok(html.indexOf('id="rule-sharing"') > html.indexOf('class="content-card rule-test-tools"'));
-assert.doesNotMatch(html.slice(0,html.indexOf('id="rule-sharing"')), /rule-pack-export/);
 assert.match(html, /local commands that skip the AI call/);
 assert.doesNotMatch(html, /class="notice on"/);
 assert.match(html, /class="guide-topic-link guide-link" data-guide-topic="request-rules">Learn how routing works/);

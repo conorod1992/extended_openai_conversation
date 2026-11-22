@@ -28,7 +28,7 @@ const requestRulesGuide = guideContentSource.slice(requestRulesStart, requestRul
 assert.match(requestRulesGuide, /ExtendedOpenAI sentence patterns/);
 assert.match(requestRulesGuide, /Continue matching after this rule/);
 assert.match(requestRulesGuide, /Captured value/);
-assert.match(requestRulesGuide, /Rule Sharing/);
+assert.match(requestRulesGuide, /Backup & Restore/);
 assert.match(requestRulesGuide, /Set conversation response overrides the generic success response/);
 assert.match(requestRulesGuide, /Continue to AI runs only after normal completion/);
 assert.match(requestRulesGuide, /response_variable stay within the action sequence/);

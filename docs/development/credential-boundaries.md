@@ -4,7 +4,7 @@ The sharing and operational diagnostic boundaries are deliberately separate from
 
 ## Sharing writers
 
-Current Setup, configuration and Rule Pack writers call `sharing.project_sharing_sections`. Only classified sections survive. Writers build an explicit envelope from the projected result and public metadata; they must not merge source configuration, provider connections or future source fields back into it.
+Current Setup and configuration writers call `sharing.project_sharing_sections`. Only classified sections survive. Writers build an explicit envelope from the projected result and public metadata; they must not merge source configuration, provider connections or future source fields back into it.
 
 The reviewed pipeline has four responsibilities:
 

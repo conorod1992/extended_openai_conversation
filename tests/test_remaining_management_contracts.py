@@ -98,25 +98,6 @@ async def test_request_rule_management_settings_forward_revision(
     update.assert_awaited_once_with(*args, **kwargs)
 
 
-async def test_management_rule_pack_export_forwards_selection(hass, monkeypatch):
-    rules = object()
-    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
-    export = Mock(return_value={"rules": ["selected"]})
-    monkeypatch.setattr(ui, "export_rule_pack", export)
-    result = await ui.async_request_rules_command(
-        _request(
-            hass,
-            "request_rules",
-            "rule_pack_export",
-            selection="group",
-            group_id="lights",
-            rule_ids=["one"],
-        )
-    )
-    assert result == {"rules": ["selected"]}
-    export.assert_called_once_with(rules, "group", "lights", ["one"], reviewed=False)
-
-
 async def test_live_rule_test_rejects_unavailable_agent(hass, monkeypatch):
     monkeypatch.setattr(ui, "_conversation_entity_id", lambda *_: None)
     with pytest.raises(HomeAssistantError, match="agent is unavailable"):

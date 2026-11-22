@@ -241,11 +241,7 @@ replacement, authorization changes, cancellation, and failures after insertion.
 Uncertain attempts survive snapshot refresh; edits and revoked authentication
 lifetimes require explicit new-send confirmation. Fresh sends obtain a current
 server retry window without renewing an uncertain predecessor; failed preparation
-does not count as a dispatched send. Real-browser disclosure/rebind
-journeys preserve Rule Sharing files, review and export choices, and initialization
-failure remains retryable. Already-open mounted disclosures initialize without
-needing another toggle. These journeys are registered in the nightly browser
-execution inventory in addition to PR smoke collection.
+does not count as a dispatched send. Real-browser coverage checks that rebinding Request Rules preserves a single activation per editor control.
 
 PR lint runs the nightly selection and execution-catalog guards without Home
 Assistant fixtures. A new real-HA file must be selected by Enhanced or explicitly

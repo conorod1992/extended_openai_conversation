@@ -30,7 +30,7 @@ export function requireRequestRuleAcknowledgement(action, result, ruleId) {
   requireMutationAcknowledgement(result?.revision != null
     && (!["create", "duplicate", "update"].includes(action)
       || (typeof identity === "string" && identity.length > 0 && (action !== "update" || identity === ruleId) && (action !== "duplicate" || identity !== ruleId)))
-    && (!["groups", "rule_pack_import"].includes(action) || (Array.isArray(result.groups) && Array.isArray(result.rules)))
+    && (action !== "groups" || (Array.isArray(result.groups) && Array.isArray(result.rules)))
     && (!["settings", "defaults"].includes(action) || hasDefaults)
     && (!["settings", "wording_groups"].includes(action) || Array.isArray(result.wording_groups)), "saving Request Rules");
 }

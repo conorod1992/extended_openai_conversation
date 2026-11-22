@@ -1751,7 +1751,7 @@ async def test_captured_rule_punctuation_reaches_final_provider_input(
         RequestRules,
     )
     from tests.test_conversation_orchestration import _assist_fixture
-    from tests.test_request_rule_packs import captured_routing_rule
+    from tests.test_request_rule_captured_input import captured_routing_rule
     from tests.test_request_rules import MemoryStore
 
     text = "deep think why is the sky blue?"

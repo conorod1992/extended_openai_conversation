@@ -115,47 +115,6 @@ test("mutation declarations preserve real revisions and cached projections", asy
     expect(await panel.evaluate(host => host._eocRequestRuleRevision.value)).toBe(authoritative.revision);
     await panel.locator(".request-rule-card").filter({hasText:"Newer genuine HA collection read"}).locator(".rule-duplicate").click();
     await expect.poll(() => panel.evaluate(host => host._result.rules.length)).toBe(authoritative.rules.length + 1);
-  } else if (scenario === "rule_pack") {
-    const pack = await panel.evaluate(async host => {
-      await host._call("request_rules", "create", {rule:{name:"Original pack rule", enabled:true, phrases:["pack phrase"], match_type:"equals", action_type:"model_routing", action:{model:"gpt-5-mini", scope:"conversation"}}});
-      return host._call("request_rules", "rule_pack_export", {selection:"all", reviewed_custom:true});
-    });
-    pack.rules[0].name = "Imported pack rule";
-    await panel.evaluate(host => host._loadSection());
-    await panel.locator("#rule-sharing > summary").click();
-    await panel.locator("#rule-pack-file").setInputFiles({name:"rules.json", mimeType:"application/json", buffer:Buffer.from(JSON.stringify(pack))});
-    await panel.locator("#rule-pack-review-button").click();
-    await expect(panel.locator("#rule-pack-confirm")).toBeVisible();
-    // Hold an old genuine read across import acknowledgement: it must not restore the old revision.
-    await page.evaluate(() => {
-      const {hass, panel} = window.browserHarness;
-      const original = hass.callWS.bind(hass);
-      let release;
-      const gate = new Promise(resolve => { release = resolve; });
-      let hold = true;
-      hass.callWS = async message => {
-        const result = await original(message);
-        if (hold && message.section === "request_rules" && message.action === "list") {
-          hold = false; window.mutationEffectsProbe.oldReadReady = true; await gate;
-        }
-        return result;
-      };
-      window.mutationEffectsProbe.releaseOldRead = release;
-      window.mutationEffectsProbe.oldRead = panel._call("request_rules", "list");
-    });
-    await expect.poll(() => page.evaluate(() => Boolean(window.mutationEffectsProbe.oldReadReady))).toBe(true);
-    await panel.locator("#rule-pack-confirm").click();
-    await expect(panel.locator(".request-rule-card").filter({hasText:"Imported pack rule"})).toBeVisible();
-    const acknowledgement = await page.evaluate(() => window.mutationEffectsProbe.calls.find(c => c.message.action === "rule_pack_import"));
-    expect(acknowledgement).toBeTruthy();
-    await page.evaluate(async () => { window.mutationEffectsProbe.releaseOldRead(); await window.mutationEffectsProbe.oldRead; });
-    expect(await panel.evaluate(host => host._eocRequestRuleRevision.value)).toBe(acknowledgement.result.revision);
-    await panel.evaluate(host => host._call("request_rules", "groups", {groups:[]}));
-    const following = await page.evaluate(() => window.mutationEffectsProbe.calls.find(c => c.message.section === "request_rules" && c.message.action === "groups"));
-    expect(following.message.revision).toBe(acknowledgement.result.revision);
-    await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
-    await panel.evaluate(host => host._navigate("capabilities", "request-rules"));
-    await expect(panel.locator(".request-rule-card").filter({hasText:"Imported pack rule"})).toBeVisible();
   } else {
     await expect(panel.locator("#usage-window")).toBeVisible();
     await panel.locator("#usage-window").selectOption("7");

@@ -317,8 +317,6 @@
 .eoc-live-request-test>summary::-webkit-details-marker{display:none}
 .eoc-live-request-body{display:grid;gap:12px}
 .eoc-live-request-body .search-row{margin:0}
-.rule-sharing{margin:0;padding:24px}
-.rule-sharing>summary{font-size:19px;line-height:1.3}
 .rule-groups{width:min(760px,calc(100vw - 28px))}
 .rule-group-manager-rows{display:grid;gap:8px}
 .rule-group-row{display:grid;grid-template-columns:minmax(180px,1fr) 75px auto auto;gap:10px;align-items:end;padding:10px;border:1px solid var(--divider-color);border-radius:9px}

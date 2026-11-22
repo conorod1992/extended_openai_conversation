@@ -188,8 +188,8 @@ export const GUIDE_TOPICS = [
   {
     id: "request-rules",
     title: "Request Rules",
-    summary: "Request Rules let you handle predictable phrases deterministically with local actions, Function Tools, conditions, AI routing, and reusable shared rules.",
-    terms: "request rules local command sentence pattern optional choice variable capture captured value condition only when group priority order continue matching rule sharing import export routing model action automation voice shortcut",
+    summary: "Request Rules let you handle predictable phrases deterministically with local actions, Function Tools, conditions, and AI routing.",
+    terms: "request rules local command sentence pattern optional choice variable capture captured value condition only when group priority order continue matching backup restore routing model action automation voice shortcut",
     body: [
       {type: "p", text: "Request Rules check text before it is sent to the AI provider. They only apply after Home Assistant has already chosen this Extended OpenAI conversation agent to handle the request."},
       {type: "p", text: "A local rule can run Home Assistant actions or enabled Function Tools without an AI call. A routing rule can change the model or reasoning used for a request or conversation. Local rules can also run first and then continue to the AI when that is what you want."},
@@ -201,9 +201,9 @@ export const GUIDE_TOPICS = [
       {type: "heading", text: "Actions and Function results"},
       {type: "p", text: "The editor uses Home Assistant's normal action and condition selectors where possible. A local rule can also call an enabled ExtendedOpenAI Function Tool directly. Give a Function result an alias when later steps or the local response need to reference fields from that result. Function results stay inside that rule and are not automatically sent to the AI provider."},
       {type: "p", text: "Native script results take precedence: failures and false top-level conditions use the failure response; Set conversation response overrides the generic success response; a successful Stop consumes the request locally; Continue to AI runs only after normal completion without a final response or stop. Script variables and response_variable stay within the action sequence and are not automatically available in the separate success response."},
-      {type: "heading", text: "Testing and sharing"},
+      {type: "heading", text: "Testing and moving rules"},
       {type: "p", text: "Match Preview is safe: it shows which rules would match, captured values, and where checking would stop without running actions, Function Tools, or the AI provider. Live Test uses the real processing path and can perform actions, so use it deliberately."},
-      {type: "p", text: "Rule Sharing at the bottom of the page can export all rules, one group, or selected rules. Imports are reviewed first, appended after existing rules in their shared relative order, and start disabled. Newly created rules start enabled; toggle them on the Request Rules list. Rule packs omit Function Tool definitions and agent-wide wording alternatives. Restricted exports omit arbitrary custom content by default; including it requires manual review because action data, templates and response text can contain secrets."},
+      {type: "p", text: "Newly created rules start enabled. To move a saved rule set to another installation, export Request Rules from Backup & Restore using Custom (private). Restoring that section replaces the destination assistant’s rules and preserves groups, order and wording alternatives."},
       {type: "note", title: "Request Rule or normal Home Assistant automation?", text: "Use a Request Rule when the phrase belongs specifically to this Extended OpenAI agent, should avoid an AI call, or should change AI routing. Use a normal Home Assistant sentence-trigger automation when the command should work independently of Extended OpenAI or needs normal automation ownership and behaviour."},
       {type: "heading", text: "Safety"},
       {type: "p", text: "Guest Mode and Home Assistant permissions are still enforced. Use narrow matching for sensitive actions such as locks, alarms, or garage doors. Request Rules, their groups, priority order, and matching settings are preserved by the agent's full backup."},

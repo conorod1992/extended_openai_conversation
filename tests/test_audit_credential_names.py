@@ -85,10 +85,8 @@ async def test_complete_reviewed_exports_and_private_fidelity(hass, name, format
         management_ui,
         transfer,
     )
-    from custom_components.extended_openai_conversation_responses.request_rule_packs import (
-        export_rule_pack,
-    )
     from tests.test_request_rules import MemoryStore, RequestRules, local_rule
+    from tests.test_sharing_schema_context import rule_setup_artifact
     from tests.test_transfer import _portable_document
 
     tool = _rest_tool()
@@ -114,8 +112,8 @@ async def test_complete_reviewed_exports_and_private_fidelity(hass, name, format
         ]
         manager = RequestRules(MemoryStore({"rules": [rule]}))
         await manager.async_initialize()
-        exported = export_rule_pack(manager, "all", reviewed=True)
-        assert exported["rules"] == []
+        exported = rule_setup_artifact(manager.snapshot(), reviewed=True)
+        assert exported["document"]["sections"]["request_rules"]["rules"] == []
         assert SECRET in manager.snapshot()["rules"][0]["action"]["canonical_signature"]
     assert SECRET not in json.dumps(exported)
     assert config == before

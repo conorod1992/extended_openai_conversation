@@ -24,7 +24,6 @@ EXPECTED_JOURNEYS = {
     "memory",
     "request_rules",
     "request_rules_empty",
-    "rule_pack",
     "functions",
     "knowledge",
     "guest_quiet",
@@ -37,9 +36,6 @@ CRITICAL_ACTIONS = {
     ("request_rules", "create"),
     ("request_rules", "update"),
     ("request_rules", "delete"),
-    ("request_rules", "rule_pack_export"),
-    ("request_rules", "rule_pack_review"),
-    ("request_rules", "rule_pack_import"),
     ("configuration", "save"),
     ("tools", "save"),
     ("tools", "save_group"),
@@ -72,7 +68,7 @@ REVIEWED_FRONTEND_MUTATIONS = {
     ("memories", "temporary_clear"), ("memories", "temporary_delete"),
     ("memories", "temporary_update"), ("quiet_hours", "rebind"), ("request_rules", "delete"),
     ("request_rules", "duplicate"), ("request_rules", "groups"),
-    ("request_rules", "move"), ("request_rules", "rule_pack_import"),
+    ("request_rules", "move"),
     ("request_rules", "settings"), ("request_rules", "update"),
     ("tools", "delete"), ("tools", "delete_group"),
     ("tools", "ha_add"), ("tools", "save"),
@@ -156,22 +152,6 @@ def test_shipped_frontend_mutation_actions_are_reviewed() -> None:
     assert ("function_repair", "configuration_save") in covered
 
 
-def test_rule_pack_browser_contract_requires_authoritative_export_text() -> None:
-    """The enhanced exact-field gate must accept the shipped export protocol."""
-    document = json.loads(CONTRACT.read_text(encoding="utf-8"))
-    entry, = (
-        item for item in document["actions"]
-        if item["journey"] == "rule_pack" and item["action"] == "rule_pack_export"
-    )
-    assert set(entry["keys"]) == {
-        "selection", "group_id", "rule_ids", "reviewed_custom", "export_text",
-    }
-    assert entry["equals"] == {
-        "selection": "all", "group_id": None, "rule_ids": None,
-        "reviewed_custom": True, "export_text": True,
-    }
-    source = (FRONTEND_DIR / "request-rule-sharing-ui.js").read_text(encoding="utf-8")
-    assert 'export_text:true' in source
 
 
 def test_reviewed_browser_payloads_are_accepted_by_websocket_schemas() -> None:

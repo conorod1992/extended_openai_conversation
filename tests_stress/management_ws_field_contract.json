@@ -99,10 +99,6 @@
       "required": false,
       "kind": "string"
     },
-    "export_text": {
-      "required": false,
-      "kind": "boolean"
-    },
     "group": {
       "required": false,
       "kind": "object"
@@ -183,14 +179,6 @@
       "required": false,
       "kind": "string"
     },
-    "pack": {
-      "required": false,
-      "kind": "union",
-      "forms": [
-        "string",
-        "object"
-      ]
-    },
     "pin": {
       "required": false,
       "kind": "string"
@@ -211,10 +199,6 @@
       "required": false,
       "kind": "boolean"
     },
-    "review_token": {
-      "required": false,
-      "kind": "string"
-    },
     "reviewed_custom": {
       "required": false,
       "kind": "boolean"
@@ -230,14 +214,6 @@
     "rule_id": {
       "required": false,
       "kind": "string"
-    },
-    "rule_ids": {
-      "required": false,
-      "kind": "union",
-      "forms": [
-        "null",
-        "array"
-      ]
     },
     "run_id": {
       "required": false,
@@ -262,10 +238,6 @@
       ]
     },
     "section": {
-      "required": false,
-      "kind": "string"
-    },
-    "selection": {
       "required": false,
       "kind": "string"
     },

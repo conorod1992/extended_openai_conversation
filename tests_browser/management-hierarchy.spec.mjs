@@ -145,10 +145,10 @@ test("Request Rules keeps both create paths and a task-ordered layout", async ({
   await expect(panel.locator("#rule-search")).toBeVisible();
   await expect(panel.locator(".rule-toolbar .count")).toBeHidden();
   await expect(panel.locator("#rule-add")).toBeVisible();
-  const order = await panel.locator(".rule-collection,.rule-settings,.rule-wording,.rule-test-tools,.rule-sharing").evaluateAll(
-    (nodes) => nodes.map((node) => [...node.classList].find((name) => ["rule-collection", "rule-settings", "rule-wording", "rule-test-tools", "rule-sharing"].includes(name))),
+  const order = await panel.locator(".rule-collection,.rule-settings,.rule-wording,.rule-test-tools").evaluateAll(
+    (nodes) => nodes.map((node) => [...node.classList].find((name) => ["rule-collection", "rule-settings", "rule-wording", "rule-test-tools"].includes(name))),
   );
-  expect(order).toEqual(["rule-collection", "rule-settings", "rule-wording", "rule-test-tools", "rule-sharing"]);
+  expect(order).toEqual(["rule-collection", "rule-settings", "rule-wording", "rule-test-tools"]);
   await expect(panel.locator(".page-intro .guide-topic-link[data-guide-topic='request-rules']")).toBeVisible();
   await expect(panel.locator(".page-intro .rule-routing-help")).toHaveCount(0);
   await expect(panel.locator(".rule-settings").getByRole("heading", {name:"Matching defaults"})).toBeVisible();

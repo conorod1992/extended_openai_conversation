@@ -111,65 +111,6 @@ test("stale Request Rule editor cannot overwrite a backup restore from another t
   }
 });
 
-test("Rule Pack download from one assistant imports, conflicts, enables and executes on another", async ({context, page}) => {
-  test.setTimeout(120000);
-  const panel = await openRoute(context, page, "capabilities/request-rules");
-  const ruleName = "Cross-agent file-pack rule";
-  const phrase = "cross agent file pack phrase";
-  await createSimpleRule(panel, ruleName, phrase);
-
-  const sharing = panel.locator("#rule-sharing");
-  if (!(await sharing.evaluate(element => element.open))) await sharing.locator("summary").click();
-  const downloadPromise = page.waitForEvent("download");
-  await panel.locator("#rule-pack-reviewed-custom").check();
-  await panel.locator("#rule-pack-export").click();
-  await acceptSharingReview(panel);
-  const download = await downloadPromise;
-  const packPath = await download.path();
-  expect(packPath).toBeTruthy();
-  const pack = JSON.parse(await readFile(packPath, "utf8"));
-  expect(pack.rules.some(rule => rule.name === ruleName)).toBe(true);
-
-  const duplicate = await panel.evaluate(host =>
-    host._call("configuration", "duplicate", {title:"Cross-agent Rule Pack destination"})
-  );
-  expect(duplicate.subentry_id).toBeTruthy();
-  await panel.locator("#agent").selectOption(duplicate.subentry_id);
-  await expect(panel.locator("#agent option:checked")).toContainText("Cross-agent Rule Pack destination");
-
-  // Seed a same-name destination rule so the import exercises the conflict path
-  // rather than only the empty-agent happy path.
-  await createSimpleRule(panel, ruleName, phrase + " destination existing");
-
-  if (!(await sharing.evaluate(element => element.open))) await sharing.locator("summary").click();
-  await panel.locator("#rule-pack-file").setInputFiles(packPath);
-  await panel.locator("#rule-pack-review-button").click();
-  await expect(panel.locator(".rule-pack-review")).toContainText(ruleName);
-  await panel.locator("#rule-pack-confirm").click();
-  await expect(panel.locator("#rule-pack-message")).toContainText(/imported/i);
-
-  const imported = panel.locator(".request-rule-card").filter({hasText:ruleName});
-  expect(await imported.count()).toBeGreaterThanOrEqual(2);
-  const disabled = imported.filter({has:panel.locator(".rule-enabled:not(:checked)")}).last();
-  if (await disabled.count()) {
-    await disabled.locator(".rule-enabled").check();
-  } else {
-    const candidates = imported.locator(".rule-enabled");
-    const count = await candidates.count();
-    for (let index = 0; index < count; index++) {
-      if (!(await candidates.nth(index).isChecked())) {
-        await candidates.nth(index).check();
-        break;
-      }
-    }
-  }
-
-  const executed = await panel.evaluate((host, text) =>
-    host._call("request_rules", "test", {text}), phrase);
-  expect(executed.response).toContain("Cross-agent pack executed");
-  expect(executed.handled_locally).toBe(true);
-});
-
 test("nested Request Rule conditions can be authored through visible HA controls only", async ({context, page}) => {
   test.setTimeout(120000);
   const panel = await openRoute(context, page, "capabilities/request-rules");

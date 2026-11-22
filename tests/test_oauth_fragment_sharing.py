@@ -12,10 +12,6 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.private_backup import (
     decode_document,
 )
-from custom_components.extended_openai_conversation_responses.request_rule_packs import (
-    export_rule_pack,
-    validate_rule_pack,
-)
 from custom_components.extended_openai_conversation_responses.secret_redaction import (
     is_redacted_secret,
     redact_http_url,
@@ -24,7 +20,7 @@ from custom_components.extended_openai_conversation_responses.secret_redaction i
 from tests.test_literal_url_sharing import script_config
 from tests.test_private_backup_fidelity import private_document
 from tests.test_request_rules import MemoryStore, RequestRules, local_rule
-from tests.test_sharing_schema_context import configuration_artifact
+from tests.test_sharing_schema_context import configuration_artifact, rule_setup_artifact
 
 SECRET = "FABRICATED-standard-oauth-bearer-42"
 NAMES = ["access_token", "id_token", "%61ccess_token"]
@@ -59,10 +55,9 @@ def test_oauth_fragment_credentials_are_omitted_from_config_artifacts(
     assert config == before
 
 
-@pytest.mark.parametrize("selection", ["all", "selected", "group"])
 @pytest.mark.parametrize("name", NAMES)
-async def test_oauth_fragment_credentials_are_omitted_from_rule_packs(
-    hass, selection, name
+async def test_oauth_fragment_credentials_are_omitted_from_rule_setups(
+    hass, name
 ):
     rule = local_rule()
     rule["action"]["actions"] = [
@@ -71,16 +66,14 @@ async def test_oauth_fragment_credentials_are_omitted_from_rule_packs(
     manager = RequestRules(MemoryStore({"rules": [rule]}))
     await manager.async_initialize()
     before = deepcopy(manager.snapshot())
-    pack = export_rule_pack(manager, selection, rule_ids=[rule["id"]], reviewed=True)
-    assert SECRET not in json.dumps(pack)
-    assert pack["rules"] == []
-    assert pack["security"]["omitted"]
+    setup = rule_setup_artifact(before, reviewed=True)
+    rules = setup["document"]["sections"]["request_rules"]["rules"]
+    assert SECRET not in setup["json"]
+    assert rules == []
+    assert setup["security"]["omitted"]
 
-    assert validate_rule_pack(pack)["rules"] == []
     assert manager.snapshot() == before
-    assert SECRET not in json.dumps(
-        export_rule_pack(manager, selection, rule_ids=[rule["id"]])
-    )
+    assert SECRET not in rule_setup_artifact(before)["json"]
 
 
 @pytest.mark.parametrize("name", NAMES)

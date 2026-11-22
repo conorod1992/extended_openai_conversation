@@ -17,10 +17,6 @@ from custom_components.extended_openai_conversation_responses.private_backup imp
     decode_document,
     encode_document,
 )
-from custom_components.extended_openai_conversation_responses.request_rule_packs import (
-    export_rule_pack,
-    validate_rule_pack,
-)
 from custom_components.extended_openai_conversation_responses.secret_redaction import (
     is_redacted_url,
     redact_http_url,
@@ -32,7 +28,7 @@ from custom_components.extended_openai_conversation_responses.sharing import (
 from tests.test_private_backup_fidelity import private_document
 from tests.test_request_rules import MemoryStore, RequestRules, local_rule
 from tests.test_selective_restore_concurrency import RestoreHarness
-from tests.test_sharing_schema_context import configuration_artifact
+from tests.test_sharing_schema_context import configuration_artifact, rule_setup_artifact
 from tests.test_sharing_schema_references import tool_with_schema
 from tests.test_transfer import _portable_document
 
@@ -83,11 +79,10 @@ def test_script_url_credentials_are_excluded_from_final_artifacts(
     assert config == before
 
 
-@pytest.mark.parametrize("selection", ["all", "selected", "group"])
 @pytest.mark.parametrize("kind", ["query", "userinfo"])
 @pytest.mark.parametrize("spelling", SPELLINGS)
 async def test_rule_url_credentials_and_signatures_do_not_leave(
-    hass, selection, kind, spelling
+    hass, kind, spelling
 ):
     uri = credential_uri(kind, spelling)
     rule = local_rule()
@@ -99,12 +94,12 @@ async def test_rule_url_credentials_and_signatures_do_not_leave(
     before = manager.snapshot()
     assert SECRET in before["rules"][0]["action"]["canonical_signature"]
 
-    pack = export_rule_pack(manager, selection, rule_ids=[rule["id"]], reviewed=True)
+    setup = rule_setup_artifact(before, reviewed=True)
+    rules = setup["document"]["sections"]["request_rules"]["rules"]
 
-    assert SECRET not in json.dumps(pack)
-    assert pack["rules"] == []
-    assert pack["security"]["omitted"]
-    assert validate_rule_pack(pack)["rules"] == []
+    assert SECRET not in setup["json"]
+    assert rules == []
+    assert setup["security"]["omitted"]
     assert manager.snapshot() == before
 
 
@@ -128,8 +123,7 @@ def test_public_urls_and_arbitrary_templates_stay_portable(hass, format, value):
     assert public["functions"] == config["functions"]
 
 
-@pytest.mark.parametrize("selection", ["all", "selected", "group"])
-async def test_public_rule_urls_stay_portable(hass, selection):
+async def test_public_rule_urls_stay_portable(hass):
     rule = local_rule()
     rule["action"]["actions"] = [
         {
@@ -140,10 +134,10 @@ async def test_public_rule_urls_stay_portable(hass, selection):
     manager = RequestRules(MemoryStore({"rules": [rule]}))
     await manager.async_initialize()
     before = manager.snapshot()
-    pack = export_rule_pack(manager, selection, rule_ids=[rule["id"]], reviewed=True)
-    assert pack["rules"][0]["action"]["actions"] == rule["action"]["actions"]
-    assert "canonical_signature" not in pack["rules"][0]["action"]
-    assert validate_rule_pack(pack)["rules"]
+    setup = rule_setup_artifact(before, reviewed=True)
+    rules = setup["document"]["sections"]["request_rules"]["rules"]
+    assert rules[0]["action"]["actions"] == rule["action"]["actions"]
+    assert "canonical_signature" not in rules[0]["action"]
     assert manager.snapshot() == before
 
 

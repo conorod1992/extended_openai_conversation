@@ -1,6 +1,6 @@
 # Sharing and private backup security
 
-## Shareable Setup, configuration exports and Rule Sharing
+## Shareable Setup, configuration exports
 
 **Shareable exports exclude designated credentials and unclassified custom content by default, and check included content for recognized secret patterns. Custom content you choose to include may still contain secrets. Review the summary and file before sharing, especially Function Tools, scripts and templates.**
 
@@ -30,9 +30,9 @@ Only the configured Function's actual parameter schema receives structural exemp
 
 Literal HTTP URL values receive the same credential check regardless of their field name, including nested Script variables and Rule action data. Classification uses URL-parser normalization for leading whitespace/control characters and embedded tabs/newlines. Public literal URLs retain their original bytes. HTTP URL sources containing templates are conservatively omitted as coherent custom units without rendering them; ordinary non-URL templates remain portable. Existing destination-bound recovery of historical redacted exports remains in force, and private backups retain every original URL byte.
 
-New sharing documents and Rule Packs use version 2. Historical version 1 imports remain supported. All production sharing writers use the same policy. Unsupported future fields are omitted by default; adding a provider-specific pattern is only an additional defense.
+New sharing documents use version 2. Historical version 1 imports remain supported. All production sharing writers use the same policy. Unsupported future fields are omitted by default; adding a provider-specific pattern is only an additional defense.
 
-Setup, configuration and Rule Sharing use one section-projection boundary. Credential classification, schema/instance interpretation, structured request inspection and whole-unit admission are shared stages. Schema structure exempts property names from credential-name matching, not ordinary scalar values: recognised credential URLs in descriptions, titles, comments and other nested annotations cause the containing tool to be omitted. Public URLs and type-only credential properties remain portable. Setup envelopes select fields explicitly, so adding source metadata does not automatically publish it. Historical redacted-backup schema semantics and private codecs remain separate and unchanged.
+Setup and configuration exports use one section-projection boundary. Credential classification, schema/instance interpretation, structured request inspection and whole-unit admission are shared stages. Schema structure exempts property names from credential-name matching, not ordinary scalar values: recognised credential URLs in descriptions, titles, comments and other nested annotations cause the containing tool to be omitted. Public URLs and type-only credential properties remain portable. Setup envelopes select fields explicitly, so adding source metadata does not automatically publish it. Historical redacted-backup schema semantics and private codecs remain separate and unchanged.
 
 Schema name exemptions apply only in declared schema locations: property/definition/dependency maps, standard subschema applicators and dependency-name lists. Unknown or custom annotation objects are ordinary data, including their own field names. For example, `properties.api_key: {type: string}` remains portable, but `x-authentication: {api_key: ...}` causes the containing tool to be omitted. Nesting schema-looking keys inside an annotation cannot regain exemptions. Public extension objects remain available in reviewed sharing, and existing defensive URI checks remain in effect. Custom dialect extensions that use credential-named keys as schema structure may therefore be omitted until their semantics are explicitly classified. Their live definitions and private backups are unchanged; arbitrary included annotation text still requires review.
 

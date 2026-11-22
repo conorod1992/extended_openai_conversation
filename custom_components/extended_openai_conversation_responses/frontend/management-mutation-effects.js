@@ -16,7 +16,7 @@ const commands = {
   guest_mode: {save_policy:configuration, update:mutation, disable:mutation},
   knowledge: {create:knowledge, update:knowledge, delete:knowledge, set_enabled:Object.freeze({...knowledge, configuration:true})},
   memories: {add:memories, update:memories, delete:memories, clear:memories, temporary_add:memories, temporary_delete:memories, temporary_update:memories, temporary_clear:memories, reassign_legacy:memories},
-  request_rules: {settings:rules, defaults:rules, wording_groups:rules, groups:rules, create:rules, update:rules, delete:rules, duplicate:rules, move:Object.freeze({...rules, requestRules:true}), rule_pack_import:rules},
+  request_rules: {settings:rules, defaults:rules, wording_groups:rules, groups:rules, create:rules, update:rules, delete:rules, duplicate:rules, move:Object.freeze({...rules, requestRules:true})},
   settings: {update:configuration},
   tools: {save:tools, delete:tools, set_enabled:tools, save_group:tools, delete_group:tools, ha_add:tools},
   usage: {clear_details:Object.freeze({usageWindows:true})},

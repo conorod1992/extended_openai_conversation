@@ -702,7 +702,7 @@ async def test_sequential_shared_draft_is_preserved_and_savable(hass, hass_ws_cl
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scenario", ["configuration_rules", "rule_pack", "usage"])
+@pytest.mark.parametrize("scenario", ["configuration_rules", "usage"])
 async def test_frontend_mutation_effects_preserve_real_revisions_and_projections(
     hass: HomeAssistant, hass_ws_client: Any, scenario: str
 ) -> None:

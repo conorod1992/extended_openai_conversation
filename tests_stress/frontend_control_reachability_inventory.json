@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 469,
+  "expected_total_markers": 457,
   "viewports": [
     {
       "name": "small-phone",
@@ -72,9 +72,8 @@
     "overview-page-impl.js": 3,
     "overview-page.js": 1,
     "quiet-hours-ui.js": 9,
-    "request-rule-sharing-ui.js": 11,
     "request-rules-match-test-ui.js": 2,
-    "request-rules-ui-core.js": 42,
+    "request-rules-ui-core.js": 41,
     "request-rules-ui-impl.js": 35,
     "retention-settings-ui.js": 1,
     "sharing-review.js": 7,
@@ -84,14 +83,6 @@
     "voice-identity-ui.js": 8
   },
   "conditional_controls": [
-    {
-      "source": "request-rules-ui-core.js",
-      "scenario": "Failed lazy Sharing initialization exposes a retry while subsequent disclosure toggles preserve authored state",
-      "selectors": [
-        "[data-retry-rule-sharing]"
-      ],
-      "browser_spec": "tests_browser/request-rule-sharing-retained.spec.mjs"
-    },
     {
       "source": "management-actions.js",
       "scenario": "Configuration validation errors include an actionable off-route summary",

@@ -36,8 +36,8 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # headroom and the separate entry/CSS ceilings.
 # Expired finite Guest activation now requires an explicit future end or
 # indefinite choice. The local validation adds 243 reviewed JS bytes.
-# Azure route binding controls, provider-aware lookups and bounded Rule Pack
-# download preparation add about 1.1 KiB. Keep the entry and CSS limits intact.
+# The reviewed Azure route binding and provider-aware lookup allowance keeps
+# the separate entry and CSS limits intact.
 # Native-selector admission and lossless context/reset handling add 225 JS bytes.
 # Budget 250 bytes for these correctness fixes; entry and CSS limits stay fixed.
 # Scoped compact-choice styling and Quiet Hours unavailable messaging add 650

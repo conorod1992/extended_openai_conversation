@@ -1,13 +1,8 @@
 """6.8.3 fuzzy settings retire without losing rules or changing other contracts."""
 
-from copy import deepcopy
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses.request_rule_packs import (
-    export_rule_pack,
-    validate_rule_pack,
-)
 from custom_components.extended_openai_conversation_responses.request_rules import (
     DEFAULT_MATCHING,
     RequestRuleRuntime,
@@ -102,12 +97,6 @@ async def test_legacy_load_backup_import_export_and_reopen_preserve_rule():
     assert imported["defaults"] == DEFAULT_MATCHING
     backup = await manager.async_backup_data()
     assert RequestRules.validate_backup_data(backup)["rules"] == [expected]
-    pack = export_rule_pack(manager, "all", reviewed=True)
-    old_pack = deepcopy(pack)
-    old_pack["rules"][0]["matching"] = legacy
-    prepared = validate_rule_pack(old_pack)
-    assert prepared["rules"][0]["matching"] == DEFAULT_MATCHING
-    assert pack["rules"][0]["matching"] == DEFAULT_MATCHING
 
 
 async def test_legacy_defaults_only_migration_is_persisted_once():

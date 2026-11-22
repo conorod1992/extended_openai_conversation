@@ -18,10 +18,6 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.private_backup import (
     decode_document,
 )
-from custom_components.extended_openai_conversation_responses.request_rule_packs import (
-    export_rule_pack,
-    validate_rule_pack,
-)
 from custom_components.extended_openai_conversation_responses.sharing import (
     SHARING_VERSION,
 )
@@ -50,6 +46,14 @@ def configuration_artifact(config, format):
         artifact = json.loads(serialized)
         public = artifact["sections"]["configuration"]
     return artifact, public, serialized
+
+
+def rule_setup_artifact(rules, *, reviewed=False):
+    """Project and serialize rules through the production Shareable Setup writer."""
+    document = _portable_document(mode="setup")
+    document["version"] = SHARING_VERSION
+    document["sections"]["request_rules"] = rules
+    return transfer.finalize_setup_export(document, reviewed=reviewed)
 
 
 def instance_payload(shape, credential=True):
@@ -82,9 +86,8 @@ def test_script_instance_credentials_are_excluded_from_real_artifacts(
     assert config == before
 
 
-@pytest.mark.parametrize("selection", ["all", "selected", "group"])
 @pytest.mark.parametrize("shape", ["plain", "schema_shaped"])
-async def test_rule_instance_credentials_cannot_become_schemas(hass, selection, shape):
+async def test_rule_instance_credentials_cannot_become_schemas(hass, shape):
     rule = local_rule()
     rule["action"]["actions"] = [
         {"action": "rest_command.report", "data": instance_payload(shape)}
@@ -93,12 +96,12 @@ async def test_rule_instance_credentials_cannot_become_schemas(hass, selection, 
     await manager.async_initialize()
     before = manager.snapshot()
 
-    pack = export_rule_pack(manager, selection, rule_ids=[rule["id"]], reviewed=True)
+    setup = rule_setup_artifact(before, reviewed=True)
+    rules = setup["document"]["sections"]["request_rules"]["rules"]
 
-    assert SECRET not in json.dumps(pack)
-    assert pack["rules"] == []
-    assert pack["security"]["omitted"]
-    assert validate_rule_pack(pack)["rules"] == []
+    assert SECRET not in setup["json"]
+    assert rules == []
+    assert setup["security"]["omitted"]
     assert manager.snapshot() == before
 
 

@@ -1,23 +1,15 @@
 """Saved dependency, bounded matching and native template regression tests."""
 
 import asyncio
-from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
-    management_ui,
     request_rules as rules,
 )
 from custom_components.extended_openai_conversation_responses.function_dependency_integrity import (
     async_validate_request_rule_functions,
-)
-from custom_components.extended_openai_conversation_responses.request_rule_packs import (
-    async_append_rule_pack,
-    export_rule_pack,
-    prepare_rule_pack,
-    validate_rule_pack,
 )
 from custom_components.extended_openai_conversation_responses.request_rule_patterns import (
     MAX_MATCH_INPUT_CHARS,
@@ -116,47 +108,3 @@ async def test_legacy_fuzzy_settings_cannot_bypass_matching_input_bounds(text):
     assert manager.match("turn on lamp") is not None
     with pytest.raises(SentenceMatchLimitError, match="at most"):
         manager.match(text)
-
-
-@pytest.mark.asyncio
-async def test_exported_template_actions_round_trip_on_loop(hass, monkeypatch):
-    rule = local_rule()
-    rule["conditions"] = [{"condition": "template", "value_template": "{{ true }}"}]
-    rule["action"]["actions"] = [
-        {"delay": "{{ runtime_delay }}"},
-        {"set_conversation_response": "{{ runtime_response }}"},
-    ]
-    manager = rules.RequestRules(MemoryStore({"rules": [rule]}))
-    await manager.async_initialize()
-    exported = export_rule_pack(manager, "all", reviewed=True)
-    prepared = await asyncio.to_thread(prepare_rule_pack, deepcopy(exported))
-    reviewed = validate_rule_pack(prepared)
-    target = rules.RequestRules(MemoryStore({"rules": []}))
-    await target.async_initialize()
-    imported = await async_append_rule_pack(
-        target, reviewed, expected_revision=target.revision()
-    )
-    assert imported["rules"][0]["enabled"] is False
-    assert imported["rules"][0]["conditions"] == reviewed["rules"][0]["conditions"]
-    from unittest.mock import AsyncMock
-
-    from tests.test_management_rule_pack_coverage import _management_request
-
-    monkeypatch.setattr(
-        management_ui, "async_get_request_rules", AsyncMock(return_value=target)
-    )
-    monkeypatch.setattr(
-        management_ui, "_validate_request_rule_conditions", AsyncMock(return_value=[])
-    )
-    hass.async_add_executor_job.side_effect = asyncio.to_thread
-    request = _management_request(hass, "rule_pack_review", pack=exported)
-    request.subentry.data = {"functions": []}
-    review = await management_ui.async_request_rules_command(request)
-    request.message.update(
-        action="rule_pack_import",
-        confirm=True,
-        revision=review["revision"],
-        review_token=review["review_token"],
-    )
-    result = await management_ui.async_request_rules_command(request)
-    assert result["rules"][0]["enabled"] is False

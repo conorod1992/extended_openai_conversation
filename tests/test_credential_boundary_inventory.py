@@ -226,7 +226,6 @@ def test_inventory_detects_aliased_new_parsers():
     [
         ("management_ui.py", "_export_agent"),
         ("transfer.py", "finalize_setup_export"),
-        ("request_rule_packs.py", "export_rule_pack"),
     ],
 )
 def test_current_sharing_writers_use_section_projection(module, owner):
