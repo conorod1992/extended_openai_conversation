@@ -17,7 +17,10 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
 )
-from custom_components.extended_openai_conversation_responses.scope import user_scope
+from custom_components.extended_openai_conversation_responses.scope import (
+    shared_scope,
+    user_scope,
+)
 
 
 class FailingArchiveStorage:
@@ -154,6 +157,90 @@ async def _archive(storage: FailingArchiveStorage) -> ConversationArchive:
     archive = ConversationArchive(storage, "agent-1")
     await archive.async_initialize()
     return archive
+
+
+async def test_archive_retention_states_across_storage_and_restore_boundaries():
+    """Private and unretained markers serve different persistence boundaries."""
+    storage = FailingArchiveStorage()
+    archive = await _archive(storage)
+    sessions = {}
+
+    async def record(session_id, text):
+        return await archive.async_record_turn(
+            session_id,
+            run_id=None,
+            user_text=text,
+            assistant_text="Reply",
+            successful=True,
+        )
+
+    for state in ("retained", "private", "unretained", "unretained_private"):
+        scope = (
+            shared_scope(source="test")
+            if state.startswith("unretained")
+            else user_scope("alice", source="test")
+        )
+        session = await archive.async_begin_session(
+            state,
+            scope,
+            state,
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
+        assert session is not None
+        if state == "private":
+            assert await record(session.session_id, "Deleted earlier private content")
+        if state.endswith("private"):
+            await archive.async_make_private(session.session_id)
+        assert archive.active_session(state).retention_state == state
+        sessions[state] = session.session_id
+        turn = await record(session.session_id, state)
+        assert (turn is not None) == (state == "retained")
+
+    def retention_states(data):
+        return {item["retention_state"] for item in data["sessions"]}
+
+    durable = {"retained", "private"}
+    assert retention_states(storage.metadata) == durable
+    assert storage.metadata["active"] == {state: sessions[state] for state in durable}
+    portable = await archive.async_backup_data()
+    assert retention_states(portable) == durable
+    assert "active" not in portable
+    assert [item["user_text"] for item in portable["turns"]] == ["retained"]
+    assert next(
+        item["title"]
+        for item in portable["sessions"]
+        if item["retention_state"] == "private"
+    ) == ""
+
+    imported = await _archive(FailingArchiveStorage())
+    await imported.async_replace_backup(
+        *imported.validate_backup_data(portable, "agent-1")
+    )
+    assert await imported.async_backup_data() == portable
+    assert imported.active_session("private") is None
+
+    recovery = await archive.async_recovery_data()
+    assert retention_states(recovery) == durable | {"unretained"}
+    assert recovery["turns"] == portable["turns"]
+    active = recovery.pop("active")
+    assert active == {
+        state: sessions[state] for state in durable | {"unretained"}
+    }
+    await archive.async_replace_backup(
+        *archive.validate_backup_data(recovery, "agent-1", local_recovery=True),
+        active=active,
+    )
+    assert {
+        state: archive.active_session(state).session_id for state in sessions
+    } == sessions
+    assert "Deleted earlier private content" not in str(storage.partitions)
+    assert retention_states(storage.metadata) == durable
+    restarted = await _archive(storage)
+    assert restarted.active_session("private").session_id == sessions["private"]
+    assert restarted.active_session("unretained") is None
+    assert restarted.active_session("unretained_private") is None
 
 
 async def test_begin_failure_does_not_publish_unpersisted_session() -> None:

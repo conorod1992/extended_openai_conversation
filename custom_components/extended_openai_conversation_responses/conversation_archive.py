@@ -131,14 +131,29 @@ class ArchiveSession:
     last_activity_at: str | None = None
 
     @property
+    def can_record_content(self) -> bool:
+        """Whether the retention state permits storing transcript turns."""
+        return self.retention_state == "retained"
+
+    @property
     def has_saved_history(self) -> bool:
         """Whether the session contains at least one retained turn."""
-        return self.retention_state == "retained" and self.turn_count > 0
+        return self.can_record_content and self.turn_count > 0
 
     @property
     def retains_metadata(self) -> bool:
         """Whether this session belongs in the durable Archive."""
         return self.retention_state not in {"unretained", "unretained_private"}
+
+    @property
+    def eligible_for_portable_backup(self) -> bool:
+        """Whether the retention state can travel in a portable backup."""
+        return self.retains_metadata
+
+    @property
+    def eligible_for_local_recovery(self) -> bool:
+        """Allow content-free unretained identity during same-agent recovery."""
+        return self.retention_state != "unretained_private"
 
     @property
     def is_private(self) -> bool:
@@ -973,7 +988,7 @@ class ConversationArchive:
                     if session.retains_metadata:
                         await self._async_publish_session_locked(None, session)
                 return None
-            if session.retention_state != "retained":
+            if not session.can_record_content:
                 return None
             previous_turns = self._turns.get(session_id, [])
             upgraded_legacy = bool(previous_turns) and all(
@@ -1611,7 +1626,7 @@ class ConversationArchive:
             sessions = [
                 session
                 for session in self._sessions.values()
-                if session.retains_metadata
+                if session.eligible_for_portable_backup
                 and session.session_id not in self._expired_pending_prune
             ]
             retained_ids = {session.session_id for session in sessions}
@@ -1631,7 +1646,7 @@ class ConversationArchive:
             sessions = [
                 session
                 for session in self._sessions.values()
-                if session.retention_state != "unretained_private"
+                if session.eligible_for_local_recovery
             ]
             session_ids = {session.session_id for session in sessions}
             turns = [turn for items in self._turns.values() for turn in items]
