@@ -1,6 +1,6 @@
 import {ensureNativePicker} from "./native-picker-loader.js";
 import {captureConfigurationOwner, configurationSubmissionIsCurrent, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
-import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
+import {capturePageRead, acceptPageRead, completePolicyResponse} from "./page-save-acknowledgement.js";
 import {same} from "./unsaved-state.js";
 
 export async function loadQuietHours(panel, silent = false) {
@@ -296,8 +296,14 @@ async function useReplacement(panel, button) {
   button.disabled = true;
   try {
     const result = await panel._call("quiet_hours", "rebind", {selection, revision, review_token:issue.review_token});
-    requireMutationAcknowledgement(typeof result?.revision === "string" && result.revision !== revision && result.config, "using the Quiet Hours replacement");
-    if (current()) await loadQuietHours(panel, true);
+    requireMutationAcknowledgement(completePolicyResponse(result, true, panel._result?.config)
+      && result.revision !== revision, "using the Quiet Hours replacement");
+    if (current()) {
+      panel._result = result;
+      panel._error = null;
+      panel._render();
+      panel._toast("Quiet Hours replacement saved.");
+    }
   } catch (err) {
     if (current()) panel._toast(`Unable to use replacement: ${err.message || String(err)}`, true);
   } finally {

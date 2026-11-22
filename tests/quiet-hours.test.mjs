@@ -43,7 +43,11 @@ test("replacement accepts a clean draft after override key order changes", async
   const p = Object.assign(panel(snapshot, draft), {
     _viewKey:() => "capabilities/quiet-hours",
     _loadToken:0, _cacheGeneration:0,
-    _call:async (...args) => {calls.push(args); return result;},
+    _call:async (...args) => {
+      calls.push(args);
+      if (args[1] !== "rebind") throw new Error("Quiet Hours read unavailable");
+      return result;
+    },
     _render() {},
     _toast(message) {toasts.push(message);},
     shadowRoot:{
@@ -61,8 +65,9 @@ test("replacement accepts a clean draft after override key order changes", async
   click();
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls[0], ["quiet_hours", "rebind", {selection:second, revision:"before", review_token:"reviewed"}]);
+  assert.equal(calls.length, 1);
   assert.equal(p._result.revision, "after");
-  assert.deepEqual(toasts, []);
+  assert.deepEqual(toasts, ["Quiet Hours replacement saved."]);
 });
 
 test("renders orphaned bindings independently of temporarily unavailable controls", () => {
