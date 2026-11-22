@@ -32,6 +32,7 @@ from .const import (
     CONF_REASONING_EFFORT,
     CONF_SERVICE_TIER,
     CONF_TEMPERATURE,
+    CONF_TEMPORARY_MEMORY,
     CONF_TOP_P,
     CONF_WEB_SEARCH,
     CONF_WEB_SEARCH_CONTEXT,
@@ -44,9 +45,11 @@ from .const import (
     DEFAULT_REASONING_EFFORT,
     DEFAULT_SERVICE_TIER,
     DEFAULT_TEMPERATURE,
+    DEFAULT_TEMPORARY_MEMORY,
     DEFAULT_TOP_P,
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_CONTEXT,
+    TEMPORARY_MEMORY_OFF,
 )
 from .conversation_archive import archive_tools
 from .conversation_lifecycle import conversation_lifecycle_active
@@ -904,15 +907,17 @@ def assemble_integration_function_tools(
 
 
 def validate_runtime_readiness(
-    options: Mapping[str, Any], entry_data: Mapping[str, Any]
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+    *,
+    model_capabilities: Mapping[str, Any] | None = None,
+    client: Any = None,
 ) -> ProviderRequestSnapshot:
-    """Validate the deterministic, guaranteed initial Conversation request.
+    """Validate the initial Conversation catalogue for supported request scopes.
 
-    Uses the production assemblers with no loaded groups, external HA-tool
-    discovery, installed Skills, retained-data scope, or Knowledge catalogue.
-    Those request-time capabilities can still exceed a limit later; the runtime
-    and Group loader retain their own checks. Existing damaged definitions use
-    the established repair projection, never a rewritten persistence payload.
+    Reserve enabled built-ins for a request with an eligible owner and data.
+    Loaded groups, external HA tools and installed Skills still need live
+    validation. Existing damaged definitions use the established repair projection.
     """
     from .agent_config import (
         configured_function_tools_from_data,
@@ -924,7 +929,11 @@ def validate_runtime_readiness(
     from .skill_availability import is_canonical_skill_loader
 
     snapshot = build_provider_request_snapshot(
-        options, entry_data, tools_required=conversation_tools_required(options)
+        options,
+        entry_data,
+        tools_required=conversation_tools_required(options),
+        model_capabilities=model_capabilities,
+        client=client,
     )
     # Routes without a known tool limit need no catalogue traversal here.
     if snapshot.tool_limit is None:
@@ -958,9 +967,12 @@ def validate_runtime_readiness(
             assemble_integration_function_tools(
                 options,
                 {tool["spec"]["name"] for tool in configured},
-                memory_scope_available=False,
-                temporary_scope_available=False,
-                knowledge_available=False,
+                memory_scope_available=True,
+                temporary_scope_available=(
+                    options.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
+                    != TEMPORARY_MEMORY_OFF
+                ),
+                knowledge_available=bool(options.get(CONF_KNOWLEDGE_ENABLED)),
                 lifecycle_active=True,
             )
         )

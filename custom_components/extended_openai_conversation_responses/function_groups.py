@@ -452,6 +452,7 @@ def load_function_groups(
         else:
             unknown.append(group_id)
     session.last_active = time.monotonic()
+    capacity_reached = False
     if max_tools is not None and configured_tools is not None:
         effective = assemble_function_tools(
             configured_tools,
@@ -461,20 +462,29 @@ def load_function_groups(
             group_loader_supported=group_loader_supported,
             tool_available=tool_available,
         )
-        if len(effective.tools) + extra_tool_count > max_tools:
+        # At capacity the provider round omits the loader. No additional
+        # group can contribute an executable member to this catalogue.
+        executable_count = extra_tool_count + sum(
+            tool.get("function", {}).get("type") != "function_group_loader"
+            for tool in effective.tools
+        )
+        if executable_count > max_tools:
             session.loaded_group_ids.clear()
             session.loaded_group_ids.update(previous)
             return {
                 "status": "error",
                 "error": f"Loading these groups exceeds the provider's {max_tools}-tool limit",
             }
+        capacity_reached = executable_count == max_tools
     return {
         "status": "success" if not unknown else "partial" if loaded else "error",
         "loaded": loaded,
         "already_loaded": already_loaded,
         "already_available": already_available,
         "unknown": unknown,
-        "loadable_groups": sorted(
+        "loadable_groups": []
+        if capacity_reached
+        else sorted(
             group_id
             for group_id in on_demand
             if group_id not in session.loaded_group_ids

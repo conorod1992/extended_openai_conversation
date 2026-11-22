@@ -1287,6 +1287,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             def prepare_round_tools(
                 candidates: list[dict[str, Any]],
+                capacity: int | None,
             ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 if loader_rounds >= MAX_FUNCTION_GROUP_LOAD_ROUNDS:
                     candidates = [
@@ -1303,12 +1304,27 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         if tool.get("function", {}).get("type")
                         == "function_group_loader"
                     ]
-                return candidates, _format_tools(
+                formatted = _format_tools(
                     provider_request_function_tools(
                         candidates, conditional_continue=conditional_continue
                     ),
                     api_mode,
                 )
+                if capacity is not None and len(formatted) == capacity + 1:
+                    executable = [
+                        tool
+                        for tool in candidates
+                        if tool.get("function", {}).get("type")
+                        != "function_group_loader"
+                    ]
+                    if len(executable) < len(candidates):
+                        return executable, _format_tools(
+                            provider_request_function_tools(
+                                executable, conditional_continue=conditional_continue
+                            ),
+                            api_mode,
+                        )
+                return candidates, formatted
 
             for n_requests in range(MAX_TOOL_ITERATIONS):
                 from .function_tool_resolution import current_configuration_data
@@ -1321,15 +1337,20 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if function_tools_factory is not None
                     else function_tools
                 )
-                request_function_tools, formatted_function_tools = prepare_round_tools(
-                    candidates
-                )
                 allowed_web_search = (
                     web_search_tool
                     if web_search_tool and self._provider_tool_allowed("web_search")
                     else None
                 )
                 limit = provider_snapshot.tool_limit
+                capacity = (
+                    limit - int(allowed_web_search is not None)
+                    if limit is not None
+                    else None
+                )
+                request_function_tools, formatted_function_tools = prepare_round_tools(
+                    candidates, capacity
+                )
                 if (
                     not force_finalizer_only
                     and limit is not None
@@ -1344,7 +1365,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # turn's loaded groups too large. Offer the current loader
                     # again so this turn can select a set that fits.
                     request_function_tools, formatted_function_tools = (
-                        prepare_round_tools(function_tools_factory())
+                        prepare_round_tools(function_tools_factory(), capacity)
                     )
                 integration_loader_seen = integration_loader_seen or any(
                     tool.get("function", {}).get("type") == "function_group_loader"

@@ -365,6 +365,18 @@ def test_unknown_and_always_available_group_results_are_deterministic() -> None:
     }
 
 
+def test_capacity_counts_group_members_even_when_loader_will_be_omitted():
+    session = FunctionGroupRuntime().begin("conversation:one", 30)
+    groups = [_group("reminders", ["one"]), _group("calendar", ["two"])]
+    tools = [_tool("one"), _tool("two")]
+    accepted = load_function_groups(session, ["reminders"], groups, tools, max_tools=2, extra_tool_count=1)
+    assert accepted["loaded"] == ["reminders"]
+    assert accepted["loadable_groups"] == []
+    rejected = load_function_groups(session, ["calendar"], groups, tools, max_tools=2, extra_tool_count=1)
+    assert rejected["status"] == "error"
+    assert session.loaded_group_ids == {"reminders"}
+
+
 def test_loaded_groups_are_isolated_and_removed_groups_cannot_resurrect_tools() -> None:
     runtime = FunctionGroupRuntime()
     first = runtime.begin("conversation:first", 30)

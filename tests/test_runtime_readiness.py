@@ -95,7 +95,8 @@ async def test_request_preview_rejects_azure_tool_count_for_signed_in_caller(has
     )
     entry = SimpleNamespace(entry_id="entry", data={"api_provider": "azure"})
     subentry = SimpleNamespace(subentry_id="agent", data=options)
-    request.validate_runtime_readiness(options, entry.data)
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        request.validate_runtime_readiness(options, entry.data)
     with pytest.raises(HomeAssistantError, match="128-tool limit"):
         await async_preview_effective_request(hass, entry, subentry, options, "admin")
 
@@ -404,7 +405,7 @@ def test_readiness_is_independent_of_ambient_runtime_and_defers_dynamic_tools(ha
         pytest.raises(HomeAssistantError, match="128-tool limit"),
     ):
         request.validate_runtime_readiness(options, {"api_provider": "azure"})
-    # Scope-dependent data and discovered HA tools are not guaranteed initial tools.
+    # Enabled built-ins must fit an eligible owner's initial request.
     options = _options(
         126,
         azure_model="gpt-4o",
@@ -414,8 +415,17 @@ def test_readiness_is_independent_of_ambient_runtime_and_defers_dynamic_tools(ha
         knowledge_enabled=True,
     )
     before = deepcopy(options)
-    request.validate_runtime_readiness(options, {"api_provider": "azure"})
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        request.validate_runtime_readiness(options, {"api_provider": "azure"})
     assert options == before
+    request.validate_runtime_readiness(
+        _options(
+            100, azure_model="gpt-4o", continue_conversation="conditional",
+            memory_mode="manual", temporary_memory="eager", knowledge_enabled=True,
+        ),
+        {"api_provider": "azure"},
+    )
+    # Discovered HA tools still need live counts.
     dynamic = [_tool(f"discovered_{i}") for i in range(10)]
     with pytest.raises(HomeAssistantError, match="128-tool limit"):
         request.validate_provider_tool_count(128 + len(dynamic), 128)

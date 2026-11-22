@@ -97,6 +97,16 @@ async def test_chat_completions_blocks_oversized_saved_catalogue_and_recovers(
         client, entry=entry, section="configuration", action="request_preview"
     )
     assert preview["success"]
+    rejected_memory = await _management_call(
+        client,
+        entry=entry,
+        section="configuration",
+        action="save",
+        revision=repaired["revision"],
+        config={"memory_mode": "manual"},
+    )
+    assert not rejected_memory["valid"]
+    assert "128-tool limit" in str(rejected_memory["errors"])
     rejected = await _management_call(
         client,
         entry=entry,
@@ -249,3 +259,55 @@ async def test_loaded_groups_are_reset_when_knowledge_tools_fill_the_budget(
         "start_fresh_conversation",
     }
     assert "128-tool limit" in json.dumps(final)
+
+
+async def test_fifth_group_fills_capacity_and_next_turn_reuses_it(hass, monkeypatch):
+    tools = [_tool(f"fixed_{index}") for index in range(122)]
+    tools.extend(_tool(f"member_{index}") for index in range(6))
+    entry = _make_entry(
+        include_ai_task=False,
+        conversation_options={
+            "chat_model": "gpt-4o",
+            "api_mode": "chat_completions",
+            "functions": tools,
+            "function_groups": [
+                _group(f"group_{index}", [f"member_{index}"]) for index in range(6)
+            ],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            *[
+                _chat_sse_tool_call(
+                    f"call_{index}",
+                    FUNCTION_GROUP_LOADER_TOOL_NAME,
+                    {"groups": [f"group_{index}"]},
+                )
+                for index in range(5)
+            ],
+            _chat_sse_text("Finished"),
+            _chat_sse_text("Continued"),
+        ],
+    )
+    result = await _say(hass, agent)
+    assert _speech(result) == "Finished"
+    followup = await conversation.async_converse(
+        hass=hass,
+        text="Continue",
+        conversation_id=result.conversation_id,
+        context=Context(),
+        language="en",
+        agent_id=entry.entry_id,
+    )
+    assert _speech(followup) == "Continued"
+    sent = [request["body"] for request in wire.requests]
+    assert [len(body["tools"]) for body in sent] == [124, 125, 126, 127, 128, 128, 128]
+    for body in sent[-2:]:
+        names = {tool["function"]["name"] for tool in body["tools"]}
+        assert "member_4" in names
+        assert "member_5" not in names
+        assert FUNCTION_GROUP_LOADER_TOOL_NAME not in names

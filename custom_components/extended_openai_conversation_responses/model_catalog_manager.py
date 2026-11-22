@@ -255,11 +255,12 @@ class ModelCatalogManager:
         from .request import (
             build_provider_request_snapshot,
             capability_model_identity,
-            conversation_tools_required,
+            validate_runtime_readiness,
         )
 
         for entry in self.hass.config_entries.async_entries(DOMAIN):
             entry_data = getattr(entry, "data", {})
+            client = getattr(entry, "runtime_data", None)
             provider = effective_api_provider(
                 entry_data.get("api_provider"), entry_data.get("base_url")
             )
@@ -267,20 +268,24 @@ class ModelCatalogManager:
                 if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                     continue
                 options = subentry.data
-                model = capability_model_identity(options, getattr(entry, "data", {}))
+                model = capability_model_identity(options, entry_data)
+                metadata = catalog_model_metadata(candidate, model, provider=provider)
                 try:
-                    build_provider_request_snapshot(
-                        options,
-                        getattr(entry, "data", {}),
-                        tools_required=(
-                            conversation_tools_required(options)
-                            if subentry.subentry_type == "conversation"
-                            else False
-                        ),
-                        model_capabilities=catalog_model_metadata(
-                            candidate, model, provider=provider
-                        ),
-                    )
+                    if subentry.subentry_type == "conversation":
+                        validate_runtime_readiness(
+                            options,
+                            entry_data,
+                            model_capabilities=metadata,
+                            client=client,
+                        )
+                    else:
+                        build_provider_request_snapshot(
+                            options,
+                            entry_data,
+                            tools_required=False,
+                            model_capabilities=metadata,
+                            client=client,
+                        )
                 except Exception:
                     return False
                 if subentry.subentry_type != "conversation":
@@ -416,13 +421,11 @@ class ModelCatalogManager:
                                     CONF_REASONING_EFFORT: inherited_effort,
                                 }
                                 try:
-                                    build_provider_request_snapshot(
+                                    validate_runtime_readiness(
                                         inherited_options,
                                         entry_data,
-                                        tools_required=conversation_tools_required(
-                                            effective
-                                        ),
                                         model_capabilities=current_metadata,
+                                        client=client,
                                     )
                                 except HomeAssistantError:
                                     continue  # This combination was already unusable.
@@ -432,13 +435,11 @@ class ModelCatalogManager:
                                     not in routed_metadata["reasoning"]["efforts"]
                                 ):
                                     return False
-                                build_provider_request_snapshot(
+                                validate_runtime_readiness(
                                     inherited_options,
                                     entry_data,
-                                    tools_required=conversation_tools_required(
-                                        effective
-                                    ),
                                     model_capabilities=routed_metadata,
+                                    client=client,
                                 )
                             if not fixed_route:
                                 continue
@@ -463,16 +464,14 @@ class ModelCatalogManager:
                                 "efforts"
                             ] or [None]:
                                 try:
-                                    build_provider_request_snapshot(
+                                    validate_runtime_readiness(
                                         {
                                             **effective,
                                             CONF_REASONING_EFFORT: possible_effort,
                                         },
                                         entry_data,
-                                        tools_required=conversation_tools_required(
-                                            effective
-                                        ),
                                         model_capabilities=routed_metadata,
+                                        client=client,
                                     )
                                 except HomeAssistantError:
                                     continue
@@ -488,11 +487,11 @@ class ModelCatalogManager:
                             not in routed_metadata["reasoning"]["efforts"]
                         ):
                             return False
-                        build_provider_request_snapshot(
+                        validate_runtime_readiness(
                             effective,
-                            getattr(entry, "data", {}),
-                            tools_required=conversation_tools_required(effective),
+                            entry_data,
                             model_capabilities=routed_metadata,
+                            client=client,
                         )
                     except Exception:
                         return False

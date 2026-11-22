@@ -22,6 +22,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
 )
 from homeassistant.const import CONF_API_KEY
+from tests.test_function_groups import _tool
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +38,40 @@ def _label_candidate():
     value["catalog_version"] += 1
     value["models"][0]["display_name"] = "Astra (catalog update)"
     return value
+
+
+async def test_catalogue_auto_route_preserves_existing_native_tool_capacity(
+    hass, monkeypatch, check_manager
+):
+    candidate = deepcopy(dict(data.BUNDLED_CATALOG))
+    candidate["catalog_version"] += 1
+    model = next(item for item in candidate["models"] if item["id"] == "gpt-4o")
+    model["function_calling"]["preferred_api"] = "chat_completions"
+    candidate = data.validate_catalog(candidate)
+    data.validate_catalog_transition(None, candidate)
+    options = {
+        "chat_model": "gpt-4o",
+        "api_mode": "auto",
+        "functions": [_tool(f"tool_{index}") for index in range(128)],
+    }
+    subentry = SimpleNamespace(
+        subentry_type="conversation", subentry_id="assistant", data=options
+    )
+    entry = SimpleNamespace(
+        entry_id="provider",
+        data={"api_provider": "openai"},
+        subentries={"assistant": subentry},
+    )
+    hass.config_entries.async_entries.return_value = [entry]
+    monkeypatch.setattr(
+        runtime,
+        "async_get_request_rules",
+        AsyncMock(return_value=SimpleNamespace(snapshot=lambda: {"rules": []})),
+    )
+    assert await check_manager._candidate_preserves_saved_requests(data.BUNDLED_CATALOG)
+    assert not await check_manager._candidate_preserves_saved_requests(candidate)
+    options["functions"].pop()
+    assert await check_manager._candidate_preserves_saved_requests(candidate)
 
 
 class MemoryStore:
