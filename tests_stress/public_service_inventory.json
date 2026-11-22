@@ -58,6 +58,10 @@
     "query_image": [
       "tests_real_ha/test_service_handler_contracts.py"
     ],
+    "rebuild_memory_embeddings": [
+      "tests_real_ha/test_persistent_memory_runtime_recovery.py",
+      "tests_real_ha/test_request_rules_script_semantics.py"
+    ],
     "reload_skills": [
       "tests/test_skills_coverage.py"
     ]

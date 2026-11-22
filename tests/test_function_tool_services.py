@@ -20,6 +20,7 @@ from custom_components.extended_openai_conversation_responses.services import (
     async_setup_services,
     async_skill_source_ref,
 )
+from homeassistant.core import Context, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -110,8 +111,11 @@ async def test_function_state_services_preserve_unrelated_configuration_and_gues
         if call.args[:2] == (DOMAIN, service)
     )
     await handler(
-        SimpleNamespace(
-            data={"config_entry": "entry-1", "agent_id": "agent-1", field: [target]}
+        ServiceCall(
+            hass,
+            DOMAIN,
+            service,
+            {"config_entry": "entry-1", "agent_id": "agent-1", field: [target]},
         )
     )
     after = guest_mode.resolve_guest_policy(
@@ -165,24 +169,30 @@ async def test_enable_disable_actions_update_one_or_multiple_tools(
     }
 
     await handlers[SERVICE_DISABLE_FUNCTION_TOOLS](
-        SimpleNamespace(
-            data={
+        ServiceCall(
+            hass,
+            DOMAIN,
+            SERVICE_DISABLE_FUNCTION_TOOLS,
+            {
                 "config_entry": "entry-1",
                 "agent_id": "agent-1",
                 "functions": ["one", "two"],
-            }
+            },
         )
     )
     disabled = yaml.safe_load(subentry.data["functions"])
     assert [tool["enabled"] for tool in disabled] == [False, False]
 
     await handlers[SERVICE_ENABLE_FUNCTION_TOOLS](
-        SimpleNamespace(
-            data={
+        ServiceCall(
+            hass,
+            DOMAIN,
+            SERVICE_ENABLE_FUNCTION_TOOLS,
+            {
                 "config_entry": "entry-1",
                 "agent_id": "agent-1",
                 "functions": ["two"],
-            }
+            },
         )
     )
     enabled = yaml.safe_load(subentry.data["functions"])
@@ -191,13 +201,16 @@ async def test_enable_disable_actions_update_one_or_multiple_tools(
     hass.auth.async_get_user.return_value = SimpleNamespace(is_admin=False)
     with pytest.raises(HomeAssistantError, match="Administrator"):
         await handlers[SERVICE_ENABLE_FUNCTION_TOOLS](
-            SimpleNamespace(
-                context=SimpleNamespace(user_id="non-admin"),
-                data={
+            ServiceCall(
+                hass,
+                DOMAIN,
+                SERVICE_ENABLE_FUNCTION_TOOLS,
+                {
                     "config_entry": "entry-1",
                     "agent_id": "agent-1",
                     "functions": ["one"],
                 },
+                context=Context(user_id="non-admin"),
             )
         )
 
@@ -237,12 +250,15 @@ async def test_group_actions_do_not_change_member_tool_state(hass, monkeypatch) 
     }
 
     await handlers[SERVICE_DISABLE_FUNCTION_GROUPS](
-        SimpleNamespace(
-            data={
+        ServiceCall(
+            hass,
+            DOMAIN,
+            SERVICE_DISABLE_FUNCTION_GROUPS,
+            {
                 "config_entry": "entry-1",
                 "agent_id": "agent-1",
                 "function_groups": ["optional"],
-            }
+            },
         )
     )
     assert subentry.data["function_groups"][0]["enabled"] is False
@@ -250,12 +266,15 @@ async def test_group_actions_do_not_change_member_tool_state(hass, monkeypatch) 
     assert [tool.get("enabled", True) for tool in stored_tools] == [True, False]
 
     await handlers[SERVICE_ENABLE_FUNCTION_GROUPS](
-        SimpleNamespace(
-            data={
+        ServiceCall(
+            hass,
+            DOMAIN,
+            SERVICE_ENABLE_FUNCTION_GROUPS,
+            {
                 "config_entry": "entry-1",
                 "agent_id": "agent-1",
                 "function_groups": ["optional"],
-            }
+            },
         )
     )
     assert subentry.data["function_groups"][0]["enabled"] is True

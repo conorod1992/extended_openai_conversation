@@ -10,7 +10,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import services
+from custom_components.extended_openai_conversation_responses import (
+    services,
+    skill_transactions,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
     SERVICE_DOWNLOAD_SKILL,
@@ -24,6 +27,9 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.template import Template
 from tests_stress.conftest import record
 from tests_stress.test_skill_lifecycle_campaign import _write_skill
+
+OWNED_TOKEN = "a" * 32
+RETRY_TOKEN = "b" * 32
 
 
 @pytest.mark.parametrize(
@@ -45,11 +51,14 @@ async def test_cancelled_download_settles_native_work_before_owned_cleanup(
     foreign = manager.staging_dir / "demo.download-foreign"
     foreign.mkdir(parents=True)
     (foreign / "keep.txt").write_bytes(b"unowned evidence")
-    staged = manager.staging_dir / "demo.download-owned"
+    staged = manager.staging_dir / f"demo.download-{OWNED_TOKEN}"
+    owned_record = manager.staging_dir / f"download-{OWNED_TOKEN}.json"
     if phase == "collision":
         staged.mkdir()
         (staged / "keep.txt").write_bytes(b"colliding unowned evidence")
-    monkeypatch.setattr(services, "uuid4", lambda: SimpleNamespace(hex="owned"))
+    monkeypatch.setattr(
+        skill_transactions, "uuid4", lambda: SimpleNamespace(hex=OWNED_TOKEN)
+    )
     monkeypatch.setattr(
         services, "async_skill_source_ref", AsyncMock(return_value="reviewed-ref")
     )
@@ -60,6 +69,14 @@ async def test_cancelled_download_settles_native_work_before_owned_cleanup(
     cleanup_calls = []
     chosen = {"prepare": "_prepare_staging", "write": "_write_file_sync"}.get(phase)
     gate_used = False
+    close_download = skill_transactions.SkillDownload.close
+
+    def close_owned_download(download):
+        assert not chosen or settled.is_set(), "cleanup raced surviving native work"
+        cleanup_calls.append(download.directory)
+        close_download(download)
+
+    monkeypatch.setattr(skill_transactions.SkillDownload, "close", close_owned_download)
 
     def add_executor(function, *args):
         nonlocal gate_used
@@ -78,9 +95,6 @@ async def test_cancelled_download_settles_native_work_before_owned_cleanup(
                     loop.call_soon_threadsafe(settled.set)
 
             return executor(gated, *args)
-        if function.__name__ == "_cleanup_path":
-            assert not chosen or settled.is_set(), "cleanup raced surviving native work"
-            cleanup_calls.append(args[0])
         return executor(function, *args)
 
     monkeypatch.setattr(hass, "async_add_executor_job", add_executor)
@@ -167,7 +181,9 @@ async def test_cancelled_download_settles_native_work_before_owned_cleanup(
             assert (staged / "keep.txt").read_bytes() == b"colliding unowned evidence"
             assert cleanup_calls == []
             # Repair the collision externally; the service never owns this tree.
-            monkeypatch.setattr(services, "uuid4", lambda: SimpleNamespace(hex="retry"))
+            monkeypatch.setattr(
+                skill_transactions, "uuid4", lambda: SimpleNamespace(hex=RETRY_TOKEN)
+            )
         else:
             await asyncio.wait_for(entered.wait(), 10)
             assert staged.exists() and not task.done()
@@ -188,6 +204,7 @@ async def test_cancelled_download_settles_native_work_before_owned_cleanup(
             assert not staged.exists()
             assert cleanup_calls == [staged]
             assert all(response.closed for response in responses)
+        assert not owned_record.exists()
         await assert_old_usable()
         assert (foreign / "keep.txt").read_bytes() == b"unowned evidence"
         stream_release.set()
@@ -199,7 +216,8 @@ async def test_cancelled_download_settles_native_work_before_owned_cleanup(
         assert fresh is not manager
         assert fresh.get_skill("demo").description == "NEW installed"
         assert (foreign / "keep.txt").read_bytes() == b"unowned evidence"
-        assert list(manager.staging_dir.glob("demo.download-retry")) == []
+        assert not (manager.staging_dir / f"demo.download-{RETRY_TOKEN}").exists()
+        assert not list(manager.staging_dir.glob("download-*.json"))
         if phase != "collision":
             assert not staged.exists()
         record(

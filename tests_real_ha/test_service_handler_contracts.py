@@ -321,7 +321,7 @@ async def test_function_state_services_dispatch_exact_requested_state(
     field: str,
     enabled: bool,
 ) -> None:
-    """Function state services must dispatch exact target, names and state."""
+    """Function state services must dispatch exact target, names, state and user."""
     # tests/test_function_tool_services.py covers both states for both families.
     # Keep real dispatch for each distinct HA schema and registration for all names.
     entry = _entry()
@@ -355,6 +355,7 @@ async def test_function_state_services_dispatch_exact_requested_state(
         subentry.subentry_id,
         ["first", "second"],
         enabled,
+        user_id=hass_admin_user.id,
     )
 
 

@@ -721,11 +721,12 @@ async def test_two_native_audio_journeys_interleave_without_cross_owned_output(
         )
         assert len(wire.requests) == 3
         assert speech.recordings == ["a", "b", "a"]
-        assert tts.messages == [
-            "Reply for satellite A.",
-            "Reply for satellite B.",
-            "Recovered reply for satellite A.",
-        ]
+        # HA can start either independent synthesis worker first. Recovery only
+        # starts after both original journeys have finished.
+        assert Counter(tts.messages[:2]) == Counter(
+            ["Reply for satellite A.", "Reply for satellite B."]
+        )
+        assert tts.messages[2:] == ["Recovered reply for satellite A."]
         assert "both-provider-requests-admitted" in stages
         record(
             stress_trace,

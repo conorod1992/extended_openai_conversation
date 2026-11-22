@@ -1232,6 +1232,7 @@
     "tests_real_ha/test_ai_task_runtime.py::test_generate_data_structured_output_flows_through_home_assistant",
     "tests_real_ha/test_ai_task_runtime.py::test_generate_data_uses_real_ha_runtime_and_does_not_leak_previous_task",
     "tests_real_ha/test_ai_task_runtime.py::test_malformed_provider_stream_fails_through_public_ai_task_api",
+    "tests_real_ha/test_archive_private_activity.py::test_archive_restore_preserves_live_unretained_privacy",
     "tests_real_ha/test_archive_private_activity.py::test_continuing_private_conversation_never_resumes_retention",
     "tests_real_ha/test_archive_private_activity.py::test_native_private_archive_follows_core_session_cleanup",
     "tests_real_ha/test_assist_origin_context.py::test_public_assist_preserves_real_device_and_satellite_origin_context",
