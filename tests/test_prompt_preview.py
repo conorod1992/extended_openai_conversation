@@ -840,6 +840,20 @@ async def test_effective_request_preview_rejects_text_only_route_when_finalizer_
             "admin",
         )
 
+    options[CONF_CHAT_MODEL] = "gpt-4o"
+    result = await async_preview_effective_request(
+        hass,
+        SimpleNamespace(entry_id="entry-1", data={}),
+        SimpleNamespace(subentry_id="agent-1"),
+        options,
+        "admin",
+    )
+    sections = {section["key"]: section["content"] for section in result["sections"]}
+    assert sections["function_tools"] == sections["function_group_loader"] == "[]"
+    [finalizer] = yaml.safe_load(sections["integration_tools"])
+    assert finalizer["function"]["name"] == "set_continue_conversation"
+    assert yaml.safe_load(sections["request_settings"])["tool_choice"] == "required"
+
 
 async def test_effective_request_preview_uses_first_request_tool_assembly(
     hass, monkeypatch

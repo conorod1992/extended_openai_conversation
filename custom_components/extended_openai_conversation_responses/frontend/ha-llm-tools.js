@@ -13,12 +13,19 @@ export function bindHALlmTools(panel, acknowledge) {
   if (!host || host.__eocHaBound) return;
   host.__eocHaBound = true;
   const agentId = panel._agentId, entryId = panel._selectedAgent?.()?.entry_id;
+  const view = panel._viewKey?.();
   const ownsAgent = () => panel._agentId === agentId && panel._selectedAgent?.()?.entry_id === entryId;
-  const load = () => {
-    if (!ownsAgent()) return Promise.resolve(null);
-    if (panel._haCatalogLoad?.current()) return panel._haCatalogLoad.promise;
+  const captureVisit = () => {
     const authenticated = captureAuthentication(panel);
-    const request = {current: () => ownsAgent() && authenticated(), promise: null};
+    const visit = panel._eocViewAssetToken;
+    // The route generation survives rendering replacement controls within a visit.
+    return () => ownsAgent() && authenticated() && panel.isConnected !== false
+      && panel.shadowRoot === root && panel._viewKey?.() === view && panel._eocViewAssetToken === visit;
+  };
+  const load = (current = captureVisit()) => {
+    if (!current()) return Promise.resolve(null);
+    if (panel._haCatalogLoad?.current()) return panel._haCatalogLoad.promise;
+    const request = {current, promise: null};
     panel._haCatalogLoad = request;
     const ownsLoad = () => panel._haCatalogLoad === request && request.current();
     request.promise = (async () => {
@@ -39,11 +46,10 @@ export function bindHALlmTools(panel, acknowledge) {
     return request.promise;
   };
   const refresh = async () => {
-    const authenticated = captureAuthentication(panel);
-    const visible = () => ownsAgent() && authenticated() && panel.isConnected !== false
-      && root.querySelector(".tools-surface");
+    const current = captureVisit();
+    const visible = () => current() && root.querySelector(".tools-surface");
     try {
-      if (await load() && visible() && !root.querySelector("dialog[open]")) panel._render();
+      if (await load(current) && visible() && !root.querySelector("dialog[open]")) panel._render();
     } catch (err) {
       if (visible()) panel._toast(err.message, true);
     }
@@ -69,8 +75,7 @@ export function bindHALlmTools(panel, acknowledge) {
     dialog.dataset.haLlmToolsDialog = "";
     dialog.setAttribute("aria-label", "Add Home Assistant tools");
     dialog.innerHTML = `<div class="dialog-header"><h2>Add Home Assistant tools</h2></div><div class="dialog-body">
-      <p>These tools are provided by Home Assistant or installed integrations. Choose the ones you want this assistant to use.</p>
-      <p>Only the tools you select now are added. New tools must be added separately. Adding many tools can increase how much information is sent with each request. Function Groups can help by loading tools only when needed. Home Assistant tools are unavailable in Guest Mode.</p>
+      <p>These tools are provided by Home Assistant or installed integrations. Only selected tools are added. Use Function Groups to limit request size. These tools are unavailable in Guest Mode.</p>
       <p role="status" data-status>Loading available tools…</p>
       <label>Preview device<select data-device><option value="">No device</option></select></label>
       <label>Search<input type="search" data-search></label><label>Sources<select multiple data-sources aria-label="Filter by sources"></select><small>Leave sources unselected to show all sources.</small></label>

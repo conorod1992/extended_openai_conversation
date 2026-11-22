@@ -1,5 +1,5 @@
 import {test, expect} from "@playwright/test";
-import {acceptConfirmation, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 import {openCollection, beginCollectionMeasure, finishCollectionMeasure} from "./collection-helpers.mjs";
 
 const tool = (panel, name) => panel.locator(`[data-tool-key="${name}"]`);
@@ -203,6 +203,70 @@ test("Functions: HA availability refresh changes only the affected tool", async 
   await panel.locator("#refresh-ha-tools").click();
   await expect(tool(panel, "tool_0")).toContainText("Unavailable");
   await expectRetained(page, '[data-tool-key="tool_1"]');
+});
+
+test("Functions: a retired HA catalogue refresh cannot update the reopened page", async ({page}) => {
+  const errors = trackPageErrors(page);
+  const route = fixtureUrl("capabilities/functions");
+  await page.goto(route);
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(tool(panel, "baseline_tool")).toHaveCount(1);
+  await page.evaluate(() => {
+    const state = browserHarness.getState();
+    state.configuration.config.functions[0].function = {
+      type:"ha_llm", tool_name:"baseline_ha", source_id:"fixture", api_id:"assist",
+    };
+    localStorage.setItem("extended-openai-browser-harness-state-v3", JSON.stringify(state));
+  });
+  await page.goto(route);
+  const refresh = panel.locator("#refresh-ha-tools");
+  await expect(refresh).toBeVisible();
+  await panel.evaluate(async host => {
+    await host._ensureHALlmTools();
+    await host._haCatalogLoad?.promise;
+    const hass = host.hass, original = hass.callWS.bind(hass);
+    const reads = [];
+    window.haCatalogueVisitReads = reads;
+    hass.callWS = message => {
+      if (message.section === "tools" && message.action === "ha_catalog") {
+        return new Promise((resolve, reject) => reads.push({resolve, reject}));
+      }
+      return original(message);
+    };
+    host._haCatalog = {saved:{baseline_tool:{description:"Accepted catalogue", available:true}}};
+    host._haCatalogAgent = host._agentId;
+    host._haCatalogLoadedAt = Date.now();
+    host._render();
+  });
+  for (const [index, outcome] of ["success", "failure"].entries()) {
+    await refresh.click();
+    await expect.poll(() => page.evaluate(() => haCatalogueVisitReads.length)).toBe(index + 1);
+    await panel.evaluate(async (host, index) => {
+      haCatalogueVisitReads[index].completion = host._haCatalogLoad.promise.catch(() => null);
+      await host._navigate("guide");
+      await host._navigate("capabilities", "functions");
+    }, index);
+    await expect(refresh).toBeVisible();
+    await page.evaluate(async ({index, outcome}) => {
+      const read = haCatalogueVisitReads[index];
+      if (outcome === "success") {
+        read.resolve({saved:{baseline_tool:{description:"Retired catalogue", available:false}}});
+      } else {
+        read.reject(new Error("Retired catalogue refresh failed"));
+      }
+      await read.completion;
+    }, {index, outcome});
+    await expect(tool(panel, "baseline_tool")).toContainText("Accepted catalogue");
+    await expect(panel.locator("#toast")).not.toContainText("Retired catalogue refresh failed");
+  }
+  await refresh.click();
+  await expect.poll(() => page.evaluate(() => haCatalogueVisitReads.length)).toBe(3);
+  await page.evaluate(() => haCatalogueVisitReads[2].resolve({
+    saved:{baseline_tool:{description:"Current catalogue", available:false}},
+  }));
+  await expect(tool(panel, "baseline_tool")).toContainText("Current catalogue");
+  await expect(refresh).toBeEnabled();
+  await expectHarnessClean(page, errors);
 });
 
 test("Request Rules: moved cards retain identity and boundary buttons remain disabled after completion", async ({page}) => {

@@ -17,14 +17,12 @@ from .const import (
     CONF_CONTINUE_CONVERSATION,
     CONF_FUNCTION_GROUPS,
     CONF_KNOWLEDGE_ENABLED,
-    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_TEMPORARY_MEMORY,
     CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_FUNCTION_GROUPS,
-    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
@@ -42,13 +40,13 @@ from .memory import memory_enabled
 from .model_payload import count_model_function_tools
 from .prompt import render_effective_prompt
 from .request import (
-    CONTINUE_CONVERSATION_TOOL,
-    START_FRESH_CONVERSATION_TOOL,
     assemble_integration_function_tools,
     build_provider_request_snapshot,
     canonical_json,
     format_function_tools,
+    function_call_budget_available,
     ha_tool_discovery_references,
+    request_function_tools,
     validate_provider_tool_count,
 )
 from .skill_runtime_availability import effective_tool_runtime_scope
@@ -240,16 +238,6 @@ async def async_preview_effective_request(
             archive_available=archive_available,
             archive_session_available=archive_session_available,
         )
-        custom_tools = [
-            tool
-            for tool in grouped.tools
-            if tool.get("spec", {}).get("name") != FUNCTION_GROUP_LOADER_TOOL_NAME
-        ]
-        loader_tools = [
-            tool
-            for tool in grouped.tools
-            if tool.get("spec", {}).get("name") == FUNCTION_GROUP_LOADER_TOOL_NAME
-        ]
         configured_names = {
             tool.get("spec", {}).get("name")
             for tool in configured_tools
@@ -264,29 +252,21 @@ async def async_preview_effective_request(
             archive_available=archive_available,
             archive_session_available=archive_session_available,
             guest_policy=guest_policy,
+            lifecycle_active=True,
         )
         conditional_continue = (
             options.get(CONF_CONTINUE_CONVERSATION, DEFAULT_CONTINUE_CONVERSATION)
             == CONTINUE_CONVERSATION_CONDITIONAL
         )
-        max_function_calls = int(
-            options.get(
-                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            )
-        )
-        if max_function_calls == 0:
-            custom_tools = []
+        if not function_call_budget_available(options):
             integration_tools = []
-        else:
-            integration_tools.append(START_FRESH_CONVERSATION_TOOL)
-        if conditional_continue:
-            integration_tools.append(CONTINUE_CONVERSATION_TOOL)
 
         provider = build_provider_request_snapshot(
             options,
             getattr(entry, "data", {}),
-            tools_required=bool(custom_tools or loader_tools or integration_tools),
+            tools_required=bool(
+                grouped.tools or integration_tools or conditional_continue
+            ),
             client=getattr(entry, "runtime_data", None),
         )
         formatted_provider = (
@@ -296,17 +276,31 @@ async def async_preview_effective_request(
             grouped.tools,
             provider.tool_limit,
             extra_tool_count=count_model_function_tools(integration_tools)
+            + int(conditional_continue)
             + len(formatted_provider),
         )
-        if admitted_grouped_tools is not grouped.tools and loader_tools:
-            loader_tools = []
+        if len(admitted_grouped_tools) < len(grouped.tools):
             notes.append(
                 "The provider tool limit leaves no slot for the Function Group loader."
             )
+        custom_tools = [
+            tool
+            for tool in admitted_grouped_tools
+            if tool.get("spec", {}).get("name") != FUNCTION_GROUP_LOADER_TOOL_NAME
+        ]
+        loader_tools = [
+            tool
+            for tool in admitted_grouped_tools
+            if tool.get("spec", {}).get("name") == FUNCTION_GROUP_LOADER_TOOL_NAME
+        ]
+        request_tools = request_function_tools(
+            [*admitted_grouped_tools, *integration_tools],
+            conditional_continue=conditional_continue,
+        )
         formatted_custom = format_function_tools(custom_tools, provider.api_mode)
         formatted_loader = format_function_tools(loader_tools, provider.api_mode)
         formatted_integration = format_function_tools(
-            integration_tools, provider.api_mode
+            request_tools[len(admitted_grouped_tools) :], provider.api_mode
         )
         validate_provider_tool_count(
             len(formatted_custom)

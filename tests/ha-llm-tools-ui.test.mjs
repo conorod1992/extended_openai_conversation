@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import { bindHALlmTools, filterHATools, haToolName, isHALlmTool, renderHAToolCard } from "../custom_components/extended_openai_conversation_responses/frontend/ha-llm-tools.js";
 import {categorizeFunctionTools, synchronizePersistedFunctions} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools-base.js";
 
@@ -127,4 +128,70 @@ for (const transition of ["late success", "late failure", "assistant round trip"
   assert.equal(catalogPanel._haCatalog, currentCatalog);
   assert.equal(catalogPanel._haCatalogAgent, roundTrip ? "A" : "B");
   assert.ok(rendered.includes(catalogPanel._haCatalogAgent));
+}
+
+for (const outcome of ["success", "failure"]) {
+  test(`a late HA catalogue ${outcome} belongs to the originating Tools visit`, async () => {
+    const cached = {saved:{baseline:{}}};
+    const events = [];
+    const requests = [];
+    let host, button;
+    const catalogPanel = {
+      _agentId:"agent",
+      _draft:{functions:[tool]},
+      _haCatalog:cached,
+      _haCatalogAgent:"agent",
+      _haCatalogLoadedAt:Date.now(),
+      _selectedAgent() { return {entry_id:"entry"}; },
+      _viewKey() { return this.view; },
+      shadowRoot:{querySelector(selector) {
+        if (selector === ".tools-surface") return host;
+        if (selector === "#refresh-ha-tools") return button;
+        return null;
+      }},
+      _call(section, action) {
+        assert.deepEqual([section, action], ["tools", "ha_catalog"]);
+        return new Promise((resolve, reject) => requests.push({resolve, reject}));
+      },
+      _render() { events.push("render"); },
+      _toast(message) { events.push(message); },
+    };
+    const mount = (view, visit) => {
+      catalogPanel.view = view;
+      catalogPanel._eocViewAssetToken = visit;
+      if (button) button.isConnected = false;
+      host = view === "capabilities/functions" ? {} : null;
+      button = host && {
+        isConnected:true,
+        addEventListener(_event, listener) { this.refresh = () => listener({currentTarget:this}); },
+      };
+      bindHALlmTools(catalogPanel);
+      return button;
+    };
+
+    const original = mount("capabilities/functions", 1);
+    const oldRefresh = original.refresh();
+    assert.equal(original.disabled, true);
+    mount("overview", 2);
+    const returned = mount("capabilities/functions", 3);
+    assert.equal(requests.length, 1, "the fresh accepted cache avoids an automatic read");
+
+    if (outcome === "success") requests[0].resolve({saved:{stale:{}}});
+    else requests[0].reject(new Error("Old visit's catalogue failed"));
+    await oldRefresh;
+    assert.deepEqual(events, []);
+    assert.equal(catalogPanel._haCatalog, cached);
+    assert.notEqual(returned.disabled, true);
+
+    const currentRefresh = returned.refresh();
+    const replacement = mount("capabilities/functions", 3);
+    const sameVisitRefresh = replacement.refresh();
+    assert.equal(requests.length, 2, "replacement controls share a pending read in the same visit");
+    const current = {saved:{current:{}}};
+    requests[1].resolve(current);
+    await Promise.all([currentRefresh, sameVisitRefresh]);
+    assert.ok(events.includes("render"));
+    assert.equal(catalogPanel._haCatalog, current);
+    assert.equal(replacement.disabled, false);
+  });
 }

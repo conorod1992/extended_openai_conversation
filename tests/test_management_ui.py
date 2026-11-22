@@ -142,11 +142,6 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     monkeypatch.setattr(
         management_request_preview, "format_function_tools", lambda tools, _mode: tools
     )
-    monkeypatch.setattr(
-        management_request_preview,
-        "assemble_integration_function_tools",
-        lambda *_args, **_kwargs: [],
-    )
     monkeypatch.setattr(management_request_preview, "memory_enabled", lambda _options: False)
 
     ha_tool = {
@@ -244,6 +239,10 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
         section for section in empty["sections"] if section["key"] == "request_settings"
     )
     assert '"tool_choice":"auto"' in request_settings["content"]
+    integration = next(
+        section for section in empty["sections"] if section["key"] == "integration_tools"
+    )
+    assert "start_fresh_conversation" in integration["content"]
 
 
 @pytest.mark.asyncio

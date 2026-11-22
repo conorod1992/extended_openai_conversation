@@ -38,6 +38,7 @@ from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
+from tests.test_function_groups import _group, _tool
 from tests_real_ha.device_info_compat import device_info_field
 from tests_real_ha.test_cross_feature_acceptance import _agent, _rule, _say, _speech
 from tests_real_ha.test_management_backend_acceptance import (
@@ -137,12 +138,18 @@ async def _write(command, route, changes, revision):
 async def test_guest_mode_tool_matches_saved_request_preview(
     hass, hass_ws_client, monkeypatch, api_mode, saved, enabled
 ):
-    agent = await _agent(hass, api_mode=api_mode, **saved)
+    agent = await _agent(
+        hass,
+        api_mode=api_mode,
+        functions=[_tool("eager_tool"), _tool("on_demand_tool")],
+        function_groups=[_group("on-demand", ["on_demand_tool"])],
+        **saved,
+    )
     before = deepcopy(dict(agent.subentry.data))
     assert (CONF_GUEST_MODE_ENABLED in before) == bool(saved)
     client = await _admin_client(hass, hass_ws_client)
 
-    async def preview_tools(**draft):
+    async def preview_sections(**draft):
         preview = await _management_call(
             client,
             entry=agent.entry,
@@ -150,11 +157,11 @@ async def test_guest_mode_tool_matches_saved_request_preview(
             action="request_preview",
             **draft,
         )
-        return next(
-            json.loads(section["content"])
+        return {
+            section["key"]: json.loads(section["content"])
             for section in preview["sections"]
-            if section["key"] == "integration_tools"
-        )
+            if section["format"] == "json"
+        }
 
     def guest_tool(tools):
         return next(
@@ -172,14 +179,19 @@ async def test_guest_mode_tool_matches_saved_request_preview(
         else _responses_sse_text("Provider replied")
     )
     wire = _install_wire(monkeypatch, agent, [reply])
-    preview = guest_tool(await preview_tools())
+    preview = await preview_sections()
     assert _speech(await _say(hass, agent, "Give me the provider response")) == (
         "Provider replied"
     )
     [request] = wire.requests
-    actual = guest_tool(request["body"]["tools"])
-    assert preview == actual
-    assert (actual is not None) is enabled
+    assert request["body"]["tools"] == [
+        *preview["provider_tools"],
+        *preview["function_tools"],
+        *preview["function_group_loader"],
+        *preview["integration_tools"],
+    ]
+    assert request["body"]["tool_choice"] == preview["request_settings"]["tool_choice"]
+    assert (guest_tool(preview["integration_tools"]) is not None) is enabled
 
     snapshot = await _management_call(
         client, entry=agent.entry, section="configuration", action="get"
@@ -189,8 +201,8 @@ async def test_guest_mode_tool_matches_saved_request_preview(
         client, entry=agent.entry, section="guest_mode", action="get"
     )
     assert policy["config"][CONF_GUEST_MODE_ENABLED] is enabled
-    draft = await preview_tools(config={CONF_GUEST_MODE_ENABLED: not enabled})
-    assert (guest_tool(draft) is not None) == (not enabled)
+    draft = await preview_sections(config={CONF_GUEST_MODE_ENABLED: not enabled})
+    assert (guest_tool(draft["integration_tools"]) is not None) == (not enabled)
     exported = await _management_call(
         client, entry=agent.entry, section="configuration", action="export"
     )
