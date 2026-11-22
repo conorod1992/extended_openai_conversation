@@ -106,6 +106,7 @@ from .function_execution import (
     function_execution_errors_propagate,
     split_legacy_execution_delay,
 )
+from .function_groups import admit_function_group_loader
 from .function_tool_recovery import (
     MalformedToolArguments,
     ToolRecoveryState,
@@ -1289,13 +1290,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 candidates: list[dict[str, Any]],
                 capacity: int | None,
             ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-                if loader_rounds >= MAX_FUNCTION_GROUP_LOAD_ROUNDS:
-                    candidates = [
-                        tool
-                        for tool in candidates
-                        if tool.get("function", {}).get("type")
-                        != "function_group_loader"
-                    ]
                 if function_call_budget.exhausted:
                     # The loader and finalizer do not execute ordinary tools.
                     candidates = [
@@ -1304,29 +1298,18 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         if tool.get("function", {}).get("type")
                         == "function_group_loader"
                     ]
-                formatted = _format_tools(
+                candidates = admit_function_group_loader(
+                    candidates,
+                    capacity,
+                    extra_tool_count=int(conditional_continue),
+                    loader_available=loader_rounds < MAX_FUNCTION_GROUP_LOAD_ROUNDS,
+                )
+                return candidates, _format_tools(
                     provider_request_function_tools(
                         candidates, conditional_continue=conditional_continue
                     ),
                     api_mode,
                 )
-                if capacity is not None and len(formatted) == capacity + 1:
-                    # Keep groups loaded by the prior turn's final loader call.
-                    # At capacity there is no slot for the loader itself.
-                    executable = [
-                        tool
-                        for tool in candidates
-                        if tool.get("function", {}).get("type")
-                        != "function_group_loader"
-                    ]
-                    if len(executable) < len(candidates):
-                        return executable, _format_tools(
-                            provider_request_function_tools(
-                                executable, conditional_continue=conditional_continue
-                            ),
-                            api_mode,
-                        )
-                return candidates, formatted
 
             for n_requests in range(MAX_TOOL_ITERATIONS):
                 from .function_tool_resolution import current_configuration_data

@@ -32,13 +32,14 @@ from .const import (
     SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_OFF,
 )
-from .function_groups import assemble_function_tools
+from .function_groups import admit_function_group_loader, assemble_function_tools
 from .guest_function_tools import filter_guest_tools_and_groups
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
 from .ha_llm_tools import ToolSnapshot, async_discover
 from .helpers import get_exposed_entities
 from .knowledge import get_loaded_knowledge
 from .memory import memory_enabled
+from .model_payload import count_model_function_tools
 from .prompt import render_effective_prompt
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
@@ -288,13 +289,24 @@ async def async_preview_effective_request(
             tools_required=bool(custom_tools or loader_tools or integration_tools),
             client=getattr(entry, "runtime_data", None),
         )
+        formatted_provider = (
+            list(provider.provider_tools) if guest_policy.web_search else []
+        )
+        admitted_grouped_tools = admit_function_group_loader(
+            grouped.tools,
+            provider.tool_limit,
+            extra_tool_count=count_model_function_tools(integration_tools)
+            + len(formatted_provider),
+        )
+        if admitted_grouped_tools is not grouped.tools and loader_tools:
+            loader_tools = []
+            notes.append(
+                "The provider tool limit leaves no slot for the Function Group loader."
+            )
         formatted_custom = format_function_tools(custom_tools, provider.api_mode)
         formatted_loader = format_function_tools(loader_tools, provider.api_mode)
         formatted_integration = format_function_tools(
             integration_tools, provider.api_mode
-        )
-        formatted_provider = (
-            list(provider.provider_tools) if guest_policy.web_search else []
         )
         validate_provider_tool_count(
             len(formatted_custom)
@@ -320,7 +332,10 @@ async def async_preview_effective_request(
                 "System / context",
                 "\n".join(
                     part
-                    for part in (preview.text, ha_snapshot.prompt_for(grouped.tools))
+                    for part in (
+                        preview.text,
+                        ha_snapshot.prompt_for(admitted_grouped_tools),
+                    )
                     if part
                 ),
                 "text",
@@ -368,7 +383,7 @@ async def async_preview_effective_request(
         ]
 
         grouped_payload = canonical_json(
-            format_function_tools(grouped.tools, provider.api_mode)
+            format_function_tools(admitted_grouped_tools, provider.api_mode)
         )
         ungrouped_payload = canonical_json(
             format_function_tools(all_available_tools, provider.api_mode)
@@ -400,7 +415,7 @@ async def async_preview_effective_request(
     return {
         "prompt": "\n".join(
             part
-            for part in (preview.text, ha_snapshot.prompt_for(grouped.tools))
+            for part in (preview.text, ha_snapshot.prompt_for(admitted_grouped_tools))
             if part
         ),
         "prompt_sections": [

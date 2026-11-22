@@ -33,7 +33,9 @@ def setup_agent(hass, monkeypatch):
         management_ui, "entry_and_agent", lambda *args: (entry, subentry)
     )
 
-    async def persist(hass, entry, subentry, tools, groups, *, expected_revision=None):
+    async def persist(
+        hass, entry, subentry, tools, groups, *, expected_revision=None, ha_snapshot=None
+    ):
         subentry.data = normalize_agent_config(
             {**subentry.data, "functions": tools, "function_groups": groups}
         )

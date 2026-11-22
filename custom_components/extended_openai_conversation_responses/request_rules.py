@@ -54,6 +54,7 @@ from .guest_mode import (
     GuestModeDenied,
     guest_arguments_allowed_runtime,
 )
+from .ha_llm_tools import ToolSnapshot
 from .helpers import (
     effective_api_provider,
     get_model_config,
@@ -2298,6 +2299,63 @@ def _is_function_action(step: Mapping[str, Any]) -> bool:
     return is_function_service_action(step)
 
 
+def validate_result_alias_template_update(
+    hass: HomeAssistant, previous: Mapping[str, Any], candidate: Mapping[str, Any]
+) -> None:
+    """Require review of native templates still using a removed result name."""
+    if (
+        previous.get("action_type") != "local_action"
+        or candidate.get("action_type") != "local_action"
+    ):
+        return
+
+    def aliases(rule: Mapping[str, Any]) -> set[str]:
+        return {
+            alias
+            for step in rule["action"]["actions"]
+            if isinstance(step, Mapping)
+            and _is_function_action(step)
+            and isinstance(data := effective_service_payload(step), Mapping)
+            and isinstance(alias := data.get("result_alias"), str)
+        }
+
+    removed = aliases(previous) - aliases(candidate)
+    if not removed:
+        return
+
+    from jinja2 import meta
+
+    from homeassistant.helpers.template import TemplateEnvironment
+
+    environment = TemplateEnvironment(hass, limited=False, strict=False)
+
+    def references(value: Any, names: set[str]) -> set[str]:
+        if isinstance(value, Mapping):
+            return set().union(*(references(item, names) for item in value.values()))
+        if isinstance(value, (list, tuple)):
+            return set().union(*(references(item, names) for item in value))
+        source = value.template if isinstance(value, Template) else value
+        if isinstance(source, str) and ("{{" in source or "{%" in source):
+            return names & meta.find_undeclared_variables(environment.parse(source))
+        return set()
+
+    missing: set[str] = set()
+    for step in candidate["action"]["actions"]:
+        missing.update(references(step, removed))
+        if isinstance(step, Mapping):
+            if isinstance(variables := step.get("variables"), Mapping):
+                removed.difference_update(variables)
+            if isinstance(response := step.get("response_variable"), str):
+                removed.discard(response)
+        if not removed:
+            break
+    if missing:
+        raise HomeAssistantError(
+            "Update the Home Assistant action templates that still use the removed "
+            "Function result aliases: " + ", ".join(sorted(missing))
+        )
+
+
 def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) -> None:
     produced: set[str] = set()
     step_ids: set[str] = set()
@@ -3314,12 +3372,15 @@ def _ensure_action_guard_service(hass: HomeAssistant) -> None:
 
 
 def validate_routed_request_options(
-    options: Mapping[str, Any], entry_data: Mapping[str, Any]
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+    *,
+    ha_snapshot: ToolSnapshot | None = None,
 ) -> None:
     """Validate the complete Conversation request selected by a route."""
     from .request import validate_runtime_readiness
 
-    validate_runtime_readiness(options, entry_data)
+    validate_runtime_readiness(options, entry_data, ha_snapshot=ha_snapshot)
 
 
 def validate_rule_model_request(
@@ -3328,6 +3389,7 @@ def validate_rule_model_request(
     entry_data: Mapping[str, Any],
     *,
     check_captured_effort_support: bool = True,
+    ha_snapshot: ToolSnapshot | None = None,
 ) -> None:
     """Reject statically invalid routes at every Request Rule write boundary."""
     if rule.get("action_type") != "model_routing":
@@ -3405,13 +3467,15 @@ def validate_rule_model_request(
                 entry_data.get("api_provider"), entry_data.get("base_url")
             ),
         )
-    validate_routed_request_options(candidate, entry_data)
+    validate_routed_request_options(candidate, entry_data, ha_snapshot=ha_snapshot)
 
 
 def validate_saved_model_routes(
     rules: Sequence[Mapping[str, Any]],
     options: Mapping[str, Any],
     entry_data: Mapping[str, Any],
+    *,
+    ha_snapshot: ToolSnapshot | None = None,
 ) -> None:
     """Validate enabled static routes against the proposed destination settings."""
     for rule in rules:
@@ -3420,7 +3484,11 @@ def validate_saved_model_routes(
                 # Legacy rules can have this invalid capture saved already. A
                 # restore or unrelated settings edit must leave them repairable.
                 validate_rule_model_request(
-                    rule, options, entry_data, check_captured_effort_support=False
+                    rule,
+                    options,
+                    entry_data,
+                    check_captured_effort_support=False,
+                    ha_snapshot=ha_snapshot,
                 )
             except HomeAssistantError as err:
                 label = rule.get("name", rule.get("id", "unnamed"))

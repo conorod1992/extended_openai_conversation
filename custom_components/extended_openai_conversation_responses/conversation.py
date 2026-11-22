@@ -2337,7 +2337,11 @@ class ExtendedOpenAIAgentEntity(
                 current = assemble_function_tools(
                     available_tools, groups, set(session.loaded_group_ids)
                 )
-                extra = len(self._get_function_tools()) - len(current.tools)
+                from .model_payload import count_model_function_tools
+
+                extra = count_model_function_tools(
+                    self._get_function_tools()
+                ) - count_model_function_tools(current.tools)
                 extra += int(
                     _get_continue_conversation_mode(self.subentry.data)
                     == CONTINUE_CONVERSATION_CONDITIONAL

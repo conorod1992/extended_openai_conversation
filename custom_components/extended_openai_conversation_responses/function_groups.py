@@ -18,6 +18,7 @@ from .const import (
     FUNCTION_GROUP_LOADING_ON_DEMAND,
 )
 from .conversation_requests import ConversationRequests
+from .model_payload import count_model_function_tools
 from .skill_availability import function_group_enabled
 
 _RUNTIMES = "extended_openai_conversation_responses.function_group_runtimes"
@@ -400,6 +401,26 @@ def assemble_function_tools(
     )
 
 
+def admit_function_group_loader(
+    tools: list[dict[str, Any]],
+    max_tools: int | None,
+    *,
+    extra_tool_count: int = 0,
+    loader_available: bool = True,
+) -> list[dict[str, Any]]:
+    """Drop the optional loader when executable tools fill the remaining slots."""
+    if loader_available and (
+        max_tools is None
+        or count_model_function_tools(tools) + extra_tool_count != max_tools + 1
+    ):
+        return tools
+    return [
+        tool
+        for tool in tools
+        if tool.get("function", {}).get("type") != "function_group_loader"
+    ]
+
+
 def load_function_groups(
     session: FunctionGroupSession,
     requested: Any,
@@ -453,6 +474,7 @@ def load_function_groups(
         else:
             unknown.append(group_id)
     session.last_active = time.monotonic()
+    loader_admitted = loader_available_next_round
     if max_tools is not None and configured_tools is not None:
         effective = assemble_function_tools(
             configured_tools,
@@ -462,12 +484,14 @@ def load_function_groups(
             group_loader_supported=group_loader_supported,
             tool_available=tool_available,
         )
-        executable_count = extra_tool_count + sum(
-            loader_available_next_round
-            or tool.get("function", {}).get("type") != "function_group_loader"
-            for tool in effective.tools
+        admitted = admit_function_group_loader(
+            effective.tools,
+            max_tools,
+            extra_tool_count=extra_tool_count,
+            loader_available=loader_available_next_round,
         )
-        if executable_count > max_tools:
+        loader_admitted = len(admitted) == len(effective.tools) and loader_admitted
+        if count_model_function_tools(admitted) + extra_tool_count > max_tools:
             session.loaded_group_ids.clear()
             session.loaded_group_ids.update(previous)
             return {
@@ -481,7 +505,7 @@ def load_function_groups(
         "already_available": already_available,
         "unknown": unknown,
         "loadable_groups": []
-        if not loader_available_next_round
+        if not loader_admitted
         else sorted(
             group_id
             for group_id in on_demand

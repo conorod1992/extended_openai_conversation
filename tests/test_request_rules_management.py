@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import request_rules as rr
+from custom_components.extended_openai_conversation_responses import (
+    management_ui as ui,
+    request_rules as rr,
+)
+from homeassistant.exceptions import HomeAssistantError
 
 
 class MemoryStore:
@@ -65,7 +70,56 @@ def routing_rule(*, rule_id: str = "route"):
     }
 
 
-async def test_initialize_projects_defaults_without_overwriting_malformed_container() -> None:
+async def test_renaming_result_alias_requires_updating_native_templates(
+    hass, management_agent, management_message, monkeypatch
+):
+    rules = rr.RequestRules(MemoryStore())
+    await rules.async_initialize()
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
+    monkeypatch.setattr(
+        ui, "_async_validate_request_rule_mutation", AsyncMock(return_value=None)
+    )
+    original = local_rule()
+    original["action"]["actions"] = [
+        {
+            "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
+            "data": {"function": "read_sensor", "result_alias": "lookup"},
+        },
+        {"set_conversation_response": "{{ lookup.level }}"},
+    ]
+    saved = await rules.async_create(original)
+    candidate = deepcopy(saved)
+    candidate["action"]["actions"][0]["data"]["result_alias"] = "reading"
+
+    async def update():
+        return await ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            management_message(
+                "request_rules",
+                "update",
+                rule_id=saved["id"],
+                rule=candidate,
+                revision=rules.revision(),
+            ),
+        )
+
+    with pytest.raises(
+        HomeAssistantError, match="removed Function result aliases: lookup"
+    ):
+        await update()
+    assert rules.rule_snapshot(saved["id"]) == saved
+    candidate["action"]["actions"][1]["set_conversation_response"] = (
+        "{{ 'lookup' }} {{ reading.level }}"
+    )
+    updated = await update()
+    assert updated["rule"]["action"]["actions"] == candidate["action"]["actions"]
+
+
+async def test_initialize_projects_defaults_without_overwriting_malformed_container() -> (
+    None
+):
     store = MemoryStore(["not", "an", "object"])
     rules = rr.RequestRules(store)
 

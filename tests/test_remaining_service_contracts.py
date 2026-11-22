@@ -51,8 +51,9 @@ async def test_provider_change_rejects_concurrent_child_edits(
     )
     monkeypatch.setattr(rr, "async_get_request_rules", AsyncMock(return_value=rules))
 
-    def validate(*_args, check_captured_effort_support):
+    def validate(*_args, check_captured_effort_support, ha_snapshot):
         assert not check_captured_effort_support
+        assert ha_snapshot is None
         if change == "data":
             child.data = {"prompt": "changed elsewhere"}
         elif change == "removed":
@@ -114,6 +115,7 @@ async def test_provider_change_validates_only_enabled_rules_and_llm_subentries(
     validate.assert_called_once_with(
         enabled, children["conversation"].data, {CONF_API_KEY: "new"},
         check_captured_effort_support=False,
+        ha_snapshot=None,
     )
     routed.assert_called_once()
     snapshot.assert_called_once_with(

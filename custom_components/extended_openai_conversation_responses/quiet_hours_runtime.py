@@ -980,7 +980,6 @@ class QuietHoursManager:
                         control["restore_before_apply"] = True
                 self._migrate_selected_entity_ids()
                 candidate = self._config
-                await self._async_save_locked()
                 now = dt_util.now()
                 old_period = (
                     quiet_period_for(now, previous.start, previous.end)
@@ -1045,7 +1044,7 @@ class QuietHoursManager:
                         ).items()
                         if key in observed
                     }
-                    await self._async_save_control_state_locked()
+                await self._async_save_locked()
             except BaseException as err:
                 failure = err
                 if self._config_recovery_pending:

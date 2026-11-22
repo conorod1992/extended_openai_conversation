@@ -54,7 +54,7 @@ from .const import (
 from .conversation_archive import archive_tools
 from .conversation_lifecycle import conversation_lifecycle_active
 from .guest_mode import GuestCapabilityPolicy, guest_mode_restrict_tool
-from .ha_llm_tools import is_ha_tool
+from .ha_llm_tools import ToolSnapshot, is_ha_tool
 from .helpers import effective_api_provider, is_native_openai_connection
 from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
 from .memory import MEMORY_TOOL_NAMES, memory_tools
@@ -70,7 +70,7 @@ from .model_capabilities import (
     select_api_path,
     validate_reasoning_effort,
 )
-from .model_payload import prepare_model_function_tools
+from .model_payload import count_model_function_tools, prepare_model_function_tools
 from .temporary_memory import TEMPORARY_MEMORY_TOOL_NAMES, temporary_memory_tools
 
 _LOGGER = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ CONTINUE_CONVERSATION_TOOL = {
 START_FRESH_CONVERSATION_TOOL_NAME = "start_fresh_conversation"
 
 
-def _provider_tool_limit(
+def provider_tool_limit(
     entry_data: Mapping[str, Any], api_mode: str, *, client: Any
 ) -> int | None:
     """Return only a known applicable provider/API tool-array limit."""
@@ -790,7 +790,7 @@ def build_provider_request_snapshot(
         api_kwargs,
         (provider_tool,) if provider_tool is not None else (),
         capabilities["structured_outputs"],
-        tool_limit=_provider_tool_limit(entry_data, api_mode, client=client),
+        tool_limit=provider_tool_limit(entry_data, api_mode, client=client),
         reasoning_items_supported=reasoning_items_supported,
         reasoning_current_turn_only=(
             api_mode == API_MODE_RESPONSES
@@ -912,6 +912,7 @@ def validate_runtime_readiness(
     *,
     model_capabilities: Mapping[str, Any] | None = None,
     client: Any = None,
+    ha_snapshot: ToolSnapshot | None = None,
 ) -> ProviderRequestSnapshot:
     """Validate the initial Conversation catalogue for supported request scopes.
 
@@ -946,10 +947,13 @@ def validate_runtime_readiness(
         else validate_function_groups(options.get(CONF_FUNCTION_GROUPS, []), configured)
     )
     budget_available = function_call_budget_available(options)
+    if ha_snapshot is not None:
+        configured = ha_snapshot.project(configured)
 
     def guaranteed(tool: dict[str, Any]) -> bool:
-        function_type = tool.get("function", {}).get("type")
-        return function_type != "ha_llm" and not is_canonical_skill_loader(tool)
+        if is_ha_tool(tool):
+            return ha_snapshot is not None and tool.get("ha_available") is True
+        return not is_canonical_skill_loader(tool)
 
     assembly = assemble_function_tools(
         configured,
@@ -982,6 +986,7 @@ def validate_runtime_readiness(
         == CONTINUE_CONVERSATION_CONDITIONAL,
     )
     validate_provider_tool_count(
-        len(tools) + len(snapshot.provider_tools), snapshot.tool_limit
+        count_model_function_tools(tools) + len(snapshot.provider_tools),
+        snapshot.tool_limit,
     )
     return snapshot

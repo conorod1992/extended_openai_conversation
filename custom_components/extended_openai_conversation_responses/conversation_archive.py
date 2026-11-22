@@ -135,6 +135,16 @@ class ArchiveSession:
         """Whether the session contains at least one retained turn."""
         return self.retention_state == "retained" and self.turn_count > 0
 
+    @property
+    def retains_metadata(self) -> bool:
+        """Whether this session belongs in the durable Archive."""
+        return self.retention_state not in {"unretained", "unretained_private"}
+
+    @property
+    def is_private(self) -> bool:
+        """Whether an explicit privacy boundary is active."""
+        return self.retention_state in {"private", "unretained_private"}
+
 
 @dataclass(slots=True, frozen=True, weakref_slot=True)
 class ArchiveTurn:
@@ -170,7 +180,7 @@ def archive_sessions_past_retention(
         for session in sessions
         if (
             _parse_time(session.last_activity_at or session.last_message_at)
-            if session.retention_state == "private"
+            if session.is_private
             else latest.get(session.session_id) or _parse_time(session.last_message_at)
         )
         < cutoff
@@ -898,10 +908,7 @@ class ConversationArchive:
                 current is not None
                 and (
                     not archive_session_inactive(current, now, inactivity_minutes)
-                    or (
-                        live_logical_conversation
-                        and current.retention_state == "private"
-                    )
+                    or (live_logical_conversation and current.is_private)
                 )
                 and current.scope_id == scope.scope_id
                 and current.home_assistant_conversation_id
@@ -911,17 +918,12 @@ class ConversationArchive:
                 and not (may_retain and current.retention_state == "unretained")
             ):
                 current = replace(current, last_activity_at=now.isoformat())
-                if current.retention_state == "private":
-                    # Live activity is authoritative even when this optional
-                    # content-free refresh cannot be persisted.
-                    self._sessions[current.session_id] = current
-                    # Persist only content-free metadata; private activity never
-                    # rewrites transcript partitions or retains message text.
+                # Live activity is authoritative even when a durable refresh fails.
+                self._sessions[current.session_id] = current
+                if current.is_private and current.retains_metadata:
                     await self._async_publish_session_locked(
                         session_key, current, on_durable_write=on_durable_write
                     )
-                else:
-                    self._sessions[current.session_id] = current
                 return current
 
             timestamp = now.isoformat()
@@ -962,13 +964,14 @@ class ConversationArchive:
             if session is None:
                 return None
             timestamp = dt_util.utcnow().isoformat()
-            if session.retention_state == "private":
+            if session.is_private:
                 # A slow turn is active until completion too. Persist activity
                 # without retaining content or changing the active binding.
                 if timestamp != session.last_activity_at or self._pending_partitions:
                     session = replace(session, last_activity_at=timestamp)
                     self._sessions[session.session_id] = session
-                    await self._async_publish_session_locked(None, session)
+                    if session.retains_metadata:
+                        await self._async_publish_session_locked(None, session)
                 return None
             if session.retention_state != "retained":
                 return None
@@ -1034,6 +1037,16 @@ class ConversationArchive:
         """Delete retained turns and journal the privacy boundary before publishing."""
         async with self._lock:
             session = self._require_session(session_id)
+            if not session.retains_metadata:
+                self._sessions[session_id] = replace(
+                    session, retention_state="unretained_private"
+                )
+                return {
+                    "private_mode_enabled": True,
+                    "session_id": session_id,
+                    "deleted_turns": 0,
+                    "future_turns_retained": False,
+                }
             turns = dict(self._turns)
             removed = list(turns.pop(session_id, ()))
             sessions = dict(self._sessions)
@@ -1409,7 +1422,7 @@ class ConversationArchive:
             targets = {
                 session.session_id
                 for session in self._sessions.values()
-                if session.scope_id == scope_id and session.retention_state != "private"
+                if session.scope_id == scope_id and not session.is_private
             }
             if not targets:
                 return {"deleted_sessions": 0, "deleted_turns": 0}
@@ -1598,7 +1611,7 @@ class ConversationArchive:
             sessions = [
                 session
                 for session in self._sessions.values()
-                if session.retention_state != "unretained"
+                if session.retains_metadata
                 and session.session_id not in self._expired_pending_prune
             ]
             retained_ids = {session.session_id for session in sessions}
@@ -1615,10 +1628,19 @@ class ConversationArchive:
         async with self._lock:
             self._require_writable()
             # Records are immutable; the lock protects selection and serialization.
-            sessions = list(self._sessions.values())
+            sessions = [
+                session
+                for session in self._sessions.values()
+                if session.retention_state != "unretained_private"
+            ]
+            session_ids = {session.session_id for session in sessions}
             turns = [turn for items in self._turns.values() for turn in items]
             payload = await asyncio.to_thread(_archive_payload, sessions, turns)
-            payload["active"] = dict(self._active)
+            payload["active"] = {
+                key: session_id
+                for key, session_id in self._active.items()
+                if session_id in session_ids
+            }
             return payload
 
     @staticmethod
@@ -1768,7 +1790,7 @@ class ConversationArchive:
     ) -> None:
         """Publish session metadata and an optional active binding."""
         self._require_writable()
-        if session.retention_state == "unretained" and not self._pending_partitions:
+        if not session.retains_metadata and not self._pending_partitions:
             self._sessions[session.session_id] = session
             if session_key is not None:
                 self._active[session_key] = session.session_id
@@ -1839,7 +1861,7 @@ class ConversationArchive:
         persisted_sessions = {
             session.session_id: session
             for session in sessions.values()
-            if session.retention_state != "unretained"
+            if session.retains_metadata
         }
         payload: dict[str, Any] = {
             "sessions": [

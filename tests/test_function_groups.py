@@ -365,17 +365,27 @@ def test_unknown_and_always_available_group_results_are_deterministic() -> None:
     }
 
 
-def test_capacity_counts_group_members_even_when_loader_will_be_omitted():
+@pytest.mark.parametrize("loader_available_next_round", [False, True])
+def test_capacity_counts_group_members_even_when_loader_will_be_omitted(
+    loader_available_next_round,
+):
     session = FunctionGroupRuntime().begin("conversation:one", 30)
     groups = [_group("reminders", ["one"]), _group("calendar", ["two"])]
     tools = [_tool("one"), _tool("two")]
     accepted = load_function_groups(
-        session, ["reminders"], groups, tools, max_tools=2, extra_tool_count=1,
-        loader_available_next_round=False,
+        session,
+        ["reminders"],
+        groups,
+        tools,
+        max_tools=2,
+        extra_tool_count=1,
+        loader_available_next_round=loader_available_next_round,
     )
     assert accepted["loaded"] == ["reminders"]
     assert accepted["loadable_groups"] == []
-    rejected = load_function_groups(session, ["calendar"], groups, tools, max_tools=2, extra_tool_count=1)
+    rejected = load_function_groups(
+        session, ["calendar"], groups, tools, max_tools=2, extra_tool_count=1
+    )
     assert rejected["status"] == "error"
     assert session.loaded_group_ids == {"reminders"}
 

@@ -2710,6 +2710,8 @@
     "tests_stress/test_environment_edge_contracts.py::test_unicode_filename_atomic_roundtrip_and_path_identity",
     "tests/test_conversation_archive.py::test_enabling_household_retention_starts_future_boundary[False]",
     "tests/test_conversation_archive.py::test_enabling_household_retention_starts_future_boundary[True]",
+    "tests/test_conversation_archive.py::test_making_an_unretained_session_private_does_not_persist_metadata[False]",
+    "tests/test_conversation_archive.py::test_making_an_unretained_session_private_does_not_persist_metadata[True]",
     "tests_real_ha/test_action_target_safety.py::test_script_all_target_cannot_skip_exposure_authorization[service_data]",
     "tests_real_ha/test_action_target_safety.py::test_script_all_target_cannot_skip_exposure_authorization[target]",
     "tests_real_ha/test_assist_streaming_speech_processing.py::test_conditional_final_answer_reaches_actual_assist_progress[1-False-Let me check. ]",

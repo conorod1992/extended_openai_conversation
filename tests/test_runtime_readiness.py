@@ -101,6 +101,138 @@ async def test_request_preview_rejects_azure_tool_count_for_signed_in_caller(has
         await async_preview_effective_request(hass, entry, subentry, options, "admin")
 
 
+async def test_add_ha_tool_validates_available_saved_and_selected_tools(
+    hass, management_agent, management_message, rules
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+    )
+    from tests.test_ha_llm_tools import Echo, TestAPI, context, register
+
+    hass.config.language = "en"
+    entry, subentry = management_agent
+    entry.data = {"api_provider": "azure"}
+    second = Echo()
+    second.name = "second"
+    api = register(hass, TestAPI(hass, tools=[Echo(), second]))
+    snapshot = await async_discover(hass, context())
+    saved, added = [tool.reference for tool in snapshot.tools.values()]
+    existing = new_reference_tool(saved, set())
+    subentry.data = _options(
+        functions=[*[_tool(f"marker_{i}") for i in range(126)], existing],
+        azure_model="gpt-4o",
+    )
+
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        await ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            management_message("tools", "ha_add", tools=[added]),
+        )
+    hass.config_entries.async_update_subentry.assert_not_called()
+
+    # One unavailable saved reference consumes no slot in this preview context.
+    api.tools = [second]
+    result = await ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message("tools", "ha_add", tools=[added]),
+    )
+    assert [item["name"] for item in result["ha_saved"].values()] == ["second"]
+    hass.config_entries.async_update_subentry.assert_called_once()
+
+    hass.config_entries.async_update_subentry.reset_mock()
+    saved = await _save(hass, entry, subentry, {"memory_mode": "manual"})
+    assert saved["valid"] is False
+    assert "128-tool limit" in str(saved["errors"])
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        await ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            management_message("tools", "save", tool=_tool("extra")),
+        )
+    hass.config_entries.async_update_subentry.assert_not_called()
+
+
+@pytest.mark.parametrize("ordinary_count,loader_admitted", [(125, True), (126, False)])
+async def test_preview_and_dispatch_share_loader_capacity(
+    hass, ordinary_count, loader_admitted
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+        tool_snapshot_scope,
+    )
+    from tests.test_ha_llm_tools import TestAPI, context, register
+
+    register(hass, TestAPI(hass))
+    snapshot = await async_discover(hass, context())
+    remote = new_reference_tool(next(iter(snapshot.tools.values())).reference, set())
+    options = _options(
+        functions=[
+            *[_tool(f"marker_{i}") for i in range(ordinary_count)],
+            remote,
+            _tool("held"),
+        ],
+        function_groups=[
+            {
+                "id": "later",
+                "name": "Later",
+                "description": "Optional",
+                "functions": ["held"],
+                "loading_mode": "on_demand",
+            }
+        ],
+        azure_model="gpt-4o",
+        exposed_entities_enabled=False,
+        current_datetime_enabled=False,
+        prompt="Base",
+    )
+    provider_data = {"api_provider": "azure"}
+    entry = SimpleNamespace(data=provider_data, entry_id="entry")
+    subentry = SimpleNamespace(data=options, subentry_id="agent")
+    with tool_snapshot_scope(snapshot):
+        sent = await _dispatch(_agent(hass, entry, subentry))
+    result = await async_preview_effective_request(
+        hass, entry, subentry, options, "admin"
+    )
+    section_keys = {
+        "function_tools",
+        "function_group_loader",
+        "integration_tools",
+        "provider_tools",
+    }
+    preview = [
+        definition
+        for section in result["sections"]
+        if section["key"] in section_keys
+        for definition in json.loads(section["content"])
+    ]
+    sent_names = {item["function"]["name"] for item in sent["tools"]}
+    assert {item["function"]["name"] for item in preview} == sent_names
+    assert len(preview) == len(sent["tools"]) == 128
+    assert ("load_function_groups" in sent_names) is loader_admitted
+
+
+def test_readiness_counts_only_advertised_persistent_memory_tools():
+    from custom_components.extended_openai_conversation_responses.memory import (
+        memory_tools,
+    )
+
+    # One legacy memory tool is executable for old callers and absent from new
+    # provider schemas. The start-fresh tool uses the slot it would have taken.
+    count = 128 - len(memory_tools())
+    options = _options(count, azure_model="gpt-4o", memory_mode="manual")
+    request.validate_runtime_readiness(options, {"api_provider": "azure"})
+    options = _options(count + 1, azure_model="gpt-4o", memory_mode="manual")
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        request.validate_runtime_readiness(options, {"api_provider": "azure"})
+
+
 @pytest.fixture
 def rules(monkeypatch):
     manager = SimpleNamespace(

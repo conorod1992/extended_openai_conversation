@@ -2229,8 +2229,9 @@ async def test_manual_same_value_adjustment_during_satellite_save_is_preserved(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("committed", [False, True])
 async def test_failed_period_metadata_save_retains_continuous_quiet_volume(
-    monkeypatch, hass
+    monkeypatch, hass, committed
 ):
     _install_registry(monkeypatch, "bedroom")
     _seed_room(hass, "bedroom", volume=0.55)
@@ -2241,7 +2242,7 @@ async def test_failed_period_metadata_save_retains_continuous_quiet_volume(
     monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
     calls, _ = await _install_services(hass)
     await manager.async_reconcile(now=now)
-    persisted = {}
+    persisted = deepcopy(manager._store.async_save.call_args.args[0])
     failed = False
 
     async def save(data):
@@ -2252,6 +2253,8 @@ async def test_failed_period_metadata_save_retains_continuous_quiet_volume(
             and not failed
         ):
             failed = True
+            if committed:
+                persisted = deepcopy(data)
             raise OSError("period metadata write failed")
         persisted = deepcopy(data)
 
@@ -2265,8 +2268,7 @@ async def test_failed_period_metadata_save_retains_continuous_quiet_volume(
             _config(start="21:00", max_volume=0.1, wake_sound="unchanged").as_dict()
         )
     assert manager._initialized
-    # A committed policy change is reconciled before reporting its lost ack.
-    assert calls[-1] == ("media_player.bedroom", 0.1)
+    assert calls[-1] == ("media_player.bedroom", 0.1 if committed else 0.2)
     calls.clear()
     await manager.async_reconcile(now=now)
     assert calls == []

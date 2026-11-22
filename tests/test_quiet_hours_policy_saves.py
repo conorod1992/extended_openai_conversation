@@ -156,3 +156,37 @@ async def test_explicit_reenable_starts_fresh_observations(hass, monkeypatch, ki
     assert (volumes if kind == "volume" else switches) == [
         (entity, 0.2 if kind == "volume" else False)
     ]
+
+
+async def test_policy_and_observation_reset_survive_failed_control_write(
+    hass, monkeypatch
+):
+    _install_registry(monkeypatch, "bedroom")
+    manager = _stateful_public_manager(hass)
+    _seed_room(hass, "bedroom", volume=0.1, wake="off")
+    manager._config = _config()
+    volumes, _ = await _install_services(hass)
+    await manager.async_reconcile()
+    persisted = deepcopy(manager._store.async_save.call_args.args[0])
+    writes = 0
+
+    async def save(data):
+        nonlocal persisted, writes
+        writes += 1
+        if writes == 2:
+            raise OSError("control state write failed")
+        persisted = deepcopy(data)
+
+    async def load():
+        return deepcopy(persisted)
+
+    manager._store = SimpleNamespace(async_save=save, async_load=load)
+    candidate = {**manager.config.as_dict(), "max_volume": 0.05}
+    with pytest.raises(OSError, match="control state write failed"):
+        await manager.async_update_config(candidate)
+    assert persisted["config"]["max_volume"] == 0.05
+    assert "media_player.bedroom" not in persisted["active"]["observed_controls"]
+    assert volumes == []
+
+    await manager.async_update_config(candidate)
+    assert volumes == [("media_player.bedroom", 0.05)]

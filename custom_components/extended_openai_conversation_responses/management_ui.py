@@ -56,6 +56,8 @@ from .backup import async_create_backup, async_inspect_backup, async_restore_bac
 from .built_in_functions import built_in_function_catalog
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
+    API_MODE_CHAT_COMPLETIONS,
+    API_MODE_RESPONSES,
     CONF_API_PROVIDER,
     CONF_CHAT_MODEL,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
@@ -102,6 +104,7 @@ from .guest_mode import (
     resolve_guest_policy,
 )
 from .ha_llm_tools import (
+    ToolSnapshot,
     async_discover,
     is_ha_tool,
     new_reference_tool,
@@ -169,6 +172,11 @@ from .management_request_preview import (
 from .memory import ANONYMOUS_USER_ID, async_get_memory
 from .model_catalog import active_catalog_version, catalog_generation
 from .regex_execution import async_process_speech_text
+from .request import (
+    ha_tool_discovery_references,
+    provider_tool_limit,
+    validate_runtime_readiness,
+)
 from .request_rule_match_preview import async_request_rule_match_preview
 from .request_rule_packs import (
     async_append_rule_pack,
@@ -321,6 +329,8 @@ def _validated_model_request(
     config: dict[str, Any],
     entry_data: Mapping[str, Any],
     current: Mapping[str, Any] | None = None,
+    *,
+    ha_snapshot: ToolSnapshot | None = None,
 ) -> dict[str, Any]:
     """Use the live resolver only at a configuration mutation boundary."""
     # Validate the candidate itself, including generated capabilities. A manual
@@ -328,10 +338,46 @@ def _validated_model_request(
     from .request_rules import validate_routed_request_options
 
     try:
-        validate_routed_request_options(config, entry_data)
+        validate_routed_request_options(config, entry_data, ha_snapshot=ha_snapshot)
     except HomeAssistantError as err:
         raise AgentConfigError("api_mode", str(err)) from err
     return config
+
+
+async def _async_capacity_ha_snapshot(
+    hass: HomeAssistant, entry: Any, config: Mapping[str, Any], user_id: str | None
+) -> ToolSnapshot | None:
+    """Resolve eligible HA definitions when a management edit can hit a cap."""
+    if (
+        user_id is None
+        or config.get("api_mode") == API_MODE_RESPONSES
+        or provider_tool_limit(
+            getattr(entry, "data", {}),
+            API_MODE_CHAT_COMPLETIONS,
+            client=getattr(entry, "runtime_data", None),
+        )
+        is None
+    ):
+        return None
+    tools = inspect_function_tools(config)
+    groups = inspect_function_groups(config.get(CONF_FUNCTION_GROUPS, []), tools)
+    references = ha_tool_discovery_references(tools, groups, config)
+    if not references:
+        return None
+
+    from homeassistant.helpers import llm
+
+    return await async_discover(
+        hass,
+        llm.LLMContext(
+            platform=DOMAIN,
+            context=Context(user_id=user_id),
+            language=hass.config.language,
+            assistant="conversation",
+            device_id=None,
+        ),
+        references,
+    )
 
 
 async def _async_validate_configuration_request(
@@ -339,13 +385,17 @@ async def _async_validate_configuration_request(
     entry: Any,
     subentry: Any,
     config: dict[str, Any],
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     """Validate proposed defaults and every retained route at one shared boundary."""
     from .request_rules import validate_saved_model_routes
 
-    _validated_model_request(config, entry.data, subentry.data)
+    ha_snapshot = await _async_capacity_ha_snapshot(hass, entry, config, user_id)
+    _validated_model_request(config, entry.data, subentry.data, ha_snapshot=ha_snapshot)
     rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
-    validate_saved_model_routes(rules.snapshot().get("rules", []), config, entry.data)
+    validate_saved_model_routes(
+        rules.snapshot().get("rules", []), config, entry.data, ha_snapshot=ha_snapshot
+    )
     return config
 
 
@@ -363,6 +413,8 @@ async def _persist_function_configuration(
     deleted_group: str | None = None,
     repaired_group: str | None = None,
     rules_manager: Any = None,
+    ha_snapshot: ToolSnapshot | None = None,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     """Persist one revision-checked tool edit without discarding quarantined siblings."""
     from .function_configuration_repair import (
@@ -400,6 +452,15 @@ async def _persist_function_configuration(
             deleted_group=deleted_group,
             repaired_group=repaired_group,
         ).persisted
+    if ha_snapshot is None:
+        ha_snapshot = await _async_capacity_ha_snapshot(hass, entry, candidate, user_id)
+    if ha_snapshot is not None:
+        validate_runtime_readiness(
+            candidate,
+            entry.data,
+            client=getattr(entry, "runtime_data", None),
+            ha_snapshot=ha_snapshot,
+        )
     await _async_validate_configuration_dependencies(
         hass,
         entry,
@@ -407,6 +468,7 @@ async def _persist_function_configuration(
         candidate,
         renamed_function=renamed_function,
         rules_manager=rules_manager,
+        **({"ha_snapshot": ha_snapshot} if ha_snapshot is not None else {}),
     )
     return _tolerant_persist_function_configuration(
         hass,
@@ -1033,6 +1095,12 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         if field_only and update_revision is None:
             update_revision = rules.revision()
         candidate = _prepare_request_rule(message.get("rule"), rule_id, rules)
+        if not field_only:
+            from .request_rules import validate_result_alias_template_update
+
+            validate_result_alias_template_update(
+                hass, rules.rule_snapshot(rule_id), candidate
+            )
         check_configuration = await _async_validate_request_rule_mutation(
             hass, candidate, request.entry, subentry
         )
@@ -1391,7 +1459,9 @@ async def _async_prepare_configuration_write(
             )
             editor_timings["merge_validation_ms"] = _elapsed_ms(phase)
         phase = perf_counter()
-        await _async_validate_configuration_request(hass, entry, subentry, normalized)
+        await _async_validate_configuration_request(
+            hass, entry, subentry, normalized, request.user_id
+        )
     except AgentConfigError as err:
         if editor_timings is None:
             raise
@@ -1752,7 +1822,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         if result["valid"]:
             try:
                 await _async_validate_configuration_request(
-                    hass, entry, subentry, result["config"]
+                    hass, entry, subentry, result["config"], user_id
                 )
             except HomeAssistantError as err:
                 return {"valid": False, "errors": {"api_mode": str(err)}}
@@ -2012,6 +2082,7 @@ async def _async_validate_configuration_dependencies(
     *,
     renamed_function: tuple[str, str] | None = None,
     rules_manager: Any = None,
+    ha_snapshot: ToolSnapshot | None = None,
 ) -> None:
     """Validate retained rules against the exact replacement configuration."""
     from .transfer import _async_validate_request_rule_function_dependencies
@@ -2035,7 +2106,9 @@ async def _async_validate_configuration_dependencies(
 
     from .request_rules import validate_saved_model_routes
 
-    validate_saved_model_routes(document.get("rules", []), config, entry.data)
+    validate_saved_model_routes(
+        document.get("rules", []), config, entry.data, ha_snapshot=ha_snapshot
+    )
     if renamed_function is not None:
         from .function_dependency_integrity import _rule_script_actions
 
@@ -2101,7 +2174,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         ):
             raise HomeAssistantError("The selected Assist satellite is unavailable")
 
-        references = None
+        references = discovery_references = None
         if action == "ha_add":
             selected = message.get("tools")
             if not isinstance(selected, list) or len(selected) > 1000:
@@ -2110,6 +2183,14 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 references = [validate_reference(ref) for ref in selected]
             except ValueError as err:
                 raise HomeAssistantError(str(err)) from err
+            saved_tools = inspect_function_tools(subentry.data)
+            saved_groups = inspect_function_groups(
+                subentry.data.get(CONF_FUNCTION_GROUPS, []), saved_tools
+            )
+            discovery_references = [
+                *references,
+                *ha_tool_discovery_references(saved_tools, saved_groups, subentry.data),
+            ]
         ha_catalog_snapshot = await async_discover(
             hass,
             llm.LLMContext(
@@ -2119,7 +2200,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 assistant="conversation",
                 device_id=device_id,
             ),
-            references,
+            discovery_references,
         )
         # Discovery awaits external sources. Re-read canonical state before any
         # synchronous mutation so concurrent saves cannot be overwritten.
@@ -2200,7 +2281,9 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             tools,
             groups,
             expected_revision=message.get("revision"),
+            ha_snapshot=ha_catalog_snapshot,
         )
+        selected_keys = {reference_key(ref) for ref in references}
         result["ha_saved"] = {
             tool["spec"]["name"]: {
                 "available": True,
@@ -2209,7 +2292,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 "description": ha_catalog_snapshot.tools[key].tool.description or "",
             }
             for key, tool in ha_existing.items()
-            if key in ha_catalog_snapshot.tools
+            if key in selected_keys
         }
         return result
     if action == "validate":
@@ -2331,6 +2414,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 subentry,
                 tools,
                 groups,
+                user_id=user_id,
                 expected_revision=message.get("revision"),
             )
 
@@ -2342,6 +2426,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 subentry,
                 tools,
                 groups,
+                user_id=user_id,
                 expected_revision=message.get("revision"),
             )
 
@@ -2375,6 +2460,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             extra_updates={CONF_GUEST_ALLOWED_FUNCTION_NAMES: renamed_guest_names},
             renamed_function=(original_name, saved_name),
             rules_manager=rules,
+            user_id=user_id,
             expected_revision=operation_revision,
         )
 
@@ -2419,6 +2505,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             subentry,
             tools,
             groups,
+            user_id=user_id,
             expected_revision=operation_revision,
         )
         if not enabled:
@@ -2458,6 +2545,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             subentry,
             remaining,
             groups,
+            user_id=user_id,
             expected_revision=operation_revision,
         )
         performance = result.setdefault("_performance", {})
@@ -2557,6 +2645,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             subentry,
             tools,
             validated_groups,
+            user_id=user_id,
             expected_revision=message.get("revision"),
             **repair_options,
             renamed_group=(original_id, candidate["id"])
@@ -2599,6 +2688,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             subentry,
             tools,
             remaining,
+            user_id=user_id,
             expected_revision=message.get("revision"),
             extra_updates=group_reference_updates(subentry.data, group_id, None),
             deleted_group=group_id,
@@ -3185,7 +3275,9 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
         candidate, _snapshot = merge_unchanged_function_configuration(
             subentry, normalized, provider=entry_api_provider(entry)
         )
-        await _async_validate_configuration_request(hass, entry, subentry, candidate)
+        await _async_validate_configuration_request(
+            hass, entry, subentry, candidate, request.user_id
+        )
         _require_agent_config_revision(subentry, message["revision"])
         update_configuration_subentry(hass, entry, subentry, data=candidate)
         result = {

@@ -227,6 +227,39 @@ async def test_scope_is_stable_and_different_sessions_are_not_joined() -> None:
     assert changed.scope_id == "user:bob"
 
 
+@pytest.mark.parametrize("shared", [False, True])
+async def test_making_an_unretained_session_private_does_not_persist_metadata(shared):
+    scope = (
+        shared_scope(source="device_mapping", device_id="satellite")
+        if shared
+        else unretained_scope(device_id="satellite")
+    )
+    storage = FakeArchiveStorage()
+    archive = ConversationArchive(storage, "agent-1")
+    await archive.async_initialize()
+    session = await archive.async_begin_session(
+        "conversation:one",
+        scope,
+        "one",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    assert session.retention_state == "unretained"
+    assert await archive.async_make_private(session.session_id) == {
+        "private_mode_enabled": True,
+        "session_id": session.session_id,
+        "deleted_turns": 0,
+        "future_turns_retained": False,
+    }
+    assert storage.metadata_save_count == 0
+    assert (await archive.async_backup_data())["sessions"] == []
+    assert (await archive.async_recovery_data())["sessions"] == []
+    fresh = ConversationArchive(storage, "agent-1")
+    await fresh.async_initialize()
+    assert fresh.active_session("conversation:one") is None
+
+
 async def test_archive_scope_counts_include_only_retained_sessions() -> None:
     archive = await _archive()
     alice = user_scope("alice", source="authenticated_user")
@@ -1819,7 +1852,20 @@ async def test_enabling_household_retention_starts_future_boundary(private):
     second = await archive.async_begin_session("key", scope, "chat", **options)
     if private:
         assert second.session_id == first.session_id
-        assert second.retention_state == "private"
+        assert second.retention_state == "unretained_private"
+        assert storage.metadata is None
+        assert await archive.async_record_turn(
+            second.session_id,
+            run_id=None,
+            user_text="another private turn",
+            assistant_text="another reply",
+            successful=True,
+        ) is None
+        resumed = await archive.async_resume_saving(
+            "key", second.session_id, scope, shared_archive_enabled=True
+        )
+        assert resumed.retention_state == "retained"
+        assert resumed.session_id != second.session_id
     else:
         assert second.session_id != first.session_id
         assert second.retention_state == "retained"
