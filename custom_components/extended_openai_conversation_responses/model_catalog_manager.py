@@ -25,6 +25,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     CONF_CHAT_MODEL as CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
@@ -75,14 +76,19 @@ WS_CATALOG = f"{DOMAIN}/model_catalog"
 _LOGGER = logging.getLogger(__name__)
 
 
+def require_catalogue_publication_complete(hass: HomeAssistant) -> None:
+    """Reject model-dependent writes while the catalogue is being published."""
+    if _DATA_PUBLICATION in hass.data:
+        raise HomeAssistantError(
+            "Model data is being updated. Wait for it to finish and retry."
+        )
+
+
 def require_current_configuration_catalogue(
     hass: HomeAssistant, generation: int
 ) -> None:
     """Check model-dependent validation before a synchronous configuration write."""
-    if _DATA_PUBLICATION in hass.data:
-        raise HomeAssistantError(
-            "Model data is being updated. Wait for it to finish and retry saving."
-        )
+    require_catalogue_publication_complete(hass)
     if generation != catalog_generation():
         raise HomeAssistantError(
             "Model data changed during validation. Review the settings and retry saving."
@@ -797,6 +803,10 @@ class ModelCatalogManager:
                 )
             for connection in inventory:
                 require_provider_restore_complete(self.hass, connection.entry.entry_id)
+                for assistant in connection.assistants:
+                    get_agent_maintenance_gate(
+                        self.hass, connection.entry.entry_id, assistant.subentry.subentry_id
+                    ).require_idle()
             self.hass.data[_DATA_PUBLICATION] = True
             try:
                 await self._save(

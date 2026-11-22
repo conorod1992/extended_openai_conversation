@@ -1299,6 +1299,16 @@ async def _async_destination_archive_liveness(
     return frozenset(live)
 
 
+def require_catalogue_ready_for_restore(hass: HomeAssistant) -> None:
+    """Check admission while the caller owns exclusive assistant maintenance."""
+    from .model_catalog_manager import require_catalogue_publication_complete
+
+    try:
+        require_catalogue_publication_complete(hass)
+    except HomeAssistantError as err:
+        raise backup.BackupError(str(err)) from err
+
+
 async def _async_restore_backup_recoverably(
     hass: HomeAssistant,
     entry: Any,
@@ -1314,6 +1324,7 @@ async def _async_restore_backup_recoverably(
     only the backup lock; both full and selective restores share its journal and
     rollback implementation without nesting maintenance-gate ownership.
     """
+    require_catalogue_ready_for_restore(hass)
     prepared = await backup.async_inspect_backup(value, subentry.subentry_id)
     entry_id = entry.entry_id
     subentry_id = subentry.subentry_id

@@ -274,6 +274,94 @@ async def test_catalogue_freshness_is_checked_inside_the_owned_save(
     assert manager.catalog == expanded
 
 
+@pytest.mark.parametrize(
+    "mode,overlap",
+    [("current", "publishing"), ("new", "publishing"), ("current", "validated")],
+)
+async def test_configuration_import_cannot_write_against_a_resetting_catalogue(
+    hass, monkeypatch, catalogue_publication, mode, overlap
+):
+    manager, _, _ = catalogue_publication
+    entry, child = _entry_pair()
+    child.data.update(chat_model="gpt-4o", api_mode="responses", max_tokens=500)
+    hass.config_entries.async_entries.return_value = [entry]
+    hass.config_entries.async_get_entry.return_value = entry
+    rules = RequestRules(RuleStore())
+    await rules.async_initialize()
+    monkeypatch.setattr(
+        runtime, "async_get_request_rules", AsyncMock(return_value=rules)
+    )
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
+    request = ui._ManagementRequest(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "configuration",
+            "action": "import",
+            "mode": mode,
+            "confirm": True,
+            "revision": ui.persisted_config_projection(child).revision,
+            "document": {
+                "schema": "extended_openai_conversation.agent",
+                "version": ui.AGENT_CONFIG_EXPORT_VERSION,
+                "title": "Imported",
+                "config": {**child.data, "max_tokens": 20000},
+            },
+        },
+        entry.entry_id,
+        child.subentry_id,
+        entry,
+        child,
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    if overlap == "validated":
+        validate = ui._async_validate_configuration_dependencies
+
+        async def pause_validation(*args):
+            await validate(*args)
+            entered.set()
+            await release.wait()
+
+        monkeypatch.setattr(
+            ui, "_async_validate_configuration_dependencies", pause_validation
+        )
+        import_task = asyncio.create_task(ui.async_configuration_command(request))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            assert (await manager.async_reset())["source"] == "bundled"
+        finally:
+            release.set()
+            with pytest.raises(
+                HomeAssistantError, match="Model data changed during validation"
+            ):
+                await import_task
+    else:
+        save = manager.store.async_save
+
+        async def pause_save(value):
+            entered.set()
+            await release.wait()
+            await save(value)
+
+        monkeypatch.setattr(manager.store, "async_save", pause_save)
+        reset = asyncio.create_task(manager.async_reset())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            with pytest.raises(HomeAssistantError, match="Model data is being updated"):
+                await ui.async_configuration_command(request)
+        finally:
+            release.set()
+            assert (await reset)["source"] == "bundled"
+
+    hass.config_entries.async_update_subentry.assert_not_called()
+    hass.config_entries.async_add_subentry.assert_not_called()
+
+    request.message["document"]["config"]["max_tokens"] = 600
+    result = await ui.async_configuration_command(request)
+    assert result["status"] == ("updated" if mode == "current" else "created")
+
+
 @pytest.mark.parametrize("action", ["save", "update"])
 @pytest.mark.parametrize("overlap", ["publishing", "validated", "save_failed"])
 async def test_configuration_write_cannot_commit_against_a_resetting_catalogue(

@@ -1776,6 +1776,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         }
     if action == "import":
         _require_admin(is_admin)
+        model_generation = catalog_generation()
         parsed = _parse_import_document(
             message.get("document"),
             provider=provider,
@@ -1808,6 +1809,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 raise HomeAssistantError(
                     "Confirm applying shorter Usage detail retention before overwriting configuration"
                 )
+            require_current_configuration_catalogue(hass, model_generation)
             hass.config_entries.async_update_subentry(
                 entry, subentry, data=parsed["config"], title=parsed["title"]
             )
@@ -1837,6 +1839,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             }
         if mode != "new":
             raise HomeAssistantError("mode must be current or new")
+        require_current_configuration_catalogue(hass, model_generation)
         imported = ConfigSubentry(
             data=MappingProxyType(parsed["config"]),
             subentry_type="conversation",

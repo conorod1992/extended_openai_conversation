@@ -1856,10 +1856,13 @@ async def async_restore_transfer(
     from .restore_recovery import (
         async_finish_restore_reload,
         async_restore_backup_recoverably,
+        require_catalogue_ready_for_restore,
     )
 
     async def restore_exclusively_owned() -> dict[str, Any]:
         require_provider_restore_complete(hass, entry.entry_id)
+        # Check admission before the upload precondition can consume its session.
+        require_catalogue_ready_for_restore(hass)
         if precondition is not None:
             await precondition()
         if (

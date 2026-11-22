@@ -79,6 +79,14 @@ class AgentMaintenanceGate:
                 "Assistant restore recovery is required; retry after recovery completes"
             )
 
+    def require_idle(self) -> None:
+        """Require a settled maintenance generation without waiting for a lease."""
+        self.require_available()
+        if self._writer_active:
+            raise HomeAssistantError(
+                "Assistant maintenance is in progress. Wait for it to finish and try again."
+            )
+
     async def async_wait_idle(self) -> None:
         """Let platform reloads observe the settled maintenance outcome."""
         async with self._condition:
