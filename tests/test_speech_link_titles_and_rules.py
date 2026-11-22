@@ -272,3 +272,53 @@ def test_parenthesized_title_with_unmatched_opener_has_same_indexed_fallback(des
         )
         assert completed.endswith("Read Guide next.")
         assert _stream(text, len(text) - len(source)) == completed
+
+
+@pytest.mark.parametrize("title", ['"Version (beta"', "'Version (beta'", "(Version (beta)"])
+def test_indexed_titles_after_long_destinations_match_streaming(title):
+    prefix = "An ordinary sentence. " * 230
+    destination = "https://example.com/" + "a" * 2300
+    link_start = prefix + "Read [Guide](" + destination
+    source = f"{link_start} {title}) next."
+    expected = prefix + "Read Guide next."
+
+    assert (
+        _final_whitespace_cleanup(StreamingSpeechSanitizer().process_complete(source))
+        == expected
+    )
+    title_start = len(link_start) + 1
+    for split in (
+        0,
+        len(prefix),
+        len(link_start),
+        title_start,
+        title_start + 1,
+        len(source) - 7,
+        len(source),
+    ):
+        assert _stream(source, split) == expected, split
+
+
+def test_completed_index_does_not_rescan_tail_without_closing_parentheses():
+    class CountedText(str):
+        looked_at = 0
+
+        def __getitem__(self, key):
+            if isinstance(key, slice):
+                start, stop, step = key.indices(len(self))
+                self.looked_at += len(range(start, stop, step))
+            return super().__getitem__(key)
+
+        def find(self, sub, start=0, end=None):
+            end = len(self) if end is None else end
+            result = super().find(sub, start, end)
+            self.looked_at += (result + len(sub) if result >= 0 else end) - start
+            return result
+
+    # Each opener looks like an angle destination. There is no possible
+    # closing parenthesis anywhere in the remaining message.
+    source = CountedText("[bad](<fragment\n" * 2000)
+    _, _, destinations = StreamingSpeechSanitizer._index_complete_links(source)
+
+    assert destinations == {}
+    assert source.looked_at <= 2 * len(source)

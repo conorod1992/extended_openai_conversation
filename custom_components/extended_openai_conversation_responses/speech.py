@@ -88,7 +88,8 @@ def _join_speech(parts: list[str], kinds: Mapping[int, _LiteralKind]) -> str:
 _BACKTICK_RUN = re.compile(r"`+")
 _LABEL_SYNTAX = re.compile(r"`+|[\[\]]")
 _LINK_WHITESPACE = " \t\r\n"
-_LINK_TITLE_PREFIX = re.compile(r"""[ \t\r\n]["'(]""")
+_LINK_WHITESPACE_RUN = re.compile(r"\s+")
+_LINK_TITLE_DELIMITERS = ('"', "'", "(")
 
 
 def _link_whitespace_end(text: str, start: int, end: int) -> int:
@@ -1958,21 +1959,43 @@ class StreamingSpeechSanitizer:
         # recognise. Bound those speculative probes so malformed bulk text
         # cannot turn complete-response cleanup into quadratic rescanning.
         remaining_probe_chars = max(16_384, len(text) * 4)
+        whitespace_runs = _LINK_WHITESPACE_RUN.finditer(text)
+        whitespace = next(whitespace_runs, None)
+        next_closer = -1
         for candidate in re.finditer(r"\]\(", text):
+            if remaining_probe_chars <= 0:
+                break
             opening = candidate.end() - 1
             if opening in closed_parens:
                 continue
             url_start = opening + 1
-            if url_start >= len(text) or remaining_probe_chars <= 0:
-                continue
-            prefix = text[url_start : url_start + 2048]
-            if not (
-                prefix.lstrip(_LINK_WHITESPACE).startswith("<")
-                or _LINK_TITLE_PREFIX.search(prefix)
-            ):
+            if url_start >= len(text):
                 continue
             window = min(16_384, len(text) - url_start, remaining_probe_chars)
-            if ")" not in text[url_start : url_start + window]:
+            window_end = url_start + window
+            # Walk candidate starts and whitespace runs in order. For a bare
+            # destination the shared scanner checks for a title at its first
+            # whitespace boundary, even if the destination is very long.
+            while whitespace is not None and whitespace.end() <= url_start:
+                whitespace = next(whitespace_runs, None)
+            destination = url_start
+            if whitespace is not None and whitespace.start() == url_start:
+                destination = whitespace.end()
+                whitespace = next(whitespace_runs, None)
+            if destination >= window_end:
+                continue
+            if text[destination] != "<" and (
+                whitespace is None
+                or whitespace.end() >= window_end
+                or text[whitespace.end()] not in _LINK_TITLE_DELIMITERS
+            ):
+                continue
+            # Cache the next possible closer across overlapping windows.
+            if next_closer < url_start:
+                next_closer = text.find(")", url_start)
+                if next_closer == -1:
+                    next_closer = len(text)
+            if next_closer >= window_end:
                 continue
             status, end = StreamingSpeechSanitizer._scan_markdown_destination(
                 text, url_start, True, limit=url_start + window - 1
@@ -2060,7 +2083,7 @@ class StreamingSpeechSanitizer:
             return unfinished()
         if text[position] == ")":
             return "complete", position + 1
-        if position == whitespace_start or text[position] not in ('"', "'", "("):
+        if position == whitespace_start or text[position] not in _LINK_TITLE_DELIMITERS:
             return "no", start
         closing = ")" if text[position] == "(" else text[position]
         position += 1
