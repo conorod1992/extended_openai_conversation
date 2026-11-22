@@ -259,6 +259,7 @@ async def test_ai_task_reconfigure_preserves_omitted_fields(
     if sampling:
         raw["reasoning_effort"] = "none"
     handler = SimpleNamespace(
+        hass=SimpleNamespace(data={}),
         options=deepcopy(raw),
         _temp_data=None,
         _is_new=False,
@@ -331,6 +332,7 @@ async def test_ai_task_advanced_retry_does_not_promote_display_defaults(hass):
 
     raw = {"chat_model": "gpt-5.6", "api_mode": "responses", "opaque": {"keep": True}}
     handler = SimpleNamespace(
+        hass=SimpleNamespace(data={}),
         options=deepcopy(raw),
         _temp_data={"max_tokens": 777, "advanced_options": True},
         _is_new=False,
@@ -369,6 +371,7 @@ async def test_ai_task_explicit_model_transition_clears_dependent_sampling(hass)
         "opaque": {"keep": True},
     }
     handler = SimpleNamespace(
+        hass=SimpleNamespace(data={}),
         options=deepcopy(raw),
         _temp_data=None,
         _is_new=False,

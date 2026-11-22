@@ -93,6 +93,7 @@ async def test_ai_task_native_flow_rejects_invalid_candidate(
     options, provider, advanced
 ):
     handler = SimpleNamespace(
+        hass=SimpleNamespace(data={}),
         options=dict(DEFAULT_AI_TASK_OPTIONS),
         _is_new=True,
         _temp_data=options,
