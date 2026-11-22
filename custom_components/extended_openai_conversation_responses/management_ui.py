@@ -359,6 +359,15 @@ async def _async_capacity_ha_snapshot(
         is None
     ):
         return None
+    try:
+        configured = parse_configured_function_tools(config)
+    except yaml.YAMLError:
+        # Unreadable definitions have no discoverable HA references.
+        return None
+    if not isinstance(configured, list) or not any(
+        isinstance(tool, Mapping) and is_ha_tool(tool) for tool in configured
+    ):
+        return None
     tools = inspect_function_tools(config)
     groups = inspect_function_groups(config.get(CONF_FUNCTION_GROUPS, []), tools)
     references = ha_tool_discovery_references(tools, groups, config)

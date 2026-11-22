@@ -190,3 +190,39 @@ async def test_policy_and_observation_reset_survive_failed_control_write(
 
     await manager.async_update_config(candidate)
     assert volumes == [("media_player.bedroom", 0.05)]
+
+
+async def test_unreadable_policy_save_preserves_already_quiet_observation(
+    hass, monkeypatch
+):
+    _install_registry(monkeypatch, "bedroom")
+    manager = _stateful_public_manager(hass)
+    _seed_room(hass, "bedroom", volume=0.1, wake="off")
+    manager._config = _config()
+    volumes, _ = await _install_services(hass)
+    await manager.async_reconcile()
+    persisted = deepcopy(manager._store.async_save.call_args.args[0])
+    readable = False
+
+    async def save(data):
+        nonlocal persisted
+        persisted = deepcopy(data)
+        if not readable:
+            raise OSError("policy committed without acknowledgement")
+
+    async def load():
+        return deepcopy(persisted) if readable else None
+
+    manager._store = SimpleNamespace(async_save=save, async_load=load)
+    entity = "media_player.bedroom"
+    with pytest.raises(OSError, match="without acknowledgement"):
+        await manager.async_update_config(
+            {**manager.config.as_dict(), "max_volume": 0.25}
+        )
+    assert entity in manager.active["observed_controls"]
+    assert entity in persisted["active"]["observed_controls"]
+    hass.states.async_set(entity, "idle", {"volume_level": 0.7})
+    readable = True
+    await manager.async_reconcile()
+    assert manager.config.max_volume == 0.25
+    assert volumes == []

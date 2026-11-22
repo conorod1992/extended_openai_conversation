@@ -930,6 +930,8 @@ class QuietHoursManager:
                         )
             previous = self._config
             previous_identities = getattr(self, "_selection_identities", {})
+            previous_renames = getattr(self, "_deferred_selection_renames", {})
+            previous_active = deepcopy(self._active)
             if replacement is not None:
                 entity_id, review_token = replacement
                 issue = (
@@ -1009,6 +1011,21 @@ class QuietHoursManager:
                         changed_domains.add("media_player")
                     if candidate.wake_sound != previous.wake_sound:
                         changed_domains.add("switch")
+
+                    def needs_recheck(entity_id: str) -> bool:
+                        domain = entity_id.partition(".")[0]
+                        if domain not in changed_domains:
+                            return False
+                        if domain == "media_player":
+                            current = _current_volume(self.hass, entity_id)
+                            return (
+                                current is None
+                                or current > candidate.max_volume + _VOLUME_TOLERANCE
+                            )
+                        return candidate.wake_sound != "unchanged" and _current_switch(
+                            self.hass, entity_id
+                        ) is not (candidate.wake_sound == "on")
+
                     controls = self._active.get("controls", {})
                     observed = list(
                         dict.fromkeys(
@@ -1018,8 +1035,7 @@ class QuietHoursManager:
                     self._active["observed_controls"] = observed = [
                         entity_id
                         for entity_id in observed
-                        if entity_id in controls
-                        or entity_id.partition(".")[0] not in changed_domains
+                        if entity_id in controls or not needs_recheck(entity_id)
                     ]
                     if "observed_identities" in self._active:
                         self._active["observed_identities"] = {
@@ -1051,6 +1067,8 @@ class QuietHoursManager:
                     # Publish no speculative configuration while disk is unknown.
                     self._config = previous
                     self._selection_identities = previous_identities
+                    self._deferred_selection_renames = previous_renames
+                    self._active = previous_active
             needs_reconcile = failure is None or self._config != previous
             needs_reconcile |= self._selection_identities != previous_identities
             needs_schedule = needs_reconcile or self._config_recovery_pending

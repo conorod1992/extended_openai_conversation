@@ -38,7 +38,7 @@ MUTATIONS = (
     Mutation(
         "request-validation",
         COMPONENT + "management_ui.py",
-        "validate_routed_request_options(config, entry_data)",
+        "validate_routed_request_options(config, entry_data, ha_snapshot=ha_snapshot)",
         "pass  # sensitivity: skip effective request validation",
         MATRIX
         + "test_invalid_request_cannot_publish_through_any_setup_writer[hosted-search-api-update]",

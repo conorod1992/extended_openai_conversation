@@ -10,6 +10,7 @@ from custom_components.extended_openai_conversation_responses.entity import (
 )
 from custom_components.extended_openai_conversation_responses.function_groups import (
     FunctionGroupRuntime,
+    admit_function_group_loader,
     assemble_function_tools,
     load_function_groups,
 )
@@ -90,7 +91,7 @@ def test_free_form_object_selector_is_rejected_before_strict_submission():
         _format_structured_output(caller, None)
 
 
-@pytest.mark.parametrize("size,accepted", [(126, True), (127, False)])
+@pytest.mark.parametrize("size,accepted", [(126, True), (127, True), (128, False)])
 def test_group_budget_counts_loader_and_reserved_builtin(size, accepted):
     tools = [_tool(f"tool_{index}") for index in range(size + 1)]
     groups = [
@@ -103,10 +104,12 @@ def test_group_budget_counts_loader_and_reserved_builtin(size, accepted):
     )
     assert (result["status"] == "success") == accepted
     assert session.loaded_group_ids == ({"first"} if accepted else set())
-    assert (
-        len(assemble_function_tools(tools, groups, set(session.loaded_group_ids)).tools)
-        + 1
-        <= 128
+    effective = assemble_function_tools(tools, groups, set(session.loaded_group_ids))
+    assert len(
+        admit_function_group_loader(effective.tools, 128, extra_tool_count=1)
+    ) + 1 <= 128
+    assert not accepted or result["loadable_groups"] == (
+        ["last"] if size == 126 else []
     )
 
 
