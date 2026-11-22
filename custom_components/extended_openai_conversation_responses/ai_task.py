@@ -336,8 +336,23 @@ def _finite_json_float(value: str) -> float:
 
 def _require_serializable_response(data: Any) -> None:
     """Check the final result with Home Assistant's JSON encoder."""
+
+    def require_finite(value: Any) -> None:
+        # Caller selectors can coerce strings into numbers after JSON parsing.
+        # The HA encoder silently maps nonfinite floats to null.
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("Non-finite number in validated AI Task result")
+        if isinstance(value, dict):
+            for key, item in value.items():
+                require_finite(key)
+                require_finite(item)
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                require_finite(item)
+
     try:
         json_bytes(data)
+        require_finite(data)
     except TypeError, ValueError, RecursionError:
         raise HomeAssistantError(
             "AI Task result cannot be returned as Home Assistant JSON"

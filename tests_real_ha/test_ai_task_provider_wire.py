@@ -654,7 +654,21 @@ async def test_structured_task_returns_selector_normalized_data(
     schema = vol.Schema(
         {vol.Required("count"): selector.NumberSelector({"mode": "box", "min": 0})}
     )
-    _wire(monkeypatch, entry, [_text_reply(mode, '{"count":2}')])
+    _wire(
+        monkeypatch,
+        entry,
+        [_text_reply(mode, '{"count":"NaN"}'), _text_reply(mode, '{"count":2}')],
+    )
+    with pytest.raises(
+        HomeAssistantError, match="cannot be returned as Home Assistant JSON"
+    ):
+        await ai_task.async_generate_data(
+            hass,
+            task_name="Non-finite selector result",
+            entity_id=entity_id,
+            instructions="Return count",
+            structure=schema,
+        )
     result = await ai_task.async_generate_data(
         hass,
         task_name="Selector task",

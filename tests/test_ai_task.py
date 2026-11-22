@@ -36,6 +36,23 @@ def _entity() -> ai_task_platform.ExtendedOpenAITaskEntity:
 
 
 @pytest.mark.parametrize(
+    ("result", "valid"),
+    [
+        ({"items": [{"duration": 2.0}, {"duration": None}]}, True),
+        ({"items": [{"duration": float("nan")}]}, False),
+        ({"items": (float("inf"),)}, False),
+        ({"items": {float("-inf")}}, False),
+    ],
+)
+def test_validated_ai_task_result_rejects_nonfinite_numbers(result, valid):
+    if valid:
+        ai_task_platform._require_serializable_response(result)
+    else:
+        with pytest.raises(HomeAssistantError, match="cannot be returned as Home Assistant JSON"):
+            ai_task_platform._require_serializable_response(result)
+
+
+@pytest.mark.parametrize(
     ("identifier", "serializable"),
     [
         (-(2**63) - 1, False),
