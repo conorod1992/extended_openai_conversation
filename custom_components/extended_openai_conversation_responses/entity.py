@@ -999,7 +999,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         structure: SchemaValidator | None = None,
         conditional_continue: bool = False,
         function_tools_factory: Callable[[], list[dict[str, Any]]] | None = None,
-        function_group_loader: Callable[[Any, int | None], dict[str, Any]]
+        function_group_loader: Callable[[Any, int | None, bool], dict[str, Any]]
         | None = None,
         reset_loaded_function_groups: Callable[[], bool] | None = None,
         request_options: Mapping[str, Any] | None = None,
@@ -1311,6 +1311,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     api_mode,
                 )
                 if capacity is not None and len(formatted) == capacity + 1:
+                    # Keep groups loaded by the prior turn's final loader call.
+                    # At capacity there is no slot for the loader itself.
                     executable = [
                         tool
                         for tool in candidates
@@ -1748,6 +1750,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 loader_result = function_group_loader(
                                     loader_call.tool_args.get("groups"),
                                     provider_snapshot.tool_limit,
+                                    loader_rounds < MAX_FUNCTION_GROUP_LOAD_ROUNDS,
                                 )
                         except BaseException as err:
                             append_unresolved_tool_results(

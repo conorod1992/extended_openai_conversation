@@ -2305,7 +2305,10 @@ class ExtendedOpenAIAgentEntity(
         return configured_function_tools_from_data(data)
 
     def _load_function_groups(
-        self, requested: Any, max_tools: int | None
+        self,
+        requested: Any,
+        max_tools: int | None,
+        loader_available_next_round: bool = True,
     ) -> dict[str, Any]:
         """Apply an integration-owned loader call to the active conversation."""
         session = _ACTIVE_TURN.get().function_group_session
@@ -2346,6 +2349,7 @@ class ExtendedOpenAIAgentEntity(
                 available_tools,
                 max_tools=max_tools,
                 extra_tool_count=extra,
+                loader_available_next_round=loader_available_next_round,
             )
 
     @staticmethod

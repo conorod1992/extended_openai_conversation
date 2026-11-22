@@ -369,7 +369,10 @@ def test_capacity_counts_group_members_even_when_loader_will_be_omitted():
     session = FunctionGroupRuntime().begin("conversation:one", 30)
     groups = [_group("reminders", ["one"]), _group("calendar", ["two"])]
     tools = [_tool("one"), _tool("two")]
-    accepted = load_function_groups(session, ["reminders"], groups, tools, max_tools=2, extra_tool_count=1)
+    accepted = load_function_groups(
+        session, ["reminders"], groups, tools, max_tools=2, extra_tool_count=1,
+        loader_available_next_round=False,
+    )
     assert accepted["loaded"] == ["reminders"]
     assert accepted["loadable_groups"] == []
     rejected = load_function_groups(session, ["calendar"], groups, tools, max_tools=2, extra_tool_count=1)

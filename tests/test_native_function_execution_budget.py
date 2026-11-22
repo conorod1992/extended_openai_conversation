@@ -344,7 +344,7 @@ async def test_zero_budget_does_not_consume_function_group_loader(hass) -> None:
         function_group_loader=load_group,
     )
 
-    load_group.assert_called_once_with(["extra"], None)
+    load_group.assert_called_once_with(["extra"], None, True)
     entity._execute_function_tool.assert_not_awaited()
 
 

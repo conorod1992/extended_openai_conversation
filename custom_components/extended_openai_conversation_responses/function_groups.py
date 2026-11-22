@@ -411,6 +411,7 @@ def load_function_groups(
     tool_available: ToolAvailabilityPredicate | None = None,
     max_tools: int | None = None,
     extra_tool_count: int = 0,
+    loader_available_next_round: bool = True,
 ) -> dict[str, Any]:
     """Validate and apply one model-requested group load operation."""
     _available_names, on_demand, always = _available_group_sets(
@@ -452,7 +453,6 @@ def load_function_groups(
         else:
             unknown.append(group_id)
     session.last_active = time.monotonic()
-    capacity_reached = False
     if max_tools is not None and configured_tools is not None:
         effective = assemble_function_tools(
             configured_tools,
@@ -462,10 +462,9 @@ def load_function_groups(
             group_loader_supported=group_loader_supported,
             tool_available=tool_available,
         )
-        # At capacity the provider round omits the loader. No additional
-        # group can contribute an executable member to this catalogue.
         executable_count = extra_tool_count + sum(
-            tool.get("function", {}).get("type") != "function_group_loader"
+            loader_available_next_round
+            or tool.get("function", {}).get("type") != "function_group_loader"
             for tool in effective.tools
         )
         if executable_count > max_tools:
@@ -475,7 +474,6 @@ def load_function_groups(
                 "status": "error",
                 "error": f"Loading these groups exceeds the provider's {max_tools}-tool limit",
             }
-        capacity_reached = executable_count == max_tools
     return {
         "status": "success" if not unknown else "partial" if loaded else "error",
         "loaded": loaded,
@@ -483,7 +481,7 @@ def load_function_groups(
         "already_available": already_available,
         "unknown": unknown,
         "loadable_groups": []
-        if capacity_reached
+        if not loader_available_next_round
         else sorted(
             group_id
             for group_id in on_demand
