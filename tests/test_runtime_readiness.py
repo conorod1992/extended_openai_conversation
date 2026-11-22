@@ -158,6 +158,27 @@ async def test_add_ha_tool_validates_available_saved_and_selected_tools(
     hass.config_entries.async_update_subentry.assert_not_called()
 
 
+@pytest.mark.parametrize("malformed", [False, True])
+async def test_capacity_probe_skips_disabled_and_unreadable_ha_tools(
+    hass, management_agent, monkeypatch, malformed
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        new_reference_tool,
+    )
+    from tests.test_ha_llm_tools import reference
+
+    entry, _ = management_agent
+    entry.data = {"api_provider": "azure"}
+    tool = new_reference_tool(reference(), set())
+    tool["enabled"] = False
+    options = {"functions": "[" if malformed else [tool]}
+    discover = AsyncMock()
+    monkeypatch.setattr(ui, "async_discover", discover)
+
+    assert await ui._async_capacity_ha_snapshot(hass, entry, options, "admin") is None
+    discover.assert_not_awaited()
+
+
 @pytest.mark.parametrize("ordinary_count,loader_admitted", [(125, True), (126, False)])
 async def test_preview_and_dispatch_share_loader_capacity(
     hass, ordinary_count, loader_admitted

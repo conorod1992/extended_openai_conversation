@@ -117,6 +117,38 @@ async def test_renaming_result_alias_requires_updating_native_templates(
     assert updated["rule"]["action"]["actions"] == candidate["action"]["actions"]
 
 
+@pytest.mark.parametrize(
+    "binding",
+    [
+        {"variables": {"lookup": {"level": 1}}},
+        {"action": "sensor.read", "response_variable": "lookup"},
+        None,
+    ],
+    ids=["later-variable", "later-service-result", "unbound-nested-template"],
+)
+def test_alias_rename_checks_nested_templates_and_allows_later_bindings(hass, binding):
+    previous = local_rule()
+    previous["action"]["actions"] = [
+        {
+            "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
+            "data": {"function": "read_sensor", "result_alias": "lookup"},
+        },
+        {
+            "if": [{"condition": "template", "value_template": "{{ true }}"}],
+            "then": [{"set_conversation_response": "{{ lookup.level }}"}],
+        },
+    ]
+    candidate = deepcopy(previous)
+    actions = candidate["action"]["actions"]
+    actions[0]["data"]["result_alias"] = "reading"
+    if binding is None:
+        with pytest.raises(HomeAssistantError, match="Function result aliases: lookup"):
+            rr.validate_result_alias_template_update(hass, previous, candidate)
+    else:
+        actions.insert(1, binding)
+        rr.validate_result_alias_template_update(hass, previous, candidate)
+
+
 async def test_initialize_projects_defaults_without_overwriting_malformed_container() -> (
     None
 ):
