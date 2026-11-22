@@ -1365,7 +1365,9 @@ class ConversationArchive:
         sessions = [
             session
             for session in self._sessions.values()
-            if session.scope_id == scope_id and session.has_saved_history
+            if session.scope_id == scope_id
+            and session.has_saved_history
+            and session.session_id not in self._expired_pending_prune
         ]
         sessions.sort(key=lambda item: _parse_time(item.last_message_at), reverse=True)
         page = sessions[max(0, offset) : max(0, offset) + limit]
@@ -1493,7 +1495,15 @@ class ConversationArchive:
         async with self._lock:
             self._ensure_initialized()
             sessions = _sessions_in_delete_range(
-                self._sessions.values(), scope_id, start, end
+                (
+                    session
+                    for session in self._sessions.values()
+                    if allow_outside_range
+                    or session.session_id not in self._expired_pending_prune
+                ),
+                scope_id,
+                start,
+                end,
             )
             if not sessions:
                 return {"deleted_sessions": 0, "deleted_turns": 0}

@@ -980,7 +980,12 @@ class ExtendedOpenAIAgentEntity(
             and isinstance(subentry_id, str)
             and isinstance(resolution.conversation_id, str)
             and has_live_conversation_owner(
-                self.hass, subentry_id, resolution.conversation_id, scope.scope_id
+                self.hass,
+                subentry_id,
+                resolution.conversation_id,
+                scope.scope_id,
+                # Core reuses the chat until its cleanup sweep actually removes it.
+                require_recent_activity=False,
             )
         )
         with async_get_chat_session(

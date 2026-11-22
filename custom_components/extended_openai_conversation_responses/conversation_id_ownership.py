@@ -67,7 +67,12 @@ def conversation_id_is_owned(hass: HomeAssistant | None, conversation_id: str) -
 
 
 def has_live_conversation_owner(
-    hass: HomeAssistant, agent_id: str, conversation_id: str, scope_id: str
+    hass: HomeAssistant,
+    agent_id: str,
+    conversation_id: str,
+    scope_id: str,
+    *,
+    require_recent_activity: bool = True,
 ) -> bool:
     """Check that a retained Archive binding still owns the active native chat."""
     if conversation_id.startswith(GUEST_CONVERSATION_ID_PREFIX):
@@ -82,7 +87,10 @@ def has_live_conversation_owner(
         and registration.session is session
         and registration.owner == owner
         and conversation_id in hass.data.get(DATA_CHAT_LOGS, {})
-        and session.last_updated + CONVERSATION_TIMEOUT >= dt_util.utcnow()
+        and (
+            not require_recent_activity
+            or session.last_updated + CONVERSATION_TIMEOUT >= dt_util.utcnow()
+        )
     )
 
 

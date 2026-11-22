@@ -1281,7 +1281,11 @@ async def _async_destination_archive_liveness(
         ]
         if key == f"conversation:{conversation_id}":
             if keys == [None, None] and has_live_conversation_owner(
-                hass, subentry_id, conversation_id, scope.scope_id
+                hass,
+                subentry_id,
+                conversation_id,
+                scope.scope_id,
+                require_recent_activity=False,
             ):
                 live.add(key)
         elif (

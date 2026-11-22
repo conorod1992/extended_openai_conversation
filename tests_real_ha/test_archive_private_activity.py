@@ -18,6 +18,10 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context
+from homeassistant.helpers.chat_session import (
+    DATA_CHAT_SESSION,
+    DATA_CHAT_SESSION_CLEANUP,
+)
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_cross_feature_acceptance import (
     _agent,
@@ -26,6 +30,67 @@ from tests_real_ha.test_cross_feature_acceptance import (
     _speech,
 )
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
+
+
+async def test_native_private_archive_follows_core_session_cleanup(hass, monkeypatch):
+    from tests_real_ha.test_conversation_runtime_lifecycle import _tool
+
+    user = MockUser(id="archive-owner", name="Archive Owner")
+    user.add_to_hass(hass)
+    agent = await _agent(
+        hass,
+        **{
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: 1,
+            CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_HA_DEFAULT,
+        },
+    )
+    sent = _provider(
+        monkeypatch,
+        agent,
+        ["Opened", _tool("conversation_private"), "Private", "Follow-up", "New"],
+    )
+    now = dt_util.utcnow()
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+
+    async def say(text, conversation_id=None):
+        return await conversation.async_converse(
+            hass=hass,
+            text=text,
+            conversation_id=conversation_id,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=agent.entry.entry_id,
+        )
+
+    first = await say("Open conversation")
+    conversation_id = first.conversation_id
+    assert _speech(await say("Make this private", conversation_id)) == "Private"
+    native_session = hass.data[DATA_CHAT_SESSION][conversation_id]
+    cleanup = hass.data[DATA_CHAT_SESSION_CLEANUP]
+    now += timedelta(minutes=4)
+    cleanup.unsub()
+    cleanup._cleanup(now)
+    now += timedelta(minutes=2)
+    result = await say("Private follow-up", conversation_id)
+    assert _speech(result) == "Follow-up"
+    assert hass.data[DATA_CHAT_SESSION][conversation_id] is native_session
+    assert any(
+        row["content"] == "Make this private"
+        for row in sent[-1]["messages"]
+        if row["role"] == "user"
+    )
+    archive = agent._archive
+    assert "Private follow-up" not in str(await archive.async_backup_data())
+
+    now += timedelta(minutes=6)
+    cleanup.unsub()
+    cleanup._cleanup(now)
+    assert conversation_id not in hass.data[DATA_CHAT_SESSION]
+    result = await say("New conversation", conversation_id)
+    assert _speech(result) == "New"
+    assert result.conversation_id != conversation_id
+    assert "New conversation" in str(await archive.async_backup_data())
 
 
 async def test_continuing_private_conversation_never_resumes_retention(

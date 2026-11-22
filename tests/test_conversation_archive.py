@@ -557,6 +557,22 @@ async def test_failed_prune_masks_both_paging_directions(monkeypatch, explicit_d
         assert current["turns"][0]["user_text"] == "recent transcript"
     assert archive.scope_counts() == {scope.scope_id: 1}
     assert (await archive.async_search(scope.scope_id, "expired"))["results"] == []
+    assert (await archive.async_list_sessions(scope.scope_id))["sessions"][0][
+        "session_id"
+    ] == recent
+    expired_date = dt_util.as_local(recent_time - timedelta(days=2)).date().isoformat()
+    assert (
+        await archive.async_preview_delete_date_range(
+            scope.scope_id, expired_date, expired_date
+        )
+    )["session_count"] == 0
+    assert await archive.async_delete_date_range(
+        scope.scope_id,
+        expired_date,
+        expired_date,
+        confirm=True,
+        allow_outside_range=False,
+    ) == {"deleted_sessions": 0, "deleted_turns": 0}
     if explicit_delete:
         removed = await archive.async_delete_session(scope.scope_id, expired)
     else:
