@@ -488,6 +488,7 @@ class ModelCatalogManager:
     ) -> bool:
         """Check concrete saved agent and routing choices from one inventory."""
         from .request import capability_model_identity, validate_runtime_readiness
+        from .request_rules import request_rule_repair
 
         if inventory is None:
             inventory = await self._candidate_inventory(candidate)
@@ -504,16 +505,17 @@ class ModelCatalogManager:
                     continue
                 saved_rules = assistant.rules.rules
                 inherited_efforts = set()
-                effort_only_routes: list[tuple[int, str]] = []
+                effort_only_routes: set[str] = set()
                 configured_effort = options.get(CONF_REASONING_EFFORT)
                 if isinstance(configured_effort, str) and configured_effort:
                     inherited_efforts.add(configured_effort)
-                for index, saved_rule in enumerate(saved_rules):
+                for saved_rule in saved_rules:
                     saved_action = saved_rule.get("action", {})
                     saved_effort = saved_action.get("reasoning_effort")
                     if (
                         saved_rule.get("enabled", True)
                         and saved_rule.get("action_type") == "model_routing"
+                        and not request_rule_repair(saved_rule)
                         and not saved_action.get("reset")
                         and isinstance(saved_effort, str)
                         and saved_effort
@@ -524,13 +526,9 @@ class ModelCatalogManager:
                         if not (
                             saved_action.get("model") or saved_action.get("azure_model")
                         ):
-                            effort_only_routes.append((index, saved_effort))
-                continued_efforts: set[str] = set()
-                for index, rule in enumerate(saved_rules):
-                    if (
-                        not rule.get("enabled", True)
-                        or rule.get("action_type") != "model_routing"
-                    ):
+                            effort_only_routes.add(saved_effort)
+                for rule in saved_rules:
+                    if not rule.get("enabled", True) or request_rule_repair(rule):
                         continue
                     action = rule.get("action", {})
                     if action.get("reset"):
@@ -538,17 +536,6 @@ class ModelCatalogManager:
                     routed_model = action.get("model")
                     routed_effort = action.get("reasoning_effort")
                     routed_binding = action.get("azure_model")
-                    if (
-                        action.get("scope") == "request"
-                        and rule.get("continue_matching")
-                        and not action.get("continue_to_ai")
-                        and isinstance(routed_effort, str)
-                        and routed_effort
-                        and not SLOT_REFERENCE.search(routed_effort)
-                    ):
-                        # Only later rules in this ordered snapshot can inherit
-                        # a request-only setting through continued matching.
-                        continued_efforts.add(routed_effort)
                     if routed_binding and SLOT_REFERENCE.search(str(routed_binding)):
                         continue
                     if (
@@ -590,24 +577,10 @@ class ModelCatalogManager:
                         )
                         possible_efforts = set()
                         if not routed_effort:
-                            possible_efforts.update(
-                                inherited_efforts | continued_efforts
-                            )
-                        if fixed_route:
+                            possible_efforts.update(inherited_efforts)
+                        if fixed_route and action.get("scope") == "conversation":
                             # A saved conversation route can affect later turns.
-                            # A request route can only affect later matching rules.
-                            if action.get("scope", "conversation") == "conversation":
-                                possible_efforts.update(
-                                    effort for _, effort in effort_only_routes
-                                )
-                            elif rule.get("continue_matching") and not action.get(
-                                "continue_to_ai"
-                            ):
-                                possible_efforts.update(
-                                    effort
-                                    for later, effort in effort_only_routes
-                                    if later > index
-                                )
+                            possible_efforts.update(effort_only_routes)
                         if routed_effort and not dynamic_effort and not fixed_route:
                             # Protect the default only if it could use this effort.
                             # Other fixed models are checked with their own identity.

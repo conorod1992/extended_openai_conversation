@@ -10,7 +10,7 @@ from homeassistant.helpers.template import is_template_string
 
 from . import request_rules
 from .request_rule_patterns import SentenceMatchLimitError
-from .request_rules import RuleMatch, rule_provider_input, rule_stops_matching
+from .request_rules import RuleMatch, rule_provider_input
 from .script_payload import effective_service_payload, is_function_service_action
 from .script_structure import iter_script_actions
 
@@ -66,10 +66,10 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
     rule = match.rule
     action = rule["action"]
     would_do: dict[str, Any]
-    if rule.get(request_rules.RESULT_ALIAS_REPAIR):
+    if rule.get(request_rules.MATCH_REPAIR):
         continue_to_ai = False
         would_do = {
-            "type": "local_action",
+            "type": rule["action_type"],
             "action_count": 0,
             "consumed": True,
             "provider_input": "none",
@@ -80,9 +80,7 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
         continue_to_ai = bool(action.get("continue_to_ai", False))
         continuation = _local_continuation(action.get("actions", []))
         terminal = continuation == "terminal"
-        conditional = continuation == "conditional" and (
-            continue_to_ai or rule.get("continue_matching", False)
-        )
+        conditional = continuation == "conditional" and continue_to_ai
         functions = [
             {
                 "name": data["function"],
@@ -109,6 +107,16 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
             **({"terminal": True} if terminal else {}),
             **({"conditional": True} if conditional else {}),
             **({"functions": functions} if functions else {}),
+            **(
+                {"model": action["model"]}
+                if continue_to_ai and not terminal and action.get("model")
+                else {}
+            ),
+            **(
+                {"azure_model": action["azure_model"]}
+                if continue_to_ai and not terminal and action.get("azure_model")
+                else {}
+            ),
         }
     else:
         continue_to_ai = action.get("continue_to_ai")
@@ -131,13 +139,6 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
             "provider_input": "none" if consumed else "original",
         }
 
-    if (
-        rule.get("continue_matching")
-        and not continue_to_ai
-        and not would_do.get("terminal")
-    ):
-        would_do["continue_matching"] = True
-
     return {
         "matched": True,
         "rule": {
@@ -155,47 +156,6 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
     }
 
 
-def _preview_chain_step(
-    match: RuleMatch, text: str, conditional: bool = False
-) -> tuple[dict[str, Any], dict[str, Any], bool, bool]:
-    """Keep the selected summary, chain and potential AI input in agreement."""
-    summary = request_rule_match_preview(match)
-    action = summary["would_do"]
-    conditional = conditional or bool(action.get("conditional"))
-    ai_input = (
-        _preview_ai_input(match, text) if action["provider_input"] != "none" else None
-    )
-    if conditional:
-        summary["conditional"] = action["conditional"] = True
-        if ai_input is not None:
-            ai_input["conditional"] = True
-            action.update(consumed=None, provider_input="conditional")
-    stopped = (
-        bool(action.get("terminal"))
-        or ai_input is not None
-        or rule_stops_matching(match.rule)
-    )
-    return (
-        summary,
-        {
-            "rule": {"id": match.rule["id"], "name": match.rule["name"]},
-            "status": "conditional"
-            if conditional
-            else (
-                "would_send_to_ai"
-                if ai_input is not None
-                else "stopped"
-                if stopped
-                else "continued"
-            ),
-            "would_do": action,
-            "ai_input": ai_input,
-        },
-        stopped,
-        conditional,
-    )
-
-
 async def async_request_rule_match_preview(
     hass: HomeAssistant,
     rules: Any,
@@ -203,36 +163,35 @@ async def async_request_rule_match_preview(
 ) -> dict[str, Any]:
     """Test a match without executing actions or making a provider request."""
     try:
-        if hasattr(rules, "async_eligible_matches") and rules._has_continuation:
-            skipped: list[dict[str, str]] = []
-            chain: list[dict[str, Any]] = []
-            summary = request_rule_match_preview(None)
-            conditional = False
-            async for match in rules.async_eligible_matches(hass, text, skipped):
-                summary, item, stopped, conditional = _preview_chain_step(
-                    match, text, conditional
-                )
-                chain.append(item)
-                if stopped:
-                    break
-            return {
-                **summary,
-                "matched_rules": chain,
-                "skipped_conditions": skipped,
-            }
         if hasattr(rules, "async_match_with_skipped"):
             match, skipped = await rules.async_match_with_skipped(hass, text)
         else:
             match, skipped = await rules.async_match(hass, text), []
     except SentenceMatchLimitError as err:
         raise HomeAssistantError(str(err)) from err
-    if match is None:
-        summary, chain = request_rule_match_preview(None), []
-    else:
-        summary, item, _, _ = _preview_chain_step(match, text)
-        chain = [item]
-    return {
-        **summary,
-        "skipped_conditions": skipped,
-        "matched_rules": chain,
-    }
+    summary = request_rule_match_preview(match)
+    items = []
+    if match is not None:
+        action = summary["would_do"]
+        ai_input = (
+            _preview_ai_input(match, text)
+            if action["provider_input"] != "none"
+            else None
+        )
+        if ai_input is not None and action.get("conditional"):
+            ai_input["conditional"] = True
+        items.append(
+            {
+                "rule": {"id": match.rule["id"], "name": match.rule["name"]},
+                "status": (
+                    "conditional"
+                    if action.get("conditional")
+                    else "would_send_to_ai"
+                    if ai_input is not None
+                    else "stopped"
+                ),
+                "would_do": action,
+                "ai_input": ai_input,
+            }
+        )
+    return {**summary, "skipped_conditions": skipped, "matched_rules": items}

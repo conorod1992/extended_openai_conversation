@@ -280,13 +280,10 @@ async def test_safe_preview_matches_native_termination_without_executing_actions
         calls.append(call.data["message"])
 
     hass.services.async_register("rule_probe", "record", record)
-    await agent._request_rules.async_create(
-        {
-            **_local(actions, success="First complete"),
-            "name": "First",
-            "continue_matching": True,
-        }
-    )
+    first = _local(actions, success="First complete")
+    first["name"] = "First"
+    first["action"].update(continue_to_ai=True, model="gpt-5.6")
+    await agent._request_rules.async_create(first)
     await agent._request_rules.async_create(
         {
             **_rule(
@@ -304,36 +301,35 @@ async def test_safe_preview_matches_native_termination_without_executing_actions
     assert agent._request_rules.snapshot() == snapshot
     assert agent._request_rules.revision() == revision
     assert sent == [] and calls == []
-    chain = preview["matched_rules"]
+    assert preview["rule"]["name"] == "First"
+    assert len(preview["matched_rules"]) == 1
+    selected = preview["matched_rules"][0]
     if certainty == "terminal":
-        assert preview["rule"]["name"] == "First"
-        assert len(chain) == 1 and chain[0]["status"] == "stopped"
-        assert chain[0]["ai_input"] is None
+        assert selected["status"] == "stopped" and selected["ai_input"] is None
         assert preview["would_do"]["consumed"] is True
         assert preview["would_do"]["provider_input"] == "none"
         assert preview["would_do"]["terminal"] is True
+        assert "model" not in preview["would_do"]
     else:
-        assert preview["rule"]["name"] == "Second"
-        assert [item["rule"]["name"] for item in chain] == ["First", "Second"]
+        assert preview["would_do"]["model"] == "gpt-5.6"
+        assert selected["ai_input"]["provider_input"] == "run rule"
         if certainty == "conditional":
             assert preview["conditional"] is True
-            assert [item["status"] for item in chain] == ["conditional", "conditional"]
+            assert selected["status"] == "conditional"
             assert preview["would_do"]["consumed"] is None
             assert preview["would_do"]["provider_input"] == "conditional"
-            assert chain[1]["ai_input"]["conditional"] is True
+            assert selected["ai_input"]["conditional"] is True
         else:
-            assert [item["status"] for item in chain] == [
-                "continued",
-                "would_send_to_ai",
-            ]
+            assert selected["status"] == "would_send_to_ai"
             assert "conditional" not in preview
-        assert chain[1]["ai_input"]["provider_input"] == "run rule"
 
     # Real Assist execution uses HA Script, not a preview helper or fake executor.
     result = await _say(hass, agent, "run rule")
     assert _speech(result, successful=reply != "Failed safely") == reply
     assert calls == markers
     assert len(sent) == (1 if reply == "Provider answer" else 0)
+    if sent:
+        assert sent[0]["model"] == "gpt-5.6"
 
 
 @pytest.mark.parametrize(
@@ -378,9 +374,9 @@ async def test_single_rule_preview_and_native_script_suppress_terminal_ai_input(
 
 
 @pytest.mark.parametrize("stop_enabled", [False, True])
-@pytest.mark.parametrize("continue_matching", [False, True])
+@pytest.mark.parametrize("select_model", [False, True])
 async def test_conditional_local_handoff_keeps_capture_and_excludes_later_rules(
-    hass, monkeypatch, stop_enabled, continue_matching
+    hass, monkeypatch, stop_enabled, select_model
 ):
     agent = await _agent(hass)
     sent = _provider(monkeypatch, agent, ["Provider answer"])
@@ -389,10 +385,12 @@ async def test_conditional_local_handoff_keeps_capture_and_excludes_later_rules(
         phrase="run {question}", match_type="sentence_pattern", success="First complete",
     )
     rule.update(
-        name="First", continue_matching=continue_matching,
+        name="First",
         ai_input_mode="capture", ai_input_capture="question",
     )
     rule["action"]["continue_to_ai"] = True
+    if select_model:
+        rule["action"]["model"] = "gpt-5.6"
     await agent._request_rules.async_create(rule)
     await agent._request_rules.async_create({
         **_local([_record_action("unreachable")]), "name": "Second", "order": 1,
@@ -413,6 +411,8 @@ async def test_conditional_local_handoff_keeps_capture_and_excludes_later_rules(
     assert len(sent) == (0 if stop_enabled else 1)
     if sent:
         assert sent[0]["messages"][-1]["content"] == "rule"
+        if select_model:
+            assert sent[0]["model"] == "gpt-5.6"
 
 
 @pytest.mark.parametrize("match_type", ["equals", "starts_with", "ends_with", "contains"])

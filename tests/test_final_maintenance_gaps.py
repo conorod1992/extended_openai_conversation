@@ -200,11 +200,10 @@ def test_malformed_provider_error_body_does_not_hide_explicit_model_error(body):
 
 
 @pytest.mark.parametrize("matched", [False, True])
-async def test_continuation_chain_exhaustion_returns_last_result_or_no_match(
+async def test_first_match_returns_result_or_no_match(
     hass, monkeypatch, matched
 ):
     rule = local_rule()
-    rule["continue_matching"] = True
     rules = await manager(rule)
     if matched:
         monkeypatch.setattr(

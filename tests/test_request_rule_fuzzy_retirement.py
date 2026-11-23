@@ -70,7 +70,6 @@ async def test_legacy_load_backup_import_export_and_reopen_preserve_rule():
         behavior="custom",
         matching=legacy,
     )
-    rule["continue_matching"] = True
     rule["conditions"] = [
         {"condition": "state", "entity_id": "light.study", "state": "off"}
     ]

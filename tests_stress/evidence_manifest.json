@@ -205,7 +205,7 @@
       "rule-match",
       "rule-continue-to-ai",
       "rule-local-continue-to-ai",
-      "rule-continue-matching",
+      "rule-local-model",
       "rule-matching-behavior",
       "rule-fuzzy"
     ],
@@ -330,16 +330,16 @@
       "tests_real_ha/test_live_config_mutation_semantics.py::test_conversation_route_survives_rule_edit_disable_and_delete"
     ]
   },
-  "capabilities/request-rules::continue_matching_execution": {
+  "capabilities/request-rules::local_handoff_model": {
     "controls": [
-      "rule-continue-matching"
+      "rule-local-model"
     ],
     "classification": "runtime_effect",
-    "effect": "Eligible chained rules execute in priority order and stop at terminal/provider outcomes.",
+    "effect": "The first eligible local rule can run its actions and use the selected model on the provider wire. Native termination suppresses handoff.",
     "evidence": [
-      "tests_stress/test_request_rules_provider_wire.py::test_continue_matching_skips_false_condition_and_reaches_later_rule",
-      "tests_stress/test_request_rules_provider_wire.py::test_continue_matching_stops_on_provider_handoff",
-      "tests_stress/test_request_rules_provider_wire.py::test_continue_matching_stops_on_terminal_local_outcome"
+      "tests_stress/test_request_rules_provider_wire.py::test_first_eligible_rule_skips_false_condition",
+      "tests_stress/test_request_rules_provider_wire.py::test_local_rule_hands_off_to_selected_model",
+      "tests_stress/test_request_rules_provider_wire.py::test_local_terminal_outcome_suppresses_ai_handoff"
     ]
   },
   "capabilities/request-rules::group_management": {

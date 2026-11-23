@@ -169,10 +169,9 @@ async def test_running_conversation_recovers_rules_without_ai_fallthrough(
     assert "PRIVATE-RULE" not in caplog.text
 
 
-@pytest.mark.parametrize("continuation", [False, True])
 @pytest.mark.parametrize("outcome", ["stable", "committed", "not_written", "written"])
 async def test_matching_budget_fallback_requires_current_rule_generation(
-    real_hass, monkeypatch, continuation, outcome
+    real_hass, monkeypatch, outcome
 ):
     hass = real_hass
     entity, invoke, _logs, provider_calls = _assist_fixture(monkeypatch)
@@ -189,7 +188,6 @@ async def test_matching_budget_fallback_requires_current_rule_generation(
     entity._request_rules = rules
     entity._request_rule_runtime = rr.get_request_rule_runtime(hass, "entry", "agent")
     rule = local_rule("Retained", ["good {time}"], match_type="sentence_pattern")
-    rule["continue_matching"] = continuation
     rule["action"]["actions"] = [
         {"action": "budget_probe.record", "data": {"version": "old"}}
     ]

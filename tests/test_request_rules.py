@@ -469,67 +469,139 @@ async def test_local_continue_to_ai_success_and_failure(hass) -> None:
     assert failed.response == "Failed safely"
 
 
-async def test_continue_matching_runs_each_local_rule_once_and_preview_is_safe(
-    hass,
-) -> None:
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("azure", [False, True])
+async def test_local_handoff_uses_selected_model_for_one_turn(hass, api_mode, azure):
+    rule = local_rule("Prepare then ask", ["ask {question}"], "sentence_pattern")
+    rule.update(ai_input_mode="capture", ai_input_capture="question")
+    entry_data = {"api_provider": "azure"} if azure else {}
+    retained = {CONF_CHAT_MODEL: "gpt-4.1"}
+    selected = "kitchen-deployment" if azure else "gpt-4.1-mini"
+    rule["action"].update(model=selected, continue_to_ai=True)
+    if azure:
+        retained["azure_model"] = "gpt-4.1"
+        rule["action"]["azure_model"] = "gpt-4.1-mini"
+    options = {**retained, "api_mode": api_mode}
+    runtime = RequestRuleRuntime()
+    runtime.set("session", retained)
+    rules = await manager(rule, local_rule("Lower priority", ["ask why?"], order=1))
+    hass.services = FakeServices()
+    outcome = await async_evaluate_rule(
+        hass, rules, runtime, "ask why?", "session",
+        request_options=options, entry_data=entry_data,
+    )
+    assert outcome.successful and not outcome.consume
+    assert outcome.provider_input == "why?"
+    assert len(hass.services.calls) == 1
+    effective = runtime.effective_options(options, "session", outcome.request_override)
+    wire = build_provider_request_snapshot(effective, entry_data, tools_required=False)
+    assert wire.api_kwargs["model"] == selected
+    if azure:
+        assert effective["azure_model"] == "gpt-4.1-mini"
+    assert runtime.peek("session") == retained
+    assert runtime.effective_options(options, "session")[CONF_CHAT_MODEL] == "gpt-4.1"
+
+
+@pytest.mark.parametrize(
+    ("changes", "error"),
+    [
+        ({"continue_to_ai": False, "model": "gpt-5"}, "requires Continue to AI"),
+        ({"azure_model": "gpt-5"}, "Choose an Azure deployment"),
+        ({"model": "{question}"}, "Choose a fixed model"),
+        ({"model": []}, "must be text"),
+    ],
+)
+def test_local_handoff_model_requires_usable_configuration(changes, error):
+    rule = local_rule()
+    rule["action"]["continue_to_ai"] = True
+    rule["action"].update(changes)
+    with pytest.raises(ValueError, match=error):
+        validate_rule(rule)
+
+
+async def test_first_eligible_rule_runs_once_and_preview_is_safe(hass) -> None:
     from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
         async_request_rule_match_preview,
     )
 
     first = local_rule("First", phrases=["hello"])
-    first["continue_matching"] = True
     second = local_rule("Second", phrases=["hello"], order=1)
-    second["continue_matching"] = True
-    third = local_rule("Third", phrases=["hello"], order=2)
-    rules = await manager(first, second, third)
+    rules = await manager(first, second)
     services = FakeServices()
     hass.services = services
 
     preview = await async_request_rule_match_preview(hass, rules, "hello")
-    assert [item["rule"]["name"] for item in preview["matched_rules"]] == [
-        "First",
-        "Second",
-        "Third",
-    ]
-    assert [item["status"] for item in preview["matched_rules"]] == [
-        "conditional",
-        "conditional",
-        "conditional",
-    ]
-    assert preview["conditional"] is True
-    assert all(item["would_do"]["conditional"] for item in preview["matched_rules"])
-    assert all(item["ai_input"] is None for item in preview["matched_rules"])
+    assert [item["rule"]["name"] for item in preview["matched_rules"]] == ["First"]
+    assert preview["matched_rules"][0]["status"] == "stopped"
     assert services.calls == []
 
     outcome = await async_evaluate_rule(
         hass, rules, RequestRuleRuntime(), "hello", "session"
     )
-    assert outcome is not None and outcome.match.rule["name"] == "Third"
+    assert outcome is not None and outcome.match.rule["name"] == "First"
     assert outcome.consume and outcome.successful
-    assert len(services.calls) == 3
+    assert len(services.calls) == 1
 
 
-async def test_continue_matching_defaults_off_and_legacy_rules_migrate() -> None:
+def test_retired_continue_matching_is_only_retained_for_repair() -> None:
     rule = local_rule()
-    assert validate_rule(rule)["continue_matching"] is False
-    rule["continue_matching"] = "yes"
+    for flag in (False, True):
+        raw = {**rule, "continue_matching": flag}
+        if flag:
+            with pytest.raises(ValueError, match="Continue matching was removed"):
+                validate_rule(raw)
+        else:
+            assert "continue_matching" not in validate_rule(raw)
+        raw["action"] = {**raw["action"], "continue_to_ai": True}
+        assert "continue_matching" not in validate_rule(raw)
     with pytest.raises(ValueError, match="continue_matching"):
-        validate_rule(rule)
+        validate_rule({**rule, "continue_matching": "yes"})
 
 
-async def test_continue_matching_persists_and_round_trips_backup() -> None:
-    original = local_rule("First", phrases=["hello"])
-    original["continue_matching"] = True
-    source = await manager(original)
+async def test_legacy_matching_rule_round_trips_and_blocks_until_repaired(hass) -> None:
+    from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
+        async_request_rule_match_preview,
+    )
+
+    legacy = local_rule("First", phrases=["hello"])
+    legacy["continue_matching"] = True
+    later = local_rule("Second", phrases=["hello"], order=1)
+    source = await manager(legacy, later)
     backup = await source.async_backup_data()
     assert backup["rules"][0]["continue_matching"] is True
-    assert (
-        RequestRules.validate_backup_data(backup)["rules"][0]["continue_matching"]
-        is True
-    )
-    restored = RequestRules(MemoryStore())
+    restored = await manager()
     await restored.async_replace_backup(backup)
-    assert restored.snapshot()["rules"][0]["continue_matching"] is True
+    saved = restored.rule_snapshot(legacy["id"])
+    assert saved["continue_matching"] is True
+    assert restored.diagnostic_snapshot()["matching_diagnostic_ids"] == [legacy["id"]]
+
+    services = FakeServices()
+    hass.services = services
+    preview = await async_request_rule_match_preview(hass, restored, "hello")
+    assert preview["would_do"]["needs_repair"]
+    assert len(preview["matched_rules"]) == 1
+    result = await async_evaluate_rule(
+        hass, restored, RequestRuleRuntime(), "hello", "session"
+    )
+    assert result.consume and not result.successful
+    assert "Continue matching was removed" in result.response
+    assert services.calls == []
+
+    disabled = await restored.async_update(legacy["id"], {**saved, "enabled": False})
+    assert disabled["continue_matching"] is True
+    assert restored.match("hello").rule["id"] == later["id"]
+    with pytest.raises(ValueError, match="Continue matching was removed"):
+        await restored.async_update(legacy["id"], {**disabled, "enabled": True})
+
+    saved.pop("continue_matching")
+    await restored.async_update(legacy["id"], saved)
+    assert legacy["id"] not in restored.diagnostic_snapshot()["diagnostics"]
+    result = await async_evaluate_rule(
+        hass, restored, RequestRuleRuntime(), "hello", "session"
+    )
+    assert result.consume and result.successful
+    assert result.match.rule["id"] == legacy["id"]
+    assert len(services.calls) == 1
 
 
 async def test_global_drag_reorder_keeps_groups_and_compiled_patterns() -> None:
@@ -758,7 +830,7 @@ async def test_legacy_fuzzy_chain_keeps_deterministic_order() -> None:
     assert cursor.next_match() is None
 
 
-async def test_continue_matching_handoff_stops_later_rules(hass) -> None:
+async def test_legacy_terminal_handoff_loads_as_first_match(hass) -> None:
     first = local_rule("First", phrases=["hello"])
     first["continue_matching"] = True
     first["action"]["continue_to_ai"] = True
@@ -771,12 +843,12 @@ async def test_continue_matching_handoff_stops_later_rules(hass) -> None:
     )
     assert outcome is not None and not outcome.consume
     assert outcome.match.rule["name"] == "First"
+    assert "continue_matching" not in rules.rule_snapshot(first["id"])
     assert len(services.calls) == 1
 
 
-async def test_continue_matching_failure_stops_later_actions(hass) -> None:
+async def test_local_failure_stops_later_actions(hass) -> None:
     first = local_rule("First", phrases=["hello"])
-    first["continue_matching"] = True
     second = local_rule("Second", phrases=["hello"], order=1)
     rules = await manager(first, second)
     services = FakeServices(fail=True)
@@ -2524,55 +2596,6 @@ async def test_conversation_overrides_compose_across_separate_rules() -> None:
     }
 
 
-async def test_conversation_reset_clears_prior_request_reset_during_rule_cascade() -> None:
-    request_reset = routing_rule(scope="request", reset=True)
-    request_reset["order"] = 0
-    request_reset["continue_matching"] = True
-    request_reset["action"]["continue_to_ai"] = False
-    conversation_reset = routing_rule(scope="conversation", reset=True)
-    conversation_reset["order"] = 1
-    conversation_reset["action"]["continue_to_ai"] = False
-    rules = await manager(request_reset, conversation_reset)
-
-    result = await async_evaluate_rule(
-        SimpleNamespace(),
-        rules,
-        RequestRuleRuntime(),
-        "think carefully about this",
-        "session",
-    )
-
-    assert result is not None
-    assert result.match.rule["action"]["scope"] == "conversation"
-    assert result.request_override is None
-
-
-async def test_conversation_route_reapplies_new_values_after_request_reset() -> None:
-    request_reset = routing_rule(scope="request", reset=True)
-    request_reset["order"] = 0
-    request_reset["continue_matching"] = True
-    request_reset["action"]["continue_to_ai"] = False
-    conversation_route = routing_rule(scope="conversation")
-    conversation_route["order"] = 1
-    conversation_route["action"]["continue_to_ai"] = False
-    rules = await manager(request_reset, conversation_route)
-
-    result = await async_evaluate_rule(
-        SimpleNamespace(),
-        rules,
-        RequestRuleRuntime(),
-        "think carefully about this",
-        "session",
-    )
-
-    assert result is not None
-    assert result.request_override == {
-        "__request_rule_reset__": "1",
-        CONF_CHAT_MODEL: "gpt-5",
-        CONF_REASONING_EFFORT: "high",
-    }
-
-
 async def test_invalid_conversation_update_is_atomic() -> None:
     runtime = RequestRuleRuntime()
     runtime.set("one", {CONF_CHAT_MODEL: "gpt-5", CONF_REASONING_EFFORT: "high"})
@@ -2903,7 +2926,6 @@ async def test_sentence_apostrophes_match_preview_and_local_evaluation(hass, pat
     assert len(hass.services.calls) == 1
 
 @pytest.mark.parametrize("captured", [False, True])
-@pytest.mark.parametrize("request_reset", [False, True])
 @pytest.mark.parametrize(
     ("entry_data", "model", "underlying", "accepted"),
     [
@@ -2914,20 +2936,12 @@ async def test_sentence_apostrophes_match_preview_and_local_evaluation(hass, pat
     ],
     ids=["openai-reject", "openai-accept", "azure-reject", "azure-accept"],
 )
-async def test_conversation_effort_validates_unmasked_next_turn(
-    captured, request_reset, entry_data, model, underlying, accepted
+async def test_conversation_effort_validates_retained_model(
+    captured, entry_data, model, underlying, accepted
 ):
     runtime = RequestRuleRuntime()
     before = {CONF_CHAT_MODEL: model, **({"azure_model": underlying} if underlying else {})}
     runtime.set("kitchen", before)
-    temporary = routing_rule(reset=request_reset)
-    temporary["continue_matching"] = True
-    temporary["action"].update(
-        model=None if request_reset else "temporary" if underlying else "gpt-5.6",
-        reasoning_effort=None,
-        continue_to_ai=False,
-        **({"azure_model": "gpt-5.6"} if underlying and not request_reset else {}),
-    )
     retained = routing_rule(
         scope="conversation", match_type="sentence_pattern" if captured else "starts_with"
     )
@@ -2935,10 +2949,8 @@ async def test_conversation_effort_validates_unmasked_next_turn(
     retained["action"].update(model=None, reasoning_effort="{effort}" if captured else "high")
     if captured:
         retained["phrases"] = ["think carefully {effort}"]
-    rules = await manager(temporary, retained)
+    rules = await manager(retained)
     settings = dict(before)
-    if request_reset:
-        settings = {CONF_CHAT_MODEL: "gpt-5.6"} if not underlying else {CONF_CHAT_MODEL: "configured", "azure_model": "gpt-5.6"}
     pending = async_evaluate_rule(
         SimpleNamespace(), rules, runtime, "think carefully high", "kitchen",
         configured_model=settings[CONF_CHAT_MODEL], request_options=settings, entry_data=entry_data,

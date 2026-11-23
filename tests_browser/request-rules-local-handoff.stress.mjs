@@ -13,26 +13,26 @@ async function setActions(panel, actions) {
   }, actions);
 }
 
-test("nightly Continue Matching chain survives repeated authoring and fresh load", async ({page}, testInfo) => {
+test("nightly local handoff models survive repeated authoring and fresh load", async ({page}, testInfo) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
   let panel = page.locator("extended-openai-management-panel");
 
   const created = [];
   for (let index = 0; index < 5; index += 1) {
-    const name = `Nightly continuation ${index + 1}`;
+    const name = `Nightly local handoff ${index + 1}`;
     created.push(name);
     await panel.getByRole("button", {name:"Create rule", exact:true}).first().click();
     await panel.locator("#rule-name").fill(name);
-    await panel.locator("#rule-phrases").fill("nightly continuation chain");
+    await panel.locator("#rule-phrases").fill("nightly local handoff");
     await panel.locator("#rule-match").selectOption("equals");
     await setActions(panel, [{
       action:"light.turn_on",
-      target:{entity_id:`light.continuation_${index + 1}`},
+      target:{entity_id:`light.handoff_${index + 1}`},
     }]);
     if (index < 4) {
-      await panel.locator("#rule-advanced").evaluate((details) => { details.open = true; });
-      await panel.locator("#rule-continue-matching").check();
+      await panel.locator("#rule-local-continue-to-ai").check();
+      await panel.locator("#rule-local-model").fill(index % 2 ? "gpt-5.6" : "gpt-5-mini");
     }
     if (index === 2) {
       await panel.locator("#rule-add-conditions").click();
@@ -48,8 +48,8 @@ test("nightly Continue Matching chain survives repeated authoring and fresh load
   for (let index = 0; index < created.length; index += 1) {
     const card = panel.locator(".request-rule-card").filter({hasText:created[index]});
     await card.locator(".rule-edit").click();
-    await panel.locator("#rule-advanced").evaluate((details) => { details.open = true; });
-    await expect(panel.locator("#rule-continue-matching")).toBeChecked({checked:index < 4});
+    await expect(panel.locator("#rule-local-continue-to-ai")).toBeChecked({checked:index < 4});
+    if (index < 4) await expect(panel.locator("#rule-local-model")).toHaveValue(index % 2 ? "gpt-5.6" : "gpt-5-mini");
     if (index === 2) await expect(panel.locator("#rule-conditions-body")).toBeVisible();
     await panel.locator(".rule-close").first().click();
   }
@@ -57,21 +57,21 @@ test("nightly Continue Matching chain survives repeated authoring and fresh load
   await page.goto(fixtureUrl("capabilities/request-rules"));
   panel = page.locator("extended-openai-management-panel");
   const state = await page.evaluate(() => browserHarness.getState().requestRules.rules
-    .filter((rule) => rule.name.startsWith("Nightly continuation "))
+    .filter((rule) => rule.name.startsWith("Nightly local handoff "))
     .map((rule) => ({
       name:rule.name,
       order:rule.order,
-      continue_matching:Boolean(rule.continue_matching),
+      model:rule.action.model ?? null,
       condition_count:(rule.conditions || []).length,
     })));
   expect(state.map((item) => item.name)).toEqual(created);
-  expect(state.map((item) => item.continue_matching)).toEqual([true,true,true,true,false]);
+  expect(state.map((item) => item.model)).toEqual(["gpt-5-mini","gpt-5.6","gpt-5-mini","gpt-5.6",null]);
   expect(state.map((item) => item.condition_count)).toEqual([0,0,1,0,0]);
 
-  await testInfo.attach("request-rule-continuation-chain", {
-    body:JSON.stringify({rules:state.length, continuations:4, conditionalRules:1, freshLoadVerified:true}, null, 2),
+  await testInfo.attach("request-rule-local-handoffs", {
+    body:JSON.stringify({rules:state.length, handoffs:4, conditionalRules:1, freshLoadVerified:true}, null, 2),
     contentType:"application/json",
   });
-  console.log("ENHANCED REQUEST_RULE_CONTINUATION rules=5 continuations=4");
+  console.log("ENHANCED REQUEST_RULE_HANDOFF rules=5 handoffs=4");
   await expectHarnessClean(page, errors);
 });

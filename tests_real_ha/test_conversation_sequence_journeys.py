@@ -43,7 +43,7 @@ def _call(name: str, call_id: str, arguments: dict) -> dict:
     }
 
 
-def _local(phrase, actions, response, *, continued=False, conditions=None):
+def _local(phrase, actions, response, *, conditions=None):
     rule = _rule(
         "local_action",
         {
@@ -53,7 +53,6 @@ def _local(phrase, actions, response, *, continued=False, conditions=None):
         },
         phrase=phrase,
     )
-    rule["continue_matching"] = continued
     if conditions is not None:
         rule["conditions"] = conditions
     return rule
@@ -307,10 +306,10 @@ async def test_on_demand_group_executes_again_after_intervening_conversation_tur
     }
 
 
-async def test_prior_continued_rule_changes_later_condition_in_same_request(
+async def test_local_sequence_can_use_state_set_by_an_earlier_action(
     hass, monkeypatch
 ):
-    """Condition observes the effect of the preceding matching local action."""
+    """A merged native sequence can branch on state changed by its earlier action."""
     agent = await _agent(hass)
     effects = []
 
@@ -324,33 +323,27 @@ async def test_prior_continued_rule_changes_later_condition_in_same_request(
     hass.services.async_register("sequence_probe", "set_flag", set_flag)
     hass.services.async_register("sequence_probe", "record", record)
     hass.states.async_set("input_boolean.sequence_ready", "off")
-    first = _local(
-        "run chain",
-        [{"action": "sequence_probe.set_flag", "data": {"state": "on"}}],
-        "First.",
-        continued=True,
+    await agent._request_rules.async_create(
+        _local(
+            "run sequence",
+            [
+                {"action": "sequence_probe.set_flag", "data": {"state": "on"}},
+                {
+                    "if": [{
+                        "condition": "state",
+                        "entity_id": "input_boolean.sequence_ready",
+                        "state": "on",
+                    }],
+                    "then": [_record("later")],
+                },
+            ],
+            "Complete.",
+        )
     )
-    second = _local(
-        "run chain",
-        [_record("later")],
-        "Second.",
-        conditions=[
-            {
-                "condition": "state",
-                "entity_id": "input_boolean.sequence_ready",
-                "state": "on",
-            }
-        ],
-    )
-    # Explicit priority: the shared fixture defaults every new rule to order 0.
-    second["order"] = 1
-    await agent._request_rules.async_create(first)
-    await agent._request_rules.async_create(second)
     sent = _provider(monkeypatch, agent, [])
-    result = await _say(hass, agent, "run chain")
-    assert _speech(result) == "Second."
+    result = await _say(hass, agent, "run sequence")
+    assert _speech(result) == "Complete."
     assert effects == ["set", "later"]
-    assert hass.states.get("input_boolean.sequence_ready").state == "on"
     assert sent == []
 
 

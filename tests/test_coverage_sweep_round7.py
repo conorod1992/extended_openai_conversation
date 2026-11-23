@@ -614,56 +614,30 @@ def test_speech_markdown_link_end_matrix() -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_rule_preview_continuation_chain_stops_at_terminal_rule(hass) -> None:
+async def test_request_rule_preview_reports_selected_rule_and_skips(hass) -> None:
     from custom_components.extended_openai_conversation_responses import request_rule_match_preview
     from custom_components.extended_openai_conversation_responses.request_rules import RuleMatch
 
-    continued_rule = {
+    rule = {
         "id": "one",
         "name": "One",
         "match_type": "equals",
         "action_type": "local_action",
-        "continue_matching": True,
-        "action": {
-            "actions": [],
-            "continue_to_ai": False,
-            "success_response": "done",
-            "failure_response": "failed",
-        },
-    }
-    stopped_rule = {
-        "id": "two",
-        "name": "Two",
-        "match_type": "equals",
-        "action_type": "local_action",
-        "continue_matching": False,
-        "action": {
-            "actions": [],
-            "continue_to_ai": False,
-            "success_response": "done",
-            "failure_response": "failed",
-        },
+        "action": {"actions": [{"delay": 0}], "continue_to_ai": True, "model": "gpt-5"},
     }
 
-    async def eligible(_hass, _text, skipped):
-        skipped.append({"id": "skipped", "name": "Skipped", "reason": "conditions_false"})
-        yield RuleMatch(continued_rule, "hello", False, 100.0)
-        yield RuleMatch(stopped_rule, "hello", False, 100.0)
-
-    rules = SimpleNamespace(
-        _has_continuation=True,
-        async_eligible_matches=eligible,
-    )
+    async def match_with_skipped(_hass, _text):
+        return RuleMatch(rule, "hello", False, 100.0), [
+            {"id": "skipped", "name": "Skipped", "reason": "conditions_false"}
+        ]
 
     result = await request_rule_match_preview.async_request_rule_match_preview(
-        hass, rules, "hello"
+        hass, SimpleNamespace(async_match_with_skipped=match_with_skipped), "hello"
     )
 
-    assert [item["status"] for item in result["matched_rules"]] == [
-        "continued",
-        "stopped",
-    ]
-    assert result["rule"]["id"] == "two"
+    assert [item["status"] for item in result["matched_rules"]] == ["conditional"]
+    assert result["rule"]["id"] == "one"
+    assert result["would_do"]["model"] == "gpt-5"
     assert result["skipped_conditions"][0]["id"] == "skipped"
 
 
@@ -1271,7 +1245,6 @@ def test_request_rules_invalidate_after_unreadable_store_fails_closed(monkeypatc
     manager._rules = [{"id": "r"}]
     conditions = Mock()
     manager._condition_checkers["r"] = conditions
-    manager._has_continuation = True
 
     manager._invalidate_after_unreadable_store()
 
@@ -1282,7 +1255,6 @@ def test_request_rules_invalidate_after_unreadable_store_fails_closed(monkeypatc
     assert manager._rules == []
     assert manager._condition_checkers == {}
     conditions.async_unload.assert_called_once()
-    assert manager._has_continuation is False
 
 
 @pytest.mark.parametrize(

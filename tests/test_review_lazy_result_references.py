@@ -60,7 +60,7 @@ async def test_legacy_action_alias_stops_eligible_match_without_execution(
     status = configured.diagnostic_snapshot()
     assert "success response" in status["diagnostics"][legacy["id"]]
     assert status["matching_diagnostic_ids"] == [legacy["id"]]
-    assert rules.RESULT_ALIAS_REPAIR not in saved
+    assert rules.MATCH_REPAIR not in saved
     preview = await async_request_rule_match_preview(hass, configured, "good night")
     assert preview["would_do"]["needs_repair"]
     assert preview["would_do"]["provider_input"] == "none"
@@ -95,7 +95,7 @@ async def test_legacy_action_alias_stops_eligible_match_without_execution(
     }
     await configured.async_update(legacy["id"], repaired)
     assert legacy["id"] not in configured.snapshot()["diagnostics"]
-    assert not configured.match("good night").rule.get(rules.RESULT_ALIAS_REPAIR)
+    assert not configured.match("good night").rule.get(rules.MATCH_REPAIR)
 
 
 async def test_function_rename_preserves_legacy_alias_execution_block():
@@ -112,7 +112,22 @@ async def test_function_rename_preserves_legacy_alias_execution_block():
     ]
     configured = await manager(legacy)
     await configured.async_rename_function_reference("read_sensor", "read_battery")
-    assert configured.match("good night").rule[rules.RESULT_ALIAS_REPAIR]
+    assert configured.match("good night").rule[rules.MATCH_REPAIR]
+
+
+async def test_function_rename_preserves_legacy_matching_repair():
+    legacy = local_rule()
+    legacy["continue_matching"] = True
+    legacy["action"]["actions"] = [
+        {"action": f"{DOMAIN}.call_function", "data": {"function": "read_sensor"}}
+    ]
+    configured = await manager(legacy)
+    assert await configured.async_rename_function_reference("read_sensor", "read_battery") == 1
+    raw = configured.rule_snapshot(legacy["id"])
+    assert raw["action"]["actions"][0]["data"]["function"] == "read_battery"
+    assert raw["continue_matching"] is True
+    assert configured.match("good night").rule[rules.MATCH_REPAIR]
+    assert configured.diagnostic_snapshot()["matching_diagnostic_ids"] == [legacy["id"]]
 
 
 async def test_restore_preflight_retains_legacy_rule_with_unavailable_function(hass):
@@ -170,7 +185,7 @@ async def test_group_removal_preserves_legacy_alias_execution_block():
     )
     await configured.async_set_groups([])
     assert configured.rule_snapshot(legacy["id"])["group_id"] is None
-    assert configured.match("good night").rule[rules.RESULT_ALIAS_REPAIR]
+    assert configured.match("good night").rule[rules.MATCH_REPAIR]
 
 
 @pytest.mark.parametrize("mutation", ["update", "create", "duplicate"])
@@ -195,7 +210,7 @@ async def test_capacity_mutations_keep_admitted_alias_repair_in_matching(
     await configured.async_replace_backup({"rules": [first, legacy, fallback]})
     before = deepcopy(store.data)
     revision = configured.revision()
-    assert configured.match("check sensor").rule[rules.RESULT_ALIAS_REPAIR]
+    assert configured.match("check sensor").rule[rules.MATCH_REPAIR]
 
     with pytest.raises(ValueError, match="state limit"):
         if mutation == "update":
@@ -213,7 +228,7 @@ async def test_capacity_mutations_keep_admitted_alias_repair_in_matching(
 
     assert configured.revision() == revision
     assert store.data == before
-    assert configured.match("check sensor").rule[rules.RESULT_ALIAS_REPAIR]
+    assert configured.match("check sensor").rule[rules.MATCH_REPAIR]
     restored = await manager()
     await restored.async_replace_backup(await configured.async_backup_data())
-    assert restored.match("check sensor").rule[rules.RESULT_ALIAS_REPAIR]
+    assert restored.match("check sensor").rule[rules.MATCH_REPAIR]

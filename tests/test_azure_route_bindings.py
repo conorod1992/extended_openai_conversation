@@ -143,10 +143,9 @@ def test_same_deployment_reuses_its_own_configured_binding():
 
 
 @pytest.mark.parametrize("api", ["responses", "chat_completions"])
-@pytest.mark.parametrize("first_reset", [False, True])
 @pytest.mark.parametrize("second_scope", ["request", "conversation"])
-async def test_chained_azure_routes_replace_the_whole_binding(
-    hass, api, first_reset, second_scope
+async def test_azure_route_replaces_the_whole_retained_binding(
+    hass, api, second_scope
 ):
     defaults = {
         "chat_model": "main",
@@ -155,18 +154,6 @@ async def test_chained_azure_routes_replace_the_whole_binding(
         "functions": [],
         "memory_mode": "off",
     }
-    first = _rule(
-        "first",
-        "route",
-        match_type="starts_with",
-        action={
-            "reset": first_reset,
-            "scope": "request",
-            "continue_to_ai": False,
-            **({} if first_reset else {"model": "first-alias", "azure_model": "gpt-5"}),
-        },
-    )
-    first["continue_matching"] = True
     second = _rule(
         "second",
         "route",
@@ -179,7 +166,7 @@ async def test_chained_azure_routes_replace_the_whole_binding(
             "continue_to_ai": True,
         },
     )
-    rules = RequestRules(MemoryStore({"rules": [first, second]}))
+    rules = RequestRules(MemoryStore({"rules": [second]}))
     await rules.async_initialize()
     runtime = RequestRuleRuntime()
     runtime.set("session", {"chat_model": "retained-alias", "azure_model": "gpt-5"})

@@ -13,7 +13,7 @@ assert.deepEqual(parseWordingAlternatives("one, two"), ["one", "two"]);
 const option = {disabled:false};
 const scope = {value:"request",querySelector:()=>option};
 const reasoning = {value:"{effort}",ownerDocument:{createElement:()=>({})},replaceChildren(...options){this.options=options;}};
-const elements = new Map([["#rule-action-type",{value:"model_routing"}],["#rule-match",{value:"equals"}],["#rule-scope",scope],["#rule-continue-to-ai",{checked:false}],["#rule-continue-matching",{checked:true}],["#rule-reasoning",reasoning]]);
+const elements = new Map([["#rule-action-type",{value:"model_routing"}],["#rule-match",{value:"equals"}],["#rule-scope",scope],["#rule-continue-to-ai",{checked:true}],["#rule-reasoning",reasoning]]);
 const root = {querySelector:(key)=>elements.get(key)};
 syncRequestRuleRoutingControls(root, ["low", "high"]);
 assert.equal(scope.value,"request");

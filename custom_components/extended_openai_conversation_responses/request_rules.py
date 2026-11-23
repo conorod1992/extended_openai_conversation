@@ -331,6 +331,7 @@ def _normalize_legacy_consumed_request_scope(value: Any) -> tuple[Any, bool]:
     if (
         not isinstance(action, Mapping)
         or "continue_to_ai" in action
+        or value.get("continue_matching") is True
         or action.get("scope", "request") != "request"
     ):
         return value, False
@@ -408,7 +409,6 @@ class RequestRules:
         self._groups: list[dict[str, str]] = []
         self._matching_snapshot = _MatchingSnapshot((), ())
         self._committed_matching_snapshot = self._matching_snapshot
-        self._has_continuation = False
         self._condition_checkers: dict[str, _NativeConditions] = {}
         self._unsubscribe_stop: Callable[[], None] | None = None
         self._diagnostics: dict[str, str] = {}
@@ -559,6 +559,7 @@ class RequestRules:
                             candidate,
                             validate_sentence_pattern=False,
                             validate_script_schema=False,
+                            allow_legacy_matching=True,
                             allow_empty_normalized_phrases=True,
                         )
                         if validated["id"] in seen_ids:
@@ -595,7 +596,6 @@ class RequestRules:
                 self._opaque_fields = {}
                 self._sort_and_compile()
                 self._committed_matching_snapshot = self._matching_snapshot
-                self._has_continuation = False
                 self._initialized = False
                 self._committed_state = None
                 self._revision_generation = 0
@@ -743,6 +743,7 @@ class RequestRules:
                     candidate,
                     validate_sentence_pattern=False,
                     validate_script_schema=False,
+                    allow_legacy_matching=True,
                     allow_empty_normalized_phrases=True,
                 )
             )
@@ -774,6 +775,7 @@ class RequestRules:
                     _assign_missing_result_step_ids(rule),
                     validate_sentence_pattern=False,
                     validate_script_schema=False,
+                    allow_legacy_matching=True,
                     allow_empty_normalized_phrases=True,
                 )
                 for rule in prepared["rules"]
@@ -925,6 +927,7 @@ class RequestRules:
                 _assign_missing_result_step_ids(raw),
                 validate_sentence_pattern=not preserve_inactive,
                 validate_script_schema=not preserve_inactive,
+                allow_legacy_matching=preserve_inactive,
                 allow_empty_normalized_phrases=preserve_inactive,
             )
             if (
@@ -1217,8 +1220,8 @@ class RequestRules:
         published = {rule_id: deepcopy(rule) for rule_id, rule in replacements.items()}
 
         for rule, _, _ in snapshot.deterministic:
-            if rule.get(RESULT_ALIAS_REPAIR) and rule["id"] in published:
-                published[rule["id"]][RESULT_ALIAS_REPAIR] = True
+            if rule.get(MATCH_REPAIR) and rule["id"] in published:
+                published[rule["id"]][MATCH_REPAIR] = rule[MATCH_REPAIR]
 
         def replace(
             items: tuple[tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...],
@@ -1385,12 +1388,12 @@ class RequestRules:
                     diagnostics[rule["id"]] = _EMPTY_NORMALIZED_PHRASE
                     continue
 
-            alias_issue = request_rule_alias_repair(rule)
-            if alias_issue is not None:
+            repair_issue = request_rule_repair(rule)
+            if repair_issue is not None:
                 # Keep enabled triggers in order so an eligible match
                 # cannot unexpectedly run a lower rule or go to AI.
-                diagnostics[rule["id"]] = alias_issue
-                rule[RESULT_ALIAS_REPAIR] = True
+                diagnostics[rule["id"]] = repair_issue
+                rule[MATCH_REPAIR] = repair_issue
             else:
                 try:
                     _validate_action(
@@ -1511,7 +1514,6 @@ class RequestRules:
         self._discard_condition_checkers()
         self._sort_and_compile()
         self._committed_matching_snapshot = self._matching_snapshot
-        self._has_continuation = False
 
     def _remember_committed_state(self) -> None:
         """Capture the exact last committed Request Rule configuration."""
@@ -1528,10 +1530,6 @@ class RequestRules:
         # Assist reads one immutable committed generation without waiting behind
         # management I/O. Candidate compilation never grants execution authority.
         self._committed_matching_snapshot = self._matching_snapshot
-        self._has_continuation = any(
-            rule.get("continue_matching", False)
-            for rule, _, _ in self._committed_matching_snapshot.deterministic
-        )
 
     def _restore_committed_state(self) -> None:
         snapshot = self._committed_state
@@ -1775,6 +1773,7 @@ def validate_rule(
     validate_sentence_pattern: bool = True,
     validate_script_schema: bool = True,
     allow_legacy_action_aliases: bool = False,
+    allow_legacy_matching: bool = False,
     allow_empty_normalized_phrases: bool = False,
 ) -> dict[str, Any]:
     """Validate and normalize the persisted rule contract."""
@@ -1871,6 +1870,9 @@ def validate_rule(
     continue_matching = value.get("continue_matching", False)
     if not isinstance(continue_matching, bool):
         raise ValueError("continue_matching must be true or false")
+    needs_matching_repair = continue_matching and not action["continue_to_ai"]
+    if needs_matching_repair and not allow_legacy_matching:
+        raise ValueError(CONTINUE_MATCHING_REPAIR)
     ai_input_mode = value.get("ai_input_mode", "original")
     if ai_input_mode not in {"original", "capture"}:
         raise ValueError("AI input must be Original request or Captured value")
@@ -1924,7 +1926,7 @@ def validate_rule(
     if (
         action_type == "model_routing"
         and not action["continue_to_ai"]
-        and not continue_matching
+        and not needs_matching_repair
         and action["scope"] == "request"
     ):
         raise ValueError(
@@ -1955,7 +1957,7 @@ def validate_rule(
         "slots": [{"name": item} for item in slot_names],
         "conditions": deepcopy(conditions),
         "group_id": group_id,
-        "continue_matching": continue_matching,
+        **({"continue_matching": True} if needs_matching_repair else {}),
         "ai_input_mode": ai_input_mode,
         "ai_input_capture": ai_input_capture,
     }
@@ -2027,6 +2029,8 @@ def _validate_action(
             "failure_response",
             "canonical_signature",
             "continue_to_ai",
+            "model",
+            "azure_model",
         }
         unknown = set(value) - allowed
         if unknown:
@@ -2046,6 +2050,19 @@ def _validate_action(
         continue_to_ai = value.get("continue_to_ai", False)
         if not isinstance(continue_to_ai, bool):
             raise ValueError("continue_to_ai must be true or false")
+        model = value.get("model", "")
+        azure_model = value.get("azure_model", "")
+        model = "" if model is None else model
+        azure_model = "" if azure_model is None else azure_model
+        if not isinstance(model, str) or not isinstance(azure_model, str):
+            raise ValueError("A handoff model must be text")
+        model, azure_model = model.strip(), azure_model.strip()
+        if (model or azure_model) and not continue_to_ai:
+            raise ValueError("A handoff model requires Continue to AI")
+        if azure_model and not model:
+            raise ValueError("Choose an Azure deployment for the handoff")
+        if any(re.search(r"[{}]", name) for name in (model, azure_model)):
+            raise ValueError("Choose a fixed model for the AI handoff")
         return {
             "actions": actions,
             "success_response": _clean(
@@ -2058,6 +2075,8 @@ def _validate_action(
             ),
             "canonical_signature": canonical_action_signature(actions),
             "continue_to_ai": continue_to_ai,
+            **({"model": model} if model else {}),
+            **({"azure_model": azure_model} if azure_model else {}),
         }
     allowed = {
         "model",
@@ -2324,7 +2343,11 @@ def _is_function_action(step: Mapping[str, Any]) -> bool:
     return is_function_service_action(step)
 
 
-RESULT_ALIAS_REPAIR = "_result_alias_repair"
+MATCH_REPAIR = "_match_repair"
+CONTINUE_MATCHING_REPAIR = (
+    "Continue matching was removed. Combine the required steps in one Request Rule, "
+    "or enable Continue to AI on this rule and choose a handoff model if needed."
+)
 
 
 def _response_alias_names(action: Mapping[str, Any]) -> set[str]:
@@ -2398,6 +2421,15 @@ def request_rule_alias_repair(rule: Mapping[str, Any]) -> str | None:
         except ValueError as err:
             return str(err)
     return None
+
+
+def request_rule_repair(rule: Mapping[str, Any]) -> str | None:
+    """Describe rules that must block before executing their saved actions."""
+    if rule.get("continue_matching") and not rule.get("action", {}).get(
+        "continue_to_ai"
+    ):
+        return CONTINUE_MATCHING_REPAIR
+    return request_rule_alias_repair(rule)
 
 
 def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) -> None:
@@ -3281,10 +3313,10 @@ def validate_rule_model_request(
     ha_snapshot: ToolSnapshot | None = None,
 ) -> None:
     """Reject statically invalid routes at every Request Rule write boundary."""
-    if rule.get("action_type") != "model_routing":
-        return
     action = rule["action"]
-    if action.get("reset"):
+    if action.get("reset") or request_rule_repair(rule):
+        return
+    if rule["action_type"] == "local_action" and not action.get("model"):
         return
     from .model_routing import routed_model_override
 
@@ -3406,13 +3438,6 @@ def _validate_effective_reasoning(
         )
 
 
-def rule_stops_matching(rule: Mapping[str, Any]) -> bool:
-    """A provider handoff or an ordinary match is terminal for this utterance."""
-    return not rule.get("continue_matching", False) or bool(
-        rule["action"].get("continue_to_ai", False)
-    )
-
-
 def rule_provider_input(match: RuleMatch, original_text: str) -> str | None:
     """Resolve only an explicitly selected, validated capture at handoff."""
     rule = match.rule
@@ -3457,7 +3482,7 @@ async def async_evaluate_rule(
     request_options: Mapping[str, Any] | None = None,
     entry_data: Mapping[str, Any] | None = None,
 ) -> RuleEvaluation | None:
-    """Apply each eligible rule once, stopping on handoff or failure."""
+    """Apply the first eligible rule, which owns local handling or AI handoff."""
     if isinstance(rules, RequestRules) and not rules.initialized:
         raise HomeAssistantError(REQUEST_RULES_UNAVAILABLE)
     matching_generation = rules._generation if isinstance(rules, RequestRules) else None
@@ -3494,123 +3519,35 @@ async def async_evaluate_rule(
                 "Request Rules changed during matching; please retry"
             )
 
-    if not isinstance(rules, RequestRules) or not rules._has_continuation:
-        try:
-            match = await rules.async_match(hass, text)
-        except SentenceMatchLimitError as err:
-            require_matching_revision()
-            _LOGGER.warning(
-                "Skipping Request Rules for bounded matching failure: %s", err
-            )
-            return None
-        require_matching_revision()
-        if match is None:
-            return None
-        evaluation = await _async_evaluate_matched_rule(
-            hass,
-            match,
-            text,
-            runtime,
-            session_id,
-            configured_model,
-            guest_policy,
-            timeout_minutes,
-            function_executor,
-            context,
-            require_matching_revision=require_matching_revision,
-            commit_execution_snapshot=commit_execution_snapshot,
-            live_guest_policy=live_guest_policy,
-            request_options=request_options,
-            entry_data=entry_data,
-            can_retain_conversation_route=can_retain_conversation_route,
-        )
-        require_matching_revision()
-        return evaluation
-
-    last: RuleEvaluation | None = None
-    request_override: dict[str, str] = {}
-    skipped: list[dict[str, str]] = []
     try:
-        async for match in rules.async_eligible_matches(hass, text, skipped):
-            require_matching_revision()
-            evaluation = await _async_evaluate_matched_rule(
-                hass,
-                match,
-                text,
-                runtime,
-                session_id,
-                configured_model,
-                guest_policy,
-                timeout_minutes,
-                function_executor,
-                context,
-                request_override,
-                require_matching_revision=require_matching_revision,
-                commit_execution_snapshot=commit_execution_snapshot,
-                live_guest_policy=live_guest_policy,
-                request_options=request_options,
-                entry_data=entry_data,
-                can_retain_conversation_route=can_retain_conversation_route,
-            )
-            require_matching_revision()
-            action = match.rule["action"]
-            if match.rule["action_type"] == "model_routing":
-                if action["reset"]:
-                    if (
-                        action["scope"] == "conversation"
-                        and can_retain_conversation_route()
-                    ):
-                        request_override.clear()
-                    else:
-                        request_override = dict(evaluation.request_override or {})
-                elif (
-                    action["scope"] == "conversation"
-                    and can_retain_conversation_route()
-                ):
-                    applied = runtime.get(session_id, timeout_minutes)
-                    for key, value in (
-                        (CONF_CHAT_MODEL, action["model"]),
-                        (
-                            "azure_model",
-                            action.get("azure_model")
-                            or (action["model"] if "azure_model" in applied else None),
-                        ),
-                        (CONF_REASONING_EFFORT, action["reasoning_effort"]),
-                    ):
-                        if value:
-                            if _REQUEST_RESET_SENTINEL in request_override:
-                                request_override[key] = applied[key]
-                            else:
-                                request_override.pop(key, None)
-            if evaluation.request_override:
-                request_override.update(evaluation.request_override)
-            last = RuleEvaluation(
-                evaluation.match,
-                evaluation.consume,
-                evaluation.response,
-                dict(request_override) or None,
-                evaluation.successful,
-                evaluation.provider_input,
-                evaluation.terminal,
-            )
-            if (
-                not evaluation.successful
-                or evaluation.terminal
-                or rule_stops_matching(match.rule)
-            ):
-                return last
+        match = await rules.async_match(hass, text)
     except SentenceMatchLimitError as err:
-        if last is None:
-            require_matching_revision()
-            _LOGGER.warning(
-                "Skipping Request Rules for bounded matching failure: %s", err
-            )
-            return None
-        raise HomeAssistantError(
-            "Request Rule matching could not safely continue"
-        ) from err
+        require_matching_revision()
+        _LOGGER.warning("Skipping Request Rules for bounded matching failure: %s", err)
+        return None
     require_matching_revision()
-    return last
+    if match is None:
+        return None
+    evaluation = await _async_evaluate_matched_rule(
+        hass,
+        match,
+        text,
+        runtime,
+        session_id,
+        configured_model,
+        guest_policy,
+        timeout_minutes,
+        function_executor,
+        context,
+        require_matching_revision=require_matching_revision,
+        commit_execution_snapshot=commit_execution_snapshot,
+        live_guest_policy=live_guest_policy,
+        request_options=request_options,
+        entry_data=entry_data,
+        can_retain_conversation_route=can_retain_conversation_route,
+    )
+    require_matching_revision()
+    return evaluation
 
 
 @private_template_diagnostics
@@ -3625,7 +3562,6 @@ async def _async_evaluate_matched_rule(
     timeout_minutes: int,
     function_executor: Callable[[str, dict[str, Any]], Awaitable[Any]] | None,
     context: Context | None,
-    prior_request_override: Mapping[str, str] | None = None,
     require_matching_revision: Callable[[], None] | None = None,
     commit_execution_snapshot: Callable[[], None] | None = None,
     live_guest_policy: Callable[[], GuestCapabilityPolicy] | None = None,
@@ -3638,11 +3574,11 @@ async def _async_evaluate_matched_rule(
     action = rule["action"]
     if require_matching_revision is not None:
         require_matching_revision()
-    if rule.get(RESULT_ALIAS_REPAIR):
+    if rule.get(MATCH_REPAIR):
         return RuleEvaluation(
             match,
             True,
-            "This Request Rule needs repair. Review its Function result aliases in Extended OpenAI.",
+            f"This Request Rule needs repair. {rule[MATCH_REPAIR]}",
             successful=False,
             terminal=True,
         )
@@ -3824,8 +3760,37 @@ async def _async_evaluate_matched_rule(
                 successful=False,
             )
         if action["continue_to_ai"] and not stopped:
+            handoff_override = None
+            if action.get("model"):
+                from .model_routing import routed_model_override
+
+                defaults = request_options or {CONF_CHAT_MODEL: configured_model}
+                retained = runtime.peek(session_id)
+                try:
+                    handoff_override = routed_model_override(
+                        defaults,
+                        action["model"],
+                        action.get("azure_model"),
+                        entry_data or {},
+                        retained,
+                    )
+                    if request_options is not None:
+                        validate_routed_request_options(
+                            {**request_options, **retained, **handoff_override},
+                            entry_data or {},
+                        )
+                except HomeAssistantError as err:
+                    return RuleEvaluation(
+                        match,
+                        True,
+                        f"The actions completed, but the AI handoff could not use its model: {err}",
+                        successful=False,
+                    )
             return RuleEvaluation(
-                match, False, provider_input=rule_provider_input(match, original_text)
+                match,
+                False,
+                request_override=handoff_override,
+                provider_input=rule_provider_input(match, original_text),
             )
         try:
             response = resolve_result_values(
@@ -3908,12 +3873,7 @@ async def _async_evaluate_matched_rule(
         if action["reasoning_effort"]
         else None
     )
-    prior = dict(prior_request_override or {})
-    retained_before = runtime.peek(session_id)
-    conversation_override = (
-        {} if _REQUEST_RESET_SENTINEL in prior else dict(retained_before)
-    )
-    conversation_override.update(prior)
+    conversation_override = runtime.peek(session_id)
     selected_model = (
         model or conversation_override.get(CONF_CHAT_MODEL) or configured_model
     )
@@ -3974,28 +3934,7 @@ async def _async_evaluate_matched_rule(
     if action["scope"] == "conversation" and (
         can_retain_conversation_route is None or can_retain_conversation_route()
     ):
-        # A request reset/override can mask an incompatible retained sibling.
-        # Validate what the next turn will inherit before mutating runtime state.
-        defaults = request_options or {CONF_CHAT_MODEL: configured_model}
-        retained_override = routed_model_override(
-            defaults, model, underlying_model, entry_data or {}, retained_before
-        )
-        if effort:
-            retained_override[CONF_REASONING_EFFORT] = effort
-        retained = {**retained_before, **retained_override}
-        next_turn = {**defaults, **retained}
-        if retained.get(CONF_REASONING_EFFORT):
-            _validate_effective_reasoning(
-                capability_model_identity(next_turn, entry_data or {}),
-                retained[CONF_REASONING_EFFORT],
-                provider=effective_api_provider(
-                    (entry_data or {}).get("api_provider"),
-                    (entry_data or {}).get("base_url"),
-                ),
-            )
-        if request_options is not None:
-            validate_routed_request_options(next_turn, entry_data or {})
-        runtime.set(session_id, retained_override, timeout_minutes)
+        runtime.set(session_id, override, timeout_minutes)
         request_override = None
     else:
         request_override = override

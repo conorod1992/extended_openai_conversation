@@ -521,7 +521,8 @@ def _portable_document(*, mode: str = "custom") -> dict:
     }
 
 
-def test_selective_request_rules_transfer_keeps_captured_ai_input() -> None:
+@pytest.mark.parametrize("action_type", ["local_action", "model_routing"])
+def test_selective_request_rules_transfer_keeps_captured_ai_input(action_type) -> None:
     document = _portable_document(mode="setup")
     rule = {
         "id": "ask-rule",
@@ -544,12 +545,20 @@ def test_selective_request_rules_transfer_keeps_captured_ai_input() -> None:
         "ai_input_mode": "capture",
         "ai_input_capture": "question",
     }
+    if action_type == "local_action":
+        rule["action_type"] = action_type
+        rule["action"] = {
+            "model": "gpt-5",
+            "actions": [{"variables": {"prepared": True}}],
+            "continue_to_ai": True,
+        }
     document["sections"][transfer.SECTION_REQUEST_RULES] = _rules_backup([rule])
     prepared = transfer.inspect_transfer(document, "target-agent")
     imported = prepared.request_rules["rules"][0]
+    assert imported["action"]["model"] == "gpt-5"
     assert imported["ai_input_mode"] == "capture"
     assert imported["ai_input_capture"] == "question"
-    assert imported["continue_matching"] is True
+    assert "continue_matching" not in imported
 
 
 @pytest.mark.parametrize(

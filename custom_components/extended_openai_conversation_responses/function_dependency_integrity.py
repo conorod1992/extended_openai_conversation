@@ -539,6 +539,7 @@ async def async_rename_function_reference_recursive(
                             updated["id"], updated
                         ),
                         allow_legacy_action_aliases=True,
+                        allow_legacy_matching=True,
                         allow_empty_normalized_phrases=True,
                     )
                 )

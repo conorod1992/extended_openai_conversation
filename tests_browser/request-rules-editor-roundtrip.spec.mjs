@@ -19,13 +19,6 @@ for (const bundled of [false, true]) test(`New routing rules reflect and save th
   await expect(scope).toBeDisabled();
   await expect(scope).toHaveValue("conversation");
   await expect(help).toContainText("acknowledged locally");
-  await panel.locator("#rule-advanced > summary").click();
-  const matching = panel.locator("#rule-continue-matching");
-  await matching.check();
-  await expect(scope).toBeEnabled();
-  await expect(scope).toHaveValue("request");
-  await expect(help).toContainText("Later matching rules can run");
-  await matching.uncheck();
   await panel.locator("#rule-match").selectOption("starts_with");
   await expect(handoff).toBeChecked();
   await expect(scope).toHaveValue("request");
@@ -109,11 +102,11 @@ async function assertLocalRuleEditor(panel, {groupId, conditions, actions}) {
   await expect(panel.locator("#rule-match")).toHaveValue("contains");
   await expect(panel.locator("#rule-action-type")).toHaveValue("local_action");
   await expect(panel.locator("#rule-group")).toHaveValue(groupId);
-  await expect(panel.locator("#rule-local-continue-to-ai")).not.toBeChecked();
+  await expect(panel.locator("#rule-local-continue-to-ai")).toBeChecked();
+  await expect(panel.locator("#rule-local-model")).toHaveValue("gpt-5.6");
   await expect(panel.locator("#rule-success")).toHaveValue("Local success");
   await expect(panel.locator("#rule-failure")).toHaveValue("Local failure");
   await expect(panel.locator("#rule-ai-input-mode")).toHaveValue("original");
-  await expect(panel.locator("#rule-continue-matching")).toBeChecked();
   await expect(panel.locator("#rule-matching-behavior")).toHaveValue("custom");
   await expect(panel.locator("#rule-word-forms")).not.toBeChecked();
   await expect(panel.locator("#rule-wording")).not.toBeChecked();
@@ -136,7 +129,6 @@ async function assertRoutingRuleEditor(panel, {groupId}) {
   await expect(panel.locator("#rule-reset")).not.toBeChecked();
   await expect(panel.locator("#rule-continue-to-ai")).toBeChecked();
   await expect(panel.locator("#rule-ai-input-mode")).toHaveValue("original");
-  await expect(panel.locator("#rule-continue-matching")).not.toBeChecked();
   await expect(panel.locator("#rule-matching-behavior")).toHaveValue("defaults");
 }
 
@@ -170,7 +162,8 @@ test("Request Rule editor round-trips local and routing forms through reopen and
   await panel.locator("#rule-add-conditions").click();
   await setHaSelector(panel.locator("#rule-condition-host ha-selector"), conditions);
   await panel.locator("#rule-advanced summary").click();
-  await panel.locator("#rule-continue-matching").check();
+  await panel.locator("#rule-local-continue-to-ai").check();
+  await panel.locator("#rule-local-model").fill("gpt-5.6");
   await panel.locator("#rule-matching-behavior").selectOption("custom");
   await panel.locator("#rule-word-forms").uncheck();
   await panel.locator("#rule-wording").uncheck();
@@ -281,13 +274,12 @@ for (const bundled of [false, true]) {
     await panel.locator("#rule-advanced summary").click();
     for (const match of ["equals", "starts_with", "ends_with", "contains", "sentence_pattern"]) {
       await panel.locator("#rule-match").selectOption(match);
-      for (const ai of [false, true]) for (const matching of [false, true]) {
+      for (const ai of [false, true]) {
         await panel.locator("#rule-continue-to-ai").check();
         await panel.locator("#rule-scope").selectOption("request");
-        await panel.locator("#rule-continue-matching").setChecked(matching);
         await panel.locator("#rule-continue-to-ai").setChecked(ai);
-        await expect(panel.locator('#rule-scope option[value="request"]')).toHaveJSProperty("disabled", !ai && !matching);
-        await expect(panel.locator("#rule-scope")).toHaveValue(!ai && !matching ? "conversation" : "request");
+        await expect(panel.locator('#rule-scope option[value="request"]')).toHaveJSProperty("disabled", !ai);
+        await expect(panel.locator("#rule-scope")).toHaveValue(!ai ? "conversation" : "request");
       }
     }
     await panel.locator("#rule-model").fill("gpt-5.6");
@@ -297,7 +289,6 @@ for (const bundled of [false, true]) {
     await expect(panel.locator("#rule-reasoning")).toHaveValue("");
     await expect(panel.locator("#rule-reasoning option")).toHaveCount(1);
     await panel.locator("#rule-match").selectOption("contains");
-    await panel.locator("#rule-continue-matching").uncheck();
     await panel.locator("#rule-continue-to-ai").uncheck();
     await panel.locator("#rule-save").click();
     await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);

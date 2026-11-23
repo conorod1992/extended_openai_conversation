@@ -53,15 +53,17 @@ assert.equal(requestOption.disabled, false);
 
 
 const {syncRequestRuleRoutingControls: actualEditorControls} = await import("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js");
-const continueMatching = {checked: false};
-elements.set("#rule-continue-matching", continueMatching);
 for (const controls of [actualEditorControls, syncRequestRuleRoutingControls]) {
   for (const match of ["equals", "starts_with", "ends_with", "contains", "sentence_pattern"]) {
-    for (const ai of [false, true]) for (const matching of [false, true]) {
-      matchType.value = match; continueToAi.checked = ai; continueMatching.checked = matching; scope.value = "request";
+    for (const ai of [false, true]) {
+      continueToAi.checked = true;
       controls(root);
-      assert.equal(requestOption.disabled, !ai && !matching, `${match}: ai=${ai}, matching=${matching}`);
-      assert.equal(scope.value, !ai && !matching ? "conversation" : "request");
+      matchType.value = match;
+      scope.value = "request";
+      continueToAi.checked = ai;
+      controls(root);
+      assert.equal(requestOption.disabled, !ai, match);
+      assert.equal(scope.value, ai ? "request" : "conversation");
     }
   }
   const reasoning = {value: "high", ownerDocument:{createElement:()=>({})}, replaceChildren(...options){this.options=options;}};

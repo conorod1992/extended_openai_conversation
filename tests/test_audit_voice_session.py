@@ -115,10 +115,9 @@ def test_continuity_cleanup_handles_delimiter_in_conversation_and_owner_ids():
     assert rules.get(sibling) == {"chat_model": "gpt-4.1"}
 
 
-@pytest.mark.parametrize("continuation", [False, True])
 @pytest.mark.parametrize("reset_first", [False, True])
 async def test_ended_conversation_cannot_be_recreated_by_inflight_route(
-    hass, continuation, reset_first
+    hass, reset_first
 ):
     from custom_components.extended_openai_conversation_responses.request_rules import (
         RuleMatch,
@@ -135,21 +134,11 @@ async def test_ended_conversation_cannot_be_recreated_by_inflight_route(
     rule["action"].update(scope="conversation", model="gpt-4.1", reasoning_effort=None)
     rules = await manager(rule)
 
-    if continuation:
+    async def match(*_args):
+        runtime.reset_continuity("owner")
+        return RuleMatch(validate_rule(rule), "route", False, 100.0)
 
-        async def matches(*_args):
-            runtime.reset_continuity("owner")
-            yield RuleMatch(validate_rule(rule), "route", False, 100.0)
-
-        rules._has_continuation = True
-        rules.async_eligible_matches = matches
-    else:
-
-        async def match(*_args):
-            runtime.reset_continuity("owner")
-            return RuleMatch(validate_rule(rule), "route", False, 100.0)
-
-        rules.async_match = match
+    rules.async_match = match
 
     evaluation = await async_evaluate_rule(hass, rules, runtime, "route", session_id)
     assert evaluation.request_override == {"chat_model": "gpt-4.1"}

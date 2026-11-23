@@ -583,6 +583,7 @@ def _prepare_request_rule(
         raw,
         validate_sentence_pattern=not preserve_inactive,
         validate_script_schema=not preserve_inactive,
+        allow_legacy_matching=preserve_inactive,
         allow_empty_normalized_phrases=preserve_inactive,
     )
 
@@ -720,11 +721,14 @@ async def _async_validate_request_rule_mutation(
     subentry: Any,
 ) -> Callable[[], None]:
     """Validate dependencies and retain their configuration owner for admission."""
-    await _validate_request_rule_conditions(hass, rule)
+    from .request_rules import request_rule_repair, validate_rule_model_request
+
     source = subentry.data
-    await async_validate_request_rule_functions(
-        hass, rule, _request_rule_function_tools(rule, source)
-    )
+    if not (rule.get("enabled") is False and request_rule_repair(rule)):
+        await _validate_request_rule_conditions(hass, rule)
+        await async_validate_request_rule_functions(
+            hass, rule, _request_rule_function_tools(rule, source)
+        )
 
     def check_configuration() -> None:
         # HA replaces this immutable mapping on each configuration change. Check
@@ -736,8 +740,6 @@ async def _async_validate_request_rule_mutation(
             )
 
     check_configuration()
-    from .request_rules import validate_rule_model_request
-
     validate_rule_model_request(rule, source, getattr(entry, "data", {}))
     return check_configuration
 

@@ -5,13 +5,11 @@ export function syncRequestRuleRoutingControls(root, efforts = null, selectedEff
   const actionType = root?.querySelector?.("#rule-action-type");
   const scope = root?.querySelector?.("#rule-scope");
   const continueToAi = root?.querySelector?.("#rule-continue-to-ai");
-  const continueMatching = root?.querySelector?.("#rule-continue-matching");
   const reasoning = root?.querySelector?.("#rule-reasoning");
   const help = root?.querySelector?.("#rule-routing-scope-help");
   if (!actionType || !scope) return;
   const consumed = actionType.value === "model_routing"
-    && !(continueToAi?.checked ?? false)
-    && !(continueMatching?.checked ?? false);
+    && !(continueToAi?.checked ?? false);
   const requestOption = scope.querySelector('option[value="request"]');
   if (requestOption) requestOption.disabled = consumed;
   if (consumed) {
@@ -29,7 +27,7 @@ export function syncRequestRuleRoutingControls(root, efforts = null, selectedEff
     ? "This command is acknowledged locally. It must change or reset the rest of the conversation."
     : continueToAi?.checked
       ? `This sends the ${root.querySelector("#rule-ai-input-mode")?.value === "capture" ? "captured value" : "original request"} to the AI after applying the route.`
-      : "Later matching rules can run. Request-only scope applies to any AI handoff in this request.";
+      : "";
 }
 
 export function setReasoningOptions(root, efforts, selected = "", captureNames = [], allowCaptures = true) {

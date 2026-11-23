@@ -55,7 +55,7 @@ const continued = formatRequestRuleMatchResult(panel, {
   would_do:{type:"local_action",action_count:1,consumed:false,provider_input:"original",functions:[{name:"get_battery",result_alias:"battery"}]},
 });
 assert.match(continued, /get_battery → battery/);
-assert.match(continued, /selected AI input would continue to the AI/);
+assert.match(continued, /After success, AI would handle the selected input/);
 assert.match(continued, /Earlier rule: Only when conditions were false/);
 assert.match(continued, /no Function result was invented/);
 
@@ -106,27 +106,18 @@ assert.doesNotMatch(source, /"process"/);
 
 const conditional = formatRequestRuleMatchResult(panel, {
   matched:true, conditional:true,
-  rule:{name:"Second <possible>",match_type:"equals",action_type:"model_routing"},
+  rule:{name:"Local <possible>",match_type:"equals",action_type:"local_action"},
   matched_rules:[
-    {rule:{name:"First"},status:"conditional",ai_input:null},
-    {rule:{name:"Second <possible>"},status:"conditional",ai_input:{conditional:true,mode:"capture",capture:"question",provider_input:"what <next>"}},
+    {rule:{name:"Local <possible>"},status:"conditional",ai_input:{conditional:true,mode:"capture",capture:"question",provider_input:"what <next>"}},
   ],
-  would_do:{type:"model_routing",conditional:true,consumed:null,provider_input:"conditional",model:"gpt-5"},
+  would_do:{type:"local_action",action_count:1,conditional:true,consumed:null,provider_input:"conditional",model:"gpt-5",functions:[{name:"battery",result_alias:"charge"}]},
 });
-assert.match(conditional, /Conditional match: Second &lt;possible&gt;/);
-assert.match(conditional, /First — conditional/);
-assert.match(conditional, /Possible AI input: Captured value: question → what &lt;next&gt;/);
-assert.match(conditional, /any AI handoff is conditional/);
-assert.doesNotMatch(conditional, /Would send|Matched: Second|would send to AI, stopped/);
-
-const uncertainLocal = formatRequestRuleMatchResult(panel, {
-  matched:true,conditional:true,
-  rule:{name:"Local",match_type:"equals",action_type:"local_action"},
-  would_do:{conditional:true,action_count:1,consumed:null,provider_input:"conditional",functions:[{name:"battery",result_alias:"charge"}]},
-});
-assert.match(uncertainLocal, /including battery → charge/);
-assert.match(uncertainLocal, /Conditional: actions may stop or fail/);
-assert.doesNotMatch(uncertainLocal, /input would continue to the AI/);
+assert.match(conditional, /Conditional match: Local &lt;possible&gt;/);
+assert.match(conditional, /Possible AI input/);
+assert.match(conditional, /question → what &lt;next&gt;/);
+assert.match(conditional, /including battery → charge/);
+assert.match(conditional, /Actions may stop or fail/);
+assert.match(conditional, /using gpt-5/);
 
 const terminal = formatRequestRuleMatchResult(panel, {
   matched:true,rule:{name:"First",match_type:"equals",action_type:"local_action"},
@@ -134,22 +125,14 @@ const terminal = formatRequestRuleMatchResult(panel, {
   would_do:{type:"local_action",action_count:1,terminal:true,consumed:true,provider_input:"none"},
 });
 assert.match(terminal, /Matched: First/);
-assert.match(terminal, /First — stopped/);
 assert.match(terminal, /command would be consumed locally/);
-assert.doesNotMatch(terminal, /AI input|Second|continue to the AI/);
+assert.doesNotMatch(terminal, /AI input|Second/);
 
 for (const type of ["local_action", "model_routing"]) {
-  const continuing = formatRequestRuleMatchResult(panel, {
-    matched:true,rule:{name:"First",match_type:"equals",action_type:type},
-    would_do:{type,continue_matching:true,action_count:1,consumed:true,provider_input:"none"},
+  const repair = formatRequestRuleMatchResult(panel, {
+    matched:true,rule:{name:"Legacy rule",match_type:"equals",action_type:type},
+    would_do:{type,action_count:0,terminal:true,consumed:true,needs_repair:true,provider_input:"none"},
   });
-  assert.match(continuing, /checking (?:would continue to )?later rules/);
-  assert.doesNotMatch(continuing, /command would be consumed locally|input would continue to the AI/);
+  assert.match(repair, /needs repair/);
+  assert.match(repair, /request would stop here/);
 }
-
-const repair = formatRequestRuleMatchResult(panel, {
-  matched:true,rule:{name:"Old alias",match_type:"equals",action_type:"local_action"},
-  would_do:{type:"local_action",action_count:0,terminal:true,consumed:true,needs_repair:true,provider_input:"none"},
-});
-assert.match(repair, /needs repair/);
-assert.match(repair, /stop here without running its actions/);

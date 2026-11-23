@@ -38,6 +38,7 @@ for (const swap of [true, false]) {
   const actions = [step("one", swap ? "right" : "renamed"), step("two", swap ? "left" : "right"), {action:"review_probe.record", data:{message:"{{ native_one.result.value }}"}}];
   panel._eocRuleEditorState.actionSelector.value = actions;
   q("#rule-action-type").value = "local_action";
+  q("#rule-matching-repair").hidden = true;
   q("#rule-ai-input-mode").value = "original";
   q("#rule-phrases").value = "run";
   q("#rule-success").value = "First result: {left.value}";
