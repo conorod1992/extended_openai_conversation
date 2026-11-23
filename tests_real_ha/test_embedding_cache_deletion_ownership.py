@@ -42,8 +42,7 @@ async def test_hybrid_cache_worker_settles_before_permanent_deletion(
     primary_path = Path(primary._store.path)
     cache_path = Path(cache._store.path)
     assert primary_path.is_file()
-    assert isinstance(cache._store, Store)
-    assert type(cache._store).async_save is Store.async_save
+    assert cache._store._recovery_gate is None
 
     async def embeddings(texts):
         return [[1.0, 0.0, 0.0] for _ in texts]
@@ -71,7 +70,9 @@ async def test_hybrid_cache_worker_settles_before_permanent_deletion(
         try:
             result = native_write(path, *args, **kwargs)
             if write_failure:
-                raise OSError("private-cache-failure-detail")
+                raise ha_storage.WriteError("private-cache-failure-detail") from (
+                    OSError("private-cache-failure-detail")
+                )
             return result
         finally:
             hass.loop.call_soon_threadsafe(finished.set)
