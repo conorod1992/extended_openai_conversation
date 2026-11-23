@@ -738,13 +738,15 @@ async def test_failed_save_reconciliation_decodes_the_actual_durable_generation(
         expected = {
             "sources": [asdict(KnowledgeLibrary.validate_backup_data(payload)[0])]
         }
-        storage = AmbiguousStorage(expected)
+        storage = AmbiguousStorage({"sources": [{**raw, "title": "Original title"}]})
         manager = KnowledgeLibrary(storage)
         await manager.async_initialize()
         storage.replacement = payload
         with pytest.raises(OSError, match="lost save"):
             await manager.async_replace_backup(
-                KnowledgeLibrary.validate_backup_data(expected)
+                KnowledgeLibrary.validate_backup_data(
+                    {"sources": [{**raw, "title": "Attempted title"}]}
+                )
             )
         assert await manager.async_backup_data() == expected
         fresh = KnowledgeLibrary(storage)
