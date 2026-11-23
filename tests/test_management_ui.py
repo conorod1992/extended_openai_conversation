@@ -255,7 +255,10 @@ async def test_request_rule_test_defaults_duplicate_move_and_errors(
     rules = SimpleNamespace(
         async_set_defaults=AsyncMock(return_value={"case_sensitive": True}),
         async_duplicate=AsyncMock(return_value={"id": "copy"}),
-        snapshot=lambda: {"diagnostics": {}},
+        diagnostic_snapshot=lambda: {
+            "diagnostics": {"rule": "Use a native response variable."},
+            "matching_diagnostic_ids": ["rule"],
+        },
         async_move=AsyncMock(return_value={"id": "rule", "priority": 2}),
         revision=lambda: "revision-2",
     )
@@ -292,6 +295,9 @@ async def test_request_rule_test_defaults_duplicate_move_and_errors(
     )
     assert duplicated["rule"]["id"] == "copy"
     assert moved["rule"]["priority"] == 2
+    for result in (duplicated, moved):
+        assert result["diagnostics"] == {"rule": "Use a native response variable."}
+        assert result["matching_diagnostic_ids"] == ["rule"]
     with pytest.raises(HomeAssistantError, match="direction is required"):
         await management_ui.async_management_command(
             hass, "admin", True, _message("request_rules", "move", rule_id="rule")
