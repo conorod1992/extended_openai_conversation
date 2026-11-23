@@ -282,13 +282,13 @@ def test_archive_limit_failure_removes_partial_file(monkeypatch, tmp_path, huge_
 def test_setup_export_preserves_format_redaction_and_boundary(monkeypatch):
     snapshot = _portable_document(mode="setup")
     original = deepcopy(snapshot)
-    document = transfer.redact_transfer_document(snapshot)
+    document = transfer.finalize_setup_export(snapshot)["document"]
     expected = json.dumps(document, ensure_ascii=False, indent=2)
     monkeypatch.setattr(backup, "MAX_LEGACY_EXPORT_BYTES", len(expected.encode()))
     result = transfer.finalize_setup_export(snapshot)
     assert result["json"] == expected
     assert result["document"] == document
-    assert result["filename"] == "coverage-agent-shareable-setup-2026-09-13.json"
+    assert result["filename"] == "shared-conversation-agent-shareable-setup-2026-09-13.json"
     assert result["mode"] == "setup"
     assert snapshot == original
     monkeypatch.setattr(backup, "MAX_LEGACY_EXPORT_BYTES", len(expected.encode()) - 1)
@@ -298,7 +298,7 @@ def test_setup_export_preserves_format_redaction_and_boundary(monkeypatch):
 
 def test_setup_rejects_huge_scalar_before_encoding(monkeypatch):
     snapshot = _portable_document(mode="setup")
-    snapshot["padding"] = "x" * 1000000
+    snapshot["integration_version"] = "x" * 1000000
     monkeypatch.setattr(backup, "MAX_LEGACY_EXPORT_BYTES", 8192)
     encode = Mock(side_effect=AssertionError("Unbounded setup serialization"))
     monkeypatch.setattr(json.JSONEncoder, "iterencode", encode)
@@ -326,7 +326,8 @@ async def test_async_setup_serialization_runs_in_worker(hass, monkeypatch):
         hass, SimpleNamespace(entry_id="entry"), SimpleNamespace(subentry_id="agent")
     )
     assert worker_threads
-    assert json.loads(result["json"]) == transfer.redact_transfer_document(snapshot)
+    assert result["document"] == finalize(snapshot)["document"]
+    assert result["json"] == finalize(snapshot)["json"]
 
 
 def test_transfer_text_size_check_never_encodes_whole_input(monkeypatch):

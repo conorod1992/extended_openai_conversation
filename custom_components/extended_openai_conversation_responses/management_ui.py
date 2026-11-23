@@ -478,9 +478,7 @@ def _redact_export_secrets(value: Any, *, schema: bool = False) -> Any:
     return redact_secrets(value, schema=schema)
 
 
-def _export_agent(
-    subentry, *, reviewed: bool = False, provider: str | None = None
-) -> dict[str, Any]:
+def _export_agent(subentry, *, provider: str | None = None) -> dict[str, Any]:
     """Build a conservative, versioned public configuration projection."""
     from .sharing import SHARING_VERSION, project_sharing_sections
 
@@ -488,9 +486,7 @@ def _export_agent(
         dict(subentry.data),
         agent_config_snapshot(dict(subentry.data), provider=provider),
     )
-    sections, security = project_sharing_sections(
-        {"configuration": snapshot}, reviewed=reviewed
-    )
+    sections, security = project_sharing_sections({"configuration": snapshot})
     return {
         "schema": "extended_openai_conversation.agent",
         "version": SHARING_VERSION,
@@ -1712,9 +1708,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "title": duplicate.title,
         }
     if action == "export":
-        document = _export_agent(
-            subentry, reviewed=message.get("reviewed_custom") is True, provider=provider
-        )
+        document = _export_agent(subentry, provider=provider)
         return {
             "document": document,
             "json": json.dumps(document, indent=2, ensure_ascii=False),
@@ -3342,6 +3336,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("enabled"): bool,
         vol.Optional("yaml"): str,
         vol.Optional("document"): vol.Any(str, dict),
+        # Older panels sent this flag on configuration exports. All exports are restricted.
         vol.Optional("reviewed_custom"): bool,
         vol.Optional("sample_text"): str,
         vol.Optional("mode"): str,

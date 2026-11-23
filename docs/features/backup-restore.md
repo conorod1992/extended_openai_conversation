@@ -6,7 +6,7 @@ Choose an export type according to what you need:
 
 | Export type | Use it for | Important limits |
 | --- | --- | --- |
-| **Shareable Setup** | Sharing supported public behaviour settings | Excludes provider credentials and private histories. Custom prompts, Function Tools and Rules are omitted by default; including reviewed custom content is an explicit choice. |
+| **Shareable Setup** | Sharing supported public behaviour settings | Omits provider credentials, private histories, custom prompts, Function Tools and Request Rules. |
 | **Full Backup (private)** | Recovering or moving the selected agent's configuration and retained data | Preserves credentials and private content; the file is not encrypted. |
 | **Custom (private)** | Backing up only selected sections | Preserves the selected private sections, including provider credentials when configuration is selected; the file is not encrypted. |
 
@@ -16,16 +16,14 @@ The configuration editor's **Export configuration** is also for sharing configur
 
 1. Select the conversation agent you want to back up.
 2. Open **Usage & Maintenance → Backup & Restore** and choose **Export type**.
-3. For **Custom (private)**, select the sections to include. For **Shareable Setup**, include custom content only after reviewing it.
+3. For **Custom (private)**, select the sections to include. For **Shareable Setup**, check the contents and omission summary before downloading.
 4. Choose **Create export** and save the downloaded file securely.
 
 Exports use saved configuration. Save any draft settings first if you want them included.
 
 Private ZIP backups are limited to 160 MiB compressed and 320 MiB uncompressed. Legacy plain JSON imports are limited to 128 MiB. If a Full Backup exceeds a limit, export smaller groups of sections with Custom.
 
-Shareable Setup with reviewed custom content retains quarantined Function Tool and Group definitions for repair after import, subject to the usual sharing omissions. Export does not silently repair malformed records or missing references. If omitting private content would make an ambiguous Function collection executable, its retained Functions are disabled and that change is listed in the omission summary. Usable disabled and load-when-needed groups retain their availability restrictions.
-
-If sharing omissions remove or disable the built-in Skill loader, the export also omits the now-unavailable Skill selections and lists that omission. This lets ordinary configuration import complete without enabling an omitted or disabled Function. Reconfigure the loader and select the desired Skills after import. The source assistant and private backups retain their original selections.
+To move a custom setup privately, choose **Custom (private)** and select **Agent configuration and Function Tools** and **Request Rules**. The configuration section includes provider credentials. Previously downloaded reviewed sharing files can still be imported and validated.
 
 ## What a full backup includes
 
@@ -60,7 +58,7 @@ Provider restoration requires an explicit shared-connection choice because other
 
 Validation checks the combined destination configuration, including Request Rule references to Function Tools. An incompatible combination of selected and unselected sections must be resolved before restore. Temporary memories that have already expired are discarded. If configuration is selected, restoring it replaces any unsaved configuration draft for the destination agent.
 
-Every selected section replaces the agent's corresponding saved data rather than merging the backup with what is already there. Request Rules are therefore restored as the saved rule set, including their exact global order and groups. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
+Every selected section replaces the agent's corresponding saved data rather than merging the backup with what is already there. Private Request Rules are restored with their saved global order and groups. A new Shareable Setup contains an empty Request Rules section. Deselect that section to keep the destination's rules. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
 
 Restore is designed to avoid leaving only half of the backup applied. If saving the restored data fails part-way through, Extended OpenAI attempts to return the agent to the state it had before the restore began.
 
@@ -108,7 +106,7 @@ Files created by older versions in the system temporary directory have no reliab
 
 ## Security
 
-Full and custom private backup files preserve credentials, prompts, memories, Knowledge sources, conversation history and usage information. They are not encrypted. Keep them private. Use Shareable Setup for conservative public sharing and review any custom content you explicitly include. See the [sharing security contract](credential-security.md).
+Full and custom private backup files preserve credentials, prompts, memories, Knowledge sources, conversation history and usage information. They are not encrypted. Keep them private. Use Shareable Setup to share supported public settings. See the [sharing security contract](credential-security.md).
 
 
 Selective restores preserve active Archive privacy bindings when Archive is not
@@ -119,20 +117,3 @@ active conversation bindings. A failed restore does not resume saving a private
 conversation when its prior state is recovered.
 
 Local recovery snapshots also preserve content-free active unretained sessions. These sessions are excluded from portable backups and durable Archive metadata, and recovery validation rejects any turns attached to them.
-
-Reviewed public sharing also recognizes these credential field families, with
-case/separator variants: `Ocp-Apim-Subscription-Key`, `X-Auth-Key`,
-`x-functions-key`, `access_key`, `private_key`, `app_key`, and `license_key`.
-The check covers HTTP parameters (including encoded URL names), nested/JSON
-payloads and schema instance literals. The whole credential-bearing Function or
-Rule is omitted, rather than exporting partially rewritten executable code.
-Type-only schema declarations and credential metadata such as `access_key_name`
-remain portable. This export policy does not change live configuration, private
-backup contents or historical destination-bound credential recovery.
-
-`appid` is classified as a credential for query/REST parameters and nested/JSON request payloads directed to the
-recognized OpenWeather API hosts (`api.openweathermap.org`, `pro.openweathermap.org`, and `history.openweathermap.org`).
-Generic application IDs, unknown providers and opaque/template payload aliases
-remain ambiguous reviewed content. Arbitrary `key` names outside the existing
-HTTP credential context are not globally classified as secrets. Review still
-requires checking authored content; these checks are not a secret-free guarantee.

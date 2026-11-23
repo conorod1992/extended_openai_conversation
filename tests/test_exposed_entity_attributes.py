@@ -10,7 +10,6 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     exposed_attributes,
     management_request_preview,
-    management_ui,
     prompt,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -38,7 +37,6 @@ from custom_components.extended_openai_conversation_responses.management_request
     async_preview_effective_request,
 )
 from custom_components.extended_openai_conversation_responses.management_ui import (
-    _export_agent,
     _parse_import_document,
 )
 from homeassistant.helpers import entity_registry as er
@@ -122,7 +120,9 @@ async def test_import_export_round_trip_preserves_preferences_without_live_value
     data[CONF_EXPOSED_ENTITY_ATTRIBUTES] = {
         "registry:stable": ["brightness", "color_temp"]
     }
-    document = _export_agent(SimpleNamespace(title="Jarvis", data=data), reviewed=True)
+    from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+    document = historical_reviewed_configuration(data, title="Jarvis")
     parsed = _parse_import_document(document)
 
     assert parsed["config"][CONF_EXPOSED_ENTITY_ATTRIBUTES] == {

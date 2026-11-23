@@ -30,6 +30,7 @@ test("Backup export modes validate selection, preserve settings and reset on reo
       await expect(await download).toBeTruthy();
     }
     await page.goto(fixtureUrl("assistant/basics"));
+    await expect(panel.locator("#config-max_tokens")).toBeVisible();
     await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
     panel = page.locator("extended-openai-management-panel");
     await expect(panel.locator("#transfer-export-mode")).toHaveValue("setup");

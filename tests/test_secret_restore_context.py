@@ -175,7 +175,7 @@ async def test_new_export_literal_marker_text_round_trips_without_local_secret(
             transfer.SECTION_CONFIGURATION: document["agent"]["config"],
             transfer.SECTION_REQUEST_RULES: _rules_backup(),
         }
-        exported = transfer.finalize_setup_export(raw)["document"]
+        exported = transfer.redact_transfer_document(raw)
     imported = transfer.inspect_transfer(json.loads(json.dumps(exported)), "agent-1")
     assert imported.config["prompt"] == text
     assert not imported.redacted_sensitive_fields

@@ -34,20 +34,19 @@ BUILTINS = (
 
 @pytest.mark.parametrize("field,value", BUILTINS)
 @pytest.mark.parametrize("kind", ["configuration", "setup"])
-@pytest.mark.parametrize("reviewed", [False, True])
-def test_supported_public_choice_round_trip(hass, field, value, kind, reviewed):
+def test_supported_public_choice_round_trip(hass, field, value, kind):
     model = "gpt-5" if value == "minimal" else "gpt-5.6"
     config = {"chat_model": model, "api_mode": "responses", field: value}
     if kind == "configuration":
         artifact = management_ui._export_agent(
-            SimpleNamespace(data=config), reviewed=reviewed
+            SimpleNamespace(data=config)
         )
         imported = management_ui._parse_import_document(artifact)["config"]
     else:
         document = _portable_document(mode="setup")
         document["version"] = SHARING_VERSION
         document["sections"]["configuration"] = deepcopy(config)
-        artifact = transfer.finalize_setup_export(document, reviewed=reviewed)[
+        artifact = transfer.finalize_setup_export(document)[
             "document"
         ]
         imported = transfer.inspect_transfer(artifact, "new-assistant").config

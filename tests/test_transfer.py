@@ -137,7 +137,7 @@ def _entry_and_subentry(config: dict | None = None):
 
 
 @pytest.mark.parametrize("entrypoint", ["document", "json"])
-async def test_shareable_setup_reads_only_setup_state_and_round_trips_ha_llm_reference(
+async def test_shareable_setup_reads_only_setup_state_and_omits_ha_llm_reference(
     hass,
     monkeypatch,
     entrypoint,
@@ -171,9 +171,7 @@ async def test_shareable_setup_reads_only_setup_state_and_round_trips_ha_llm_ref
     ):
         monkeypatch.setattr(transfer, name, forbidden)
 
-    result = await transfer.async_create_setup_export(
-        hass, entry, subentry, reviewed=True
-    )
+    result = await transfer.async_create_setup_export(hass, entry, subentry)
     document = result["document"]
     assert set(document["sections"]) == transfer.SETUP_SECTIONS
 
@@ -184,7 +182,7 @@ async def test_shareable_setup_reads_only_setup_state_and_round_trips_ha_llm_ref
     }[entrypoint]
     prepared = transfer.inspect_transfer(source, "target-agent")
     tools = yaml.safe_load(prepared.config[CONF_FUNCTION_TOOLS])
-    assert tools[0]["function"] == reference
+    assert tools == []
     assert prepared.request_rules == RequestRules.validate_backup_data(_rules_backup())
     with pytest.raises(backup.BackupError, match="not valid JSON"):
         transfer.inspect_transfer(yaml.safe_dump(document), "target-agent")

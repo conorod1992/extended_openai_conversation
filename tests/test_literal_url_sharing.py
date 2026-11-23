@@ -94,93 +94,13 @@ async def test_rule_url_credentials_and_signatures_do_not_leave(
     before = manager.snapshot()
     assert SECRET in before["rules"][0]["action"]["canonical_signature"]
 
-    setup = rule_setup_artifact(before, reviewed=True)
+    setup = rule_setup_artifact(before)
     rules = setup["document"]["sections"]["request_rules"]["rules"]
 
     assert SECRET not in setup["json"]
     assert rules == []
     assert setup["security"]["omitted"]
     assert manager.snapshot() == before
-
-
-@pytest.mark.parametrize("format", ["setup", "configuration"])
-@pytest.mark.parametrize(
-    "value",
-    [
-        "https://example.invalid/public?units=c",
-        " \thttps://example.invalid/public?units=c",
-        "ordinary: text",
-        "// This is [an ordinary comment",
-        "{{ states('sensor.temperature') }}",
-        "https is a word, not a URL: {{ value }}",
-        "custom://example.invalid/public",
-    ],
-)
-def test_public_urls_and_arbitrary_templates_stay_portable(hass, format, value):
-    config = script_config(value)
-    agent_config_snapshot(config)
-    _artifact, public, _serialized = configuration_artifact(config, format)
-    assert public["functions"] == config["functions"]
-
-
-async def test_public_rule_urls_stay_portable(hass):
-    rule = local_rule()
-    rule["action"]["actions"] = [
-        {
-            "action": "rest_command.report",
-            "data": {"image": " \thttps://example.invalid/public?units=c"},
-        }
-    ]
-    manager = RequestRules(MemoryStore({"rules": [rule]}))
-    await manager.async_initialize()
-    before = manager.snapshot()
-    setup = rule_setup_artifact(before, reviewed=True)
-    rules = setup["document"]["sections"]["request_rules"]["rules"]
-    assert rules[0]["action"]["actions"] == rule["action"]["actions"]
-    assert "canonical_signature" not in rules[0]["action"]
-    assert manager.snapshot() == before
-
-
-@pytest.mark.parametrize(
-    "annotation", ["default", "example", "examples", "const", "enum"]
-)
-def test_schema_instance_urls_receive_the_same_parser_normalization(hass, annotation):
-    uri = credential_uri("query", "\t{}")
-    tool = tool_with_schema(
-        {
-            "type": "object",
-            "properties": {
-                "image": {
-                    "type": "string",
-                    annotation: [uri] if annotation in {"examples", "enum"} else uri,
-                }
-            },
-        }
-    )
-    agent_config_snapshot({"functions": [tool]})
-    artifact, public, serialized = configuration_artifact(
-        {"functions": [tool]}, "setup"
-    )
-    assert SECRET not in serialized
-    assert public["functions"] == []
-    assert artifact["security"]["omitted"]
-
-
-def test_literal_http_templates_are_omitted_without_rendering(hass):
-    config = script_config("https://{{ private_host }}/snapshot?sig={{ private_key }}")
-    agent_config_snapshot(config)
-    artifact, public, _serialized = configuration_artifact(config, "setup")
-    assert public["functions"] == []
-    assert artifact["security"]["omitted"]
-
-
-@pytest.mark.parametrize(
-    "value", ["https://user:private@[", " \thttps://user:private@["]
-)
-def test_malformed_http_authority_cannot_hide_from_literal_classification(hass, value):
-    config = script_config(value)
-    _artifact, public, _serialized = configuration_artifact(config, "setup")
-    assert public["functions"] == []
 
 
 @settings(max_examples=75, deadline=None)

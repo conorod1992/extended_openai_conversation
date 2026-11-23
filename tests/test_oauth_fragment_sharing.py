@@ -66,7 +66,7 @@ async def test_oauth_fragment_credentials_are_omitted_from_rule_setups(
     manager = RequestRules(MemoryStore({"rules": [rule]}))
     await manager.async_initialize()
     before = deepcopy(manager.snapshot())
-    setup = rule_setup_artifact(before, reviewed=True)
+    setup = rule_setup_artifact(before)
     rules = setup["document"]["sections"]["request_rules"]["rules"]
     assert SECRET not in setup["json"]
     assert rules == []

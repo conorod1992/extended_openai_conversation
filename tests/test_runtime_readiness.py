@@ -1181,7 +1181,9 @@ async def test_import_ha_catalogue_over_capacity(
     )
     saved = await _save(hass, entry, subentry, {"functions": functions})
     assert not saved["valid"] and "128-tool limit" in str(saved["errors"]), saved
-    doc = ui._export_agent(SimpleNamespace(data=bad), reviewed=True, provider="azure")
+    from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+    doc = historical_reviewed_configuration(bad)
     serialized = json.dumps(doc)
     for action in ("import_preview", "import"):
         with pytest.raises(HomeAssistantError, match="128-tool limit"):

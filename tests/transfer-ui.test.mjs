@@ -24,6 +24,7 @@ const makePanel = (handler) => ({
       json: '{"format":"extended_openai_conversation_transfer"}',
       filename: "jarvis-shareable-setup-2026-09-08.json",
       mode: "setup",
+      security: {mode: "restricted", review_required: false},
     };
   });
 

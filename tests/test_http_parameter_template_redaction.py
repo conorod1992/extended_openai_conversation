@@ -73,16 +73,19 @@ def test_complete_exports_remove_http_credentials(
     assert SECRET not in result["json"]
     assert SECRET not in json.dumps(result["document"])
     assert redact_secrets(public) == public
-    request = public["functions"][0]["function"]
-    if kind.startswith("params-"):
-        assert (
-            request["params"][kind.removeprefix("params-")] == REDACTED_SECRET_SENTINEL
-        )
-        assert request["params"]["units"] == "c"
+    if exporter == "setup":
+        assert public["functions"] == []
     else:
-        assert request["resource_template"] == {
-            "__extended_openai_redacted_url__": None
-        }
+        request = public["functions"][0]["function"]
+        if kind.startswith("params-"):
+            assert (
+                request["params"][kind.removeprefix("params-")] == REDACTED_SECRET_SENTINEL
+            )
+            assert request["params"]["units"] == "c"
+        else:
+            assert request["resource_template"] == {
+                "__extended_openai_redacted_url__": None
+            }
     assert config == original
 
 
@@ -181,7 +184,7 @@ def test_nonsecret_payloads_schemas_and_literal_templates_survive_complete_expor
     config = {"functions": yaml.safe_dump(tools) if persisted else tools}
     original = deepcopy(config)
     _result, public = export(config, exporter)
-    assert public["functions"] == tools
+    assert public["functions"] == (tools if exporter == "legacy" else [])
     assert config == original
 
 

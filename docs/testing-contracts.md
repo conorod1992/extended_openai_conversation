@@ -190,9 +190,9 @@ or promote members out of disabled/on-demand groups. Unit boundary cases and the
 native backup-transfer export collector cover these contracts without mutating
 the source configuration.
 
-Reviewed exports reconcile selected Skills after Tool and Group omissions, then
-round-trip through the ordinary configuration importer. Typed YAML and unsafe Group
-metadata must not leave a dangling loader dependency or enable a disabled loader.
+Restricted public exports omit custom Function Tools, Groups, Skill selections and
+Request Rules. Historical reviewed files still use the existing import validation,
+and private backups preserve custom definitions.
 Nested Composite result aliases belong to the parent step; hydration, persistence
 and execution retain those aliases without passing them to strict child validators.
 Provider connection recovery is shared by the credential endpoint and registered

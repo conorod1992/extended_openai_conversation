@@ -3,7 +3,7 @@ import {captureAuthentication} from "./authentication-presentation.js";
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
 import {bindExportOptions, TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
 import {backupSummaryLines, unassignedTemporaryMemoryNotice} from "./backup-summary.js";
-import {reviewSharingExport} from "./sharing-review.js";
+import {restrictedSharingSecurity, reviewSharingExport} from "./sharing-review.js";
 import {callMutation, captureConfigurationSubmission, captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft} from "./configuration-acknowledgement.js";
 export {backupSummaryLines};
 export {TRANSFER_SECTIONS, renderBackupTransferPanel} from "./backup-transfer-shell.js";
@@ -103,12 +103,16 @@ async function defaultSaveBlob(blob, filename) {
   }
 }
 
-export async function downloadSetupExport(panel, saveBlob = defaultSaveBlob, {reviewedCustom = false, review = false} = {}) {
+export async function downloadSetupExport(panel, saveBlob = defaultSaveBlob, {review = false} = {}) {
   const current = captureAuthentication(panel);
-  const result = await callBackupTransfer(panel, "setup_export", reviewedCustom ? {reviewed_custom: true} : {});
+  const result = await callBackupTransfer(panel, "setup_export");
   if (!current()) return {...result, cancelled:true};
   if (!result?.json || !result?.filename) throw new Error("The server returned an invalid setup export");
-  if (review && !await reviewSharingExport(panel, result)) return {...result, cancelled: true};
+  if (review) {
+    if (!await reviewSharingExport(panel, result)) return {...result, cancelled: true};
+  } else {
+    restrictedSharingSecurity(result);
+  }
   if (!current()) return {...result, cancelled:true};
   const blob = new Blob([result.json], {type: "application/json"});
   await saveBlob(blob, result.filename, result);
@@ -547,7 +551,7 @@ export function bindBackupTransfer(panel) {
     panel._setSaving(button, true);
     try {
       if (mode === "setup") {
-        const exported = await downloadSetupExport(panel, defaultSaveBlob, {reviewedCustom: Boolean(root.querySelector("#transfer-reviewed-custom")?.checked), review: true});
+        const exported = await downloadSetupExport(panel, defaultSaveBlob, {review: true});
         if (exported.cancelled) return;
       }
       else if (mode === "custom") await downloadCustomBackup(panel, sections);

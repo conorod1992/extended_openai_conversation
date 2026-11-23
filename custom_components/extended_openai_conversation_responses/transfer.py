@@ -653,33 +653,25 @@ def redact_transfer_document(document: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def finalize_setup_export(
-    document: dict[str, Any], *, reviewed: bool = False
-) -> dict[str, Any]:
-    """Serialize a lightweight shareable setup document."""
+def finalize_setup_export(document: dict[str, Any]) -> dict[str, Any]:
+    """Serialize a restricted public setup document."""
     try:
         check_redaction_budget(document, backup.MAX_LEGACY_EXPORT_BYTES)
-        if document.get("version") == SHARING_VERSION:
-            sections, security = project_sharing_sections(
-                document["sections"], reviewed=reviewed
-            )
-            redacted = {
-                "format": TRANSFER_FORMAT,
-                "version": SHARING_VERSION,
-                "mode": "setup",
-                "created_at": document["created_at"],
-                "integration_version": document["integration_version"],
-                "agent": {
-                    "title": "Shared conversation agent",
-                    "source_entry_id": "shared-entry",
-                    "source_subentry_id": "shared-agent",
-                },
-                "sections": sections,
-                "security": security,
-            }
-        else:
-            # Explicit legacy v1 semantics retained for old clients/fixtures.
-            redacted = redact_transfer_document(document)
+        sections, security = project_sharing_sections(document["sections"])
+        redacted = {
+            "format": TRANSFER_FORMAT,
+            "version": SHARING_VERSION,
+            "mode": "setup",
+            "created_at": document["created_at"],
+            "integration_version": document["integration_version"],
+            "agent": {
+                "title": "Shared conversation agent",
+                "source_entry_id": "shared-entry",
+                "source_subentry_id": "shared-agent",
+            },
+            "sections": sections,
+            "security": security,
+        }
         serialized = bounded_json_dumps(redacted, backup.MAX_LEGACY_EXPORT_BYTES)
     except JSONBudgetExceeded as err:
         raise backup.BackupError(
@@ -698,7 +690,7 @@ def finalize_setup_export(
 
 
 async def async_create_setup_export(
-    hass: HomeAssistant, entry: Any, subentry: Any, *, reviewed: bool = False
+    hass: HomeAssistant, entry: Any, subentry: Any
 ) -> dict[str, Any]:
     """Build a lightweight, redacted setup-sharing document."""
     from .agent_maintenance import get_agent_maintenance_gate
@@ -708,7 +700,7 @@ async def async_create_setup_export(
         document = await async_collect_transfer_snapshot(
             hass, entry, subentry, mode="setup"
         )
-    return await asyncio.to_thread(finalize_setup_export, document, reviewed=reviewed)
+    return await asyncio.to_thread(finalize_setup_export, document)
 
 
 def _secret_path(path: tuple[Any, ...]) -> str:

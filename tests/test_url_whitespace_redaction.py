@@ -73,7 +73,11 @@ def test_complete_exports_redact_client_normalized_urls(
         result = backup.finalize_backup_snapshot(document)
     assert SECRET not in result["json"]
     inspected = transfer.inspect_transfer(result["document"], "target")
-    assert any("resource" in path for path in inspected.redacted_sensitive_fields)
+    if exporter == "setup":
+        assert not inspected.redacted_sensitive_fields
+        assert inspected.raw_configuration["functions"] == []
+    else:
+        assert any("resource" in path for path in inspected.redacted_sensitive_fields)
     assert SECRET not in json.dumps(inspected.raw_configuration)
     assert config == original
 

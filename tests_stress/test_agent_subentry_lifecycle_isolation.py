@@ -100,7 +100,7 @@ async def test_duplicate_and_imported_agents_start_config_only_then_diverge_dura
     assert duplicate_memories["memories"] == []
 
     exported = await _management_call(
-        client, entry=source, section="configuration", action="export", reviewed_custom=True
+        client, entry=source, section="configuration", action="export"
     )
     imported = await _management_call(
         client,
@@ -119,7 +119,7 @@ async def test_duplicate_and_imported_agents_start_config_only_then_diverge_dura
         action="get",
     )
     assert imported_cfg["config"]["max_tokens"] == 913
-    assert imported_cfg["config"]["prompt"] == "Portable source configuration"
+    assert imported_cfg["config"]["prompt"] != "Portable source configuration"
     imported_memories = await _management_call(
         client,
         entry=destination,

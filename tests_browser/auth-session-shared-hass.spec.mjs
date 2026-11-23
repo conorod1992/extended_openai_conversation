@@ -119,7 +119,6 @@ for (const bundle of [false,true]) for(const aba of [false,true]) test(`late sha
       return new Promise(resolve=>heldOwnerExport.release=()=>resolve(result));
     };
   });
-  await panel.locator('#transfer-reviewed-custom').check();
   await panel.locator('#create-backup-transfer').click();
   await expect.poll(()=>page.evaluate(()=>heldOwnerExport.calls)).toBe(1);
   await panel.evaluate(host=>{host.hass={...host.hass,user:{id:'replacement-account',is_admin:false}};});

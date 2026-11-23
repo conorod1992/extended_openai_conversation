@@ -34,7 +34,6 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
 from custom_components.extended_openai_conversation_responses.scope import (
     ResolvedDataScope,
 )
-from homeassistant.components import conversation
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_acceptance_lifecycle import (
     _conversation_subentry,
@@ -248,7 +247,7 @@ async def test_websocket_setup_export_is_coherent_across_restore(
 
     monkeypatch.setattr(transfer, "async_collect_transfer_snapshot", observed_collect)
     export = asyncio.create_task(
-        _transfer_call(client, entry=entry, action="setup_export", data={"reviewed_custom": True})
+        _transfer_call(client, entry=entry, action="setup_export")
     )
     disposable = None
     try:
@@ -279,11 +278,9 @@ async def test_websocket_setup_export_is_coherent_across_restore(
         assert response["success"], response
         document = json.loads(response["result"]["json"])
         config = document["sections"]["configuration"]
-        names = [item["spec"]["name"] for item in config[CONF_FUNCTION_TOOLS]]
-        reference = document["sections"]["request_rules"]["rules"][0]["action"][
-            "actions"
-        ][0]["data"]["function"]
-        assert names == [reference] == ["beta"], "setup export mixed config and rules"
+        assert config[CONF_ARCHIVE_RETENTION_DAYS] == 365
+        assert config[CONF_FUNCTION_TOOLS] == []
+        assert document["sections"]["request_rules"]["rules"] == []
         disposable = _make_entry("Imported setup", include_ai_task=False)
         await _setup_entry(hass, disposable)
         destination = _conversation_subentry(disposable)
@@ -292,16 +289,11 @@ async def test_websocket_setup_export_is_coherent_across_restore(
         )
         assert result["status"] == "restored"
         await hass.async_block_till_done()
-        imported_rules = await async_get_request_rules(
-            hass, disposable.entry_id, destination.subentry_id
-        )
-        await transfer._async_validate_request_rule_function_dependencies(
-            hass, await imported_rules.async_backup_data(), dict(destination.data)
-        )
-        loaded = conversation.async_get_agent(hass, disposable.entry_id)
-        value = await loaded._async_execute_request_rule_function("beta", {}, None)
-        assert "BETA" in str(value)
-        normal = await _transfer_call(client, entry=entry, action="setup_export", data={"reviewed_custom": True})
+        committed = hass.config_entries.async_get_entry(disposable.entry_id)
+        assert committed.subentries[destination.subentry_id].data[CONF_ARCHIVE_RETENTION_DAYS] == 365
+        imported_rules = await async_get_request_rules(hass, disposable.entry_id, destination.subentry_id)
+        assert (await imported_rules.async_backup_data())["rules"] == []
+        normal = await _transfer_call(client, entry=entry, action="setup_export")
         assert (
             normal["success"]
             and normal["result"]["document"]["sections"] == document["sections"]
@@ -309,8 +301,8 @@ async def test_websocket_setup_export_is_coherent_across_restore(
         record(
             stress_trace,
             "setup_export_restore_recovered",
-            imported_tool="beta",
-            imported_rule="rule-beta",
+            archive_retention_days=365,
+            omitted_custom_units=True,
         )
         record(
             stress_trace,

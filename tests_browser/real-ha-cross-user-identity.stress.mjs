@@ -22,7 +22,7 @@ async function post(url, body) {
 }
 
 async function checkConfigurationExportRetirement(page, bundled) {
-  const marker = `Auth-owned configuration export ${bundled ? "bundle" : "source"}`;
+  const maxTokens = bundled ? 935 : 936;
   await page.goto(`${fixture(raceBackendA, "assistant/basics")}&bundle=${bundled ? "1" : "0"}`);
   let panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#export-agent")).toBeAttached();
@@ -32,22 +32,24 @@ async function checkConfigurationExportRetirement(page, bundled) {
     return user;
   });
   expect(owner.is_admin).toBe(true);
-  await panel.evaluate(async (host, marker) => {
+  await panel.evaluate(async (host, maxTokens) => {
     const saved = await host._call("configuration", "get");
-    await host._call("configuration", "save", {revision:saved.revision, config:{prompt:marker}});
-  }, marker);
+    await host._call("configuration", "save", {revision:saved.revision, config:{max_tokens:maxTokens}});
+  }, maxTokens);
 
   const startExport = async () => {
     if (!await panel.locator("#export-agent").isVisible()) await panel.locator(".agent-actions-menu > summary").click();
     await panel.locator("#export-agent").click();
-    await panel.locator("[data-custom]").click();
   };
   const downloadExport = async () => {
     await startExport();
-    await expect(panel.locator("[data-artifact]")).toHaveValue(new RegExp(marker));
+    const artifact = panel.locator("[data-artifact]");
+    await expect(artifact).toBeVisible();
+    expect(JSON.parse(await artifact.inputValue()).config.max_tokens).toBe(maxTokens);
     const pending = page.waitForEvent("download");
     await acceptSharingReview(panel);
-    expect(await readFile(await (await pending).path(), "utf8")).toContain(marker);
+    const saved = JSON.parse(await readFile(await (await pending).path(), "utf8"));
+    expect(saved.config.max_tokens).toBe(maxTokens);
   };
   await downloadExport(); // Healthy unchanged-owner baseline through the real UI.
 

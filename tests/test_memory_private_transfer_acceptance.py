@@ -77,7 +77,7 @@ async def test_private_full_and_memory_only_transfers_preserve_sensitive_values(
     assert (await target_temporary.async_list_owned("user:destination-user"))[0].content == temporary["content"]
 
     # Sharing still reads only setup sections; deliberately retained values stay private.
-    shareable = await transfer.async_create_setup_export(hass, entry, subentry, reviewed=True)
+    shareable = await transfer.async_create_setup_export(hass, entry, subentry)
     assert set(shareable["document"]["sections"]) == transfer.SETUP_SECTIONS
     assert "synthetic-private-value" not in shareable["json"]
     assert "synthetic-provider-connection-value" not in shareable["json"]

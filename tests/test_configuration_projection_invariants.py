@@ -281,9 +281,11 @@ async def test_function_semantics_survive_duplicate_export_and_recovery(
         hass, "admin", True, management_message("configuration", "duplicate")
     )
     duplicate = hass.config_entries.async_add_subentry.call_args.args[1]
-    exported = ui._export_agent(subentry, reviewed=True)
+    exported = ui._export_agent(subentry)
     imported = ui._parse_import_document(exported)["config"]
-    snapshots = [duplicate.data, imported]
+    assert config.parse_configured_function_tools(imported) == []
+    assert config.agent_config_snapshot(dict(imported))["memory_enabled"]
+    snapshots = [duplicate.data]
     for snapshot in (
         backup.export_configuration_snapshot(original),
         backup.private_configuration_snapshot(original),

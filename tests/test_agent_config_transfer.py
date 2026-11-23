@@ -22,6 +22,17 @@ from custom_components.extended_openai_conversation_responses.secret_redaction i
 )
 
 
+def historical_reviewed_configuration(config, *, title="Shared conversation agent"):
+    """Represent an existing v2 reviewed artifact without using an export writer."""
+    return {
+        "schema": "extended_openai_conversation.agent",
+        "version": 2,
+        "title": title,
+        "config": config,
+        "security": {"policy_version": 1, "mode": "reviewed_custom", "review_required": True, "omitted": []},
+    }
+
+
 def test_export_is_versioned_and_excludes_history_and_credentials(hass) -> None:
     data = agent_config_defaults()
     data["prompt"] = "Custom"
@@ -39,9 +50,8 @@ def test_export_is_versioned_and_excludes_history_and_credentials(hass) -> None:
     assert document["version"] == 2
     assert "prompt" not in document["config"]
     assert document["config"]["function_groups"] == []
-    reviewed = _export_agent(subentry, reviewed=True)
-    assert reviewed["config"]["prompt"] == "Custom"
-    assert reviewed["config"]["function_groups"][0]["id"] == "general"
+    assert document["security"]["mode"] == "restricted"
+    assert document["security"]["review_required"] is False
     serialized = str(document)
     assert "api_key" not in serialized
     assert "memory_contents" not in serialized
@@ -119,7 +129,7 @@ def test_legacy_export_does_not_silently_accept_guest_v2(hass) -> None:
     assert GUEST_V2_FIELDS.isdisjoint(parsed["config"])
 
 
-def test_import_export_round_trip_preserves_disabled_tool_state(hass) -> None:
+def test_historical_reviewed_import_preserves_disabled_tool_state(hass) -> None:
     data = agent_config_defaults()
     data["functions"] = yaml.safe_dump(
         [
@@ -134,7 +144,7 @@ def test_import_export_round_trip_preserves_disabled_tool_state(hass) -> None:
             }
         ]
     )
-    exported = _export_agent(SimpleNamespace(title="Jarvis", data=data), reviewed=True)
+    exported = historical_reviewed_configuration(data, title="Jarvis")
     parsed = _parse_import_document(exported)
     assert yaml.safe_load(parsed["config"]["functions"])[0]["enabled"] is False
 

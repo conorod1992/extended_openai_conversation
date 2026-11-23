@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 456,
+  "expected_total_markers": 450,
   "viewports": [
     {
       "name": "small-phone",
@@ -39,7 +39,7 @@
     "agent-config-sections-primary.js": 4,
     "agent-config-tools-base.js": 39,
     "assistant-configuration-actions.js": 4,
-    "backup-transfer-shell.js": 7,
+    "backup-transfer-shell.js": 5,
     "backup-transfer-ui.js": 5,
     "debug-panel.js": 16,
     "exposed-attributes-ui.js": 7,
@@ -76,7 +76,7 @@
     "request-rules-ui-core.js": 41,
     "request-rules-ui-impl.js": 34,
     "retention-settings-ui.js": 1,
-    "sharing-review.js": 7,
+    "sharing-review.js": 3,
     "unsaved-state.js": 2,
     "usage-chart.js": 12,
     "voice-identity-core.js": 4,
@@ -148,10 +148,9 @@
     },
     {
       "source": "sharing-review.js",
-      "reason": "Sharing review and explicit acknowledgement before download",
+      "reason": "Restricted sharing review before download",
       "selectors": [
         "[data-artifact]",
-        "[data-ack]",
         "[data-download]",
         "[data-cancel]"
       ],

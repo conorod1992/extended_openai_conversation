@@ -59,6 +59,9 @@ async def test_no_credential_survives_any_redacted_rule_export(hass, kind):
         if kind == "legacy"
         else decoded["sections"]["request_rules"]
     )
+    if kind == "setup":
+        assert exported_rules["rules"] == []
+        return
     action = exported_rules["rules"][0]["action"]
     assert "canonical_signature" not in action
     assert action["actions"][0]["data"]["api_key"] == {

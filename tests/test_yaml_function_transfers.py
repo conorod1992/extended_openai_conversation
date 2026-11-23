@@ -93,11 +93,10 @@ async def test_serialized_export_preserves_numeric_schema_and_runtime_variables(
         }
     tool["function"]["variables"] = {"factor": 0.000001, "literal": "1e-06"}
     subentry.data = {**subentry.data, "functions": yaml.safe_dump(tools)}
-    exported = await management_ui.async_management_command(
-        hass, "admin", True,
-        management_message("configuration", "export", reviewed_custom=True),
-    )
-    text = exported["json"] if format == "json" else yaml.safe_dump(exported["document"])
+    from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+    exported = historical_reviewed_configuration({**subentry.data, "functions": tools})
+    text = json.dumps(exported) if format == "json" else yaml.safe_dump(exported)
     if format == "json" and schema_bound:
         assert '"minimum": 1e-06' in text
     parsed = management_ui._parse_import_document(text)
@@ -304,18 +303,15 @@ async def test_exact_json_export_import_into_new_agent_preserves_numbers(
     tools = yaml.safe_load(source.data["functions"])
     tools[-1]["function"]["variables"] = {"number": number, "literal": "1e-06"}
     source.data = {**source.data, "functions": yaml.safe_dump(tools)}
-    exported = await management_ui.async_management_command(
-        hass,
-        "admin",
-        True,
-        management_message("configuration", "export", reviewed_custom=True),
-    )
+    from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+    exported = historical_reviewed_configuration({**source.data, "functions": tools})
     created = await management_ui.async_management_command(
         hass,
         "admin",
         True,
         management_message(
-            "configuration", "import", document=exported["json"], mode="new"
+            "configuration", "import", document=json.dumps(exported), mode="new"
         ),
     )
     assert created["status"] == "created"

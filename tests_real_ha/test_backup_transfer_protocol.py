@@ -92,12 +92,11 @@ def _conversation_subentry(entry: MockConfigEntry):
     )
 
 
-@pytest.mark.parametrize("reviewed", [False, True])
 @pytest.mark.parametrize(
     "damage", ["healthy", "missing_spec", "missing_name", "invalid_group"]
 )
 async def test_setup_export_keeps_known_function_quarantine(
-    hass: HomeAssistant, reviewed: bool, damage: str
+    hass: HomeAssistant, damage: str
 ) -> None:
     config = quarantine_source(damage, encoded=True)
     entry = MockConfigEntry(
@@ -117,19 +116,12 @@ async def test_setup_export_keeps_known_function_quarantine(
     entry.add_to_hass(hass)
     subentry = _conversation_subentry(entry)
     original = deepcopy(dict(subentry.data))
-    result = await async_create_setup_export(hass, entry, subentry, reviewed=reviewed)
+    result = await async_create_setup_export(hass, entry, subentry)
     restored = inspect_transfer(result["json"], "target")
     assert restored.config is not None
-    assert effective_tool_names(restored.config) == (
-        effective_tool_names(original) if reviewed else set()
-    )
-    if reviewed:
-        from custom_components.extended_openai_conversation_responses import backup
-
-        snapshot = backup.export_configuration_snapshot(original)
-        projected = result["document"]["sections"]["configuration"]
-        assert projected["functions"] == snapshot["functions"]
-        assert projected["function_groups"] == snapshot["function_groups"]
+    assert effective_tool_names(restored.config) == set()
+    projected = result["document"]["sections"]["configuration"]
+    assert projected["functions"] == projected["function_groups"] == []
     assert dict(subentry.data) == original
 
 
@@ -301,19 +293,15 @@ async def test_private_backup_moves_request_rules_between_installations(
     source_admin = MockUser(id="source-admin", name="Source admin", is_owner=True)
     source_client = await hass_ws_client(hass, await _user_token(hass, source_admin))
 
-    for reviewed in (False, True):
+    for options in ({}, {"reviewed_custom": True}):
         setup = await _transfer_call(
-            source_client,
-            entry=source,
-            action="setup_export",
-            data={"reviewed_custom": reviewed},
+            source_client, entry=source, action="setup_export", data=options
         )
         assert setup["success"], setup
         portable = inspect_transfer(setup["result"]["json"], "destination")
         assert portable.request_rules is not None
-        assert [rule["name"] for rule in portable.request_rules["rules"]] == (
-            ["Source first", "Source second"] if reviewed else []
-        )
+        assert portable.request_rules["rules"] == []
+        assert setup["result"]["security"]["mode"] == "restricted"
 
     archive, metadata = await _download_archive(
         source_client, entry=source, mode="custom", sections=[SECTION_REQUEST_RULES]

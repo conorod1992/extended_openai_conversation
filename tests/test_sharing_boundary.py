@@ -11,7 +11,6 @@ import yaml
 
 from custom_components.extended_openai_conversation_responses import (
     backup,
-    sharing,
     transfer,
 )
 from custom_components.extended_openai_conversation_responses.private_backup import (
@@ -54,32 +53,6 @@ def test_recognised_urls_cannot_acquire_schema_exemptions(
     assert public["functions"] == []
     assert artifact["security"]["omitted"]
     assert config == before
-
-
-@pytest.mark.parametrize("format", ["setup", "configuration"])
-def test_public_schema_structure_annotations_and_templates_stay_portable(hass, format):
-    schema = {
-        "type": "object",
-        "properties": {
-            "password": {"type": "string"},
-            "units": {
-                "type": "string",
-                "description": "https://example.invalid/docs?units=c",
-                "enum": ["c", "f"],
-            },
-        },
-        "required": ["password"],
-        "additionalProperties": False,
-    }
-    tool = tool_with_schema(schema)
-    tool["function"]["resource"] = "https://weather.example.test/api"
-    artifact, public, _serialized = configuration_artifact(
-        {"functions": [tool]}, format
-    )
-    assert public["functions"] == [tool]
-    assert all(
-        item["field"] != "function_tool_1" for item in artifact["security"]["omitted"]
-    )
 
 
 @pytest.mark.parametrize("uri", URLS)
@@ -144,24 +117,6 @@ def test_unfamiliar_credential_values_do_not_depend_on_known_token_formats(fabri
         for format in ("setup", "configuration"):
             _artifact, public, _serialized = configuration_artifact(config, format)
             assert public["functions"] == []
-
-
-@pytest.mark.parametrize("format", ["setup", "configuration"])
-def test_final_unit_admission_detects_regressed_schema_walker(
-    hass, monkeypatch, format
-):
-    tool = tool_with_schema(
-        {"type": "object", "properties": {}, "description": URLS[0]}
-    )
-    # Simulate a future schema walk accidentally returning unchecked annotations.
-    monkeypatch.setattr(
-        sharing, "_schema_annotations", lambda value, root, **kwargs: value
-    )
-    _artifact, public, serialized = configuration_artifact(
-        {"functions": [tool]}, format
-    )
-    assert public["functions"] == []
-    assert SECRET not in serialized
 
 
 @settings(max_examples=25, deadline=None)
