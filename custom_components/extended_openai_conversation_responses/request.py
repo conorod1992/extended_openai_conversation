@@ -668,13 +668,10 @@ def build_provider_request_snapshot(
     options = dict(options)
     normalize_agent_numeric_values(options)
     model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
-    if (
-        options.get("azure_model")
-        and effective_api_provider(
-            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-        )
-        != "azure"
-    ):
+    provider = effective_api_provider(
+        entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+    )
+    if options.get("azure_model") and provider != "azure":
         raise HomeAssistantError(
             "Azure underlying model is only supported with Azure; clear the setting for this provider."
         )
@@ -793,9 +790,17 @@ def build_provider_request_snapshot(
         api_kwargs,
         (provider_tool,) if provider_tool is not None else (),
         capabilities["structured_outputs"],
-        tool_limit=CHAT_COMPLETIONS_TOOL_LIMIT
-        if api_mode == API_MODE_CHAT_COMPLETIONS
-        else None,
+        tool_limit=(
+            CHAT_COMPLETIONS_TOOL_LIMIT
+            if api_mode == API_MODE_CHAT_COMPLETIONS
+            and (
+                provider == "azure"
+                or is_native_openai_connection(
+                    entry_data, client=client, allow_query=True
+                )
+            )
+            else None
+        ),
         reasoning_items_supported=reasoning_items_supported,
         reasoning_current_turn_only=(
             api_mode == API_MODE_RESPONSES

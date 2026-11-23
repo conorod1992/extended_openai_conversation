@@ -21,14 +21,16 @@ from homeassistant.util import dt as dt_util
 from tests.test_temporary_memory import Storage, _record
 
 
-@pytest.mark.parametrize("has_owner_field", [False, True])
+@pytest.mark.parametrize("owner_field", ["omitted", "null", "canonical"])
 async def test_v1_snapshot_is_read_only_until_guarded_owner_migration(
-    hass, has_owner_field
+    hass, owner_field
 ):
     store = Store(hass, 1, f"{STORAGE_KEY_PREFIX}.entry.agent", private=True)
     record = _record(scope_id="user:alice", content="Visitors arrive tomorrow")
-    if not has_owner_field:
+    if owner_field == "omitted":
         record.pop("owner_scope_id")
+    elif owner_field == "null":
+        record["owner_scope_id"] = None
     await store.async_save({"records": [record]})
     original = Path(store.path).read_bytes()
     snapshot = await async_read_temporary_memory_snapshot(

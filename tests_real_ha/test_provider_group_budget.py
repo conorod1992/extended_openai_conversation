@@ -27,7 +27,7 @@ from tests_real_ha.test_provider_wire_e2e import (
 )
 
 
-@pytest.mark.parametrize("provider", ["openai", "azure", "compatible"])
+@pytest.mark.parametrize("provider", ["openai", "azure"])
 @pytest.mark.parametrize("configured_count", [128, 129])
 async def test_chat_completions_blocks_oversized_saved_catalogue_and_recovers(
     hass, hass_ws_client, monkeypatch, provider, configured_count
@@ -46,13 +46,9 @@ async def test_chat_completions_blocks_oversized_saved_catalogue_and_recovers(
     }
     if provider == "azure":
         options["azure_model"] = "gpt-4o"
-    endpoints = {
-        "azure": "https://resource.openai.azure.com",
-        "compatible": "https://compatible.example/v1",
-    }
     entry = _make_entry(
         include_ai_task=False,
-        base_url=endpoints.get(provider),
+        base_url="https://resource.openai.azure.com" if provider == "azure" else None,
         data={
             "api_provider": "azure" if provider == "azure" else "openai",
             "api_version": "2024-10-21",
@@ -135,6 +131,49 @@ async def test_chat_completions_blocks_oversized_saved_catalogue_and_recovers(
     }
 
 
+async def test_compatible_chat_can_save_preview_and_send_129_tools(
+    hass, hass_ws_client, monkeypatch
+):
+    entry = _make_entry(
+        include_ai_task=False,
+        base_url="https://compatible.example/v1",
+        data={"api_provider": "openai"},
+        conversation_options={
+            "chat_model": "gpt-4o",
+            "api_mode": "chat_completions",
+            "functions": [],
+            "archive_enabled": False,
+            "guest_mode_enabled": False,
+            "memory_mode": "off",
+            "temporary_memory": "off",
+        },
+    )
+    await _setup_entry(hass, entry)
+    client = await _admin_client(hass, hass_ws_client)
+    before = await _management_call(
+        client, entry=entry, section="configuration", action="get"
+    )
+    saved = await _management_call(
+        client,
+        entry=entry,
+        section="configuration",
+        action="save",
+        revision=before["revision"],
+        config={"functions": [_tool(f"tool_{index}") for index in range(128)]},
+    )
+    assert saved["valid"]
+    await hass.async_block_till_done()
+    preview = await _management_response(
+        client, entry=entry, section="configuration", action="request_preview"
+    )
+    assert preview["success"]
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    wire = _install_wire(monkeypatch, agent, [_chat_sse_text("Accepted")])
+    assert _speech(await _say(hass, agent)) == "Accepted"
+    [request] = wire.requests
+    assert len(request["body"]["tools"]) == 129
+
+
 @pytest.mark.parametrize(
     "provider,base_url,mode,limited",
     [
@@ -151,7 +190,7 @@ async def test_chat_completions_blocks_oversized_saved_catalogue_and_recovers(
             "openai",
             "https://compatible.example/v1",
             "chat_completions",
-            True,
+            False,
             id="compatible-chat",
         ),
     ],

@@ -183,6 +183,112 @@ def test_alias_rename_checks_nested_templates_and_allows_later_bindings(hass, bi
         rr.validate_result_alias_template_update(hass, previous, candidate)
 
 
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize("location", ["inside-if", "after-sequence"])
+async def test_nested_native_bindings_are_valid_through_management(
+    hass, management_agent, management_message, monkeypatch, operation, location
+):
+    rules = rr.RequestRules(MemoryStore())
+    await rules.async_initialize()
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
+    monkeypatch.setattr(
+        ui, "_async_validate_request_rule_mutation", AsyncMock(return_value=None)
+    )
+    candidate = local_rule()
+    lookup = {
+        "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
+        "data": {"function": "read_sensor", "result_alias": "lookup"},
+    }
+    use_lookup = {"set_conversation_response": "{{ lookup.level }}"}
+    params = {}
+    if operation == "update":
+        candidate["action"]["actions"] = [lookup, use_lookup]
+        saved = await rules.async_create(candidate)
+        candidate = deepcopy(saved)
+        lookup = candidate["action"]["actions"][0]
+        lookup["data"]["result_alias"] = "reading"
+        params["rule_id"] = saved["id"]
+
+    bind = {"variables": {"lookup": {"level": 42}}}
+    if location == "inside-if":
+        native_actions = [
+            {
+                "if": [{"condition": "template", "value_template": "{{ true }}"}],
+                "then": [bind, use_lookup],
+            }
+        ]
+    else:
+        native_actions = [{"sequence": [bind]}, use_lookup]
+    candidate["action"]["actions"] = [*native_actions, lookup]
+    result = await ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message("request_rules", operation, rule=candidate, **params),
+    )
+    assert result["rule"]["action"]["actions"][:-1] == native_actions
+
+
+@pytest.mark.parametrize("separate_branch", [False, True])
+def test_nested_alias_consumer_cannot_use_later_or_sibling_binding(
+    hass, separate_branch
+):
+    bind = {"variables": {"lookup": {"level": 42}}}
+    consume = {"set_conversation_response": "{{ lookup.level }}"}
+    branch = {
+        "if": [{"condition": "template", "value_template": "{{ true }}"}],
+        "then": [consume, bind],
+    }
+    if separate_branch:
+        branch["then"] = [bind]
+        branch["else"] = [consume]
+    candidate = local_rule()
+    candidate["action"]["actions"] = [
+        branch,
+        {
+            "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
+            "data": {"function": "read_sensor", "result_alias": "lookup"},
+        },
+    ]
+    with pytest.raises(HomeAssistantError, match="earlier step: lookup"):
+        rr.validate_result_alias_template_update(hass, None, candidate)
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        lambda steps: {
+            "choose": [
+                {
+                    "conditions": [
+                        {"condition": "template", "value_template": "{{ true }}"}
+                    ],
+                    "sequence": steps,
+                }
+            ]
+        },
+        lambda steps: {"repeat": {"count": 1, "sequence": steps}},
+        lambda steps: {"parallel": [{"sequence": steps}]},
+    ],
+    ids=["choose", "repeat", "parallel"],
+)
+def test_other_native_action_containers_use_local_binding_order(hass, wrap):
+    candidate = local_rule()
+    candidate["action"]["actions"] = [
+        wrap(
+            [
+                {"variables": {"lookup": {"level": 42}}},
+                {"set_conversation_response": "{{ lookup.level }}"},
+            ]
+        ),
+        {
+            "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
+            "data": {"function": "read_sensor", "result_alias": "lookup"},
+        },
+    ]
+    rr.validate_result_alias_template_update(hass, None, candidate)
+
+
 async def test_initialize_projects_defaults_without_overwriting_malformed_container() -> (
     None
 ):

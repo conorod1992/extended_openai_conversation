@@ -12,6 +12,7 @@ import yaml
 
 from custom_components.extended_openai_conversation_responses import (
     agent_config,
+    helpers,
     management_ui as ui,
     request,
     services,
@@ -99,6 +100,49 @@ async def test_request_preview_rejects_azure_tool_count_for_signed_in_caller(has
         request.validate_runtime_readiness(options, entry.data)
     with pytest.raises(HomeAssistantError, match="128-tool limit"):
         await async_preview_effective_request(hass, entry, subentry, options, "admin")
+
+
+@pytest.mark.parametrize(
+    ("entry_data", "client_url", "expected"),
+    [
+        ({}, None, 128),
+        ({"base_url": "https://eu.api.openai.com/v1"}, None, 128),
+        ({"base_url": "https://api.openai.com/v1?project=test"}, None, 128),
+        ({"api_provider": "azure"}, None, 128),
+        ({"base_url": "https://resource.openai.azure.com"}, None, 128),
+        (
+            {"api_provider": "openai", "base_url": "https://compatible.example/v1"},
+            None,
+            None,
+        ),
+        ({}, "https://compatible.example/v1", None),
+    ],
+)
+def test_tool_limit_uses_the_effective_endpoint(
+    monkeypatch, entry_data, client_url, expected
+):
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    client = None if client_url is None else SimpleNamespace(base_url=client_url)
+    assert (
+        request.build_provider_request_snapshot(
+            _options(), entry_data, client=client
+        ).tool_limit
+        == expected
+    )
+
+
+def test_official_sdk_query_preserves_the_cap_without_enabling_hosted_tools():
+    client = SimpleNamespace(
+        base_url="https://api.openai.com/v1",
+        default_query={"project": "test"},
+    )
+    assert not helpers.is_native_openai_connection({}, client=client)
+    assert (
+        request.build_provider_request_snapshot(
+            _options(), {}, client=client
+        ).tool_limit
+        == 128
+    )
 
 
 async def test_add_ha_tool_validates_available_saved_and_selected_tools(
@@ -475,7 +519,7 @@ async def _dispatch(agent, *, conditional=False):
         ("openai", "chat_completions", 127, True, False),
         ("openai", "responses", 127, True, True),
         ("openai", "auto", 127, True, True),
-        ("custom", "chat_completions", 127, True, False),
+        ("custom", "chat_completions", 127, True, True),
         ("custom", "chat_completions", 126, True, True),
     ],
 )

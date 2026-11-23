@@ -17,6 +17,7 @@ from homeassistant.helpers.script import Script, async_validate_actions_config
 
 from .. import ha_actions
 from ..const import DOMAIN
+from ..exceptions import EffectOutcomeUnknown
 from ..script_lifecycle import async_cleanup_script, async_run_script
 from ..script_structure import iter_unvalidated_script_actions
 from ..template_diagnostics import private_template_diagnostics
@@ -55,6 +56,7 @@ class _AuthorizedScriptServices:
         self._exposed_entities = exposed_entities
         self._internal_services = internal_services
         self._authorize_action = authorize_action
+        self.effect_outcome_unknown = False
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._hass.services, name)
@@ -110,9 +112,13 @@ class _AuthorizedScriptServices:
             kwargs["target"] = target
         if (domain, service) in self._internal_services:
             return await self._hass.services.async_call(domain, service, **kwargs)
-        return await ha_actions.async_dispatch_ha_service(
-            self._hass, domain, service, kwargs
-        )
+        try:
+            return await ha_actions.async_dispatch_ha_service(
+                self._hass, domain, service, kwargs
+            )
+        except EffectOutcomeUnknown:
+            self.effect_outcome_unknown = True
+            raise
 
 
 class _AuthorizedScriptHass:
@@ -173,8 +179,9 @@ class ScriptFunction(Function):
             hass,
             copy_runtime_function_config(function_config["sequence"]),
         )
+        script_hass = _AuthorizedScriptHass(hass, self, exposed_entities)
         script = Script(
-            cast(HomeAssistant, _AuthorizedScriptHass(hass, self, exposed_entities)),
+            cast(HomeAssistant, script_hass),
             sequence,
             DOMAIN,
             DOMAIN,
@@ -208,6 +215,9 @@ class ScriptFunction(Function):
                 )
                 if result is None or outcome.script_execution == "cancelled":
                     raise HomeAssistantError("Script Function did not complete")
+                # HA can recover from the step error without settling its effect.
+                if script_hass.services.effect_outcome_unknown:
+                    raise EffectOutcomeUnknown()
                 if outcome.script_execution == "aborted":
                     # HA deliberately treats a false top-level condition as a
                     # normal stop. Native aborts (timeout/error stop/missing stop
@@ -234,6 +244,12 @@ class ScriptFunction(Function):
                 return result.variables.get("_function_result", "Success")
         except asyncio.CancelledError:
             cancelled = True
+            raise
+        except EffectOutcomeUnknown:
+            raise
+        except Exception:
+            if script_hass.services.effect_outcome_unknown:
+                raise EffectOutcomeUnknown() from None
             raise
         finally:
             await async_cleanup_script(script, cancelled=cancelled)

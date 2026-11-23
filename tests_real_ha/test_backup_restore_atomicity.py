@@ -61,6 +61,51 @@ async def _setup_entry(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     assert entry.state is ConfigEntryState.LOADED
 
 
+async def test_selective_rule_restore_replaces_rules_preserving_saved_enabled_states(
+    hass,
+):
+    from custom_components.extended_openai_conversation_responses import transfer
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        async_get_request_rules,
+    )
+    from tests_real_ha.test_cross_feature_acceptance import _rule
+
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    key = (entry.entry_id, subentry.subentry_id)
+    manager = await async_get_request_rules(hass, *key)
+    original = {}
+    for enabled in (True, False):
+        name = "Enabled source rule" if enabled else "Disabled source rule"
+        rule = _rule(
+            "local_action",
+            {"actions": [{"set_conversation_response": "Done"}]},
+            phrase=name,
+        )
+        saved = await manager.async_create({**rule, "name": name, "enabled": enabled})
+        original[saved["id"]] = enabled
+    document = backup.finalize_backup_snapshot(
+        await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    )["document"]
+    for rule_id in original:
+        await manager.async_delete(rule_id)
+    destination = await manager.async_create(
+        _rule(
+            "local_action",
+            {"actions": [{"set_conversation_response": "Destination"}]},
+        )
+    )
+    assert destination["id"] not in original
+
+    result = await transfer.async_restore_transfer(
+        hass, entry, subentry, document, sections=[transfer.SECTION_REQUEST_RULES]
+    )
+    assert result["status"] == "restored"
+    restored = (await async_get_request_rules(hass, *key)).snapshot()["rules"]
+    assert {rule["id"]: rule["enabled"] for rule in restored} == original
+
+
 def _conversation_subentry(entry: MockConfigEntry):
     return next(
         subentry

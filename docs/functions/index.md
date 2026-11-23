@@ -71,7 +71,7 @@ See [Function groups](../features/function-groups.md) for lifecycle, compatibili
 
 **Assistant → Basics → Advanced request settings → Tool-call limit per request** limits executable tool calls during one conversation turn. The allowance resets on the next turn. A Function Group load has its own bound and does not use this allowance; reading a Skill file does.
 
-Chat Completions requests can advertise up to 128 Function Tools, including built-in tools. This also applies to OpenAI-compatible connections. Function Groups can keep larger catalogues available on demand when the tools loaded for any one request fit within the limit.
+Chat Completions requests to OpenAI and Azure OpenAI can advertise up to 128 Function Tools, including built-in tools. Other OpenAI-compatible endpoints enforce their own limits. Function Groups can keep larger catalogues available on demand when the tools loaded for any one request fit within the endpoint's limit.
 
 When a provider returns too many calls in one batch, eligible calls run in order
 up to the remaining allowance. Known read-only parallel batches reserve that

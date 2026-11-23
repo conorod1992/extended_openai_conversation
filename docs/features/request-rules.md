@@ -231,7 +231,7 @@ The selected capture must be present on every trigger variant and every possible
 
 ### Moving Request Rules between installations
 
-Use **Usage & Maintenance → Backup & Restore** to export a **Custom (private)** backup with **Request Rules** selected. On the destination, restore the Request Rules section to replace the assistant's saved rules, groups, priority order, matching settings, and wording alternatives. Restore configuration too if you need the matching Function Tools, and check referenced Home Assistant entities, scripts, and services. See [Backup & Restore](backup-restore.md).
+Use **Usage & Maintenance → Backup & Restore** to export a **Custom (private)** backup with **Request Rules** selected. On the destination, restore the Request Rules section to replace the assistant's saved rules, groups, priority order, matching settings, and wording alternatives. The restore preserves each rule's saved enabled state, subject to validation. Review enabled rules before restoring and check their Home Assistant entities, scripts, and services. Restore configuration too if you need the matching Function Tools. See [Backup & Restore](backup-restore.md).
 
 ## Request Rules compared with native automations
 

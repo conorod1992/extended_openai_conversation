@@ -97,7 +97,7 @@ async def _native_conversation(
 async def test_partial_ha_failure_blocks_changed_argument_retry(
     hass, monkeypatch, failure, recovery
 ):
-    if not hasattr(llm, "ToolResult"):
+    if failure != "raised" and not hasattr(llm, "ToolResult"):
         pytest.skip("HA's native ToolResult envelope is required")
     effects = []
 
@@ -124,10 +124,10 @@ async def test_partial_ha_failure_blocks_changed_argument_retry(
         _function_call_stream(
             [("first", run.name, {"targets": ["successful", "failed"]})]
         ),
-        *([] if recovery else [TimeoutError("continuation lost")]),
     ]
     first = await run.invoke()
     assert first.response.error_code is not None
+    assert run.client.responses.create.await_count == 1
     assert effects == ["successful"]
     assert "uncertain" in run.entity._execution_tool_outcomes.values()
     run.client.responses.create.side_effect = [

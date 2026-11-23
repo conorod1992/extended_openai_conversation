@@ -1009,8 +1009,14 @@ async def async_read_temporary_memory_snapshot(
     if owner_scope_id is None:
         return []
     data = await _temporary_memory_store(hass, entry_id, subentry_id).async_load()
+    now = dt_util.utcnow()
+    active = [
+        normalized
+        for _, record, expiry in _decode_stored_records(data)
+        if expiry > now and (normalized := _normalize_record_owner(record)) is not None
+    ]
     return TemporaryMemory.select_active_snapshot(
-        (record for _, record, _expiry in _decode_stored_records(data)),
+        _bounded_records(active),
         scope_id,
         owner_scope_id,
     )

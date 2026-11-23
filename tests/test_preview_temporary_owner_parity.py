@@ -7,6 +7,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     conversation as runtime,
+    temporary_memory as temporary,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_CONVERSATION_CONTINUITY,
@@ -14,6 +15,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONVERSATION_CONTINUITY_DEVICE,
     CONVERSATION_CONTINUITY_HA_DEFAULT,
     CONVERSATION_CONTINUITY_USER,
+    TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.continuity import (
     ConversationContinuity,
@@ -121,3 +123,103 @@ async def test_preview_includes_temporary_memory_available_to_same_owner(
         f"Preview dropped {missing}, which production includes for {mode}; "
         f"notes={preview['notes']}"
     )
+
+
+@pytest.mark.parametrize(
+    ("scope_id", "stored_owner", "personal"),
+    [
+        ("user:admin", None, True),
+        ("shared:household", None, False),
+        ("user:admin", " user:admin ", True),
+    ],
+)
+async def test_cold_preview_matches_live_temporary_memory(
+    hass, monkeypatch, scope_id, stored_owner, personal
+):
+    _setup_area_template_registries(hass)
+    hass.config.location_name = "Current Home"
+    hass.config.time_zone = "Europe/Dublin"
+    options = _options()
+    options[CONF_KNOWLEDGE_ENABLED] = False
+    options["temporary_memory"] = TEMPORARY_MEMORY_BALANCED
+    now = datetime.now(UTC)
+    base = replace(
+        _temporary(),
+        scope_id=scope_id,
+        owner_scope_id=stored_owner,
+        expires_at=(now + timedelta(days=1)).isoformat(),
+    )
+    retained = replace(
+        base,
+        memory_id="keep",
+        content="A retained temporary fact.",
+        updated_at=now.isoformat(),
+    )
+    overflow = replace(
+        base,
+        memory_id="overflow",
+        content="An overflow temporary fact.",
+        updated_at=(now - timedelta(days=1)).isoformat(),
+    )
+    expired = replace(
+        retained,
+        memory_id="expired",
+        content="An expired temporary fact.",
+        expires_at=(now - timedelta(seconds=1)).isoformat(),
+    )
+    unrelated = replace(
+        retained,
+        memory_id="other",
+        scope_id="user:bob",
+        owner_scope_id="user:bob",
+        content="Someone else's temporary fact.",
+    )
+    store = SimpleNamespace(
+        async_load=AsyncMock(
+            return_value={
+                "records": [
+                    asdict(row) for row in (retained, overflow, expired, unrelated)
+                ]
+            }
+        ),
+        async_save=AsyncMock(),
+    )
+    monkeypatch.setattr(temporary, "MAX_ACTIVE_RECORDS", 2)
+    monkeypatch.setattr(temporary, "_temporary_memory_store", lambda *_: store)
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
+        lambda _hass: _entity_context(),
+    )
+    entry = SimpleNamespace(entry_id="entry-1")
+    subentry = SimpleNamespace(subentry_id="agent-1", data=options)
+    cold = await temporary.async_read_temporary_memory_snapshot(
+        hass, entry.entry_id, subentry.subentry_id, scope_id, owner_scope_id=scope_id
+    )
+    cold_preview = (
+        await async_preview_effective_request(hass, entry, subentry, options, "admin")
+        if personal
+        else None
+    )
+    store.async_save.assert_not_awaited()
+    assert (
+        temporary.get_loaded_temporary_memory(
+            hass, entry.entry_id, subentry.subentry_id
+        )
+        is None
+    )
+    manager = await temporary.async_get_temporary_memory(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    warm = await manager.async_active_snapshot(scope_id, owner_scope_id=scope_id)
+    assert cold == warm
+    assert [row.memory_id for row in cold] == [retained.memory_id]
+    if cold_preview is not None:
+        warm_preview = await async_preview_effective_request(
+            hass, entry, subentry, options, "admin"
+        )
+        for preview in (cold_preview, warm_preview):
+            assert retained.content in preview["prompt"]
+            assert all(
+                row.content not in preview["prompt"]
+                for row in (overflow, expired, unrelated)
+            )

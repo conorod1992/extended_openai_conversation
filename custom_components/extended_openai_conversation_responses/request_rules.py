@@ -95,6 +95,7 @@ from .script_structure import (
     iter_script_actions,
     normalize_script_containers as _normalize_script_containers,
     rewrite_script_actions,
+    script_containers,
     script_selector_fields,
 )
 from .storage_namespaces import REQUEST_RULES_PREFIX as STORAGE_KEY_PREFIX
@@ -2423,31 +2424,81 @@ def validate_result_alias_template_update(
         return set()
 
     missing: set[str] = set()
-    for step in actions:
+
+    def visit_sequence(steps: Sequence[Mapping[str, Any]], names: set[str]) -> set[str]:
+        remaining = names.copy()
+        for step in steps:
+            remaining = visit_step(step, remaining)
+            if not remaining:
+                break
+        return remaining
+
+    def visit_step(step: Mapping[str, Any], names: set[str]) -> set[str]:
         if id(step) in disabled:
-            continue
+            return names
+        remaining = names.copy()
+        containers = list(script_containers(step))
+        nested_keys = {container.key for container in containers}
+        missing.update(
+            references(
+                {
+                    key: value
+                    for key, value in step.items()
+                    if key not in nested_keys | {"variables"}
+                },
+                names,
+            )
+        )
+        # Each branch starts with the bindings available at its parent step.
+        # After the step, a name with any possible producer is left to HA.
+        for container in containers:
+            value = container.value
+            if container.kind == "choose":
+                for branch in value:
+                    missing.update(references(branch.get("conditions"), names))
+                    remaining.intersection_update(
+                        visit_sequence(branch["sequence"], names)
+                    )
+            elif container.kind == "repeat":
+                missing.update(
+                    references(
+                        {
+                            key: item
+                            for key, item in value.items()
+                            if key not in {"sequence", "until"}
+                        },
+                        names,
+                    )
+                )
+                body = visit_sequence(value["sequence"], names)
+                missing.update(references(value.get("until"), body))
+                remaining.intersection_update(body)
+            elif container.kind == "parallel":
+                for branch in value:
+                    remaining.intersection_update(visit_step(branch, names))
+            else:
+                remaining.intersection_update(visit_sequence(value, names))
+
         variables = step.get("variables")
         if isinstance(variables, ScriptVariables):
             variables = variables.variables
         if isinstance(variables, Mapping):
             # Home Assistant renders variable definitions in insertion order.
             for name, value in variables.items():
-                missing.update(references(name, unbound))
-                missing.update(references(value, unbound))
-                unbound.discard(name)
-        else:
-            missing.update(references(step, unbound))
-        if isinstance(step, Mapping):
-            if (
-                _is_function_action(step)
-                and isinstance(data := effective_service_payload(step), Mapping)
-                and isinstance(alias := data.get("result_alias"), str)
-            ):
-                unbound.discard(alias)
-            if isinstance(response := step.get("response_variable"), str):
-                unbound.discard(response)
-        if not unbound:
-            break
+                missing.update(references(name, remaining))
+                missing.update(references(value, remaining))
+                remaining.discard(name)
+        if (
+            _is_function_action(step)
+            and isinstance(data := effective_service_payload(step), Mapping)
+            and isinstance(alias := data.get("result_alias"), str)
+        ):
+            remaining.discard(alias)
+        if isinstance(response := step.get("response_variable"), str):
+            remaining.discard(response)
+        return remaining
+
+    visit_sequence(actions, unbound)
     if missing & removed:
         raise HomeAssistantError(
             "Update the Home Assistant action templates that still use the removed "

@@ -165,7 +165,7 @@ def _absolute_http_endpoint(base_url: str) -> SplitResult:
 
 
 def supports_openai_hosted_tools(
-    api_provider: str | None, base_url: str | None
+    api_provider: str | None, base_url: str | None, *, allow_query: bool = False
 ) -> bool:
     """Return whether the entry uses OpenAI's native hosted tools endpoint."""
     if api_provider not in {None, DEFAULT_API_PROVIDER}:
@@ -183,7 +183,7 @@ def supports_openai_hosted_tools(
             and endpoint.path.rstrip("/") == _OPENAI_ENDPOINT.path
             and endpoint.username is None
             and endpoint.password is None
-            and not endpoint.query
+            and (allow_query or not endpoint.query)
             and not endpoint.fragment
         )
     except ValueError:
@@ -256,14 +256,16 @@ def resolve_provider_endpoint(
     return provider, base_url
 
 
-def is_native_openai_connection(data: Mapping[str, Any], *, client: Any = None) -> bool:
+def is_native_openai_connection(
+    data: Mapping[str, Any], *, client: Any = None, allow_query: bool = False
+) -> bool:
     """Classify the configured endpoint or the SDK's effective default."""
     base_url = data.get("base_url")
     if base_url is None or base_url == "":
         # The SDK stores an environment endpoint's query independently of
         # its base URL. Keep the same native-endpoint check in that case.
         query = getattr(client, "default_query", None)
-        if isinstance(query, Mapping) and query:
+        if not allow_query and isinstance(query, Mapping) and query:
             return False
         sdk_url = getattr(client, "base_url", None)
         # SDK versions expose their own HTTPX URL types. Both have a string host.
@@ -274,7 +276,9 @@ def is_native_openai_connection(data: Mapping[str, Any], *, client: Any = None) 
         if base_url == "":
             return False
     # An inferred Azure connection necessarily has a different endpoint.
-    return supports_openai_hosted_tools(data.get("api_provider"), base_url)
+    return supports_openai_hosted_tools(
+        data.get("api_provider"), base_url, allow_query=allow_query
+    )
 
 
 def get_token_param_for_model(model: str) -> str:

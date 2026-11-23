@@ -10,6 +10,7 @@ import sys
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
+import voluptuous as vol
 
 from custom_components.extended_openai_conversation_responses import (
     conversation as conversation_owner,
@@ -25,6 +26,9 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
 )
 from custom_components.extended_openai_conversation_responses.functions import (
     BashFunction,
+)
+from custom_components.extended_openai_conversation_responses.ha_schema import (
+    schema_for_ha,
 )
 from custom_components.extended_openai_conversation_responses.local_intents import (
     CONF_LOCAL_INTENTS_ENABLED,
@@ -429,6 +433,72 @@ async def test_assist_reports_lost_effect_acknowledgements(
         assert [
             item.content for item in await agent._memory.async_list(owner.id)
         ] == [arguments["content"]]
+
+
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("after_dispatch", [False, True])
+async def test_script_continue_on_error_preserves_uncertain_outcome(
+    hass, api_mode, after_dispatch
+):
+    effects = []
+
+    async def apply_action(call):
+        effects.append("first")
+        raise HomeAssistantError("Private acknowledgement failure")
+
+    async def finish_action(call):
+        effects.append("second")
+
+    hass.services.async_register(
+        "acceptance",
+        "first",
+        apply_action,
+        schema=None
+        if after_dispatch
+        else schema_for_ha(vol.Schema({vol.Required("required"): str})),
+    )
+    hass.services.async_register("acceptance", "second", finish_action)
+    function = {
+        "spec": {
+            "name": "script_ack_probe",
+            "description": "Run the test sequence",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {
+            "type": "script",
+            "sequence": [
+                {"action": "acceptance.first", "continue_on_error": True},
+                {"action": "acceptance.second"},
+            ],
+        },
+    }
+    agent = await _contract_agent(hass, api_mode=api_mode, functions=[function])
+    owner = await hass.auth.async_create_user(
+        "Script acknowledgement owner", group_ids=[GROUP_ID_ADMIN]
+    )
+    tool_frame = (
+        _responses_sse_tool_call if api_mode == "responses" else _chat_sse_tool_call
+    )
+    text_frame = _responses_sse_text if api_mode == "responses" else _chat_sse_text
+    replies = [tool_frame("script-ack", "script_ack_probe", {})]
+    if not after_dispatch:
+        replies.append(text_frame("The script finished."))
+    async with _transport(agent.entry, replies) as wire:
+        result = await conversation.async_converse(
+            hass=hass,
+            text="Run the test sequence",
+            agent_id=agent.entry.entry_id,
+            conversation_id=None,
+            context=Context(user_id=owner.id),
+            language="en",
+        )
+        wire.assert_complete(len(replies))
+        if after_dispatch:
+            assert "may have taken effect" in _speech(result, successful=False)
+        else:
+            assert _speech(result) == "The script finished."
+            assert "Success" in json.dumps(wire.requests[1]["body"])
+    assert effects == (["first", "second"] if after_dispatch else ["second"])
 
 
 @pytest.mark.parametrize("kind", ["raise", "error", "success", "unmatched"])
