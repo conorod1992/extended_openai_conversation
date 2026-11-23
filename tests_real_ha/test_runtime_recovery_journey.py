@@ -203,7 +203,8 @@ async def test_dirty_session_recovers_across_ha_failure_config_mutation_and_relo
 
     assert failed.response.error_code is not None
     failed_speech = failed.response.as_dict()["speech"]["plain"]["speech"]
-    assert "Check the tool configuration and permissions" in failed_speech
+    # The tool rejects B inside its opaque handler, after EOAI has dispatched it.
+    assert "The action may have taken effect" in failed_speech
     assert ha_tool.attempts == [entity_a, entity_b]
     assert ha_tool.calls == [entity_a]
     assert len(failing_wire.requests) == 1
@@ -304,7 +305,8 @@ async def test_dirty_session_recovers_across_ha_failure_config_mutation_and_relo
     output_c = json.loads(failed_outputs["call-recovery-valid-c"]["output"])
     assert output_a["result"] == {"entity_id": entity_a, "state": "ready"}
     assert output_b["result"]["status"] == "error"
-    assert "Check the tool configuration and permissions" in output_b["result"]["error"]
+    assert output_b["result"]["effect_outcome"] == "uncertain"
+    assert "The action may have taken effect" in output_b["result"]["error"]
     assert entity_b not in output_b["result"]["error"]
     assert output_c["result"]["status"] == "skipped"
     assert "failed" in output_c["result"]["error"]
