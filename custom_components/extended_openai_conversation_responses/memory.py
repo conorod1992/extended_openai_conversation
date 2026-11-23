@@ -20,7 +20,6 @@ from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .agent_maintenance import get_agent_maintenance_gate
@@ -47,7 +46,11 @@ from .provider_errors import provider_failure_category, provider_log_remediation
 from .retrieval_text import _stem, bounded_phrase, ordered_term_phrase, word_tokens
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 from .storage_namespaces import MEMORY_PREFIX as STORAGE_KEY_PREFIX
-from .strict_store import PropagatingWriteStore, async_storage_lock
+from .strict_store import (
+    AcknowledgedWriteStore,
+    PropagatingWriteStore,
+    async_storage_lock,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -172,13 +175,29 @@ _AUTOMATIC_MEMORY_FILLER_TERMS = frozenset(
 )
 
 
-_RECALL_REQUEST_CLAUSE = (
+# Match complete, topic-free courtesy clauses at the edges of a request.
+# Topic-bearing requests such as "remind me when the train arrives" must keep
+# their terms. The ranking fallback still requires strong topic overlap.
+_REMINDER_REQUEST = (
     r"i(?:\s+would|['\u2019]d)\s+appreciate\s+a\s+(?:quick\s+)?"
     r"reminder\s+(?:of|about)\s+something\s+from\s+before"
 )
+_RECALL_COURTESY_CLAUSE = (
+    r"(?:"
+    r"(?:please\s+)?help\s+me\s+remember\s+something\s+we\s+"
+    r"(?:discussed|talked\s+about)\s+(?:previously|before)"
+    r"|(?:please\s+)?recall\s+the\s+details(?:\s+right\s+now)?"
+    r"|(?:please\s+)?remind\s+me\s+when\s+you\s+have\s+a\s+moment"
+    r"|(?:(?:if|when)\s+you\s+have\s+a\s+moment,?\s+)?"
+    r"(?:would\s+you\s+mind\s+refreshing\s+my\s+memory"
+    r"|could\s+you\s+help\s+me\s+think\s+back\s+to\s+this)"
+    r"|i\s+just\s+want\s+to\s+remember,?\s+if\s+you\s+can\s+help"
+    r")"
+)
 _RECALL_REQUEST_FRAMING = re.compile(
-    rf"^\s*{_RECALL_REQUEST_CLAUSE}\s*[.!?,:;]\s*"
-    rf"|(?<=[\s.!?,:;]){_RECALL_REQUEST_CLAUSE}(?:\s*[.!?])?\s*\Z",
+    rf"^\s*(?:{_REMINDER_REQUEST}|{_RECALL_COURTESY_CLAUSE})\s*[.!?,:;]\s*"
+    rf"|(?<=[\s.!?,:;]){_REMINDER_REQUEST}(?:\s*[.!?])?\s*\Z"
+    rf"|(?<=[.!?])\s+{_RECALL_COURTESY_CLAUSE}(?:\s*[.!?])?\s*\Z",
     re.IGNORECASE,
 )
 
@@ -287,7 +306,7 @@ class HomeAssistantMemoryStorage:
         await self._store.async_save(data)
 
 
-class _EmbeddingCacheStore(Store[dict[str, Any]]):
+class _EmbeddingCacheStore(AcknowledgedWriteStore):
     """Allow an explicit removal to discard any deferred cache generation."""
 
     async def async_remove(self) -> None:
@@ -311,7 +330,7 @@ class HomeAssistantEmbeddingCacheStorage:
             atomic_writes=True,
             serialize_in_event_loop=False,
         )
-        # Register cleanup ownership without changing best-effort cache I/O.
+        # Register cleanup ownership. The Memory manager owns cache retry policy.
         get_agent_maintenance_gate(hass, entry_id, subentry_id).register_store(
             self._store
         )

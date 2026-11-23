@@ -150,6 +150,25 @@ async def test_charset_fallback_reuses_bounded_body(
     assert response.content.requested == [web.MAX_REMOTE_RESPONSE_BYTES + 1]
 
 
+@pytest.mark.parametrize("media_type", ["application/json", "application/problem+json"])
+@pytest.mark.parametrize("bom", [b"", b"\xef\xbb\xbf"])
+async def test_rest_json_uses_utf8_despite_wrong_charset(
+    hass, monkeypatch, media_type, bom
+):
+    response = _FakeResponse(bom + '{"label":"Café"}'.encode())
+    response.charset = "iso-8859-1"
+    response.headers = {"Content-Type": f"{media_type}; charset=iso-8859-1"}
+    monkeypatch.setattr(
+        web, "async_get_clientsession", lambda *_a, **_kw: _FakeSession(response)
+    )
+    config = {
+        **_rest_config(),
+        "value_template": Template("{{ value_json.label }}", hass),
+    }
+    assert await web.RestFunction().execute(hass, config, {}, None, []) == "Café"
+    assert len(response.content.requested) == 1
+
+
 async def test_unrecoverable_encoding_is_explicit_failure(hass, monkeypatch):
     response = _FakeResponse(b"\xff")
     session = _FakeSession(response)

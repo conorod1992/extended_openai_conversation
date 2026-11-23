@@ -429,13 +429,20 @@ async def _private_rest_update(data: rest.data.RestData) -> None:
     try:
         async with session.request(data._method, data._resource, **kwargs) as response:
             cast(Any, data)._eoai_no_content = response.status == 204
-            if not data._force_use_set_encoding and response.charset:
-                try:
-                    data.data = await response.text()
-                except UnicodeError, LookupError:
-                    data._force_use_set_encoding = True
-            if data._force_use_set_encoding or not response.charset:
-                data.data = await response.text(encoding=data._encoding)
+            content_type = response.headers.get("Content-Type", "")
+            media_type = content_type.partition(";")[0].strip().lower()
+            if media_type == "application/json" or media_type.endswith("+json"):
+                # JSON exchanged over HTTP uses UTF-8. Tolerate a leading BOM
+                # and ignore charset parameters on JSON media types.
+                data.data = await response.text(encoding="utf-8-sig")
+            else:
+                if not data._force_use_set_encoding and response.charset:
+                    try:
+                        data.data = await response.text()
+                    except UnicodeError, LookupError:
+                        data._force_use_set_encoding = True
+                if data._force_use_set_encoding or not response.charset:
+                    data.data = await response.text(encoding=data._encoding)
             data.headers = response.headers
             _LOGGER.debug(
                 "REST Function response received; status=%d characters=%d",

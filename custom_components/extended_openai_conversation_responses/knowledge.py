@@ -533,9 +533,12 @@ class KnowledgeLibrary:
                 description=new_description,
                 content=new_content,
                 created_at=current.created_at,
-                updated_at=dt_util.utcnow().isoformat(),
+                updated_at=current.updated_at,
                 enabled=new_enabled,
             )
+            if updated == current:
+                return current
+            updated = replace(updated, updated_at=dt_util.utcnow().isoformat())
             index = await asyncio.to_thread(_build_index, (updated,))
             self._unindex(source_id)
             self._sources[source_id] = updated
@@ -845,6 +848,10 @@ class KnowledgeLibrary:
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             snapshot = tuple(sources)
+            if not self._repair_required and snapshot == tuple(
+                self._published_sources().values()
+            ):
+                return
             index = await asyncio.to_thread(_build_index, snapshot)
             # Cancellation during construction cannot mutate published state.
             self._sources = {source.source_id: source for source in snapshot}

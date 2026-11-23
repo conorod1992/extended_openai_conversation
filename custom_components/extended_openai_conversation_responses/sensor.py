@@ -15,6 +15,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_point_in_utc_time
+from homeassistant.helpers.json import json_bytes
 from homeassistant.util import dt as dt_util
 
 from . import ExtendedOpenAIConfigEntry
@@ -26,6 +27,9 @@ from .persistence_hardening import StorageRepairRequired
 from .usage import UsageManager, async_get_usage, usage_retention_policy
 
 _LOGGER = logging.getLogger(__name__)
+
+# Leave room below Recorder's 16 KiB limit for HA's entity attributes.
+_USAGE_STATE_ATTRIBUTES_BUDGET = 15 * 1024
 
 
 async def async_setup_entry(
@@ -338,7 +342,7 @@ class LastResponseUsageSensor(UsageSensor):
         run = self._usage.latest_run
         if run is None:
             return {}
-        return {
+        attributes = {
             "completed_at": run.completed_at,
             "duration_ms": run.duration_ms,
             "models": run.models,
@@ -352,6 +356,18 @@ class LastResponseUsageSensor(UsageSensor):
             "success": run.successful,
             "error_type": run.error_type,
         }
+        if len(json_bytes(attributes)) > _USAGE_STATE_ATTRIBUTES_BUDGET:
+            # Recorder drops the entire object when it is oversized. Preserve
+            # accounting fields and shed the largest optional label list first.
+            for key in sorted(
+                ("models", "providers"),
+                key=lambda key: len(json_bytes(attributes[key])),
+                reverse=True,
+            ):
+                attributes[key] = []
+                if len(json_bytes(attributes)) <= _USAGE_STATE_ATTRIBUTES_BUDGET:
+                    break
+        return attributes
 
 
 def rebind_usage_sensors(

@@ -75,6 +75,12 @@ async def test_standalone_reminder_request_preserves_topic_matches(automatic_rec
     for query in (
         f"{question} {reminder}.",
         f"{reminder}: {question}",
+        f"Please help me remember something we discussed previously. {question} "
+        "Please recall the details right now.",
+        f"If you have a moment, would you mind refreshing my memory? {question}",
+        f"{question} Please remind me when you have a moment.",
+        f"When you have a moment, could you help me think back to this? {question} "
+        "I just want to remember, if you can help.",
         f"{question.removesuffix('?')} I’d appreciate a reminder about something from before",
     ):
         results = await memory.async_search(
@@ -82,7 +88,12 @@ async def test_standalone_reminder_request_preserves_topic_matches(automatic_rec
         )
         assert [item.content for item in results] == [target]
 
-    for query in (reminder, f"{reminder}: where is Selene's turquoise compass?"):
+    for query in (
+        reminder,
+        f"{reminder}: where is Selene's turquoise compass?",
+        "Please help me remember something we discussed previously. "
+        "Where is Selene's turquoise compass? Please recall the details right now.",
+    ):
         assert not await memory.async_search(
             "alice", query, automatic_recall=automatic_recall, allow_fuzzy_only=False
         )

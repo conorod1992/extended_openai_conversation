@@ -1,8 +1,9 @@
 """Bulk index building keeps the loop responsive and publishes complete state."""
 
 import asyncio
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import threading
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -149,3 +150,25 @@ async def test_cancelled_initialize_can_retry_after_worker_finishes(monkeypatch)
     await library.async_initialize()
     assert library.source_count == 1
     assert library.total_source_count == 2
+
+
+async def test_unchanged_knowledge_preserves_revision_and_does_not_write(monkeypatch):
+    storage = FakeStorage()
+    library = knowledge.KnowledgeLibrary(storage)
+    await library.async_initialize()
+    source = await library.async_create("Catalogue", "", "Reference text.")
+    save = AsyncMock(wraps=storage.async_save)
+    monkeypatch.setattr(storage, "async_save", save)
+    assert (
+        await library.async_update(
+            source.source_id, title="Catalogue", expected_revision=source.updated_at
+        )
+        == source
+    )
+    await library.async_replace_backup([source])
+    save.assert_not_awaited()
+    with pytest.raises(ValueError, match="changed in another tab"):
+        await library.async_update(source.source_id, expected_revision="stale")
+    await library.async_replace_backup([replace(source, enabled=False)])
+    save.assert_awaited_once()
+    assert not (await library.async_get(source.source_id)).enabled

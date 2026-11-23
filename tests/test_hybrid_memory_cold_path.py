@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+import errno
 from types import SimpleNamespace
 
 import pytest
@@ -557,3 +558,51 @@ async def test_interactive_backfill_and_model_migration_share_allowance(monkeypa
     calls.clear()
     assert await memory.async_prepare_hybrid(["alice"], "tea")
     assert calls == ["tea", "general | Black tea"]
+
+
+@pytest.mark.parametrize("error_number", [errno.EACCES, errno.ENOSPC])
+async def test_native_cache_write_failure_retries_on_demand(
+    hass, monkeypatch, error_number
+):
+    from custom_components.extended_openai_conversation_responses import (
+        memory as module,
+    )
+    from homeassistant.helpers import storage
+    from homeassistant.util.file import WriteError
+
+    cache = module.HomeAssistantEmbeddingCacheStorage(hass, "entry", "agent")
+    memory = await _memory(cache)
+    await memory.async_add("alice", "Oscar is a Cavachon", "pets", "explicit")
+
+    async def embed(texts):
+        return [[1.0, 0.0] for _ in texts]
+
+    memory.set_embedding_provider(embed)
+    now = 1.0
+    attempts = 0
+    native_write = storage.write_utf8_file_atomic
+
+    def write(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            try:
+                raise OSError(error_number, "injected disk failure")
+            except OSError as cause:
+                raise WriteError("injected atomic write failure") from cause
+        return native_write(*args, **kwargs)
+
+    monkeypatch.setattr(module, "monotonic", lambda: now)
+    monkeypatch.setattr(storage, "write_utf8_file_atomic", write)
+    assert await memory.async_prepare_hybrid(["alice"], "Oscar") == [1.0, 0.0]
+    assert memory.hybrid_status()["reason"] == "embedding_cache_not_persisted"
+    assert memory._embedding_cache_dirty
+    assert attempts == 1
+    now += 1
+    assert await memory.async_prepare_hybrid(["alice"], "Oscar") == [1.0, 0.0]
+    assert attempts == 1
+    now += module.EMBEDDING_CACHE_RETRY_SECONDS
+    assert await memory.async_prepare_hybrid(["alice"], "Oscar") == [1.0, 0.0]
+    assert attempts == 2
+    assert not memory._embedding_cache_dirty
+    assert (await cache.async_load())["embeddings"]

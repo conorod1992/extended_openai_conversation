@@ -199,6 +199,8 @@ async def test_successful_agent_test() -> None:
         (None, None, "Failed"),
         ("content_filter", None, "Failed"),
         ("stop", " ", "Failed"),
+        ("stop", "**", "Failed"),
+        ("stop", "\u200b\u2060", "Failed"),
         ("tool_calls", None, "Failed"),
         ("length", None, "Warning"),
     ],
@@ -237,6 +239,8 @@ async def test_chat_probe_requires_a_completed_text_reply(
         ("answer", "Passed"),
         ("empty", "Failed"),
         ("whitespace", "Failed"),
+        ("ornament", "Failed"),
+        ("invisible", "Failed"),
         ("refusal", "Failed"),
         ("commentary", "Failed"),
         ("incomplete_message", "Failed"),
@@ -254,6 +258,8 @@ async def test_responses_probe_requires_a_completed_final_answer(case, expected_
         response.output = []
     elif case == "whitespace":
         message.content[0].text = "  "
+    elif case in {"ornament", "invisible"}:
+        message.content[0].text = "**" if case == "ornament" else "\u200b\u2060"
     elif case == "refusal":
         message.content = [SimpleNamespace(type="refusal", refusal="I cannot answer")]
     elif case == "commentary":

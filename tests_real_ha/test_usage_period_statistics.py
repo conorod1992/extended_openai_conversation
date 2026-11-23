@@ -484,6 +484,37 @@ async def test_last_response_poll_hides_expired_detail_without_new_usage(hass, f
     assert await hass.config_entries.async_unload(agent.entry.entry_id)
 
 
+@pytest.mark.parametrize("model", ["a" * 16600, "界" * 5600])
+async def test_last_response_keeps_recorder_counters_with_oversized_labels(hass, model):
+    from homeassistant.components.recorder import history
+
+    agent = await _sensor_agent(hass, memory_mode="off", usage_run_retention_days=7)
+    entities = await _enabled_usage_entities(hass, agent)
+    usage = entities["usage"]._usage
+    entity_id = entities["last_response_usage"].entity_id
+    await hass.async_start()
+    async with usage.async_run():
+        await usage.async_record_request(
+            model=model,
+            provider="openai",
+            successful=True,
+            usage=RequestUsage(input_tokens=17, output_tokens=39, total_tokens=56),
+        )
+    await hass.async_block_till_done()
+    await async_wait_recording_done(hass)
+
+    latest = await hass.async_add_executor_job(
+        history.get_last_state_changes, hass, 1, entity_id
+    )
+    recorded = latest[entity_id][-1]
+    assert recorded.state == "56"
+    assert recorded.attributes["providers"] == ["openai"]
+    assert recorded.attributes["api_request_count"] == 1
+    assert recorded.attributes["input"] == 17
+    assert recorded.attributes["success"] is True
+    assert usage.latest_run.models == [model]
+
+
 @pytest.mark.parametrize("checkpoint_total", [0, 503])
 @pytest.mark.parametrize("reload_before_restore", [False, True])
 async def test_cumulative_restore_corrects_recorder_sum_without_new_meter_cycle(
