@@ -474,7 +474,7 @@ async def test_configured_text_result_stays_text_through_rule_action_and_speech(
         _record_action("{{ reply.result is string }}"),
     ], success="Value {answer}"))
     assert _speech(await _say(hass, agent, "run rule")) == f"Value {text}"
-    assert captured == [True]
+    assert captured == ["True" if legacy else True]
 
 
 async def test_variables_delay_and_action_keep_one_ha_script_context(hass, monkeypatch):

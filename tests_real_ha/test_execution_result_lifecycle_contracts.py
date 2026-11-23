@@ -762,6 +762,7 @@ async def test_typed_and_exact_text_results_survive_local_and_provider_consumers
     # Control the actual backend return, independently of HA's Template parsing
     # and trailing-newline rules. EOAI dispatch, HA services/scripts and provider
     # serialization all remain the production paths under test.
+    hass.config.legacy_templates = False
     execute = AsyncMock(return_value=value)
     monkeypatch.setattr(get_function("template"), "execute", execute)
     tool = {

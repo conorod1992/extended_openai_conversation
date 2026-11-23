@@ -2346,7 +2346,7 @@ def _validate_response_only_aliases(
         if environment is not None and ("{{" in value or "{%" in value):
             try:
                 template = environment.parse(value)
-            except TemplateSyntaxError:
+            except (TemplateSyntaxError, RecursionError):
                 # HA validates templates separately. Conservatively flag an
                 # unrecognised template that could refer to a retired binding.
                 return any(
