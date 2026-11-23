@@ -608,6 +608,7 @@
     "tests/test_conversation_archive.py::test_date_range_deletes_more_than_selected_limit_in_one_transaction[50]",
     "tests/test_conversation_archive.py::test_date_range_deletes_more_than_selected_limit_in_one_transaction[51]",
     "tests/test_conversation_archive.py::test_delete_selected_deduplicates_and_clears_active_mapping",
+    "tests/test_conversation_archive.py::test_expiry_hides_transcripts_before_prune_and_uses_latest_turn_after_restart",
     "tests/test_conversation_archive.py::test_home_assistant_storage_delegates_to_private_atomic_stores",
     "tests/test_conversation_archive.py::test_initialize_completes_pending_transaction_before_loading",
     "tests/test_conversation_archive.py::test_initialize_rejects_corrupted_pending_transaction[pending0]",

@@ -2032,14 +2032,15 @@ class ConversationArchive:
         }
         latest_turn_at: dict[str, datetime] = {}
         for session_id, session_turns in turns.items():
-            previous = self._latest_turn_at.get(session_id)
-            reuse = (
-                previous is not None and self._turns.get(session_id) is session_turns
+            previous = (
+                self._latest_turn_at.get(session_id)
+                if self._turns.get(session_id) is session_turns
+                else None
             )
-            if reuse:
+            if previous is not None:
                 latest_turn_at[session_id] = previous
             for turn in session_turns:
-                if not reuse:
+                if previous is None:
                     stamp = _parse_time(turn.timestamp)
                     latest = latest_turn_at.get(session_id)
                     if latest is None or stamp > latest:
