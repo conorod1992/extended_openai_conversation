@@ -102,6 +102,14 @@ def test_embedding_cache_registers_cleanup_without_binding_its_io(hass):
     assert cache._store._recovery_gate is None
 
 
+async def test_cache_erasure_discards_a_queued_generation(hass):
+    hass.loop = asyncio.get_running_loop()
+    cache = HomeAssistantEmbeddingCacheStorage(hass, "provider", "agent")
+    cache._store.async_delay_save(lambda: {"embeddings": {"pending": {}}}, delay=60)
+    await cache.async_remove()
+    assert await cache.async_load() is None
+
+
 async def test_erasure_requires_ownership_and_preserves_failed_handles_for_retry(
     hass, monkeypatch
 ):

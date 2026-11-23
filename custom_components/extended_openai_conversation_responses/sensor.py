@@ -358,13 +358,13 @@ class LastResponseUsageSensor(UsageSensor):
         }
         if len(json_bytes(attributes)) > _USAGE_STATE_ATTRIBUTES_BUDGET:
             # Recorder drops the entire object when it is oversized. Preserve
-            # accounting fields and shed the largest optional label list first.
+            # accounting fields and shed the largest optional metadata first.
             for key in sorted(
-                ("models", "providers"),
+                ("models", "providers", "error_type"),
                 key=lambda key: len(json_bytes(attributes[key])),
                 reverse=True,
             ):
-                attributes[key] = []
+                attributes[key] = None if key == "error_type" else []
                 if len(json_bytes(attributes)) <= _USAGE_STATE_ATTRIBUTES_BUDGET:
                     break
         return attributes
