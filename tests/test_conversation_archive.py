@@ -104,10 +104,26 @@ async def test_expiry_hides_transcripts_before_prune_and_uses_latest_turn_after_
     now = newest + timedelta(days=30)
     assert (await archive.async_prune(days))["deleted_sessions"] == 0
     assert len((await archive.async_get(scope.scope_id, saved.session_id))["turns"]) == 2
+    with pytest.raises(ValueError, match="text_offset exceeds"):
+        await archive.async_get(scope.scope_id, saved.session_id, text_offset=1000)
+    with pytest.raises(ValueError, match="Invalid archive backward cursor"):
+        await archive.async_get_before(scope.scope_id, saved.session_id, before_turn=3)
+    with pytest.raises(ValueError, match="Invalid archive backward text offset"):
+        await archive.async_get_before(
+            scope.scope_id, saved.session_id, before_turn=1, before_text_offset=1000
+        )
+    with monkeypatch.context() as limited:
+        limited.setattr(archive_module, "MAX_MODEL_TOOL_RESULT_CHARACTERS", 1025)
+        with pytest.raises(ValueError, match="archive page metadata exceeds result limit"):
+            await archive.async_get(scope.scope_id, saved.session_id)
+        with pytest.raises(ValueError, match="archive page metadata exceeds result limit"):
+            await archive.async_get_before(scope.scope_id, saved.session_id, before_turn=2)
 
     now += timedelta(seconds=1)
     with pytest.raises(ValueError, match="conversation session not found"):
         await archive.async_get(scope.scope_id, saved.session_id)
+    with pytest.raises(ValueError, match="conversation session not found"):
+        await archive.async_get_before(scope.scope_id, saved.session_id, before_turn=2)
     assert (await archive.async_list_sessions(scope.scope_id))["sessions"] == []
     assert (await archive.async_search(scope.scope_id, "retained transcript"))["results"] == []
     assert archive.scope_counts() == {}
@@ -1383,7 +1399,9 @@ async def test_async_get_archive_reuses_one_manager_per_agent(monkeypatch) -> No
         return storage
 
     monkeypatch.setattr(archive_module, "HomeAssistantArchiveStorage", fake_storage)
-    hass = SimpleNamespace(data={})
+    hass = SimpleNamespace(
+        data={}, config_entries=SimpleNamespace(async_get_entry=lambda _: None)
+    )
 
     first = await async_get_archive(hass, "entry-1", "agent-1")
     second = await async_get_archive(hass, "entry-1", "agent-1")
@@ -1391,6 +1409,7 @@ async def test_async_get_archive_reuses_one_manager_per_agent(monkeypatch) -> No
 
     assert first is second
     assert other is not first
+    assert first.scope_counts() == {}
     assert [(entry_id, subentry_id) for entry_id, subentry_id, _ in storages] == [
         ("entry-1", "agent-1"),
         ("entry-1", "agent-2"),

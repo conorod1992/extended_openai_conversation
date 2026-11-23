@@ -124,10 +124,13 @@ async def test_renaming_result_alias_requires_updating_native_templates(
     {"set_conversation_response": "{{ lookup.level if lookup is not undefined }}"},
     {"set_conversation_response": "{{ lookup is defined and lookup.level or 'waiting' }}"},
     {"set_conversation_response": "{{ lookup is undefined or lookup.level }}"},
+    {"set_conversation_response": "{{ 'waiting' if lookup is undefined or false else lookup.level }}"},
     {"set_conversation_response": "{% if lookup is defined and true %}{{ lookup.level }}{% elif lookup is undefined %}waiting{% else %}{{ lookup.level }}{% endif %}"},
     {"stop": "Literal {{ lookup.level }} and unmatched {{"},
     {"if": [{"condition": "template", "value_template": "{{ true }}"}],
      "then": [{"set_conversation_response": "{{ lookup.level }}", "enabled": False}]},
+    {"if": [{"condition": "template", "value_template": "{{ true }}"}],
+     "then": [{"variables": {"label": "{{ lookup | default('waiting') }}"}}]},
     {"set_conversation_response": "{{ lookup.level }}", "enabled": False},
 ])
 async def test_rule_creation_allows_optional_and_nonexecuting_result_references(

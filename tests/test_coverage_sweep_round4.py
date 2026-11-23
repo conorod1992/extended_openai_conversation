@@ -683,11 +683,11 @@ async def test_archive_query_cancels_without_waiting_for_snapshot_worker(monkeyp
         completed = True
         return "done"
 
-    monkeypatch.setattr(archives.asyncio, "to_thread", to_thread)
     from tests.test_conversation_archive import FakeArchiveStorage
 
     archive = archives.ConversationArchive(FakeArchiveStorage(), "agent")
     await archive.async_initialize()
+    monkeypatch.setattr(archives.asyncio, "to_thread", to_thread)
     archive._ensure_initialized = Mock(wraps=archive._ensure_initialized)
 
     task = asyncio.create_task(archive.async_query_snapshot("scope", query))

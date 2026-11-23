@@ -37,13 +37,14 @@ def isolate_catalogue():
     data.activate_catalog(None)
 
 
-@pytest.mark.parametrize("choices, allowed", [
-    ("{effort=low|high}", False),
-    ("{effort=low|medium}", True),
-    ("{effort}", False),
+@pytest.mark.parametrize("choices, api_mode, allowed", [
+    ("{effort=low|high}", "responses", False),
+    ("{effort=low|medium}", "responses", True),
+    ("{effort}", "responses", False),
+    ("{effort=low|max}", "chat_completions", True),
 ])
 async def test_catalogue_apply_preserves_usable_captured_reasoning(
-    hass, monkeypatch, choices, allowed
+    hass, monkeypatch, choices, api_mode, allowed
 ):
     raw = deepcopy(dict(data.BUNDLED_CATALOG))
     raw["catalog_version"] += 1
@@ -54,6 +55,7 @@ async def test_catalogue_apply_preserves_usable_captured_reasoning(
     manager.store = MemoryStore()
     manager.available_catalog = candidate
     child = _catalogue_assistant("one")
+    child.data["api_mode"] = api_mode
     hass.config_entries.async_entries.return_value = [
         SimpleNamespace(entry_id="entry", data={}, subentries={"one": child})
     ]
