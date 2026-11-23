@@ -95,7 +95,6 @@ assert.match(requestRulesDialog(panel), /id="rule-group"/);
 assert.doesNotMatch(requestRulesDialog(panel), /rule-enabled-edit|<span>Enabled<\/span>/);
 assert.match(requestRulesDialog(panel), /Set conversation response overrides it/);
 assert.match(requestRulesDialog(panel), /unless an action sets a conversation response or stops the script/);
-assert.match(requestRulesDialog(panel), /id="rule-local-model"/);
 assert.doesNotMatch(requestRulesDialog(panel), /id="rule-continue-matching"/);
 assert.doesNotMatch(requestRulesDialog(panel), /<ha-selector/);
 assert.match(requestRulesDialog(panel), /Conditions, delays, choose, repeat, parallel/);

@@ -89,7 +89,7 @@ async def test_seeded_competing_rules_preserve_eligible_public_effects(
                     )
                     final = _local([_record_action("lower-priority")], phrase=phrase, match_type=matcher)
                     if route:
-                        first["action"].update(model="gpt-5.2", continue_to_ai=True)
+                        first["action"]["continue_to_ai"] = True
                     if text == "liagt":
                         for rule in (first, final):
                             rule["phrases"].append(text)
@@ -126,7 +126,7 @@ async def test_seeded_competing_rules_preserve_eligible_public_effects(
                     ]
                     assert len(wire.requests) == int(route)
                     if route:
-                        assert wire.requests[0]["body"]["model"] == "gpt-5.2"
+                        assert wire.requests[0]["body"]["model"] == agent.subentry.data["chat_model"]
                     record(
                         stress_trace,
                         "competing_rule_witness",
@@ -731,12 +731,12 @@ async def test_first_eligible_rule_skips_false_condition(
     )
 
 
-async def test_local_rule_hands_off_to_selected_model(
+async def test_first_local_rule_hands_off_once(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
     stress_trace: list[dict],
 ) -> None:
-    """A local handoff uses the selected model without running a later rule."""
+    """A local handoff sends one request using the current model."""
     agent = await _agent(hass, API_MODE_CHAT_COMPLETIONS)
     calls: list[str] = []
 
@@ -749,7 +749,7 @@ async def test_local_rule_hands_off_to_selected_model(
         phrase="handoff chain",
         success="Unused",
     )
-    first["action"].update(continue_to_ai=True, model="gpt-5.2")
+    first["action"]["continue_to_ai"] = True
 
     later = _local(
         [_record_action("later")],
@@ -763,11 +763,11 @@ async def test_local_rule_hands_off_to_selected_model(
     assert _speech(result) == "Provider response"
     assert calls == ["first"]
     assert len(wire.requests) == 1
-    assert wire.requests[0]["body"]["model"] == "gpt-5.2"
+    assert wire.requests[0]["body"]["model"] == agent.subentry.data["chat_model"]
     record(
         stress_trace,
         "summary",
-        scenario="local_model_handoff",
+        scenario="first_local_handoff",
         executed=calls,
         provider_requests=1,
     )
@@ -809,7 +809,7 @@ async def test_local_terminal_outcome_suppresses_ai_handoff(
         phrase="terminal chain",
         success="First complete",
     )
-    first["action"].update(continue_to_ai=True, model="gpt-5.2")
+    first["action"]["continue_to_ai"] = True
     later = _local(
         [_record_action("later")],
         phrase="terminal chain",
@@ -854,7 +854,7 @@ async def test_local_failure_suppresses_ai_handoff(
         success="Should not succeed",
         failure="Failed safely",
     )
-    first["action"].update(continue_to_ai=True, model="gpt-5.2")
+    first["action"]["continue_to_ai"] = True
     later = _local(
         [_record_action("later")],
         phrase="failure chain",

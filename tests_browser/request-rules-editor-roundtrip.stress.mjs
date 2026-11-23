@@ -51,10 +51,7 @@ async function configureCase(panel, item, index, groupId) {
     await setHaSelector(panel.locator("#rule-action-sequence-host ha-selector"), actions);
     await panel.locator("#rule-success").fill(`Local success ${index + 1}`);
     await panel.locator("#rule-failure").fill(`Local failure ${index + 1}`);
-    if (item.continueAi) {
-      await panel.locator("#rule-local-continue-to-ai").check();
-      await panel.locator("#rule-local-model").fill("gpt-5-mini");
-    }
+    if (item.continueAi) await panel.locator("#rule-local-continue-to-ai").check();
     if (item.conditions) {
       const conditions = [{
         condition: "state",
@@ -129,8 +126,6 @@ async function assertCase(panel, item, index, groupId) {
 
   if (item.action === "local_action") {
     await expect(panel.locator("#rule-local-continue-to-ai")).toBeChecked({checked:item.continueAi});
-    if (item.continueAi) await expect(panel.locator("#rule-local-model")).toHaveValue("gpt-5-mini");
-    else await expect(panel.locator("#rule-local-model")).toBeHidden();
     await expect(panel.locator("#rule-success")).toHaveValue(`Local success ${index + 1}`);
     await expect(panel.locator("#rule-failure")).toHaveValue(`Local failure ${index + 1}`);
     const actions = await panel.locator("#rule-action-sequence-host ha-selector").evaluate((selector) => selector.value);

@@ -528,7 +528,11 @@ class ModelCatalogManager:
                         ):
                             effort_only_routes.add(saved_effort)
                 for rule in saved_rules:
-                    if not rule.get("enabled", True) or request_rule_repair(rule):
+                    if (
+                        not rule.get("enabled", True)
+                        or rule.get("action_type") != "model_routing"
+                        or request_rule_repair(rule)
+                    ):
                         continue
                     action = rule.get("action", {})
                     if action.get("reset"):

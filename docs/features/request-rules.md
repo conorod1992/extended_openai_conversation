@@ -245,7 +245,7 @@ In **All rules**, drag a card or use **Move up**, **Move down**, **Move to top**
 
 Rules that already had **Continue to AI** enabled keep their behavior. Other rules that used **Continue matching** are preserved in storage and backups and flagged for repair. When an enabled affected rule matches and its **Only when** conditions pass, Assist reports that it needs repair before running any actions or calling AI. Disable it to allow lower-priority rules to handle the request while you work on the repair.
 
-Put any steps that should run together in one local rule. For example, combine two action sequences in one rule, or use native **Choose** and conditions to decide which steps to run. If the old sequence ran actions and then selected a model, enable **Continue to AI** in the local rule and set its **AI handoff model**. Review the updated rule in Match Preview before using it.
+Put any steps that should run together in one local rule. For example, combine two action sequences in one rule, or use native **Choose** and conditions to decide which steps to run. Enable **Continue to AI** if the rule should send the selected input after running its actions. It uses the current conversation model. You can change that model with a separate **Model routing** command scoped to the rest of the conversation. Review the updated rule in Match Preview before using it.
 
 ### Match Preview
 
@@ -255,7 +255,7 @@ Preview does not interpret nested branches, loops, parallel actions, service out
 
 ### AI handoff
 
-In a local rule, enable **Continue to AI** to send the selected input after the actions complete successfully. A native Script Stop or a final non-null conversation response consumes the request locally. Leave **AI handoff model** blank to use the current model, or enter a fixed model for this request. For a custom Azure deployment, enter the deployment name and its underlying model. The local handoff leaves any retained conversation route in place.
+In a local rule, enable **Continue to AI** to send the selected input after the actions complete successfully. A native Script Stop or a final non-null conversation response consumes the request locally. A local handoff uses the current conversation model.
 
 
 For any rule with **Continue to AI** on, **Original request** sends the user's full request, as existing rules do. **Captured value** sends only the chosen named value from a Sentence Pattern trigger. For example, `deep think {question}` can send `why is the sky blue?` from `deep think why is the sky blue?`.

@@ -623,7 +623,7 @@ async def test_request_rule_preview_reports_selected_rule_and_skips(hass) -> Non
         "name": "One",
         "match_type": "equals",
         "action_type": "local_action",
-        "action": {"actions": [{"delay": 0}], "continue_to_ai": True, "model": "gpt-5"},
+        "action": {"actions": [{"delay": 0}], "continue_to_ai": True},
     }
 
     async def match_with_skipped(_hass, _text):
@@ -637,7 +637,6 @@ async def test_request_rule_preview_reports_selected_rule_and_skips(hass) -> Non
 
     assert [item["status"] for item in result["matched_rules"]] == ["conditional"]
     assert result["rule"]["id"] == "one"
-    assert result["would_do"]["model"] == "gpt-5"
     assert result["skipped_conditions"][0]["id"] == "skipped"
 
 

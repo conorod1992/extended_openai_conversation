@@ -205,7 +205,6 @@
       "rule-match",
       "rule-continue-to-ai",
       "rule-local-continue-to-ai",
-      "rule-local-model",
       "rule-matching-behavior",
       "rule-fuzzy"
     ],
@@ -330,15 +329,15 @@
       "tests_real_ha/test_live_config_mutation_semantics.py::test_conversation_route_survives_rule_edit_disable_and_delete"
     ]
   },
-  "capabilities/request-rules::local_handoff_model": {
+  "capabilities/request-rules::first_local_handoff": {
     "controls": [
-      "rule-local-model"
+      "rule-local-continue-to-ai"
     ],
     "classification": "runtime_effect",
-    "effect": "The first eligible local rule can run its actions and use the selected model on the provider wire. Native termination suppresses handoff.",
+    "effect": "The first eligible local rule may hand off to AI after its actions. Native termination suppresses handoff.",
     "evidence": [
       "tests_stress/test_request_rules_provider_wire.py::test_first_eligible_rule_skips_false_condition",
-      "tests_stress/test_request_rules_provider_wire.py::test_local_rule_hands_off_to_selected_model",
+      "tests_stress/test_request_rules_provider_wire.py::test_first_local_rule_hands_off_once",
       "tests_stress/test_request_rules_provider_wire.py::test_local_terminal_outcome_suppresses_ai_handoff"
     ]
   },

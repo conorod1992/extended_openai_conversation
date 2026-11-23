@@ -103,7 +103,6 @@ async function assertLocalRuleEditor(panel, {groupId, conditions, actions}) {
   await expect(panel.locator("#rule-action-type")).toHaveValue("local_action");
   await expect(panel.locator("#rule-group")).toHaveValue(groupId);
   await expect(panel.locator("#rule-local-continue-to-ai")).toBeChecked();
-  await expect(panel.locator("#rule-local-model")).toHaveValue("gpt-5.6");
   await expect(panel.locator("#rule-success")).toHaveValue("Local success");
   await expect(panel.locator("#rule-failure")).toHaveValue("Local failure");
   await expect(panel.locator("#rule-ai-input-mode")).toHaveValue("original");
@@ -163,7 +162,6 @@ test("Request Rule editor round-trips local and routing forms through reopen and
   await setHaSelector(panel.locator("#rule-condition-host ha-selector"), conditions);
   await panel.locator("#rule-advanced summary").click();
   await panel.locator("#rule-local-continue-to-ai").check();
-  await panel.locator("#rule-local-model").fill("gpt-5.6");
   await panel.locator("#rule-matching-behavior").selectOption("custom");
   await panel.locator("#rule-word-forms").uncheck();
   await panel.locator("#rule-wording").uncheck();

@@ -107,16 +107,6 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
             **({"terminal": True} if terminal else {}),
             **({"conditional": True} if conditional else {}),
             **({"functions": functions} if functions else {}),
-            **(
-                {"model": action["model"]}
-                if continue_to_ai and not terminal and action.get("model")
-                else {}
-            ),
-            **(
-                {"azure_model": action["azure_model"]}
-                if continue_to_ai and not terminal and action.get("azure_model")
-                else {}
-            ),
         }
     else:
         continue_to_ai = action.get("continue_to_ai")

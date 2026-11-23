@@ -26,7 +26,7 @@ const requestRulesStart = guideContentSource.indexOf('id: "request-rules"');
 const requestRulesEnd = guideContentSource.indexOf("\n  {\n    id:", requestRulesStart + 1);
 const requestRulesGuide = guideContentSource.slice(requestRulesStart, requestRulesEnd);
 assert.match(requestRulesGuide, /ExtendedOpenAI sentence patterns/);
-assert.match(requestRulesGuide, /optional model for that request/);
+assert.match(requestRulesGuide, /continue to AI using the current model/);
 assert.match(requestRulesGuide, /Captured value/);
 assert.match(requestRulesGuide, /Backup & Restore/);
 assert.match(requestRulesGuide, /Set conversation response overrides the generic success response/);

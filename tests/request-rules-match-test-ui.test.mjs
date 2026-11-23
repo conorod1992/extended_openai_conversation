@@ -110,14 +110,13 @@ const conditional = formatRequestRuleMatchResult(panel, {
   matched_rules:[
     {rule:{name:"Local <possible>"},status:"conditional",ai_input:{conditional:true,mode:"capture",capture:"question",provider_input:"what <next>"}},
   ],
-  would_do:{type:"local_action",action_count:1,conditional:true,consumed:null,provider_input:"conditional",model:"gpt-5",functions:[{name:"battery",result_alias:"charge"}]},
+  would_do:{type:"local_action",action_count:1,conditional:true,consumed:null,provider_input:"conditional",functions:[{name:"battery",result_alias:"charge"}]},
 });
 assert.match(conditional, /Conditional match: Local &lt;possible&gt;/);
 assert.match(conditional, /Possible AI input/);
 assert.match(conditional, /question → what &lt;next&gt;/);
 assert.match(conditional, /including battery → charge/);
 assert.match(conditional, /Actions may stop or fail/);
-assert.match(conditional, /using gpt-5/);
 
 const terminal = formatRequestRuleMatchResult(panel, {
   matched:true,rule:{name:"First",match_type:"equals",action_type:"local_action"},

@@ -548,14 +548,14 @@ def test_selective_request_rules_transfer_keeps_captured_ai_input(action_type) -
     if action_type == "local_action":
         rule["action_type"] = action_type
         rule["action"] = {
-            "model": "gpt-5",
             "actions": [{"variables": {"prepared": True}}],
             "continue_to_ai": True,
         }
     document["sections"][transfer.SECTION_REQUEST_RULES] = _rules_backup([rule])
     prepared = transfer.inspect_transfer(document, "target-agent")
     imported = prepared.request_rules["rules"][0]
-    assert imported["action"]["model"] == "gpt-5"
+    if action_type == "model_routing":
+        assert imported["action"]["model"] == "gpt-5"
     assert imported["ai_input_mode"] == "capture"
     assert imported["ai_input_capture"] == "question"
     assert "continue_matching" not in imported

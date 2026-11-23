@@ -282,7 +282,7 @@ async def test_safe_preview_matches_native_termination_without_executing_actions
     hass.services.async_register("rule_probe", "record", record)
     first = _local(actions, success="First complete")
     first["name"] = "First"
-    first["action"].update(continue_to_ai=True, model="gpt-5.6")
+    first["action"]["continue_to_ai"] = True
     await agent._request_rules.async_create(first)
     await agent._request_rules.async_create(
         {
@@ -309,9 +309,7 @@ async def test_safe_preview_matches_native_termination_without_executing_actions
         assert preview["would_do"]["consumed"] is True
         assert preview["would_do"]["provider_input"] == "none"
         assert preview["would_do"]["terminal"] is True
-        assert "model" not in preview["would_do"]
     else:
-        assert preview["would_do"]["model"] == "gpt-5.6"
         assert selected["ai_input"]["provider_input"] == "run rule"
         if certainty == "conditional":
             assert preview["conditional"] is True
@@ -329,7 +327,7 @@ async def test_safe_preview_matches_native_termination_without_executing_actions
     assert calls == markers
     assert len(sent) == (1 if reply == "Provider answer" else 0)
     if sent:
-        assert sent[0]["model"] == "gpt-5.6"
+        assert sent[0]["model"] == agent.subentry.data["chat_model"]
 
 
 @pytest.mark.parametrize(
@@ -374,9 +372,9 @@ async def test_single_rule_preview_and_native_script_suppress_terminal_ai_input(
 
 
 @pytest.mark.parametrize("stop_enabled", [False, True])
-@pytest.mark.parametrize("select_model", [False, True])
+@pytest.mark.parametrize("legacy_continue_matching", [False, True])
 async def test_conditional_local_handoff_keeps_capture_and_excludes_later_rules(
-    hass, monkeypatch, stop_enabled, select_model
+    hass, monkeypatch, stop_enabled, legacy_continue_matching
 ):
     agent = await _agent(hass)
     sent = _provider(monkeypatch, agent, ["Provider answer"])
@@ -389,9 +387,10 @@ async def test_conditional_local_handoff_keeps_capture_and_excludes_later_rules(
         ai_input_mode="capture", ai_input_capture="question",
     )
     rule["action"]["continue_to_ai"] = True
-    if select_model:
-        rule["action"]["model"] = "gpt-5.6"
-    await agent._request_rules.async_create(rule)
+    if legacy_continue_matching:
+        rule["continue_matching"] = True
+    saved = await agent._request_rules.async_create(rule)
+    assert "continue_matching" not in saved
     await agent._request_rules.async_create({
         **_local([_record_action("unreachable")]), "name": "Second", "order": 1,
     })
@@ -411,8 +410,7 @@ async def test_conditional_local_handoff_keeps_capture_and_excludes_later_rules(
     assert len(sent) == (0 if stop_enabled else 1)
     if sent:
         assert sent[0]["messages"][-1]["content"] == "rule"
-        if select_model:
-            assert sent[0]["model"] == "gpt-5.6"
+        assert sent[0]["model"] == agent.subentry.data["chat_model"]
 
 
 @pytest.mark.parametrize("match_type", ["equals", "starts_with", "ends_with", "contains"])

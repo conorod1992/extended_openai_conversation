@@ -2029,8 +2029,6 @@ def _validate_action(
             "failure_response",
             "canonical_signature",
             "continue_to_ai",
-            "model",
-            "azure_model",
         }
         unknown = set(value) - allowed
         if unknown:
@@ -2050,19 +2048,6 @@ def _validate_action(
         continue_to_ai = value.get("continue_to_ai", False)
         if not isinstance(continue_to_ai, bool):
             raise ValueError("continue_to_ai must be true or false")
-        model = value.get("model", "")
-        azure_model = value.get("azure_model", "")
-        model = "" if model is None else model
-        azure_model = "" if azure_model is None else azure_model
-        if not isinstance(model, str) or not isinstance(azure_model, str):
-            raise ValueError("A handoff model must be text")
-        model, azure_model = model.strip(), azure_model.strip()
-        if (model or azure_model) and not continue_to_ai:
-            raise ValueError("A handoff model requires Continue to AI")
-        if azure_model and not model:
-            raise ValueError("Choose an Azure deployment for the handoff")
-        if any(re.search(r"[{}]", name) for name in (model, azure_model)):
-            raise ValueError("Choose a fixed model for the AI handoff")
         return {
             "actions": actions,
             "success_response": _clean(
@@ -2075,8 +2060,6 @@ def _validate_action(
             ),
             "canonical_signature": canonical_action_signature(actions),
             "continue_to_ai": continue_to_ai,
-            **({"model": model} if model else {}),
-            **({"azure_model": azure_model} if azure_model else {}),
         }
     allowed = {
         "model",
@@ -2346,7 +2329,7 @@ def _is_function_action(step: Mapping[str, Any]) -> bool:
 MATCH_REPAIR = "_match_repair"
 CONTINUE_MATCHING_REPAIR = (
     "Continue matching was removed. Combine the required steps in one Request Rule, "
-    "or enable Continue to AI on this rule and choose a handoff model if needed."
+    "or enable Continue to AI if it should hand off after those steps."
 )
 
 
@@ -3313,10 +3296,10 @@ def validate_rule_model_request(
     ha_snapshot: ToolSnapshot | None = None,
 ) -> None:
     """Reject statically invalid routes at every Request Rule write boundary."""
-    action = rule["action"]
-    if action.get("reset") or request_rule_repair(rule):
+    if rule.get("action_type") != "model_routing" or request_rule_repair(rule):
         return
-    if rule["action_type"] == "local_action" and not action.get("model"):
+    action = rule["action"]
+    if action.get("reset"):
         return
     from .model_routing import routed_model_override
 
@@ -3760,37 +3743,8 @@ async def _async_evaluate_matched_rule(
                 successful=False,
             )
         if action["continue_to_ai"] and not stopped:
-            handoff_override = None
-            if action.get("model"):
-                from .model_routing import routed_model_override
-
-                defaults = request_options or {CONF_CHAT_MODEL: configured_model}
-                retained = runtime.peek(session_id)
-                try:
-                    handoff_override = routed_model_override(
-                        defaults,
-                        action["model"],
-                        action.get("azure_model"),
-                        entry_data or {},
-                        retained,
-                    )
-                    if request_options is not None:
-                        validate_routed_request_options(
-                            {**request_options, **retained, **handoff_override},
-                            entry_data or {},
-                        )
-                except HomeAssistantError as err:
-                    return RuleEvaluation(
-                        match,
-                        True,
-                        f"The actions completed, but the AI handoff could not use its model: {err}",
-                        successful=False,
-                    )
             return RuleEvaluation(
-                match,
-                False,
-                request_override=handoff_override,
-                provider_input=rule_provider_input(match, original_text),
+                match, False, provider_input=rule_provider_input(match, original_text)
             )
         try:
             response = resolve_result_values(

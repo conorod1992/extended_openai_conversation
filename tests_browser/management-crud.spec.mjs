@@ -162,7 +162,6 @@ test("Request Rule condition selector, local continuation, and group survive rel
   await panel.locator("#rule-success").fill("Stopped successfully");
   await panel.locator("#rule-failure").fill("Could not run the action");
   await panel.locator("#rule-advanced summary").click();
-  await panel.locator("#rule-local-model").fill("gpt-5.6");
   await expect(panel.locator("#rule-action-sequence-host ha-selector")).toHaveJSProperty("value", []);
   await panel.locator("#rule-save").click();
   await expect(panel.locator("#rule-error")).toContainText("Add at least one action before saving this rule.");
@@ -192,7 +191,6 @@ test("Request Rule condition selector, local continuation, and group survive rel
   await expect(panel.locator("#rule-success")).toHaveValue("Stopped successfully");
   await expect(panel.locator("#rule-failure")).toBeVisible();
   await expect(panel.locator("#rule-failure")).toHaveValue("Could not run the action");
-  await expect(panel.locator("#rule-local-model")).toHaveValue("gpt-5.6");
   await expect(panel.locator("#rule-group")).toHaveValue(await panel.locator(".rule-group-row").getAttribute("data-group-id"));
   const saved = await panel.locator("#rule-condition-host ha-selector").evaluate((selector) => selector.value);
   expect(saved).toEqual(condition);

@@ -7,10 +7,9 @@ function localActionSummary(response) {
   const action = response?.would_do || {};
   const count = Number(action.action_count || 0);
   const functions=(action.functions || []).map((item)=>`${item.name}${item.result_alias ? ` → ${item.result_alias}` : ""}`).join(", ");
-  const model = action.model ? ' using ' + action.model : '';
-  const outcome = action.conditional ? 'Actions may stop or fail. If they complete, AI would handle the selected input' + model + '.'
+  const outcome = action.conditional ? "Actions may stop or fail. If they complete, AI would handle the selected input."
     : action.consumed ? "The command would be consumed locally."
-    : 'After success, AI would handle the selected input' + model + '.';
+    : "After success, AI would handle the selected input.";
   return `Configured: ${count} local action${count === 1 ? "" : "s"}${functions ? `, including ${functions}` : ""}. ${outcome} No action ran; no Function result was invented.`;
 }
 

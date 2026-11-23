@@ -469,54 +469,27 @@ async def test_local_continue_to_ai_success_and_failure(hass) -> None:
     assert failed.response == "Failed safely"
 
 
-@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
-@pytest.mark.parametrize("azure", [False, True])
-async def test_local_handoff_uses_selected_model_for_one_turn(hass, api_mode, azure):
+async def test_first_local_handoff_uses_the_retained_route_and_captured_input(hass):
     rule = local_rule("Prepare then ask", ["ask {question}"], "sentence_pattern")
     rule.update(ai_input_mode="capture", ai_input_capture="question")
-    entry_data = {"api_provider": "azure"} if azure else {}
+    rule["action"]["continue_to_ai"] = True
     retained = {CONF_CHAT_MODEL: "gpt-4.1"}
-    selected = "kitchen-deployment" if azure else "gpt-4.1-mini"
-    rule["action"].update(model=selected, continue_to_ai=True)
-    if azure:
-        retained["azure_model"] = "gpt-4.1"
-        rule["action"]["azure_model"] = "gpt-4.1-mini"
-    options = {**retained, "api_mode": api_mode}
+    options = {CONF_CHAT_MODEL: "gpt-4.1-mini", "api_mode": "chat_completions"}
     runtime = RequestRuleRuntime()
     runtime.set("session", retained)
     rules = await manager(rule, local_rule("Lower priority", ["ask why?"], order=1))
     hass.services = FakeServices()
     outcome = await async_evaluate_rule(
-        hass, rules, runtime, "ask why?", "session",
-        request_options=options, entry_data=entry_data,
+        hass, rules, runtime, "ask why?", "session", request_options=options,
     )
     assert outcome.successful and not outcome.consume
     assert outcome.provider_input == "why?"
+    assert outcome.request_override is None
     assert len(hass.services.calls) == 1
-    effective = runtime.effective_options(options, "session", outcome.request_override)
-    wire = build_provider_request_snapshot(effective, entry_data, tools_required=False)
-    assert wire.api_kwargs["model"] == selected
-    if azure:
-        assert effective["azure_model"] == "gpt-4.1-mini"
+    effective = runtime.effective_options(options, "session")
+    wire = build_provider_request_snapshot(effective, {}, tools_required=False)
+    assert wire.api_kwargs["model"] == "gpt-4.1"
     assert runtime.peek("session") == retained
-    assert runtime.effective_options(options, "session")[CONF_CHAT_MODEL] == "gpt-4.1"
-
-
-@pytest.mark.parametrize(
-    ("changes", "error"),
-    [
-        ({"continue_to_ai": False, "model": "gpt-5"}, "requires Continue to AI"),
-        ({"azure_model": "gpt-5"}, "Choose an Azure deployment"),
-        ({"model": "{question}"}, "Choose a fixed model"),
-        ({"model": []}, "must be text"),
-    ],
-)
-def test_local_handoff_model_requires_usable_configuration(changes, error):
-    rule = local_rule()
-    rule["action"]["continue_to_ai"] = True
-    rule["action"].update(changes)
-    with pytest.raises(ValueError, match=error):
-        validate_rule(rule)
 
 
 async def test_first_eligible_rule_runs_once_and_preview_is_safe(hass) -> None:

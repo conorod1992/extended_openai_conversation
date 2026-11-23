@@ -13,7 +13,7 @@ async function setActions(panel, actions) {
   }, actions);
 }
 
-test("nightly local handoff models survive repeated authoring and fresh load", async ({page}, testInfo) => {
+test("nightly local handoffs survive repeated authoring and fresh load", async ({page}, testInfo) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
   let panel = page.locator("extended-openai-management-panel");
@@ -30,10 +30,7 @@ test("nightly local handoff models survive repeated authoring and fresh load", a
       action:"light.turn_on",
       target:{entity_id:`light.handoff_${index + 1}`},
     }]);
-    if (index < 4) {
-      await panel.locator("#rule-local-continue-to-ai").check();
-      await panel.locator("#rule-local-model").fill(index % 2 ? "gpt-5.6" : "gpt-5-mini");
-    }
+    if (index < 4) await panel.locator("#rule-local-continue-to-ai").check();
     if (index === 2) {
       await panel.locator("#rule-add-conditions").click();
       await panel.locator("#rule-condition-host ha-selector").evaluate((node) => {
@@ -49,7 +46,6 @@ test("nightly local handoff models survive repeated authoring and fresh load", a
     const card = panel.locator(".request-rule-card").filter({hasText:created[index]});
     await card.locator(".rule-edit").click();
     await expect(panel.locator("#rule-local-continue-to-ai")).toBeChecked({checked:index < 4});
-    if (index < 4) await expect(panel.locator("#rule-local-model")).toHaveValue(index % 2 ? "gpt-5.6" : "gpt-5-mini");
     if (index === 2) await expect(panel.locator("#rule-conditions-body")).toBeVisible();
     await panel.locator(".rule-close").first().click();
   }
@@ -61,11 +57,11 @@ test("nightly local handoff models survive repeated authoring and fresh load", a
     .map((rule) => ({
       name:rule.name,
       order:rule.order,
-      model:rule.action.model ?? null,
+      handoff: Boolean(rule.action.continue_to_ai),
       condition_count:(rule.conditions || []).length,
     })));
   expect(state.map((item) => item.name)).toEqual(created);
-  expect(state.map((item) => item.model)).toEqual(["gpt-5-mini","gpt-5.6","gpt-5-mini","gpt-5.6",null]);
+  expect(state.map((item) => item.handoff)).toEqual([true,true,true,true,false]);
   expect(state.map((item) => item.condition_count)).toEqual([0,0,1,0,0]);
 
   await testInfo.attach("request-rule-local-handoffs", {
