@@ -153,6 +153,22 @@ for (const viewport of reachabilityInventory.viewports) {
     await page.evaluate(() => { window.recoveryReachability.usageFailed = false; });
     await panel.locator("[data-usage-retry]").first().click();
     await expect(panel.locator("[data-usage-retry]")).toHaveCount(0);
+
+    await page.goto(fixtureUrl("capabilities/request-rules"));
+    const rule = panel.locator(".request-rule-card").first();
+    await expect(rule).toBeVisible();
+    await panel.evaluate(host => {
+      const saved = host._result.rules[0];
+      saved.continue_matching = true;
+      saved.action.continue_to_ai = false;
+    });
+    await rule.locator(".rule-edit").click();
+    const repair = panel.locator("#rule-matching-repair");
+    await expect(repair).toBeVisible();
+    await auditControls(page, panel, viewport.name + "/Request Rule repair", repair);
+    const confirm = repair.locator("#rule-matching-repair-confirm");
+    await confirm.check();
+    await expect(confirm).toBeChecked();
   });
 }
 
