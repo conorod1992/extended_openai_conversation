@@ -929,17 +929,26 @@ async def test_management_create_assigns_id_and_validates_canonical_function_ref
     assert updated["diagnostics"] == {}
 
 
+@pytest.mark.parametrize("alias_repair", [False, True])
 async def test_deleting_rule_returns_diagnostics_for_reactivated_patterns(
-    hass, monkeypatch
+    hass, monkeypatch, alias_repair
 ) -> None:
     from tests.test_request_rule_match_bounds import _rule
 
     monkeypatch.setattr(rr, "MAX_AGENT_PATTERN_STATES", 8)
     rules = RequestRules(MemoryStore())
-    await rules.async_replace_backup(
-        {"rules": [_rule(0, "first long command"), _rule(1, "second long command")]}
-    )
+    second = _rule(1, "second long command")
+    if alias_repair:
+        second["action"]["actions"] = [
+            {
+                "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                "data": {"function": "read_sensor", "result_alias": "lookup"},
+            },
+            {"set_conversation_response": "{lookup.value}"},
+        ]
+    await rules.async_replace_backup({"rules": [_rule(0, "first long command"), second]})
     assert set(rules.snapshot()["diagnostics"]) == {"rule-1"}
+    assert rules.snapshot()["matching_diagnostic_ids"] == []
     subentry = SimpleNamespace(
         subentry_id="agent", subentry_type="conversation", data={}
     )
@@ -968,7 +977,9 @@ async def test_deleting_rule_returns_diagnostics_for_reactivated_patterns(
         },
     )
     assert rules.match("second long command").rule["id"] == "rule-1"
-    assert result["diagnostics"] == rules.snapshot()["diagnostics"] == {}
+    assert result["diagnostics"] == rules.snapshot()["diagnostics"]
+    assert result["matching_diagnostic_ids"] == (["rule-1"] if alias_repair else [])
+    assert set(result["diagnostics"]) == ({"rule-1"} if alias_repair else set())
 
 
 # Mutation-order and stale-writer regressions formerly split by roadmap provenance.

@@ -848,7 +848,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             "rule": rule,
             "sensitive_matching_warning": rule_has_sensitive_actions(rule),
             "revision": rules.revision(),
-            "diagnostics": rules.snapshot().get("diagnostics", {}),
+            **rules.diagnostic_snapshot(),
         }
     rule_id = message.get("rule_id")
     if not isinstance(rule_id, str):
@@ -876,7 +876,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             "rule": rule,
             "sensitive_matching_warning": rule_has_sensitive_actions(rule),
             "revision": rules.revision(),
-            "diagnostics": rules.snapshot().get("diagnostics", {}),
+            **rules.diagnostic_snapshot(),
         }
     if action == "delete":
         if message.get("confirm") is not True:
@@ -887,7 +887,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         return {
             "deleted": deleted,
             "revision": rules.revision(),
-            "diagnostics": rules.snapshot().get("diagnostics", {}),
+            **rules.diagnostic_snapshot(),
         }
     if action == "duplicate":
         rule = await rules.async_duplicate(
@@ -897,7 +897,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             "rule": rule,
             "sensitive_matching_warning": rule_has_sensitive_actions(rule),
             "revision": rules.revision(),
-            "diagnostics": rules.snapshot().get("diagnostics", {}),
+            **rules.diagnostic_snapshot(),
         }
     if action == "move":
         direction = message.get("direction")
@@ -913,7 +913,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             "rule": rule,
             "sensitive_matching_warning": rule_has_sensitive_actions(rule),
             "revision": rules.revision(),
-            "diagnostics": rules.snapshot().get("diagnostics", {}),
+            **rules.diagnostic_snapshot(),
         }
     raise HomeAssistantError(f"Unknown Request Rules action: {action}")
 

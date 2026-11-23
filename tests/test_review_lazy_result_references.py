@@ -12,7 +12,7 @@ from custom_components.extended_openai_conversation_responses.const import DOMAI
 from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
     async_request_rule_match_preview,
 )
-from tests.test_request_rules import local_rule, manager
+from tests.test_request_rules import MemoryStore, local_rule, manager
 
 
 @pytest.mark.parametrize(
@@ -57,7 +57,9 @@ async def test_legacy_action_alias_stops_eligible_match_without_execution(
         await configured.async_replace_backup(backup)
     saved = configured.rule_snapshot(legacy["id"])
     assert saved["action"]["actions"][1] == consumer
-    assert "success response" in configured.snapshot()["diagnostics"][legacy["id"]]
+    status = configured.diagnostic_snapshot()
+    assert "success response" in status["diagnostics"][legacy["id"]]
+    assert status["matching_diagnostic_ids"] == [legacy["id"]]
     assert rules.RESULT_ALIAS_REPAIR not in saved
     preview = await async_request_rule_match_preview(hass, configured, "good night")
     assert preview["would_do"]["needs_repair"]
@@ -83,6 +85,7 @@ async def test_legacy_action_alias_stops_eligible_match_without_execution(
     disabled = deepcopy(saved)
     disabled["enabled"] = False
     await configured.async_update(legacy["id"], disabled)
+    assert configured.diagnostic_snapshot()["matching_diagnostic_ids"] == []
     assert configured.match("good night").rule["id"] == fallback["id"]
 
     repaired = deepcopy(saved)
@@ -168,3 +171,49 @@ async def test_group_removal_preserves_legacy_alias_execution_block():
     await configured.async_set_groups([])
     assert configured.rule_snapshot(legacy["id"])["group_id"] is None
     assert configured.match("good night").rule[rules.RESULT_ALIAS_REPAIR]
+
+
+@pytest.mark.parametrize("mutation", ["update", "create", "duplicate"])
+async def test_capacity_mutations_keep_admitted_alias_repair_in_matching(
+    monkeypatch, mutation
+):
+    monkeypatch.setattr(rules, "MAX_AGENT_PATTERN_STATES", 6)
+    first = local_rule("First", ["morning"], match_type="sentence_pattern")
+    legacy = local_rule(
+        "Legacy", ["check sensor"], match_type="sentence_pattern", order=1
+    )
+    legacy["action"]["actions"] = [
+        {
+            "action": f"{DOMAIN}.call_function",
+            "data": {"function": "read_sensor", "result_alias": "lookup"},
+        },
+        {"set_conversation_response": "{lookup.value}"},
+    ]
+    fallback = local_rule("Fallback", ["check sensor"], order=2)
+    store = MemoryStore()
+    configured = rules.RequestRules(store)
+    await configured.async_replace_backup({"rules": [first, legacy, fallback]})
+    before = deepcopy(store.data)
+    revision = configured.revision()
+    assert configured.match("check sensor").rule[rules.RESULT_ALIAS_REPAIR]
+
+    with pytest.raises(ValueError, match="state limit"):
+        if mutation == "update":
+            await configured.async_update(
+                first["id"], {**first, "phrases": ["good morning"]}
+            )
+        elif mutation == "create":
+            await configured.async_create(
+                local_rule(
+                    "Another", ["lights"], match_type="sentence_pattern", order=0
+                )
+            )
+        else:
+            await configured.async_duplicate(first["id"])
+
+    assert configured.revision() == revision
+    assert store.data == before
+    assert configured.match("check sensor").rule[rules.RESULT_ALIAS_REPAIR]
+    restored = await manager()
+    await restored.async_replace_backup(await configured.async_backup_data())
+    assert restored.match("check sensor").rule[rules.RESULT_ALIAS_REPAIR]

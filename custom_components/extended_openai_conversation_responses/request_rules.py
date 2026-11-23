@@ -638,6 +638,27 @@ class RequestRules:
                 "Request Rules changed in another tab. Reload the latest rules before saving."
             )
 
+    def _matching_diagnostic_ids(self) -> set[str]:
+        """Find diagnosed rules still admitted to the current matcher."""
+        if not self._diagnostics:
+            return set()
+        return {
+            rule["id"]
+            for rule, _, _ in self._matching_snapshot.deterministic
+            if rule["id"] in self._diagnostics
+        }
+
+    def _inactive_diagnostic_ids(self) -> set[str]:
+        """Give the legacy capacity exemption only to excluded rules."""
+        return self._diagnostics.keys() - self._matching_diagnostic_ids()
+
+    def diagnostic_snapshot(self) -> dict[str, Any]:
+        """Return safe management status for excluded and repair-blocked rules."""
+        return {
+            "diagnostics": dict(self._diagnostics),
+            "matching_diagnostic_ids": sorted(self._matching_diagnostic_ids()),
+        }
+
     def snapshot(self) -> dict[str, Any]:
         """Return a copy suitable for the management API."""
         return {
@@ -647,7 +668,7 @@ class RequestRules:
             "wording_groups": _copy_wording_groups(self._wording_groups),
             "groups": deepcopy(self._groups),
             "rules": [dict(rule) for rule in self._rules],
-            "diagnostics": dict(self._diagnostics),
+            **self.diagnostic_snapshot(),
             **(
                 {"wording_diagnostics": dict(self._wording_diagnostics)}
                 if self._wording_diagnostics
@@ -686,6 +707,7 @@ class RequestRules:
         snapshot = self.snapshot()
         snapshot.pop("revision", None)
         snapshot.pop("diagnostics", None)
+        snapshot.pop("matching_diagnostic_ids", None)
         snapshot.pop("wording_diagnostics", None)
         return snapshot
 
@@ -832,7 +854,7 @@ class RequestRules:
             if any(item["id"] == rule["id"] for item in self._rules):
                 raise ValueError("rule id already exists")
             _validate_total_pattern_states(
-                [*self._rules, rule], inactive_rule_ids=self._diagnostics
+                [*self._rules, rule], inactive_rule_ids=self._inactive_diagnostic_ids()
             )
             self._rules.append(rule)
             self._sort_and_compile()
@@ -920,7 +942,8 @@ class RequestRules:
             prospective = deepcopy(self._rules)
             prospective[index] = rule
             _validate_total_pattern_states(
-                prospective, inactive_rule_ids=set(self._diagnostics) - {rule_id}
+                prospective,
+                inactive_rule_ids=self._inactive_diagnostic_ids() - {rule_id},
             )
             self._rules[index] = rule
             self._discard_condition_checkers(rule_id)
@@ -975,7 +998,7 @@ class RequestRules:
             for order, item in enumerate(prospective):
                 item["order"] = order
             _validate_total_pattern_states(
-                prospective, inactive_rule_ids=self._diagnostics
+                prospective, inactive_rule_ids=self._inactive_diagnostic_ids()
             )
             self._rules = prospective
             self._sort_and_compile()

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
+import {applyRequestRuleMutation} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-core.js";
 import {renderRequestRules} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
 import {createRequestRuleActionSelector, createRequestRuleConditionSelector, loadRequestRuleActions, readRequestRuleActions, renameResultReferences, suggestResultAlias, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 
@@ -195,3 +196,29 @@ assert.match(requestRulesDialog(panel), /Treats simple variations such as “lig
 const diagnosticHtml = renderRequestRules({...panel,_result:{...panel._result,diagnostics:{one:"Sentence pattern is inactive: permutations are not supported"}}});
 assert.match(diagnosticHtml, /Rule inactive/);
 assert.match(diagnosticHtml, /permutations are not supported/);
+
+
+const repairPanel = {
+  ...panel,
+  _render() {},
+  _result: {
+    ...panel._result,
+    diagnostics: {one: "Use a native response variable."},
+    matching_diagnostic_ids: ["one"],
+  },
+};
+const repairHtml = renderRequestRules(repairPanel);
+assert.match(repairHtml, /Needs repair/);
+assert.match(repairHtml, /Requests stop here when this rule’s trigger matches and its conditions pass/);
+assert.match(repairHtml, /Disable the rule to let matching continue/);
+assert.doesNotMatch(repairHtml, /Rule inactive/);
+
+assert.equal(applyRequestRuleMutation(repairPanel, "update", {
+  rule: {...panel._result.rules[0], enabled: false},
+  revision: "disabled",
+  diagnostics: repairPanel._result.diagnostics,
+  matching_diagnostic_ids: [],
+}, {ruleId: "one"}), true);
+assert.deepEqual(repairPanel._result.matching_diagnostic_ids, []);
+assert.match(renderRequestRules(repairPanel), /Rule inactive/);
+assert.doesNotMatch(renderRequestRules(repairPanel), /Requests stop here/);
