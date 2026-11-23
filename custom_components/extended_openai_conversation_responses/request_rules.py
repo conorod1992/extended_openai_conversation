@@ -2346,7 +2346,7 @@ def _validate_response_only_aliases(
         if environment is not None and ("{{" in value or "{%" in value):
             try:
                 template = environment.parse(value)
-            except (TemplateSyntaxError, RecursionError):
+            except TemplateSyntaxError, RecursionError:
                 # HA validates templates separately. Conservatively flag an
                 # unrecognised template that could refer to a retired binding.
                 return any(
@@ -3040,6 +3040,9 @@ async def _async_guest_functions_allowed(
         if level > FunctionSecurity.CONTROL:
             return False
         arguments = data.get("arguments", {})
+        # Never guess a Guest target from an unresolved legacy result reference.
+        if RESULT_REFERENCE.search(json.dumps(arguments, ensure_ascii=False)):
+            return False
         await async_validate_function_arguments(hass, tool["spec"], arguments)
         control = level == FunctionSecurity.CONTROL
         if control and contains_indirect_service_call(arguments, hass):

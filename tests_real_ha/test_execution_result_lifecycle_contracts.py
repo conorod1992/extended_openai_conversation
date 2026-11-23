@@ -299,7 +299,7 @@ async def test_shared_response_variable_cannot_publish_another_invocations_alias
     result = await _say(hass, agent, "run rule")
     assert observed == [({"a": "First result"}, "First result")]
     if consumer == "success_response":
-        assert "response construction failed (Function result b is unavailable)" in _speech(
+        assert "response construction failed (missing variable b)" in _speech(
             result, successful=False
         )
         return

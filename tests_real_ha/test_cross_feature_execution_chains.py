@@ -147,6 +147,7 @@ async def test_edit_working_rule_then_execute_again_without_stale_alias(
             "result_alias": "reading",
             "step_id": "1234567890abcdef1234567890abcdef",
         },
+        "response_variable": "result_data",
     }
     created = await agent._request_rules.async_create(
         _local(

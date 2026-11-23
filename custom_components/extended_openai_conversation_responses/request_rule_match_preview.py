@@ -65,6 +65,7 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
 
     rule = match.rule
     action = rule["action"]
+    would_do: dict[str, Any]
     if rule.get(request_rules.RESULT_ALIAS_REPAIR):
         continue_to_ai = False
         would_do = {
@@ -96,7 +97,7 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
             and is_function_service_action(step)
             and isinstance(data.get("function"), str)
         ]
-        would_do: dict[str, Any] = {
+        would_do = {
             "type": "local_action",
             "action_count": len(action.get("actions", [])),
             "consumed": None

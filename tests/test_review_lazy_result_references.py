@@ -133,3 +133,38 @@ async def test_restore_preflight_retains_legacy_rule_with_unavailable_function(h
     active = await manager()
     await active.async_replace_backup(backup)
     assert legacy["id"] in active.snapshot()["diagnostics"]
+
+
+@pytest.mark.parametrize(
+    ("template", "needs_repair"),
+    [("{{ lookup.value", True), ("{{ something.value", False)],
+)
+def test_unparseable_templates_use_conservative_alias_detection(template, needs_repair):
+    rule = local_rule()
+    rule["action"]["actions"] = [
+        {
+            "action": f"{DOMAIN}.call_function",
+            "data": {"function": "read_sensor", "result_alias": "lookup"},
+        },
+        {"set_conversation_response": template},
+    ]
+    assert bool(rules.request_rule_alias_repair(rule)) is needs_repair
+
+
+async def test_group_removal_preserves_legacy_alias_execution_block():
+    legacy = local_rule()
+    legacy["group_id"] = "sensors"
+    legacy["action"]["actions"] = [
+        {
+            "action": f"{DOMAIN}.call_function",
+            "data": {"function": "read_sensor", "result_alias": "lookup"},
+        },
+        {"set_conversation_response": "{{ lookup.value }}"},
+    ]
+    configured = await manager()
+    await configured.async_replace_backup(
+        {"groups": [{"id": "sensors", "name": "Sensors"}], "rules": [legacy]}
+    )
+    await configured.async_set_groups([])
+    assert configured.rule_snapshot(legacy["id"])["group_id"] is None
+    assert configured.match("good night").rule[rules.RESULT_ALIAS_REPAIR]
