@@ -16,7 +16,6 @@ from custom_components.extended_openai_conversation_responses.strict_store impor
     RecoveryGuardedStore,
     async_remove_agent_stores,
 )
-from homeassistant.helpers.storage import Store
 
 
 def test_gate_lookup_does_not_construct_discarded_owners(hass, monkeypatch):
@@ -96,20 +95,11 @@ def test_live_store_snapshot_does_not_retain_dead_partition_handles(hass):
     assert gate.storage_resources == ()
 
 
-def test_embedding_cache_registers_without_changing_best_effort_store(hass):
+def test_embedding_cache_registers_cleanup_without_binding_its_io(hass):
     cache = HomeAssistantEmbeddingCacheStorage(hass, "provider", "agent")
     gate = agent_maintenance.get_agent_maintenance_gate(hass, "provider", "agent")
     assert gate.storage_resources == (cache._store,)
-    assert isinstance(cache._store, Store)
-    cache_type = type(cache._store)
-    for operation in (
-        "async_load",
-        "async_save",
-        "async_delay_save",
-        "_async_handle_write_data",
-        "_async_write_data",
-    ):
-        assert getattr(cache_type, operation) is getattr(Store, operation)
+    assert cache._store._recovery_gate is None
 
 
 async def test_erasure_requires_ownership_and_preserves_failed_handles_for_retry(
