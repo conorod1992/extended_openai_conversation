@@ -973,7 +973,7 @@ def validate_runtime_readiness(
     model_capabilities: Mapping[str, Any] | None = None,
     client: Any = None,
     ha_snapshot: ToolSnapshot | None = None,
-    reserve_configured_ha_tools: bool = False,
+    previous_model_capabilities: Mapping[str, Any] | None = None,
 ) -> ProviderRequestSnapshot:
     """Validate the initial Conversation catalogue for supported request scopes.
 
@@ -1001,10 +1001,11 @@ def validate_runtime_readiness(
     )
     from .skills import SkillManager
 
+    tools_required = conversation_tools_required(options)
     snapshot = build_provider_request_snapshot(
         options,
         entry_data,
-        tools_required=conversation_tools_required(options),
+        tools_required=tools_required,
         model_capabilities=model_capabilities,
         client=client,
     )
@@ -1019,13 +1020,31 @@ def validate_runtime_readiness(
         else validate_function_groups(options.get(CONF_FUNCTION_GROUPS, []), configured)
     )
     budget_available = function_call_budget_available(options)
+    reserve_configured_ha_tools = False
     if ha_snapshot is not None:
         configured = ha_snapshot.project(configured)
-    elif reserve_configured_ha_tools:
-        configured = [
-            {**tool, "ha_available": True} if is_ha_tool(tool) else tool
-            for tool in configured
-        ]
+    elif (
+        previous_model_capabilities is not None
+        and budget_available
+        and any(is_ha_tool(tool) for tool in configured)
+    ):
+        try:
+            previous = build_provider_request_snapshot(
+                options,
+                entry_data,
+                tools_required=tools_required,
+                model_capabilities=previous_model_capabilities,
+                client=client,
+            )
+        except HomeAssistantError:
+            pass
+        else:
+            if previous.tool_limit is None:
+                reserve_configured_ha_tools = True
+                configured = [
+                    {**tool, "ha_available": True} if is_ha_tool(tool) else tool
+                    for tool in configured
+                ]
 
     selected_skills = options.get(CONF_SKILLS, []) or []
     manager = SkillManager.get_loaded_instance() if selected_skills else None

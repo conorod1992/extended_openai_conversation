@@ -429,35 +429,19 @@ class ModelCatalogManager:
         connection: _SavedConnection,
         metadata: Mapping[str, Any],
     ) -> None:
-        from .request import (
-            build_provider_request_snapshot,
-            capability_model_identity,
-            conversation_tools_required,
-            validate_runtime_readiness,
-        )
+        from .request import capability_model_identity, validate_runtime_readiness
 
         current = catalog_model_metadata(
             self.catalog,
             capability_model_identity(options, connection.entry_data),
             provider=connection.provider,
         )
-        try:
-            previous = build_provider_request_snapshot(
-                options,
-                connection.entry_data,
-                tools_required=conversation_tools_required(options),
-                model_capabilities=current,
-                client=connection.client,
-            )
-        except HomeAssistantError:
-            previous = None
         validate_runtime_readiness(
             options,
             connection.entry_data,
             model_capabilities=metadata,
             client=connection.client,
-            reserve_configured_ha_tools=previous is not None
-            and previous.tool_limit is None,
+            previous_model_capabilities=current,
         )
 
     def _candidate_preserves_saved_defaults(
