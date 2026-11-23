@@ -48,9 +48,10 @@ Functions or retain request-owned tool/API objects for background execution. A
 source can implement its own scheduling capability as part of its native behavior.
 Both Responses and Chat Completions use the same live capability adapter.
 
-If a tool fails after it may have acted, a later turn in the same conversation
-cannot retry it with changed arguments until the unresolved exchange is
-acknowledged. A returned HA error result has the same protection as an exception.
+If a dispatched tool raises or returns an error and its effect is uncertain,
+ExtendedOpenAI ends the current provider turn and reports that the action may have
+taken effect. A later turn in the same conversation cannot retry the action with
+changed arguments until the unresolved exchange is acknowledged.
 The same conservative guard applies after a failed provider continuation when
 schema normalization changed the submitted arguments or uses validators whose
 value preservation cannot be established. The native tool owns its own

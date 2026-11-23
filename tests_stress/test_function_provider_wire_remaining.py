@@ -386,22 +386,11 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
                                 instructions="Read unavailable dependency",
                                 llm_api=caller,
                             )
-                            if kind == "script":
-                                # The registered HA action raised after dispatch.
-                                # A caller cannot infer that it was effect-free.
-                                with pytest.raises(EffectOutcomeUnknown):
-                                    await ai_task.async_generate_data(hass, **task_options)
-                                assert len(wire.requests) == 1
-                            else:
-                                failed_task = await ai_task.async_generate_data(
-                                    hass, **task_options
-                                )
-                                assert failed_task.data == "Completed"
-                                assert len(wire.requests) == 2
-                                native_error = _provider_result(
-                                    wire.requests[1], api_mode, call_id
-                                )
-                                assert native_error.get("status") == "error", native_error
+                            # The caller API exposes an opaque HA tool. Its
+                            # failure cannot prove the dispatch was effect-free.
+                            with pytest.raises(EffectOutcomeUnknown):
+                                await ai_task.async_generate_data(hass, **task_options)
+                            assert len(wire.requests) == 1
                             record(
                                 stress_trace,
                                 "shared_backend_failure",
