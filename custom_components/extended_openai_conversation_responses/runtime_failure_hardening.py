@@ -14,7 +14,7 @@ from homeassistant.helpers import intent
 
 from .const import CONF_API_MODE, CONF_CHAT_MODEL, DEFAULT_API_MODE, DEFAULT_CHAT_MODEL
 from .debug import record_current_provider_failure
-from .exceptions import TokenLengthExceededError
+from .exceptions import EffectOutcomeUnknown, TokenLengthExceededError
 from .model_lifecycle import record_entity_retirement_failure
 from .operational_errors import log_handled_failure
 from .provider_errors import (
@@ -80,7 +80,11 @@ def _conversation_error_result(
             active_logger.warning("Conversation failed %s: %s", context, err)
         else:
             log_handled_failure(active_logger, f"Conversation failed {context}", err)
-        message = f"Something went wrong: {err}"
+        message = (
+            str(err)
+            if isinstance(err, EffectOutcomeUnknown)
+            else f"Something went wrong: {err}"
+        )
 
     response = intent.IntentResponse(language=user_input.language)
     response.async_set_error(intent.IntentResponseErrorCode.UNKNOWN, message)

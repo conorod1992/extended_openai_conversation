@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import partial
+import logging
 from typing import Any
 
 from homeassistant.const import (
@@ -25,10 +26,15 @@ from homeassistant.helpers import (
     target as target_helpers,
 )
 
+from .exceptions import EffectOutcomeUnknown
+from .function_tool_recovery import should_report_uncertain_effects
 from .ha_permissions import async_require_control_permission, get_active_ha_context
 from .ha_service_compat import prepare_service_dispatch
 from .indirect_targets import validate_indirect_targets
+from .operational_errors import log_handled_failure
 from .schema_errors import SCHEMA_ERRORS as _SERVICE_SCHEMA_ERRORS
+
+_LOGGER = logging.getLogger(__name__)
 
 ActionTargetRevalidator = Callable[[HomeAssistant, set[str]], None]
 _ACTIVE_ACTION_TARGET_REVALIDATOR: ContextVar[ActionTargetRevalidator | None] = (
@@ -174,12 +180,17 @@ async def async_dispatch_ha_service(
     )
     try:
         response = await registry.async_call(domain=domain, service=service, **kwargs)
-    except _SERVICE_SCHEMA_ERRORS as err:
-        # Home Assistant has transitioned service schemas from voluptuous to
-        # probatio. Keep the integration's action boundary stable across both: a
-        # schema rejection is an ordinary Home Assistant action failure that the
-        # caller can surface to the model/user, not an uncaught conversation error.
-        raise HomeAssistantError(str(err)) from err
+    except Exception as err:
+        if receipt is not None and should_report_uncertain_effects():
+            # The dispatcher already crossed the effect boundary. Even a
+            # schema error from an adapter or delegated handler is ambiguous.
+            log_handled_failure(
+                _LOGGER, "Home Assistant action acknowledgement failed", err
+            )
+            raise EffectOutcomeUnknown() from None
+        if isinstance(err, _SERVICE_SCHEMA_ERRORS):
+            raise HomeAssistantError(str(err)) from err
+        raise
     execution_completed(receipt)
     return response
 

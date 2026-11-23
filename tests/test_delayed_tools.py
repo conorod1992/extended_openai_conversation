@@ -194,7 +194,7 @@ async def test_scheduled_waiter_drops_request_context_after_edit_and_revert(
 
 
 async def test_schedule_reconciles_after_lost_store_acknowledgement(hass) -> None:
-    """A committed schedule remains operational after Store reports failure."""
+    """A confirmed schedule is returned after Store loses the acknowledgement."""
     persisted: dict[str, Any] = {}
 
     async def save_then_fail(payload: dict[str, Any]) -> None:
@@ -210,16 +210,14 @@ async def test_schedule_reconciles_after_lost_store_acknowledgement(hass) -> Non
     manager._store = SimpleNamespace(async_save=save_then_fail, async_load=load)
     context = SimpleNamespace(context=Context(user_id="user-1"), device_id="device-1")
 
-    with pytest.raises(OSError, match="directory fsync acknowledgement failed"):
-        await manager.async_schedule(
-            _entity(hass),
-            "control_light",
-            {"delay": {"seconds": 30}, "value": 1},
-            context,
-        )
+    scheduled = await manager.async_schedule(
+        _entity(hass),
+        "control_light",
+        {"delay": {"seconds": 30}, "value": 1},
+        context,
+    )
 
-    assert len(manager._records) == 1
-    scheduled = next(iter(manager._records.values()))
+    assert manager._records == {scheduled.call_id: scheduled}
     assert persisted["calls"] == [scheduled.as_dict()]
 
 

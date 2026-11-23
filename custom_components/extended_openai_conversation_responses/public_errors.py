@@ -4,7 +4,11 @@ from http import HTTPStatus
 
 from homeassistant.exceptions import HomeAssistantError, TemplateError
 
-from .exceptions import EffectReplayBlocked, FunctionResponseParseError
+from .exceptions import (
+    EffectOutcomeUnknown,
+    EffectReplayBlocked,
+    FunctionResponseParseError,
+)
 
 
 class SanitizedTemplateError(HomeAssistantError):
@@ -67,6 +71,7 @@ def sanitize_backend_error(error: BaseException) -> BaseException:
             SanitizedUnexpectedBackendError,
             SanitizedRequestError,
             InvalidIndirectTarget,
+            EffectOutcomeUnknown,
         ),
     ):
         return public
@@ -91,6 +96,8 @@ def sanitize_template_error(error: BaseException) -> BaseException:
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
+        if isinstance(current, EffectOutcomeUnknown):
+            return error
         if isinstance(current, TemplateError):
             return SanitizedTemplateError()
         current = current.__cause__ or current.__context__

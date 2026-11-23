@@ -2149,7 +2149,9 @@ async def test_reasoning_history_model_transitions(hass, mode, change, tmp_path)
             content, (conversation.ToolResultContent, conversation.SystemContent)
         )
     )
-    assert reasoning_content.native.model_dump()["encrypted_content"] == "encrypted"
+    assert (
+        reasoning_content.native.item.model_dump()["encrypted_content"] == "encrypted"
+    )
 
     entity.subentry.data = {**entity.subentry.data, CONF_CHAT_MODEL: "gpt-5-mini"}
     log.async_add_user_content(conversation.UserContent(content="Back"))
@@ -2160,6 +2162,27 @@ async def test_reasoning_history_model_transitions(hass, mode, change, tmp_path)
             "encrypted_content"
         ]
         == "encrypted"
+    )
+
+    # A different connection using the same model can consume the visible
+    # history, but cannot consume any previously retained reasoning item.
+    entity.entry.runtime_data.base_url = "https://independent.example/v1"
+    log.async_add_user_content(
+        conversation.UserContent(content="Use the new connection")
+    )
+    await entity._async_handle_chat_log(
+        log,
+        [],
+        [],
+        request_options={
+            **entity.subentry.data,
+            CONF_API_MODE: API_MODE_RESPONSES,
+            CONF_WEB_SEARCH: False,
+        },
+    )
+    assert not any(item["type"] == "reasoning" for item in requests[3]["input"])
+    assert any(
+        item.get("content") == "Historical explanation" for item in requests[3]["input"]
     )
 
 

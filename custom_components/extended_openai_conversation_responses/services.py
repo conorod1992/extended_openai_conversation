@@ -287,7 +287,6 @@ async def async_set_function_tools_enabled(
         context = get_active_ha_context()
         snapshot = await async_capacity_ha_snapshot(
             hass,
-            entry,
             persisted,
             user_id if user_id is not None or context is None else context.user_id,
         )
@@ -326,7 +325,6 @@ async def async_set_function_groups_enabled(
         context = get_active_ha_context()
         snapshot = await async_capacity_ha_snapshot(
             hass,
-            entry,
             persisted,
             user_id if user_id is not None or context is None else context.user_id,
         )

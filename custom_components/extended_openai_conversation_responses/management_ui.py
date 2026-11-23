@@ -344,7 +344,7 @@ async def _async_validate_configuration_request(
     """Validate proposed defaults and every retained route at one shared boundary."""
     from .request_rules import validate_saved_model_routes
 
-    ha_snapshot = await _async_capacity_ha_snapshot(hass, entry, config, user_id)
+    ha_snapshot = await _async_capacity_ha_snapshot(hass, config, user_id)
     _validated_model_request(config, entry.data, subentry.data, ha_snapshot=ha_snapshot)
     rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
     validate_saved_model_routes(
@@ -407,7 +407,7 @@ async def _persist_function_configuration(
             repaired_group=repaired_group,
         ).persisted
     if ha_snapshot is None:
-        ha_snapshot = await _async_capacity_ha_snapshot(hass, entry, candidate, user_id)
+        ha_snapshot = await _async_capacity_ha_snapshot(hass, candidate, user_id)
     if ha_snapshot is not None:
         validate_runtime_readiness(
             candidate,
@@ -1708,7 +1708,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             dict(duplicate.data),
             entry.data,
             ha_snapshot=await _async_capacity_ha_snapshot(
-                hass, entry, duplicate.data, request.user_id
+                hass, duplicate.data, request.user_id
             ),
         )
         hass.config_entries.async_add_subentry(entry, duplicate)
@@ -1740,7 +1740,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             parsed["config"],
             entry.data,
             ha_snapshot=await _async_capacity_ha_snapshot(
-                hass, entry, parsed["config"], request.user_id
+                hass, parsed["config"], request.user_id
             ),
         )
         if message.get("mode", "current") == "current":
@@ -1788,7 +1788,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             parsed["config"],
             entry.data,
             ha_snapshot=await _async_capacity_ha_snapshot(
-                hass, entry, parsed["config"], request.user_id
+                hass, parsed["config"], request.user_id
             ),
         )
         mode = message.get("mode", "current")

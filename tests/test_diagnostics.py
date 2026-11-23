@@ -1,5 +1,7 @@
 """Tests for non-sensitive integration diagnostics."""
 
+import asyncio
+from threading import get_ident
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -370,8 +372,19 @@ def _stats(**values):
 
 async def test_config_entry_diagnostics_projects_populated_runtime_without_secrets(
     hass,
+    monkeypatch,
 ) -> None:
     """The public HA diagnostics endpoint should aggregate safe runtime projections."""
+    loop_thread = get_ident()
+    installed_version = diagnostics_module.version
+
+    def read_version_off_loop(package):
+        assert get_ident() != loop_thread
+        return installed_version(package)
+
+    # The unit HA fixture otherwise runs executor jobs inline.
+    monkeypatch.setattr(hass, "async_add_executor_job", asyncio.to_thread)
+    monkeypatch.setattr(diagnostics_module, "version", read_version_off_loop)
     secret = "CANARY_DIAGNOSTICS_SECRET"
     entry = _diagnostics_entry(data={"api_key": secret})
     hass.data[SUBSYSTEM_STATUS_KEY] = {

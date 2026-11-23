@@ -96,6 +96,8 @@ from .delayed_tools import (
     DelayedToolManager,
 )
 from .exceptions import (
+    EffectOutcomeUnknown,
+    EffectReplayBlocked,
     FunctionResponseParseError,
     ParseArgumentsFailed,
     TokenLengthExceededError,
@@ -659,17 +661,23 @@ def _discard_conditional_drafts(
 def _responses_reasoning_route(
     authentication: tuple[str, str], client: Any, options: Mapping[str, Any]
 ) -> str:
-    """Bind encrypted items to the client connection and routed deployment."""
+    """Bind opaque reasoning to the connection and effective model route."""
     endpoint = getattr(client, "base_url", None)
+    query = getattr(client, "default_query", None)
+    organization = getattr(client, "organization", None)
+    project = getattr(client, "project", None)
     route = (
         authentication,
         str(endpoint)
         if isinstance(endpoint, str) or isinstance(getattr(endpoint, "host", None), str)
         else None,
+        dict(query) if isinstance(query, Mapping) else None,
+        organization if isinstance(organization, str) else None,
+        project if isinstance(project, str) else None,
         options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
         options.get("azure_model"),
     )
-    return sha256(json.dumps(route).encode()).hexdigest()
+    return sha256(json.dumps(route, sort_keys=True).encode()).hexdigest()
 
 
 def _serialize_response_item(item: Any) -> dict[str, Any]:
@@ -1021,11 +1029,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             == "azure"
         )
         client_auth = getattr(provider_client, "_eoai_authentication_snapshot", None)
-        authentication = (
-            provider_authentication_snapshot(self.entry)
-            if isinstance(client_auth, tuple) or azure
-            else None
-        )
+        authentication = provider_authentication_snapshot(self.entry)
         if isinstance(client_auth, tuple) and client_auth != authentication:
             raise HomeAssistantError(
                 "Provider connection is changing; retry the request"
@@ -1170,8 +1174,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             reasoning_route = (
                 _responses_reasoning_route(authentication, provider_client, options)
                 if provider_snapshot.api_mode == API_MODE_RESPONSES
-                and authentication is not None
-                and azure
                 else None
             )
 
@@ -1238,7 +1240,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     CONF_FUNCTION_TOOL_ERROR_RECOVERY,
                     DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,
                 )
-                is True
+                is True,
+                report_uncertain_effects=True,
             )
             shorten_tool_call_id = options.get(
                 CONF_SHORTEN_TOOL_CALL_ID,
@@ -2968,11 +2971,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 ):
                     result = str(result)
         except HomeAssistantError as err:
-            from .exceptions import EffectReplayBlocked
-
             if (
                 delayed
-                or isinstance(err, (EffectReplayBlocked, FunctionResponseParseError))
+                or isinstance(
+                    err,
+                    (
+                        EffectOutcomeUnknown,
+                        EffectReplayBlocked,
+                        FunctionResponseParseError,
+                    ),
+                )
                 or strict_execution_failures_enabled()
                 or function_execution_errors_propagate()
             ):

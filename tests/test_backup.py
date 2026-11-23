@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import timedelta
+from threading import get_ident
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -413,6 +415,16 @@ def test_backup_secret_redaction_preserves_schema_property_names() -> None:
 async def test_create_full_backup_contains_only_durable_safe_state(
     monkeypatch, hass
 ) -> None:
+    loop_thread = get_ident()
+    read_version = backup._integration_version
+
+    def read_version_off_loop():
+        assert get_ident() != loop_thread
+        return read_version()
+
+    # The unit HA fixture otherwise runs executor jobs inline.
+    monkeypatch.setattr(hass, "async_add_executor_job", asyncio.to_thread)
+    monkeypatch.setattr(backup, "_integration_version", read_version_off_loop)
     source = _document()
     config = source["agent"]["config"]
     config["prompt"] = "Never reveal sk-1234567890abcdef"

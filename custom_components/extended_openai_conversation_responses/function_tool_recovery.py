@@ -44,6 +44,7 @@ class ToolRecoveryState:
     limit: int = _MAX_RECOVERIES_PER_CONVERSATION
     used: int = 0
     malformed_calls: dict[str, CorrectableToolFailure] = field(default_factory=dict)
+    report_uncertain_effects: bool = False
 
     def consume(self) -> bool:
         """Reserve one recovery slot, returning False when the cap is exhausted."""
@@ -94,6 +95,12 @@ def strict_execution_failures_enabled() -> bool:
     """Return whether arbitrary runtime failures must remain fail-fast."""
     state = current_tool_recovery_state()
     return state is not None and state.enabled
+
+
+def should_report_uncertain_effects() -> bool:
+    """Whether the provider request owns a public response for an unclear effect."""
+    state = current_tool_recovery_state()
+    return state is not None and state.report_uncertain_effects
 
 
 def provider_argument_text(arguments: Any) -> str:

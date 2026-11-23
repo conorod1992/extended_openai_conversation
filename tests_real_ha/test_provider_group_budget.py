@@ -27,7 +27,7 @@ from tests_real_ha.test_provider_wire_e2e import (
 )
 
 
-@pytest.mark.parametrize("provider", ["openai", "azure"])
+@pytest.mark.parametrize("provider", ["openai", "azure", "compatible"])
 @pytest.mark.parametrize("configured_count", [128, 129])
 async def test_chat_completions_blocks_oversized_saved_catalogue_and_recovers(
     hass, hass_ws_client, monkeypatch, provider, configured_count
@@ -46,10 +46,17 @@ async def test_chat_completions_blocks_oversized_saved_catalogue_and_recovers(
     }
     if provider == "azure":
         options["azure_model"] = "gpt-4o"
+    endpoints = {
+        "azure": "https://resource.openai.azure.com",
+        "compatible": "https://compatible.example/v1",
+    }
     entry = _make_entry(
         include_ai_task=False,
-        base_url="https://resource.openai.azure.com" if provider == "azure" else None,
-        data={"api_provider": provider, "api_version": "2024-10-21"},
+        base_url=endpoints.get(provider),
+        data={
+            "api_provider": "azure" if provider == "azure" else "openai",
+            "api_version": "2024-10-21",
+        },
         conversation_options=options,
     )
     await _setup_entry(hass, entry)
@@ -144,7 +151,7 @@ async def test_chat_completions_blocks_oversized_saved_catalogue_and_recovers(
             "openai",
             "https://compatible.example/v1",
             "chat_completions",
-            False,
+            True,
             id="compatible-chat",
         ),
     ],

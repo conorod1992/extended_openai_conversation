@@ -295,7 +295,7 @@ async def async_collect_backup_snapshot(
             "format": BACKUP_FORMAT,
             "version": PRIVATE_BACKUP_VERSION,
             "created_at": dt_util.utcnow().isoformat(),
-            "integration_version": _integration_version(),
+            "integration_version": await asyncio.to_thread(_integration_version),
             "provider_connection": deepcopy(dict(getattr(entry, "data", {}))),
             "agent": {
                 "title": subentry.title,
@@ -762,7 +762,7 @@ async def _snapshot_for_restore(
         guest_mode_schedule,
         request_rule_backup,
         dt_util.utcnow().isoformat(),
-        _integration_version(),
+        await asyncio.to_thread(_integration_version),
         archive_active=archive_active,
         authoritative_config=True,
         usage_snapshotted=include_usage,

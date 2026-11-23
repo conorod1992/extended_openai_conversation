@@ -133,7 +133,12 @@ from .debug import (
     record_system_prompt,
 )
 from .entity import ExtendedOpenAIBaseLLMEntity
-from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
+from .exceptions import (
+    EffectOutcomeUnknown,
+    FunctionLoadFailed,
+    FunctionNotFound,
+    InvalidFunction,
+)
 from .function_execution import (
     function_execution_errors_propagate,
     propagate_function_execution_errors,
@@ -149,6 +154,7 @@ from .function_tool_quarantine import (
     _runtime_configured_function_tools as configured_function_tools_from_data,
     _runtime_validate_function_groups as validate_function_groups,
 )
+from .function_tool_recovery import should_report_uncertain_effects
 from .function_tool_resolution import (
     configured_function_tool_for_execution,
     current_configuration_data,
@@ -206,6 +212,7 @@ from .model_tool_results import (
     model_memory_as_dict,
     omit_null_paging_cursor,
 )
+from .mutation_outcomes import mutation_failure
 from .operation_settlement import async_settle_owned_operation, async_wait_owned_cleanup
 from .operational_errors import log_handled_failure
 from .persistence_hardening import StorageRepairRequired
@@ -2571,6 +2578,8 @@ class ExtendedOpenAIAgentEntity(
                     return await super()._execute_function_tool(
                         resolved_tool, tool_input, llm_context, guest_entities
                     )
+            except EffectOutcomeUnknown:
+                raise
             except Exception:
                 if policy.guest_active:
                     _LOGGER.warning("Guest-permitted tool execution failed")
@@ -2621,10 +2630,19 @@ class ExtendedOpenAIAgentEntity(
                 result = await self._async_execute_temporary_memory_tool(
                     function_tool["function"]["operation"], tool_input.tool_args
                 )
-        except (RuntimeError, ValueError) as err:
-            result = {"status": "error", "error": str(err)}
-        except Exception:
-            if function_type in {"memory", "temporary_memory"}:
+        except Exception as err:
+            memory_tool = function_type in {"memory", "temporary_memory"}
+            if (
+                memory_tool
+                and should_report_uncertain_effects()
+                and (failure := mutation_failure(err)) is not None
+                and failure.outcome == "uncertain"
+            ):
+                log_handled_failure(_LOGGER, "Memory write acknowledgement failed", err)
+                raise EffectOutcomeUnknown() from None
+            if isinstance(err, (RuntimeError, ValueError)):
+                result = {"status": "error", "error": str(err)}
+            elif memory_tool:
                 _LOGGER.exception("Memory tool failed")
                 result = {
                     "status": "unavailable",

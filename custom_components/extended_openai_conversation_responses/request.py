@@ -130,18 +130,7 @@ CONTINUE_CONVERSATION_TOOL = {
 START_FRESH_CONVERSATION_TOOL_NAME = "start_fresh_conversation"
 
 
-def provider_tool_limit(
-    entry_data: Mapping[str, Any], api_mode: str, *, client: Any
-) -> int | None:
-    """Return only a known applicable provider/API tool-array limit."""
-    if api_mode != API_MODE_CHAT_COMPLETIONS:
-        return None
-    provider = effective_api_provider(
-        entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-    )
-    if provider == "azure" or is_native_openai_connection(entry_data, client=client):
-        return 128
-    return None
+CHAT_COMPLETIONS_TOOL_LIMIT = 128
 
 
 def validate_provider_tool_count(count: int, limit: int | None) -> None:
@@ -804,7 +793,9 @@ def build_provider_request_snapshot(
         api_kwargs,
         (provider_tool,) if provider_tool is not None else (),
         capabilities["structured_outputs"],
-        tool_limit=provider_tool_limit(entry_data, api_mode, client=client),
+        tool_limit=CHAT_COMPLETIONS_TOOL_LIMIT
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else None,
         reasoning_items_supported=reasoning_items_supported,
         reasoning_current_turn_only=(
             api_mode == API_MODE_RESPONSES
@@ -923,11 +914,8 @@ def assemble_integration_function_tools(
 
 async def async_capacity_ha_snapshot(
     hass: HomeAssistant,
-    entry: Any,
     config: Mapping[str, Any],
     user_id: str | None,
-    *,
-    provider_data: Mapping[str, Any] | None = None,
 ) -> ToolSnapshot | None:
     """Resolve eligible HA definitions when a management edit can hit a cap."""
     import yaml
@@ -941,17 +929,7 @@ async def async_capacity_ha_snapshot(
         inspect_function_tools,
     )
 
-    if (
-        config.get("api_mode") == API_MODE_RESPONSES
-        or provider_tool_limit(
-            provider_data if provider_data is not None else getattr(entry, "data", {}),
-            API_MODE_CHAT_COMPLETIONS,
-            client=getattr(entry, "runtime_data", None)
-            if provider_data is None
-            else None,
-        )
-        is None
-    ):
+    if config.get("api_mode") == API_MODE_RESPONSES:
         return None
     try:
         configured = parse_configured_function_tools(config)

@@ -154,6 +154,15 @@ class EffectReplayBlocked(HomeAssistantError):
     """A recovery guard stopped execution before a prior effect could repeat."""
 
 
+class EffectOutcomeUnknown(HomeAssistantError):
+    """An attempted effect could not be confirmed."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The action may have taken effect. Check the result before retrying."
+        )
+
+
 class InvalidFunction(HomeAssistantError):
     """When function validation failed."""
 

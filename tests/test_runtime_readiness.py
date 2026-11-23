@@ -160,15 +160,13 @@ async def test_add_ha_tool_validates_available_saved_and_selected_tools(
 
 @pytest.mark.parametrize("malformed", [False, True])
 async def test_capacity_probe_skips_disabled_and_unreadable_ha_tools(
-    hass, management_agent, monkeypatch, malformed
+    hass, monkeypatch, malformed
 ):
     from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
         new_reference_tool,
     )
     from tests.test_ha_llm_tools import reference
 
-    entry, _ = management_agent
-    entry.data = {"api_provider": "azure"}
     tool = new_reference_tool(reference(), set())
     tool["enabled"] = False
     options = {"functions": "[" if malformed else [tool]}
@@ -178,7 +176,7 @@ async def test_capacity_probe_skips_disabled_and_unreadable_ha_tools(
         discover,
     )
 
-    assert await ui._async_capacity_ha_snapshot(hass, entry, options, "admin") is None
+    assert await ui._async_capacity_ha_snapshot(hass, options, "admin") is None
     discover.assert_not_awaited()
 
 
@@ -477,7 +475,8 @@ async def _dispatch(agent, *, conditional=False):
         ("openai", "chat_completions", 127, True, False),
         ("openai", "responses", 127, True, True),
         ("openai", "auto", 127, True, True),
-        ("custom", "chat_completions", 127, True, True),
+        ("custom", "chat_completions", 127, True, False),
+        ("custom", "chat_completions", 126, True, True),
     ],
 )
 async def test_accepted_save_reaches_actual_initial_provider_request(

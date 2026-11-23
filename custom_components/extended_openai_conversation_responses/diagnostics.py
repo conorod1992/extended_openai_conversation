@@ -259,7 +259,7 @@ async def async_get_config_entry_diagnostics(
     manager = hass.data.get(DATA_MANAGER)
     catalog_status = manager.status() if manager is not None else BUNDLED_CATALOG
     try:
-        sdk_version = version("openai")
+        sdk_version = await hass.async_add_executor_job(version, "openai")
     except PackageNotFoundError:
         sdk_version = None
     # Allowlist only: never serialize entry.data, catalogue models, prompts,

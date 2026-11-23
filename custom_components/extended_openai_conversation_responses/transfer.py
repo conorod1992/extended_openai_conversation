@@ -1706,10 +1706,8 @@ async def async_materialize_restore(
             context = get_active_ha_context()
             ha_snapshot = await async_capacity_ha_snapshot(
                 hass,
-                entry,
                 target.config,
                 context.user_id if context is not None else None,
-                provider_data=provider_connection,
             )
         validate_routed_request_options(
             target.config, provider_data, ha_snapshot=ha_snapshot

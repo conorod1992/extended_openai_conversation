@@ -12,7 +12,7 @@ from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
-from .exceptions import FunctionNotFound
+from .exceptions import EffectOutcomeUnknown, FunctionNotFound
 from .function_call_budget import FunctionCallBudget, FunctionCallLimitReached
 from .function_execution import (
     async_validate_function_arguments,
@@ -230,7 +230,9 @@ def append_unresolved_tool_results(
         result: dict[str, Any]
         if tool_call.id == actual_failed_id:
             result = {"status": "error", "error": failure_text}
-            if isinstance(error, HAToolResultError):
+            if isinstance(error, EffectOutcomeUnknown):
+                result["effect_outcome"] = "uncertain"
+            elif isinstance(error, HAToolResultError):
                 result = error.private_result(failure_text)
         else:
             result = {

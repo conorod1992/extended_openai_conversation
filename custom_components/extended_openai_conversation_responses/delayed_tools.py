@@ -27,6 +27,7 @@ from homeassistant.util import dt as dt_util
 from .agent_config import function_tool_enabled
 from .agent_maintenance import AgentRestoreRecoveryRequired, get_agent_maintenance_gate
 from .const import DOMAIN
+from .exceptions import EffectOutcomeUnknown
 from .function_tool_quarantine import (
     _runtime_configured_function_tools as configured_function_tools_from_data,
 )
@@ -478,75 +479,80 @@ class DelayedToolManager:
         if not isinstance(catch_up, bool):
             raise HomeAssistantError("Function Tool delay_catch_up must be a boolean")
         context = getattr(llm_context, "context", None)
-        record = None
-        from .execution_outcomes import execution_operation
+        from .execution_outcomes import (
+            execution_completed,
+            execution_operation,
+            execution_rejected,
+        )
 
-        operation = None
-        try:
-            async with self._lock:
-                if not self._setup_complete or self._quarantined:
-                    raise HomeAssistantError(
-                        "Delayed Function Tool scheduler is unavailable"
-                    )
-                _validate_call_capacity(
-                    self._records, entity.entry.entry_id, entity.subentry.subentry_id
+        async with self._lock:
+            if not self._setup_complete or self._quarantined:
+                raise HomeAssistantError(
+                    "Delayed Function Tool scheduler is unavailable"
                 )
-                _validate_argument_budget(arguments)
-                record = DelayedToolCall(
-                    call_id=uuid4().hex,
-                    entry_id=entity.entry.entry_id,
-                    subentry_id=entity.subentry.subentry_id,
-                    tool_name=tool_name,
-                    arguments=deepcopy(arguments),
-                    due_at=(now + delay).isoformat(),
-                    expires_at=None
-                    if catch_up
-                    else (
-                        now + delay + timedelta(seconds=_DEFAULT_GRACE_SECONDS)
-                    ).isoformat(),
-                    created_at=now.isoformat(),
-                    user_id=getattr(context, "user_id", None),
-                    device_id=getattr(llm_context, "device_id", None),
-                    satellite_id=get_request_satellite(),
-                    definition_fingerprint=tool_definition_fingerprint(function_tool)
-                    if function_tool is not None
-                    else None,
-                )
-                updated = dict(self._records)
-                updated[record.call_id] = record
-                with execution_operation(
-                    "delayed_job",
-                    {
-                        "operation": "schedule",
-                        "entry_id": record.entry_id,
-                        "subentry_id": record.subentry_id,
-                        "tool_name": tool_name,
-                        "arguments": arguments,
-                        "delay_seconds": delay.total_seconds(),
-                        "definition": record.definition_fingerprint,
-                        "user_id": record.user_id,
-                        "device_id": record.device_id,
-                        "satellite_id": record.satellite_id,
-                    },
-                ) as operation:
+            _validate_call_capacity(
+                self._records, entity.entry.entry_id, entity.subentry.subentry_id
+            )
+            _validate_argument_budget(arguments)
+            record = DelayedToolCall(
+                call_id=uuid4().hex,
+                entry_id=entity.entry.entry_id,
+                subentry_id=entity.subentry.subentry_id,
+                tool_name=tool_name,
+                arguments=deepcopy(arguments),
+                due_at=(now + delay).isoformat(),
+                expires_at=None
+                if catch_up
+                else (
+                    now + delay + timedelta(seconds=_DEFAULT_GRACE_SECONDS)
+                ).isoformat(),
+                created_at=now.isoformat(),
+                user_id=getattr(context, "user_id", None),
+                device_id=getattr(llm_context, "device_id", None),
+                satellite_id=get_request_satellite(),
+                definition_fingerprint=tool_definition_fingerprint(function_tool)
+                if function_tool is not None
+                else None,
+            )
+            updated = {**self._records, record.call_id: record}
+            with execution_operation(
+                "delayed_job",
+                {
+                    "operation": "schedule",
+                    "entry_id": record.entry_id,
+                    "subentry_id": record.subentry_id,
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                    "delay_seconds": delay.total_seconds(),
+                    "definition": record.definition_fingerprint,
+                    "user_id": record.user_id,
+                    "device_id": record.device_id,
+                    "satellite_id": record.satellite_id,
+                },
+            ) as operation:
+                try:
                     await self._async_save_records_transactionally(updated)
-        except BaseException:
-            # Transactional readback can settle this particular queue write.
-            # An unreadable generation invalidates the manager and stays unknown.
-            if record is not None and self._setup_complete and not self._quarantined:
-                from .execution_outcomes import execution_completed, execution_rejected
-
-                receipt = operation.receipt if operation is not None else None
-                if receipt is not None:
-                    if record.call_id in self._records:
-                        execution_completed(receipt)
-                    else:
-                        execution_rejected(receipt)
-            raise
-        finally:
-            # A committed call survives a lost acknowledgement, but rejected work never arms.
-            if record is not None and self._started and record.call_id in self._records:
-                self._arm(record.call_id)
+                except BaseException as err:
+                    if not self._setup_complete or self._quarantined:
+                        if isinstance(err, Exception) and operation.receipt is not None:
+                            raise EffectOutcomeUnknown() from None
+                        raise
+                    retained = self._records.get(record.call_id)
+                    if retained is None:
+                        execution_rejected(operation.receipt)
+                        raise
+                    if retained != record:
+                        if isinstance(err, Exception):
+                            raise EffectOutcomeUnknown() from None
+                        raise
+                    execution_completed(operation.receipt)
+                    if not isinstance(err, Exception):
+                        raise
+                    # The validated readback confirmed this exact submission.
+                    record = retained
+                finally:
+                    if self._started and self._records.get(record.call_id) == record:
+                        self._arm(record.call_id)
         return record
 
     async def async_remove_agent(self, entry_id: str, subentry_id: str) -> None:
@@ -584,10 +590,15 @@ class DelayedToolManager:
 
     async def _async_reconcile_failed_save(self) -> None:
         """Reload validated calls after a failed write acknowledgement."""
-        raw_data = await self._store.async_load() or {}
-        raw_calls = raw_data.get("calls", []) if isinstance(raw_data, dict) else []
-        if not isinstance(raw_calls, list):
+        raw_data = await _async_load_delayed_queue_store(self._store)
+        if raw_data is None or raw_data == {}:
+            raw_calls = []
+        elif not isinstance(raw_data, dict) or not isinstance(
+            raw_data.get("calls"), list
+        ):
             raise ValueError("persisted delayed Function Tools are malformed")
+        else:
+            raw_calls = raw_data["calls"]
         records: dict[str, DelayedToolCall] = {}
         for raw in raw_calls:
             record = DelayedToolCall.from_dict(raw)
