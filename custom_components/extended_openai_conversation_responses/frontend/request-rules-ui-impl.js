@@ -268,7 +268,7 @@ function renderResultAliases(panel, selector) {
     const alias = data.result_alias || "";
     const suggestion = suggestResultAlias(data.function, suggested);
     suggested.add(suggestion);
-    return `<label>Result alias for ${panel._e(data.function)} (step ${index + 1})<input class="rule-result-alias" data-index="${index}" value="${panel._e(alias)}" placeholder="${panel._e(suggestion)}" pattern="[A-Za-z_][A-Za-z0-9_]*"><small>Optional unique result name for later steps or the local response.</small></label>`;
+    return `<label>Result alias for ${panel._e(data.function)} (step ${index + 1})<input class="rule-result-alias" data-index="${index}" value="${panel._e(alias)}" placeholder="${panel._e(suggestion)}" pattern="[A-Za-z_][A-Za-z0-9_]*"><small>Optional unique result name for the success response. For later actions use a Home Assistant response variable.</small></label>`;
   }).join("");
   syncResultAliasMode(panel.shadowRoot);
   host.querySelectorAll(".rule-result-alias").forEach((input) => input.addEventListener("change", () => {
@@ -459,20 +459,21 @@ export function bindRequestRuleEditor(panel) {
       const actionType=q("#rule-action-type").value;
       if (actionType === "local_action") assertSelectorYamlReady(state.actionSelector);
       assertSelectorYamlReady(state.conditionSelector);
-      let actions=readRequestRuleActions(state.actionSelector);
+      const actions=readRequestRuleActions(state.actionSelector);
       if(actionType==="local_action"&&!actions.length)throw new Error("Add at least one action before saving this rule.");
       const previous=(panel._result?.rules||[]).find((item)=>item.id===panel._editingRuleId);
       const aliasMappings = new Map();
+      const functionCalls = actions.filter(isFunctionServiceAction).map(effectiveServicePayload);
       for (const oldStep of previous?.action?.actions || []) {
+        if (!isFunctionServiceAction(oldStep)) continue;
         const oldData=effectiveServicePayload(oldStep);
         const oldAlias=oldData?.result_alias, stepId=oldData?.step_id;
         if (!oldAlias || !stepId) continue;
-        const edited=actions.map(effectiveServicePayload).find((data)=>data?.step_id===stepId);
+        const edited=functionCalls.find((data)=>data?.step_id===stepId);
         if (edited?.result_alias && edited.result_alias!==oldAlias) {
           aliasMappings.set(oldAlias, edited.result_alias);
         }
       }
-      actions=renameResultReferenceMap(actions,aliasMappings);
       const successResponse=renameResultReferenceMap(ruleResponseValue(q("#rule-success").value, previous?.action?.success_response),aliasMappings);
       const rules=panel._result?.rules||[];
       if(q("#rule-ai-input-mode").value==="capture" && (q("#rule-ai-input-settings").hidden || q("#rule-ai-input-capture").getAttribute("aria-invalid")==="true")) throw new Error(q("#rule-ai-input-help").textContent || "Choose a capture available in every trigger.");

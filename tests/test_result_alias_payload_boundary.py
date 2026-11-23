@@ -75,15 +75,13 @@ def test_renamed_references_under_metadata_named_argument_keys_validate(
     ]
     stale = deepcopy(rule)
     stale["action"]["actions"][1][payload_field]["arguments"].pop("ordinary_key")
-    with pytest.raises(ValueError, match="earlier step"):
+    with pytest.raises(ValueError, match="only available in the success response"):
         rules.validate_rule(stale)
     rule["action"]["actions"] = rename_with_frontend(
         rule["action"]["actions"], shipped=shipped
     )
     assert rule["action"]["actions"] == renamed_actions_fixture(key, payload_field)
-    checked = rules.validate_rule(rule)
-    assert checked["action"]["actions"][0]["data"]["result_alias"] == "updated"
-    assert checked["action"]["actions"][1][payload_field]["arguments"] == {
-        key: "{updated.value}",
-        "ordinary_key": "{updated.value}",
-    }
+    with pytest.raises(ValueError, match="only available in the success response"):
+        rules.validate_rule(rule)
+    retained = rules.RequestRules.validate_backup_data({"rules": [rule]})
+    assert retained["rules"][0]["action"]["actions"] == rule["action"]["actions"]

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections import deque
-from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -1306,7 +1304,7 @@ def test_request_rule_local_action_validation_rejects_invalid_shapes(value) -> N
         request_rules._validate_action("local_action", value)
 
 
-def test_request_rule_result_dependencies_require_prior_result() -> None:
+def test_request_rule_rejects_action_result_placeholders() -> None:
     from custom_components.extended_openai_conversation_responses import request_rules
 
     action = {
@@ -1326,8 +1324,8 @@ def test_request_rule_result_dependencies_require_prior_result() -> None:
         ]
     }
 
-    with pytest.raises(ValueError, match="earlier step"):
-        request_rules._validate_result_dependencies(action, set())
+    with pytest.raises(ValueError, match="only available in the success response"):
+        request_rules._validate_response_only_aliases(action)
 
 
 def test_request_rule_result_dependencies_reject_nested_capture() -> None:

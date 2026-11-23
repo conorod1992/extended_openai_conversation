@@ -841,7 +841,7 @@ async def test_result_alias_validation_and_substitution() -> None:
         },
         {
             "action": "notify.send_message",
-            "data": {"message": "{battery.level} for {device}"},
+            "data": {"message": "{{ battery_data.result.level }} for {device}"},
         },
     ]
     rule["action"]["success_response"] = "{battery.name} is at {battery.level}%"
@@ -987,7 +987,7 @@ async def test_result_dependencies_and_bounds() -> None:
             "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
             "data": {
                 "function": "same",
-                "arguments": {"previous": "{one.value}"},
+                "arguments": {},
                 "result_alias": "two",
             },
         },
@@ -1009,11 +1009,10 @@ async def test_result_dependencies_and_bounds() -> None:
         validate_rule(duplicate)
     reordered = deepcopy(rule)
     reordered["action"]["actions"].reverse()
-    with pytest.raises(ValueError, match="earlier step"):
-        validate_rule(reordered)
+    validate_rule(reordered)
     deleted = deepcopy(rule)
-    deleted["action"]["actions"].pop(0)
-    with pytest.raises(ValueError, match="earlier step"):
+    deleted["action"]["actions"].pop(1)
+    with pytest.raises(ValueError, match="missing Function result"):
         validate_rule(deleted)
     assert _bounded_function_result(False) is False
     assert _bounded_function_result(0) == 0
@@ -1349,12 +1348,13 @@ async def test_function_result_capture_feeds_later_step_and_response(
                     if all(name.startswith(("__eoai_completed_", "__eoai_stopped_", "__eoai_wait_completed_")) for name in raw):
                         variables.update(values.async_simple_render(variables) if hasattr(values, "async_simple_render") else values)
                 elif step.get("action") == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
-                    await async_call_active_function(
+                    result = await async_call_active_function(
                         step["data"]["function"],
                         step["data"]["arguments"],
                         step["data"].get("result_alias"),
                     )
-                    variables.update(module._ACTIVE_RULE_ACTION.get().function_results)
+                    if "response_variable" in step:
+                        variables[step["response_variable"]] = {"result": result}
                 elif "data" in step and "message" in step["data"]:
                     message = step["data"]["message"]
                     calls.append(
@@ -1372,6 +1372,7 @@ async def test_function_result_capture_feeds_later_step_and_response(
     rule["action"]["actions"] = [
         {
             "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "response_variable": "battery_data",
             "data": {
                 "function": "get_battery",
                 "arguments": {},
@@ -1380,7 +1381,7 @@ async def test_function_result_capture_feeds_later_step_and_response(
         },
         {
             "action": "notify.send_message",
-            "data": {"message": "{battery.level} for {device}"},
+            "data": {"message": "{{ battery_data.result.level }} for {device}"},
         },
     ]
     rule["action"]["success_response"] = "{battery.name} is at {battery.level}%"
@@ -1400,64 +1401,6 @@ async def test_function_result_capture_feeds_later_step_and_response(
     )
     assert outcome is not None and outcome.response == "Kitchen tablet is at 62%"
     assert calls == ["62 for tablet"]
-
-
-async def test_missing_function_result_path_stops_later_steps(
-    hass, monkeypatch
-) -> None:
-    from custom_components.extended_openai_conversation_responses import (
-        request_rules as module,
-    )
-
-    calls = []
-
-    class CaptureScript:
-        def __init__(self, _hass, sequence, *_args, **_kwargs):
-            self.sequence = sequence
-
-        async def async_run(self, _variables, _context=None):
-            step = next(step for step in self.sequence if step.get("action"))
-            if step["action"] == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
-                await async_call_active_function(
-                    step["data"]["function"], {}, step["data"].get("result_alias")
-                )
-            else:
-                calls.append(step)
-
-        async def async_unload(self):
-            pass
-
-    monkeypatch.setattr(module, "Script", CaptureScript)
-    rule = local_rule()
-    rule["action"]["actions"] = [
-        {
-            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-            "data": {
-                "function": "get_battery",
-                "arguments": {},
-                "result_alias": "battery",
-            },
-        },
-        {"action": "notify.send_message", "data": {"message": "{battery.missing}"}},
-    ]
-
-    async def execute(_name, _arguments):
-        return SimpleNamespace(tool_result={"result": {"level": 0}})
-
-    outcome = await async_evaluate_rule(
-        hass,
-        await manager(rule),
-        RequestRuleRuntime(),
-        "good night",
-        "session",
-        function_executor=execute,
-    )
-    assert (
-        outcome is not None
-        and outcome.response == "Failed safely"
-        and not outcome.successful
-    )
-    assert calls == []
 
 
 @pytest.mark.parametrize("value", [False, 0, "", None])

@@ -237,7 +237,7 @@ async def test_partial_composite_does_not_authorize_changed_argument_retry(
 
 @pytest.mark.parametrize("second", ["disabled", "failed"])
 @pytest.mark.parametrize(
-    "consumer", ["unconsumed", "action", "conversation_response", "success_response"]
+    "consumer", ["unconsumed", "success_response"]
 )
 async def test_shared_response_variable_cannot_publish_another_invocations_alias(
     hass, monkeypatch, second, consumer
@@ -291,10 +291,6 @@ async def test_shared_response_variable_cannot_publish_another_invocations_alias
         },
         _record_action("{{ shared.result }}"),
     ]
-    if consumer == "action":
-        actions.append(_record_action("{b}"))
-    if consumer == "conversation_response":
-        actions.append({"set_conversation_response": "{b}"})
     await agent._request_rules.async_create(
         _local(
             actions, success="{b}" if consumer == "success_response" else "Recovered"
@@ -303,13 +299,11 @@ async def test_shared_response_variable_cannot_publish_another_invocations_alias
     result = await _say(hass, agent, "run rule")
     assert observed == [({"a": "First result"}, "First result")]
     if consumer == "success_response":
-        assert "response construction failed (missing variable b)" in _speech(
+        assert "response construction failed (Function result b is unavailable)" in _speech(
             result, successful=False
         )
         return
-    assert _speech(result, successful=consumer == "unconsumed") == (
-        "Recovered" if consumer == "unconsumed" else "Failed safely"
-    )
+    assert _speech(result) == "Recovered"
 
 
 @pytest.mark.parametrize("value", ["001", "false", "null"])
@@ -810,13 +804,13 @@ async def test_typed_and_exact_text_results_survive_local_and_provider_consumers
                         "result_alias": "result_one",
                     },
                 },
-                {"action": "rule_probe.typed", "data": {"value": "{result_one}"}},
+                {"action": "rule_probe.typed", "data": {"value": "{{ authored.result is string }}"}},
             ]
         )
     )
     assert _speech(await _say(hass, agent, "run rule")) == "Done"
     assert len(seen) == 1
     actual, results = seen[0]
-    assert type(actual) is type(value) and actual == value
+    assert actual is isinstance(value, str)
     assert type(results["result_one"]) is type(value) and results["result_one"] == value
     assert execute.await_count == 2

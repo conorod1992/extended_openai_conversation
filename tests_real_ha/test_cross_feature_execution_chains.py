@@ -150,7 +150,7 @@ async def test_edit_working_rule_then_execute_again_without_stale_alias(
     }
     created = await agent._request_rules.async_create(
         _local(
-            [capture, _record_action("before={reading.rows.0.level}")],
+            [capture, _record_action("before={{ result_data.result.rows[0].level }}")],
             success="First {reading.rows.0.level}",
         )
     )
@@ -158,7 +158,7 @@ async def test_edit_working_rule_then_execute_again_without_stale_alias(
     assert seen == ["before=73"]
     modified = deepcopy(created)
     modified["action"]["actions"][0]["data"]["result_alias"] = "updated"
-    modified["action"]["actions"][1]["data"]["message"] = "after={updated.rows.0.level}"
+    modified["action"]["actions"][1]["data"]["message"] = "after={{ result_data.result.rows[0].level }}"
     modified["action"]["success_response"] = "Second {updated.rows.0.level}"
     await agent._request_rules.async_update(created["id"], modified)
     assert _speech(await _say(hass, agent, "run rule")) == "Second 73"

@@ -35,7 +35,6 @@ from homeassistant.helpers.script_variables import ScriptVariables
 from homeassistant.helpers.template import Template
 from homeassistant.helpers.trace import StopReason, script_execution_cv
 from homeassistant.helpers.typing import UNDEFINED
-from homeassistant.util.async_ import create_eager_task
 
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
@@ -95,7 +94,6 @@ from .script_structure import (
     iter_script_actions,
     normalize_script_containers as _normalize_script_containers,
     rewrite_script_actions,
-    script_containers,
     script_selector_fields,
 )
 from .storage_namespaces import REQUEST_RULES_PREFIX as STORAGE_KEY_PREFIX
@@ -907,6 +905,17 @@ class RequestRules:
                 validate_script_schema=not preserve_inactive,
                 allow_empty_normalized_phrases=preserve_inactive,
             )
+            if (
+                not preserve_inactive
+                and previous["action_type"] == rule["action_type"] == "local_action"
+            ):
+                removed_aliases = _response_alias_names(
+                    previous["action"]
+                ) - _response_alias_names(rule["action"])
+                if removed_aliases:
+                    _validate_response_only_aliases(
+                        rule["action"], previous_aliases=removed_aliases
+                    )
             self._require_group(rule)
             prospective = deepcopy(self._rules)
             prospective[index] = rule
@@ -1184,15 +1193,15 @@ class RequestRules:
         snapshot = self._matching_snapshot
         published = {rule_id: deepcopy(rule) for rule_id, rule in replacements.items()}
 
+        for rule, _, _ in snapshot.deterministic:
+            if rule.get(RESULT_ALIAS_REPAIR) and rule["id"] in published:
+                published[rule["id"]][RESULT_ALIAS_REPAIR] = True
+
         def replace(
             items: tuple[tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...],
         ):
             return tuple(
-                (
-                    published.get(rule["id"], rule),
-                    settings,
-                    phrase,
-                )
+                (published.get(rule["id"], rule), settings, phrase)
                 for rule, settings, phrase in items
             )
 
@@ -1353,17 +1362,24 @@ class RequestRules:
                     diagnostics[rule["id"]] = _EMPTY_NORMALIZED_PHRASE
                     continue
 
-            try:
-                _validate_action(
-                    rule["action_type"],
-                    rule["action"],
-                    capture_names=phrase_slots[0]
-                    if rule["match_type"] == "sentence_pattern"
-                    else set(),
-                )
-            except ValueError as err:
-                diagnostics[rule["id"]] = f"Action is inactive: {err}"
-                continue
+            alias_issue = request_rule_alias_repair(rule)
+            if alias_issue is not None:
+                # Keep enabled triggers in order so an eligible match
+                # cannot unexpectedly run a lower rule or go to AI.
+                diagnostics[rule["id"]] = alias_issue
+                rule[RESULT_ALIAS_REPAIR] = True
+            else:
+                try:
+                    _validate_action(
+                        rule["action_type"],
+                        rule["action"],
+                        capture_names=phrase_slots[0]
+                        if rule["match_type"] == "sentence_pattern"
+                        else set(),
+                    )
+                except ValueError as err:
+                    diagnostics[rule["id"]] = f"Action is inactive: {err}"
+                    continue
             if rule["enabled"]:
                 if rule["match_type"] == "sentence_pattern":
                     total_pattern_states += state_count
@@ -1735,6 +1751,7 @@ def validate_rule(
     *,
     validate_sentence_pattern: bool = True,
     validate_script_schema: bool = True,
+    allow_legacy_action_aliases: bool = False,
     allow_empty_normalized_phrases: bool = False,
 ) -> dict[str, Any]:
     """Validate and normalize the persisted rule contract."""
@@ -1873,13 +1890,11 @@ def validate_rule(
     referenced_slots = _referenced_slots(action) | _legacy_action_slots(raw_action)
     if action_type == "local_action":
         _validate_result_dependencies(action, set(slot_names))
-        aliases = {
-            data.get("result_alias")
-            for step in action["actions"]
-            if isinstance(step, Mapping)
-            and isinstance(data := effective_service_payload(step), Mapping)
-        }
-        referenced_slots -= aliases
+        if validate_script_schema and not allow_legacy_action_aliases:
+            _validate_response_only_aliases(action)
+        # Retain legacy bare action placeholders on load and backup restore.
+        # The matching snapshot marks their actions as requiring repair.
+        referenced_slots -= _response_alias_names(action)
     unknown_slots = referenced_slots - set(slot_names)
     if unknown_slots and (validate_sentence_pattern or sentence_valid):
         raise ValueError("unknown captured value: " + ", ".join(sorted(unknown_slots)))
@@ -2286,232 +2301,80 @@ def _is_function_action(step: Mapping[str, Any]) -> bool:
     return is_function_service_action(step)
 
 
-def validate_result_alias_template_update(
-    hass: HomeAssistant,
-    previous: Mapping[str, Any] | None,
-    candidate: Mapping[str, Any],
-) -> None:
-    """Check native templates against the order of explicit result bindings."""
-    if candidate.get("action_type") != "local_action":
-        return
+RESULT_ALIAS_REPAIR = "_result_alias_repair"
 
-    def aliases(rule: Mapping[str, Any]) -> set[str]:
-        return {
-            alias
-            for step in rule["action"]["actions"]
-            if isinstance(step, Mapping)
-            and _is_function_action(step)
-            and isinstance(data := effective_service_payload(step), Mapping)
-            and isinstance(alias := data.get("result_alias"), str)
-        }
 
-    if (
-        previous is not None
-        and previous.get("action_type") == "local_action"
-        and previous["action"]["actions"] == candidate["action"]["actions"]
-    ):
-        return
-
-    current = aliases(candidate)
-    removed = (
-        aliases(previous) - current
-        if previous is not None and previous.get("action_type") == "local_action"
-        else set()
-    )
-    unbound = removed | current
-    if not unbound:
-        return
-
-    from jinja2 import meta, nodes
-    from jinja2.visitor import NodeTransformer
-
-    from homeassistant.helpers.script_variables import ScriptVariables
-    from homeassistant.helpers.template import TemplateEnvironment
-
-    environment = TemplateEnvironment(hass, limited=False, strict=False)
-    actions = cv.SCRIPT_SCHEMA(
-        _prepare_concrete_captures(
-            candidate["action"]["actions"], None, validation=True
-        )
-    )
-    disabled = {
-        id(step)
-        for step in iter_script_actions(actions)
-        if step.get("enabled") is False
+def _response_alias_names(action: Mapping[str, Any]) -> set[str]:
+    return {
+        alias
+        for step in action["actions"]
+        if _is_function_action(step)
+        and isinstance(data := effective_service_payload(step), Mapping)
+        and isinstance(alias := data.get("result_alias"), str)
     }
-    script_selectors = script_selector_fields(actions)
 
-    def defined_by(node: nodes.Node, truth: bool) -> frozenset[str]:
-        if isinstance(node, nodes.Not):
-            return defined_by(node.node, not truth)
-        if (isinstance(node, nodes.And) and truth) or (
-            isinstance(node, nodes.Or) and not truth
-        ):
-            return defined_by(node.left, truth) | defined_by(node.right, truth)
-        if (
-            isinstance(node, nodes.Test)
-            and isinstance(node.node, nodes.Name)
-            and (node.name == ("defined" if truth else "undefined"))
-        ):
-            return frozenset({node.node.name})
-        return frozenset()
 
-    class RequiredReferences(NodeTransformer):
-        """Mask undefined-safe reads on a throwaway AST used only for linting."""
+def _validate_response_only_aliases(
+    action: Mapping[str, Any], *, previous_aliases: Collection[str] = ()
+) -> None:
+    """Detect legacy action consumers without trying to infer HA variable scope."""
+    from jinja2 import Environment, TemplateSyntaxError, nodes
 
-        def visit_Name(self, node, guarded):
-            return (
-                nodes.Const(None)
-                if node.ctx == "load" and node.name in guarded
-                else node
-            )
+    aliases = _response_alias_names(action) | set(previous_aliases)
+    bindings = aliases | {f"__eoai_result_{alias}" for alias in aliases}
+    environment = (
+        Environment(extensions=["jinja2.ext.do", "jinja2.ext.loopcontrols"])
+        if bindings
+        else None
+    )
 
-        def visit_Filter(self, node, guarded):
-            if node.name in {"default", "d"} and isinstance(node.node, nodes.Name):
-                node.node = nodes.Const(None)
-            return self.generic_visit(node, guarded)
-
-        def visit_Test(self, node, guarded):
-            if node.name in {"defined", "undefined"} and isinstance(
-                node.node, nodes.Name
-            ):
-                node.node = nodes.Const(None)
-            return self.generic_visit(node, guarded)
-
-        def visit_CondExpr(self, node, guarded):
-            when_true = guarded | defined_by(node.test, True)
-            when_false = guarded | defined_by(node.test, False)
-            node.expr1 = self.visit(node.expr1, when_true)
-            if node.expr2 is not None:
-                node.expr2 = self.visit(node.expr2, when_false)
-            node.test = self.visit(node.test, guarded)
-            return node
-
-        def visit_If(self, node, guarded):
-            for branch in (node, *node.elif_):
-                when_true = guarded | defined_by(branch.test, True)
-                when_false = guarded | defined_by(branch.test, False)
-                branch.body = [self.visit(item, when_true) for item in branch.body]
-                branch.test = self.visit(branch.test, guarded)
-                guarded = when_false
-            node.else_ = [self.visit(item, guarded) for item in node.else_]
-            return node
-
-        def visit_And(self, node, guarded):
-            node.right = self.visit(node.right, guarded | defined_by(node.left, True))
-            node.left = self.visit(node.left, guarded)
-            return node
-
-        def visit_Or(self, node, guarded):
-            node.right = self.visit(node.right, guarded | defined_by(node.left, False))
-            node.left = self.visit(node.left, guarded)
-            return node
-
-    def references(value: Any, names: set[str]) -> set[str]:
+    def references(value: Any, *, template_key: bool = False) -> bool:
         if isinstance(value, Mapping):
-            if id(value) in disabled or (
-                id(value) in script_selectors and value.get("enabled") is False
-            ):
-                return set()
-            return set().union(
-                *(references(item, names) for pair in value.items() for item in pair)
+            return any(
+                references(key, template_key=True) or references(item)
+                for key, item in value.items()
             )
-        if isinstance(value, (list, tuple)):
-            return set().union(*(references(item, names) for item in value))
-        if isinstance(value, ScriptVariables):
-            return references(value.variables, names)
-        if isinstance(value, Template):
-            parsed = environment.parse(value.template)
-            RequiredReferences().visit(parsed, frozenset())
-            return names & meta.find_undeclared_variables(parsed)
-        return set()
-
-    missing: set[str] = set()
-
-    def visit_sequence(steps: Sequence[Mapping[str, Any]], names: set[str]) -> set[str]:
-        remaining = names.copy()
-        for step in steps:
-            remaining = visit_step(step, remaining)
-            if not remaining:
-                break
-        return remaining
-
-    def visit_step(step: Mapping[str, Any], names: set[str]) -> set[str]:
-        if id(step) in disabled:
-            return names
-        remaining = names.copy()
-        containers = list(script_containers(step))
-        nested_keys = {container.key for container in containers}
-        missing.update(
-            references(
-                {
-                    key: value
-                    for key, value in step.items()
-                    if key not in nested_keys | {"variables"}
-                },
-                names,
-            )
-        )
-        # Each branch starts with the bindings available at its parent step.
-        # After the step, a name with any possible producer is left to HA.
-        for container in containers:
-            value = container.value
-            if container.kind == "choose":
-                for branch in value:
-                    missing.update(references(branch.get("conditions"), names))
-                    remaining.intersection_update(
-                        visit_sequence(branch["sequence"], names)
-                    )
-            elif container.kind == "repeat":
-                missing.update(
-                    references(
-                        {
-                            key: item
-                            for key, item in value.items()
-                            if key not in {"sequence", "until"}
-                        },
-                        names,
-                    )
-                )
-                body = visit_sequence(value["sequence"], names)
-                missing.update(references(value.get("until"), body))
-                remaining.intersection_update(body)
-            elif container.kind == "parallel":
-                for branch in value:
-                    remaining.intersection_update(visit_step(branch, names))
-            else:
-                remaining.intersection_update(visit_sequence(value, names))
-
-        variables = step.get("variables")
-        if isinstance(variables, ScriptVariables):
-            variables = variables.variables
-        if isinstance(variables, Mapping):
-            # Home Assistant renders variable definitions in insertion order.
-            for name, value in variables.items():
-                missing.update(references(name, remaining))
-                missing.update(references(value, remaining))
-                remaining.discard(name)
-        if (
-            _is_function_action(step)
-            and isinstance(data := effective_service_payload(step), Mapping)
-            and isinstance(alias := data.get("result_alias"), str)
+        if isinstance(value, list):
+            return any(references(item) for item in value)
+        if not isinstance(value, str):
+            return False
+        if not template_key and (
+            RESULT_REFERENCE.search(value)
+            or aliases.intersection(SLOT_REFERENCE.findall(value))
         ):
-            remaining.discard(alias)
-        if isinstance(response := step.get("response_variable"), str):
-            remaining.discard(response)
-        return remaining
+            return True
+        if environment is not None and ("{{" in value or "{%" in value):
+            try:
+                template = environment.parse(value)
+            except TemplateSyntaxError:
+                # HA validates templates separately. Conservatively flag an
+                # unrecognised template that could refer to a retired binding.
+                return any(
+                    name in bindings
+                    for name in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", value)
+                )
+            return any(
+                node.ctx == "load" and node.name in bindings
+                for node in template.find_all(nodes.Name)
+            )
+        return False
 
-    visit_sequence(actions, unbound)
-    if missing & removed:
-        raise HomeAssistantError(
-            "Update the Home Assistant action templates that still use the removed "
-            "Function result aliases: " + ", ".join(sorted(missing & removed))
+    if references(action["actions"]):
+        raise ValueError(
+            "Function result aliases are only available in the success response. "
+            "Set a distinct Home Assistant response_variable on the producing "
+            "action and use that variable's result in later actions."
         )
-    if missing:
-        raise HomeAssistantError(
-            "Function result must be produced by an earlier step: "
-            + ", ".join(sorted(missing))
-        )
+
+
+def request_rule_alias_repair(rule: Mapping[str, Any]) -> str | None:
+    """Describe a legacy action alias dependency before admitting execution."""
+    if rule.get("action_type") == "local_action":
+        try:
+            _validate_response_only_aliases(rule["action"])
+        except ValueError as err:
+            return str(err)
+    return None
 
 
 def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) -> None:
@@ -2537,14 +2400,6 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
     for step in action["actions"]:
         if not isinstance(step, Mapping):
             continue
-        missing = (
-            _result_references(step) | (_referenced_slots(step) & all_aliases)
-        ) - produced
-        if missing:
-            raise ValueError(
-                "Function result must be produced by an earlier step: "
-                + ", ".join(sorted(missing))
-            )
         data = effective_service_payload(step)
         if not _is_function_action(step) or not isinstance(data, Mapping):
             continue
@@ -2957,39 +2812,19 @@ def resolve_result_values(
     return value
 
 
-def _native_result_sequence(
-    actions: Sequence[Mapping[str, Any]],
-    slots: Mapping[str, str],
-    alias_bindings: dict[str, tuple[str, str]] | None = None,
+def _native_action_sequence(
+    actions: Sequence[Mapping[str, Any]], slots: Mapping[str, str]
 ) -> list[dict[str, Any]]:
-    """Keep HA variables and waits in one script while exposing captured results."""
-    aliases = {
-        data["result_alias"]
-        for step in actions
-        if _is_function_action(step)
-        and isinstance(data := effective_service_payload(step), Mapping)
-        and data.get("result_alias")
-    }
-    # Each frozen script owns its helper; captured/native names cannot shadow it.
-    lookup_name = f"__eoai_result_value_{uuid4().hex}"
+    """Resolve selectors and pass exact request captures to native templates."""
     slot_lookup_name = f"__eoai_slot_text_{uuid4().hex}"
-
-    def result_template(match: re.Match[str]) -> str:
-        token = match.group(0)[1:-1]
-        return "{{ " + lookup_name + "(" + repr(token) + ") }}"
 
     def native_templates(value: Any) -> Any:
         if isinstance(value, str):
-            value = RESULT_REFERENCE.sub(result_template, value)
             return SLOT_REFERENCE.sub(
                 lambda match: (
-                    result_template(match)
-                    if match.group(1) in aliases
-                    else (
-                        "{{ " + slot_lookup_name + "(" + repr(match.group(1)) + ") }}"
-                        if match.group(1) in slots
-                        else match.group(0)
-                    )
+                    "{{ " + slot_lookup_name + "(" + repr(match.group(1)) + ") }}"
+                    if match.group(1) in slots
+                    else match.group(0)
                 ),
                 value,
             )
@@ -2999,62 +2834,9 @@ def _native_result_sequence(
             return [native_templates(item) for item in value]
         return value
 
-    sequence: list[dict[str, Any]] = []
-    for step in actions:
-        rendered = native_templates(_prepare_concrete_captures(step, slots))
-        data = effective_service_payload(step)
-        alias = (
-            data.get("result_alias")
-            if _is_function_action(step) and isinstance(data, Mapping)
-            else None
-        )
-        if alias:
-            response_name = step.get("response_variable") or f"__eoai_result_{alias}"
-            binding = f"__eoai_alias_{uuid4().hex}"
-            if alias_bindings is not None:
-                alias_bindings[binding] = (alias, response_name)
-            rendered["response_variable"] = response_name
-            sequence.append(rendered)
-            sequence.append(
-                {
-                    **({"alias": binding} if alias_bindings is not None else {}),
-                    "variables": {alias: "{{ " + response_name + ".result }}"},
-                }
-            )
-        else:
-            sequence.append(rendered)
-    return sequence
-
-
-class _ResultAliasVariables(ScriptVariables):
-    """Copy a captured result without HA interpreting strings as native literals."""
-
-    def __init__(self, variables: ScriptVariables, alias: str, response: str) -> None:
-        super().__init__(variables.as_dict())
-        self._alias = alias
-        self._response = response
-
-    def async_simple_render(self, run_variables: Mapping[str, Any]) -> dict[str, Any]:
-        # The producer publishes only after this invocation returns successfully.
-        # Authored HA response variables may contain any earlier service's value.
-        results = _ACTIVE_RULE_ACTION.get().function_results or {}
-        return {self._alias: results[self._alias]} if self._alias in results else {}
-
-
-def _bind_result_aliases(value: Any, bindings: Mapping[str, tuple[str, str]]) -> Any:
-    """Bind only generated assignments after HA validation and template guards."""
-    if isinstance(value, Mapping):
-        result = {
-            key: _bind_result_aliases(item, bindings) for key, item in value.items()
-        }
-        marker = value.get("alias")
-        binding = bindings.get(marker) if isinstance(marker, str) else None
-        if binding is not None and isinstance(result.get("variables"), ScriptVariables):
-            result["variables"] = _ResultAliasVariables(result["variables"], *binding)
-        return result
-    if isinstance(value, list):
-        return [_bind_result_aliases(item, bindings) for item in value]
-    return value
+    return [
+        native_templates(_prepare_concrete_captures(step, slots)) for step in actions
+    ]
 
 
 def _outcome_probes(
@@ -3258,9 +3040,6 @@ async def _async_guest_functions_allowed(
         if level > FunctionSecurity.CONTROL:
             return False
         arguments = data.get("arguments", {})
-        # Results are unknown before execution. Never guess a restricted target.
-        if RESULT_REFERENCE.search(json.dumps(arguments, ensure_ascii=False)):
-            return False
         await async_validate_function_arguments(hass, tool["spec"], arguments)
         control = level == FunctionSecurity.CONTROL
         if control and contains_indirect_service_call(arguments, hass):
@@ -3407,80 +3186,6 @@ def _preserve_slot_text(value: Any) -> Any:
         return {key: _preserve_slot_text(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_preserve_slot_text(item) for item in value]
-    return value
-
-
-class _ResultReferenceTemplate(Template):
-    """Keep lazy result failures fatal even inside native if/choose conditions."""
-
-    def __init__(
-        self,
-        source: Template,
-        helper: str,
-        on_error: Callable[[RuleResponseValueError], None],
-        results: Mapping[str, Any],
-    ) -> None:
-        super().__init__(source.template, source.hass)
-        self._source = source
-        self._helper = helper
-        self._on_error = on_error
-        self._results = results
-        self._exact_reference = re.fullmatch(
-            r"\{\{\s*" + re.escape(helper) + r"\('([A-Za-z_][A-Za-z0-9_.]*)'\)\s*\}\}",
-            source.template,
-        )
-
-    def async_render_to_info(self, variables=None, **kwargs):
-        scope = dict(variables or {})
-        scope[self._helper] = lambda token: _lookup_result_value(token, self._results)
-        info = self._source.async_render_to_info(scope, **kwargs)
-        error = info.exception
-        seen = set()
-        while error is not None and id(error) not in seen:
-            if isinstance(error, RuleResponseValueError):
-                # Tracked wait templates render in HA event callbacks. Raising
-                # there alone cannot stop the owning script.
-                self._on_error(error)
-                # Outside Jinja this remains a ValueError. HA must not convert a
-                # reached invalid reference into a false condition or continue.
-                raise error
-            seen.add(id(error))
-            error = error.__cause__ or error.__context__
-        return info
-
-    def async_render(self, *args, **kwargs):
-        info = self.async_render_to_info(*args, **kwargs)
-        rendered = info.result()
-        if self._exact_reference is not None:
-            # A full authored result reference denotes its native value. HA's
-            # literal parser must not reinterpret a tool's JSON-looking text.
-            return _lookup_result_value(self._exact_reference.group(1), self._results)
-        return rendered
-
-
-def _guard_result_references(
-    value: Any,
-    on_error: Callable[[RuleResponseValueError], None],
-    results: Mapping[str, Any],
-) -> Any:
-    if isinstance(value, Template):
-        helper = re.search(r"\b__eoai_result_value_[0-9a-f]{32}\b", value.template)
-        return (
-            _ResultReferenceTemplate(value, helper.group(), on_error, results)
-            if helper
-            else value
-        )
-    if isinstance(value, ScriptVariables):
-        return ScriptVariables(
-            _guard_result_references(value.as_dict(), on_error, results)
-        )
-    if isinstance(value, Mapping):
-        return {
-            key: _guard_result_references(item, on_error, results)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_guard_result_references(item, on_error, results) for item in value]
     return value
 
 
@@ -3907,6 +3612,14 @@ async def _async_evaluate_matched_rule(
     action = rule["action"]
     if require_matching_revision is not None:
         require_matching_revision()
+    if rule.get(RESULT_ALIAS_REPAIR):
+        return RuleEvaluation(
+            match,
+            True,
+            "This Request Rule needs repair. Review its Function result aliases in Extended OpenAI.",
+            successful=False,
+            terminal=True,
+        )
     if rule["action_type"] == "local_action":
         policy = guest_policy or GuestCapabilityPolicy.unrestricted()
         executable_actions = action["actions"]
@@ -3936,17 +3649,7 @@ async def _async_evaluate_matched_rule(
                     match, True, GUEST_MODE_UNAVAILABLE, successful=False
                 )
         try:
-            captures_results = any(
-                isinstance(step, Mapping)
-                and _is_function_action(step)
-                and isinstance(data := effective_service_payload(step), Mapping)
-                and data.get("result_alias")
-                for step in executable_actions
-            )
-            alias_bindings: dict[str, tuple[str, str]] = {}
-            script_actions = _native_result_sequence(
-                executable_actions, match.slots, alias_bindings
-            )
+            script_actions = _native_action_sequence(executable_actions, match.slots)
             if live_guest_policy is not None:
                 _ensure_action_guard_service(hass)
                 script_actions = _guard_native_actions(script_actions)
@@ -3957,16 +3660,6 @@ async def _async_evaluate_matched_rule(
             validated_actions = await async_validate_actions_config(
                 hass, schema_actions
             )
-            result_reference_error: RuleResponseValueError | None = None
-            result_reference_stop: asyncio.Task[None] | None = None
-
-            def stop_on_result_error(error: RuleResponseValueError) -> None:
-                nonlocal result_reference_error, result_reference_stop
-                if result_reference_error is None:
-                    result_reference_error = error
-                    # Start eagerly so HA's stop signal is set in this callback,
-                    # before a ready wait timeout can advance to another action.
-                    result_reference_stop = create_eager_task(script.async_stop())
 
             def current_policy() -> GuestCapabilityPolicy:
                 nonlocal policy
@@ -3980,17 +3673,10 @@ async def _async_evaluate_matched_rule(
                     lambda value: _guard_template_reads(value, current_policy),
                 )
             result_values: dict[str, Any] = {}
-            if captures_results:
-                # Keep result rendering outermost: the inner privacy wrapper
-                # authorizes reads, then exact references retain their raw type.
-                validated_actions = _guard_result_references(
-                    validated_actions, stop_on_result_error, result_values
-                )
             if require_matching_revision is not None:
                 require_matching_revision()
             if match.slots:
                 validated_actions = _preserve_slot_text(validated_actions)
-            validated_actions = _bind_result_aliases(validated_actions, alias_bindings)
             # Once the validated native script starts, its frozen actions may
             # produce external effects. Later edits apply to future requests;
             # they must never invite a retry of an already executed action.
@@ -4058,8 +3744,6 @@ async def _async_evaluate_matched_rule(
                     {**match.slots, "request": {"slots": dict(match.slots)}},
                     context,
                 )
-                if result_reference_error is not None:
-                    raise result_reference_error
                 variables = run_result.variables if run_result is not None else {}
                 if (
                     execution.script_execution in {"aborted", "error", "cancelled"}
@@ -4094,9 +3778,7 @@ async def _async_evaluate_matched_rule(
                 # Script.async_unload was added after our minimum supported HA.
                 # Older Script releases expose async_stop for the same final
                 # run cleanup; keep using async_unload where it is available.
-                await async_cleanup_script(
-                    script, cancelled=cancelled, pending_stop=result_reference_stop
-                )
+                await async_cleanup_script(script, cancelled=cancelled)
         except GuestModeDenied, _GuestTemplateDenied:
             return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE, successful=False)
         except Exception as err:

@@ -78,44 +78,6 @@ def test_result_resolution_recurses_through_authored_response_values() -> None:
     }
 
 
-def test_native_result_sequence_rewrites_nested_result_and_slot_references() -> None:
-    actions = [
-        {
-            "action": "extended_openai_conversation_responses.call_function",
-            "enabled": False,
-            "data": {
-                "result_alias": "reading",
-                "attributes": {"template": "{reading.values.0} {room} {missing}"},
-            },
-        },
-        {"action": "test.log", "data": {"values": [{"template": "{reading.value}"}]}},
-    ]
-
-    sequence = request_rules._native_result_sequence(actions, {"room": "Kitchen"})
-
-    template = sequence[0]["data"]["attributes"]["template"]
-    helper = template.split("(", 1)[0].removeprefix("{{ ")
-    assert helper.startswith("__eoai_result_value_")
-    slot_helper = template.split(" }} {{ ", 1)[1].split("(", 1)[0]
-    assert slot_helper.startswith("__eoai_slot_text_")
-    assert (
-        template
-        == "{{ "
-        + helper
-        + "('reading.values.0') }} {{ "
-        + slot_helper
-        + "('room') }} {missing}"
-    )
-    assert sequence[0]["response_variable"] == "__eoai_result_reading"
-    assert sequence[1] == {
-        "variables": {"reading": "{{ __eoai_result_reading.result }}"},
-    }
-    assert sequence[2]["data"]["values"][0]["template"] == (
-        "{{ " + helper + "('reading.value') }}"
-    )
-    assert sequence[0]["enabled"] is False
-
-
 @pytest.mark.parametrize(
     "rule",
     [

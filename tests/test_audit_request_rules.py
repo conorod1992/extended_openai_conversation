@@ -37,7 +37,7 @@ async def evaluate_functions(hass, actions, executor):
 async def test_unreachable_missing_result_field_does_not_abort(hass):
     async def execute(*args):
         return {"status": "not_found"}
-    result = await evaluate_functions(hass, [function_step(), {"choose": [{"conditions": "{{ false }}", "sequence": [{"set_conversation_response": "{lookup.value}"}]}], "default": [{"set_conversation_response": "Nothing found"}]}], execute)
+    result = await evaluate_functions(hass, [function_step(response_variable="reply"), {"choose": [{"conditions": "{{ false }}", "sequence": [{"set_conversation_response": "{{ reply.result.value }}"}]}], "default": [{"set_conversation_response": "Nothing found"}]}], execute)
     assert result.successful and result.response == "Nothing found"
 
 

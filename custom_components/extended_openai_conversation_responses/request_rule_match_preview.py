@@ -65,7 +65,17 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
 
     rule = match.rule
     action = rule["action"]
-    if rule["action_type"] == "local_action":
+    if rule.get(request_rules.RESULT_ALIAS_REPAIR):
+        continue_to_ai = False
+        would_do = {
+            "type": "local_action",
+            "action_count": 0,
+            "consumed": True,
+            "provider_input": "none",
+            "terminal": True,
+            "needs_repair": True,
+        }
+    elif rule["action_type"] == "local_action":
         continue_to_ai = bool(action.get("continue_to_ai", False))
         continuation = _local_continuation(action.get("actions", []))
         terminal = continuation == "terminal"

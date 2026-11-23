@@ -5,6 +5,7 @@ const unchanged = " Nothing was changed.";
 
 function localActionSummary(response) {
   const action = response?.would_do || {};
+  if (action.needs_repair) return "The matched rule needs repair. The request would stop here without running its actions.";
   const count = Number(action.action_count || 0);
   const functions=(action.functions || []).map((item)=>`${item.name}${item.result_alias ? ` → ${item.result_alias}` : ""}`).join(", ");
   const outcome = action.conditional ? "Conditional: actions may stop or fail." : action.continue_matching ? "After success, keep checking later rules." : action.consumed ? "The command would be consumed locally." : "After success, the selected AI input would continue to the AI.";

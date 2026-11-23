@@ -141,8 +141,6 @@ async def _agent_after_reload(hass, entry_id):
 async def test_alias_rename_preserves_metadata_named_function_arguments(hass, monkeypatch, key, payload_field):
     from copy import deepcopy
 
-    from tests.test_result_alias_payload_boundary import renamed_actions_fixture
-
     tools = [
         {
             "spec": {
@@ -191,13 +189,14 @@ async def test_alias_rename_preserves_metadata_named_function_arguments(hass, mo
     actions = [
         {
             "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "response_variable": "reply",
             "data": {"function": "produce", "arguments": {}, "result_alias": "lookup", "step_id": "1" * 32},
         },
         {
             "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
             payload_field: {
                 "function": "consume",
-                "arguments": {key: "{lookup.value}", "ordinary_key": "{lookup.value}"},
+                "arguments": {key: "{{ reply.result.value }}", "ordinary_key": "{{ reply.result.value }}"},
             },
         },
     ]
@@ -205,9 +204,7 @@ async def test_alias_rename_preserves_metadata_named_function_arguments(hass, mo
     assert _speech(await _say(hass, agent, "run rule")) == "Done"
     assert observed == [{"special": "working", "ordinary": "working"}]
     edited = deepcopy(saved)
-    # The fast suite checks this exact emission against source and shipped JS;
-    # the native HA container need not install a second language runtime.
-    edited["action"]["actions"] = renamed_actions_fixture(key, payload_field)
+    edited["action"]["actions"][0]["data"]["result_alias"] = "updated"
     await agent._request_rules.async_update(saved["id"], edited)
     assert _speech(await _say(hass, agent, "run rule")) == "Done"
     assert observed == [{"special": "working", "ordinary": "working"}] * 2
@@ -284,9 +281,18 @@ async def test_result_path_agrees_across_later_action_and_spoken_response(
     capture = {
         "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
         "data": {"function": "produce_reading", "arguments": {}, "result_alias": alias},
+        "response_variable": "reply",
     }
+    expression = "reply.result"
+    value = _DATA
+    for component in path.split("."):
+        key = int(component) if isinstance(value, list) else component
+        expression += f"[{key!r}]"
+        value = value[key]
+    # Observe the native value inside Jinja before HA parses action field text.
+    action = _record_action("{{ (" + expression + ") == " + repr(value) + " }}")
     await agent._request_rules.async_create(
-        _local([capture, _record_action(reference)], success="Result: " + reference)
+        _local([capture, action], success="Result: " + reference)
     )
     expected = _lookup(_DATA, path)
     # Spoken responses JSON-format non-string values, while subsequent script
@@ -294,7 +300,7 @@ async def test_result_path_agrees_across_later_action_and_spoken_response(
     spoken = expected if isinstance(expected, str) else json.dumps(expected)
     result = await _say(hass, agent, "run rule")
     assert _speech(result) == f"Result: {spoken}"
-    assert calls == [expected]
+    assert calls == [True]
 
 
 @pytest.mark.parametrize(
@@ -338,14 +344,11 @@ async def test_invalid_result_path_never_executes_dependent_action(
             "result_alias": "payload",
         },
     }
-    await agent._request_rules.async_create(
-        _local(
-            [capture, _record_action("{payload." + missing_path + "}")],
-            failure="Failed safely",
-        )
-    )
+    legacy = _local([capture, _record_action("{payload." + missing_path + "}")])
+    legacy.update(id="old-result", order=0)
+    await agent._request_rules.async_replace_backup({"rules": [legacy]})
     result = await _say(hass, agent, "run rule")
-    assert _speech(result, successful=False) == "Failed safely"
+    assert _speech(result, successful=False)  .startswith("This Request Rule needs repair")
     assert calls == []
 
 
@@ -391,6 +394,7 @@ async def test_generated_two_step_dataflow_preserves_nested_value(
     hass.services.async_register("rule_probe", "record", record)
     capture = {
         "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+        "response_variable": "reply",
         "data": {
             "function": "produce_reading",
             "arguments": {},
@@ -398,11 +402,15 @@ async def test_generated_two_step_dataflow_preserves_nested_value(
         },
     }
     reference = "{payload.reading." + field + "}"
+    expression = "reply.result['reading']"
+    for component in field.split("."):
+        key = int(component) if component.isdigit() and field.startswith("rows.") else component
+        expression += f"[{key!r}]"
     await agent._request_rules.async_create(
         _local(
             [
                 capture,
-                {"variables": {"intermediate": reference}},
+                {"variables": {"intermediate": "{{ " + expression + " }}"}},
                 _record_action("{{ intermediate }}"),
             ],
             success="Result: " + reference,

@@ -19,7 +19,7 @@ from custom_components.extended_openai_conversation_responses.functions import (
     CompositeFunction,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
-    _native_result_sequence,
+    _native_action_sequence,
 )
 from custom_components.extended_openai_conversation_responses.safety_hardening import (
     _normalized_statistics_arguments,
@@ -41,7 +41,7 @@ def test_captured_result_preserves_whole_data_template():
         },
     ]
     original = deepcopy(actions)
-    sequence = _native_result_sequence(actions, {})
+    sequence = _native_action_sequence(actions, {})
     assert sequence[-1] == actions[-1]
     assert actions == original
 

@@ -470,12 +470,11 @@ async def test_configured_text_result_stays_text_through_rule_action_and_speech(
 
     hass.services.async_register("rule_probe", "record", record)
     await agent._request_rules.async_create(_local([
-        {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": {"function": "text_result", "arguments": {}, "result_alias": "answer"}},
-        _record_action("{answer}"),
+        {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": {"function": "text_result", "arguments": {}, "result_alias": "answer"}, "response_variable": "reply"},
+        _record_action("{{ reply.result is string }}"),
     ], success="Value {answer}"))
     assert _speech(await _say(hass, agent, "run rule")) == f"Value {text}"
-    assert captured == [text]
-    assert type(captured[0]) is str
+    assert captured == [True]
 
 
 async def test_variables_delay_and_action_keep_one_ha_script_context(hass, monkeypatch):
@@ -648,8 +647,10 @@ async def test_function_capture_preserves_ha_variables_and_survives_reload(
                         "arguments": {},
                         "result_alias": "battery",
                     },
+                    "response_variable": "battery_data",
                 },
-                _record_action("{{ marker }}:{battery.level}"),
+                {"if": [{"condition": "template", "value_template": "{{ battery_data.result.level < 70 }}"}],
+                 "then": [_record_action("{{ marker }}:{{ battery_data.result.level }}")]},
             ],
             success="Battery {battery.level}",
         )
@@ -678,14 +679,13 @@ async def test_function_capture_preserves_ha_variables_and_survives_reload(
                         "result_alias": "battery",
                     },
                 },
-                _record_action("{battery.missing}"),
             ],
+            success="{battery.missing}",
             phrase="missing battery field",
         )
     )
-    assert (
-        _speech(await _say(hass, agent, "missing battery field"), successful=False)
-        == "Failed safely"
+    assert "response construction failed" in _speech(
+        await _say(hass, agent, "missing battery field"), successful=False
     )
     assert calls == ["kitchen:62", "kitchen:62"]
     assert function_calls.await_count == 3
@@ -835,9 +835,17 @@ async def test_nested_function_results_agree_in_native_action_and_speech(
             "result_alias": "battery",
         },
     }
-    action = _record_action(reference)
-    if reference == "whole-data-template":
-        action["data"] = "{{ {'message': battery['current']['level']} }}"
+    capture["response_variable"] = "battery_data"
+    if reference.startswith("{battery."):
+        path = reference[9:-1].split(".")
+        expression = "battery_data.result"
+        for item in path:
+            expression += f"[{item}]" if item.isdigit() and "items" in path else f"[{item!r}]"
+        action = _record_action("{{ " + expression + " }}")
+    elif reference == "whole-data-template":
+        action = {"action": "rule_probe.record", "data": "{{ {'message': battery_data.result['current']['level']} }}"}
+    else:
+        action = _record_action(reference.replace("battery", "battery_data.result"))
     response = (
         reference if reference.startswith("{battery.") else "{battery.current.level}"
     )
@@ -848,13 +856,13 @@ async def test_nested_function_results_agree_in_native_action_and_speech(
     assert calls == [expected]
     await agent._request_rules.async_create(
         _local(
-            [capture, _record_action("{battery.current.missing}")],
+            [capture],
+            success="{battery.current.missing}",
             phrase="missing rule",
         )
     )
-    assert (
-        _speech(await _say(hass, agent, "missing rule"), successful=False)
-        == "Failed safely"
+    assert "response construction failed" in _speech(
+        await _say(hass, agent, "missing rule"), successful=False
     )
     assert calls == [expected]
 
@@ -1182,7 +1190,6 @@ async def test_condition_shorthand_captures_survive_create_reload_and_execute(
     hass, monkeypatch, form
 ):
     from copy import deepcopy
-    from homeassistant.helpers import config_validation as cv
     from custom_components.extended_openai_conversation_responses.request_rules import (
         _validate_script_sequence,
     )

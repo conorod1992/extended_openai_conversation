@@ -197,11 +197,39 @@ A rule can call an enabled Function Tool directly without sending the request to
 
 For example, match `Show {entity_id} attributes`, add **Call configured function**, set **Function tool** to `get_attributes`, and set **Arguments** to `entity_id: "{{ entity_id }}"`. Direct execution uses the same implementation, argument validation, current enabled state, Guest Mode policy, and entity-access checks as a model-initiated call.
 
-To use a Function Tool's return value, set an optional **Result alias** on its action step. For `get_device_battery(device={device})`, name the result `battery`; an object result such as `{"name":"Kitchen tablet","level":62}` can then be used in the local success response as `{battery.name} is at {battery.level}%`. A scalar string, number, boolean, or null can be referenced as `{battery}`. Nested object paths and simple numeric array indexes such as `{battery.items.0.name}` are supported. A missing path in an executed action stops the sequence and uses the failure response. If only the separate success response cannot be constructed after actions finish, Extended OpenAI reports that the actions succeeded but the response failed. Completed actions are not retried, and placeholders are never spoken unresolved.
+To use a Function Tool's return value, set an optional **Result alias** on its action step. For `get_device_battery(device={device})`, name the result `battery`; an object result such as `{"name":"Kitchen tablet","level":62}` can then be used in the local success response as `{battery.name} is at {battery.level}%`. A scalar string, number, boolean, or null can be referenced as `{battery}`. Nested object paths and simple numeric array indexes such as `{battery.items.0.name}` are supported. If a path is missing or the separate success response cannot otherwise be constructed after actions finish, Extended OpenAI reports that the actions succeeded but the response failed. Completed actions are not retried, and placeholders are never spoken unresolved.
 
-Request captures and Function results stay separate. `{device}` remains a request capture, while `{battery.device}` reads a field from the Function result. A Function result cannot overwrite a capture. Each result-producing call needs a unique editable alias, even when the same Function Tool is called twice. Aliases use letters, digits, and underscores, start with a letter or underscore, and cannot use reserved names such as `request`, `conversation`, or `system`. The editor suggests an alias from the Function Tool name; the saved step ID remains stable when you rename the alias. References to an earlier alias in simple `{alias.path}` form are updated on rename. Removing a referenced producing step or moving it after a consumer is rejected on save.
+Request captures and Function results stay separate. `{device}` remains a request capture, while `{battery.device}` reads a field from the Function result. A Function result cannot overwrite a capture. Each result-producing call needs a unique editable alias, even when the same Function Tool is called twice. Aliases use letters, digits, and underscores, start with a letter or underscore, and cannot use reserved names such as `request`, `conversation`, or `system`. The editor suggests an alias from the Function Tool name; the saved step ID remains stable when you rename the alias. Renaming an alias in the editor updates references in the success response.
 
 Function execution success is determined by the execution outcome, not the truthiness of its result: `false`, `0`, empty string, and null are valid values. Retained results are limited to 16 KiB and eight levels of nesting. The safe Match Preview lists the Function Tool and alias but never runs it or invents a result. Live Test can run it after the normal explicit confirmation. **Function results are not automatically sent to the AI provider**, including when Continue to AI is on; the provider receives the selected AI input.
+
+### Branching on a Function result
+
+Use the native Home Assistant response variable for later actions. In the YAML below, the rule can keep the `battery` alias for its success response. The `battery_data` variable contains the service response, with the Function's return value under `result`.
+
+```yaml
+- action: extended_openai_conversation_responses.call_function
+  data:
+    function: get_device_battery
+    arguments:
+      device: Kitchen tablet
+    result_alias: battery
+  response_variable: battery_data
+- if:
+    - condition: template
+      value_template: >-
+        {{ battery_data is defined and battery_data.result is mapping
+           and battery_data.result.level is number
+           and battery_data.result.level < 20 }}
+  then:
+    - action: switch.turn_on
+      target:
+        entity_id: switch.tablet_charger
+```
+
+For a configured Function call without a result alias, the existing response includes the tool result envelope inside `result`. Read the value using `battery_data.result.result` in that case.
+
+Earlier development builds allowed aliases such as `{battery.level}` or `{{ battery.level }}` inside native actions. Stored and restored rules with these references are preserved and marked for repair. When an enabled affected rule matches and passes its Only when conditions, the request stops with a repair message. Its actions, lower-priority rules, and AI handoff do not run. Add a distinct `response_variable` and update action templates as above, then save and preview the rule. When a native variable already shares an alias name, give it a distinct name and update its usages before saving.
 
 ### Example: targeted Broadcast
 

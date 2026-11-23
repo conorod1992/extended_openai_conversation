@@ -839,9 +839,6 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         check_configuration = await _async_validate_request_rule_mutation(
             hass, candidate, request.entry, subentry
         )
-        from .request_rules import validate_result_alias_template_update
-
-        validate_result_alias_template_update(hass, None, candidate)
         rule = await rules.async_create(
             candidate,
             expected_revision=message.get("revision"),
@@ -866,12 +863,6 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         if field_only and update_revision is None:
             update_revision = rules.revision()
         candidate = _prepare_request_rule(message.get("rule"), rule_id, rules)
-        if not field_only:
-            from .request_rules import validate_result_alias_template_update
-
-            validate_result_alias_template_update(
-                hass, rules.rule_snapshot(rule_id), candidate
-            )
         check_configuration = await _async_validate_request_rule_mutation(
             hass, candidate, request.entry, subentry
         )

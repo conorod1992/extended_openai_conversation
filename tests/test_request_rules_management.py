@@ -87,7 +87,8 @@ async def test_renaming_result_alias_requires_updating_native_templates(
         },
         {"set_conversation_response": "{{ lookup.level }}"},
     ]
-    saved = await rules.async_create(original)
+    await rules.async_replace_backup({"rules": [original]})
+    saved = rules.rule_snapshot(original["id"])
     candidate = deepcopy(saved)
     candidate["action"]["actions"][0]["data"]["result_alias"] = "reading"
 
@@ -106,187 +107,16 @@ async def test_renaming_result_alias_requires_updating_native_templates(
         )
 
     with pytest.raises(
-        HomeAssistantError, match="removed Function result aliases: lookup"
+        ValueError, match="only available in the success response"
     ):
         await update()
     assert rules.rule_snapshot(saved["id"]) == saved
+    candidate["action"]["actions"][0]["response_variable"] = "sensor_data"
     candidate["action"]["actions"][1]["set_conversation_response"] = (
-        "{{ 'lookup' }} {{ reading.level }}"
+        "{{ sensor_data.result.level }}"
     )
     updated = await update()
     assert updated["rule"]["action"]["actions"] == candidate["action"]["actions"]
-
-
-@pytest.mark.parametrize("step", [
-    {"variables": {"label": "{{ lookup | default('waiting') }}"}},
-    {"set_conversation_response": "{{ lookup is defined }}"},
-    {"set_conversation_response": "{{ lookup.level if lookup is defined else 'waiting' }}"},
-    {"set_conversation_response": "{{ lookup.level if lookup is not undefined }}"},
-    {"set_conversation_response": "{{ lookup is defined and lookup.level or 'waiting' }}"},
-    {"set_conversation_response": "{{ lookup is undefined or lookup.level }}"},
-    {"set_conversation_response": "{{ 'waiting' if lookup is undefined or false else lookup.level }}"},
-    {"set_conversation_response": "{% if lookup is defined and true %}{{ lookup.level }}{% elif lookup is undefined %}waiting{% else %}{{ lookup.level }}{% endif %}"},
-    {"stop": "Literal {{ lookup.level }} and unmatched {{"},
-    {"if": [{"condition": "template", "value_template": "{{ true }}"}],
-     "then": [{"set_conversation_response": "{{ lookup.level }}", "enabled": False}]},
-    {"if": [{"condition": "template", "value_template": "{{ true }}"}],
-     "then": [{"variables": {"label": "{{ lookup | default('waiting') }}"}}]},
-    {"set_conversation_response": "{{ lookup.level }}", "enabled": False},
-])
-async def test_rule_creation_allows_optional_and_nonexecuting_result_references(
-    hass, management_agent, management_message, monkeypatch, step
-):
-    rules = rr.RequestRules(MemoryStore())
-    await rules.async_initialize()
-    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
-    monkeypatch.setattr(ui, "_async_validate_request_rule_mutation", AsyncMock(return_value=None))
-    candidate = local_rule()
-    candidate["action"]["actions"] = [step, {
-        "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
-        "data": {"function": "read_sensor", "result_alias": "lookup"},
-    }]
-    result = await ui.async_management_command(
-        hass, "admin", True, management_message("request_rules", "create", rule=candidate)
-    )
-    assert result["rule"]["action"]["actions"][0] == step
-
-
-@pytest.mark.parametrize(
-    "binding",
-    [
-        {"variables": {"lookup": {"level": 1}}},
-        {"action": "sensor.read", "response_variable": "lookup"},
-        None,
-    ],
-    ids=["later-variable", "later-service-result", "unbound-nested-template"],
-)
-def test_alias_rename_checks_nested_templates_and_allows_later_bindings(hass, binding):
-    previous = local_rule()
-    previous["action"]["actions"] = [
-        {
-            "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
-            "data": {"function": "read_sensor", "result_alias": "lookup"},
-        },
-        {
-            "if": [{"condition": "template", "value_template": "{{ true }}"}],
-            "then": [{"set_conversation_response": "{{ lookup.level }}"}],
-        },
-    ]
-    candidate = deepcopy(previous)
-    actions = candidate["action"]["actions"]
-    actions[0]["data"]["result_alias"] = "reading"
-    if binding is None:
-        with pytest.raises(HomeAssistantError, match="Function result aliases: lookup"):
-            rr.validate_result_alias_template_update(hass, previous, candidate)
-    else:
-        actions.insert(1, binding)
-        rr.validate_result_alias_template_update(hass, previous, candidate)
-
-
-@pytest.mark.parametrize("operation", ["create", "update"])
-@pytest.mark.parametrize("location", ["inside-if", "after-sequence"])
-async def test_nested_native_bindings_are_valid_through_management(
-    hass, management_agent, management_message, monkeypatch, operation, location
-):
-    rules = rr.RequestRules(MemoryStore())
-    await rules.async_initialize()
-    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
-    monkeypatch.setattr(
-        ui, "_async_validate_request_rule_mutation", AsyncMock(return_value=None)
-    )
-    candidate = local_rule()
-    lookup = {
-        "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
-        "data": {"function": "read_sensor", "result_alias": "lookup"},
-    }
-    use_lookup = {"set_conversation_response": "{{ lookup.level }}"}
-    params = {}
-    if operation == "update":
-        candidate["action"]["actions"] = [lookup, use_lookup]
-        saved = await rules.async_create(candidate)
-        candidate = deepcopy(saved)
-        lookup = candidate["action"]["actions"][0]
-        lookup["data"]["result_alias"] = "reading"
-        params["rule_id"] = saved["id"]
-
-    bind = {"variables": {"lookup": {"level": 42}}}
-    if location == "inside-if":
-        native_actions = [
-            {
-                "if": [{"condition": "template", "value_template": "{{ true }}"}],
-                "then": [bind, use_lookup],
-            }
-        ]
-    else:
-        native_actions = [{"sequence": [bind]}, use_lookup]
-    candidate["action"]["actions"] = [*native_actions, lookup]
-    result = await ui.async_management_command(
-        hass,
-        "admin",
-        True,
-        management_message("request_rules", operation, rule=candidate, **params),
-    )
-    assert result["rule"]["action"]["actions"][:-1] == native_actions
-
-
-@pytest.mark.parametrize("separate_branch", [False, True])
-def test_nested_alias_consumer_cannot_use_later_or_sibling_binding(
-    hass, separate_branch
-):
-    bind = {"variables": {"lookup": {"level": 42}}}
-    consume = {"set_conversation_response": "{{ lookup.level }}"}
-    branch = {
-        "if": [{"condition": "template", "value_template": "{{ true }}"}],
-        "then": [consume, bind],
-    }
-    if separate_branch:
-        branch["then"] = [bind]
-        branch["else"] = [consume]
-    candidate = local_rule()
-    candidate["action"]["actions"] = [
-        branch,
-        {
-            "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
-            "data": {"function": "read_sensor", "result_alias": "lookup"},
-        },
-    ]
-    with pytest.raises(HomeAssistantError, match="earlier step: lookup"):
-        rr.validate_result_alias_template_update(hass, None, candidate)
-
-
-@pytest.mark.parametrize(
-    "wrap",
-    [
-        lambda steps: {
-            "choose": [
-                {
-                    "conditions": [
-                        {"condition": "template", "value_template": "{{ true }}"}
-                    ],
-                    "sequence": steps,
-                }
-            ]
-        },
-        lambda steps: {"repeat": {"count": 1, "sequence": steps}},
-        lambda steps: {"parallel": [{"sequence": steps}]},
-    ],
-    ids=["choose", "repeat", "parallel"],
-)
-def test_other_native_action_containers_use_local_binding_order(hass, wrap):
-    candidate = local_rule()
-    candidate["action"]["actions"] = [
-        wrap(
-            [
-                {"variables": {"lookup": {"level": 42}}},
-                {"set_conversation_response": "{{ lookup.level }}"},
-            ]
-        ),
-        {
-            "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
-            "data": {"function": "read_sensor", "result_alias": "lookup"},
-        },
-    ]
-    rr.validate_result_alias_template_update(hass, None, candidate)
 
 
 async def test_initialize_projects_defaults_without_overwriting_malformed_container() -> (
@@ -1307,46 +1137,3 @@ async def test_function_reference_rename_rejects_stale_revision() -> None:
     ]
     assert manager.function_references("new_tool") == []
     store.async_save.assert_not_awaited()
-
-
-def test_native_result_alias_tracks_order_and_variables_rebinding(hass):
-    previous = local_rule()
-    previous["action"]["actions"] = [
-        {
-            "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
-            "data": {"function": "read_sensor", "result_alias": "lookup"},
-        },
-        {"set_conversation_response": "{{ lookup.level }}"},
-    ]
-    candidate = deepcopy(previous)
-    candidate["action"]["actions"].reverse()
-    with pytest.raises(HomeAssistantError, match="earlier step: lookup"):
-        rr.validate_result_alias_template_update(hass, previous, candidate)
-
-    candidate = deepcopy(previous)
-    candidate["action"]["actions"][0] = {
-        "variables": {"lookup": {"level": 42}, "label": "{{ lookup.level }}"},
-    }
-    candidate["action"]["actions"][1] = {"set_conversation_response": "{{ label }}"}
-    rr.validate_result_alias_template_update(hass, previous, candidate)
-
-
-def test_native_result_alias_validation_skips_disabled_conditions(hass):
-    rule = local_rule()
-    condition = {
-        "condition": "template",
-        "value_template": "{{ lookup.level > 0 }}",
-        "enabled": False,
-    }
-    rule["action"]["actions"] = [
-        {"if": [condition], "then": [{"delay": 0}]},
-        {
-            "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
-            "data": {"function": "read_sensor", "result_alias": "lookup"},
-        },
-    ]
-    rr.validate_result_alias_template_update(hass, None, rule)
-
-    condition["enabled"] = True
-    with pytest.raises(HomeAssistantError, match="earlier step: lookup"):
-        rr.validate_result_alias_template_update(hass, None, rule)

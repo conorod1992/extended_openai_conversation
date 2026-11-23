@@ -14,7 +14,7 @@ class Field extends EventTarget {
   contains() { return false; }
 }
 
-const step = (id, alias) => ({action:"extended_openai_conversation_responses.call_function", data:{function:"lookup", arguments:{}, step_id:id, result_alias:alias}});
+const step = (id, alias) => ({action:"extended_openai_conversation_responses.call_function", data:{function:"lookup", arguments:{}, step_id:id, result_alias:alias}, response_variable:"native_" + id});
 for (const swap of [true, false]) {
   const fields = new Map();
   const q = selector => {
@@ -35,7 +35,7 @@ for (const swap of [true, false]) {
   // Model the opening contract while this fixture exercises only alias retry.
   panel._eocRuleEditorState.owner = captureConfigurationOwner(panel);
   q("#rule-dialog").open = true;
-  const actions = [step("one", swap ? "right" : "renamed"), step("two", swap ? "left" : "right"), {action:"review_probe.record", data:{message:"{left.value}"}}];
+  const actions = [step("one", swap ? "right" : "renamed"), step("two", swap ? "left" : "right"), {action:"review_probe.record", data:{message:"{{ native_one.result.value }}"}}];
   panel._eocRuleEditorState.actionSelector.value = actions;
   q("#rule-action-type").value = "local_action";
   q("#rule-ai-input-mode").value = "original";
@@ -51,7 +51,7 @@ for (const swap of [true, false]) {
   for (const rule of submitted) {
     const reference = swap ? "{right.value}" : "{renamed.value}";
     assert.equal(rule.action.success_response, `First result: ${reference}`);
-    assert.equal(rule.action.actions[2].data.message, reference);
+    assert.equal(rule.action.actions[2].data.message, "{{ native_one.result.value }}");
     assert.deepEqual(rule, submitted[0]);
   }
 }

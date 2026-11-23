@@ -1338,6 +1338,8 @@ async def _async_validate_request_rule_function_dependencies(
     config: Mapping[str, Any],
 ) -> None:
     """Apply canonical Request Rule Function validation to one combined target."""
+    from .request_rules import request_rule_alias_repair
+
     quarantined_names: set[str] = set()
     try:
         tools = configured_function_tools_from_data(config)
@@ -1357,7 +1359,7 @@ async def _async_validate_request_rule_function_dependencies(
             if isinstance(item.get("name"), str) and item["name"]
         }
     for rule in request_rules.get("rules", []):
-        if not isinstance(rule, Mapping):
+        if not isinstance(rule, Mapping) or request_rule_alias_repair(rule):
             continue
         try:
             await async_validate_request_rule_functions(

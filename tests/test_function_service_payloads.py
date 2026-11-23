@@ -164,11 +164,7 @@ def test_result_alias_and_step_identity_use_effective_payload(hass):
     step = rule["action"]["actions"][0]
     assert len(step["data_template"]["step_id"]) == 32
     assert "step_id" not in step["data"]
-    bindings = {}
-    sequence = rr._native_result_sequence([step], {}, bindings)
-    assert next(iter(bindings.values()))[0] == "answer"
-    assert sequence[0]["response_variable"]
-    assert "answer" in sequence[1]["variables"]
+    assert rr._native_action_sequence([step], {}) == [step]
 
 
 async def test_native_rule_dispatch_and_result_follow_effective_payload(tmp_path):
@@ -192,7 +188,7 @@ async def test_native_rule_dispatch_and_result_follow_effective_payload(tmp_path
         "extended_openai_conversation_responses",
         "call_function",
         capture,
-        supports_response=SupportsResponse.ONLY,
+        supports_response=SupportsResponse.OPTIONAL,
     )
     rule = local_rule("Payload", ["echo now"])
     rule["action"]["actions"] = [

@@ -82,9 +82,8 @@ async def test_native_runner_unregisters_after_repeated_cancellation(
 
 
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
-@pytest.mark.parametrize("cancel", [False, True])
-async def test_result_reference_stop_cannot_skip_native_unload(
-    hass, monkeypatch, api_mode, cancel
+async def test_legacy_result_reference_never_starts_native_script(
+    hass, monkeypatch, api_mode
 ):
     effects = []
 
@@ -108,64 +107,29 @@ async def test_result_reference_stop_cannot_skip_native_unload(
         },
     }
     agent = await _agent(hass, api_mode=api_mode, **{CONF_FUNCTION_TOOLS: [tool]})
-    await agent._request_rules.async_create(
-        _local(
-            [
-                {"action": "script_probe.record"},
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {
-                        "function": "result_probe",
-                        "arguments": {},
-                        "result_alias": "battery",
-                    },
+    legacy = _local(
+        [
+            {"action": "script_probe.record"},
+            {
+                "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                "data": {
+                    "function": "result_probe",
+                    "arguments": {},
+                    "result_alias": "battery",
                 },
-                {"wait_template": "{battery.missing}"},
-            ]
-        )
+            },
+            {"wait_template": "{battery.missing}"},
+        ]
     )
+    legacy.update(id="old-wait", order=0)
+    await agent._request_rules.async_replace_backup({"rules": [legacy]})
     text = _chat_sse_text if api_mode == "chat_completions" else _responses_sse_text
     _install_wire(monkeypatch, agent, [text("Healthy")])
     scripts = _capture_scripts(monkeypatch, request_rules)
-    original_render = request_rules._ResultReferenceTemplate.async_render_to_info
-    errors = []
-    task = None
-
-    def observe(self, *args, **kwargs):
-        try:
-            return original_render(self, *args, **kwargs)
-        except request_rules.RuleResponseValueError:
-            errors.append(True)
-            if cancel:
-                # Observe the actual failure, without replacing native stop or
-                # unload behavior, and cancel while its stop task is pending.
-                asyncio.get_running_loop().call_soon(
-                    task.cancel, "cancel while stopping invalid result reference"
-                )
-            raise
-
-    monkeypatch.setattr(
-        request_rules._ResultReferenceTemplate, "async_render_to_info", observe
-    )
-    task = asyncio.create_task(_say(hass, agent, "run rule"))
-    try:
-        if cancel:
-            with pytest.raises(asyncio.CancelledError):
-                await task
-        else:
-            assert _speech(await task, successful=False) == "Failed safely"
-        await hass.async_block_till_done()
-        assert errors
-        assert effects == [True]
-        assert scripts
-        for script in scripts:
-            _assert_native_script_finished(hass, script)
-        assert _speech(await _say(hass, agent, "independent healthy turn")) == "Healthy"
-        assert effects == [True]
-    finally:
-        if not task.done():
-            task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+    response = await _say(hass, agent, "run rule")
+    assert "needs repair" in _speech(response, successful=False)
+    assert effects == scripts == []
+    assert _speech(await _say(hass, agent, "independent healthy turn")) == "Healthy"
 
 
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])

@@ -1,6 +1,5 @@
 """Combined guarantees for execution provenance, local dataflow and durable cleanup."""
 
-from dataclasses import replace
 
 from dataclasses import asdict, dataclass
 from io import BytesIO
@@ -225,26 +224,9 @@ async def test_structured_overflow_is_complete_and_does_not_mutate_local_result(
         rr._bounded_function_result(value)
 
 
-def test_alias_copy_uses_current_producer_and_leaves_authored_response_untouched():
-    binding = rr._ResultAliasVariables(
-        rr.ScriptVariables({"second": "{{ shared.result }}"}), "second", "shared"
-    )
-    shared = {"shared": {"result": "from A"}}
-    token = rr._ACTIVE_RULE_ACTION.set(
-        replace(rr._ACTIVE_RULE_ACTION.get(), function_results={"first": "from A"})
-    )
-    try:
-        assert binding.async_simple_render(shared) == {}
-        rr._ACTIVE_RULE_ACTION.get().function_results["second"] = False
-        assert binding.async_simple_render(shared) == {"second": False}
-        assert shared == {"shared": {"result": "from A"}}
-    finally:
-        rr._ACTIVE_RULE_ACTION.reset(token)
-
-
 def test_unrelated_result_alias_fields_are_not_function_metadata():
     action = {"action": "script.ordinary", "data": {"result_alias": "input"}}
-    assert rr._native_result_sequence([action], {}) == [action]
+    assert rr._native_action_sequence([action], {}) == [action]
     rr._validate_result_dependencies(
         {
             "actions": [{"sequence": [action]}],
@@ -264,7 +246,7 @@ def test_condition_capture_save_runtime_schema_parity(hass, selector):
         "then": [{"stop": "Done"}],
     }
     saved = rr._validate_script_sequence([action])
-    runtime = rr._native_result_sequence(
+    runtime = rr._native_action_sequence(
         saved, {"room": "kitchen", "entity": "light.kitchen"}
     )
     validated = cv.SCRIPT_SCHEMA(runtime)

@@ -12,12 +12,12 @@ from tests.test_request_rules import local_rule, manager
 
 
 @pytest.mark.parametrize("producer", ["disabled", "failed", "success"])
-@pytest.mark.parametrize("embedded", [False, True, "native"])
 @pytest.mark.parametrize("value", [False, 0, None, 73])
 async def test_result_namespace_with_native_collision(
-    tmp_path, producer, embedded, value
+    tmp_path, producer, value
 ):
     hass = HomeAssistant(str(tmp_path))
+    hass.config.legacy_templates = False
     effects, calls = [], []
 
     async def capture(call):
@@ -39,7 +39,7 @@ async def test_result_namespace_with_native_collision(
         return {"nested": [value]}
 
     hass.services.async_register(
-        DOMAIN, "call_function", capture, supports_response=SupportsResponse.ONLY
+        DOMAIN, "call_function", capture, supports_response=SupportsResponse.OPTIONAL
     )
     hass.services.async_register("namespace_probe", "record", record)
 
@@ -52,7 +52,7 @@ async def test_result_namespace_with_native_collision(
 
     rule = local_rule(phrases=["run"])
     rule["action"]["actions"] = [
-        {"variables": {"reading": {"nested": [99]}}},
+        {"variables": {"native_reading": {"nested": [99]}}},
         function("first", "first_result"),
         function(
             "lookup",
@@ -63,18 +63,9 @@ async def test_result_namespace_with_native_collision(
                 else {"continue_on_error": True}
             ),
         ),
-        {"action": "namespace_probe.record", "data": {"value": "{first_result.level}"}},
-        {
-            "action": "namespace_probe.record",
-            "data": {
-                "value": "Reading: {reading.nested.0}"
-                if embedded
-                else "{reading.nested.0}"
-            },
-        },
+        {"action": "namespace_probe.record", "data": {"value": "{{ native_reading.nested[0] }}"}},
     ]
-    if embedded == "native":
-        rule["action"]["actions"][-1]["data"]["value"] = "{{ reading.nested[0] }}"
+    rule["action"]["success_response"] = "{first_result.level}: {reading.nested.0}"
     try:
         result = await rules.async_evaluate_rule(
             hass,
@@ -85,15 +76,14 @@ async def test_result_namespace_with_native_collision(
             function_executor=execute,
         )
         assert calls == (["first"] if producer == "disabled" else ["first", "lookup"])
-        assert effects[0] == {"value": 11}
-        assert result.successful == (producer == "success" or embedded == "native")
-        if embedded == "native":
-            assert effects[1] == {"value": value if producer == "success" else 99}
-        elif producer == "success":
-            assert effects[1] == {"value": f"Reading: {value}" if embedded else value}
-            if not embedded:
-                assert type(effects[1]["value"]) is type(value)
+        assert effects == [{"value": 99}]
+        if producer == "success":
+            import json
+
+            assert result.successful
+            assert result.response == f"11: {json.dumps(value)}"
         else:
-            assert len(effects) == 1
+            assert not result.successful
+            assert "response construction failed (Function result reading is unavailable)" in result.response
     finally:
         await hass.async_stop(force=True)

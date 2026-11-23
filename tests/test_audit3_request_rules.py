@@ -85,13 +85,13 @@ async def test_authored_response_variable_and_alias_both_available(hass):
         [
             function_step(response_variable="reply"),
             {
-                "set_conversation_response": "{{ reply.result.level }} / {{ lookup.level }}"
+                "set_conversation_response": "{{ reply.result.level }}"
             },
         ],
         execute,
     )
     assert outcome.successful
-    assert outcome.response == "62 / 62"
+    assert outcome.response == "62"
 
 
 @pytest.mark.parametrize(
@@ -185,30 +185,11 @@ async def test_alias_assignment_preserves_type_in_real_script(hass, legacy, valu
 
     outcome = await evaluate_functions(hass, [
         function_step(response_variable="reply"),
-        {"set_conversation_response": "{{ lookup == reply.result }} / {{ lookup is string }} / {{ reply.result is string }}"},
+        {"set_conversation_response": "{{ reply.result is string }}"},
     ], execute)
     expected = "True" if isinstance(value, str) else "False"
     assert outcome.successful
-    assert outcome.response == f"True / {expected} / {expected}"
-
-
-@pytest.mark.parametrize("legacy", [True, False])
-@pytest.mark.parametrize("privacy_guard", [True, False])
-@pytest.mark.parametrize("value", ["123456", "False", "None", '{"level":62}', "  spaced  ", False, 0, None, {"level": 62}, [1, 2]])
-def test_exact_result_reference_preserves_native_type_at_render_boundary(hass, legacy, privacy_guard, value):
-    from homeassistant.helpers.template import Template
-
-    hass.config.legacy_templates = legacy
-    helper = "__eoai_result_value_" + "a" * 32
-    source = Template("{{ " + helper + "('answer') }}", hass)
-    if privacy_guard:
-        source = rules._guard_template_reads(source, GuestCapabilityPolicy.unrestricted)
-    wrapped = rules._guard_result_references(
-        source, lambda error: pytest.fail(str(error)), {"answer": value}
-    )
-    rendered = wrapped.async_render({"answer": "unrelated native variable"})
-    assert rendered == value
-    assert type(rendered) is type(value)
+    assert outcome.response == expected
 
 
 @pytest.mark.parametrize("legacy", [True, False])
@@ -231,11 +212,10 @@ async def test_exact_reference_preserves_type_in_script_with_live_privacy_guard(
 
     hass.services.async_call.side_effect = dispatch
     rule = local_rule(phrases=["run"])
-    rule["action"]["actions"] = [function_step(), {"action": "rule_probe.record", "data": {"message": "{lookup}"}}]
+    rule["action"]["actions"] = [function_step(response_variable="reply"), {"action": "rule_probe.record", "data": {"message": "{{ reply.result is string }}"}}]
     outcome = await rules.async_evaluate_rule(hass, await manager(rule), rules.RequestRuleRuntime(), "run", "session", function_executor=execute, live_guest_policy=GuestCapabilityPolicy.unrestricted)
     assert outcome.successful
-    assert captured == [value]
-    assert type(captured[0]) is type(value)
+    assert captured == [str(isinstance(value, str)) if legacy else isinstance(value, str)]
 
 
 async def test_guest_parallel_forbidden_event_rejected_before_any_effect(hass):
@@ -279,3 +259,52 @@ async def test_parallel_guest_preflight_prevents_partial_effects(hass):
     assert not outcome.successful
     assert not effects
     hass.services.async_call.assert_not_called()
+
+
+
+@pytest.mark.parametrize("level", [0, 62])
+@pytest.mark.parametrize("with_alias", [False, True])
+async def test_response_only_alias_can_share_function_with_native_branch(
+    tmp_path, level, with_alias
+):
+    from custom_components.extended_openai_conversation_responses import services
+    from homeassistant.core import HomeAssistant
+
+    hass = HomeAssistant(str(tmp_path))
+    hass.config.legacy_templates = False
+    effects = []
+
+    async def execute(*_args):
+        return SimpleNamespace(tool_result={"result": {"level": level}})
+
+    async def record(call):
+        effects.append(call.service)
+
+    await services.async_setup_services(hass, {})
+    hass.services.async_register("rule_probe", "record", record)
+    rule = local_rule(phrases=["run"])
+    producer = function_step(response_variable="reading")
+    if not with_alias:
+        producer["data"].pop("result_alias")
+    result_path = "reading.result" if with_alias else "reading.result.result"
+    success = "Battery {lookup.level}" if with_alias else "Done"
+    rule["action"].update(
+        actions=[
+            producer,
+            {
+                "if": [{"condition": "template", "value_template": "{{ " + result_path + ".level < 20 }}"}],
+                "then": [{"action": "rule_probe.record"}],
+            },
+        ],
+        success_response=success,
+    )
+    try:
+        outcome = await rules.async_evaluate_rule(
+            hass, await manager(rule), rules.RequestRuleRuntime(), "run", "session",
+            function_executor=execute,
+        )
+        assert outcome.successful
+        assert outcome.response == (f"Battery {level}" if with_alias else "Done")
+        assert effects == (["record"] if level < 20 else [])
+    finally:
+        await hass.async_stop(force=True)

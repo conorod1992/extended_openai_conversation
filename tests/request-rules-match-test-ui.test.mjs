@@ -146,3 +146,10 @@ for (const type of ["local_action", "model_routing"]) {
   assert.match(continuing, /checking (?:would continue to )?later rules/);
   assert.doesNotMatch(continuing, /command would be consumed locally|input would continue to the AI/);
 }
+
+const repair = formatRequestRuleMatchResult(panel, {
+  matched:true,rule:{name:"Old alias",match_type:"equals",action_type:"local_action"},
+  would_do:{type:"local_action",action_count:0,terminal:true,consumed:true,needs_repair:true,provider_input:"none"},
+});
+assert.match(repair, /needs repair/);
+assert.match(repair, /stop here without running its actions/);

@@ -120,11 +120,12 @@ test("Function result aliases round-trip and rename response references by stabl
     {
       action:"extended_openai_conversation_responses.call_function",
       data:{function:"baseline_tool", arguments:{}, result_alias:"battery", step_id:"battery-step"},
+      response_variable:"battery_data",
     },
     {
       action:"light.turn_on",
       target:{entity_id:"light.alias_probe"},
-      data:{note:"{battery.level}"},
+      data:{note:"{{ battery_data.result.level }}"},
     },
   ];
   await setActions(panel, actions);
@@ -151,11 +152,12 @@ test("Function result aliases round-trip and rename response references by stabl
     {
       action:"extended_openai_conversation_responses.call_function",
       data:{function:"baseline_tool", arguments:{}, result_alias:"power", step_id:"battery-step"},
+      response_variable:"battery_data",
     },
     {
       action:"light.turn_on",
       target:{entity_id:"light.alias_probe"},
-      data:{note:"{power.level}"},
+      data:{note:"{{ battery_data.result.level }}"},
     },
   ]);
   await panel.locator(".rule-close").first().click();

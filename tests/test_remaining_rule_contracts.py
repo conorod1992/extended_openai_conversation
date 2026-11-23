@@ -105,6 +105,7 @@ async def test_captured_results_with_live_policy_remain_guarded(hass, local_scri
         {
             "action": f"{rr.DOMAIN}.call_function",
             "data": {"function": "read", "arguments": {}, "result_alias": "reading"},
+            "response_variable": "reply",
         }
     ]
     live_policy = Mock(side_effect=GuestCapabilityPolicy.unrestricted)
@@ -123,7 +124,7 @@ async def test_captured_results_with_live_policy_remain_guarded(hass, local_scri
     assert live_policy.call_count == before + 1
     hass.services.async_call.assert_awaited_once()
     assert any(
-        step.get("response_variable") == "__eoai_result_reading"
+        step.get("response_variable") == "reply"
         for step in local_script.actions
     )
 

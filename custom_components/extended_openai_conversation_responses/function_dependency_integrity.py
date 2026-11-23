@@ -538,6 +538,7 @@ async def async_rename_function_reference_recursive(
                         validate_sentence_pattern=not manager.preserves_inactive_pattern(
                             updated["id"], updated
                         ),
+                        allow_legacy_action_aliases=True,
                         allow_empty_normalized_phrases=True,
                     )
                 )

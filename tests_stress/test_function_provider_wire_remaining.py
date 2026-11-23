@@ -323,10 +323,11 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
                                         "arguments": arguments,
                                         "result_alias": "business_value",
                                     },
+                                    "response_variable": "business_data",
                                 },
                                 {
                                     "action": "outcome_probe.capture",
-                                    "data": {"value": "{{ business_value }}"},
+                                    "data": "{{ {'value': business_data.result} }}",
                                 },
                             ]
                         )

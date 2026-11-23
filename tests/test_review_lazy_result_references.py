@@ -1,7 +1,7 @@
-"""Result references fail only when reached, and fail the whole native rule."""
+"""Legacy action aliases are retained for repair without executing a script."""
 
-import asyncio
-import gc
+from copy import deepcopy
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -9,342 +9,127 @@ from custom_components.extended_openai_conversation_responses import (
     request_rules as rules,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
-from homeassistant.core import Context, HomeAssistant, SupportsResponse
-from homeassistant.exceptions import HomeAssistantError
+from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
+    async_request_rule_match_preview,
+)
 from tests.test_request_rules import local_rule, manager
 
 
-@pytest.mark.parametrize("cancels", [1, 3])
-async def test_cancellation_collects_native_result_reference_failure(
-    tmp_path, monkeypatch, cancels
-):
-    """A reached failure and caller cancellation must not orphan HA's run task."""
-    hass = HomeAssistant(str(tmp_path))
-    loop = asyncio.get_running_loop()
-    previous_handler = loop.get_exception_handler()
-    unhandled = []
-    effects = []
-    failures = []
-    scripts = []
-    task = None
-    original_script = rules.Script
-    original_render = rules._ResultReferenceTemplate.async_render_to_info
-
-    def report(loop, context):
-        unhandled.append(context)
-        if previous_handler is not None:
-            previous_handler(loop, context)
-        else:
-            loop.default_exception_handler(context)
-
-    def capture_script(*args, **kwargs):
-        script = original_script(*args, **kwargs)
-        scripts.append(script)
-        return script
-
-    def render(template, *args, **kwargs):
-        try:
-            return original_render(template, *args, **kwargs)
-        except rules.RuleResponseValueError:
-            failures.append(True)
-            for _ in range(cancels):
-                loop.call_soon(task.cancel, "cancel failed native wait")
-            raise
-
-    async def capture(call):
-        return {"result": await rules.async_call_active_function("lookup", {}, "lookup")}
-
-    async def record(call):
-        effects.append(True)
-        # Keep HA's outer async_run awaiting its shielded native run when the
-        # later wait fails; an entirely synchronous script has no detached task.
-        await asyncio.sleep(0)
-
-    async def execute(*_):
-        return {}
-
-    loop.set_exception_handler(report)
-    monkeypatch.setattr(rules, "Script", capture_script)
-    monkeypatch.setattr(rules._ResultReferenceTemplate, "async_render_to_info", render)
-    hass.services.async_register(
-        DOMAIN, "call_function", capture, supports_response=SupportsResponse.ONLY
-    )
-    hass.services.async_register("review_probe", "record", record)
-    rule = local_rule(phrases=["run"])
-    rule["action"]["actions"] = [
-        {"action": "review_probe.record"},
-        {
-            "action": f"{DOMAIN}.call_function",
-            "data": {"function": "lookup", "arguments": {}, "result_alias": "lookup"},
-        },
-        {"wait_template": "{lookup.missing}"},
-        {"action": "review_probe.record"},
-    ]
-    try:
-        task = asyncio.create_task(rules.async_evaluate_rule(
-            hass, await manager(rule), rules.RequestRuleRuntime(), "run", "session",
-            function_executor=execute, context=Context(),
-        ))
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        await hass.async_block_till_done()
-        gc.collect()
-        await asyncio.sleep(0)
-        assert failures == [True]
-        assert effects == [True]  # The action after the failed wait never ran.
-        assert scripts and all(script.runs == 0 for script in scripts)
-        assert not unhandled
-    finally:
-        if task is not None:
-            if not task.done():
-                task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        await hass.async_stop(force=True)
-        loop.set_exception_handler(previous_handler)
-
-
-@pytest.mark.parametrize("consumer", ["if", "choose", "service"])
 @pytest.mark.parametrize(
-    "value,reference",
+    "consumer",
     [
-        ({"status": "not_found"}, "lookup.missing"),
-        ("plain text", "lookup.0"),
-        ({}, "lookup.items"),
-        ({}, "lookup.get"),
-        ({}, "lookup.keys"),
+        {"wait_template": "{lookup.ready}"},
+        {"variables": {"value": "{lookup}"}},
+        {
+            "if": [{"condition": "template", "value_template": "{{ lookup.ready }}"}],
+            "then": [{"delay": 0}],
+        },
+        {"action": "test.consume", "data": {"{{ lookup.key }}": True}},
+        {"action": "test.consume", "data": {"result_alias": "{lookup.value}"}},
+        {"set_conversation_response": "{{ __eoai_result_lookup.result }}"},
     ],
 )
-async def test_invalid_reached_reference_cannot_run_fallback(
-    tmp_path, consumer, value, reference
+@pytest.mark.parametrize("restore", [False, True])
+async def test_legacy_action_alias_stops_eligible_match_without_execution(
+    hass, consumer, restore
 ):
-    hass = HomeAssistant(str(tmp_path))
-    effects = []
-
-    async def capture(call):
-        return {
-            "result": await rules.async_call_active_function(
-                call.data["function"], {}, call.data.get("result_alias")
-            )
-        }
-
-    async def record(call):
-        effects.append(call.data)
-
-    async def execute(*_):
-        return value
-
-    hass.services.async_register(
-        DOMAIN, "call_function", capture, supports_response=SupportsResponse.ONLY
-    )
-    hass.services.async_register("review_probe", "record", record)
-    effect = {"action": "review_probe.record", "data": {"message": "Fell through"}}
-    template = "{" + reference + "}"
-    condition = [{"condition": "template", "value_template": template}]
-    next_action = (
-        {"if": condition, "then": [], "else": [effect], "continue_on_error": True}
-        if consumer == "if"
-        else (
+    legacy = local_rule()
+    legacy["continue_matching"] = True
+    legacy["action"].update(
+        actions=[
             {
-                "choose": [{"conditions": condition, "sequence": []}],
-                "default": [effect],
-                "continue_on_error": True,
-            }
-            if consumer == "choose"
-            else {**effect, "data": {"message": template}, "continue_on_error": True}
-        )
-    )
-    rule = local_rule(phrases=["run"])
-    rule["action"]["actions"] = [
-        {
-            "action": f"{DOMAIN}.call_function",
-            "data": {"function": "lookup", "arguments": {}, "result_alias": "lookup"},
-        },
-        next_action,
-        effect,
-    ]
-    try:
-        result = await rules.async_evaluate_rule(
-            hass,
-            await manager(rule),
-            rules.RequestRuleRuntime(),
-            "run",
-            "session",
-            function_executor=execute,
-        )
-        assert not result.successful
-        assert not effects
-    finally:
-        await hass.async_stop(force=True)
-
-
-@pytest.mark.parametrize("mode", ["disabled", "recoverable"])
-async def test_bare_unavailable_alias_does_not_become_empty_service_data(hass, mode):
-    from tests.test_audit_request_rules import evaluate_functions, function_step
-
-    async def execute(*_):
-        raise HomeAssistantError("recoverable")
-
-    result = await evaluate_functions(
-        hass,
-        [
-            function_step(
-                **(
-                    {"enabled": False}
-                    if mode == "disabled"
-                    else {"continue_on_error": True}
-                )
-            ),
-            {"set_conversation_response": "{lookup}"},
+                "action": f"{DOMAIN}.call_function",
+                "data": {
+                    "function": "read_sensor",
+                    "arguments": {},
+                    "result_alias": "lookup",
+                },
+            },
+            consumer,
         ],
-        execute,
+        continue_to_ai=True,
     )
-    assert not result.successful
+    fallback = local_rule("Fallback", order=1)
+    configured = await manager(legacy, fallback)
+    if restore:
+        backup = await configured.async_backup_data()
+        configured = await manager()
+        await configured.async_replace_backup(backup)
+    saved = configured.rule_snapshot(legacy["id"])
+    assert saved["action"]["actions"][1] == consumer
+    assert "success response" in configured.snapshot()["diagnostics"][legacy["id"]]
+    assert rules.RESULT_ALIAS_REPAIR not in saved
+    preview = await async_request_rule_match_preview(hass, configured, "good night")
+    assert preview["would_do"]["needs_repair"]
+    assert preview["would_do"]["provider_input"] == "none"
+    assert len(preview["matched_rules"]) == 1
 
-
-async def test_unreached_jinja_branch_does_not_resolve_missing_reference(tmp_path):
-    from tests.test_audit_request_rules import function_step
-
-    hass = HomeAssistant(str(tmp_path))
-
-    async def capture(call):
-        return {
-            "result": await rules.async_call_active_function(
-                call.data["function"], {}, call.data.get("result_alias")
-            )
-        }
-
-    hass.services.async_register(
-        DOMAIN, "call_function", capture, supports_response=SupportsResponse.ONLY
+    execute = AsyncMock()
+    outcome = await rules.async_evaluate_rule(
+        hass,
+        configured,
+        rules.RequestRuleRuntime(),
+        "good night",
+        "session",
+        function_executor=execute,
     )
+    assert outcome.consume and outcome.terminal and not outcome.successful
+    assert "needs repair" in outcome.response
+    execute.assert_not_awaited()
+    hass.services.async_call.assert_not_awaited()
+    with pytest.raises(ValueError, match="only available in the success response"):
+        await configured.async_update(legacy["id"], saved)
 
-    async def execute(*_):
-        return {"0": ["OK"]}
+    disabled = deepcopy(saved)
+    disabled["enabled"] = False
+    await configured.async_update(legacy["id"], disabled)
+    assert configured.match("good night").rule["id"] == fallback["id"]
 
-    rule = local_rule(phrases=["run"])
-    rule["action"]["actions"] = [
-        function_step(),
-        {
-            "if": "{{ false }}",
-            "then": [{"set_conversation_response": "{lookup.missing}"}],
-            "else": [{"set_conversation_response": "{lookup.0.0}"}],
-        },
-    ]
-    try:
-        result = await rules.async_evaluate_rule(
-            hass,
-            await manager(rule),
-            rules.RequestRuleRuntime(),
-            "run",
-            "session",
-            function_executor=execute,
-            context=Context(),
-        )
-        assert result.successful and result.response == "OK"
-    finally:
-        await hass.async_stop(force=True)
-
-
-@pytest.mark.parametrize("timeout", [None, {"milliseconds": 150}])
-@pytest.mark.parametrize("parallel", [False, True])
-@pytest.mark.parametrize("missing", [False, True])
-@pytest.mark.parametrize("cancel", [False, True])
-async def test_tracked_result_reference_updates_stop_only_invalid_rules(
-    tmp_path, monkeypatch, timeout, parallel, missing, cancel
-):
-    hass = HomeAssistant(str(tmp_path))
-    hass.states.async_set("sensor.trigger", "off")
-    effects = []
-    waiting = asyncio.Event()
-    tracking = asyncio.Event()
-    renders = 0
-    original_render = rules._ResultReferenceTemplate.async_render_to_info
-
-    def render(template, *args, **kwargs):
-        nonlocal renders
-        info = original_render(template, *args, **kwargs)
-        if "sensor.trigger" in template.template:
-            renders += 1
-            if renders >= 2:
-                tracking.set()
-        return info
-
-    monkeypatch.setattr(rules._ResultReferenceTemplate, "async_render_to_info", render)
-
-    async def capture(call):
-        return {
-            "result": await rules.async_call_active_function(
-                call.data["function"], {}, call.data.get("result_alias")
-            )
-        }
-
-    async def record(call):
-        effects.append(call.data)
-
-    async def ready(call):
-        waiting.set()
-
-    async def execute(*_):
-        return {} if missing else {"ready": True}
-
-    hass.services.async_register(
-        DOMAIN, "call_function", capture, supports_response=SupportsResponse.ONLY
-    )
-    hass.services.async_register("review_probe", "record", record)
-    hass.services.async_register("review_probe", "ready", ready)
-    wait = {
-        "wait_template": "{% if is_state('sensor.trigger', 'on') %}{lookup.ready}{% else %}false{% endif %}",
-        "continue_on_timeout": True,
-        "continue_on_error": True,
+    repaired = deepcopy(saved)
+    repaired["action"]["actions"][0]["response_variable"] = "sensor_data"
+    repaired["action"]["actions"][1] = {
+        "set_conversation_response": "{{ sensor_data.result.value }}"
     }
-    if timeout:
-        wait["timeout"] = timeout
-    sequence = [
-        {"action": "review_probe.ready"},
-        wait,
-        {"action": "review_probe.record", "data": {"message": "after wait"}},
-    ]
-    rule = local_rule(phrases=["run"])
-    rule["action"]["actions"] = [
+    await configured.async_update(legacy["id"], repaired)
+    assert legacy["id"] not in configured.snapshot()["diagnostics"]
+    assert not configured.match("good night").rule.get(rules.RESULT_ALIAS_REPAIR)
+
+
+async def test_function_rename_preserves_legacy_alias_execution_block():
+    legacy = local_rule()
+    legacy["action"]["actions"] = [
         {
             "action": f"{DOMAIN}.call_function",
-            "data": {"function": "lookup", "arguments": {}, "result_alias": "lookup"},
+            "data": {
+                "function": "read_sensor",
+                "result_alias": "lookup",
+            },
         },
-        *([{"parallel": [sequence]}] if parallel else sequence),
+        {"set_conversation_response": "{{ lookup.value }}"},
     ]
-    task = None
-    try:
-        task = asyncio.create_task(
-            rules.async_evaluate_rule(
-                hass,
-                await manager(rule),
-                rules.RequestRuleRuntime(),
-                "run",
-                "session",
-                function_executor=execute,
-                context=Context(),
-            )
-        )
-        await asyncio.wait_for(waiting.wait(), 1)
-        # Let the Script install its template tracker before delivering the update.
-        await asyncio.wait_for(tracking.wait(), 1)
-        if cancel:
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-        else:
-            hass.states.async_set("sensor.trigger", "on")
-            result = await asyncio.wait_for(task, 1)
-            assert result.successful is not missing
-        expected = [] if missing or cancel else [{"message": "after wait"}]
-        assert effects == expected
-        await hass.async_block_till_done()
-        # Stopped waits must unsubscribe; a later event cannot resume them.
-        hass.states.async_set("sensor.trigger", "off")
-        hass.states.async_set("sensor.trigger", "on")
-        await hass.async_block_till_done()
-        assert effects == expected
-    finally:
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        await hass.async_stop(force=True)
+    configured = await manager(legacy)
+    await configured.async_rename_function_reference("read_sensor", "read_battery")
+    assert configured.match("good night").rule[rules.RESULT_ALIAS_REPAIR]
+
+
+async def test_restore_preflight_retains_legacy_rule_with_unavailable_function(hass):
+    from custom_components.extended_openai_conversation_responses.transfer import (
+        _async_validate_request_rule_function_dependencies,
+    )
+
+    legacy = local_rule()
+    legacy["action"]["actions"] = [
+        {
+            "action": f"{DOMAIN}.call_function",
+            "data": {
+                "function": "unavailable",
+                "result_alias": "lookup",
+            },
+        },
+        {"set_conversation_response": "{lookup.value}"},
+    ]
+    backup = rules.RequestRules.validate_backup_data({"rules": [legacy]})
+    await _async_validate_request_rule_function_dependencies(hass, backup, {})
+    active = await manager()
+    await active.async_replace_backup(backup)
+    assert legacy["id"] in active.snapshot()["diagnostics"]
