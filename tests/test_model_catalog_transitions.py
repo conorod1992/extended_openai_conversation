@@ -72,6 +72,21 @@ async def test_catalogue_auto_route_preserves_existing_native_tool_capacity(
     assert not await check_manager._candidate_preserves_saved_requests(candidate)
     options["functions"].pop()
     assert await check_manager._candidate_preserves_saved_requests(candidate)
+    ha_tool = {
+        "spec": {"name": "read_temperature"},
+        "function": {
+            "type": "ha_llm",
+            "source_type": "api",
+            "source_id": "example.Tool",
+            "api_id": "example-api",
+            "tool_name": "read_temperature",
+        },
+    }
+    options["functions"].append(ha_tool)
+    assert await check_manager._candidate_preserves_saved_requests(data.BUNDLED_CATALOG)
+    assert not await check_manager._candidate_preserves_saved_requests(candidate)
+    ha_tool["enabled"] = False
+    assert await check_manager._candidate_preserves_saved_requests(candidate)
 
 
 class MemoryStore:

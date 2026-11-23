@@ -1329,3 +1329,24 @@ def test_native_result_alias_tracks_order_and_variables_rebinding(hass):
     }
     candidate["action"]["actions"][1] = {"set_conversation_response": "{{ label }}"}
     rr.validate_result_alias_template_update(hass, previous, candidate)
+
+
+def test_native_result_alias_validation_skips_disabled_conditions(hass):
+    rule = local_rule()
+    condition = {
+        "condition": "template",
+        "value_template": "{{ lookup.level > 0 }}",
+        "enabled": False,
+    }
+    rule["action"]["actions"] = [
+        {"if": [condition], "then": [{"delay": 0}]},
+        {
+            "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
+            "data": {"function": "read_sensor", "result_alias": "lookup"},
+        },
+    ]
+    rr.validate_result_alias_template_update(hass, None, rule)
+
+    condition["enabled"] = True
+    with pytest.raises(HomeAssistantError, match="earlier step: lookup"):
+        rr.validate_result_alias_template_update(hass, None, rule)

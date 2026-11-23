@@ -207,8 +207,13 @@ async def test_archive_first_intent_failure_cannot_be_erased_by_session_publicat
 
     with monkeypatch.context() as fault:
         fault.setattr(atomicwrites, "_replace_atomic", fail)
-        with pytest.raises(OSError):
-            await archive.async_make_private(alpha.session_id)
+        if boundary == "after_replace":
+            result = await archive.async_make_private(alpha.session_id)
+            assert result["private_mode_enabled"] is True
+            assert result["cleanup_pending"] is True
+        else:
+            with pytest.raises(OSError):
+                await archive.async_make_private(alpha.session_id)
     assert len(faults) == 1
     committed = boundary == "after_replace"
     if committed:

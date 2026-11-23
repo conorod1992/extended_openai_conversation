@@ -588,7 +588,9 @@ class DelayedToolManager:
             if task is not None:
                 task.cancel()
 
-    async def _async_reconcile_failed_save(self) -> None:
+    async def _async_reconcile_failed_save(
+        self, claim: DelayedToolCall | None = None
+    ) -> None:
         """Reload validated calls after a failed write acknowledgement."""
         raw_data = await _async_load_delayed_queue_store(self._store)
         if raw_data is None or raw_data == {}:
@@ -605,14 +607,15 @@ class DelayedToolManager:
             previous = self._records.get(record.call_id)
             task = self._tasks.get(record.call_id)
             # An already executing live worker still consumes admission capacity.
-            # Interrupted calls and unacknowledged transitions are never replayed.
+            # The claim caller has not dispatched yet. It can adopt the exact
+            # durable claim when the save committed but its acknowledgement failed.
             live_execution = (
                 previous is not None
                 and previous.status == _EXECUTING
                 and task is not None
                 and not task.done()
             )
-            if record.status != _EXECUTING or live_execution:
+            if record.status != _EXECUTING or live_execution or record == claim:
                 records[record.call_id] = record
                 _validate_call_capacity(records)
         _validate_call_capacity(records)
@@ -629,14 +632,21 @@ class DelayedToolManager:
         self._tasks.clear()
 
     async def _async_save_records_transactionally(
-        self, records: dict[str, DelayedToolCall]
+        self,
+        records: dict[str, DelayedToolCall],
+        *,
+        claim: DelayedToolCall | None = None,
     ) -> None:
         """Save a complete generation and reconcile any failed acknowledgement."""
+
+        async def reconcile() -> None:
+            await self._async_reconcile_failed_save(claim)
+
         await _async_settle_transactional_save(
             self._store.async_save(self._storage_payload(records)),
             lambda: None,
             lambda: setattr(self, "_records", records),
-            self._async_reconcile_failed_save,
+            reconcile,
             self._invalidate_after_unreadable_store,
         )
 
@@ -932,8 +942,13 @@ class DelayedToolManager:
                         record.tool_name,
                     )
                     return False, False
-            updated[call_id] = replace(record, status=_EXECUTING)
-            await self._async_save_records_transactionally(updated)
+            claim = updated[call_id] = replace(record, status=_EXECUTING)
+            try:
+                await self._async_save_records_transactionally(updated, claim=claim)
+            except Exception:
+                if self._records.get(call_id) != claim:
+                    raise
+                _LOGGER.warning("Recovered a committed delayed Function Tool claim")
             return True, False
 
     async def _async_retry_agent(self, record: DelayedToolCall) -> bool:

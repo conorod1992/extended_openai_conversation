@@ -22,7 +22,7 @@ import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, set
 import {ASSISTANT_INTRO_MARKUP, renderManagement, renderManagementRoute, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors} from "./management-actions.js";
 import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
-import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
+import {captureCatalogLoad, catalogFailureIsCurrent, catalogMayPublish} from "./management-catalog-ownership.js";
 import {capturePageRead, acceptPageRead, hasPendingPageSaveRead, retryPageSaveReadsOnTransport} from "./page-save-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, syncConversationSearchOwner, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
@@ -588,6 +588,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _clearSearchData() {
     this._settingsSearchConfig = null;
     this._settingsSearchConfigAgentId = null;
+    this._settingsSearchConfigLoadedAt = null;
     this._settingsSearchConfigError = null;
     this._settingsSearchConfigErrorAgentId = null;
   }
@@ -1234,6 +1235,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _loadAgents(selectedId = null, owner = null, selectionIntent = null, {preserveAuthoringOnFailure = false} = {}) {
     const context=captureCatalogLoad(this,owner,selectionIntent);
+    this._agentCatalogRetry = null;
     this._markColdLifecycle("agents-start");
     try {
       await loadAgentsWithOverviewPrefetch(this, selectedId, owner, context);
@@ -1246,6 +1248,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // preview remains blocked. Let that caller present the failed read.
       if (preserveAuthoringOnFailure) throw err;
       if (!catalogFailureIsCurrent(this,context)) return;
+      if (!context.acceptedRead) this._agentCatalogRetry = {context, selectedId};
       // Failed catalogue reads cannot validate the owner of a mounted editor.
       // Close it so the failure can render and stale drafts cannot be submitted.
       this.shadowRoot?.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
@@ -2389,8 +2392,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     const view = this._viewKey();
     q("#retry-route")?.addEventListener("click", () => {
+      const retry = this._agentCatalogRetry;
       if (this._data === null) this._loadInitialAgents(true);
-      else void this._loadSection();
+      else if (retry && catalogMayPublish(this, retry.context)) {
+        void this._loadAgents(retry.selectedId, retry.context.owner, retry.context.intent);
+      } else void this._loadSection();
     });
     if (view === "data-memory/knowledge") getRouteFeature(view)?.bindKnowledge(this);
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);

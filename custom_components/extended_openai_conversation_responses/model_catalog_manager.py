@@ -423,15 +423,48 @@ class ModelCatalogManager:
                         return False
         return not entries
 
+    def _validate_candidate_request(
+        self,
+        options: Mapping[str, Any],
+        connection: _SavedConnection,
+        metadata: Mapping[str, Any],
+    ) -> None:
+        from .request import (
+            build_provider_request_snapshot,
+            capability_model_identity,
+            conversation_tools_required,
+            validate_runtime_readiness,
+        )
+
+        current = catalog_model_metadata(
+            self.catalog,
+            capability_model_identity(options, connection.entry_data),
+            provider=connection.provider,
+        )
+        try:
+            previous = build_provider_request_snapshot(
+                options,
+                connection.entry_data,
+                tools_required=conversation_tools_required(options),
+                model_capabilities=current,
+                client=connection.client,
+            )
+        except HomeAssistantError:
+            previous = None
+        validate_runtime_readiness(
+            options,
+            connection.entry_data,
+            model_capabilities=metadata,
+            client=connection.client,
+            reserve_configured_ha_tools=previous is not None
+            and previous.tool_limit is None,
+        )
+
     def _candidate_preserves_saved_defaults(
         self, candidate: dict[str, Any], inventory: _SavedInventory
     ) -> bool:
         """Reject invalid base routes before any Request Rules storage reads."""
-        from .request import (
-            build_provider_request_snapshot,
-            capability_model_identity,
-            validate_runtime_readiness,
-        )
+        from .request import build_provider_request_snapshot, capability_model_identity
 
         for connection in inventory:
             entry_data = connection.entry_data
@@ -443,12 +476,7 @@ class ModelCatalogManager:
                 metadata = catalog_model_metadata(candidate, model, provider=provider)
                 try:
                     if assistant.subentry.subentry_type == "conversation":
-                        validate_runtime_readiness(
-                            options,
-                            entry_data,
-                            model_capabilities=metadata,
-                            client=client,
-                        )
+                        self._validate_candidate_request(options, connection, metadata)
                     else:
                         build_provider_request_snapshot(
                             options,
@@ -632,11 +660,8 @@ class ModelCatalogManager:
                                     not in routed_metadata["reasoning"]["efforts"]
                                 ):
                                     return False
-                                validate_runtime_readiness(
-                                    inherited_options,
-                                    entry_data,
-                                    model_capabilities=routed_metadata,
-                                    client=client,
+                                self._validate_candidate_request(
+                                    inherited_options, connection, routed_metadata
                                 )
                             if not fixed_route:
                                 continue
@@ -682,11 +707,8 @@ class ModelCatalogManager:
                                         )
                                     except HomeAssistantError:
                                         continue
-                                    validate_runtime_readiness(
-                                        concrete,
-                                        entry_data,
-                                        model_capabilities=routed_metadata,
-                                        client=client,
+                                    self._validate_candidate_request(
+                                        concrete, connection, routed_metadata
                                     )
                             # A captured effort must not hide fixed API, tool,
                             # tier or output requirements. Try the finite effort
@@ -696,14 +718,13 @@ class ModelCatalogManager:
                                 "efforts"
                             ] or [None]:
                                 try:
-                                    validate_runtime_readiness(
+                                    self._validate_candidate_request(
                                         {
                                             **effective,
                                             CONF_REASONING_EFFORT: possible_effort,
                                         },
-                                        entry_data,
-                                        model_capabilities=routed_metadata,
-                                        client=client,
+                                        connection,
+                                        routed_metadata,
                                     )
                                 except HomeAssistantError:
                                     continue
@@ -719,11 +740,8 @@ class ModelCatalogManager:
                             not in routed_metadata["reasoning"]["efforts"]
                         ):
                             return False
-                        validate_runtime_readiness(
-                            effective,
-                            entry_data,
-                            model_capabilities=routed_metadata,
-                            client=client,
+                        self._validate_candidate_request(
+                            effective, connection, routed_metadata
                         )
                     except Exception:
                         return False

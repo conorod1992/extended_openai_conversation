@@ -125,8 +125,9 @@ async def test_archive_post_journal_failure_keeps_recoverable_target_live() -> N
     )
     storage.fail_partition_on = storage.partition_save_count + 1
 
-    with pytest.raises(OSError, match="partition write failed"):
-        await archive.async_make_private(session.session_id)
+    result = await archive.async_make_private(session.session_id)
+    assert result["private_mode_enabled"] is True
+    assert result["cleanup_pending"] is True
 
     # The journal is already durable, so RAM must match the state restart recovery
     # will finish rather than rolling back to content that is now scheduled to erase.

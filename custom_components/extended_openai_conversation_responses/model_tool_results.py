@@ -251,20 +251,12 @@ def model_memory_as_dict(
     memory: MemoryRecord,
     *,
     include_scope: bool = False,
-    personal_scope_id: str | None = None,
 ) -> dict[str, Any]:
     """Project a memory for the model while omitting only absent optional fields."""
-    result = memory_as_dict(
-        memory,
-        include_scope=include_scope,
-        personal_scope_id=personal_scope_id,
-        include_revision=True,
-    )
+    result = memory_as_dict(memory, include_revision=True)
     if include_scope:
         result["scope"] = (
-            "household"
-            if result["scope_id"] == SHARED_HOUSEHOLD_SCOPE_ID
-            else "personal"
+            "household" if memory.user_id == SHARED_HOUSEHOLD_SCOPE_ID else "personal"
         )
     return _sparse_memory_mapping(result)
 
@@ -274,7 +266,8 @@ def _sparse_memory_mapping(value: dict[str, Any]) -> dict[str, Any]:
     return {
         key: item
         for key, item in value.items()
-        if key not in _OPTIONAL_MEMORY_FIELDS or item is not None
+        if key != "scope_id"
+        and (key not in _OPTIONAL_MEMORY_FIELDS or item is not None)
     }
 
 

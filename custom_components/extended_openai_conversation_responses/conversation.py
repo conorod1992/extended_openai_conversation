@@ -3011,13 +3011,10 @@ class ExtendedOpenAIAgentEntity(
                 offset=offset,
                 ranking=ranking,
             )
-            personal_id = self._personal_memory_scope_id(llm_context)
             page = bounded_record_page(
                 {
                     "memories": [
-                        model_memory_as_dict(
-                            memory, include_scope=True, personal_scope_id=personal_id
-                        )
+                        model_memory_as_dict(memory, include_scope=True)
                         for memory in memories[:limit]
                     ],
                     "offset": offset,
@@ -3047,12 +3044,9 @@ class ExtendedOpenAIAgentEntity(
             memories, has_more = await self._memory.async_list_page(
                 list_scopes, category, limit, offset
             )
-            personal_id = self._personal_memory_scope_id(llm_context)
             page = {
                 "memories": [
-                    model_memory_as_dict(
-                        memory, include_scope=True, personal_scope_id=personal_id
-                    )
+                    model_memory_as_dict(memory, include_scope=True)
                     for memory in memories
                 ],
                 "offset": max(0, offset),
@@ -3119,11 +3113,7 @@ class ExtendedOpenAIAgentEntity(
                 return {"status": "updated"}
             return {
                 "status": "updated",
-                "memory": model_memory_as_dict(
-                    memory,
-                    include_scope=True,
-                    personal_scope_id=self._personal_memory_scope_id(llm_context),
-                ),
+                "memory": model_memory_as_dict(memory, include_scope=True),
             }
         if operation == "delete":
             targets = arguments.get("targets")
@@ -3447,13 +3437,31 @@ class ExtendedOpenAIAgentEntity(
                 requested = arguments.get("session_id")
                 if not isinstance(requested, str):
                     raise ValueError("session_id is required")
-                return await self._archive.async_get(
+                page = await self._archive.async_get(
                     scope.scope_id,
                     requested,
                     int(arguments.get("start_turn", 0)),
                     int(arguments.get("limit", 6)),
                     text_offset=int(arguments.get("text_offset", 0)),
                 )
+                if isinstance(session := page.get("session"), dict):
+                    page = {
+                        **page,
+                        "session": {
+                            key: session[key]
+                            for key in (
+                                "session_id",
+                                "title",
+                                "started_at",
+                                "last_message_at",
+                                "turn_count",
+                                "scope_type",
+                                "retention_state",
+                            )
+                            if key in session
+                        },
+                    }
+                return page
             if turn.archive is None:
                 raise RuntimeError("active conversation session is unavailable")
             session_key, session_id = turn.archive

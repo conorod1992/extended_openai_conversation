@@ -511,8 +511,9 @@ async def test_interrupted_private_commit_cannot_resurrect_content() -> None:
         successful=True,
     )
     storage.fail_metadata_on = storage.metadata_save_count + 2
-    with pytest.raises(OSError, match="metadata write failed"):
-        await archive.async_make_private(session.session_id)
+    result = await archive.async_make_private(session.session_id)
+    assert result["private_mode_enabled"] is True
+    assert result["cleanup_pending"] is True
 
     storage.fail_metadata_on = None
     restarted = ConversationArchive(storage, "agent-1")
@@ -543,8 +544,15 @@ async def test_partition_write_failure_recovers_private_state_on_restart() -> No
     )
     storage.fail_partition_on = storage.partition_save_count + 1
 
-    with pytest.raises(OSError, match="partition write failed"):
-        await archive.async_make_private(session.session_id)
+    assert await archive.async_make_private(session.session_id) == {
+        "private_mode_enabled": True,
+        "session_id": session.session_id,
+        "deleted_turns": 1,
+        "future_turns_retained": False,
+        "cleanup_pending": True,
+    }
+    with pytest.raises(ValueError, match="not found"):
+        await archive.async_get("user:alice", session.session_id)
 
     assert "pending_partitions" in storage.metadata
     restarted = ConversationArchive(storage, "agent-1")

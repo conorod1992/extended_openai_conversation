@@ -973,11 +973,14 @@ def validate_runtime_readiness(
     model_capabilities: Mapping[str, Any] | None = None,
     client: Any = None,
     ha_snapshot: ToolSnapshot | None = None,
+    reserve_configured_ha_tools: bool = False,
 ) -> ProviderRequestSnapshot:
     """Validate the initial Conversation catalogue for supported request scopes.
 
     Reserve enabled built-ins for a request with an eligible owner and data.
     Dynamically available HA tools are counted when a catalogue is supplied.
+    When imposing a new cap across callers, reserve slots for eligible configured
+    HA references since no one discovery context represents every caller.
     Loaded groups and later availability changes still need live validation.
     Existing damaged definitions use the established repair projection.
     """
@@ -1018,6 +1021,11 @@ def validate_runtime_readiness(
     budget_available = function_call_budget_available(options)
     if ha_snapshot is not None:
         configured = ha_snapshot.project(configured)
+    elif reserve_configured_ha_tools:
+        configured = [
+            {**tool, "ha_available": True} if is_ha_tool(tool) else tool
+            for tool in configured
+        ]
 
     selected_skills = options.get(CONF_SKILLS, []) or []
     manager = SkillManager.get_loaded_instance() if selected_skills else None
@@ -1029,7 +1037,9 @@ def validate_runtime_readiness(
 
     def guaranteed(tool: dict[str, Any]) -> bool:
         if is_ha_tool(tool):
-            return ha_snapshot is not None and tool.get("ha_available") is True
+            return (
+                ha_snapshot is not None or reserve_configured_ha_tools
+            ) and tool.get("ha_available") is True
         return not is_canonical_skill_loader(tool) or skill_available
 
     assembly = assemble_function_tools(

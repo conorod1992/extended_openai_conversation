@@ -98,7 +98,7 @@ const configData = {
     temperature: 0.4,
   },
 };
-const currentPanel = {_agentId:"agent-1", _draft:null, _draftAgentId:null, _configData:null, _settingsSearchConfig:configData, _settingsSearchConfigAgentId:"agent-1"};
+const currentPanel = {_agentId:"agent-1", _draft:null, _draftAgentId:null, _configData:null, _settingsSearchConfig:configData, _settingsSearchConfigAgentId:"agent-1", _settingsSearchConfigLoadedAt:Date.now()};
 assert.deepEqual(settingCurrentState(searchSettings("web search")[0], currentPanel), {label:"Current",value:"On"});
 assert.deepEqual(settingCurrentState(searchSettings("conversation timeout")[0], currentPanel), {label:"Current",value:"30 min"});
 assert.deepEqual(settingCurrentState(searchSettings("voice device assignments")[0], currentPanel), {label:"Current",value:"2 assignments"});
@@ -108,7 +108,7 @@ assert.deepEqual(settingCurrentState(searchSettings("long-term memory")[0], curr
 assert.deepEqual(settingCurrentState(searchSettings("current date/time format")[0], currentPanel), {label:"Current",value:"Default"});
 assert.deepEqual(settingCurrentState(searchSettings("system prompt")[0], currentPanel), {label:"Current",value:"16 characters"});
 assert.deepEqual(settingCurrentState(searchSettings("response creativity")[0], currentPanel), {label:"Current",value:"Not supported by current model"});
-const draftPanel = {...currentPanel, _draft:{...configData.config, web_search:false}, _draftAgentId:"agent-1", _draftTitle:"Kitchen draft", _configData:configData};
+const draftPanel = {...currentPanel, _draft:{...configData.config, web_search:false}, _draftAgentId:"agent-1", _draftTitle:"Kitchen draft", _configData:configData, _eocDirtyConfigKeys:new Set(["web_search"])};
 assert.deepEqual(settingCurrentState(searchSettings("web search")[0], draftPanel), {label:"Current draft",value:"Off"});
 const otherAgentPanel = {...currentPanel, _agentId:"agent-2"};
 assert.equal(settingCurrentState(searchSettings("web search")[0], otherAgentPanel), null, "cached values must not bleed between agents");

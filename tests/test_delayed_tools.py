@@ -254,15 +254,25 @@ async def test_delayed_state_transitions_reconcile_after_lost_acknowledgement(
     assert persisted["calls"] == []
 
 
+@pytest.mark.parametrize("lost_claim_ack", [False, True])
 async def test_due_call_uses_current_tool_and_current_exposure(
-    hass, monkeypatch
+    hass, monkeypatch, lost_claim_ack
 ) -> None:
     """Execution re-resolves the tool and exposure instead of stale snapshots."""
     manager = DelayedToolManager(hass)
     manager._setup_complete = True
     record = _record()
     manager._records = {record.call_id: record}
-    manager._store = SimpleNamespace(async_save=AsyncMock())
+    persisted = {"calls": [record.as_dict()]}
+
+    async def save(payload):
+        persisted.update(payload)
+        if lost_claim_ack and payload["calls"] and payload["calls"][0]["status"] == _EXECUTING:
+            raise OSError("claim acknowledgement failed after replace")
+
+    manager._store = SimpleNamespace(
+        async_save=AsyncMock(side_effect=save), async_load=AsyncMock(return_value=persisted)
+    )
 
     latest_subentry = SimpleNamespace(subentry_type="conversation", data={})
     latest_entry = SimpleNamespace(
@@ -292,6 +302,8 @@ async def test_due_call_uses_current_tool_and_current_exposure(
 
     assert retry is False
     assert record.call_id not in manager._records
+    assert persisted["calls"] == []
+    assert await manager._async_execute_due(record.call_id) is False
     agent._execute_function_tool.assert_awaited_once()
     called_tool, tool_input, context, exposed = (
         agent._execute_function_tool.await_args.args

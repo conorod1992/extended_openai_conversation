@@ -60,6 +60,7 @@ test("Retention Search fills missing values from full settings and keeps draft v
   panel._draftAgentId = panel._agentId;
   panel._configData = {projection:"retention", config:{usage_run_retention_days:20}};
   panel._draft = {usage_run_retention_days:30};
+  panel._eocDirtyConfigKeys = new Set(["usage_run_retention_days"]);
   panel._settingsSearchQuery = "run details retention";
   await ensureSearchConfiguration(panel);
   assert.equal(requests.length, 0);
@@ -76,6 +77,25 @@ test("Retention Search fills missing values from full settings and keeps draft v
   assert.deepEqual(settingCurrentState({configKey:"usage_run_retention_days"}, panel), {
     label:"Current draft", value:"30",
   });
+});
+
+test("Search reloads expired values even when a clean editor draft is mounted", async () => {
+  const {panel, requests, results} = searchFixture();
+  panel._draftAgentId = panel._agentId;
+  panel._draft = configuration(15).config;
+  panel._eocDirtyConfigKeys = new Set();
+  const first = ensureSearchConfiguration(panel);
+  requests[0].resolve(configuration(15));
+  await first;
+  assert.match(results.innerHTML, /Current: 15/);
+
+  panel._settingsSearchConfigLoadedAt -= 31_000;
+  const refresh = ensureSearchConfiguration(panel);
+  assert.equal(requests.length, 2);
+  requests[1].resolve(configuration(45));
+  await refresh;
+  assert.match(results.innerHTML, /Current: 45/);
+  assert.equal(panel._draft.conversation_timeout_minutes, 15);
 });
 
 for (const oldFails of [false, true]) {

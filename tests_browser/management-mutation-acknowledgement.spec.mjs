@@ -119,6 +119,40 @@ for (const bundled of [false, true]) for (const failure of ["cache", "lost"]) {
   });
 }
 
+for (const bundled of [false, true]) test(`Retry refreshes the assistant catalogue after duplication (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics", bundled ? "&bundle=1" : ""));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+  await panel.evaluate(host => {
+    const send = host.hass.callWS.bind(host.hass);
+    window.catalogueRetry = {duplicates:0, catalogueReads:0};
+    let created;
+    host.hass.callWS = async request => {
+      if (request.section === "configuration" && request.action === "duplicate") {
+        catalogueRetry.duplicates++;
+        created = {...host._selectedAgent(), subentry_id:"new-agent", title:"Example Copy"};
+        return {status:"created", subentry_id:created.subentry_id, title:created.title};
+      }
+      if (request.action === "agents" && !request.section && created) {
+        if (++catalogueRetry.catalogueReads === 1) throw Error("Transient catalogue failure");
+        const data = await send(request);
+        return {...data, agents:[...data.agents, created]};
+      }
+      return send(request);
+    };
+  });
+  await panel.locator(".agent-actions-menu > summary").click();
+  await panel.locator("#duplicate-agent").click();
+  await expect(panel.locator("#toast")).toContainText("Created Example Copy");
+  await expect(panel.locator(".route-error-state")).toContainText("Transient catalogue failure");
+  await panel.locator("#retry-route").click();
+  await expect(panel.locator("#agent")).toHaveValue("new-agent");
+  await expect(panel.locator(".route-error-state")).toHaveCount(0);
+  expect(await page.evaluate(() => catalogueRetry)).toEqual({duplicates:1, catalogueReads:2});
+  await expectHarnessClean(page, errors);
+});
+
 for (const bundled of [false, true]) for (const action of ["delete", "clear"]) for (const transition of ["none", "agent", "authentication round trip"]) {
   test(`temporary ${action} confirmation retains its owner: ${transition} (${bundled ? "bundle" : "source"})`, async ({page}) => {
     const errors = trackPageErrors(page);

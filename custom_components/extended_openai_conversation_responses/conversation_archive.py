@@ -1116,27 +1116,37 @@ class ConversationArchive:
             turns = dict(self._turns)
             removed = list(turns.pop(session_id, ()))
             sessions = dict(self._sessions)
-            sessions[session_id] = ArchiveSession(
-                **{
-                    **asdict(session),
-                    "title": "",
-                    "turn_count": 0,
-                    "retention_state": "private",
-                    "last_activity_at": dt_util.utcnow().isoformat(),
-                }
+            private = sessions[session_id] = replace(
+                session,
+                title="",
+                turn_count=0,
+                retention_state="private",
+                last_activity_at=dt_util.utcnow().isoformat(),
             )
-            await self._async_commit_state_locked(
-                sessions=sessions,
-                turns=turns,
-                active=dict(self._active),
-                changed_partitions=self._changed_partitions(removed),
-            )
-            return {
+            result = {
                 "private_mode_enabled": True,
                 "session_id": session_id,
                 "deleted_turns": len(removed),
                 "future_turns_retained": False,
             }
+            try:
+                await self._async_commit_state_locked(
+                    sessions=sessions,
+                    turns=turns,
+                    active=dict(self._active),
+                    changed_partitions=self._changed_partitions(removed),
+                )
+            except Exception:
+                # The exact object is published only after a confirmed journal
+                # write or successful authoritative readback of that generation.
+                if self._sessions.get(session_id) is not private:
+                    raise
+                if self._pending_partitions:
+                    _LOGGER.warning(
+                        "Private Archive session has pending transcript cleanup"
+                    )
+                    result["cleanup_pending"] = True
+            return result
 
     async def async_resume_saving(
         self,

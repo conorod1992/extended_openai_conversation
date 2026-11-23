@@ -1,6 +1,7 @@
 import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
+import {cacheTimestampIsFresh, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {pageMetadata, focusManagementSetting} from "./frontend-navigation.js";
 import {SETTINGS_INDEX} from "./management-settings-index.js";
 
@@ -42,15 +43,17 @@ function titleCase(value) {
 }
 
 function fullConfiguration(panel, explicitData = null) {
-  const cached = panel._settingsSearchConfigAgentId === panel._agentId ? panel._settingsSearchConfig : null;
-  return [explicitData, cached, panel._configDataStale ? null : panel._configData].find((data) =>
+  const cached = panel._settingsSearchConfigAgentId === panel._agentId
+    && cacheTimestampIsFresh(panel._settingsSearchConfigLoadedAt, CLEAN_CONFIG_TTL_MS)
+    ? panel._settingsSearchConfig : null;
+  const routeData = panel._configDataStale ? null : panel._freshCleanConfiguration?.(panel._agentId, "full");
+  return [explicitData, cached, routeData].find((data) =>
     data?.config && data.projection !== "retention");
 }
 
 function activeConfiguration(panel, configKey, explicitData) {
   if (panel._draft && panel._draftAgentId === panel._agentId
-      && (!panel._configDataStale || panel._eocDirtyConfigKeys?.has(configKey))
-      && (panel._configData?.projection !== "retention" || Object.hasOwn(panel._draft, configKey))) {
+      && panel._eocDirtyConfigKeys?.has(configKey)) {
     return {data: panel._configData || explicitData || {}, config: panel._draft, title: panel._draftTitle, draft: true};
   }
   const data = fullConfiguration(panel, explicitData);
@@ -195,6 +198,7 @@ async function ensureSearchConfiguration(panel, {retry = false} = {}) {
       if (!data?.config) throw new Error("Configuration response did not include config");
       panel._settingsSearchConfig = data;
       panel._settingsSearchConfigAgentId = agentId;
+      panel._settingsSearchConfigLoadedAt = Date.now();
       panel._settingsSearchConfigError = null;
       panel._settingsSearchConfigErrorAgentId = null;
     })
@@ -202,6 +206,7 @@ async function ensureSearchConfiguration(panel, {retry = false} = {}) {
       if (!current()) return;
       panel._settingsSearchConfig = null;
       panel._settingsSearchConfigAgentId = null;
+      panel._settingsSearchConfigLoadedAt = null;
       panel._settingsSearchConfigError = true;
       panel._settingsSearchConfigErrorAgentId = agentId;
     })

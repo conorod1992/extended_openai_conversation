@@ -50,6 +50,8 @@ The archive is separate from persistent memory."""
 
 ARCHIVE_PRIVACY_GUIDANCE = """ Use the privacy/deletion tools
 when asked to stop or resume saving, or to delete retained conversations.
+If privacy is enabled and cleanup_pending is true, say future turns will not
+be saved and stored transcript cleanup has not been confirmed.
 """
 
 ARCHIVE_SEARCH_GUIDANCE = """Search it only when the user clearly refers to a

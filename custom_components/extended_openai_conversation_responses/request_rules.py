@@ -2339,6 +2339,7 @@ def validate_result_alias_template_update(
         for step in iter_script_actions(actions)
         if step.get("enabled") is False
     }
+    script_selectors = script_selector_fields(actions)
 
     def defined_by(node: nodes.Node, truth: bool) -> frozenset[str]:
         if isinstance(node, nodes.Not):
@@ -2408,7 +2409,9 @@ def validate_result_alias_template_update(
 
     def references(value: Any, names: set[str]) -> set[str]:
         if isinstance(value, Mapping):
-            if id(value) in disabled:
+            if id(value) in disabled or (
+                id(value) in script_selectors and value.get("enabled") is False
+            ):
                 return set()
             return set().union(
                 *(references(item, names) for pair in value.items() for item in pair)
