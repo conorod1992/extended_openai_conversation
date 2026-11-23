@@ -184,12 +184,24 @@ async def test_replacement_binding_requires_an_explicit_reviewed_transaction(has
         }}}
     with pytest.raises(ValueError, match="reviewed replacement changed"):
         await manager.async_rebind_selection(entity_id, expected_revision=manager.revision(), review_token="stale")
-    from custom_components.extended_openai_conversation_responses import management_permissions
+    from custom_components.extended_openai_conversation_responses import (
+        management_permissions,
+        management_ui,
+    )
+
     monkeypatch.setattr(management_permissions, "async_get_quiet_hours", AsyncMock(return_value=manager))
-    message = {"action":"rebind", "selection":entity_id, "revision":manager.revision(), "review_token":issue["review_token"]}
+    message = management_ui.websocket_management._ws_schema({
+        "id": 1,
+        "type": management_ui.WS_COMMAND,
+        "section": "quiet_hours",
+        "action": "rebind",
+        "selection": entity_id,
+        "revision": manager.revision(),
+        "review_token": issue["review_token"],
+    })
     with pytest.raises(HomeAssistantError, match="Administrator permission"):
-        await management_permissions.async_quiet_hours_command(hass, False, message)
-    await management_permissions.async_quiet_hours_command(hass, True, message)
+        await management_ui.async_management_command(hass, "user", False, message)
+    await management_ui.async_management_command(hass, "admin", True, message)
     saved = manager._store.async_save.await_args.args[0]
     assert saved["selection_identities"][entity_id] == [domain, "test", "replacement"]
     assert entity_id not in manager.snapshot()["selection_issues"]

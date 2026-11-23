@@ -67,7 +67,12 @@ function setupHealthMarkup(panel, health, cards) {
   </section>`;
 }
 
+const broadcastCard = '<section id="broadcast-card" class="content-card" aria-label="Broadcast"><p class="empty">Loading Broadcast…</p></section>';
+
 export function renderOverview(panel, agent) {
+  if (!agent) {
+    return `<section class="page-intro"><h1>Overview</h1><p>No conversation agents configured.</p></section>${broadcastCard}`;
+  }
   const result = panel._result || {};
   const usage = result.usage || {};
   const conversations = result.conversations || {};
@@ -119,7 +124,7 @@ export function renderOverview(panel, agent) {
     </section>`)}
     ${warnings.length ? `<section class="overview-warnings" aria-label="Actionable warnings">${warnings.map((warning) => `<div class="notice warning"><strong>Review recommended</strong><p>${panel._e(warning)}</p></div>`).join("")}</section>` : ""}
 
-    <section id="broadcast-card" class="content-card" aria-label="Broadcast"><p class="empty">Loading Broadcast…</p></section>`;
+    ${broadcastCard}`;
 }
 
 export function bindOverview(panel, broadcastPromise) {

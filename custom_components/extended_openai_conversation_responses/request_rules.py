@@ -2222,7 +2222,6 @@ def _validate_script_sequence(
     if not validate_schema:
         return migrated
     try:
-        _validate_template_syntax(migrated)
         cv.SCRIPT_SCHEMA(
             _prepare_concrete_captures(
                 migrated,
@@ -2235,19 +2234,6 @@ def _validate_script_sequence(
     except Exception as err:
         raise ValueError(f"invalid Home Assistant action sequence: {err}") from err
     return migrated
-
-
-def _validate_template_syntax(value: Any) -> None:
-    """Compile authored Jinja without evaluating runtime variables."""
-    if isinstance(value, str) and any(marker in value for marker in ("{{", "{%", "{#")):
-        cv.template(value)
-    elif isinstance(value, Mapping):
-        for key, item in value.items():
-            _validate_template_syntax(key)
-            _validate_template_syntax(item)
-    elif isinstance(value, list):
-        for item in value:
-            _validate_template_syntax(item)
 
 
 def _assign_missing_result_step_ids(value: Any) -> Any:
@@ -2335,29 +2321,118 @@ def validate_result_alias_template_update(
     if not unbound:
         return
 
-    from jinja2 import meta
+    from jinja2 import meta, nodes
+    from jinja2.visitor import NodeTransformer
 
+    from homeassistant.helpers.script_variables import ScriptVariables
     from homeassistant.helpers.template import TemplateEnvironment
 
     environment = TemplateEnvironment(hass, limited=False, strict=False)
+    actions = cv.SCRIPT_SCHEMA(
+        _prepare_concrete_captures(
+            candidate["action"]["actions"], None, validation=True
+        )
+    )
+    disabled = {
+        id(step)
+        for step in iter_script_actions(actions)
+        if step.get("enabled") is False
+    }
+
+    def defined_by(node: nodes.Node, truth: bool) -> frozenset[str]:
+        if isinstance(node, nodes.Not):
+            return defined_by(node.node, not truth)
+        if (isinstance(node, nodes.And) and truth) or (
+            isinstance(node, nodes.Or) and not truth
+        ):
+            return defined_by(node.left, truth) | defined_by(node.right, truth)
+        if (
+            isinstance(node, nodes.Test)
+            and isinstance(node.node, nodes.Name)
+            and (node.name == ("defined" if truth else "undefined"))
+        ):
+            return frozenset({node.node.name})
+        return frozenset()
+
+    class RequiredReferences(NodeTransformer):
+        """Mask undefined-safe reads on a throwaway AST used only for linting."""
+
+        def visit_Name(self, node, guarded):
+            return (
+                nodes.Const(None)
+                if node.ctx == "load" and node.name in guarded
+                else node
+            )
+
+        def visit_Filter(self, node, guarded):
+            if node.name in {"default", "d"} and isinstance(node.node, nodes.Name):
+                node.node = nodes.Const(None)
+            return self.generic_visit(node, guarded)
+
+        def visit_Test(self, node, guarded):
+            if node.name in {"defined", "undefined"} and isinstance(
+                node.node, nodes.Name
+            ):
+                node.node = nodes.Const(None)
+            return self.generic_visit(node, guarded)
+
+        def visit_CondExpr(self, node, guarded):
+            when_true = guarded | defined_by(node.test, True)
+            when_false = guarded | defined_by(node.test, False)
+            node.expr1 = self.visit(node.expr1, when_true)
+            if node.expr2 is not None:
+                node.expr2 = self.visit(node.expr2, when_false)
+            node.test = self.visit(node.test, guarded)
+            return node
+
+        def visit_If(self, node, guarded):
+            for branch in (node, *node.elif_):
+                when_true = guarded | defined_by(branch.test, True)
+                when_false = guarded | defined_by(branch.test, False)
+                branch.body = [self.visit(item, when_true) for item in branch.body]
+                branch.test = self.visit(branch.test, guarded)
+                guarded = when_false
+            node.else_ = [self.visit(item, guarded) for item in node.else_]
+            return node
+
+        def visit_And(self, node, guarded):
+            node.right = self.visit(node.right, guarded | defined_by(node.left, True))
+            node.left = self.visit(node.left, guarded)
+            return node
+
+        def visit_Or(self, node, guarded):
+            node.right = self.visit(node.right, guarded | defined_by(node.left, False))
+            node.left = self.visit(node.left, guarded)
+            return node
 
     def references(value: Any, names: set[str]) -> set[str]:
         if isinstance(value, Mapping):
-            return set().union(*(references(item, names) for item in value.values()))
+            if id(value) in disabled:
+                return set()
+            return set().union(
+                *(references(item, names) for pair in value.items() for item in pair)
+            )
         if isinstance(value, (list, tuple)):
             return set().union(*(references(item, names) for item in value))
-        source = value.template if isinstance(value, Template) else value
-        if isinstance(source, str) and ("{{" in source or "{%" in source):
-            return names & meta.find_undeclared_variables(environment.parse(source))
+        if isinstance(value, ScriptVariables):
+            return references(value.variables, names)
+        if isinstance(value, Template):
+            parsed = environment.parse(value.template)
+            RequiredReferences().visit(parsed, frozenset())
+            return names & meta.find_undeclared_variables(parsed)
         return set()
 
     missing: set[str] = set()
-    for step in candidate["action"]["actions"]:
-        if isinstance(step, Mapping) and isinstance(
-            variables := step.get("variables"), Mapping
-        ):
+    for step in actions:
+        if id(step) in disabled:
+            continue
+        variables = step.get("variables")
+        if isinstance(variables, ScriptVariables):
+            variables = variables.variables
+        if isinstance(variables, Mapping):
             # Home Assistant renders variable definitions in insertion order.
             for name, value in variables.items():
+                missing.update(references(name, unbound))
                 missing.update(references(value, unbound))
                 unbound.discard(name)
         else:

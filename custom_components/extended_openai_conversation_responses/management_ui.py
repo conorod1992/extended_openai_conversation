@@ -3336,6 +3336,8 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("rule_id"): str,
         vol.Optional("rule"): dict,
         vol.Optional("revision"): str,
+        vol.Optional("selection"): str,
+        vol.Optional("review_token"): str,
         vol.Optional("direction"): str,
         vol.Optional("pin"): str,
         vol.Optional("pin_repeat"): str,

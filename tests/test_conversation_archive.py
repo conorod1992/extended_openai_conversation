@@ -73,6 +73,50 @@ async def _archive():
     return archive
 
 
+async def test_expiry_hides_transcripts_before_prune_and_uses_latest_turn_after_restart(
+    monkeypatch,
+):
+    now = datetime(2026, 7, 1, tzinfo=dt_util.UTC)
+    newest = now
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    storage = FakeArchiveStorage()
+    days = 365
+    archive = ConversationArchive(storage, "agent-1", retention_days=lambda: days)
+    await archive.async_initialize()
+    scope = user_scope("alice", source="authenticated_user")
+
+    async def begin(manager):
+        return await manager.async_begin_session(
+            "logical-chat", scope, "ha-chat", archive_enabled=True,
+            shared_archive_enabled=False, inactivity_minutes=60 * 24 * 365,
+        )
+
+    saved = await begin(archive)
+    for now in (newest, newest - timedelta(hours=2)):
+        await archive.async_record_turn(
+            saved.session_id, run_id=None, user_text="retained transcript",
+            assistant_text="stored response", successful=True,
+        )
+
+    archive = ConversationArchive(storage, "agent-1", retention_days=lambda: days)
+    await archive.async_initialize()
+    days = 30
+    now = newest + timedelta(days=30)
+    assert (await archive.async_prune(days))["deleted_sessions"] == 0
+    assert len((await archive.async_get(scope.scope_id, saved.session_id))["turns"]) == 2
+
+    now += timedelta(seconds=1)
+    with pytest.raises(ValueError, match="conversation session not found"):
+        await archive.async_get(scope.scope_id, saved.session_id)
+    assert (await archive.async_list_sessions(scope.scope_id))["sessions"] == []
+    assert (await archive.async_search(scope.scope_id, "retained transcript"))["results"] == []
+    assert archive.scope_counts() == {}
+    assert (await archive.async_backup_data())["turns"] == []
+    assert len((await archive.async_recovery_data())["turns"]) == 2
+    assert (await begin(archive)).session_id != saved.session_id
+    assert await archive.async_prune(days) == {"deleted_sessions": 1, "deleted_turns": 2}
+
+
 async def test_date_delete_previews_earlier_turns_in_home_assistants_timezone(
     monkeypatch,
 ):

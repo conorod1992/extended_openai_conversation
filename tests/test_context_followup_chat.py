@@ -11,6 +11,15 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_SHORTEN_TOOL_CALL_ID,
     CONTEXT_TRUNCATE_KEEP_RECENT,
 )
+from custom_components.extended_openai_conversation_responses.entity import (
+    _responses_reasoning_route,
+)
+from custom_components.extended_openai_conversation_responses.provider_content import (
+    RoutedReasoning,
+)
+from custom_components.extended_openai_conversation_responses.provider_errors import (
+    provider_authentication_snapshot,
+)
 from homeassistant.components import conversation
 from tests.test_provider_tool_protocol import (
     _chat_log,
@@ -21,6 +30,19 @@ from tests.test_provider_tool_protocol import (
     _tool,
     _tool_call_stream,
 )
+
+
+def _owned_reasoning(entity, ciphertext):
+    from openai.types.responses import ResponseReasoningItem
+
+    return RoutedReasoning(
+        _responses_reasoning_route(
+            provider_authentication_snapshot(entity.entry), entity._client, entity.subentry.data
+        ),
+        ResponseReasoningItem(
+            id="rs_old", type="reasoning", summary=[], encrypted_content=ciphertext
+        ),
+    )
 
 
 @pytest.mark.parametrize("shorten", [False, True])
@@ -66,8 +88,6 @@ async def test_chat_followup_evicts_old_history_and_keeps_call_result_pair(
 
 
 async def test_current_turn_reasoning_keeps_older_text_and_wire_replay(hass):
-    from openai.types.responses import ResponseReasoningItem
-
     from tests.test_tool_exchange_protocol import (
         _entity as responses_entity,
         _final_stream as responses_final,
@@ -88,12 +108,7 @@ async def test_current_turn_reasoning_keeps_older_text_and_wire_replay(hass):
         older,
         conversation.AssistantContent(
             agent_id=entity.entity_id,
-            native=ResponseReasoningItem(
-                id="rs_old",
-                type="reasoning",
-                summary=[],
-                encrypted_content=ciphertext,
-            ),
+            native=_owned_reasoning(entity, ciphertext),
         ),
         conversation.AssistantContent(agent_id=entity.entity_id, content="Remembered."),
     ]
@@ -112,8 +127,6 @@ async def test_current_turn_reasoning_keeps_older_text_and_wire_replay(hass):
 async def test_prepared_eviction_preserves_newer_turns(hass, kind, strategy):
     """Removing one costly old turn must not evict cheap newer exchanges."""
     import asyncio
-
-    from openai.types.responses import ResponseReasoningItem
 
     from tests.test_tool_exchange_protocol import (
         _entity as responses_entity,
@@ -174,12 +187,7 @@ async def test_prepared_eviction_preserves_newer_turns(hass, kind, strategy):
             2,
             conversation.AssistantContent(
                 agent_id=entity.entity_id,
-                native=ResponseReasoningItem(
-                    id="rs_old",
-                    type="reasoning",
-                    summary=[],
-                    encrypted_content="r" * 18000,
-                ),
+                native=_owned_reasoning(entity, "r" * 18000),
             ),
         )
     else:

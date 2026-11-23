@@ -114,6 +114,9 @@ async def test_blocking_nested_request_does_not_reenter_parent_conversation(
     )
     if target == "same":
         assert effects == []
+        assert result["successful"] is True, result
+        assert result["response"] == "Parent completed"
+        assert len(sent) == 2
         # Core's conversation service returns the fixed guard as response data;
         # EOAI's service raises a backend exception, contained at dispatch.
         expected = (

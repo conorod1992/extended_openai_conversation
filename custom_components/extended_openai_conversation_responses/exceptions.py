@@ -154,6 +154,10 @@ class EffectReplayBlocked(HomeAssistantError):
     """A recovery guard stopped execution before a prior effect could repeat."""
 
 
+class NestedConversationRejected(HomeAssistantError):
+    """A nested request was refused before it could enter its parent conversation."""
+
+
 class EffectOutcomeUnknown(HomeAssistantError):
     """An attempted effect could not be confirmed."""
 

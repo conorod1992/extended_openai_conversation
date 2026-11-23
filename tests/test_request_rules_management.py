@@ -117,6 +117,37 @@ async def test_renaming_result_alias_requires_updating_native_templates(
     assert updated["rule"]["action"]["actions"] == candidate["action"]["actions"]
 
 
+@pytest.mark.parametrize("step", [
+    {"variables": {"label": "{{ lookup | default('waiting') }}"}},
+    {"set_conversation_response": "{{ lookup is defined }}"},
+    {"set_conversation_response": "{{ lookup.level if lookup is defined else 'waiting' }}"},
+    {"set_conversation_response": "{{ lookup.level if lookup is not undefined }}"},
+    {"set_conversation_response": "{{ lookup is defined and lookup.level or 'waiting' }}"},
+    {"set_conversation_response": "{{ lookup is undefined or lookup.level }}"},
+    {"set_conversation_response": "{% if lookup is defined and true %}{{ lookup.level }}{% elif lookup is undefined %}waiting{% else %}{{ lookup.level }}{% endif %}"},
+    {"stop": "Literal {{ lookup.level }} and unmatched {{"},
+    {"if": [{"condition": "template", "value_template": "{{ true }}"}],
+     "then": [{"set_conversation_response": "{{ lookup.level }}", "enabled": False}]},
+    {"set_conversation_response": "{{ lookup.level }}", "enabled": False},
+])
+async def test_rule_creation_allows_optional_and_nonexecuting_result_references(
+    hass, management_agent, management_message, monkeypatch, step
+):
+    rules = rr.RequestRules(MemoryStore())
+    await rules.async_initialize()
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
+    monkeypatch.setattr(ui, "_async_validate_request_rule_mutation", AsyncMock(return_value=None))
+    candidate = local_rule()
+    candidate["action"]["actions"] = [step, {
+        "action": f"{rr.DOMAIN}.{rr.SERVICE_CALL_FUNCTION}",
+        "data": {"function": "read_sensor", "result_alias": "lookup"},
+    }]
+    result = await ui.async_management_command(
+        hass, "admin", True, management_message("request_rules", "create", rule=candidate)
+    )
+    assert result["rule"]["action"]["actions"][0] == step
+
+
 @pytest.mark.parametrize(
     "binding",
     [

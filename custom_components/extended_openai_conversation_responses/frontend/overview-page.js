@@ -64,6 +64,7 @@ function snapshotCard(panel, title, status, detail, pageName, section, action) {
 }
 
 export function renderOverviewSnapshot(panel, sourceAgent) {
+  if (!sourceAgent) return panel._loading();
   const agent = overviewAgentFeatureProjection(sourceAgent);
   const guest = agent?.guest_mode || {};
   const memoryMode = panel._titleCase?.(agent?.memory_mode || "Unknown") || String(agent?.memory_mode || "Unknown");
@@ -129,10 +130,12 @@ export function bindOverview(panel) {
   // The agent snapshot and summary are the first useful Overview. Broadcast
   // starts after the summary is mounted so its request cannot contend for it.
   const detailsPending = Object.values(panel._result?.loading || {}).some(Boolean);
-  const broadcast = panel._result && !detailsPending
+  const agent = panel._selectedAgent?.();
+  const broadcast = (!agent || panel._result) && !detailsPending
     ? panel._eocOverviewBroadcastPromise || startOverviewBroadcastSnapshot(panel)
     : null;
   implementation.bindOverview(panel, broadcast);
+  if (!agent) return;
   void ensureOnboardingModule()
     .then((module) => {
       if (panel?._viewKey?.() === "overview") module.bindGettingStarted(panel);

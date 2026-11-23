@@ -153,6 +153,19 @@ class CompiledSentencePattern:
         """Reject text missing a literal every successful path needs."""
         return all(fragment in prepared.folded for fragment in self.required_fragments)
 
+    def allows_text_capture(self, name: str, value: str) -> bool:
+        """Whether a nonnumeric value fits one of this capture's definitions."""
+        folded = prepare_match_text(value).folded
+        for start in self.states:
+            if start.kind != "capture_start" or start.name != name or start.out is None:
+                continue
+            matcher = self.states[start.out]
+            if matcher.kind == "any" or (
+                matcher.kind == "enum" and folded in matcher.values
+            ):
+                return True
+        return False
+
     def match(
         self, text: str, budget: MatchBudget | None = None
     ) -> PatternMatch | None:

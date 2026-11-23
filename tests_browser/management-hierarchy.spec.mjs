@@ -1,6 +1,21 @@
 import {expect, test} from "@playwright/test";
 import {fixtureUrl, trackPageErrors, expectHarnessClean} from "./browser-helpers.mjs";
 
+test("global settings remain available with no conversation agents", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/quiet-hours", "&agents=0"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#qh-enabled")).toBeVisible();
+  expect(await page.evaluate(() => browserHarness.calls.some(call => call.section === "quiet_hours" && call.action === "get"))).toBe(true);
+
+  await panel.locator('.top-nav button[data-page="overview"]').click();
+  await expect(panel.locator("#broadcast-card").getByRole("heading", {name:"Broadcast", exact:true})).toBeVisible();
+  const calls = await page.evaluate(() => browserHarness.calls);
+  expect(calls.some(call => call.type.endsWith("/broadcast") && call.action === "snapshot")).toBe(true);
+  expect(calls.some(call => call.section === "overview")).toBe(false);
+  await expectHarnessClean(page, errors);
+});
+
 test("Assistant parent introduction stays between subsection navigation and the active card", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));

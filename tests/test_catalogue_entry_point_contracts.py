@@ -37,6 +37,45 @@ def isolate_catalogue():
     data.activate_catalog(None)
 
 
+@pytest.mark.parametrize("choices, allowed", [
+    ("{effort=low|high}", False),
+    ("{effort=low|medium}", True),
+    ("{effort}", False),
+])
+async def test_catalogue_apply_preserves_usable_captured_reasoning(
+    hass, monkeypatch, choices, allowed
+):
+    raw = deepcopy(dict(data.BUNDLED_CATALOG))
+    raw["catalog_version"] += 1
+    model = next(record for record in raw["models"] if record["id"] == "gpt-5.6")
+    model["reasoning"]["by_api"]["responses"]["efforts"].remove("high")
+    candidate = data.validate_catalog(raw)
+    manager = ModelCatalogManager(hass)
+    manager.store = MemoryStore()
+    manager.available_catalog = candidate
+    child = _catalogue_assistant("one")
+    hass.config_entries.async_entries.return_value = [
+        SimpleNamespace(entry_id="entry", data={}, subentries={"one": child})
+    ]
+    rules = RequestRules(RuleStore())
+    await rules.async_initialize()
+    await rules.async_create({
+        "name": "Set effort for next answer",
+        "phrases": [f"reason at {choices}"],
+        "match_type": "sentence_pattern",
+        "action_type": "model_routing",
+        "action": {
+            "model": "gpt-5.6", "reasoning_effort": "{effort}",
+            "scope": "request", "continue_to_ai": True,
+        },
+    })
+    monkeypatch.setattr(runtime, "async_get_request_rules", AsyncMock(return_value=rules))
+    status = await manager.async_apply_update()
+    assert (status["last_error"] is None) is allowed
+    assert manager.store.save_calls == int(allowed)
+    assert manager.catalog == (candidate if allowed else None)
+
+
 @pytest.mark.parametrize("route", ["apply", "reset"])
 @pytest.mark.parametrize("kind", ["conversation", "ai_task_data"])
 @pytest.mark.parametrize("valid", [False, True])

@@ -56,6 +56,7 @@ from .model_routing import routed_model_override
 from .operation_settlement import async_wait_owned_cleanup
 from .operational_errors import log_handled_failure
 from .provider_credentials import require_provider_restore_complete
+from .request_rule_patterns import compile_sentence_pattern
 from .request_rules import (
     _MANAGERS as _RULE_MANAGERS,
     SLOT_REFERENCE,
@@ -101,6 +102,7 @@ class _SavedRules:
     revision: str | None
     rules: tuple[Mapping[str, Any], ...]
     registered: bool
+    inactive: frozenset[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,6 +371,7 @@ class ModelCatalogManager:
                                 for rule in snapshot["rules"]
                             ),
                             self.hass.data.get(_RULE_MANAGERS, {}).get(key) is owner,
+                            frozenset(snapshot.get("diagnostics", {})),
                         ),
                     )
                 assistants.append(assistant)
@@ -650,6 +653,41 @@ class ModelCatalogManager:
                                 and not routed_metadata["reasoning"]["supported"]
                             ):
                                 return False
+                            capture = SLOT_REFERENCE.fullmatch(str(routed_effort))
+                            if (
+                                capture
+                                and rule.get("match_type") == "sentence_pattern"
+                                and rule.get("id") not in assistant.rules.inactive
+                            ):
+                                patterns = [
+                                    compile_sentence_pattern(phrase)
+                                    for phrase in rule["phrases"]
+                                ]
+                                for effort in current_metadata["reasoning"]["efforts"]:
+                                    if not any(
+                                        pattern.allows_text_capture(capture[1], effort)
+                                        for pattern in patterns
+                                    ):
+                                        continue
+                                    concrete = {
+                                        **effective,
+                                        CONF_REASONING_EFFORT: effort,
+                                    }
+                                    try:
+                                        validate_runtime_readiness(
+                                            concrete,
+                                            entry_data,
+                                            model_capabilities=current_metadata,
+                                            client=client,
+                                        )
+                                    except HomeAssistantError:
+                                        continue
+                                    validate_runtime_readiness(
+                                        concrete,
+                                        entry_data,
+                                        model_capabilities=routed_metadata,
+                                        client=client,
+                                    )
                             # A captured effort must not hide fixed API, tool,
                             # tier or output requirements. Try the finite effort
                             # set rather than assuming the recommendation: a

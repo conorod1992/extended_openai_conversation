@@ -203,6 +203,10 @@
       "required": false,
       "kind": "boolean"
     },
+    "review_token": {
+      "required": false,
+      "kind": "string"
+    },
     "revision": {
       "required": false,
       "kind": "string"
@@ -238,6 +242,10 @@
       ]
     },
     "section": {
+      "required": false,
+      "kind": "string"
+    },
+    "selection": {
       "required": false,
       "kind": "string"
     },

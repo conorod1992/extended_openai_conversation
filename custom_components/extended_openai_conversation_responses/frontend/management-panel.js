@@ -19,7 +19,7 @@ import {
 } from "./management-page-drafts.js";
 import {cacheTimestampIsFresh, readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
-import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
+import {ASSISTANT_INTRO_MARKUP, renderManagement, renderManagementRoute, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors} from "./management-actions.js";
 import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
@@ -1300,6 +1300,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _loadSectionData(silent = false) {
     if (!this._selectedAgent()) {
+      ++this._loadToken;
+      this._result = null;
+      this._error = null;
       this._busy = false;
       return this._render();
     }
@@ -2000,7 +2003,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const navigation = NAVIGATION.filter((item) => this._canAccessView(item.id));
     const local = this._visibleSubsections();
     const currentSection = local.find((item) => item.id === this._subsection);
-    this._eocMainMarkup = this._error ? this._routeError(this._error) : !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loadingContent(agent) : this._content(agent);
+    this._eocMainMarkup = renderManagementRoute(this, agent);
     const configurationActions = agent && !this._busy && !this._error ? this._configurationActions() : "";
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;

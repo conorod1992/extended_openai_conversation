@@ -4,6 +4,8 @@ The optional conversation archive stores what was actually discussed. It is sepa
 
 The archive is **off by default**. When enabled, the default retention is 30 days; model archive search, unidentified voice retention, and the shared-household archive are off until explicitly enabled.
 
+Once a transcript passes the configured retention cutoff, it disappears from Archive history, search, and portable backups. Scheduled maintenance removes the expired storage records.
+
 ## What is stored
 
 Only the user message, the final assistant reply, timestamps, session/run identifiers, success state, and resolved scope/source metadata are stored. A title is normalized and truncated from the first user message locally.

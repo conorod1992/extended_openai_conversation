@@ -26,7 +26,8 @@ from homeassistant.helpers import (
     target as target_helpers,
 )
 
-from .exceptions import EffectOutcomeUnknown
+from .const import DOMAIN, SERVICE_PROCESS
+from .exceptions import EffectOutcomeUnknown, NestedConversationRejected
 from .function_tool_recovery import should_report_uncertain_effects
 from .ha_permissions import async_require_control_permission, get_active_ha_context
 from .ha_service_compat import prepare_service_dispatch
@@ -141,6 +142,7 @@ async def async_dispatch_ha_service(
     from .execution_outcomes import (
         execution_completed,
         execution_refused,
+        execution_rejected,
         execution_started,
     )
 
@@ -181,6 +183,11 @@ async def async_dispatch_ha_service(
     try:
         response = await registry.async_call(domain=domain, service=service, **kwargs)
     except Exception as err:
+        if (domain, service) == (DOMAIN, SERVICE_PROCESS) and isinstance(
+            err, NestedConversationRejected
+        ):
+            execution_rejected(receipt)
+            raise
         if receipt is not None and should_report_uncertain_effects():
             # The dispatcher already crossed the effect boundary. Even a
             # schema error from an adapter or delegated handler is ambiguous.

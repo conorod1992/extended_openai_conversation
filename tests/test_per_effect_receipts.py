@@ -1,6 +1,7 @@
 """Effect provenance, settlement and failed-continuation recovery invariants."""
 
 import asyncio
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import datetime
 from types import SimpleNamespace
@@ -14,11 +15,16 @@ import voluptuous as vol
 from custom_components.extended_openai_conversation_responses import (
     execution_outcomes as receipts,
 )
+from custom_components.extended_openai_conversation_responses.exceptions import (
+    EffectOutcomeUnknown,
+    NestedConversationRejected,
+)
 from custom_components.extended_openai_conversation_responses.function_call_budget import (
     FunctionCallBudget,
 )
 from custom_components.extended_openai_conversation_responses.function_tool_recovery import (
     ToolRecoveryState,
+    bind_tool_recovery_state,
 )
 from custom_components.extended_openai_conversation_responses.persistence_hardening import (
     _async_settle_transactional_save,
@@ -74,9 +80,13 @@ async def test_queue_settlement_owns_one_receipt_and_preserves_earlier_unknown(
 
     manager._store = SimpleNamespace(async_save=save, async_load=load)
     entity, call, tool = _entity(hass), _call("first", "effect", RAW), _tool()
+    outcome = {
+        "rejected": pytest.raises(OSError, match="lost acknowledgement"),
+        "unreadable": pytest.raises(EffectOutcomeUnknown),
+    }.get(mode, nullcontext())
     with receipts.execution_attempt(entity, call, tool):
         earlier = receipts.execution_started(kind="earlier", prepared={})
-        try:
+        with outcome:
             await manager.async_schedule(
                 entity,
                 "effect",
@@ -85,8 +95,6 @@ async def test_queue_settlement_owns_one_receipt_and_preserves_earlier_unknown(
                 execution_delay={"seconds": 30},
                 function_tool=tool,
             )
-        except OSError:
-            assert mode != "success"
         assert earlier.outcome == "uncertain"
     effects = entity._execution_effect_receipts[id(call)]
     assert len(effects) == 2  # One earlier effect and exactly one queue transaction.
@@ -501,8 +509,11 @@ async def test_queue_readback_cannot_settle_an_interleaved_effect(hass, committe
             kind="unrelated", prepared={"effect": "unknown"}
         )
         finish.set()
-        with pytest.raises(OSError, match="lost acknowledgement"):
-            await task
+        if committed:
+            assert (await task).call_id == persisted["calls"][0]["call_id"]
+        else:
+            with pytest.raises(OSError, match="lost acknowledgement"):
+                await task
         assert unrelated.outcome == "uncertain"
     effects = entity._execution_effect_receipts[id(call)]
     assert [(r.kind, r.outcome) for r in effects] == [
@@ -550,6 +561,41 @@ async def test_genuine_service_provenance_distinguishes_same_exception_type(
         assert entity._execution_tool_outcomes[id(call)] == (
             "uncertain" if handler_failure else "rejected"
         )
+    finally:
+        await hass.async_stop(force=True)
+
+
+@pytest.mark.parametrize("own_service", [True, False])
+async def test_nested_refusal_settles_only_the_own_process_receipt(tmp_path, own_service):
+    from homeassistant.core import HomeAssistant
+
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    from custom_components.extended_openai_conversation_responses.ha_actions import (
+        async_dispatch_ha_service,
+    )
+
+    hass = HomeAssistant(str(tmp_path))
+    domain = DOMAIN if own_service else "other_domain"
+
+    async def reject(call):
+        raise NestedConversationRejected("Active parent conversation")
+
+    hass.services.async_register(domain, "process", reject)
+    entity, call = SimpleNamespace(), _call("first", "effect", RAW)
+    try:
+        with (
+            bind_tool_recovery_state(ToolRecoveryState(enabled=True, report_uncertain_effects=True)),
+            receipts.execution_attempt(entity, call, _tool()),
+        ):
+            prior = receipts.execution_started(kind="earlier", prepared={})
+            with pytest.raises(NestedConversationRejected if own_service else EffectOutcomeUnknown):
+                await async_dispatch_ha_service(
+                    hass, domain, "process", {"blocking": True, "service_data": {}}
+                )
+            assert prior.outcome == "uncertain"
+        prior_receipt, dispatch_receipt = entity._execution_effect_receipts[id(call)]
+        assert prior_receipt.outcome == "uncertain"
+        assert dispatch_receipt.outcome == ("rejected" if own_service else "uncertain")
     finally:
         await hass.async_stop(force=True)
 

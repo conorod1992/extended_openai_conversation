@@ -13,7 +13,6 @@ from uuid import uuid4
 
 from homeassistant.components import conversation
 from homeassistant.components.conversation.chat_log import current_chat_log
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.chat_session import ChatSession, current_session
 from homeassistant.util import dt as dt_util
 
@@ -32,6 +31,7 @@ from .conversation_ids import (
     GUEST_CONVERSATION_ID_PREFIX,
     create_conversation_id,
 )
+from .exceptions import NestedConversationRejected
 from .scope import ResolvedDataScope
 
 
@@ -544,7 +544,7 @@ class ConversationContinuity:
             in (owner.conversation_id, owner.claimed_conversation_id)
             for owner in _PROCESSING_CONVERSATIONS.get()
         ):
-            raise HomeAssistantError(
+            raise NestedConversationRejected(
                 "Nested processing cannot reuse an active parent conversation; "
                 "supply a different conversation_id or omit it."
             )
