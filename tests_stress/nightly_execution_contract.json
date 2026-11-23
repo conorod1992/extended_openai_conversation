@@ -3408,6 +3408,8 @@
     "tests_real_ha/test_usage_period_statistics.py::test_guest_sensor_follows_scheduled_boundaries_and_unload_without_polling[future]",
     "tests_real_ha/test_usage_period_statistics.py::test_guest_sensor_follows_scheduled_boundaries_and_unload_without_polling[indefinite]",
     "tests_real_ha/test_usage_period_statistics.py::test_guest_sensor_recovers_boundary_timer_after_uncertain_save",
+    "tests_real_ha/test_usage_period_statistics.py::test_last_response_keeps_recorder_counters_with_oversized_labels[ascii]",
+    "tests_real_ha/test_usage_period_statistics.py::test_last_response_keeps_recorder_counters_with_oversized_labels[multibyte]",
     "tests_real_ha/test_usage_period_statistics.py::test_last_response_poll_hides_expired_detail_without_new_usage",
     "tests_real_ha/test_usage_period_statistics.py::test_usage_counter_and_restored_aggregates_publish_without_polling",
     "tests_real_ha/test_usage_period_statistics.py::test_usage_sensors_rebind_from_volatile_to_durable_without_polling",

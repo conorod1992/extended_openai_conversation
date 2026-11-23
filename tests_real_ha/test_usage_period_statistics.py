@@ -484,7 +484,9 @@ async def test_last_response_poll_hides_expired_detail_without_new_usage(hass, f
     assert await hass.config_entries.async_unload(agent.entry.entry_id)
 
 
-@pytest.mark.parametrize("model", ["a" * 16600, "界" * 5600])
+@pytest.mark.parametrize(
+    "model", ["a" * 16600, "界" * 5600], ids=["ascii", "multibyte"]
+)
 async def test_last_response_keeps_recorder_counters_with_oversized_labels(hass, model):
     from homeassistant.components.recorder import history
 
