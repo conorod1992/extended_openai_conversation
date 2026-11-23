@@ -123,7 +123,9 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
         return {"payload": deepcopy(current["value"])}
 
     async def capture(call):
-        captured.append(deepcopy(call.data["value"]))
+        serialized = call.data["value"]
+        assert serialized.startswith("result:")
+        captured.append(json.loads(serialized.removeprefix("result:")))
 
     async def remote(request):
         if current.get("unavailable"):
@@ -327,7 +329,11 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
                                 },
                                 {
                                     "action": "outcome_probe.capture",
-                                    "data": "{{ {'value': business_data.result} }}",
+                                    # Keep the native value's JSON type through
+                                    # HA's parsing of the rendered service field.
+                                    "data": {
+                                        "value": "result:{{ business_data.result | to_json }}"
+                                    },
                                 },
                             ]
                         )
