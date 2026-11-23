@@ -1,6 +1,5 @@
 """Independent result shapes shared by real backends and enclosing workflows."""
 
-import ast
 import json
 
 BACKENDS = (
@@ -111,17 +110,3 @@ def expected_business_result(kind, value, root):
     if kind == "edit_file":
         return {"success": True, "path": str(root / "outcome.txt"), "replacements": 1}
     raise AssertionError(kind)
-
-
-def expected_consumer_result(kind, value, root, workflow):
-    # Native HA action templates parse Python literals in captured text.
-    if workflow == "request_rule" and kind in {"rest", "scrape"}:
-        text = json.dumps(value)
-        try:
-            parsed = ast.literal_eval(text)
-            return text if isinstance(parsed, str) else parsed
-        except ValueError, SyntaxError:
-            return text
-    # REST/Scrape return literal text. Provider presentation preserves that text,
-    # including JSON whitespace, rather than parsing and reserializing business data.
-    return expected_business_result(kind, value, root)

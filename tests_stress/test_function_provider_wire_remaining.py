@@ -111,7 +111,7 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
     from tests_stress.function_outcome_contract import (
         BUSINESS_VALUES,
         backend_configuration,
-        expected_consumer_result,
+        expected_business_result,
     )
 
     current = {"value": None}
@@ -238,6 +238,7 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
             current["value"] = value
             current["unavailable"] = failed
             arguments = {"payload": value, "payload_json": json.dumps(value)}
+            expected = expected_business_result(kind, value, tmp_path)
             for workflow in (
                 "direct",
                 "composite",
@@ -245,8 +246,6 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
                 "request_rule",
                 "ai_task",
             ):
-                expected = expected_consumer_result(kind, value, tmp_path, workflow)
-
                 def prepare(value=value, failed=failed):
                     (tmp_path / "outcome.txt").write_text(
                         "START" if kind == "edit_file" else json.dumps(value),
