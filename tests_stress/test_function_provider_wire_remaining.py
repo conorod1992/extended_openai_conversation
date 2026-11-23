@@ -90,6 +90,9 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
         DOMAIN,
         SERVICE_CALL_FUNCTION,
     )
+    from custom_components.extended_openai_conversation_responses.exceptions import (
+        EffectOutcomeUnknown,
+    )
     from custom_components.extended_openai_conversation_responses.functions import (
         get_function,
     )
@@ -377,19 +380,28 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
                     )
                     if workflow == "ai_task":
                         if failed:
-                            failed_task = await ai_task.async_generate_data(
-                                hass,
+                            task_options = dict(
                                 task_name="Shared failure",
                                 entity_id=task_entity,
                                 instructions="Read unavailable dependency",
                                 llm_api=caller,
                             )
-                            assert failed_task.data == "Completed"
-                            assert len(wire.requests) == 2
-                            native_error = _provider_result(
-                                wire.requests[1], api_mode, call_id
-                            )
-                            assert native_error.get("status") == "error", native_error
+                            if kind == "script":
+                                # The registered HA action raised after dispatch.
+                                # A caller cannot infer that it was effect-free.
+                                with pytest.raises(EffectOutcomeUnknown):
+                                    await ai_task.async_generate_data(hass, **task_options)
+                                assert len(wire.requests) == 1
+                            else:
+                                failed_task = await ai_task.async_generate_data(
+                                    hass, **task_options
+                                )
+                                assert failed_task.data == "Completed"
+                                assert len(wire.requests) == 2
+                                native_error = _provider_result(
+                                    wire.requests[1], api_mode, call_id
+                                )
+                                assert native_error.get("status") == "error", native_error
                             record(
                                 stress_trace,
                                 "shared_backend_failure",
