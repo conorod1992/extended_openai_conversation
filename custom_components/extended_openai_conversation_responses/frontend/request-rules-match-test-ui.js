@@ -6,7 +6,7 @@ const unchanged = " Nothing was changed.";
 function localActionSummary(response) {
   const action = response?.would_do || {};
   const count = Number(action.action_count || 0);
-  const functions=(action.functions || []).map((item)=>`${item.name}${item.result_alias ? ` → ${item.result_alias}` : ""}`).join(", ");
+  const functions=(action.functions || []).map((item)=>item.name).join(", ");
   const outcome = action.conditional ? "Actions may stop or fail. If they complete, AI would handle the selected input."
     : action.consumed ? "The command would be consumed locally."
     : "After success, AI would handle the selected input.";

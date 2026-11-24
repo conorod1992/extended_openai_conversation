@@ -42,7 +42,7 @@ Turn on **Continue to AI** when the local sequence should run first and the prov
 4. After normal completion without a final conversation response or stop, **Continue to AI** calls the provider once when enabled.
 5. Otherwise, the rule returns its success response.
 
-A condition inside `if`, `choose`, `repeat`, or another nested sequence halts only the scope Home Assistant halts. A fatal wait timeout (`continue_on_timeout: false`) follows the failure path; `continue_on_timeout: true` can complete normally. Earlier successful side effects are not rolled back if a later step fails. Native `variables` and service `response_variable` values remain available to later actions in the script, but are not automatically interpolated in the separate Request Rule success response. Only request captures and dedicated Function Tool result aliases are supported there.
+A condition inside `if`, `choose`, `repeat`, or another nested sequence halts only the scope Home Assistant halts. A fatal wait timeout (`continue_on_timeout: false`) follows the failure path; `continue_on_timeout: true` can complete normally. Earlier successful side effects are not rolled back if a later step fails. Use native `variables` and service `response_variable` values in later script actions, including **Set conversation response** for templated replies. The separate success and failure responses are static text with optional sentence-pattern captures such as `{device}`.
 
 ### Example: fast local script
 
@@ -197,15 +197,9 @@ A rule can call an enabled Function Tool directly without sending the request to
 
 For example, match `Show {entity_id} attributes`, add **Call configured function**, set **Function tool** to `get_attributes`, and set **Arguments** to `entity_id: "{{ entity_id }}"`. Direct execution uses the same implementation, argument validation, current enabled state, Guest Mode policy, and entity-access checks as a model-initiated call.
 
-To use a Function Tool's return value, set an optional **Result alias** on its action step. For `get_device_battery(device={device})`, name the result `battery`; an object result such as `{"name":"Kitchen tablet","level":62}` can then be used in the local success response as `{battery.name} is at {battery.level}%`. A scalar string, number, boolean, or null can be referenced as `{battery}`. Nested object paths and simple numeric array indexes such as `{battery.items.0.name}` are supported. If a path is missing or the separate success response cannot otherwise be constructed after actions finish, Extended OpenAI reports that the actions succeeded but the response failed. Completed actions are not retried, and placeholders are never spoken unresolved.
+### Branch and reply using a Function result
 
-Request captures and Function results stay separate. `{device}` remains a request capture, while `{battery.device}` reads a field from the Function result. A Function result cannot overwrite a capture. Each call that uses an alias needs a unique alias within the rule, even when the same Function Tool is called twice. Only top-level Function actions can set an alias. Function calls inside `if`, `choose`, or `repeat` can use native response variables. Aliases use letters, digits, and underscores, start with a letter or underscore, and cannot use reserved names such as `request`, `conversation`, or `system`. The editor suggests an alias from the Function Tool name; the saved step ID remains stable when you rename the alias. Renaming an alias in the editor updates references in the success response.
-
-Function execution success is determined by the execution outcome, not the truthiness of its result: `false`, `0`, empty string, and null are valid values. Retained results are limited to 16 KiB and eight levels of nesting. The safe Match Preview lists the Function Tool and alias but never runs it or invents a result. Live Test can run it after the normal explicit confirmation. **Function results are not automatically sent to the AI provider**, including when Continue to AI is on; the provider receives the selected AI input.
-
-### Branching on a Function result
-
-Use the native Home Assistant response variable for later actions. In the YAML below, the rule can keep the `battery` alias for its success response. The `battery_data` variable contains the service response, with the Function's return value under `result`.
+Set a Home Assistant `response_variable` on **Call configured function**. The variable holds the service response, with the Function's return value under `result`. Use it in later actions and in **Set conversation response**. This example optionally turns on a charger, then speaks the battery level.
 
 ```yaml
 - action: extended_openai_conversation_responses.call_function
@@ -213,23 +207,32 @@ Use the native Home Assistant response variable for later actions. In the YAML b
     function: get_device_battery
     arguments:
       device: Kitchen tablet
-    result_alias: battery
-  response_variable: battery_data
+  response_variable: battery
 - if:
     - condition: template
       value_template: >-
-        {{ battery_data is defined and battery_data.result is mapping
-           and battery_data.result.level is number
-           and battery_data.result.level < 20 }}
+        {{ battery.result.level < 20 }}
   then:
     - action: switch.turn_on
       target:
         entity_id: switch.tablet_charger
+- set_conversation_response: >-
+    The kitchen tablet is at {{ battery.result.level }}%.
 ```
 
-For a configured Function call without a result alias, the existing response includes the tool result envelope inside `result`. Read the value using `battery_data.result.result` in that case.
+Use the path that matches the Function's return value. For a scalar, use `battery.result`. A Function can return its own `result` field, which remains under `battery.result.result`. If a producing action can be skipped or its errors can be continued, check that the variable and expected fields are defined before using them. Native Home Assistant variable scope applies in nested sequences.
 
-Earlier development builds allowed aliases such as `{battery.level}` or `{{ battery.level }}` inside native actions. Stored and restored rules with these references are preserved and marked for repair. When an enabled affected rule matches and passes its Only when conditions, the request stops with a repair message. Its actions, lower-priority rules, and AI handoff do not run. Add a distinct `response_variable` and update action templates as above, then save and preview the rule. When a native variable already shares an alias name, give it a distinct name and update its usages before saving.
+Execution success is independent of the return value. False, zero, empty text and null are valid. **Match Preview** lists configured Functions without running them. **Test request** can run them after confirmation. Continue to AI passes the selected AI input to the provider. It does not automatically pass Function results. A final **Set conversation response** consumes the request locally.
+
+### Repair rules from earlier versions
+
+Rules that use retired Function result aliases or that captured a Function response before 7.0.0 retain their authored actions and responses when loaded or restored. An enabled affected rule that matches and passes its **Only when** conditions stops with a repair message before running its actions, trying lower-priority rules, or handing off to AI. Disable the rule if you want lower-priority rules to handle the request during repair.
+
+1. Open the affected rule. Use the action YAML editor to remove `result_alias` and `step_id` from the Function action's service data. Give the action a `response_variable` if it needs one.
+2. Update references in downstream actions and move result-dependent acknowledgements from the static success response into **Set conversation response**. For example, replace `{battery.level}` with `{{ battery.result.level }}` there. If the rule already uses a native response variable, remove only the extra wrapper that EOAI used to add to the Function value. Review each path against the Function's actual result.
+3. Confirm the response-format review when prompted, then save and run **Match Preview**. Use **Test request** when it is safe to perform the actions.
+
+Review separately stored Home Assistant scripts or custom actions that call the Function service on a rule's behalf. The rule editor can review service calls in its saved action tree. Templates in separate Home Assistant configurations need to be checked where they are defined.
 
 ### Example: targeted Broadcast
 

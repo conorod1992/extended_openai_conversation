@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
-import {renameResultReferenceMap, syncRequestRuleRoutingControls} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
+import {syncRequestRuleRoutingControls} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 import {formatWordingAlternatives, parseWordingAlternatives} from "../custom_components/extended_openai_conversation_responses/frontend/wording-alternatives.js";
 
-const mapping = new Map([["left", "right"], ["right", "left"]]);
-assert.equal(renameResultReferenceMap("Left {left.value}; right {right.value}", mapping), "Left {right.value}; right {left.value}");
-assert.deepEqual(renameResultReferenceMap({result_alias:"left", data:["{right.value}"]}, mapping), {result_alias:"left", data:["{left.value}"]});
-assert.deepEqual(renameResultReferenceMap({result_alias:"left",arguments:{result_alias:"{left.value}",step_id:"{right.value}"}},mapping),{result_alias:"left",arguments:{result_alias:"{right.value}",step_id:"{left.value}"}});
 const phrases = ["would you, please", "say \"hello\"", "switch on"];
 assert.deepEqual(parseWordingAlternatives(formatWordingAlternatives(phrases)), phrases);
 assert.deepEqual(parseWordingAlternatives("one, two"), ["one", "two"]);

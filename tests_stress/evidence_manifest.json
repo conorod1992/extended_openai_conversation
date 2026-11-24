@@ -214,16 +214,18 @@
       "tests_stress/test_request_rules_provider_wire.py::test_matcher_route_scope_reaches_wire_and_next_turn"
     ]
   },
-  "capabilities/request-rules::captures_result_aliases": {
+  "capabilities/request-rules::captures_native_responses": {
     "controls": [
       "rule-ai-input-mode",
       "rule-ai-input-capture",
-      "rule-result-alias"
+      "rule-action-sequence-host",
+      "rule-native-response-reviewed"
     ],
     "classification": "runtime_effect",
-    "effect": "Rule captures and local result aliases reach the intended conversation input.",
+    "effect": "Rule captures reach the intended conversation input and native Function response variables feed local actions and replies.",
     "evidence": [
-      "tests_real_ha/test_request_rules_script_semantics.py::test_function_capture_preserves_ha_variables_and_survives_reload"
+      "tests_real_ha/test_request_rules_script_semantics.py::test_function_capture_preserves_ha_variables_and_survives_reload",
+      "tests_real_ha/test_request_rules_live_management.py::test_legacy_function_response_repair_through_registered_management"
     ]
   },
   "capabilities/request-rules::matching_defaults_wording_pattern_helpers": {

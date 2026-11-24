@@ -813,6 +813,7 @@ def test_native_request_rule_semantics_are_mandatory():
     prefix = "tests_real_ha/test_request_rules_script_semantics.py::"
     for name, count in {
         "test_nested_function_results_agree_in_native_action_and_speech": 6,
+        "test_native_function_response_preserves_falsy_values": 4,
         "test_native_stop_enabled_decision_does_not_mask_later_abort": 15,
         "test_instrumented_stops_preserve_native_nested_scope": 8,
     }.items():

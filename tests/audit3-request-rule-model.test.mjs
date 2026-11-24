@@ -16,14 +16,6 @@ assert.equal(requestRuleCapabilityModel(azure,"","gpt-4.1-mini"),"gpt-4.1-mini")
 assert.equal(requestRuleCapabilityModel(azure,"another-deployment","gpt-4.1-mini"),"gpt-4.1-mini");
 assert.equal(requestRuleCapabilityModel({_result: {api_provider: "openai", effective_model: "gpt-5.6"}}, "gpt-4o"), "gpt-4o");
 
-const {isFunctionServiceAction} = await import("../custom_components/extended_openai_conversation_responses/frontend/script-payload.js");
-for (const field of ["action", "service", "service_template"]) {
-  assert.equal(isFunctionServiceAction({[field]: "EXTENDED_OPENAI_CONVERSATION_RESPONSES.CALL_FUNCTION"}), true);
-  assert.equal(isFunctionServiceAction({[field]: "script.CALL_FUNCTION"}), false);
-}
-assert.equal(isFunctionServiceAction({event_data: {action: "EXTENDED_OPENAI_CONVERSATION_RESPONSES.CALL_FUNCTION"}}), false);
-assert.equal(isFunctionServiceAction({action: "{{ 'extended_openai_conversation_responses.call_function' }}"}), false);
-
 assert.equal(requestRuleCapabilityModel({_result: {api_provider:"openai", effective_model:"gpt-5.6", config:{azure_model:"stale-model"}}}, "gpt-4o"), "gpt-4o");
 
 

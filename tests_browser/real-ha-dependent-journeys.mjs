@@ -48,13 +48,17 @@ export function registerDependentJourneys() {
     await panel.locator("#rule-name").fill("Dependent rule");
     await panel.locator("#rule-phrases").fill("execute dependent");
     await panel.locator("#rule-action-type").selectOption("local_action");
-    const actions = [{action: "extended_openai_conversation_responses.call_function",
-      data: {function: "dependent_journey_tool", arguments: {}, result_alias: "dependent_result", step_id: "1234567890abcdef1234567890abcdef"}}];
+    const actions = [{
+      action: "extended_openai_conversation_responses.call_function",
+      data: {function: "dependent_journey_tool", arguments: {}},
+      response_variable: "dependent_result",
+    }, {
+      set_conversation_response: "Dependent tool {{ dependent_result.result }}",
+    }];
     await panel.locator("#rule-action-sequence-host ha-selector").evaluate((selector, value) => {
       selector.value = value;
       selector.dispatchEvent(new CustomEvent("value-changed", {detail: {value}, bubbles: true, composed: true}));
     }, actions);
-    await panel.locator("#rule-success").fill("Dependent tool {dependent_result}");
     await panel.locator("#rule-save").click();
     await expect(panel.locator(".request-rule-card").filter({hasText:"Dependent rule"})).toBeVisible();
 

@@ -5,7 +5,6 @@ import {beginOperation} from "./operation-ownership.js";
 import {presentAcknowledgedMutation, captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {dialogState, setDialogBaseline} from "./management-dialogs.js";
 import {same} from "./unsaved-state.js";
-import {effectiveServicePayload, isFunctionServiceAction, setEffectiveServiceField} from "./script-payload.js";
 export {syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {applyRequestRuleMutation, matchingControls, recoverRequestRuleMutation} from "./request-rules-ui-core.js";
 export {recoverRequestRuleMutation, reconcileRequestRules, renderRequestRules} from "./request-rules-ui-core.js";
@@ -20,10 +19,7 @@ export const phraseEditorValues = (text, original = []) => text === phraseEditor
 export const ruleResponseValue = (text, original) => typeof original === "string"
   && text === original.replace(/\r\n?/g, "\n") ? original : text;
 
-function syncResultAliasMode(root) {
-  const inactive = root.querySelector("#rule-action-type").value !== "local_action";
-  root.querySelectorAll(".rule-result-alias").forEach(input => { input.disabled = inactive; });
-}
+const requiresFunctionResponseReview = diagnostic => diagnostic?.startsWith("Function response format changed.");
 
 export function applySentencePatternHelper(value, selectionStart, selectionEnd, kind) {
   const start = Math.max(0, Math.min(Number(selectionStart) || 0, value.length));
@@ -63,7 +59,7 @@ export function applySentencePatternHelper(value, selectionStart, selectionEnd, 
 }
 
 export function requestRulesDialog() {
-  return `<dialog id="rule-dialog" class="editor-dialog wide request-rule-dialog" aria-labelledby="rule-dialog-title"><form id="rule-form"><div class="dialog-header"><h2 id="rule-dialog-title">Create Request Rule</h2><button type="button" class="icon rule-close" aria-label="Close">×</button></div><div class="dialog-body"><div id="rule-matching-repair" class="notice" hidden><strong>This rule used Continue matching</strong><p>Combine the steps you still need in this rule. Enable Continue to AI if the rule should send the request to AI after the actions. With Continue to AI off, a routing rule changes the rest of the conversation.</p><label><input id="rule-matching-repair-confirm" type="checkbox">Save this as a first-match rule</label></div><label>Rule name<input id="rule-name" required maxlength="120" placeholder="Shopping list"></label><label>Group<select id="rule-group"><option value="">Ungrouped</option></select><small>Groups organize rules; the global top-to-bottom order still determines priority.</small></label><section><h3>1. What will you say?</h3><label>Trigger phrases or patterns<textarea id="rule-phrases" required placeholder="Add {item} to my shopping list"></textarea><small>One alternative per line. Alternatives must use the same variable names.</small></label><div id="rule-slot-help" class="notice" hidden><strong>Variable values</strong><p>Variable values let part of the request change each time. Use them in actions or responses.</p><p id="rule-slot-list"></p></div><label>How should it match?<select id="rule-match"><option value="equals">Equals</option><option value="starts_with">Starts with</option><option value="ends_with">Ends with</option><option value="contains">Contains</option><option value="sentence_pattern">ExtendedOpenAI sentence pattern</option></select></label><div id="sentence-pattern-builder" class="section-actions" hidden><span class="help">Insert pattern:</span><button type="button" class="secondary pattern-helper" data-pattern-helper="optional">Optional</button><button type="button" class="secondary pattern-helper" data-pattern-helper="choice">Choice</button><button type="button" class="secondary pattern-helper" data-pattern-helper="variable">Variable</button><button type="button" class="secondary pattern-helper" data-pattern-helper="range">Number range</button></div><div id="sentence-pattern-help" hidden><p class="help">Example: <code>[please] set {room} to {level=0..100}</code>.</p><details class="eoc-details-base"><summary>Sentence-pattern syntax reference</summary><p>Use <code>[optional words]</code>, <code>(one|two)</code>, free-text values such as <code>{room}</code>, constrained values such as <code>{room=kitchen|bedroom}</code>, and integer ranges such as <code>{level=0..100}</code>. Escape syntax characters with <code>\\</code>, including <code>\\|</code> inside choices. Sentence-ending punctuation is tolerated. ExtendedOpenAI syntax; named expansions and permutations are not supported.</p></details></div></section><section id="rule-conditions-section"><h3>2. Only when</h3><button type="button" class="secondary" id="rule-add-conditions" aria-controls="rule-conditions-body">Add conditions — optional</button><div id="rule-conditions-body" hidden><p class="help">When these Home Assistant conditions are false, skip to the next rule.</p><div id="rule-condition-host"></div></div></section><section><h3>3. What should happen?</h3><label>Behaviour<select id="rule-action-type"><option value="local_action">Run actions locally</option><option value="model_routing">Route through AI with different settings</option></select></label><div id="rule-local-config"><p class="help">Run Home Assistant actions locally before optional AI continuation. Conditions, delays, choose, repeat, parallel and templates use the native script editor and syntax.</p><div id="rule-action-sequence-host"></div><div id="rule-result-aliases"></div><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Continue to AI</span><small>Send the selected AI input after actions finish, unless an action sets a conversation response or stops the script.</small></span><span class="switch-control"><input id="rule-local-continue-to-ai" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></span></label><div id="rule-action-slot-help" class="notice" hidden><strong>Captured values in actions</strong><p id="rule-action-slot-list"></p><p>Use captures as script variables (<code>{{ item }}</code>) or via <code>request.slots</code>.</p><p>Call an enabled Function with <code>extended_openai_conversation_responses.call_function</code>, its name and arguments.</p></div></div><div id="rule-routing-config" hidden><p class="help" id="rule-routing-scope-help"></p><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Continue to AI</span><small>After applying these routing settings, send the selected AI input.</small></span><span class="switch-control"><input id="rule-continue-to-ai" type="checkbox" checked role="switch"><span class="switch-track" aria-hidden="true"></span></span></label><div class="form-grid"><label>Model<input id="rule-model" placeholder="gpt-5-mini"></label><label id="rule-azure-model-label" hidden>Underlying Azure model<input id="rule-azure-model" placeholder="gpt-4.1-mini"><small>Required for a different deployment with a custom name. Use the model deployed behind that name.</small></label><label>Reasoning effort<select id="rule-reasoning"><option value="">Keep current</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label><label>Scope<select id="rule-scope"><option value="request">This request only</option><option value="conversation">Rest of this conversation</option></select></label><label class="config-toggle setting"><strong>Reset to configured defaults</strong><span class="switch-control"><input id="rule-reset" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></span></label></div></div><div id="rule-ai-input-settings"><label>AI input<select id="rule-ai-input-mode"><option value="original">Original request</option><option value="capture">Captured value</option></select></label><label id="rule-ai-capture-label" hidden>Captured value<select id="rule-ai-input-capture"></select></label><p id="rule-ai-input-help" class="help" hidden></p></div></section><section><h3>4. What should the assistant say?</h3><div id="rule-local-responses" class="form-grid"><label>Success response<textarea id="rule-success" rows="2">Done</textarea><small>Used after local actions or successful Stop. Set conversation response overrides it. Example: <code>Added {item}</code>.</small></label><label>Failure response<textarea id="rule-failure" rows="2">Sorry, that did not work</textarea></label></div><p id="rule-routing-ai-response" class="help" hidden>The AI provider will generate the response.</p><label id="rule-routing-response" hidden>Acknowledgement<textarea id="rule-routing-success" rows="2">Updated</textarea></label><details id="rule-response-reference" class="eoc-details-base rule-response-reference"><summary>Response substitution reference</summary><p>Use request captures such as <code>{item}</code> or named Function results such as <code>{battery.level}</code>; native script variables are only available inside actions.</p></details></section><details id="rule-advanced" class="advanced-context-formatting eoc-details-base"><summary>Advanced matching and action configuration</summary><label>Matching behaviour<select id="rule-matching-behavior"><option value="defaults">Use default settings</option><option value="custom">Customize for this rule</option></select></label>${matchingControls("rule", {word_forms:true,wording_alternatives:true}, true)}<p id="rule-pattern-matching-help" class="help" hidden>Sentence patterns use ExtendedOpenAI's bounded matcher; wording alternatives and word-form normalization do not apply.</p><p class="help">Advanced Home Assistant JSON can use <code>{slot}</code> in text values.</p></details><div id="rule-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" class="secondary rule-close">Cancel</button><button type="submit" id="rule-save">Save</button></div></form></dialog>`;
+  return `<dialog id="rule-dialog" class="editor-dialog wide request-rule-dialog" aria-labelledby="rule-dialog-title"><form id="rule-form"><div class="dialog-header"><h2 id="rule-dialog-title">Create Request Rule</h2><button type="button" class="icon rule-close" aria-label="Close">×</button></div><div class="dialog-body"><div id="rule-action-repair" class="notice warning" hidden><strong>Review this rule</strong><p id="rule-action-repair-message"></p><label id="rule-native-response-repair" hidden><input id="rule-native-response-reviewed" type="checkbox">I reviewed how the rule uses Function responses</label></div><div id="rule-matching-repair" class="notice" hidden><strong>This rule used Continue matching</strong><p>Combine the steps you still need in this rule. Enable Continue to AI if the rule should send the request to AI after the actions. With Continue to AI off, a routing rule changes the rest of the conversation.</p><label><input id="rule-matching-repair-confirm" type="checkbox">Save this as a first-match rule</label></div><label>Rule name<input id="rule-name" required maxlength="120" placeholder="Shopping list"></label><label>Group<select id="rule-group"><option value="">Ungrouped</option></select><small>Groups organize rules; the global top-to-bottom order still determines priority.</small></label><section><h3>1. What will you say?</h3><label>Trigger phrases or patterns<textarea id="rule-phrases" required placeholder="Add {item} to my shopping list"></textarea><small>One alternative per line. Alternatives must use the same variable names.</small></label><div id="rule-slot-help" class="notice" hidden><strong>Variable values</strong><p>Variable values let part of the request change each time. Use them in actions or responses.</p><p id="rule-slot-list"></p></div><label>How should it match?<select id="rule-match"><option value="equals">Equals</option><option value="starts_with">Starts with</option><option value="ends_with">Ends with</option><option value="contains">Contains</option><option value="sentence_pattern">ExtendedOpenAI sentence pattern</option></select></label><div id="sentence-pattern-builder" class="section-actions" hidden><span class="help">Insert pattern:</span><button type="button" class="secondary pattern-helper" data-pattern-helper="optional">Optional</button><button type="button" class="secondary pattern-helper" data-pattern-helper="choice">Choice</button><button type="button" class="secondary pattern-helper" data-pattern-helper="variable">Variable</button><button type="button" class="secondary pattern-helper" data-pattern-helper="range">Number range</button></div><div id="sentence-pattern-help" hidden><p class="help">Example: <code>[please] set {room} to {level=0..100}</code>.</p><details class="eoc-details-base"><summary>Sentence-pattern syntax reference</summary><p>Use <code>[optional words]</code>, <code>(one|two)</code>, free-text values such as <code>{room}</code>, constrained values such as <code>{room=kitchen|bedroom}</code>, and integer ranges such as <code>{level=0..100}</code>. Escape syntax characters with <code>\\</code>, including <code>\\|</code> inside choices. Sentence-ending punctuation is tolerated. ExtendedOpenAI syntax; named expansions and permutations are not supported.</p></details></div></section><section id="rule-conditions-section"><h3>2. Only when</h3><button type="button" class="secondary" id="rule-add-conditions" aria-controls="rule-conditions-body">Add conditions — optional</button><div id="rule-conditions-body" hidden><p class="help">When these Home Assistant conditions are false, skip to the next rule.</p><div id="rule-condition-host"></div></div></section><section><h3>3. What should happen?</h3><label>Behaviour<select id="rule-action-type"><option value="local_action">Run actions locally</option><option value="model_routing">Route through AI with different settings</option></select></label><div id="rule-local-config"><p class="help">Run Home Assistant actions locally before optional AI continuation. Conditions, delays, choose, repeat, parallel and templates use the native script editor and syntax.</p><div id="rule-action-sequence-host"></div><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Continue to AI</span><small>Send the selected AI input after actions finish, unless an action sets a conversation response or stops the script.</small></span><span class="switch-control"><input id="rule-local-continue-to-ai" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></span></label><div id="rule-action-slot-help" class="notice" hidden><strong>Captured values in actions</strong><p id="rule-action-slot-list"></p><p>Use captures as script variables (<code>{{ item }}</code>) or via <code>request.slots</code>.</p><p>Call an enabled Function with <code>extended_openai_conversation_responses.call_function</code>, its name and arguments.</p></div></div><div id="rule-routing-config" hidden><p class="help" id="rule-routing-scope-help"></p><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Continue to AI</span><small>After applying these routing settings, send the selected AI input.</small></span><span class="switch-control"><input id="rule-continue-to-ai" type="checkbox" checked role="switch"><span class="switch-track" aria-hidden="true"></span></span></label><div class="form-grid"><label>Model<input id="rule-model" placeholder="gpt-5-mini"></label><label id="rule-azure-model-label" hidden>Underlying Azure model<input id="rule-azure-model" placeholder="gpt-4.1-mini"><small>Required for a different deployment with a custom name. Use the model deployed behind that name.</small></label><label>Reasoning effort<select id="rule-reasoning"><option value="">Keep current</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label><label>Scope<select id="rule-scope"><option value="request">This request only</option><option value="conversation">Rest of this conversation</option></select></label><label class="config-toggle setting"><strong>Reset to configured defaults</strong><span class="switch-control"><input id="rule-reset" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></span></label></div></div><div id="rule-ai-input-settings"><label>AI input<select id="rule-ai-input-mode"><option value="original">Original request</option><option value="capture">Captured value</option></select></label><label id="rule-ai-capture-label" hidden>Captured value<select id="rule-ai-input-capture"></select></label><p id="rule-ai-input-help" class="help" hidden></p></div></section><section><h3>4. What should the assistant say?</h3><div id="rule-local-responses" class="form-grid"><label>Success response<textarea id="rule-success" rows="2">Done</textarea><small>Used after local actions or successful Stop. Set conversation response overrides it. Example: <code>Added {item}</code>.</small></label><label>Failure response<textarea id="rule-failure" rows="2">Sorry, that did not work</textarea></label></div><p id="rule-routing-ai-response" class="help" hidden>The AI provider will generate the response.</p><label id="rule-routing-response" hidden>Acknowledgement<textarea id="rule-routing-success" rows="2">Updated</textarea></label><details id="rule-response-reference" class="eoc-details-base rule-response-reference"><summary>Response substitution reference</summary><p>Use request captures such as <code>{item}</code> in these response fields. For a reply based on a Function result, set a response variable such as <code>battery</code> on the Function action and use <strong>Set conversation response</strong> with a template such as <code>{{ battery.result.level }}</code>.</p></details></section><details id="rule-advanced" class="advanced-context-formatting eoc-details-base"><summary>Advanced matching and action configuration</summary><label>Matching behaviour<select id="rule-matching-behavior"><option value="defaults">Use default settings</option><option value="custom">Customize for this rule</option></select></label>${matchingControls("rule", {word_forms:true,wording_alternatives:true}, true)}<p id="rule-pattern-matching-help" class="help" hidden>Sentence patterns use ExtendedOpenAI's bounded matcher; wording alternatives and word-form normalization do not apply.</p><p class="help">Advanced Home Assistant JSON can use <code>{slot}</code> in text values.</p></details><div id="rule-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" class="secondary rule-close">Cancel</button><button type="submit" id="rule-save">Save</button></div></form></dialog>`;
 }
 
 
@@ -235,50 +231,6 @@ async function labelConditionAddControl(panel, selector) {
   control.shadowRoot?.querySelector("button")?.setAttribute("aria-label", label);
 }
 
-export function renameResultReferences(value, oldAlias, newAlias) {
-  return renameResultReferenceMap(value, new Map([[oldAlias, newAlias]]));
-}
-
-export function renameResultReferenceMap(value, mapping) {
-  if (typeof value === "string") return value.replace(/(?<!\{)\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_0-9][A-Za-z0-9_]*)*\}(?!\})/g,
-    (whole) => { const body=whole.slice(1,-1), alias=body.split(".",1)[0]; return mapping.has(alias) ? `{${mapping.get(alias)}${body.slice(alias.length)}}` : whole; });
-  if (Array.isArray(value)) return value.map((item) => renameResultReferenceMap(item, mapping));
-  // Alias declarations are bare identifiers, not {references}. Payload keys
-  // named result_alias/step_id have no special meaning and must be traversed.
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, renameResultReferenceMap(item, mapping)]));
-  return value;
-}
-
-export function suggestResultAlias(functionName, used = []) {
-  const base = (String(functionName || "result").replace(/[^A-Za-z0-9_]/g, "_").replace(/^[^A-Za-z_]+/, "") || "result").slice(0,60);
-  const taken = new Set(used);
-  for (const reserved of ["request","conversation","system","trigger","this","repeat","wait"]) taken.add(reserved);
-  if (!taken.has(base)) return base;
-  for (let suffix=2; suffix<1000; suffix++) if (!taken.has(`${base}_${suffix}`)) return `${base}_${suffix}`;
-  return "result";
-}
-
-function renderResultAliases(panel, selector) {
-  const host = panel.shadowRoot.querySelector("#rule-result-aliases");
-  if (!host) return;
-  const actions = selector.value || [];
-  const calls = actions.map((action, index) => ({action, index, data:effectiveServicePayload(action)})).filter(({action, data}) => isFunctionServiceAction(action) && data?.function);
-  const suggested = new Set(calls.map(({data}) => data.result_alias).filter(Boolean));
-  host.innerHTML = calls.map(({data, index}) => {
-    const alias = data.result_alias || "";
-    const suggestion = suggestResultAlias(data.function, suggested);
-    suggested.add(suggestion);
-    return `<label>Result alias for ${panel._e(data.function)} (step ${index + 1})<input class="rule-result-alias" data-index="${index}" value="${panel._e(alias)}" placeholder="${panel._e(suggestion)}" pattern="[A-Za-z_][A-Za-z0-9_]*"><small>Optional unique result name for the success response. For later actions use a Home Assistant response variable.</small></label>`;
-  }).join("");
-  syncResultAliasMode(panel.shadowRoot);
-  host.querySelectorAll(".rule-result-alias").forEach((input) => input.addEventListener("change", () => {
-    const index = Number(input.dataset.index), actions = structuredClone(selector.value || []);
-    if (!actions[index]) return;
-    setEffectiveServiceField(actions[index], "result_alias", input.value.trim() || undefined);
-    selector.value = actions;
-  }));
-}
-
 export function loadRequestRuleActions(actionSelector, rule) {
   actionSelector.value = structuredClone(rule?.action?.actions || []);
 }
@@ -352,7 +304,6 @@ function refreshEditor(panel) {
   const slots=capturedSlotNames(q("#rule-phrases").value);
   q("#rule-local-config").hidden=!local;
   const continueToAi=q("#rule-continue-to-ai").checked;
-  syncResultAliasMode(root);
   q("#rule-routing-config").hidden=local;
   q("#rule-local-responses").hidden=!local;
   q("#rule-routing-response").hidden=local||continueToAi;
@@ -419,7 +370,6 @@ export function bindRequestRuleEditor(panel) {
   q("#rule-form").addEventListener("invalid", (event) => {
     if (q("#rule-conditions-body").contains(event.target)) showRuleConditions(panel);
   }, true);
-  state.actionSelector.addEventListener("value-changed",()=>queueMicrotask(()=>renderResultAliases(panel,state.actionSelector)));
   q("#rule-action-type")?.addEventListener("change",()=>refreshEditor(panel));
   q("#rule-match")?.addEventListener("change",()=>{
     if (!state.routingHandoffEdited) q("#rule-continue-to-ai").checked=defaultRoutingHandoff(q("#rule-match").value);
@@ -461,29 +411,20 @@ export function bindRequestRuleEditor(panel) {
       const actions=readRequestRuleActions(state.actionSelector);
       if(actionType==="local_action"&&!actions.length)throw new Error("Add at least one action before saving this rule.");
       const previous=(panel._result?.rules||[]).find((item)=>item.id===panel._editingRuleId);
-      const aliasMappings = new Map();
-      const functionCalls = actions.filter(isFunctionServiceAction).map(effectiveServicePayload);
-      for (const oldStep of previous?.action?.actions || []) {
-        if (!isFunctionServiceAction(oldStep)) continue;
-        const oldData=effectiveServicePayload(oldStep);
-        const oldAlias=oldData?.result_alias, stepId=oldData?.step_id;
-        if (!oldAlias || !stepId) continue;
-        const edited=functionCalls.find((data)=>data?.step_id===stepId);
-        if (edited?.result_alias && edited.result_alias!==oldAlias) {
-          aliasMappings.set(oldAlias, edited.result_alias);
-        }
-      }
-      const successResponse=renameResultReferenceMap(ruleResponseValue(q("#rule-success").value, previous?.action?.success_response),aliasMappings);
       const rules=panel._result?.rules||[];
       if(q("#rule-ai-input-mode").value==="capture" && (q("#rule-ai-input-settings").hidden || q("#rule-ai-input-capture").getAttribute("aria-invalid")==="true")) throw new Error(q("#rule-ai-input-help").textContent || "Choose a capture available in every trigger.");
       if(!q("#rule-matching-repair").hidden && !q("#rule-matching-repair-confirm").checked) {
         throw new Error("Confirm the repaired rule is ready to handle the request on its own.");
       }
-      const rule={ai_input_mode:q("#rule-ai-input-mode").value,ai_input_capture:q("#rule-ai-input-mode").value==="capture"?q("#rule-ai-input-capture").value:null,name:q("#rule-name").value,enabled:previous?.enabled??true,phrases:phraseEditorValues(q("#rule-phrases").value,state.originalPhrases),match_type:q("#rule-match").value,action_type:actionType,action:actionType==="local_action"?{actions,success_response:successResponse,failure_response:ruleResponseValue(q("#rule-failure").value,previous?.action?.failure_response),continue_to_ai:q("#rule-local-continue-to-ai").checked}:{model:q("#rule-model").value,...(q("#rule-azure-model")?.value.trim()?{azure_model:q("#rule-azure-model").value.trim()}:{}),reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,continue_to_ai:q("#rule-continue-to-ai").checked,success_response:ruleResponseValue(q("#rule-routing-success").value,previous?.action?.success_response)},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked},order:rules.find((item)=>item.id===panel._editingRuleId)?.order??rules.length,conditions:state.conditionSelector.value||[],group_id:q("#rule-group").value||null};
+      const reviewFunctionResponses=Boolean(previous && requiresFunctionResponseReview(panel._result?.diagnostics?.[previous.id]));
+      if (reviewFunctionResponses && !q("#rule-native-response-reviewed").checked) {
+        throw new Error("Confirm that you reviewed how this rule uses Function responses.");
+      }
+      const rule={ai_input_mode:q("#rule-ai-input-mode").value,ai_input_capture:q("#rule-ai-input-mode").value==="capture"?q("#rule-ai-input-capture").value:null,name:q("#rule-name").value,enabled:previous?.enabled??true,phrases:phraseEditorValues(q("#rule-phrases").value,state.originalPhrases),match_type:q("#rule-match").value,action_type:actionType,action:actionType==="local_action"?{actions,success_response:ruleResponseValue(q("#rule-success").value,previous?.action?.success_response),failure_response:ruleResponseValue(q("#rule-failure").value,previous?.action?.failure_response),continue_to_ai:q("#rule-local-continue-to-ai").checked}:{model:q("#rule-model").value,...(q("#rule-azure-model")?.value.trim()?{azure_model:q("#rule-azure-model").value.trim()}:{}),reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,continue_to_ai:q("#rule-continue-to-ai").checked,success_response:ruleResponseValue(q("#rule-routing-success").value,previous?.action?.success_response)},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked},order:rules.find((item)=>item.id===panel._editingRuleId)?.order??rules.length,conditions:state.conditionSelector.value||[],group_id:q("#rule-group").value||null};
       const action=panel._editingRuleId?"update":"create";
       const ruleId=panel._editingRuleId, revision=state.revision, baseline=panel._result;
       const submitted=dialogState(dialog);
-      const result=await panel._call("request_rules",action,{...(ruleId?{rule_id:ruleId}:{}),rule,revision});
+      const result=await panel._call("request_rules",action,{...(ruleId?{rule_id:ruleId}:{}),rule,revision,...(reviewFunctionResponses?{confirm:true}:{})});
       if(!current()) {
         // Retired publication cannot turn this original intent into a fresh
         // create when its authored values are recovered by another panel.
@@ -540,13 +481,17 @@ export function openRequestRuleEditor(panel,id=null) {
   // fresh selectors, so Cancel cannot leak an unsaved child draft into saved data.
   state.actionSelector=createRequestRuleActionSelector(panel,q("#rule-action-sequence-host"));
   state.conditionSelector=createRequestRuleConditionSelector(panel,q("#rule-condition-host"));
-  state.actionSelector.addEventListener("value-changed",()=>queueMicrotask(()=>renderResultAliases(panel,state.actionSelector)));
   void ensureRequestRuleTranslations(panel);
   state.revision=panel._result?.revision;
   const rule=(panel._result?.rules||[]).find((item)=>item.id===id);
   panel._editingRuleId=id;
   q("#rule-dialog-title").textContent=rule?"Edit Request Rule":"Create Request Rule";
   q("#rule-name").value=rule?.name||"";
+  const diagnostic=rule ? panel._result?.diagnostics?.[rule.id] : "";
+  q("#rule-action-repair").hidden=!diagnostic;
+  q("#rule-action-repair-message").textContent=diagnostic || "";
+  q("#rule-native-response-repair").hidden=!requiresFunctionResponseReview(diagnostic);
+  q("#rule-native-response-reviewed").checked=false;
   q("#rule-matching-repair").hidden=!(rule?.continue_matching && !rule.action?.continue_to_ai);
   q("#rule-matching-repair-confirm").checked=false;
   q("#rule-ai-input-mode").value=rule?.ai_input_mode||"original";
@@ -581,7 +526,6 @@ export function openRequestRuleEditor(panel,id=null) {
   q("#rule-word-forms").checked=rule?.matching?.word_forms??true;
   q("#rule-wording").checked=rule?.matching?.wording_alternatives??true;
   loadRequestRuleActions(state.actionSelector,rule);
-  renderResultAliases(panel,state.actionSelector);
   q("#rule-error").textContent="";
   dialog.showModal();
   refreshEditor(panel);

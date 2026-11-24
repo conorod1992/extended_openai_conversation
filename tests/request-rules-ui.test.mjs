@@ -3,7 +3,7 @@ import {readFile} from "node:fs/promises";
 
 import {applyRequestRuleMutation} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-core.js";
 import {renderRequestRules} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
-import {createRequestRuleActionSelector, createRequestRuleConditionSelector, loadRequestRuleActions, readRequestRuleActions, renameResultReferences, suggestResultAlias, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
+import {createRequestRuleActionSelector, createRequestRuleConditionSelector, loadRequestRuleActions, readRequestRuleActions, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const panel = {
@@ -115,10 +115,6 @@ assert.match(bindingSource, /enabled:previous\?\.enabled\?\?true/);
 assert.match(bindingSource, /selector = \{action:\{\}\}/);
 assert.match(bindingSource, /selector = \{condition:\{\}\}/);
 assert.doesNotMatch(requestRulesDialog(panel), /<textarea[^>]*id="rule-condition/);
-assert.equal(renameResultReferences("{battery.level} {battery} {battery_other.level} {{ battery.level }}", "battery", "power"), "{power.level} {power} {battery_other.level} {{ battery.level }}");
-assert.equal(renameResultReferences("{battery.items.0.name}", "battery", "power"), "{power.items.0.name}");
-assert.equal(suggestResultAlias("get_battery", ["get_battery"]), "get_battery_2");
-assert.equal(suggestResultAlias("request"), "request_2");
 
 {
   const selector={addEventListener(){},};

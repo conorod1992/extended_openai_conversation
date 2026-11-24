@@ -52,9 +52,9 @@ const continued = formatRequestRuleMatchResult(panel, {
   matched:true,rule:{name:"Battery",match_type:"equals",action_type:"local_action"},
   matched_phrase:"battery",fuzzy:false,score:100,captured_values:{},
   skipped_conditions:[{name:"Earlier rule",reason:"conditions_false"}],
-  would_do:{type:"local_action",action_count:1,consumed:false,provider_input:"original",functions:[{name:"get_battery",result_alias:"battery"}]},
+  would_do:{type:"local_action",action_count:1,consumed:false,provider_input:"original",functions:[{name:"get_battery"}]},
 });
-assert.match(continued, /get_battery → battery/);
+assert.match(continued, /get_battery/);
 assert.match(continued, /After success, AI would handle the selected input/);
 assert.match(continued, /Earlier rule: Only when conditions were false/);
 assert.match(continued, /no Function result was invented/);
@@ -110,12 +110,12 @@ const conditional = formatRequestRuleMatchResult(panel, {
   matched_rules:[
     {rule:{name:"Local <possible>"},status:"conditional",ai_input:{conditional:true,mode:"capture",capture:"question",provider_input:"what <next>"}},
   ],
-  would_do:{type:"local_action",action_count:1,conditional:true,consumed:null,provider_input:"conditional",functions:[{name:"battery",result_alias:"charge"}]},
+  would_do:{type:"local_action",action_count:1,conditional:true,consumed:null,provider_input:"conditional",functions:[{name:"battery"}]},
 });
 assert.match(conditional, /Conditional match: Local &lt;possible&gt;/);
 assert.match(conditional, /Possible AI input/);
 assert.match(conditional, /question → what &lt;next&gt;/);
-assert.match(conditional, /including battery → charge/);
+assert.match(conditional, /including battery/);
 assert.match(conditional, /Actions may stop or fail/);
 
 const terminal = formatRequestRuleMatchResult(panel, {

@@ -352,25 +352,7 @@ for (const bundled of [false, true]) {
     await expectHarnessClean(page, errors);
   });
 
-  test(`mixed-case Function actions retain editable result aliases (${bundled})`, async ({page}) => {
-    const errors = trackPageErrors(page);
-    await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
-    const panel = panelFor(page);
-    await panel.getByRole("button", {name: "Create rule", exact: true}).first().click();
-    await setHaSelector(panel.locator("#rule-action-sequence-host ha-selector"), [{
-      action: "EXTENDED_OPENAI_CONVERSATION_RESPONSES.CALL_FUNCTION",
-      data_template: {function: "EchoCase", arguments: {}, result_alias: "reply"},
-    }]);
-    await expect(panel.locator(".rule-result-alias")).toHaveValue("reply");
-    await expect(panel.locator("#rule-result-aliases")).toContainText("EchoCase");
-    await panel.locator(".rule-result-alias").fill("renamed_reply");
-    await panel.locator(".rule-result-alias").dispatchEvent("change");
-    const actions = await panel.locator("#rule-action-sequence-host ha-selector").evaluate(selector => selector.value);
-    expect(actions[0].data_template.result_alias).toBe("renamed_reply");
-    expect(actions[0].action).toBe("EXTENDED_OPENAI_CONVERSATION_RESPONSES.CALL_FUNCTION");
-    expect(actions[0].data_template.function).toBe("EchoCase");
-    await expectHarnessClean(page, errors);
-  });
+
 }
 
 

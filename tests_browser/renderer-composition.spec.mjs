@@ -93,7 +93,8 @@ test("configuration emits the shipped local, exposed-attribute, group and transf
   expect(result.exposed).toContain("&lt;Lamp&gt;");
   expect(result.exposedPosition).toBe("exposed-attribute-settings");
   expect(result.attributes).toEqual([["brightness",true],["color_mode",false]]);
-  expect(result.transfer).toContain("Private histories, provider credentials and custom content are omitted.");
+  expect(result.transfer).toContain("Full Backup (private)");
+  expect(result.transfer).toContain("Included credentials and private data are not encrypted.");
   expect(result.transfer).toContain("Custom (private)");
   expect(result.transfer).not.toContain("Include custom content");
   expect(result.dialog).toContain("Your unsaved configuration changes will be discarded");
