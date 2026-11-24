@@ -35,6 +35,7 @@ from .ha_tool_result_compat import (
     is_tool_result_content,
     make_tool_result_content,
 )
+from .model_search_hardening import _require_nonblank_query
 from .public_errors import sanitize_backend_error
 from .tool_replay_guard import (
     async_was_unacknowledged_equivalent,
@@ -408,6 +409,16 @@ async def _async_validate_recoverable_call(
         )
     except HomeAssistantError as err:
         return correctable_validation_failure(err)
+
+    if function.get("operation") == "search" and function.get("type") in {
+        "archive",
+        "knowledge",
+        "memory",
+    }:
+        try:
+            _require_nonblank_query(arguments)
+        except ValueError as err:
+            return correctable_validation_failure(HomeAssistantError(str(err)))
 
     return _validated_tool_input(tool_input, arguments)
 

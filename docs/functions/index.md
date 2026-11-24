@@ -89,6 +89,8 @@ HA-owned tools use Home Assistant's validation and permission checks.
 
 **Correct safe tool-call errors automatically** is off by default. When enabled, unparseable JSON or invalid configured-tool arguments can be returned to the model for correction only before dispatch, when that tool call has not started. This includes arguments that exceed the JSON decoder's integer or nesting limits. There are at most two such corrections per request. Rejected arguments do not consume the execution allowance, but a corrected execution does, and extra model exchanges may increase latency and provider usage. Permission denials, changed or unavailable tools, and failures after dispatch do not qualify for this recovery. An action that may already have run is not automatically repeated.
 
+Whitespace-only queries to the Knowledge Library, Persistent Memory, and Conversation Archive search tools also qualify for correction before a search runs.
+
 ## Function types
 
 The integration supports several implementation types:

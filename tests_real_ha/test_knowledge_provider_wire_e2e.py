@@ -18,6 +18,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
     GUEST_POLICY_VERSION,
+    MEMORY_MODE_MANUAL,
 )
 from custom_components.extended_openai_conversation_responses.live_subentry_updates import (
     update_live_subentry,
@@ -170,13 +171,15 @@ async def _seed_knowledge(agent: Any):
     return relevant
 
 
-async def _say(hass: HomeAssistant, agent: Any, text: str):
+async def _say(
+    hass: HomeAssistant, agent: Any, text: str, *, user_id: str | None = None
+):
     """Enter through Home Assistant's public conversation API."""
     return await conversation.async_converse(
         hass=hass,
         text=text,
         conversation_id=None,
-        context=Context(),
+        context=Context(user_id=user_id),
         language="en",
         agent_id=agent.entry.entry_id,
     )
@@ -483,3 +486,72 @@ async def test_oversized_integer_arguments_follow_error_recovery(
     assert feedback["code"] == "invalid_json"
     assert feedback["stage"] == "provider_argument_decoding"
     assert replayed == arguments
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+@pytest.mark.parametrize("recovery_enabled", [False, True])
+@pytest.mark.parametrize(
+    ("tool_name", "handler"),
+    [
+        ("knowledge_search", "_async_execute_knowledge_tool"),
+        ("memory_search", "_async_execute_memory_tool"),
+        ("conversation_search", "_async_execute_archive_tool"),
+    ],
+)
+async def test_whitespace_search_query_is_rejected_before_spending_execution_slot(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    api_mode: str,
+    recovery_enabled: bool,
+    tool_name: str,
+    handler: str,
+) -> None:
+    agent = await _knowledge_agent(
+        hass,
+        api_mode,
+        function_tool_error_recovery=recovery_enabled,
+        max_function_calls_per_conversation=1,
+        memory_mode=MEMORY_MODE_MANUAL,
+        archive_enabled=True,
+        archive_model_search_enabled=True,
+    )
+    await _seed_knowledge(agent)
+    user = await hass.auth.async_create_user("Search owner", group_ids=["system-admin"])
+    search = AsyncMock(return_value={"results": []})
+    monkeypatch.setattr(agent, handler, search)
+    chat = api_mode == API_MODE_CHAT_COMPLETIONS
+    call = _chat_sse_tool_call if chat else _responses_sse_tool_call
+    text = _chat_sse_text if chat else _responses_sse_text
+    call_id = "call-blank-query"
+    corrected_query = " calibration token "
+    replies = [call(call_id, tool_name, {"query": " \t\n\u2003"})]
+    if recovery_enabled:
+        replies.extend(
+            [
+                call("call-corrected-query", tool_name, {"query": corrected_query}),
+                text("Recovered"),
+            ]
+        )
+    wire = _install_wire(monkeypatch, agent, replies)
+
+    result = await _say(hass, agent, "Check past notes", user_id=user.id)
+
+    assert tool_name in _tool_names(wire.requests[0]["body"], api_mode)
+    if not recovery_enabled:
+        search.assert_not_awaited()
+        assert len(wire.requests) == 1
+        assert result.response.error_code is not None
+        speech = result.response.as_dict()["speech"]["plain"]["speech"]
+        assert "query must not be blank" in speech
+        return
+
+    assert _speech(result) == "Recovered"
+    assert len(wire.requests) == 3
+    decode = _chat_tool_result if chat else _responses_tool_result
+    feedback = decode(wire.requests[1]["body"], call_id)
+    assert feedback["code"] == "invalid_arguments"
+    assert feedback["stage"] == "pre_dispatch_validation"
+    assert feedback["error"] == "query must not be blank"
+    search.assert_awaited_once()
+    assert search.await_args.args[0] == "search"
+    assert search.await_args.args[1]["query"] == corrected_query
