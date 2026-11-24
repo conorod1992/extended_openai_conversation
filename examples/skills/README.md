@@ -4,8 +4,9 @@ This directory contains example Skills for Extended OpenAI Conversation (Respons
 
 ## Installing Skills
 
-1. **Copy the skill directory** to your Home Assistant config:
+1. **Create the Skills directory and copy the entire example folder** from this directory to your Home Assistant config:
    ```bash
+   mkdir -p /config/extended_openai_conversation_responses/skills/
    cp -r crypto /config/extended_openai_conversation_responses/skills/
    ```
 
@@ -14,9 +15,9 @@ This directory contains example Skills for Extended OpenAI Conversation (Respons
    chmod +x /config/extended_openai_conversation_responses/skills/crypto/scripts/crypto.py
    ```
 
-3. **Reload skills** via service call:
+3. In **Developer Tools → Actions**, run **Reload skills**:
    ```yaml
-   service: extended_openai_conversation_responses.reload_skills
+   action: extended_openai_conversation_responses.reload_skills
    ```
 
    This service returns the number of loaded skills.

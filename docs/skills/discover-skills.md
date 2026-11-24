@@ -4,10 +4,10 @@ The repository includes example Skills under [`examples/skills`](https://github.
 
 ## Install a Skill
 
-Copy the complete Skill directory, including any supporting files, into:
+Create the Skills directory if needed. Copy the complete Skill directory, including any supporting files, into it. For example, the `crypto` Skill should have this layout:
 
 ```text
-<config>/extended_openai_conversation_responses/skills/
+<config>/extended_openai_conversation_responses/skills/crypto/SKILL.md
 ```
 
 After copying the files, run **Reload skills** in Home Assistant's **Developer Tools → Actions**:

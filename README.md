@@ -130,7 +130,7 @@ Back up Home Assistant before updating, and check the [release notes](https://co
 | Keep/search previous conversations | [Conversation Archive](https://conorod1992.github.io/extended_openai_conversation/features/conversation-archive/) |
 | Handle predictable requests specially | [Request Rules](https://conorod1992.github.io/extended_openai_conversation/features/request-rules/) |
 | Add or organise model-callable tools | [Functions](https://conorod1992.github.io/extended_openai_conversation/functions/) and [Function Groups](https://conorod1992.github.io/extended_openai_conversation/features/function-groups/) |
-| Add reusable instructions for a task | [Skills](https://conorod1992.github.io/extended_openai_conversation/features/skills/) |
+| Add reusable instructions for a task | [Skills](https://conorod1992.github.io/extended_openai_conversation/features/skills/) and [Manual installation](https://conorod1992.github.io/extended_openai_conversation/skills/discover-skills/) |
 | Delay a configured Function Tool safely | [Delayed Function Tools](https://conorod1992.github.io/extended_openai_conversation/features/delayed-function-tools/) |
 | Understand entity exposure and permissions | [Home Assistant access](https://conorod1992.github.io/extended_openai_conversation/features/home-assistant-access/) |
 | Associate voice requests with individual users | [Voice Identity](https://conorod1992.github.io/extended_openai_conversation/features/voice-identity/) |
