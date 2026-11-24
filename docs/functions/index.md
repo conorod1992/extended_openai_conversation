@@ -87,7 +87,7 @@ results, subject to the hard provider-round limit. A provider failure after
 completed effects retains replay protection until acknowledgement cleanup succeeds.
 HA-owned tools use Home Assistant's validation and permission checks.
 
-**Correct safe tool-call errors automatically** is off by default. When enabled, malformed JSON or invalid configured-tool arguments can be returned to the model for correction only before dispatch, when that tool call has not started. There are at most two such corrections per request. Rejected arguments do not consume the execution allowance, but a corrected execution does, and extra model exchanges may increase latency and provider usage. Permission denials, changed or unavailable tools, and failures after dispatch do not qualify for this recovery. An action that may already have run is not automatically repeated.
+**Correct safe tool-call errors automatically** is off by default. When enabled, unparseable JSON or invalid configured-tool arguments can be returned to the model for correction only before dispatch, when that tool call has not started. This includes arguments that exceed the JSON decoder's integer or nesting limits. There are at most two such corrections per request. Rejected arguments do not consume the execution allowance, but a corrected execution does, and extra model exchanges may increase latency and provider usage. Permission denials, changed or unavailable tools, and failures after dispatch do not qualify for this recovery. An action that may already have run is not automatically repeated.
 
 ## Function types
 

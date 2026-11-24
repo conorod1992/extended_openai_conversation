@@ -2481,7 +2481,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             if isinstance(raw_args, str) and not raw_args.strip()
                             else json.loads(raw_args)
                         )
-                    except json.JSONDecodeError as err:
+                    except (ValueError, RecursionError) as err:
                         if recovery_state is None or not recovery_state.enabled:
                             await async_recover_trailing_usage(result, request_usage)
                             raise ParseArgumentsFailed(tool_call["arguments"]) from err
@@ -2785,7 +2785,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 if isinstance(raw_args, str) and not raw_args.strip()
                                 else json.loads(raw_args)
                             )
-                        except json.JSONDecodeError as err:
+                        except (ValueError, RecursionError) as err:
                             if recovery_state is None or not recovery_state.enabled:
                                 await async_recover_trailing_usage(
                                     result, request_usage

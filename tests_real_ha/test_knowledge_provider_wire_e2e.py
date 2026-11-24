@@ -38,8 +38,15 @@ _RELEVANT_MARKER = "orion-cobalt"
 _IRRELEVANT_MARKER = "cedar-amber"
 
 
-def _chat_sse_tool_call(call_id: str, name: str, arguments: Any) -> bytes:
+def _chat_sse_tool_call(
+    call_id: str, name: str, arguments: Any = None, *, raw_arguments: str | None = None
+) -> bytes:
     """Return one real Chat Completions function-call stream."""
+    encoded = (
+        json.dumps(arguments, separators=(",", ":"))
+        if raw_arguments is None
+        else raw_arguments
+    )
     chunk = {
         "id": f"chatcmpl-{call_id}",
         "object": "chat.completion.chunk",
@@ -57,9 +64,7 @@ def _chat_sse_tool_call(call_id: str, name: str, arguments: Any) -> bytes:
                             "type": "function",
                             "function": {
                                 "name": name,
-                                "arguments": json.dumps(
-                                    arguments, separators=(",", ":")
-                                ),
+                                "arguments": encoded,
                             },
                         }
                     ],
@@ -90,10 +95,14 @@ def _chat_sse_text(text: str) -> bytes:
 
 
 def _responses_sse_tool_call(
-    call_id: str, name: str, arguments: Any
+    call_id: str, name: str, arguments: Any = None, *, raw_arguments: str | None = None
 ) -> bytes:
     """Return one real Responses API function-call stream."""
-    encoded = json.dumps(arguments, separators=(",", ":"))
+    encoded = (
+        json.dumps(arguments, separators=(",", ":"))
+        if raw_arguments is None
+        else raw_arguments
+    )
     item = {
         "id": f"fc-{call_id}",
         "type": "function_call",
@@ -418,3 +427,59 @@ async def test_nonobject_knowledge_arguments_follow_error_recovery(
         assert len(wire.requests) == 1
         assert result.response.error_code is not None
         assert "Function input must be an object" in result.response.as_dict()["speech"]["plain"]["speech"]
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+@pytest.mark.parametrize("recovery_enabled", [False, True])
+async def test_oversized_integer_arguments_follow_error_recovery(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    api_mode: str,
+    recovery_enabled: bool,
+) -> None:
+    arguments = '{"value":' + "9" * 5000 + "}"
+    agent = await _knowledge_agent(
+        hass, api_mode, function_tool_error_recovery=recovery_enabled
+    )
+    await _seed_knowledge(agent)
+    search = AsyncMock()
+    monkeypatch.setattr(agent, "_async_execute_knowledge_tool", search)
+    chat = api_mode == API_MODE_CHAT_COMPLETIONS
+    call = _chat_sse_tool_call if chat else _responses_sse_tool_call
+    text = _chat_sse_text if chat else _responses_sse_text
+    replies = [call(_SEARCH_CALL_ID, "knowledge_search", raw_arguments=arguments)]
+    if recovery_enabled:
+        replies.append(text("Recovered"))
+    wire = _install_wire(monkeypatch, agent, replies)
+
+    result = await _say(hass, agent, "Check the calibration token")
+
+    search.assert_not_awaited()
+    if not recovery_enabled:
+        assert len(wire.requests) == 1
+        assert result.response.error_code is not None
+        speech = result.response.as_dict()["speech"]["plain"]["speech"]
+        assert "unparseable tool-call arguments" in speech
+        return
+
+    assert _speech(result) == "Recovered"
+    assert len(wire.requests) == 2
+    continuation = wire.requests[1]["body"]
+    if chat:
+        feedback = _chat_tool_result(continuation, _SEARCH_CALL_ID)
+        replayed = next(
+            call["function"]["arguments"]
+            for message in continuation["messages"]
+            for call in message.get("tool_calls") or []
+            if call["id"] == _SEARCH_CALL_ID
+        )
+    else:
+        feedback = _responses_tool_result(continuation, _SEARCH_CALL_ID)
+        replayed = next(
+            item["arguments"]
+            for item in continuation["input"]
+            if item.get("type") == "function_call" and item["call_id"] == _SEARCH_CALL_ID
+        )
+    assert feedback["code"] == "invalid_json"
+    assert feedback["stage"] == "provider_argument_decoding"
+    assert replayed == arguments
