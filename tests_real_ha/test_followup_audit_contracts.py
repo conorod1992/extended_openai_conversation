@@ -9,7 +9,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
     CONF_FUNCTION_TOOLS,
 )
-from custom_components.extended_openai_conversation_responses import transfer
 from tests_real_ha.device_info_compat import device_info_field
 from tests_real_ha.test_cross_feature_acceptance import _agent, _provider
 from tests_real_ha.test_request_rules_script_semantics import _local
@@ -112,22 +111,6 @@ async def test_standard_child_service_does_not_poison_parent_response(
     assert result["handled_locally"] is False
     assert not result.get("matched_rule")
     assert len(child._usage.runs) == 1 and child._usage.runs[0].request_count == 0
-
-
-async def test_native_saved_rule_exports_no_encoded_credentials(hass):
-    agent = await _agent(hass)
-    secret = "synthetic-audit-token-do-not-use"
-    await agent._request_rules.async_create(
-        _local(
-            [{"action": "rest_command.report_measurement", "data": {"api_key": secret}}]
-        )
-    )
-    saved = await agent._request_rules.async_backup_data()
-    document = transfer._new_transfer_document(agent.entry, agent.subentry, "setup")
-    document["sections"] = {"configuration": {}, "request_rules": saved}
-    assert secret not in transfer.finalize_setup_export(document)["json"]
-    assert secret in saved["rules"][0]["action"]["canonical_signature"]
-    assert await agent._request_rules.async_backup_data() == saved
 
 
 @pytest.mark.parametrize("language", ["en", "de"])
@@ -400,12 +383,10 @@ async def test_native_ha_interrupted_reasoning_history(hass):
 
 
 @pytest.mark.parametrize("persisted", [False, True], ids=["structured", "yaml"])
-@pytest.mark.parametrize("exporter", ["setup", "private"])
-async def test_native_http_params_and_template_exports_obey_security_contracts(
-    hass, monkeypatch, persisted, exporter
+async def test_native_private_export_preserves_http_credentials_without_rendering(
+    hass, monkeypatch, persisted
 ):
     from copy import deepcopy
-    import json
     import yaml
     from homeassistant.helpers.template import Template
     from custom_components.extended_openai_conversation_responses import backup
@@ -432,18 +413,9 @@ async def test_native_http_params_and_template_exports_obey_security_contracts(
     monkeypatch.setattr(Template, "async_render", never_render)
     private = backup.private_configuration_snapshot(agent.subentry.data)
     assert SECRET in private["functions"]
-    if exporter == "setup":
-        result = await transfer.async_create_setup_export(
-            hass, agent.entry, agent.subentry
-        )
-    else:
-        result = await backup.async_create_backup(hass, agent.entry, agent.subentry)
-    if exporter == "setup":
-        assert SECRET not in result["json"]
-        assert SECRET not in json.dumps(result["document"])
-    else:
-        assert SECRET in result["json"]
-        assert backup.inspect_backup(result["document"], agent.subentry.subentry_id).config == original
+    result = await backup.async_create_backup(hass, agent.entry, agent.subentry)
+    assert SECRET in result["json"]
+    assert backup.inspect_backup(result["document"], agent.subentry.subentry_id).config == original
     assert agent.subentry.data == original
     assert backup.private_configuration_snapshot(agent.subentry.data) == private
 

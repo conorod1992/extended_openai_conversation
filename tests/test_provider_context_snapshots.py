@@ -79,33 +79,6 @@ async def test_selective_restore_and_rollback_preserve_explicit_null(
     assert tx.subentry.data == before
 
 
-async def test_setup_export_uses_parent_context_without_exporting_credentials(
-    hass, monkeypatch
-):
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    from custom_components.extended_openai_conversation_responses.request_rules import (
-        RequestRules,
-    )
-    from tests.test_request_rules import MemoryStore
-
-    rules = RequestRules(MemoryStore())
-    await rules.async_initialize()
-    monkeypatch.setattr(
-        transfer, "async_get_request_rules", AsyncMock(return_value=rules)
-    )
-    entry = SimpleNamespace(
-        entry_id="entry", data={"api_provider": "openai", "api_key": "never-export-me"}
-    )
-    subentry = SimpleNamespace(subentry_id="agent", title="Agent", data=raw_config())
-    before = deepcopy(subentry.data)
-    result = await transfer.async_create_setup_export(hass, entry, subentry)
-    assert "never-export-me" not in result["json"]
-    assert "provider_connection" not in result["document"]
-    assert subentry.data == before
-
-
 @pytest.mark.parametrize(
     "provider,effort", [("openai", None), ("openai", "high"), ("azure", "high")]
 )

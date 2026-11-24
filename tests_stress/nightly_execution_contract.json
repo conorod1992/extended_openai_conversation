@@ -2627,7 +2627,7 @@
     "tests_stress/test_responses_scale_fairness.py::test_mixed_background_pressure_preserves_lightweight_progress",
     "tests_stress/test_responses_scale_fairness.py::test_populated_scale_executes_responses_retrieval_and_tool_wire",
     "tests_stress/test_restore_background_ownership.py::test_installed_retention_waits_for_restored_policy",
-    "tests_stress/test_restore_background_ownership.py::test_websocket_setup_export_is_coherent_across_restore",
+    "tests_stress/test_restore_background_ownership.py::test_websocket_custom_export_is_coherent_across_restore",
     "tests_stress/test_restore_recovery_process.py::test_corrupt_restore_journal_cold_boot_isolation_and_repair",
     "tests_stress/test_restore_recovery_safety.py::test_bad_journal_is_preserved_and_other_assistant_remains_usable[corrupt]",
     "tests_stress/test_restore_recovery_safety.py::test_bad_journal_is_preserved_and_other_assistant_remains_usable[destination]",
@@ -2813,7 +2813,6 @@
     "tests/test_bounded_backup_serialization.py::test_encoding_matches_existing_json_and_exact_utf8_boundary[value3-None]",
     "tests/test_bounded_backup_serialization.py::test_export_rejects_huge_surviving_key_before_redaction[archive]",
     "tests/test_bounded_backup_serialization.py::test_export_rejects_huge_surviving_key_before_redaction[legacy]",
-    "tests/test_bounded_backup_serialization.py::test_export_rejects_huge_surviving_key_before_redaction[setup]",
     "tests/test_bounded_backup_serialization.py::test_huge_negative_integer_rejection_does_not_copy_the_integer",
     "tests/test_bounded_backup_serialization.py::test_import_uses_exact_budget_and_keeps_invalid_contract[False]",
     "tests/test_bounded_backup_serialization.py::test_import_uses_exact_budget_and_keeps_invalid_contract[True]",
@@ -2832,7 +2831,6 @@
     "tests/test_bounded_backup_serialization.py::test_oversized_scalar_never_reaches_whole_token_encoder[True-huge]",
     "tests/test_bounded_backup_serialization.py::test_oversized_scalar_never_reaches_whole_token_encoder[True-multibyte]",
     "tests/test_bounded_backup_serialization.py::test_pre_redaction_budget_allows_large_credentials_to_shrink",
-    "tests/test_bounded_backup_serialization.py::test_setup_export_preserves_format_redaction_and_boundary",
     "tests/test_bounded_backup_serialization.py::test_setup_rejects_huge_scalar_before_encoding",
     "tests/test_bounded_backup_serialization.py::test_shared_numeric_graph_has_budget_bounded_processing",
     "tests/test_bounded_backup_serialization.py::test_shared_values_count_each_occurrence_and_cycles_are_rejected",
@@ -4396,7 +4394,7 @@
     "backup-transfer": {
       "backup_chunks_transferred": 1,
       "transfer_previews": 1,
-      "coherent_setup_restore_exports": 1,
+      "coherent_custom_restore_exports": 1,
       "filesystem_recovery_cases": 1,
       "filesystem_recovery_kills": 3
     },
@@ -4557,7 +4555,7 @@
       "tests_stress/test_backup_transfer.py",
       "tests_stress/test_backup_transfer_preview_races.py",
       "tests_stress/test_filesystem_process_recovery.py::test_booted_filesystem_recovers_after_hard_kill[transfer]",
-      "tests_stress/test_restore_background_ownership.py::test_websocket_setup_export_is_coherent_across_restore"
+      "tests_stress/test_restore_background_ownership.py::test_websocket_custom_export_is_coherent_across_restore"
     ],
     "browser": [
       "tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_talks_to_real_management_websocket",

@@ -1,37 +1,6 @@
 import {expect, test} from "@playwright/test";
 import {acceptConfirmation, fixtureUrl, trackPageErrors, expectHarnessClean} from "./browser-helpers.mjs";
 
-test("Restricted sharing preview displays the exact artifact as text", async ({page}) => {
-  const errors = trackPageErrors(page);
-  await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
-  const panel = page.locator("extended-openai-management-panel");
-  await panel.evaluate(async host => {
-    const {reviewSharingExport} = await import("/custom_components/extended_openai_conversation_responses/frontend/sharing-review.js");
-    window.securityReviewResult = "pending";
-    void reviewSharingExport(host, {json:'{"literal":"<img src=x onerror=alert(1)>"}',security:{mode:"restricted",review_required:false,omitted:[{count:2}]}}).then(value => {window.securityReviewResult=value;});
-  });
-  await expect(panel.locator("[data-summary]")).toContainText("2 configuration");
-  await expect(panel.locator("[data-artifact]")).toHaveValue('{"literal":"<img src=x onerror=alert(1)>"}');
-  await expect(panel.locator("dialog[aria-label='Review sharing export'] img")).toHaveCount(0);
-  await panel.locator("[data-download]").click();
-  await expect.poll(() => page.evaluate(() => window.securityReviewResult)).toBe(true);
-  await expectHarnessClean(page, errors);
-});
-
-test("Shareable Setup cancellation never downloads its generated artifact", async ({page}) => {
-  const errors = trackPageErrors(page);
-  await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
-  const panel = page.locator("extended-openai-management-panel");
-  let downloads = 0;
-  page.on("download", () => {downloads += 1;});
-  await panel.locator("#create-backup-transfer").click();
-  await expect(panel.locator("[data-artifact]")).toBeVisible();
-  await panel.locator("[data-cancel]").click();
-  await expect(panel.locator("#create-backup-transfer")).toBeEnabled();
-  expect(downloads).toBe(0);
-  await expectHarnessClean(page, errors);
-});
-
 test("Shared provider restoration is opt-in, previewed and configuration-dependent", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/backup-restore"));

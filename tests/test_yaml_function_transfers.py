@@ -203,15 +203,9 @@ async def test_exports_accept_yaml_date(hass, saved_date_tool, tmp_path, mode):
         document["agent"]["config"] = config
         backup_transfer._build_archive_file(document, str(tmp_path))
     else:
-        document = transfer._new_transfer_document(
-            entry, subentry, "setup" if mode == "setup" else "custom"
-        )
+        document = transfer._new_transfer_document(entry, subentry)
         document["sections"]["configuration"] = config
-        if mode == "setup":
-            document["sections"]["request_rules"] = {"defaults": {}, "rules": []}
-            transfer.finalize_setup_export(document)
-        else:
-            backup_transfer._build_archive_file(document, str(tmp_path))
+        backup_transfer._build_archive_file(document, str(tmp_path))
 
 
 async def test_unselected_configuration_preserves_yaml_date_in_restore_rollback(
@@ -244,7 +238,7 @@ async def test_unselected_configuration_preserves_yaml_date_in_restore_rollback(
     )
     rollback = await backup._snapshot_for_restore(managers, subentry)
     # A valid memory-only custom transfer preserves the destination configuration.
-    incoming = transfer._new_transfer_document(entry, subentry, "custom")
+    incoming = transfer._new_transfer_document(entry, subentry)
     incoming["sections"]["persistent_memory"] = {"memories": []}
     selected = frozenset({"persistent_memory"})
     imported = transfer.inspect_transfer(

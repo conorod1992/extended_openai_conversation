@@ -73,6 +73,7 @@ from .const import (
     DEFAULT_SHARED_MEMORY_MODE,
     DOMAIN,
     GUEST_POLICY_VERSION,
+    LEGACY_SHARING_EXPORT_VERSION,
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
     SHARED_MEMORY_DISABLED,
@@ -183,7 +184,7 @@ from .request_rules import (
 )
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .script_payload import set_effective_service_field
-from .secret_redaction import is_redacted_secret, redact_secrets
+from .secret_redaction import is_redacted_secret
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_finish_usage_retention_write, async_get_usage
 from .yaml_serialization import dump_yaml
@@ -473,29 +474,6 @@ def _function_reference_error(name: str, references: dict[str, Any]) -> str:
     )
 
 
-def _redact_export_secrets(value: Any, *, schema: bool = False) -> Any:
-    """Redact credential values while preserving exported configuration structure."""
-    return redact_secrets(value, schema=schema)
-
-
-def _export_agent(subentry, *, provider: str | None = None) -> dict[str, Any]:
-    """Build a conservative, versioned public configuration projection."""
-    from .sharing import SHARING_VERSION, project_sharing_sections
-
-    snapshot = project_agent_config_transfer(
-        dict(subentry.data),
-        agent_config_snapshot(dict(subentry.data), provider=provider),
-    )
-    sections, security = project_sharing_sections({"configuration": snapshot})
-    return {
-        "schema": "extended_openai_conversation.agent",
-        "version": SHARING_VERSION,
-        "title": "Shared conversation agent",
-        "config": sections["configuration"],
-        "security": security,
-    }
-
-
 def _parse_import_document(
     value: Any, *, destination: Any = None, provider: str | None = None
 ) -> dict[str, Any]:
@@ -511,7 +489,10 @@ def _parse_import_document(
         raise AgentConfigError("document", "must be an object")
     if value.get("schema") != "extended_openai_conversation.agent":
         raise AgentConfigError("schema", "unsupported or missing export schema")
-    if value.get("version") not in {AGENT_CONFIG_EXPORT_VERSION, 2}:
+    if value.get("version") not in {
+        AGENT_CONFIG_EXPORT_VERSION,
+        LEGACY_SHARING_EXPORT_VERSION,
+    }:
         raise AgentConfigError("version", "unsupported export version")
     unknown = set(value) - {"schema", "version", "title", "config", "security"}
     if unknown:
@@ -1706,12 +1687,6 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "entry_id": entry.entry_id,
             "subentry_id": duplicate.subentry_id,
             "title": duplicate.title,
-        }
-    if action == "export":
-        document = _export_agent(subentry, provider=provider)
-        return {
-            "document": document,
-            "json": json.dumps(document, indent=2, ensure_ascii=False),
         }
     if action == "import_preview":
         if message.get("mode", "current") not in {"current", "new"}:
@@ -3336,8 +3311,6 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("enabled"): bool,
         vol.Optional("yaml"): str,
         vol.Optional("document"): vol.Any(str, dict),
-        # Older panels sent this flag on configuration exports. All exports are restricted.
-        vol.Optional("reviewed_custom"): bool,
         vol.Optional("sample_text"): str,
         vol.Optional("mode"): str,
         vol.Optional("subject"): str,

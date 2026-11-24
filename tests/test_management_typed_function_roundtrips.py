@@ -234,32 +234,6 @@ async def test_export_uses_lossless_yaml_for_non_json_values(hass, value, entryp
     _same_typed_value(after_runtime, before_runtime)
 
 
-@pytest.mark.parametrize("value", VALUES)
-@pytest.mark.parametrize("entrypoint", ["document", "json", "yaml"])
-async def test_current_export_text_omits_custom_runtime_values(
-    hass, management_agent, management_message, value, entrypoint
-):
-    _, subentry = management_agent
-    subentry.data = {"functions": yaml.safe_dump([_tool(value)])}
-    exported = await ui.async_management_command(
-        hass,
-        "admin",
-        True,
-        management_message("configuration", "export", reviewed_custom=True),
-    )
-    document = {
-        "document": exported["document"],
-        "json": exported["json"],
-        "yaml": yaml.safe_dump(exported["document"]),
-    }[entrypoint]
-    restored = ui._parse_import_document(document, destination=subentry)
-    assert exported["document"]["security"]["mode"] == "restricted"
-    assert exported["document"]["config"]["functions"] == []
-    assert exported["document"]["security"]["omitted"]
-    assert yaml.safe_load(restored["config"]["functions"]) == []
-
-
-
 def test_text_corpus_detects_yaml_only_json_import():
     from tests.test_agent_config_transfer import historical_reviewed_configuration
 

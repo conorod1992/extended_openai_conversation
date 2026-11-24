@@ -6,24 +6,21 @@ Choose an export type according to what you need:
 
 | Export type | Use it for | Important limits |
 | --- | --- | --- |
-| **Shareable Setup** | Sharing supported public behaviour settings | Omits provider credentials, private histories, custom prompts, Function Tools and Request Rules. |
 | **Full Backup (private)** | Recovering or moving the selected agent's configuration and retained data | Preserves credentials and private content; the file is not encrypted. |
 | **Custom (private)** | Backing up only selected sections | Preserves the selected private sections, including provider credentials when configuration is selected; the file is not encrypted. |
-
-The configuration editor's **Export configuration** is also for sharing configuration, not retained data. See [sharing security](credential-security.md) before sharing any setup.
 
 ## Create an export
 
 1. Select the conversation agent you want to back up.
 2. Open **Usage & Maintenance → Backup & Restore** and choose **Export type**.
-3. For **Custom (private)**, select the sections to include. For **Shareable Setup**, check the contents and omission summary before downloading.
+3. For **Custom (private)**, select the sections to include.
 4. Choose **Create export** and save the downloaded file securely.
 
 Exports use saved configuration. Save any draft settings first if you want them included.
 
 Private ZIP backups are limited to 160 MiB compressed and 320 MiB uncompressed. Legacy plain JSON imports are limited to 128 MiB. If a Full Backup exceeds a limit, export smaller groups of sections with Custom.
 
-To move a custom setup privately, choose **Custom (private)** and select **Agent configuration and Function Tools** and **Request Rules**. The configuration section includes provider credentials. Previously downloaded reviewed sharing files can still be imported and validated.
+To move a custom setup privately, choose **Custom (private)** and select **Agent configuration and Function Tools** and **Request Rules**. The configuration section includes provider credentials. Existing Shareable Setup and configuration export JSON files still work with **Import / Restore**, including older reviewed custom files. Configuration export files also work with **Assistant actions → Import configuration**.
 
 ## What a full backup includes
 
@@ -58,7 +55,7 @@ Provider restoration requires an explicit shared-connection choice because other
 
 Validation checks the combined destination configuration, including Request Rule references to Function Tools. An incompatible combination of selected and unselected sections must be resolved before restore. Temporary memories that have already expired are discarded. If configuration is selected, restoring it replaces any unsaved configuration draft for the destination agent.
 
-Every selected section replaces the agent's corresponding saved data rather than merging the backup with what is already there. Private Request Rules are restored with their saved global order and groups. A new Shareable Setup contains an empty Request Rules section. Deselect that section to keep the destination's rules. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
+Every selected section replaces the agent's corresponding saved data rather than merging the backup with what is already there. Private Request Rules are restored with their saved global order and groups. Some legacy Shareable Setup files contain an empty Request Rules section. Deselect it to keep the destination's rules. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
 
 Restore is designed to avoid leaving only half of the backup applied. If saving the restored data fails part-way through, Extended OpenAI attempts to return the agent to the state it had before the restore began.
 
@@ -106,7 +103,7 @@ Files created by older versions in the system temporary directory have no reliab
 
 ## Security
 
-Full and custom private backup files preserve credentials, prompts, memories, Knowledge sources, conversation history and usage information. They are not encrypted. Keep them private. Use Shareable Setup to share supported public settings. See the [sharing security contract](credential-security.md).
+Full and custom private backup files preserve credentials, prompts, memories, Knowledge sources, conversation history and usage information. They are not encrypted. Keep them private. See [credential handling and recovery](credential-security.md).
 
 
 Selective restores preserve active Archive privacy bindings when Archive is not

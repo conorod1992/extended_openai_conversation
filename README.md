@@ -160,7 +160,7 @@ Memories, Knowledge Library content, Request Rules, optional archived conversati
 
 Full backups can contain private prompts, memories, Knowledge content, archived conversations and usage metadata. Treat exported backup files accordingly.
 
-Private backups also preserve provider credentials and are not encrypted. **Shareable Setup** is a separate configuration format that excludes retained data and provider credentials; review any custom content you choose to include before sharing.
+Private backups preserve provider credentials and are not encrypted. Use **Custom (private)** to move selected sections between installations. Existing Shareable Setup and configuration export files can still be imported. See [Backup & Restore](docs/features/backup-restore.md).
 
 ## Provider compatibility
 

@@ -199,10 +199,6 @@
       "required": false,
       "kind": "boolean"
     },
-    "reviewed_custom": {
-      "required": false,
-      "kind": "boolean"
-    },
     "review_token": {
       "required": false,
       "kind": "string"
@@ -368,7 +364,6 @@
     }
   },
   "backup_transfer_actions": [
-    "setup_export",
     "export_start",
     "export_chunk",
     "export_cancel",

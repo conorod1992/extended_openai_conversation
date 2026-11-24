@@ -1,5 +1,7 @@
 """Production importer and handler connected across a failing Usage transaction."""
 
+from tests.helpers import historical_shareable_export
+
 import asyncio
 import json
 from pathlib import Path
@@ -58,10 +60,7 @@ async def test_import_retry_after_real_pruning_failure(
     baseline = await ui.async_management_command(
         hass, "admin", True, management_message("configuration", "get")
     )
-    exported = await ui.async_management_command(
-        hass, "admin", True, management_message("configuration", "export")
-    )
-    document = exported["document"]
+    document = historical_shareable_export("configuration")
     document["config"][field] = 0
     document["title"] = "Imported policy"
     with pytest.raises(HomeAssistantError, match="Confirm applying shorter Usage"):

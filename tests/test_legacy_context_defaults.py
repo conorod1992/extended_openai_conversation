@@ -70,7 +70,9 @@ def test_legacy_reads_edits_and_transfers_match_runtime(
     }
     assert ("current_datetime_context" in sections) == raw.get(FIELDS[0], False)
     assert ("exposed_entities_context" in sections) == raw.get(FIELDS[1], False)
-    portable = ui._export_agent(SimpleNamespace(data=raw))
+    from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+    portable = historical_reviewed_configuration(raw)
     imported = ui._parse_import_document(portable)["config"]
     for transferred in (
         imported,
@@ -163,13 +165,16 @@ async def test_management_read_preview_save_duplicate_import_and_reset(
     for key in FIELDS:
         assert duplicate.data.get(key, False) == raw.get(key, False)
         assert (key in duplicate.data) == (key in raw)
-    exported = await command("export")
-    imported_preview = await command("import_preview", document=exported["document"])
+    from tests.helpers import historical_shareable_export
+
+    document = historical_shareable_export("configuration")
+    document["config"].update({key: raw[key] for key in FIELDS if key in raw})
+    imported_preview = await command("import_preview", document=document)
     _assert_effective(imported_preview["config"], raw)
     current = await command("get")
     await command(
         "import",
-        document=exported["document"],
+        document=document,
         confirm=True,
         revision=current["revision"],
     )

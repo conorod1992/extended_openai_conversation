@@ -105,17 +105,6 @@ export function createBackupTransferBackend(backend) {
     const action = message.action;
     const data = message.data || {};
 
-    if (action === "setup_export") {
-      const security = {mode:"restricted", review_required:false, omitted:[]};
-      const document = {
-        format:"extended_openai_conversation_transfer", version:2, mode:"setup",
-        created_at:"2026-09-01T00:00:00Z", integration_version:"browser-fixture",
-        agent:{title:"Shared conversation agent", source_entry_id:"shared-entry", source_subentry_id:"shared-agent"},
-        sections:{configuration:{functions:[], function_groups:[], skills:[]}, request_rules:{rules:[], groups:[]}},
-        security,
-      };
-      return {json:JSON.stringify(document), document, security, filename:"browser-fixture-setup.json", content_type:"application/json"};
-    }
     if (action === "export_start") {
       const id = sessionId("export");
       const bytes = encoder.encode(JSON.stringify(backupDocument(backend)));

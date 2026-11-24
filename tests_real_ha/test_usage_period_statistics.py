@@ -365,7 +365,7 @@ async def test_local_run_counts_use_recorded_days_after_timezone_change(
     await hass.config.async_set_time_zone("UTC")
     if restore != "none":
         entry, subentry = agent.entry, agent.subentry
-        document = transfer._new_transfer_document(entry, subentry, "custom")
+        document = transfer._new_transfer_document(entry, subentry)
         document["sections"][transfer.SECTION_USAGE] = saved
         result = await transfer.async_restore_transfer(hass, entry, subentry, document)
         assert result["status"] == "restored"

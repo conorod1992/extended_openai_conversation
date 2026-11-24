@@ -1,9 +1,16 @@
 """Test helper functions."""
 
+import json
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+def historical_shareable_export(kind: str) -> dict[str, Any]:
+    """Load a standalone example of a retired v2 public export."""
+    path = Path(__file__).parent / "fixtures" / "transfer" / f"shareable-{kind}-v2.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def legacy_agent_export(subentry: Any) -> dict[str, Any]:

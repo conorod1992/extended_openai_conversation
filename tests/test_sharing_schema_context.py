@@ -2,54 +2,21 @@
 
 from copy import deepcopy
 import json
-from types import SimpleNamespace
 
 import pytest
 import yaml
 
 from custom_components.extended_openai_conversation_responses import (
     backup,
-    management_ui,
     transfer,
 )
 from custom_components.extended_openai_conversation_responses.private_backup import (
     decode_document,
 )
-from custom_components.extended_openai_conversation_responses.sharing import (
-    SHARING_VERSION,
-)
 from tests.test_private_backup_fidelity import private_document
 from tests.test_secret_restore_context import _rest_tool
-from tests.test_transfer import _portable_document
 
 SECRET = "FABRICATED-unfamiliar-instance-credential-42"
-
-
-def configuration_artifact(config, format):
-    """Use the production sharing writers and their actual JSON transport."""
-    if format == "configuration":
-        artifact = management_ui._export_agent(
-            SimpleNamespace(title="Test", data=config)
-        )
-        serialized = json.dumps(artifact)
-        public = artifact["config"]
-    else:
-        document = _portable_document(mode="setup")
-        document["version"] = SHARING_VERSION
-        document["sections"]["configuration"] = config
-        result = transfer.finalize_setup_export(document)
-        serialized = result["json"]
-        artifact = json.loads(serialized)
-        public = artifact["sections"]["configuration"]
-    return artifact, public, serialized
-
-
-def rule_setup_artifact(rules):
-    """Project and serialize rules through the production Shareable Setup writer."""
-    document = _portable_document(mode="setup")
-    document["version"] = SHARING_VERSION
-    document["sections"]["request_rules"] = rules
-    return transfer.finalize_setup_export(document)
 
 
 def instance_payload(shape, credential=True):

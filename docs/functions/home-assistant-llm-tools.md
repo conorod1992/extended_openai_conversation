@@ -63,7 +63,7 @@ fresh scope. Normal successful repetitions remain possible.
 Unavailable or renamed tools remain saved. They are omitted from model requests,
 and the management preview marks them unavailable. No similar-name replacement is
 chosen. When the exact saved identity returns, the tool becomes usable again.
-Normal save, duplication, configuration export/import and full backup retain these
+Normal save, duplication and private backup and restore retain these
 references, including when the destination lacks their sources.
 
 ## Identity and Home Assistant compatibility

@@ -23,8 +23,15 @@ export function baseBackupSummaryLines(summary = {}) {
 }
 
 export function backupSummaryLines(summary) {
-  if (summary?.security) return [...baseBackupSummaryLines(summary), SHARING_CONTRACT, sharingSummary(summary.security)];
+  if (summary?.security) {
+    const {omitted = [], review_required: reviewRequired} = summary.security;
+    const count = omitted.reduce((total, item) => total + (Number.isSafeInteger(item.count) && item.count > 0 ? item.count : 0), 0);
+    return [
+      ...baseBackupSummaryLines(summary),
+      "This is an older sharing export.",
+      `${count} configuration items or custom units omitted.`,
+      ...(reviewRequired ? ["This file can include custom content. Review it before restoring or sharing it again."] : []),
+    ];
+  }
   return [...baseBackupSummaryLines(summary), BACKUP_CREDENTIAL_WARNING];
 }
-import {SHARING_CONTRACT, sharingSummary} from "./sharing-review.js";
-

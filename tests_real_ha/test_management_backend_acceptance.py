@@ -846,9 +846,6 @@ async def test_configuration_transfer_survives_reload(hass, hass_ws_client, acti
     else:
         from tests.test_agent_config_transfer import historical_reviewed_configuration
 
-        exported = await _management_call(client, entry=entry, section="configuration", action="export", reviewed_custom=True)
-        assert exported["document"]["security"]["mode"] == "restricted"
-        assert exported["document"]["config"]["functions"] == []
         document = historical_reviewed_configuration(
             {"max_tokens": 888, "functions": [tool]}, title="Durable transferred assistant"
         )

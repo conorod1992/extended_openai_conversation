@@ -1,6 +1,5 @@
 """Tests for versioned agent configuration import and export."""
 
-from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -11,9 +10,7 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     agent_config_defaults,
 )
 from custom_components.extended_openai_conversation_responses.management_ui import (
-    _export_agent,
     _parse_import_document,
-    _redact_export_secrets,
 )
 from custom_components.extended_openai_conversation_responses.secret_redaction import (
     REDACTED_SECRET_SENTINEL,
@@ -33,31 +30,6 @@ def historical_reviewed_configuration(config, *, title="Shared conversation agen
     }
 
 
-def test_export_is_versioned_and_excludes_history_and_credentials(hass) -> None:
-    data = agent_config_defaults()
-    data["prompt"] = "Custom"
-    data["function_groups"] = [
-        {
-            "id": "general",
-            "name": "General",
-            "description": "General functions",
-            "loading_mode": "always",
-            "functions": [],
-        }
-    ]
-    subentry = SimpleNamespace(title="Jarvis", data=data)
-    document = _export_agent(subentry)
-    assert document["version"] == 2
-    assert "prompt" not in document["config"]
-    assert document["config"]["function_groups"] == []
-    assert document["security"]["mode"] == "restricted"
-    assert document["security"]["review_required"] is False
-    serialized = str(document)
-    assert "api_key" not in serialized
-    assert "memory_contents" not in serialized
-    assert "usage_history" not in serialized
-
-
 def test_export_redaction_preserves_schema_fields_but_removes_values() -> None:
     value = {
         "function": {
@@ -70,7 +42,7 @@ def test_export_redaction_preserves_schema_fields_but_removes_values() -> None:
         },
         "spec": {"parameters": {"properties": {"password": {"type": "string"}}}},
     }
-    redacted = _redact_export_secrets(value)
+    redacted = redact_secrets(value)
     assert redacted["function"]["api_key"] == REDACTED_SECRET_SENTINEL
     assert redacted["function"]["apiKey"] == REDACTED_SECRET_SENTINEL
     assert redacted["function"]["clientSecret"] == REDACTED_SECRET_SENTINEL
@@ -101,7 +73,7 @@ def test_portable_round_trip_preserves_reasoning_presence(hass, effort) -> None:
     data = {"chat_model": "gpt-5.2", "functions": []}
     if effort is not None:
         data["reasoning_effort"] = effort
-    exported = _export_agent(SimpleNamespace(title="Retained", data=data))
+    exported = historical_reviewed_configuration(data, title="Retained")
     assert ("reasoning_effort" in exported["config"]) is (effort is not None)
     parsed = _parse_import_document(exported)
     assert ("reasoning_effort" in parsed["config"]) is (effort is not None)
@@ -113,7 +85,7 @@ def test_portable_round_trip_preserves_reasoning_presence(hass, effort) -> None:
 def test_portable_transfer_preserves_unversioned_authored_guest_fields(hass) -> None:
     data = {"chat_model": "gpt-5.2", "functions": [], "guest_function_policy": "on"}
     parsed = _parse_import_document(
-        _export_agent(SimpleNamespace(title="Old", data=data))
+        historical_reviewed_configuration(data, title="Old")
     )
     assert parsed["config"]["guest_function_policy"] == "on"
     assert "guest_policy_version" not in parsed["config"]
@@ -124,7 +96,7 @@ def test_legacy_export_does_not_silently_accept_guest_v2(hass) -> None:
     for key in GUEST_V2_FIELDS:
         data.pop(key, None)
     parsed = _parse_import_document(
-        _export_agent(SimpleNamespace(title="Old", data=data))
+        historical_reviewed_configuration(data, title="Old")
     )
     assert GUEST_V2_FIELDS.isdisjoint(parsed["config"])
 
@@ -225,3 +197,14 @@ def test_redaction_preserves_structure_but_restore_drops_only_sentinel() -> None
     assert "Authorization" not in restored_data
     assert restored_data["payload"] is None
     assert restored_data["nested"] == [None, {}]
+
+
+async def test_historical_restricted_configuration_is_importable(hass):
+    from tests.helpers import historical_shareable_export
+
+    document = historical_shareable_export("configuration")
+    parsed = _parse_import_document(document)
+    assert parsed["title"] == "Shared conversation agent"
+    assert parsed["config"]["chat_model"] == "gpt-5.2"
+    assert parsed["config"]["max_tokens"] == 550
+    assert yaml.safe_load(parsed["config"]["functions"]) == []

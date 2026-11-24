@@ -173,7 +173,7 @@ def test_custom_snapshot_builder_marks_private_memory_data_before_wire_encoding(
     full = private_document()
     entry = SimpleNamespace(entry_id="entry", data=full["provider_connection"])
     subentry = SimpleNamespace(subentry_id="agent", title="Private")
-    snapshot = transfer._new_transfer_document(entry, subentry, "custom")
+    snapshot = transfer._new_transfer_document(entry, subentry)
     snapshot["sections"]["configuration"] = full["agent"]["config"]
     assert isinstance(snapshot, DecodedPrivateDocument)
     for value in (snapshot, json.loads(json.dumps(encode_document(snapshot)))):

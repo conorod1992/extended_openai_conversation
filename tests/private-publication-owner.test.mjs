@@ -1,24 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {downloadFullBackup, downloadSetupExport} from "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js";
-for (const aba of [false,true]) for (const setup of [false,true]) test(`private export retires across account transition setup=${setup} aba=${aba}`,async()=>{
+import {downloadFullBackup, downloadCustomBackup} from "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js";
+for (const aba of [false,true]) for (const mode of ["full", "custom"]) test(`private export retires across account transition mode=${mode} aba=${aba}`,async()=>{
   let release; const held=new Promise(resolve=>{release=resolve;});
   const calls=[], saved=[];
   const connection={user:{id:"owner"},callWS:async request=>{
     calls.push(request);
-    if(request.action==="setup_export")return held;
     if(request.action==="export_start")return {session_id:"original",chunk_count:1,size:1,filename:"private.zip"};
     if(request.action==="export_chunk")return held;
     return {cancelled:true};
   }};
   const panel={hass:connection,_hass:connection,_eocAuthenticationGeneration:0,_selectedAgent:()=>({entry_id:"entry",subentry_id:"agent"}),_call:()=>held};
-  const running=setup?downloadSetupExport(panel,(...args)=>saved.push(args)):downloadFullBackup(panel,(...args)=>saved.push(args));
-  while(!setup&&!calls.some(call=>call.action==="export_chunk"))await Promise.resolve();
+  const save = (...args) => saved.push(args);
+  const running = mode === "custom" ? downloadCustomBackup(panel, ["configuration"], save) : downloadFullBackup(panel, save);
+  while(!calls.some(call=>call.action==="export_chunk"))await Promise.resolve();
   connection.user.id="other";panel._eocAuthenticationGeneration++;
   if(aba){connection.user.id="owner";panel._eocAuthenticationGeneration++;}
-  release(setup?{json:'{"secret":"private"}',filename:"private.json"}:{session_id:"original",index:0,offset:0,bytes:1,data:"YQ=="});
-  if(setup)assert.equal((await running).cancelled,true);
-  else {await assert.rejects(running,/authentication changed/);assert.equal(calls.at(-1).action,"export_cancel");assert.equal(calls.at(-1).data.session_id,"original");}
+  release({session_id:"original",index:0,offset:0,bytes:1,data:"YQ=="});
+  await assert.rejects(running,/authentication changed/);
+  assert.equal(calls.at(-1).action,"export_cancel");
+  assert.equal(calls.at(-1).data.session_id,"original");
   assert.equal(saved.length,0);
 });
 test("same-user agent navigation preserves explicitly requested backup",async()=>{

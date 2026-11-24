@@ -1,5 +1,7 @@
 """A recovered durable store cannot leave session-local Usage on an old policy."""
 
+from tests.helpers import historical_shareable_export
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -71,11 +73,7 @@ async def test_committed_policy_reaches_existing_volatile_accounting(
     )
     policy = {"usage_request_retention_days": days, "usage_run_retention_days": days}
     if action == "import":
-        artifact = (
-            await ui.async_management_command(
-                hass, "admin", True, management_message("configuration", "export")
-            )
-        )["document"]
+        artifact = historical_shareable_export("configuration")
         artifact["config"].update(policy)
         payload = {"document": artifact, "mode": "current", "confirm": True, "confirm_retention": True}
     else:

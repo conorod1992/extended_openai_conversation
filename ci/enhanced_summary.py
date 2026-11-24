@@ -74,7 +74,7 @@ COUNT_METRICS = {
     "interleaved_exact_usage_api_modes",
     "exploration_corpus_cases_replayed",
     "retention_restore_ownership_cases",
-    "coherent_setup_restore_exports",
+    "coherent_custom_restore_exports",
     "quiet_pending_manual_override_checks",
     "archive_first_intent_failure_cases",
     "archive_first_intent_disk_commits",

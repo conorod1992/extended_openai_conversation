@@ -1,5 +1,7 @@
 """Compare explicit same-policy retries through all supported config writes."""
 
+from tests.helpers import historical_shareable_export
+
 import asyncio
 import json
 from types import SimpleNamespace
@@ -41,10 +43,7 @@ async def test_configuration_overwrite_preserves_archive_retention(
     baseline = await ui.async_management_command(
         hass, "admin", True, management_message("configuration", "get")
     )
-    exported = await ui.async_management_command(
-        hass, "admin", True, management_message("configuration", "export")
-    )
-    document = exported["document"]
+    document = historical_shareable_export("configuration")
     document["config"].pop(field, None)
     payload = {"document": json.dumps(document), "mode": "current"}
     preview = await ui.async_management_command(
@@ -97,10 +96,7 @@ async def test_configuration_write_enforces_retention_after_optional_cache_failu
                 )
             ),
         )
-        exported = await ui.async_management_command(
-            hass, "admin", True, management_message("configuration", "export")
-        )
-        document = exported["document"]
+        document = historical_shareable_export("configuration")
         document["config"][field] = 0
         payload = {
             "document": json.dumps(document),
@@ -222,10 +218,7 @@ async def test_same_policy_retry_reaches_deletion(
         hass, "admin", True, management_message(revision_section, revision_action)
     )
     if action == "import":
-        exported = await ui.async_management_command(
-            hass, "admin", True, management_message("configuration", "export")
-        )
-        document = exported["document"]
+        document = historical_shareable_export("configuration")
         document["config"][field] = 0
         payload = {
             "document": json.dumps(document),
@@ -364,10 +357,7 @@ async def test_import_into_new_assistant_does_not_prune_selected_source(
     )
     durable_usage = AsyncMock(side_effect=AssertionError("source must not be pruned"))
     monkeypatch.setattr(usage, "async_get_durable_usage", durable_usage)
-    exported = await ui.async_management_command(
-        hass, "admin", True, management_message("configuration", "export")
-    )
-    document = exported["document"]
+    document = historical_shareable_export("configuration")
     document["config"]["usage_request_retention_days"] = 0
     original = dict(subentry.data)
     result = await ui.async_management_command(

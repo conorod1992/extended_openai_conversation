@@ -580,7 +580,7 @@ async def test_private_followup_after_knowledge_restore(
     await agent._archive.async_make_private(session.session_id)
     retained_before = await say("Retained history witness", who=retained_user)
     assert retained_before.response.error_code is None
-    document = transfer._new_transfer_document(agent.entry, agent.subentry, "custom")
+    document = transfer._new_transfer_document(agent.entry, agent.subentry)
     document["sections"][transfer.SECTION_KNOWLEDGE] = {"sources": []}
     if rollback:
         original = agent._knowledge.async_replace_backup
@@ -715,7 +715,7 @@ async def test_ha_default_knowledge_restore_keeps_only_verified_runtime(
     elif witness == "retired":
         await agent._continuity.async_retire_chat_session(native)
 
-    document = transfer._new_transfer_document(agent.entry, agent.subentry, "custom")
+    document = transfer._new_transfer_document(agent.entry, agent.subentry)
     document["sections"][transfer.SECTION_KNOWLEDGE] = {"sources": []}
     before = await archive.async_recovery_data()
     if rollback:

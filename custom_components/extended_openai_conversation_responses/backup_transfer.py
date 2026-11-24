@@ -1051,7 +1051,6 @@ async def _start_export(
                     hass,
                     entry,
                     subentry,
-                    mode="custom",
                     sections=data.get("sections"),
                 )
             )
@@ -1651,8 +1650,6 @@ async def async_backup_transfer_command(
     if not isinstance(data, dict):
         raise backup.BackupError("Backup transfer data must be an object")
 
-    if action == "setup_export":
-        return await transfer.async_create_setup_export(hass, entry, subentry)
     if action == "export_start":
         return await _start_export(hass, entry, subentry, data)
     if action == "export_chunk":

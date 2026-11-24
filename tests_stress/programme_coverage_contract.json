@@ -147,7 +147,7 @@
     "restore_manager_settlement_cases": 2,
     "backup_chunks_transferred": 1,
     "transfer_previews": 1,
-    "coherent_setup_restore_exports": 1,
+    "coherent_custom_restore_exports": 1,
     "tls_verified_requests": 4,
     "transport_tool_recovery_cases": 2,
     "explicit_stream_close_cases": 1,

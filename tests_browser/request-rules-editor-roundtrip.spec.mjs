@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {acceptSharingReview, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 const panelFor = (page) => page.locator("extended-openai-management-panel");
 

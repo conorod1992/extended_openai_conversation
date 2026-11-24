@@ -209,12 +209,12 @@ const actionOwner = {
   _viewKey:() => "assistant/basics",
 };
 const cleanActions = renderConfigurationActions(actionOwner, ["general"]);
-for (const id of ["duplicate-agent", "import-agent", "export-agent"]) {
+for (const id of ["duplicate-agent", "import-agent"]) {
   assert.match(cleanActions, new RegExp(`id="${id}"`));
 }
 actionOwner._configDirty = true;
 const dirtyActions = renderConfigurationActions(actionOwner, ["general"]);
-for (const id of ["duplicate-agent", "export-agent"]) {
+for (const id of ["duplicate-agent"]) {
   assert.match(dirtyActions, new RegExp(`id="${id}"[^>]*disabled`));
 }
 assert.match(dirtyActions, /id="import-agent"/);

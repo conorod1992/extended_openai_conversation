@@ -15,18 +15,18 @@ for (const bundled of [false, true]) for (const mobile of [false, true]) {
     await expect(panel.getByRole("heading", {name:"Export / Backup", exact:true})).toHaveCount(0);
     await expect(panel.getByRole("heading", {name:"Export type", level:2, exact:true})).toBeVisible();
     await expect(mode).toHaveAccessibleDescription(await description.textContent());
-    await expect(privateWarning).toBeHidden();
-    await expect(description).toContainText("provider credentials and custom content are omitted");
+    await expect(mode).toHaveValue("full");
+    await expect(mode.locator("option")).toHaveText(["Full Backup (private)", "Custom (private)"]);
+    await expect(privateWarning).toBeVisible();
     await expect(panel.getByText("Selected sections replace rather than merge destination data.")).toBeVisible();
 
     // Exercise both the lightweight route and the activated transfer module.
     for (const activated of [false, true]) {
       if (activated) {
+        const download = page.waitForEvent("download");
         await panel.locator("#create-backup-transfer").click();
-        await expect(panel.locator("[data-artifact]")).toBeVisible();
-        await expect(panel.locator("[data-summary]")).toContainText("configuration items or custom units omitted");
-        expect(await page.evaluate(() => browserHarness.calls.filter(call => call.action === "setup_export").at(-1).data)).toEqual({});
-        await panel.locator("[data-cancel]").click();
+        expect((await download).suggestedFilename()).toMatch(/\.zip$/);
+        expect(await page.evaluate(() => browserHarness.calls.filter(call => call.action === "export_start").at(-1).data)).toEqual({mode:"full"});
       }
       for (const value of ["full", "custom"]) {
         await mode.selectOption(value);
@@ -44,9 +44,8 @@ for (const bundled of [false, true]) for (const mobile of [false, true]) {
           await panel.locator('.transfer-custom-section[value="configuration"]').check();
         }
       }
-      await mode.selectOption("setup");
-      await expect(privateWarning).toBeHidden();
-      await expect(description).toContainText("provider credentials and custom content are omitted");
+      await mode.selectOption("full");
+      await expect(description).toContainText("all supported saved assistant data");
     }
 
     const layout = await panel.evaluate(host => {
@@ -65,21 +64,3 @@ for (const bundled of [false, true]) for (const mobile of [false, true]) {
     await expectHarnessClean(page, errors);
   });
 }
-
-test("Shareable Setup rejects an unexpected reviewed artifact from an older backend", async ({page}) => {
-  await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
-  const panel = page.locator("extended-openai-management-panel");
-  await page.evaluate(() => {
-    const original = browserHarness.hass.callWS.bind(browserHarness.hass);
-    browserHarness.hass.callWS = async message => {
-      const result = await original(message);
-      return message.action === "setup_export" ? {...result, security:{mode:"reviewed_custom",review_required:true, omitted:[]}} : result;
-    };
-  });
-  let downloads = 0;
-  page.on("download", () => { downloads += 1; });
-  await panel.locator("#create-backup-transfer").click();
-  await expect(panel.getByText(/did not return a restricted export/)).toBeVisible();
-  await expect(panel.locator("[data-artifact]")).toHaveCount(0);
-  expect(downloads).toBe(0);
-});

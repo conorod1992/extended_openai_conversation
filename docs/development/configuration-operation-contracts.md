@@ -16,8 +16,8 @@ explicit when adding a save route; no one form is suitable for every consumer.
 | Hydrated runtime Tools | `configured_function_tools_from_data()` returns isolated containers from the revision cache. Function validators wrap HA-bound Templates and Script data in `_RuntimeFunctionConfig`. `copy_runtime_function_config()` keeps hydrated leaves for execution; ordinary `deepcopy()` intentionally recovers the captured source for persistence. Do not serialize a shallow `dict(runtime_config)` or substitute a runtime copy for a source copy. |
 | Quarantine/repair | Repair state pairs usable source Tools/Groups with original invalid siblings, indexes, diagnostics and raw Group data. A safe display candidate excludes damage; it is not permission to replace the raw collection. Unrelated saves project only their owned fields after revision checks. |
 | Management wire | `management_function_response()` and `decode_management_function_request()` encode/decode typed YAML values only at the Function editor wire boundary. Cache and storage values do not contain wire tags. |
-| Shareable document | Sharing/redaction operates on decoded source data before `json_safe_function_fields()` encodes typed YAML for transport. Runtime objects and private recovery data do not belong in this representation. |
-| Private backup/recovery | `private_configuration_snapshot()` and the private backup format preserve credentials and repair-owned malformed data for authorized recovery. They are distinct from redacted shareable exports; prepared rollback data is directly persistence-shaped. |
+| Legacy sharing import | Previously exported files retain their format-specific decoding and credential recovery. |
+| Private backup/recovery | `private_configuration_snapshot()` and the private backup format preserve credentials and repair-owned malformed data for authorized recovery. Prepared rollback data is directly persistence-shaped. |
 
 The degraded configuration preview and save routes now share field admission in
 `async_function_repair()`: validate the submitted mapping, require isolatable
@@ -51,7 +51,7 @@ including inside child tasks spawned by an inspection operation.
 revision-checked writes. `merge_unchanged_function_configuration()` returns a raw
 field-scoped persistence payload separately from its validation/display candidate.
 Private backup preparation restores raw repair-owned fields after validation;
-shareable exports retain their separate redaction and decoding requirements.
+shareable files retain their separate import and credential recovery requirements.
 
 Runtime quarantine keeps its request-local Tool-to-Group exclusion state. It may
 retain strictly validated siblings, but never makes an invalid Tool executable.
@@ -82,9 +82,9 @@ parameters. Persistence helpers must not substitute for that resolver.
 | Model or Azure underlying-model change | If reasoning is not submitted, discard the old model's effort and normalize the new model's recommendation. Persist the resulting reasoning field, or remove it when unsupported. Re-submitting an unchanged model is not a transition. Explicit reasoning is validated against the selected model. | `merge_agent_config`, `project_agent_config_updates` |
 | Explicit reset of editor values | Reset changes the draft; persistence occurs on Save. Submitted reset values are explicit even if equal to defaults. This is not a general delete-field or inheritance-reset API. | frontend reset controls, ordinary save projection |
 | New conversation agent | Materialize integration defaults and applicable model recommendations. | creation flow, `normalize_agent_config` |
-| Version-1 portable export/import | Materialize ordinary defaults, including sampling. Preserve omitted reasoning and unversioned legacy Guest policy. Tools are parsed for export and serialized for import. Export excludes opaque fields; import rejects unknown configuration fields. Credentials remain outside the agent schema; Function secrets follow the existing redaction/restoration rules. | `project_agent_config_transfer`, `_export_agent`, `_parse_import_document` |
+| Version-1 portable import | Materialize ordinary defaults, including sampling. Preserve omitted reasoning and unversioned legacy Guest policy. Tools are serialized for persistence on import. Import rejects unknown configuration fields. Credentials remain outside the agent schema; Function secrets follow the existing redaction/restoration rules. | `project_agent_config_transfer`, `_parse_import_document` |
 | Backup/export, recovery and selective transfer | Apply the same omission/default policy, retain opaque later-version fields and preserve quarantined raw Function values when safe to do so. Normal tools use the requested frontend/persistence shape. | `project_agent_config_transfer(preserve_unknown=True)`, backup quarantine boundary |
-| Private destination recovery snapshot | As above, but malformed destination Function YAML can remain opaque for private recovery. Public export still requires repair of malformed YAML. | `private_configuration_snapshot` |
+| Private destination recovery snapshot | Malformed destination Function YAML can remain opaque for private recovery. | `private_configuration_snapshot` |
 | Duplicate agent | Normalize recognized fields and preserve legacy Guest policy. Unlike portable transfer, omitted reasoning is materialized; opaque fields are excluded. | management duplicate handler |
 | Legacy Function enable/disable services | Validate the merged candidate, then persist only the owned Function Tool or Function Group field. Preserve all unrelated raw values and omissions, including legacy Guest policy. Default Functions are materialized only when the tool field is edited. | `async_set_function_tools_enabled`, `async_set_function_groups_enabled` |
 | Unrelated configuration save through the degraded Function repair handler | Preserve raw Function fields and legacy Guest policy; persist only the submitted unrelated fields. | repair `configuration_save` handler, `project_agent_config_updates` |

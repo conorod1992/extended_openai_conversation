@@ -9,6 +9,7 @@ DOMAIN = "extended_openai_conversation_responses"
 SUBSYSTEM_STATUS_KEY = f"{DOMAIN}.subsystem_status"
 CONFIG_ENTRY_VERSION = 8
 AGENT_CONFIG_EXPORT_VERSION = 1
+LEGACY_SHARING_EXPORT_VERSION = 2
 DEFAULT_NAME = "Extended OpenAI Conversation (Responses)"
 DEFAULT_CONVERSATION_NAME = "Extended OpenAI Conversation (Responses)"
 DEFAULT_AI_TASK_NAME = "Extended OpenAI AI Task (Responses)"

@@ -1,12 +1,8 @@
 # Credential boundary maintenance
 
-The sharing and operational diagnostic boundaries are deliberately separate from private backup serialization. Do not route private backups through a public projection, reinterpret historical redacted formats as lossless, or infer that arbitrary strings are public because they do not match a pattern.
+Legacy import and operational diagnostics have different data-handling requirements from private backup serialization. Do not route private backups through a public projection, reinterpret historical redacted formats as lossless, or infer that arbitrary strings are public because they do not match a pattern.
 
-## Sharing writers
-
-Current Setup and configuration writers call `sharing.project_sharing_sections`. Only classified sections survive. Writers build an explicit envelope from the projected result and public metadata; they must not merge source configuration, provider connections or future source fields back into it.
-
-Both public writers allowlist values by field and type. Configuration contains only supported public settings and empty custom collections. The Request Rules section carries default matching metadata and empty rules and groups. The omission manifest reports policy labels and counts. Custom code, template source, arbitrary identifiers and schema contents never enter this projection.
+## Legacy imports
 
 Older reviewed sharing files remain readable through the existing validated import paths. Historical redacted formats retain their destination-bound credential recovery. Private backups and recovery journals preserve source and typed values through their own codecs.
 
@@ -20,15 +16,15 @@ Pass exception objects or `failure_diagnostic` results, or use `log_handled_fail
 
 ## Review tripwires and evidence
 
-`credential-boundaries.json` records current YAML/JSON parser owners, call counts, conventionally named export/codec owners, their policy and a related regression suite. `tests/test_credential_boundary_inventory.py` discovers direct and imported aliases, rejects unclassified additions/moves, checks current sharing writers use the shared projection, and flags common preformatted-error bypasses. When a tripwire fails:
+`credential-boundaries.json` records current YAML/JSON parser owners, call counts, conventionally named export/codec owners, their policy and a related regression suite. `tests/test_credential_boundary_inventory.py` discovers direct and imported aliases, rejects unclassified additions/moves, and flags common preformatted-error bypasses. When a tripwire fails:
 
 1. Trace the new owner's input and every output/error/log destination.
 2. Classify its public, private, editor or provider role and apply the corresponding boundary.
 3. Add a behavioral regression against the final artifact or formatted handlers, including a legitimate-content control.
 4. Update the reviewed inventory and related suite pointer deliberately. Do not regenerate it merely to silence a failure.
 
-The inventory is a review aid, not an interprocedural security proof. Parser wrappers or APIs outside the supported YAML/JSON call spellings still need explicit review. Exception dataflow checks do not prove that every arbitrary string passed to logging is safe. New public writer APIs should use the export naming convention and register their role; classification alone is not evidence that they are safe.
+The inventory is a review aid, not an interprocedural security proof. Parser wrappers or APIs outside the supported YAML/JSON call spellings still need explicit review. Exception dataflow checks do not prove that every arbitrary string passed to logging is safe.
 
-Boundary regressions exercise both sharing writers, omission of unknown fields and custom units, and historical import and private restore fidelity. Operational tests exercise actual Skill discovery and multiple handlers, descendant loggers, causal errors, mapping arguments, unrelated loggers and factory chaining. Existing Rule-result and quarantine diagnostics retain useful operation guidance while using the shared structured representation.
+Boundary regressions exercise historical import and private restore fidelity. Operational tests exercise actual Skill discovery and multiple handlers, descendant loggers, causal errors, mapping arguments, unrelated loggers and factory chaining. Existing Rule-result and quarantine diagnostics retain useful operation guidance while using the shared structured representation.
 
 Run the inventory, sharing-boundary and operational-diagnostic-boundary suites together with the affected sharing, private-backup, error-observability, Skill and Rule tests. Passing a finite credential corpus samples behaviors; structural exclusions, complete-unit omission and exact private round trips are the stronger properties being asserted.

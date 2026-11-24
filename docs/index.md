@@ -56,7 +56,7 @@ When model processing is needed, relevant request text, prompts/context, tool de
 
 Optional Hybrid semantic memory retrieval also sends eligible memory text and search queries to the configured embedding provider to build or refresh its local search cache. Choose lexical retrieval if you do not want that additional embedding request path.
 
-Memories, Knowledge Library content, Request Rules, optional archived conversations, usage data and related integration state are stored locally in Home Assistant. Private full backups include provider connection settings and API credentials alongside sensitive retained data. They are not encrypted: store them securely and use redacted Shareable Setup exports when sharing configuration.
+Memories, Knowledge Library content, Request Rules, optional archived conversations, usage data and related integration state are stored locally in Home Assistant. Private full backups include provider connection settings and API credentials alongside sensitive retained data. They are not encrypted. Keep them private and store them securely.
 
 ## Reliability
 

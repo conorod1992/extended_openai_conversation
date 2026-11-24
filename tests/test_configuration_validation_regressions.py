@@ -128,7 +128,9 @@ async def test_setup_import_rejects_provider_incompatibility(monkeypatch, action
     monkeypatch.setattr(
         management_ui, "entry_and_agent", lambda *_args: (entry, subentry)
     )
-    document = management_ui._export_agent(subentry)
+    from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+    document = historical_reviewed_configuration(dict(subentry.data))
     document["config"].update({"api_mode": "chat_completions", "web_search": True})
     with pytest.raises(HomeAssistantError):
         await management_ui.async_management_command(

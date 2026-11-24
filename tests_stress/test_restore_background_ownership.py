@@ -1,11 +1,10 @@
-"""Installed retention and real setup export during a held restore publication."""
+"""Installed retention and private custom export during a held restore publication."""
 
 from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import timedelta
-import json
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
@@ -13,6 +12,7 @@ import yaml
 
 from custom_components.extended_openai_conversation_responses import (
     backup,
+    backup_transfer,
     conversation_archive as archive_module,
     restore_recovery,
     transfer,
@@ -41,7 +41,7 @@ from tests_real_ha.test_acceptance_lifecycle import (
     _make_entry,
     _setup_entry,
 )
-from tests_real_ha.test_backup_transfer_protocol import _transfer_call, _user_token
+from tests_real_ha.test_backup_transfer_protocol import _download_archive, _user_token
 from tests_stress.conftest import record
 from tests_stress.test_request_rules_matrix import rule
 
@@ -242,8 +242,8 @@ async def test_installed_retention_waits_for_restored_policy(
         await hass.async_block_till_done()
 
 
-async def test_websocket_setup_export_is_coherent_across_restore(
-    hass, hass_ws_client, monkeypatch, stress_trace
+async def test_websocket_custom_export_is_coherent_across_restore(
+    hass, hass_ws_client, monkeypatch, stress_trace, tmp_path
 ):
     entry, subentry, _archive, _target, _callback, release, restore = await _held_restore(
         hass, monkeypatch
@@ -258,9 +258,16 @@ async def test_websocket_setup_export_is_coherent_across_restore(
         return await collect(*args, **kwargs)
 
     monkeypatch.setattr(transfer, "async_collect_transfer_snapshot", observed_collect)
-    export = asyncio.create_task(
-        _transfer_call(client, entry=entry, action="setup_export")
-    )
+    async def export_document():
+        archive, _ = await _download_archive(
+            client, entry=entry, mode="custom",
+            sections=[transfer.SECTION_CONFIGURATION, transfer.SECTION_REQUEST_RULES],
+        )
+        path = tmp_path / "custom.zip"
+        path.write_bytes(archive)
+        return backup_transfer._load_archive_document(str(path))
+
+    export = asyncio.create_task(export_document())
     disposable = None
     try:
         # Prove the actual WebSocket command reached the held ownership boundary.
@@ -280,20 +287,18 @@ async def test_websocket_setup_export_is_coherent_across_restore(
             assert not export.done() and gate._waiting_writers == 1
         record(
             stress_trace,
-            "setup_export_during_restore",
+            "custom_export_during_restore",
             durable_rule="rule-beta",
             visible_tool="alpha",
         )
         release.set()
         await asyncio.wait_for(restore, 15)
-        response = await asyncio.wait_for(export, 15)
-        assert response["success"], response
-        document = json.loads(response["result"]["json"])
-        config = document["sections"]["configuration"]
-        assert config[CONF_ARCHIVE_RETENTION_DAYS] == 365
-        assert config[CONF_FUNCTION_TOOLS] == []
-        assert document["sections"]["request_rules"]["rules"] == []
-        disposable = _make_entry("Imported setup", include_ai_task=False)
+        document = await asyncio.wait_for(export, 15)
+        imported = transfer.inspect_transfer(document, "destination")
+        assert imported.config[CONF_ARCHIVE_RETENTION_DAYS] == 365
+        assert imported.config[CONF_FUNCTION_TOOLS][0]["spec"]["name"] == "beta"
+        assert [rule["id"] for rule in imported.request_rules["rules"]] == ["rule-beta"]
+        disposable = _make_entry("Imported custom backup", include_ai_task=False)
         await _setup_entry(hass, disposable)
         destination = _conversation_subentry(disposable)
         result = await transfer.async_restore_transfer(
@@ -304,22 +309,20 @@ async def test_websocket_setup_export_is_coherent_across_restore(
         committed = hass.config_entries.async_get_entry(disposable.entry_id)
         assert committed.subentries[destination.subentry_id].data[CONF_ARCHIVE_RETENTION_DAYS] == 365
         imported_rules = await async_get_request_rules(hass, disposable.entry_id, destination.subentry_id)
-        assert (await imported_rules.async_backup_data())["rules"] == []
-        normal = await _transfer_call(client, entry=entry, action="setup_export")
-        assert (
-            normal["success"]
-            and normal["result"]["document"]["sections"] == document["sections"]
-        )
+        stored = await imported_rules.async_backup_data()
+        assert [rule["id"] for rule in stored["rules"]] == ["rule-beta"]
+        normal = await export_document()
+        assert normal["sections"] == document["sections"]
         record(
             stress_trace,
-            "setup_export_restore_recovered",
+            "custom_export_restore_recovered",
             archive_retention_days=365,
-            omitted_custom_units=True,
+            restored_custom_units=True,
         )
         record(
             stress_trace,
             "summary",
-            coherent_setup_restore_exports=1,
+            coherent_custom_restore_exports=1,
             layer="genuine-ha",
         )
     finally:

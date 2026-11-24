@@ -76,7 +76,6 @@
     "request-rules-ui-core.js": 41,
     "request-rules-ui-impl.js": 34,
     "retention-settings-ui.js": 1,
-    "sharing-review.js": 3,
     "unsaved-state.js": 2,
     "usage-chart.js": 12,
     "voice-identity-core.js": 4,
@@ -145,16 +144,6 @@
         "[data-usage-retry]"
       ],
       "browser_spec": "tests_browser/control-reachability.spec.mjs"
-    },
-    {
-      "source": "sharing-review.js",
-      "reason": "Restricted sharing review before download",
-      "selectors": [
-        "[data-artifact]",
-        "[data-download]",
-        "[data-cancel]"
-      ],
-      "browser_spec": "tests_browser/sharing-security.spec.mjs"
     },
     {
       "source": "backup-transfer-ui.js",

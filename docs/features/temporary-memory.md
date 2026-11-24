@@ -35,7 +35,7 @@ Manual short-term creation records `source: manual`; model-created records retai
 
 Content and categories retain type and size validation, including during editing, startup and restore. Personal/household access controls, owner migration, expiry and repair barriers remain.
 
-Stored values may enter later model prompts, full private backups, selected custom transfers and explicitly enabled administrator request-debug captures. Backup encoding and ZIP transport are not encryption. Shareable Setup excludes Memory and continues protecting configured credentials; ordinary diagnostics and Usage do not include Memory content. Persistent Memory hybrid retrieval can additionally send its text/metadata to the configured embedding provider. EOAI Memory is not a dedicated secrets vault.
+Stored values may enter later model prompts, full private backups, selected custom transfers and explicitly enabled administrator request-debug captures. Backup encoding and ZIP transport are not encryption. Ordinary diagnostics and Usage do not include Memory content. Persistent Memory hybrid retrieval can additionally send its text/metadata to the configured embedding provider. EOAI Memory is not a dedicated secrets vault.
 
 The upgraded Temporary Memory store protects saved records during a downgrade. Older releases such as 6.8.3 leave the upgraded store on disk and cannot open it. Reinstalling the newer integration reopens the preserved records with their original expiry.
 

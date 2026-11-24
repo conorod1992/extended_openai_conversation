@@ -1326,12 +1326,11 @@ async def test_configuration_transfer_and_validation_routes(hass, monkeypatch) -
     )
     assert duplicate["title"] == "A deliberate copy"
 
-    exported = await management_ui.async_management_command(
-        hass, "admin", True, _residual_message("configuration", "export")
-    )
-    assert exported["document"]["schema"] == "extended_openai_conversation.agent"
-    assert '"title": "Shared conversation agent"' in exported["json"]
-    assert exported["document"]["security"]["mode"] == "restricted"
+    with pytest.raises(HomeAssistantError, match="Unknown configuration management action: export"):
+        await management_ui.async_management_command(
+            hass, "admin", True, _residual_message("configuration", "export")
+        )
+
     document = {
         "schema": "extended_openai_conversation.agent",
         "version": AGENT_CONFIG_EXPORT_VERSION,

@@ -24,9 +24,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
     SERVICE_CALL_FUNCTION,
 )
-from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
-    new_reference_tool,
-)
 from custom_components.extended_openai_conversation_responses.request_rules import (
     DEFAULT_MATCHING,
     DEFAULT_WORDING_GROUPS,
@@ -136,58 +133,6 @@ def _entry_and_subentry(config: dict | None = None):
 
 
 
-@pytest.mark.parametrize("entrypoint", ["document", "json"])
-async def test_shareable_setup_reads_only_setup_state_and_omits_ha_llm_reference(
-    hass,
-    monkeypatch,
-    entrypoint,
-) -> None:
-    reference = {
-        "type": "ha_llm",
-        "source_type": "platform",
-        "source_id": "homeassistant",
-        "api_id": "assist",
-        "tool_name": "GetLiveContext",
-    }
-    config = agent_config_defaults()
-    config[CONF_FUNCTION_TOOLS] = [new_reference_tool(reference, set())]
-    entry, subentry = _entry_and_subentry(config)
-    rules = SimpleNamespace(async_backup_data=AsyncMock(return_value=_rules_backup()))
-
-    async def request_rules(_hass, _entry_id, _subentry_id):
-        return rules
-
-    async def forbidden(*_args, **_kwargs):
-        raise AssertionError("shareable setup accessed private durable state")
-
-    monkeypatch.setattr(transfer, "async_get_request_rules", request_rules)
-    for name in (
-        "async_get_memory",
-        "async_get_temporary_memory",
-        "async_get_knowledge",
-        "async_get_archive",
-        "async_get_usage",
-        "async_get_guest_mode",
-    ):
-        monkeypatch.setattr(transfer, name, forbidden)
-
-    result = await transfer.async_create_setup_export(hass, entry, subentry)
-    document = result["document"]
-    assert set(document["sections"]) == transfer.SETUP_SECTIONS
-
-    source = {
-        "document": document,
-        "json": result["json"],
-        "yaml": yaml.safe_dump(document),
-    }[entrypoint]
-    prepared = transfer.inspect_transfer(source, "target-agent")
-    tools = yaml.safe_load(prepared.config[CONF_FUNCTION_TOOLS])
-    assert tools == []
-    assert prepared.request_rules == RequestRules.validate_backup_data(_rules_backup())
-    with pytest.raises(backup.BackupError, match="not valid JSON"):
-        transfer.inspect_transfer(yaml.safe_dump(document), "target-agent")
-
-
 async def test_custom_export_reads_only_selected_sections(hass, monkeypatch) -> None:
     entry, subentry = _entry_and_subentry()
     memory = SimpleNamespace(async_backup_data=AsyncMock(return_value={"memories": []}))
@@ -213,7 +158,6 @@ async def test_custom_export_reads_only_selected_sections(hass, monkeypatch) -> 
         hass,
         entry,
         subentry,
-        mode="custom",
         sections=[transfer.SECTION_PERSISTENT_MEMORY],
     )
     assert set(document["sections"]) == {transfer.SECTION_PERSISTENT_MEMORY}
@@ -607,7 +551,6 @@ async def test_custom_snapshot_collects_every_selected_manager(
         hass,
         entry,
         subentry,
-        mode="custom",
         sections=transfer.ALL_SECTIONS,
     )
 
@@ -615,20 +558,6 @@ async def test_custom_snapshot_collects_every_selected_manager(
     assert result["sections"][transfer.SECTION_CONFIGURATION]
     for manager in managers.values():
         manager.async_backup_data.assert_awaited_once()
-
-
-async def test_snapshot_rejects_unknown_mode() -> None:
-    entry, subentry = _entry_and_subentry()
-    with pytest.raises(backup.BackupError, match="mode must be setup or custom"):
-        await transfer.async_collect_transfer_snapshot(
-            SimpleNamespace(data={}), entry, subentry, mode="full"
-        )
-
-
-def test_setup_export_enforces_serialized_size_limit(monkeypatch) -> None:
-    monkeypatch.setattr(backup, "MAX_LEGACY_EXPORT_BYTES", 1)
-    with pytest.raises(backup.BackupError, match="16 MB safety limit"):
-        transfer.finalize_setup_export(_portable_document(mode="setup"))
 
 
 def test_secret_restore_matches_reordered_items_by_identity() -> None:
@@ -958,41 +887,3 @@ def test_future_transfer_version_is_rejected_cleanly() -> None:
 
     with pytest.raises(backup.BackupError, match="newer unsupported format"):
         transfer.inspect_transfer(document, "target-agent")
-
-
-async def test_setup_export_reads_manifest_outside_event_loop(
-    hass, monkeypatch
-) -> None:
-    import asyncio
-    from pathlib import Path
-    import threading
-
-    hass.async_add_executor_job.side_effect = asyncio.to_thread
-    event_loop_thread = threading.get_ident()
-    original_read = Path.read_text
-    reads = []
-
-    def read_text(path, *args, **kwargs):
-        if path.name == "manifest.json":
-            assert threading.get_ident() != event_loop_thread
-            reads.append(path)
-        return original_read(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "read_text", read_text)
-    monkeypatch.setattr(
-        transfer,
-        "async_get_request_rules",
-        AsyncMock(
-            return_value=SimpleNamespace(
-                async_backup_data=AsyncMock(return_value=_rules_backup())
-            )
-        ),
-    )
-    entry, subentry = _entry_and_subentry()
-    result = await transfer.async_create_setup_export(hass, entry, subentry)
-    assert len(reads) == 1
-    assert (
-        result["document"]["integration_version"]
-        == json.loads(original_read(reads[0]))["version"]
-    )
-    assert set(result["document"]["sections"]) == transfer.SETUP_SECTIONS

@@ -190,14 +190,13 @@ or promote members out of disabled/on-demand groups. Unit boundary cases and the
 native backup-transfer export collector cover these contracts without mutating
 the source configuration.
 
-Restricted public exports omit custom Function Tools, Groups, Skill selections and
-Request Rules. Historical reviewed files still use the existing import validation,
-and private backups preserve custom definitions.
+Historical restricted and reviewed public files still use import validation.
+Private backups preserve custom definitions.
 Nested Composite result aliases belong to the parent step; hydration, persistence
 and execution retain those aliases without passing them to strict child validators.
 Provider connection recovery is shared by the credential endpoint and registered
 `change_config` action, including authentication-failed, unchanged and disabled
-entries. Provider-aware configuration reads, writes, copies, sharing and browser
+entries. Provider-aware configuration reads, writes, copies, legacy imports and browser
 catalogue lookups use the actual parent provider. Cached scalar snapshots also
 track provider context while reusing unchanged Function validation. Portable
 configuration validation preserves explicit provider-specific efforts until the

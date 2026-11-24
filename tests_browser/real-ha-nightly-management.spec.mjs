@@ -1,3 +1,4 @@
+import {readFile} from "node:fs/promises";
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 import {expectContractCalls} from "./real-ha-contract.mjs";
@@ -10,19 +11,20 @@ test("shipped frontend duplicates, updates, and imports agents through genuine H
   const pageErrors = trackPageErrors(page);
   await page.goto(realFixtureUrl("assistant/basics"));
   await expect(page.locator('extended-openai-management-panel [data-config="__title"]')).toBeVisible();
-  const result = await page.evaluate(async () => {
+  const file = new URL("../tests/fixtures/transfer/shareable-configuration-v2.json", import.meta.url);
+  const legacyDocument = JSON.parse(await readFile(file, "utf8"));
+  const result = await page.evaluate(async (legacyDocument) => {
     const panel = window.browserHarness.panel;
     const original = await panel._call("configuration", "get");
-    const exported = await panel._call("configuration", "export");
     const updated = await panel._call("configuration", "update", {
       config: {current_datetime_enabled: false}, revision: original.revision,
     });
     const duplicate = await panel._call("configuration", "duplicate", {title: "Nightly duplicate"});
     const imported = await panel._call("configuration", "import", {
-      document: {...exported.document, title: "Nightly imported"}, mode: "new", confirm: false,
+      document: {...legacyDocument, title: "Nightly imported"}, mode: "new", confirm: false,
     });
     return {updated, duplicate, imported};
-  });
+  }, legacyDocument);
   expect(result.updated.config.current_datetime_enabled).toBe(false);
   expect(result.duplicate.status).toBe("created");
   expect(result.imported.status).toBe("created");

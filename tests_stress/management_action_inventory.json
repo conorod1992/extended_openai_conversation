@@ -36,7 +36,6 @@
     "configuration": {
       "actions": [
         "duplicate",
-        "export",
         "get",
         "import",
         "import_preview",
@@ -55,7 +54,6 @@
       ],
       "semantic_classes": {
         "duplicate": "durable_mutation",
-        "export": "read_only",
         "get": "read_only",
         "import": "durable_mutation",
         "import_preview": "validation_or_preview",
@@ -70,7 +68,6 @@
       },
       "authorization_classes": {
         "duplicate": "admin_only",
-        "export": "admin_only",
         "get": "admin_only",
         "import": "admin_only",
         "import_preview": "admin_only",
@@ -85,7 +82,6 @@
       },
       "behavioral_evidence": {
         "duplicate": "tests/test_management_agent_config.py::test_duplicate_copies_configuration_not_runtime_history",
-        "export": "tests/test_management_ui.py::test_configuration_transfer_and_validation_routes",
         "get": "tests_real_ha/test_management_backend_acceptance.py::test_stale_configuration_revision_cannot_overwrite_newer_save",
         "import": "tests/test_management_loading_performance.py::test_import_replaces_cached_configuration_projection",
         "import_preview": "tests/test_management_ui.py::test_configuration_transfer_and_validation_routes",

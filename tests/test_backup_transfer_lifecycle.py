@@ -1285,7 +1285,6 @@ async def test_take_completed_import_rechecks_completion_under_lock(
 @pytest.mark.parametrize(
     ("action", "target"),
     [
-        ("setup_export", "setup"),
         ("export_start", "export_start"),
         ("export_chunk", "export_chunk"),
         ("import_start", "import_start"),
@@ -1304,20 +1303,16 @@ async def test_command_dispatches_each_transfer_action(
     )
     result = {"target": target}
 
-    if action == "setup_export":
-        mocked = AsyncMock(return_value=result)
-        monkeypatch.setattr(transfer, "async_create_setup_export", mocked)
-    else:
-        name = {
-            "export_start": "_start_export",
-            "export_chunk": "_export_chunk",
-            "import_start": "_start_import",
-            "import_chunk": "_import_chunk",
-            "import_inspect": "_inspect_import",
-            "import_restore": "_restore_import",
-        }[action]
-        mocked = AsyncMock(return_value=result)
-        monkeypatch.setattr(backup_transfer, name, mocked)
+    name = {
+        "export_start": "_start_export",
+        "export_chunk": "_export_chunk",
+        "import_start": "_start_import",
+        "import_chunk": "_import_chunk",
+        "import_inspect": "_inspect_import",
+        "import_restore": "_restore_import",
+    }[action]
+    mocked = AsyncMock(return_value=result)
+    monkeypatch.setattr(backup_transfer, name, mocked)
 
     actual = await backup_transfer.async_backup_transfer_command(
         hass,

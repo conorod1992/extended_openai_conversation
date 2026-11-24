@@ -1,4 +1,4 @@
-"""Unified portable export, custom backup, and import/restore planning."""
+"""Private custom backups and import/restore planning, including older exports."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from datetime import datetime
 import json
 import math
 from pathlib import Path
-import re
 from typing import Any
 
 import yaml
@@ -28,18 +27,14 @@ from .agent_config import (
     shortened_usage_retention,
     validate_agent_title,
 )
-from .bounded_json import (
-    JSONBudgetExceeded,
-    bounded_json_dumps,
-    check_redaction_budget,
-    check_utf8_budget,
-)
+from .bounded_json import JSONBudgetExceeded, check_utf8_budget
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
     CONF_ARCHIVE_RETENTION_DAYS,
     CONF_VOICE_DEFAULT_USER_ID,
     CONF_VOICE_DEVICE_MAPPINGS,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
+    LEGACY_SHARING_EXPORT_VERSION,
 )
 from .conversation_archive import (
     ArchiveSession,
@@ -70,7 +65,6 @@ from .secret_redaction import (
     redact_secrets,
     restore_redacted_secrets,
 )
-from .sharing import SHARING_VERSION, project_sharing_sections
 from .temporary_memory import (
     TemporaryMemoryRecord,
     async_get_temporary_memory,
@@ -509,32 +503,23 @@ def _copy_and_map_transfer_data(
     )
 
 
-def _safe_title(title: str) -> str:
-    return (
-        re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-") or "conversation-agent"
+def _new_transfer_document(entry: Any, subentry: Any) -> DecodedPrivateDocument:
+    return DecodedPrivateDocument(
+        {
+            "format": TRANSFER_FORMAT,
+            "version": PRIVATE_TRANSFER_VERSION,
+            "mode": "custom",
+            "created_at": dt_util.utcnow().isoformat(),
+            "integration_version": _integration_version(),
+            "agent": {
+                "title": subentry.title,
+                "source_entry_id": entry.entry_id,
+                "source_subentry_id": subentry.subentry_id,
+            },
+            "sections": {},
+            "provider_connection": deepcopy(dict(getattr(entry, "data", {}))),
+        }
     )
-
-
-def _new_transfer_document(entry: Any, subentry: Any, mode: str) -> dict[str, Any]:
-    document = {
-        "format": TRANSFER_FORMAT,
-        "version": SHARING_VERSION if mode == "setup" else PRIVATE_TRANSFER_VERSION,
-        "mode": mode,
-        "created_at": dt_util.utcnow().isoformat(),
-        "integration_version": _integration_version(),
-        "agent": {
-            "title": subentry.title,
-            "source_entry_id": entry.entry_id,
-            "source_subentry_id": subentry.subentry_id,
-        },
-        "sections": {},
-        **(
-            {"provider_connection": deepcopy(dict(getattr(entry, "data", {})))}
-            if mode == "custom"
-            else {}
-        ),
-    }
-    return DecodedPrivateDocument(document) if mode == "custom" else document
 
 
 async def async_collect_transfer_snapshot(
@@ -542,39 +527,25 @@ async def async_collect_transfer_snapshot(
     entry: Any,
     subentry: Any,
     *,
-    mode: str,
     sections: Iterable[str] | None = None,
-) -> dict[str, Any]:
-    """Collect only the sections requested for a portable/custom transfer."""
+) -> DecodedPrivateDocument:
+    """Collect only the sections requested for a private custom backup."""
     from .agent_maintenance import get_agent_maintenance_gate
 
     get_agent_maintenance_gate(
         hass, entry.entry_id, subentry.subentry_id
     ).require_available()
 
-    if mode == "setup":
-        selected = SETUP_SECTIONS
-    elif mode == "custom":
-        selected = validate_section_selection(sections)
-    else:
-        raise backup.BackupError("Transfer mode must be setup or custom")
-
+    selected = validate_section_selection(sections)
     document = await hass.async_add_executor_job(
-        _new_transfer_document, entry, subentry, mode
+        _new_transfer_document, entry, subentry
     )
     if SECTION_CONFIGURATION not in selected:
         document.pop("provider_connection", None)
-    from .helpers import entry_api_provider
 
     payload = document["sections"]
     if SECTION_CONFIGURATION in selected:
-        payload[SECTION_CONFIGURATION] = (
-            deepcopy(dict(subentry.data))
-            if mode == "custom"
-            else backup.export_configuration_snapshot(
-                subentry.data, provider=entry_api_provider(entry)
-            )
-        )
+        payload[SECTION_CONFIGURATION] = deepcopy(dict(subentry.data))
     if SECTION_REQUEST_RULES in selected:
         request_rules_manager = await async_get_request_rules(
             hass, entry.entry_id, subentry.subentry_id
@@ -614,7 +585,7 @@ async def async_collect_transfer_snapshot(
             hass, entry.entry_id, subentry.subentry_id
         )
         payload[SECTION_GUEST_MODE] = await guest_mode_manager.async_backup_data()
-    return DecodedPrivateDocument(document) if mode == "custom" else document
+    return document
 
 
 def _is_redacted_placeholder(value: Any) -> bool:
@@ -651,56 +622,6 @@ def redact_transfer_document(document: dict[str, Any]) -> dict[str, Any]:
                 redact_secrets(sections[SECTION_REQUEST_RULES])
             )
     return result
-
-
-def finalize_setup_export(document: dict[str, Any]) -> dict[str, Any]:
-    """Serialize a restricted public setup document."""
-    try:
-        check_redaction_budget(document, backup.MAX_LEGACY_EXPORT_BYTES)
-        sections, security = project_sharing_sections(document["sections"])
-        redacted = {
-            "format": TRANSFER_FORMAT,
-            "version": SHARING_VERSION,
-            "mode": "setup",
-            "created_at": document["created_at"],
-            "integration_version": document["integration_version"],
-            "agent": {
-                "title": "Shared conversation agent",
-                "source_entry_id": "shared-entry",
-                "source_subentry_id": "shared-agent",
-            },
-            "sections": sections,
-            "security": security,
-        }
-        serialized = bounded_json_dumps(redacted, backup.MAX_LEGACY_EXPORT_BYTES)
-    except JSONBudgetExceeded as err:
-        raise backup.BackupError(
-            "This setup export exceeds the 16 MB safety limit; use a custom backup instead"
-        ) from err
-    title = validate_agent_title(redacted["agent"]["title"])
-    date = str(redacted["created_at"])[:10]
-    return {
-        "document": redacted,
-        "json": serialized,
-        "filename": f"{_safe_title(title)}-shareable-setup-{date}.json",
-        "security": redacted.get("security"),
-        "mode": "setup",
-        "sections": list(SECTION_ORDER[:2]),
-    }
-
-
-async def async_create_setup_export(
-    hass: HomeAssistant, entry: Any, subentry: Any
-) -> dict[str, Any]:
-    """Build a lightweight, redacted setup-sharing document."""
-    from .agent_maintenance import get_agent_maintenance_gate
-
-    gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
-    async with gate.exclusive():
-        document = await async_collect_transfer_snapshot(
-            hass, entry, subentry, mode="setup"
-        )
-    return await asyncio.to_thread(finalize_setup_export, document)
 
 
 def _secret_path(path: tuple[Any, ...]) -> str:
@@ -974,18 +895,22 @@ def _validate_transfer_document(
         and value.get("mode") == "custom"
     )
     if (value.get("version") == PRIVATE_TRANSFER_VERSION and not private) or (
-        value.get("version") == SHARING_VERSION and value.get("mode") != "setup"
+        value.get("version") == LEGACY_SHARING_EXPORT_VERSION
+        and value.get("mode") != "setup"
     ):
         raise backup.BackupError("This transfer uses an unsupported format version")
     if private and "provider_connection" in value:
         expected.add("provider_connection")
-    if value.get("version") == SHARING_VERSION and value.get("mode") == "setup":
+    if (
+        value.get("version") == LEGACY_SHARING_EXPORT_VERSION
+        and value.get("mode") == "setup"
+    ):
         expected.add("security")
     if set(value) != expected:
         raise backup.BackupError("The transfer file is incomplete or corrupted")
     if value.get("version") not in {
         TRANSFER_VERSION,
-        SHARING_VERSION,
+        LEGACY_SHARING_EXPORT_VERSION,
         PRIVATE_TRANSFER_VERSION,
     }:
         version = value.get("version")
@@ -1093,7 +1018,10 @@ def _validate_transfer_document(
 def _inspect_legacy_setup(
     value: Mapping[str, Any], *, inspect_only: bool = False
 ) -> PreparedTransfer:
-    if value.get("version") not in {AGENT_CONFIG_EXPORT_VERSION, SHARING_VERSION}:
+    if value.get("version") not in {
+        AGENT_CONFIG_EXPORT_VERSION,
+        LEGACY_SHARING_EXPORT_VERSION,
+    }:
         raise backup.BackupError("This setup export uses an unsupported version")
     unknown = set(value) - {"schema", "version", "title", "config", "security"}
     if unknown:

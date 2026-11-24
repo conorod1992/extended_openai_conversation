@@ -3,7 +3,6 @@ import {captureAuthentication} from "./authentication-presentation.js";
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
 import {bindExportOptions, TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
 import {backupSummaryLines, unassignedTemporaryMemoryNotice} from "./backup-summary.js";
-import {restrictedSharingSecurity, reviewSharingExport} from "./sharing-review.js";
 import {callMutation, captureConfigurationSubmission, captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft} from "./configuration-acknowledgement.js";
 export {backupSummaryLines};
 export {TRANSFER_SECTIONS, renderBackupTransferPanel} from "./backup-transfer-shell.js";
@@ -101,22 +100,6 @@ async function defaultSaveBlob(blob, filename) {
   } finally {
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }
-}
-
-export async function downloadSetupExport(panel, saveBlob = defaultSaveBlob, {review = false} = {}) {
-  const current = captureAuthentication(panel);
-  const result = await callBackupTransfer(panel, "setup_export");
-  if (!current()) return {...result, cancelled:true};
-  if (!result?.json || !result?.filename) throw new Error("The server returned an invalid setup export");
-  if (review) {
-    if (!await reviewSharingExport(panel, result)) return {...result, cancelled: true};
-  } else {
-    restrictedSharingSecurity(result);
-  }
-  if (!current()) return {...result, cancelled:true};
-  const blob = new Blob([result.json], {type: "application/json"});
-  await saveBlob(blob, result.filename, result);
-  return result;
 }
 
 export async function downloadArchiveBackup(panel, {mode = "full", sections = null} = {}, saveBlob = defaultSaveBlob) {
@@ -297,7 +280,7 @@ function selectedValues(root, selector) {
 
 function formatSourceKind(value) {
   return {
-    portable_transfer: "Shareable Setup",
+    portable_transfer: "Legacy Shareable Setup",
     custom_backup: "Custom Backup",
     full_backup: "Full Backup",
     legacy_setup: "Legacy setup export",
@@ -542,7 +525,7 @@ export function bindBackupTransfer(panel) {
 
   root.querySelector(`#${CREATE_ID}`)?.addEventListener("click", async () => {
     const button = root.querySelector(`#${CREATE_ID}`);
-    const mode = exportMode?.value || "setup";
+    const mode = exportMode?.value || "full";
     const sections = selectedValues(root, ".transfer-custom-section");
     if (mode === "custom" && !sections.length) {
       panel._toast("Select at least one section for the custom backup", true);
@@ -550,13 +533,9 @@ export function bindBackupTransfer(panel) {
     }
     panel._setSaving(button, true);
     try {
-      if (mode === "setup") {
-        const exported = await downloadSetupExport(panel, defaultSaveBlob, {review: true});
-        if (exported.cancelled) return;
-      }
-      else if (mode === "custom") await downloadCustomBackup(panel, sections);
+      if (mode === "custom") await downloadCustomBackup(panel, sections);
       else await downloadFullBackup(panel);
-      panel._toast(mode === "setup" ? "Shareable setup exported" : mode === "custom" ? "Custom backup created" : "Full backup created");
+      panel._toast(mode === "custom" ? "Custom backup created" : "Full backup created");
     } catch (err) {
       panel._toast(`Unable to create export: ${err.message || String(err)}`, true);
     } finally {

@@ -12,7 +12,6 @@ from custom_components.extended_openai_conversation_responses.secret_redaction i
 )
 from tests.test_backup import _document
 from tests.test_secret_restore_context import _rest_tool
-from tests.test_transfer import _portable_document
 
 SECRET = "EOAI_AUDIT_HTTP_SECRET"
 
@@ -39,20 +38,13 @@ def configuration(kind, persisted=False):
 
 @pytest.mark.parametrize("kind", ["cookie", "userinfo", "query"])
 @pytest.mark.parametrize("persisted", [False, True])
-@pytest.mark.parametrize("exporter", ["setup", "legacy"])
-def test_http_credentials_absent_from_complete_export(kind, persisted, exporter):
+def test_http_credentials_absent_from_legacy_export(kind, persisted):
     config = configuration(kind, persisted)
     original = deepcopy(config)
-    if exporter == "setup":
-        doc = _portable_document(mode="setup")
-        doc["sections"]["configuration"] = config
-        result = transfer.finalize_setup_export(doc)
-        public = result["document"]["sections"]["configuration"]
-    else:
-        doc = _document()
-        doc["agent"]["config"] = config
-        result = backup.finalize_backup_snapshot(doc)
-        public = result["document"]["agent"]["config"]
+    doc = _document()
+    doc["agent"]["config"] = config
+    result = backup.finalize_backup_snapshot(doc)
+    public = result["document"]["agent"]["config"]
     assert SECRET not in result["json"]
     assert SECRET not in json.dumps(public)
     assert config == original

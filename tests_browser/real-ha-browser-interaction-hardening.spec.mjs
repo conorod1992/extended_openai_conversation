@@ -1,7 +1,6 @@
 import {expect, test} from "@playwright/test";
 import {readFile} from "node:fs/promises";
 import {openColdHaRoute, replaceNativeYaml} from "./real-ha-shell-helpers.mjs";
-import {acceptSharingReview} from "./browser-helpers.mjs";
 
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;

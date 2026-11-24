@@ -1,10 +1,8 @@
 # Sharing and private backup security
 
-## Shareable Setup, configuration exports
+## Legacy public export files
 
-**Shareable Setup** and **Export configuration** include supported public settings such as recognized model choices, API mode and feature switches. They omit provider credentials, private data, custom prompts, identifiers, Function Tools, scripts, templates, schemas and Request Rule content. The export has a generic title and lists omissions without showing the original values. Check the file before sharing. Recipients may need to choose a model and add custom definitions separately.
-
-New shareable documents use version 2. Previously downloaded reviewed custom exports and version 1 setup files still go through their existing import validation. Older reviewed exports can contain authored code and secrets. Inspect them before restoring or sharing them again.
+Existing Shareable Setup and configuration export files retain their import validation, including version 1 and version 2 files. Older reviewed exports can contain authored code and secrets. Inspect them before restoring or sharing them again. Historical redaction placeholders may require credentials from the destination configuration or manual credential re-entry as directed by the import preview.
 
 ## Complete private backups
 
@@ -20,7 +18,7 @@ Function edits and Management editor transport use a shared safe YAML writer tha
 
 Request Rule enable/disable sends only that field; the server retains the exact stored action and condition values and checks its revision after validation. Whole-Rule updates that would replace an existing integer outside JavaScript's safe integer range are rejected with guidance instead of silently persisting a rounded value. Native exact-value updates can retain those numbers. To change or remove such numeric values, use a lossless private import; do not convert credentials to strings unless the action supports that type. Private backups and immediate restoration retain the original numeric types and values unchanged.
 
-**These files are private and unencrypted. Keep them private and store them securely.** ZIP compression, base64 and checksums do not provide confidentiality or prove who authored a file. Shareable export is the route for public sharing; a private backup is the route for complete credential-bearing restoration.
+**These files are private and unencrypted. Keep them private and store them securely.** ZIP compression, base64 and checksums do not provide confidentiality or prove who authored a file.
 
 There is no built-in password protection for these exports. If you need an encrypted copy, protect the downloaded file with your own trusted storage or encryption tools.
 
@@ -28,7 +26,7 @@ There is no built-in password protection for these exports. If you need an encry
 
 Template and arbitrary backend exception prose is excluded from public tool errors; safe failure categories and guidance remain. Backend-owned returned failure diagnostics are also contained at provider serialization, including nested batch results; ordinary successful business data and local dataflow retain their existing semantics. Provider errors expose status/category/remediation rather than arbitrary remote messages or IDs. REST execution uses a bounded transport adapter that preserves the actual request while avoiding the inherited HA logger's credential-bearing URL and response-body messages.
 
-Normal diagnostics remain allowlisted. Administrator request debugging remains opt-in, transient and potentially private: it may contain prompts, arguments, results and provider material. Do not treat debug captures or copied logs as shareable setups. Administrator access to their own configuration remains available.
+Normal diagnostics remain allowlisted. Administrator request debugging remains opt-in, transient and potentially private: it may contain prompts, arguments, results and provider material. Review debug captures and copied logs for private content before sharing. Administrator access to their own configuration remains available.
 
 HA-owned LLM tool failures use the same public error boundary: raised backend errors become source-free guidance, and flagged failure data stays local rather than being forwarded to the provider. Successful tool data keeps its existing meaning. Within EOAI-owned Function Tool, HA tool and Request Rule execution, HA template and Script log records retain their severity, diagnostic category, call site and recognized numeric action position, but omit source, raw exception prose and traceback attachments. This includes undefined-variable warnings from otherwise successful renders. Unrelated Home Assistant tasks keep their normal logging behavior; external integrations and deliberately emitted application logs still require review before sharing.
 
@@ -57,4 +55,4 @@ This intentionally replaces the previous event's `user_input` and `messages` fie
 
 ## Pending private output
 
-Export and sharing operations belong to the Home Assistant account and authentication lifetime that started them. An account change retires pending private output and closes sharing-review dialogs; returning to the original account does not revive those exports. Start a new export after returning. Same-user navigation can still complete an explicitly requested export for its original assistant. Retired transfers are cancelled where the current connection permits it; server expiry cleans up otherwise. Debug and effective-request clipboard fallback writes use the same ownership boundary. Files or clipboard writes already published before an account change cannot be revoked by the panel.
+Private export operations belong to the Home Assistant account and authentication lifetime that started them. An account change retires pending private output. Returning to the original account does not revive those exports. Start a new export after returning. Same-user navigation can still complete an explicitly requested export for its original assistant. Retired transfers are cancelled where the current connection permits it; server expiry cleans up otherwise. Debug and effective-request clipboard fallback writes use the same ownership boundary. Files or clipboard writes already published before an account change cannot be revoked by the panel.

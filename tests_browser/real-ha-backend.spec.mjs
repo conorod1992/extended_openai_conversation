@@ -1,7 +1,7 @@
 // Register dependent cross-feature journeys in the established real-HA browser CI lane.
 import {registerDependentJourneys} from "./real-ha-dependent-journeys.mjs";
 import {expect, test} from "@playwright/test";
-import {acceptConfirmation, acceptSharingReview, browserToolYaml, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, browserToolYaml, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 import {expectContractCalls} from "./real-ha-contract.mjs";
 
 const backendUrl = process.env.REAL_HA_BACKEND_URL;

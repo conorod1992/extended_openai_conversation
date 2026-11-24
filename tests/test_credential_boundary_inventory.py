@@ -219,25 +219,3 @@ def test_inventory_detects_aliased_new_parsers():
         "functions/native.py:validate:_AutomationLoader": 1,
         "functions/native.py:validate:homeassistant.util.yaml.parse_yaml": 1,
     }
-
-
-@pytest.mark.parametrize(
-    "module,owner",
-    [
-        ("management_ui.py", "_export_agent"),
-        ("transfer.py", "finalize_setup_export"),
-    ],
-)
-def test_current_sharing_writers_use_section_projection(module, owner):
-    tree = ast.parse((SOURCE / module).read_text(encoding="utf8"))
-    writer = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == owner
-    )
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "project_sharing_sections"
-        for node in ast.walk(writer)
-    )

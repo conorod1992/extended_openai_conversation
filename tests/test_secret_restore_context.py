@@ -100,7 +100,7 @@ async def test_real_request_rule_actions_reorder_by_unique_context(monkeypatch, 
     document["request_rules"] = _rules_backup([rule])
     current = backup.inspect_backup(document, "agent-1")
     entry, subentry = _entry_and_subentry()
-    imported_document = transfer._new_transfer_document(entry, subentry, "custom")
+    imported_document = transfer._new_transfer_document(entry, subentry)
     imported_document["version"] = 1
     imported_document.pop("provider_connection", None)
     raw = redact_secrets(current.request_rules)
@@ -169,8 +169,9 @@ async def test_new_export_literal_marker_text_round_trips_without_local_secret(
     if kind == "full":
         exported = backup.finalize_backup_snapshot(document)["document"]
     else:
-        raw = transfer._new_transfer_document(entry, subentry, "setup")
-        raw["version"] = 1  # Historical literal-marker compatibility
+        from tests.test_transfer import _portable_document
+
+        raw = _portable_document(mode="setup")
         raw["sections"] = {
             transfer.SECTION_CONFIGURATION: document["agent"]["config"],
             transfer.SECTION_REQUEST_RULES: _rules_backup(),

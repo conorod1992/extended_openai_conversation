@@ -22,6 +22,10 @@ Live conversation context, loaded Function Groups and conversation-scoped Reques
 
 If recovery reports damaged or ambiguous storage, follow the reported repair instructions and preserve the affected files. Do not assume a blank collection means its previous data was intentionally deleted. See [Troubleshooting](troubleshooting.md).
 
+### Existing public export files
+
+7.0.0 retires **Shareable Setup** and **Export configuration**. Use **Custom (private)** in **Usage & Maintenance → Backup & Restore** to move selected sections, or **Full Backup (private)** for complete agent recovery. Private files can contain provider credentials and retained data. Existing public export JSON files remain importable through **Import / Restore**. Configuration export files also work with **Assistant actions → Import configuration**.
+
 ### Skill installation
 
 The `extended_openai_conversation_responses.download_skill` action has been removed. If an automation, script, or Request Rule calls it, update that action before running the workflow again. Install Skill files by [copying the complete directory and reloading Skills](skills/discover-skills.md). Previously installed files and saved per-agent Skill selections carry over on upgrade.

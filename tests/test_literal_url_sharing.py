@@ -9,9 +9,6 @@ import pytest
 import yaml
 
 from custom_components.extended_openai_conversation_responses import backup, transfer
-from custom_components.extended_openai_conversation_responses.agent_config import (
-    agent_config_snapshot,
-)
 from custom_components.extended_openai_conversation_responses.private_backup import (
     PRIVATE_TRANSFER_VERSION,
     decode_document,
@@ -19,16 +16,10 @@ from custom_components.extended_openai_conversation_responses.private_backup imp
 )
 from custom_components.extended_openai_conversation_responses.secret_redaction import (
     is_redacted_url,
-    redact_http_url,
     redact_secrets,
 )
-from custom_components.extended_openai_conversation_responses.sharing import (
-    project_configuration,
-)
 from tests.test_private_backup_fidelity import private_document
-from tests.test_request_rules import MemoryStore, RequestRules, local_rule
 from tests.test_selective_restore_concurrency import RestoreHarness
-from tests.test_sharing_schema_context import configuration_artifact, rule_setup_artifact
 from tests.test_sharing_schema_references import tool_with_schema
 from tests.test_transfer import _portable_document
 
@@ -55,52 +46,6 @@ def script_config(uri, *, nested=False, persisted=False):
         "sequence": [{"variables": {"_function_result": "Success"}}],
     }
     return {"functions": yaml.safe_dump([tool]) if persisted else [tool]}
-
-
-@pytest.mark.parametrize("format", ["setup", "configuration"])
-@pytest.mark.parametrize("persisted", [False, True])
-@pytest.mark.parametrize("nested", [False, True])
-@pytest.mark.parametrize("kind", ["query", "userinfo"])
-@pytest.mark.parametrize("spelling", SPELLINGS)
-def test_script_url_credentials_are_excluded_from_final_artifacts(
-    hass, format, persisted, nested, kind, spelling
-):
-    uri = credential_uri(kind, spelling)
-    config = script_config(uri, nested=nested, persisted=persisted)
-    before = deepcopy(config)
-    agent_config_snapshot(config)
-    assert redact_http_url(uri) is not None
-
-    artifact, public, serialized = configuration_artifact(config, format)
-
-    assert SECRET not in serialized
-    assert public["functions"] == []
-    assert artifact["security"]["omitted"]
-    assert config == before
-
-
-@pytest.mark.parametrize("kind", ["query", "userinfo"])
-@pytest.mark.parametrize("spelling", SPELLINGS)
-async def test_rule_url_credentials_and_signatures_do_not_leave(
-    hass, kind, spelling
-):
-    uri = credential_uri(kind, spelling)
-    rule = local_rule()
-    rule["action"]["actions"] = [
-        {"action": "rest_command.report", "data": {"media": [{"image": uri}]}}
-    ]
-    manager = RequestRules(MemoryStore({"rules": [rule]}))
-    await manager.async_initialize()
-    before = manager.snapshot()
-    assert SECRET in before["rules"][0]["action"]["canonical_signature"]
-
-    setup = rule_setup_artifact(before)
-    rules = setup["document"]["sections"]["request_rules"]["rules"]
-
-    assert SECRET not in setup["json"]
-    assert rules == []
-    assert setup["security"]["omitted"]
-    assert manager.snapshot() == before
 
 
 @settings(max_examples=75, deadline=None)
@@ -199,11 +144,3 @@ async def test_private_restore_applies_exact_literal_credentials(
     )
 
     assert tx.subentry.data == expected
-
-
-def test_restricted_projection_still_excludes_literal_url_tools():
-    config = script_config(credential_uri("query", "{}"))
-    public, summary = project_configuration(config)
-    assert public["functions"] == []
-    assert summary["omitted"]
-    assert SECRET not in json.dumps([public, summary])

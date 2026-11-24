@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from copy import deepcopy
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -37,10 +38,9 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     async_get_request_rules,
 )
 from custom_components.extended_openai_conversation_responses.transfer import (
+    SECTION_CONFIGURATION,
     SECTION_PERSISTENT_MEMORY,
     SECTION_REQUEST_RULES,
-    async_create_setup_export,
-    inspect_transfer,
 )
 from homeassistant import loader
 from homeassistant.components import conversation
@@ -49,10 +49,6 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import recorder as recorder_helper
 from homeassistant.setup import async_setup_component
-from tests.test_reviewed_quarantine_export import (
-    effective_tool_names,
-    quarantine_source,
-)
 
 
 def _entry() -> MockConfigEntry:
@@ -90,39 +86,6 @@ def _conversation_subentry(entry: MockConfigEntry):
         for subentry in entry.subentries.values()
         if subentry.subentry_type == "conversation"
     )
-
-
-@pytest.mark.parametrize(
-    "damage", ["healthy", "missing_spec", "missing_name", "invalid_group"]
-)
-async def test_setup_export_keeps_known_function_quarantine(
-    hass: HomeAssistant, damage: str
-) -> None:
-    config = quarantine_source(damage, encoded=True)
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Quarantined Setup Export",
-        data={},
-        version=CONFIG_ENTRY_VERSION,
-        subentries_data=[
-            {
-                "data": config,
-                "subentry_type": "conversation",
-                "title": "Repairable assistant",
-                "unique_id": None,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-    subentry = _conversation_subentry(entry)
-    original = deepcopy(dict(subentry.data))
-    result = await async_create_setup_export(hass, entry, subentry)
-    restored = inspect_transfer(result["json"], "target")
-    assert restored.config is not None
-    assert effective_tool_names(restored.config) == set()
-    projected = result["document"]["sections"]["configuration"]
-    assert projected["functions"] == projected["function_groups"] == []
-    assert dict(subentry.data) == original
 
 
 async def _user_token(hass: HomeAssistant, user: MockUser) -> str:
@@ -243,6 +206,58 @@ async def _upload_archive(
     return session_id
 
 
+@pytest.mark.parametrize(
+    ("kind", "source_kind"),
+    [("setup", "portable_transfer"), ("configuration", "legacy_setup")],
+)
+async def test_retired_public_files_restore_through_registered_websocket(
+    hass, hass_ws_client, kind, source_kind,
+):
+    from tests.helpers import historical_shareable_export
+
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    user = MockUser(id="legacy-import-admin", name="Legacy import admin", is_owner=True)
+    client = await hass_ws_client(hass, await _user_token(hass, user))
+
+    retired = await _transfer_call(client, entry=entry, action="setup_export")
+    assert not retired["success"]
+    assert "Unsupported export/import transfer action" in retired["error"]["message"]
+
+    source = historical_shareable_export(kind)
+    session_id = await _upload_archive(
+        client,
+        entry=entry,
+        archive=json.dumps(source).encode(),
+        filename=f"shareable-{kind}.json",
+    )
+    selected = [SECTION_CONFIGURATION]
+    inspected = await _transfer_call(
+        client, entry=entry, action="import_inspect",
+        data={"session_id": session_id, "sections": selected},
+    )
+    assert inspected["success"], inspected
+    result = inspected["result"]
+    assert result["valid"]
+    assert result["source_kind"] == source_kind
+    assert result["summary"]["security"]["mode"] == "restricted"
+    assert result["preview"]["selected_sections"] == selected
+    assert result["preview_token"]
+
+    restored = await _transfer_call(
+        client, entry=entry, action="import_restore",
+        data={
+            "session_id": session_id, "sections": selected,
+            "preview_token": result["preview_token"],
+        },
+    )
+    assert restored["success"], restored
+    assert restored["result"]["status"] == "restored"
+    current = hass.config_entries.async_get_entry(entry.entry_id)
+    assert current.subentries[subentry.subentry_id].data["max_tokens"] == 550
+
+
 async def test_private_backup_moves_request_rules_between_installations(
     hass: HomeAssistant,
     hass_ws_client: Any,
@@ -292,16 +307,6 @@ async def test_private_backup_moves_request_rules_between_installations(
     expected = await source_rules.async_backup_data()
     source_admin = MockUser(id="source-admin", name="Source admin", is_owner=True)
     source_client = await hass_ws_client(hass, await _user_token(hass, source_admin))
-
-    for options in ({}, {"reviewed_custom": True}):
-        setup = await _transfer_call(
-            source_client, entry=source, action="setup_export", data=options
-        )
-        assert setup["success"], setup
-        portable = inspect_transfer(setup["result"]["json"], "destination")
-        assert portable.request_rules is not None
-        assert portable.request_rules["rules"] == []
-        assert setup["result"]["security"]["mode"] == "restricted"
 
     archive, metadata = await _download_archive(
         source_client, entry=source, mode="custom", sections=[SECTION_REQUEST_RULES]

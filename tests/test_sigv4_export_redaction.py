@@ -2,7 +2,6 @@
 
 from copy import deepcopy
 import json
-from types import SimpleNamespace
 from urllib.parse import urlencode
 
 import pytest
@@ -12,13 +11,10 @@ from custom_components.extended_openai_conversation_responses import backup, tra
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_snapshot,
 )
-from custom_components.extended_openai_conversation_responses.management_ui import (
-    _export_agent,
-)
 from custom_components.extended_openai_conversation_responses.secret_redaction import (
     redact_secrets,
 )
-from tests.test_http_parameter_template_redaction import export
+from tests.test_http_parameter_template_redaction import legacy_backup_export
 from tests.test_secret_restore_context import _rest_tool
 
 SIGNATURE = "eoai-example-presigned-signature-0123456789abcdef"
@@ -53,31 +49,20 @@ def configuration(location, persisted=False):
     }
 
 
-@pytest.mark.parametrize("exporter", ["agent", "setup", "legacy"])
 @pytest.mark.parametrize("location", ["url", "params"])
 @pytest.mark.parametrize("persisted", [False, True])
-def test_sigv4_credentials_absent_from_all_serialized_exports(
-    hass, exporter, location, persisted
+def test_sigv4_credentials_absent_from_legacy_export(
+    hass, location, persisted
 ):
     config = configuration(location, persisted)
     agent_config_snapshot(config)  # Actual REST/schema acceptance.
     original = deepcopy(config)
-    if exporter == "agent":
-        document = _export_agent(SimpleNamespace(title="Signed source", data=config))
-        serialized = json.dumps(document)
-    else:
-        result, public = export(config, exporter)
-        serialized = result["json"]
-        if exporter == "setup":
-            assert public["functions"] == []
+    result, _ = legacy_backup_export(config)
+    serialized = result["json"]
     assert SIGNATURE not in serialized
     assert KEY_ID not in serialized
-    if exporter == "agent":
-        assert document["config"]["functions"] == []
-        assert document["security"]["omitted"]
-    if exporter == "legacy":
-        assert "bucket.s3.eu-west-1.amazonaws.com/private/object.txt" in serialized
-        assert "AWS4-HMAC-SHA256" in serialized
+    assert "bucket.s3.eu-west-1.amazonaws.com/private/object.txt" in serialized
+    assert "AWS4-HMAC-SHA256" in serialized
     assert config == original
 
 
@@ -123,10 +108,7 @@ async def test_private_sigv4_snapshots_are_unchanged(hass, location):
     assert config == original
 
 
-@pytest.mark.parametrize("exporter", ["agent", "setup", "legacy"])
-def test_aws_field_names_in_script_data_and_schema_are_not_http_credentials(
-    hass, exporter
-):
+def test_aws_field_names_in_script_data_and_schema_are_not_http_credentials(hass):
     tool = {
         "spec": {
             "name": "labels",
@@ -154,13 +136,8 @@ def test_aws_field_names_in_script_data_and_schema_are_not_http_credentials(
         },
     }
     config = {"chat_model": "gpt-4o", "functions": [tool]}
-    if exporter == "agent":
-        public = _export_agent(
-            SimpleNamespace(title="Public labels", data=config)
-        )["config"]
-    else:
-        _, public = export(config, exporter)
-    assert public["functions"] == ([tool] if exporter == "legacy" else [])
+    _, public = legacy_backup_export(config)
+    assert public["functions"] == [tool]
 
 
 @pytest.mark.parametrize(

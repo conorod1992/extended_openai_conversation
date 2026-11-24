@@ -113,7 +113,9 @@ async def _management(hass, agent):
 async def _write(command, route, changes, revision):
     if route in ("save", "update"):
         return await command(route, config=changes, revision=revision)
-    document = (await command("export"))["document"]
+    from tests.helpers import historical_shareable_export
+
+    document = historical_shareable_export("configuration")
     document["config"].update(changes)
     if route == "import_preview":
         return await command(route, document=document)
@@ -203,12 +205,6 @@ async def test_guest_mode_tool_matches_saved_request_preview(
     assert policy["config"][CONF_GUEST_MODE_ENABLED] is enabled
     draft = await preview_sections(config={CONF_GUEST_MODE_ENABLED: not enabled})
     assert (guest_tool(draft["integration_tools"]) is not None) == (not enabled)
-    exported = await _management_call(
-        client, entry=agent.entry, section="configuration", action="export"
-    )
-    exported_config = exported["document"]["config"]
-    assert (CONF_GUEST_MODE_ENABLED in exported_config) == bool(saved)
-    assert exported_config.get(CONF_GUEST_MODE_ENABLED, False) is enabled
     assert dict(agent.subentry.data) == before
 
 
