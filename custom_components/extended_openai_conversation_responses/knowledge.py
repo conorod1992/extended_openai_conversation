@@ -20,6 +20,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .function_tool_policy import (
+    runtime_function_tool_name,
+    runtime_function_tool_names,
+)
 from .operation_settlement import async_settle_owned_operation
 from .persistence_hardening import (
     StorageRepairRequired,
@@ -54,7 +58,7 @@ CHUNK_SIZE = 2_000
 CHUNK_OVERLAP = 300
 MAX_EXCERPT_CHARACTERS = 2_000
 
-KNOWLEDGE_TOOL_NAMES = {"knowledge_search", "knowledge_list", "knowledge_get"}
+KNOWLEDGE_TOOL_NAMES = runtime_function_tool_names("knowledge")
 
 _SPACE_PATTERN = re.compile(r"\s+")
 _PHRASE_TOKEN_PATTERN = re.compile(r"[\w'-]+[+#]*")
@@ -1026,7 +1030,7 @@ def knowledge_tools() -> list[dict[str, Any]]:
     return [
         {
             "spec": {
-                "name": "knowledge_search",
+                "name": runtime_function_tool_name("knowledge", "search"),
                 "description": (
                     "Search the local Knowledge Library. Each result includes "
                     "start_character, a zero-based character cursor into the stored "
@@ -1063,7 +1067,7 @@ def knowledge_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "knowledge_list",
+                "name": runtime_function_tool_name("knowledge", "list"),
                 "description": "Browse Knowledge source titles and descriptions.",
                 "parameters": {
                     "type": "object",
@@ -1091,7 +1095,7 @@ def knowledge_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "knowledge_get",
+                "name": runtime_function_tool_name("knowledge", "get"),
                 "description": "Read a Knowledge source page by exact source ID.",
                 "parameters": {
                     "type": "object",

@@ -77,7 +77,7 @@ def classify_path(path: str) -> frozenset[str]:
         # Provider/request execution, cancellation, tool calls and cleanup.
         if name in {
             "request.py", "provider_loop.py", "openai_compat.py",
-            "non_streaming.py", "read_only_tools.py", "tool_exchange.py",
+            "non_streaming.py", "tool_exchange.py",
             "function_tool_resolution.py", "function_tool_policy.py",
         } or name.startswith("functions/"):
             return frozenset("b")

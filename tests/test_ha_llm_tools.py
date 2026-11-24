@@ -58,7 +58,7 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
     tool_result_data,
     unwrap_tool_result,
 )
-from custom_components.extended_openai_conversation_responses.read_only_tools import (
+from custom_components.extended_openai_conversation_responses.function_tool_policy import (
     is_integration_owned_read_only_tool,
 )
 from custom_components.extended_openai_conversation_responses.request import (

@@ -33,6 +33,16 @@ The maintenance gate remains a finally-only context manager: it does not choose
 outcomes based on which exception unwinds its body. Its condition sections do not
 hold the condition across suspended work (`wait_for` releases it while waiting).
 
+## Function Tool classifications
+
+`function_tool_policy.py` owns the provider names, runtime ownership, and
+replay trust of generated Function Tools. Add each generated operation there
+and use its registered name when building the provider schema. Generated names
+stay reserved while their capabilities are disabled. Configured native tools
+retain their configured names, and replay trust follows their implementation.
+Scheduling a read still creates a durable job, so the replay guard treats the
+scheduled call as an effect. Availability and permissions are checked at runtime.
+
 ## Bash teardown
 
 The cancellation branch drains graceful process/pipe cleanup with the same owned

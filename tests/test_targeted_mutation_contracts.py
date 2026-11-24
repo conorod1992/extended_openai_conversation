@@ -26,7 +26,7 @@ from custom_components.extended_openai_conversation_responses.function_tool_reso
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
 )
-from custom_components.extended_openai_conversation_responses.read_only_tools import (
+from custom_components.extended_openai_conversation_responses.function_tool_policy import (
     is_integration_owned_read_only_tool,
 )
 from homeassistant.helpers import llm

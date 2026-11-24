@@ -10,22 +10,9 @@ from homeassistant.exceptions import HomeAssistantError
 from .agent_config import function_tool_enabled
 from .const import CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS
 from .exceptions import FunctionNotFound
+from .function_tool_policy import RUNTIME_FUNCTION_TOOL_TYPES
 from .function_tool_quarantine import (
     _runtime_validate_function_groups as validate_function_groups,
-)
-
-# These definitions are owned by the integration runtime rather than the user's
-# persisted Function Tool catalogue. Their request-round objects are authoritative.
-_INTEGRATION_TOOL_TYPES = frozenset(
-    {
-        "guest_mode",
-        "memory",
-        "temporary_memory",
-        "knowledge",
-        "archive",
-        "conversation_lifecycle",
-        "function_group_loader",
-    }
 )
 
 
@@ -103,7 +90,7 @@ def latest_function_tool_for_execution(
     function = function_tool.get("function")
     if (
         not isinstance(function, Mapping)
-        or function.get("type") in _INTEGRATION_TOOL_TYPES
+        or function.get("type") in RUNTIME_FUNCTION_TOOL_TYPES
     ):
         return function_tool
 

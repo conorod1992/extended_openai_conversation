@@ -16,6 +16,10 @@ from uuid import uuid4
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .function_tool_policy import (
+    runtime_function_tool_name,
+    runtime_function_tool_names,
+)
 from .memory_tool_arguments import nullable_memory_tool_arguments
 from .persistence_hardening import (
     StorageRepairRequired,
@@ -40,11 +44,7 @@ MAX_DELETE_RECORDS = 50
 MAX_INJECT_RECORDS = 30
 MAX_INJECT_CHARACTERS = 6_000
 
-TEMPORARY_MEMORY_TOOL_NAMES = {
-    "temporary_memory_add",
-    "temporary_memory_update",
-    "temporary_memory_delete",
-}
+TEMPORARY_MEMORY_TOOL_NAMES = runtime_function_tool_names("temporary_memory")
 
 
 @dataclass(slots=True, frozen=True)
@@ -910,7 +910,7 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
     tools = [
         {
             "spec": {
-                "name": "temporary_memory_add",
+                "name": runtime_function_tool_name("temporary_memory", "add"),
                 "description": "Silently store a short-lived fact.",
                 "parameters": {
                     "type": "object",
@@ -930,7 +930,7 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "temporary_memory_update",
+                "name": runtime_function_tool_name("temporary_memory", "update"),
                 "description": "Silently update an active temporary memory.",
                 "parameters": {
                     "type": "object",
@@ -948,7 +948,7 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "temporary_memory_delete",
+                "name": runtime_function_tool_name("temporary_memory", "delete"),
                 "description": "Silently delete active temporary memories.",
                 "parameters": {
                     "type": "object",

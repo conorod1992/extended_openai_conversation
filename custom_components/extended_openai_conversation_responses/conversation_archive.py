@@ -30,6 +30,7 @@ from homeassistant.util import dt as dt_util
 
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS, DOMAIN
+from .function_tool_policy import runtime_function_tool_name
 from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
@@ -2259,7 +2260,6 @@ def archive_tools() -> list[dict[str, Any]]:
     """Return bounded model-facing archive and deterministic privacy tools."""
     return [
         _tool(
-            "conversation_search",
             "Search prior retained conversations.",
             {
                 "query": {"type": "string", "minLength": 1},
@@ -2276,7 +2276,6 @@ def archive_tools() -> list[dict[str, Any]]:
             "search",
         ),
         _tool(
-            "conversation_get",
             "Read a page from one retained conversation.",
             {
                 "session_id": {"type": "string"},
@@ -2288,28 +2287,24 @@ def archive_tools() -> list[dict[str, Any]]:
             "get",
         ),
         _tool(
-            "conversation_private",
             "Stop retaining this conversation and delete its retained turns.",
             {},
             [],
             "private",
         ),
         _tool(
-            "conversation_resume_saving",
             "Start a new retained session after private mode.",
             {},
             [],
             "resume",
         ),
         _tool(
-            "conversation_delete_current",
             "Delete the current retained conversation.",
             {},
             [],
             "delete_current",
         ),
         _tool(
-            "conversation_delete_selected",
             "Delete confirmed selected retained sessions.",
             {
                 "session_ids": {
@@ -2324,7 +2319,6 @@ def archive_tools() -> list[dict[str, Any]]:
             "delete_selected",
         ),
         _tool(
-            "conversation_delete_date_range",
             "Preview or delete sessions by the date of their last retained turn. "
             "First call with confirm=false and show the affected sessions and counts. "
             "If any turns fall outside the requested dates, direct the user to "
@@ -2343,7 +2337,6 @@ def archive_tools() -> list[dict[str, Any]]:
 
 
 def _tool(
-    name: str,
     description: str,
     properties: dict[str, Any],
     required: list[str],
@@ -2351,7 +2344,7 @@ def _tool(
 ) -> dict[str, Any]:
     return {
         "spec": {
-            "name": name,
+            "name": runtime_function_tool_name("archive", operation),
             "description": description,
             "parameters": {
                 "type": "object",

@@ -56,6 +56,7 @@ from .const import (
     DOMAIN,
     GUEST_POLICY_VERSION,
 )
+from .function_tool_policy import runtime_function_tool_name
 from .functions.security import FunctionSecurity, classify_tool
 from .helpers import get_exposed_entities
 from .persistence_hardening import _async_settle_transactional_save
@@ -866,11 +867,14 @@ def _resolve_exclusion_policy(
     )
 
 
+GUEST_MODE_RESTRICT_TOOL_NAME = runtime_function_tool_name("guest_mode", "restrict")
+
+
 def guest_mode_restrict_tool() -> dict[str, Any]:
     """Return the structurally one-way model tool."""
     return {
         "spec": {
-            "name": "guest_mode_restrict",
+            "name": GUEST_MODE_RESTRICT_TOOL_NAME,
             "description": (
                 "Enable, start sooner, or extend Guest Mode; never weaken it. "
                 "For immediate activation use start_now=true, including over a future schedule. "

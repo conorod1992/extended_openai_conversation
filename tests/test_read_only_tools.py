@@ -4,8 +4,30 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses.read_only_tools import (
+from custom_components.extended_openai_conversation_responses.conversation_archive import (
+    archive_tools,
+)
+from custom_components.extended_openai_conversation_responses.function_groups import (
+    build_loader_tool,
+)
+from custom_components.extended_openai_conversation_responses.function_tool_policy import (
+    CONTINUE_CONVERSATION_TOOL_NAME,
+    RESERVED_FUNCTION_TOOL_NAMES,
+    RUNTIME_FUNCTION_TOOL_TYPES,
     is_integration_owned_read_only_tool,
+)
+from custom_components.extended_openai_conversation_responses.guest_mode import (
+    guest_mode_restrict_tool,
+)
+from custom_components.extended_openai_conversation_responses.knowledge import (
+    knowledge_tools,
+)
+from custom_components.extended_openai_conversation_responses.memory import memory_tools
+from custom_components.extended_openai_conversation_responses.request import (
+    START_FRESH_CONVERSATION_TOOL,
+)
+from custom_components.extended_openai_conversation_responses.temporary_memory import (
+    temporary_memory_tools,
 )
 
 
@@ -47,6 +69,10 @@ def _tool(
         (_tool("guest_mode_restrict", "guest_mode", operation="restrict"), False),
         (_tool("broadcast", "native", native_name="send_broadcast"), False),
         (_tool("service", "native", native_name="execute_service"), False),
+        (_tool("get_history", "native", native_name="execute_service"), False),
+        (_tool("knowledge_search", "rest", operation="search"), False),
+        (_tool("unknown", "knowledge", operation="unknown"), False),
+        (_tool("load_function_groups", "function_group_loader"), False),
         (_tool("custom_rest", "rest"), False),
     ],
 )
@@ -55,3 +81,32 @@ def test_integration_owned_read_only_classification_is_explicit(
 ) -> None:
     """Classify integration implementations with proven read-only semantics."""
     assert is_integration_owned_read_only_tool(tool) is expected
+
+
+def test_generated_tool_definitions_match_runtime_policy() -> None:
+    tools = [
+        *archive_tools(),
+        *knowledge_tools(),
+        *memory_tools(),
+        *temporary_memory_tools(),
+        guest_mode_restrict_tool(),
+        build_loader_tool([]),
+        START_FRESH_CONVERSATION_TOOL,
+    ]
+    names = {tool["spec"]["name"] for tool in tools}
+    assert len(names) == len(tools)
+    assert RESERVED_FUNCTION_TOOL_NAMES == names | {CONTINUE_CONVERSATION_TOOL_NAME}
+    assert RUNTIME_FUNCTION_TOOL_TYPES == {tool["function"]["type"] for tool in tools}
+    assert {
+        tool["spec"]["name"]
+        for tool in tools
+        if is_integration_owned_read_only_tool(tool)
+    } == {
+        "conversation_get",
+        "conversation_search",
+        "knowledge_get",
+        "knowledge_list",
+        "knowledge_search",
+        "memory_list",
+        "memory_search",
+    }

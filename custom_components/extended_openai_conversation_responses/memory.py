@@ -35,6 +35,10 @@ from .const import (
     MEMORY_MODE_OFF,
     MEMORY_MODES,
 )
+from .function_tool_policy import (
+    runtime_function_tool_name,
+    runtime_function_tool_names,
+)
 from .memory_tool_arguments import nullable_memory_tool_arguments
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
@@ -71,14 +75,7 @@ MAX_SUBJECT_LENGTH = 128
 MAX_KEY_LENGTH = 160
 MAX_SEARCH_LIMIT = 50
 MAX_LIST_LIMIT = 100
-MEMORY_TOOL_NAMES = {
-    "memory_add",
-    "memory_upsert",
-    "memory_search",
-    "memory_list",
-    "memory_update",
-    "memory_delete",
-}
+MEMORY_TOOL_NAMES = runtime_function_tool_names("memory")
 MIN_LEXICAL_RELEVANCE_SCORE = 0.08
 MIN_SEMANTIC_SIMILARITY = 0.55
 
@@ -1999,7 +1996,7 @@ def memory_tools() -> list[dict[str, Any]]:
     tools = [
         {
             "spec": {
-                "name": "memory_add",
+                "name": runtime_function_tool_name("memory", "add"),
                 "description": "Store one concise, durable fact for the current user.",
                 "parameters": {
                     "type": "object",
@@ -2028,7 +2025,7 @@ def memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "memory_upsert",
+                "name": runtime_function_tool_name("memory", "upsert"),
                 "description": (
                     "Propose a NEW durable fact; never overwrite or bypass a conflict by changing "
                     "keys. needs_resolution means no write; search and decide what the facts mean."
@@ -2076,7 +2073,7 @@ def memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "memory_search",
+                "name": runtime_function_tool_name("memory", "search"),
                 "description": (
                     "Find relevant facts for answers and before proposing or correcting. Rankings are "
                     "candidates, not semantic matches; absence is not proof of novelty."
@@ -2103,7 +2100,7 @@ def memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "memory_list",
+                "name": runtime_function_tool_name("memory", "list"),
                 "description": "Browse existing facts, their provenance and exact revisions.",
                 "parameters": {
                     "type": "object",
@@ -2120,7 +2117,7 @@ def memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "memory_update",
+                "name": runtime_function_tool_name("memory", "update"),
                 "description": (
                     "Correct a scoped record using its exact ID and current revision. "
                     "Use intent=user_request for a current user correction request, or automatic "
@@ -2170,7 +2167,7 @@ def memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "memory_delete",
+                "name": runtime_function_tool_name("memory", "delete"),
                 "description": (
                     "Delete only specifically identified scoped records using their exact "
                     "IDs and fresh revisions. Set intent=user_request for current user requests, "

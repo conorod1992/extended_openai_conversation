@@ -27,8 +27,8 @@ from .function_execution import (
     retained_function_input,
     validate_function_arguments,
 )
+from .function_tool_policy import is_integration_owned_read_only_tool
 from .ha_tool_result_compat import is_tool_result_content
-from .read_only_tools import is_integration_owned_read_only_tool
 from .schema_errors import SCHEMA_ERRORS
 
 _MAX_AMBIGUOUS_CONVERSATIONS = 32

@@ -56,7 +56,15 @@ from .const import (
 )
 from .conversation_archive import archive_tools
 from .conversation_lifecycle import conversation_lifecycle_active
-from .guest_mode import GuestCapabilityPolicy, guest_mode_restrict_tool
+from .function_tool_policy import (
+    CONTINUE_CONVERSATION_TOOL_NAME,
+    runtime_function_tool_name,
+)
+from .guest_mode import (
+    GUEST_MODE_RESTRICT_TOOL_NAME,
+    GuestCapabilityPolicy,
+    guest_mode_restrict_tool,
+)
 from .ha_llm_tools import ToolSnapshot, is_ha_tool
 from .helpers import effective_api_provider, is_native_openai_connection
 from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
@@ -101,7 +109,6 @@ _CURRENT_TURN_REASONING_MODELS = frozenset(
     }
 )
 
-CONTINUE_CONVERSATION_TOOL_NAME = "set_continue_conversation"
 CONTINUE_CONVERSATION_TOOL = {
     "spec": {
         "name": CONTINUE_CONVERSATION_TOOL_NAME,
@@ -127,7 +134,9 @@ CONTINUE_CONVERSATION_TOOL = {
     }
 }
 
-START_FRESH_CONVERSATION_TOOL_NAME = "start_fresh_conversation"
+START_FRESH_CONVERSATION_TOOL_NAME = runtime_function_tool_name(
+    "conversation_lifecycle", "start_fresh"
+)
 
 
 CHAT_COMPLETIONS_TOOL_LIMIT = 128
@@ -909,9 +918,9 @@ def assemble_integration_function_tools(
             )
         result.extend(knowledge_tools())
     if options.get(CONF_GUEST_MODE_ENABLED, DEFAULT_PERSISTED_GUEST_MODE_ENABLED):
-        if "guest_mode_restrict" in configured_names:
+        if GUEST_MODE_RESTRICT_TOOL_NAME in configured_names:
             raise HomeAssistantError(
-                "Reserved Guest Mode tool name configured: guest_mode_restrict"
+                f"Reserved Guest Mode tool name configured: {GUEST_MODE_RESTRICT_TOOL_NAME}"
             )
         result.append(guest_mode_restrict_tool())
     return result

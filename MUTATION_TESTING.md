@@ -13,7 +13,7 @@ The existing default campaign. It mutates critical Function Tool execution logic
 - `function_call_budget.py`
 - `function_tool_resolution.py`
 - `function_tool_recovery.py`
-- `read_only_tools.py`
+- `function_tool_policy.py`
 
 It runs the existing focused Function Tool mutation-contract test set.
 

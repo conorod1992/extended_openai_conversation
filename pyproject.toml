@@ -65,7 +65,7 @@ only_mutate = [
     "custom_components/extended_openai_conversation_responses/function_call_budget.py",
     "custom_components/extended_openai_conversation_responses/function_tool_resolution.py",
     "custom_components/extended_openai_conversation_responses/function_tool_recovery.py",
-    "custom_components/extended_openai_conversation_responses/read_only_tools.py",
+    "custom_components/extended_openai_conversation_responses/function_tool_policy.py",
 ]
 pytest_add_cli_args_test_selection = [
     "tests/test_native_function_execution_budget.py",
