@@ -150,7 +150,7 @@ async def test_apply_can_use_a_newly_recognized_exact_azure_model(
     "provider,binding", [("azure", False), ("azure", True), ("openai", False)]
 )
 @pytest.mark.parametrize("api", ["responses", "chat_completions"])
-async def test_captured_effort_keeps_its_static_model_requirements(
+async def test_fixed_effort_keeps_its_static_model_requirements(
     hass, monkeypatch, provider, binding, api
 ):
     manager, options, _old, entry, candidate = setup_manager(
@@ -163,24 +163,25 @@ async def test_captured_effort_keeps_its_static_model_requirements(
     add_target(candidate, reasoning=True)
     manager.store.saved = {"catalog": candidate, "last_checked": 0}
     await manager.async_load()
-    rule = _rule(
+    high = _rule(
         "route",
-        "route {effort=low|high}",
-        match_type="sentence_pattern",
+        "route high",
         action={
             "model": TARGET,
-            "reasoning_effort": "{effort}",
+            "reasoning_effort": "high",
             "scope": "conversation",
             "continue_to_ai": True,
             **({"azure_model": TARGET} if binding else {}),
         },
     )
-    rules = RequestRules(MemoryStore({"rules": [rule]}))
+    low = {**high, "id": "low", "phrases": ["route low"],
+           "action": {**high["action"], "reasoning_effort": "low"}}
+    rules = RequestRules(MemoryStore({"rules": [high, low]}))
     await rules.async_initialize()
     monkeypatch.setattr(
         catalog_runtime, "async_get_request_rules", AsyncMock(return_value=rules)
     )
-    validate_rule_model_request(rule, options, entry.data)
+    validate_rule_model_request(high, options, entry.data)
 
     async def call(effort):
         runtime = RequestRuleRuntime()
@@ -216,7 +217,7 @@ async def test_captured_effort_keeps_its_static_model_requirements(
 
 
 @pytest.mark.parametrize("provider", ["azure", "openai"])
-async def test_already_unsupported_captured_effort_does_not_newly_block_reset(
+async def test_retired_captured_effort_does_not_block_reset(
     hass, monkeypatch, provider
 ):
     manager, options, _old, entry, candidate = setup_manager(
@@ -249,7 +250,7 @@ async def test_already_unsupported_captured_effort_does_not_newly_block_reset(
 
 
 @pytest.mark.parametrize("api", ["responses", "chat_completions"])
-async def test_captured_effort_does_not_hide_a_fixed_processing_tier(
+async def test_fixed_effort_keeps_the_processing_tier_requirement(
     hass, monkeypatch, api
 ):
     manager, options, _old, entry, candidate = setup_manager(
@@ -264,12 +265,11 @@ async def test_captured_effort_does_not_hide_a_fixed_processing_tier(
     await manager.async_load()
     rule = _rule(
         "route",
-        "route {effort=low|high}",
-        match_type="sentence_pattern",
+        "route high",
         action={
             "model": "routed-deployment",
             "azure_model": "gpt-5",
-            "reasoning_effort": "{effort}",
+            "reasoning_effort": "high",
             "scope": "conversation",
             "continue_to_ai": True,
         },
@@ -308,7 +308,7 @@ async def test_captured_effort_does_not_hide_a_fixed_processing_tier(
 
 
 @pytest.mark.parametrize("api", ["responses", "chat_completions"])
-async def test_captured_effort_can_use_a_nonrecommended_conditional_tool_profile(
+async def test_fixed_effort_can_use_a_nonrecommended_conditional_tool_profile(
     hass, monkeypatch, api
 ):
     manager, options, _old, entry, candidate = setup_manager(
@@ -328,12 +328,11 @@ async def test_captured_effort_can_use_a_nonrecommended_conditional_tool_profile
     data.validate_catalog_transition(None, candidate)
     rule = _rule(
         "route",
-        "route {effort=low|high}",
-        match_type="sentence_pattern",
+        "route high",
         action={
             "model": "custom-deployment",
             "azure_model": TARGET,
-            "reasoning_effort": "{effort}",
+            "reasoning_effort": "high",
             "scope": "conversation",
             "continue_to_ai": True,
         },

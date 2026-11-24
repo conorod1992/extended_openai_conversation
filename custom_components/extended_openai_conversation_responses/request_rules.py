@@ -542,6 +542,7 @@ class RequestRules:
                             validate_sentence_pattern=False,
                             validate_script_schema=False,
                             allow_legacy_matching=True,
+                            allow_legacy_routing=True,
                             allow_empty_normalized_phrases=True,
                         )
                         if validated["id"] in seen_ids:
@@ -726,6 +727,7 @@ class RequestRules:
                     validate_sentence_pattern=False,
                     validate_script_schema=False,
                     allow_legacy_matching=True,
+                    allow_legacy_routing=True,
                     allow_empty_normalized_phrases=True,
                 )
             )
@@ -758,6 +760,7 @@ class RequestRules:
                     validate_sentence_pattern=False,
                     validate_script_schema=False,
                     allow_legacy_matching=True,
+                    allow_legacy_routing=True,
                     allow_empty_normalized_phrases=True,
                 )
                 for rule in prepared["rules"]
@@ -865,6 +868,7 @@ class RequestRules:
                 previous["action_type"],
                 value.get("action", previous["action"]),
                 validate_script_schema=False,
+                allow_legacy_routing=True,
             )
         except ValueError:
             return False
@@ -922,6 +926,7 @@ class RequestRules:
             allow_legacy_function_responses=field_only
             and not request_rule_repair(previous),
             allow_legacy_matching=preserve_inactive,
+            allow_legacy_routing=preserve_inactive,
             allow_empty_normalized_phrases=preserve_inactive,
         )
 
@@ -1000,7 +1005,9 @@ class RequestRules:
                 name=_duplicate_rule_name(source["name"], self._rules),
                 order=source_index + 1,
             )
-            rule = validate_rule(source, allow_legacy_function_responses=True)
+            rule = validate_rule(
+                source, allow_legacy_function_responses=True, allow_legacy_routing=True
+            )
             prospective = deepcopy(self._rules)
             prospective.insert(source_index + 1, rule)
             for order, item in enumerate(prospective):
@@ -1779,6 +1786,7 @@ def validate_rule(
     validate_script_schema: bool = True,
     allow_legacy_function_responses: bool = False,
     allow_legacy_matching: bool = False,
+    allow_legacy_routing: bool = False,
     allow_empty_normalized_phrases: bool = False,
 ) -> dict[str, Any]:
     """Validate and normalize the persisted rule contract."""
@@ -1872,6 +1880,7 @@ def validate_rule(
         raw_action,
         validate_script_schema=validate_script_schema,
         capture_names=set(slot_names),
+        allow_legacy_routing=allow_legacy_routing,
     )
     continue_matching = value.get("continue_matching", False)
     if not isinstance(continue_matching, bool):
@@ -1918,7 +1927,10 @@ def validate_rule(
     group_id = value.get("group_id")
     if group_id is not None:
         group_id = _clean(group_id, 64, "group id")
-    referenced_slots = _referenced_slots(action) | _legacy_action_slots(raw_action)
+    if action_type == "model_routing":
+        referenced_slots = _referenced_slots(action["success_response"])
+    else:
+        referenced_slots = _referenced_slots(action) | _legacy_action_slots(raw_action)
     response_version = value.get(FUNCTION_RESPONSE_VERSION_FIELD)
     if FUNCTION_RESPONSE_VERSION_FIELD in value and type(response_version) is not int:
         raise ValueError("Function response version must be an integer")
@@ -2040,6 +2052,7 @@ def _validate_action(
     *,
     validate_script_schema: bool = True,
     capture_names: set[str] | None = None,
+    allow_legacy_routing: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("action must be an object")
@@ -2106,23 +2119,16 @@ def _validate_action(
     model = str(value.get("model") or "").strip()
     underlying_model = str(value.get("azure_model") or "").strip()
     effort = str(value.get("reasoning_effort") or "").strip()
-    if reset:
+    dynamic = _routing_uses_captures(value)
+    if dynamic and not allow_legacy_routing:
+        raise ValueError(DYNAMIC_ROUTING_REPAIR)
+    if reset and not dynamic:
         model = ""
         underlying_model = ""
         effort = ""
     if not reset and not model and not effort:
         raise ValueError("model routing must set a model or reasoning effort")
-    for routing_value in (model, effort, underlying_model):
-        if any(marker in routing_value for marker in ("{{", "{%", "{#")):
-            raise ValueError(
-                "model routing captured values must use simple {name} references"
-            )
-    effort_dynamic = bool(SLOT_REFERENCE.search(effort))
-    if effort_dynamic and SLOT_REFERENCE.fullmatch(effort) is None:
-        raise ValueError("captured reasoning effort must be a single {name} reference")
-    # Model strings can be Azure deployments. Capability checks require provider
-    # context and belong to validate_rule_model_request and runtime routing.
-    if effort and not effort_dynamic and effort not in all_reasoning_efforts():
+    if effort and not dynamic and effort not in all_reasoning_efforts():
         raise ValueError("unsupported reasoning effort")
     return {
         "model": model or None,
@@ -2299,6 +2305,11 @@ def _validate_script_sequence(
 
 
 MATCH_REPAIR = "_match_repair"
+ROUTING_CHOICE_FIELDS = ("model", "azure_model", "reasoning_effort")
+DYNAMIC_ROUTING_REPAIR = (
+    "Captured routing choices were removed. Replace captures in Model, Underlying "
+    "Azure model, and Reasoning effort with fixed choices, then save the rule."
+)
 CONTINUE_MATCHING_REPAIR = (
     "Continue matching was removed. Combine the required steps in one Request Rule, "
     "or enable Continue to AI if it should hand off after those steps."
@@ -2381,6 +2392,15 @@ def _function_response_needs_review(rule: Mapping[str, Any]) -> bool:
     )
 
 
+def _routing_uses_captures(action: Mapping[str, Any]) -> bool:
+    """Identify retired route substitutions without rendering or rewriting them."""
+    return any(
+        SLOT_REFERENCE.search(value) or is_template_string(value)
+        for field in ROUTING_CHOICE_FIELDS
+        if (value := str(action.get(field) or ""))
+    )
+
+
 def request_rule_repair(rule: Mapping[str, Any]) -> str | None:
     """Describe rules that must block before executing their saved actions."""
     if rule.get("action_type") == "local_action":
@@ -2398,6 +2418,10 @@ def request_rule_repair(rule: Mapping[str, Any]) -> str | None:
             )
         if retired_alias:
             return FUNCTION_RESULT_ALIAS_REPAIR
+    if rule.get("action_type") == "model_routing" and _routing_uses_captures(
+        rule["action"]
+    ):
+        return DYNAMIC_ROUTING_REPAIR
     if rule.get("continue_matching") and not rule.get("action", {}).get(
         "continue_to_ai"
     ):
@@ -3093,7 +3117,6 @@ def validate_rule_model_request(
     options: Mapping[str, Any],
     entry_data: Mapping[str, Any],
     *,
-    check_captured_effort_support: bool = True,
     ha_snapshot: ToolSnapshot | None = None,
 ) -> None:
     """Reject statically invalid routes at every Request Rule write boundary."""
@@ -3106,19 +3129,6 @@ def validate_rule_model_request(
 
     model = action.get("model")
     underlying_model = action.get("azure_model")
-    if isinstance(underlying_model, str) and SLOT_REFERENCE.search(underlying_model):
-        return  # The complete deployment/binding pair is checked after capture resolution.
-    if isinstance(model, str) and SLOT_REFERENCE.search(model):
-        # Previously saved routes remain repairable and can always be disabled.
-        if not (
-            underlying_model
-            and check_captured_effort_support
-            and rule.get("enabled", True)
-        ):
-            return
-        # A fixed Azure binding already supplies the capabilities. The
-        # captured deployment name can be checked when the rule runs.
-        model = None
     values = routed_model_override(options, model, underlying_model, entry_data)
     effort = action.get("reasoning_effort")
     if effort and not model and not underlying_model:
@@ -3130,38 +3140,6 @@ def validate_rule_model_request(
         **values,
         **({CONF_REASONING_EFFORT: effort} if effort else {}),
     }
-    if isinstance(effort, str) and SLOT_REFERENCE.search(effort):
-        # Dynamic reasoning cannot excuse a statically incompatible model/API.
-        # Effort-dependent features still receive full validation at execution.
-        from .helpers import get_api_mode
-        from .model_capabilities import ModelCapabilityError, model_capability_snapshot
-        from .request import (
-            capability_model_identity,
-            conversation_tools_required,
-            request_model_capabilities,
-        )
-
-        selected_model = str(candidate.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
-        capabilities = request_model_capabilities(candidate, entry_data)
-        if (
-            check_captured_effort_support
-            and rule.get("enabled", True)
-            and (model or underlying_model)
-            and not capabilities["reasoning"]["efforts"]
-        ):
-            raise HomeAssistantError(
-                f"Model {capability_model_identity(candidate, entry_data)} does not support reasoning effort"
-            )
-        with model_capability_snapshot(selected_model, capabilities):
-            try:
-                get_api_mode(
-                    str(candidate.get("api_mode", "auto")),
-                    selected_model,
-                    tools_required=conversation_tools_required(candidate),
-                )
-            except ModelCapabilityError as err:
-                raise HomeAssistantError(str(err)) from err
-        return
     if effort:
         from .request import capability_model_identity
 
@@ -3186,37 +3164,21 @@ def validate_saved_model_routes(
     for rule in rules:
         if rule.get("enabled", True):
             try:
-                # Legacy rules can have this invalid capture saved already. A
-                # restore or unrelated settings edit must leave them repairable.
                 validate_rule_model_request(
-                    rule,
-                    options,
-                    entry_data,
-                    check_captured_effort_support=False,
-                    ha_snapshot=ha_snapshot,
+                    rule, options, entry_data, ha_snapshot=ha_snapshot
                 )
             except HomeAssistantError as err:
                 label = rule.get("name", rule.get("id", "unnamed"))
                 raise HomeAssistantError(f"Request Rule `{label}`: {err}") from err
 
 
-def _resolved_routing_value(value: str, slots: Mapping[str, str], field: str) -> str:
-    """Resolve one deterministic captured routing value and reject empty results."""
-    resolved = resolve_slot_values(value, slots)
-    if not isinstance(resolved, str) or not resolved.strip():
-        raise HomeAssistantError(f"Captured routing {field} is empty")
-    return resolved.strip()
-
-
 def _validate_effective_reasoning(
-    model: str, effort: str, *, captured: bool = False, provider: str | None = None
+    model: str, effort: str, *, provider: str | None = None
 ) -> None:
     """Validate a resolved reasoning value against the model that will receive it."""
     if not get_model_config(model, provider=provider).get("supports_reasoning_effort"):
         raise HomeAssistantError(f"Model {model} does not support reasoning effort")
     if effort not in get_reasoning_effort_options(model, provider=provider):
-        if captured:
-            raise HomeAssistantError(f"Unsupported captured reasoning effort: {effort}")
         raise HomeAssistantError(
             f"Reasoning effort {effort} is not supported by model {model}"
         )
@@ -3358,11 +3320,14 @@ async def _async_evaluate_matched_rule(
     action = rule["action"]
     if require_matching_revision is not None:
         require_matching_revision()
-    if rule.get(MATCH_REPAIR):
+    repair = rule.get(MATCH_REPAIR)
+    if repair is None and rule["action_type"] == "model_routing":
+        repair = request_rule_repair(rule)
+    if repair:
         return RuleEvaluation(
             match,
             True,
-            f"This Request Rule needs repair. {rule[MATCH_REPAIR]}",
+            f"This Request Rule needs repair. {repair}",
             successful=False,
             terminal=True,
         )
@@ -3605,18 +3570,8 @@ async def _async_evaluate_matched_rule(
             ),
         )
 
-    model = (
-        _resolved_routing_value(action["model"], match.slots, "model")
-        if action["model"]
-        else None
-    )
-    effort = (
-        _resolved_routing_value(
-            action["reasoning_effort"], match.slots, "reasoning effort"
-        ).lower()
-        if action["reasoning_effort"]
-        else None
-    )
+    model = action.get("model")
+    effort = action.get("reasoning_effort")
     conversation_override = runtime.peek(session_id)
     selected_model = (
         model or conversation_override.get(CONF_CHAT_MODEL) or configured_model
@@ -3624,11 +3579,7 @@ async def _async_evaluate_matched_rule(
     from .model_routing import routed_model_override
     from .request import capability_model_identity
 
-    underlying_model = (
-        _resolved_routing_value(action["azure_model"], match.slots, "Azure model")
-        if action.get("azure_model")
-        else None
-    )
+    underlying_model = action.get("azure_model")
     override = routed_model_override(
         request_options or {CONF_CHAT_MODEL: configured_model},
         model,
@@ -3640,17 +3591,9 @@ async def _async_evaluate_matched_rule(
     candidate.setdefault(CONF_CHAT_MODEL, selected_model)
     capability_model = capability_model_identity(candidate, entry_data or {})
     if effort:
-        captured_effort = bool(
-            action["reasoning_effort"]
-            and SLOT_REFERENCE.fullmatch(action["reasoning_effort"])
-        )
-        captured_model = bool(
-            action["model"] and SLOT_REFERENCE.search(action["model"])
-        )
         _validate_effective_reasoning(
             capability_model,
             effort,
-            captured=captured_effort and not captured_model,
             provider=effective_api_provider(
                 (entry_data or {}).get("api_provider"),
                 (entry_data or {}).get("base_url"),

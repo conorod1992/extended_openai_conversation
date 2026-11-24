@@ -2431,7 +2431,6 @@ async def test_sentence_apostrophes_match_preview_and_local_evaluation(hass, pat
     assert outcome.response == "Done"
     assert len(hass.services.calls) == 1
 
-@pytest.mark.parametrize("captured", [False, True])
 @pytest.mark.parametrize(
     ("entry_data", "model", "underlying", "accepted"),
     [
@@ -2443,18 +2442,14 @@ async def test_sentence_apostrophes_match_preview_and_local_evaluation(hass, pat
     ids=["openai-reject", "openai-accept", "azure-reject", "azure-accept"],
 )
 async def test_conversation_effort_validates_retained_model(
-    captured, entry_data, model, underlying, accepted
+    entry_data, model, underlying, accepted
 ):
     runtime = RequestRuleRuntime()
     before = {CONF_CHAT_MODEL: model, **({"azure_model": underlying} if underlying else {})}
     runtime.set("kitchen", before)
-    retained = routing_rule(
-        scope="conversation", match_type="sentence_pattern" if captured else "starts_with"
-    )
+    retained = routing_rule(scope="conversation", match_type="starts_with")
     retained["order"] = 1
-    retained["action"].update(model=None, reasoning_effort="{effort}" if captured else "high")
-    if captured:
-        retained["phrases"] = ["think carefully {effort}"]
+    retained["action"].update(model=None, reasoning_effort="high")
     rules = await manager(retained)
     settings = dict(before)
     pending = async_evaluate_rule(

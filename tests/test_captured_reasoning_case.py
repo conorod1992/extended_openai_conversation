@@ -1,4 +1,4 @@
-"""Case-insensitive captures become canonical reasoning enums, not model names."""
+"""Fixed reasoning preserves the display case of ordinary sentence captures."""
 
 import pytest
 from custom_components.extended_openai_conversation_responses.request_rules import (
@@ -21,7 +21,7 @@ from tests.test_request_rule_routing_semantics import MemoryStore, _rule
     ],
 )
 @pytest.mark.parametrize("azure", [False, True])
-async def test_captured_effort_is_canonical_before_validation_and_storage(
+async def test_fixed_effort_keeps_capture_in_static_response(
     hass, text, display, azure
 ):
     model = "Home-Deployment" if azure else "gpt-5"
@@ -41,7 +41,7 @@ async def test_captured_effort_is_canonical_before_validation_and_storage(
         match_type="sentence_pattern",
         action={
             "model": model,
-            "reasoning_effort": "{effort}",
+            "reasoning_effort": "high",
             "scope": "conversation",
             "reset": False,
             "continue_to_ai": False,
@@ -63,6 +63,7 @@ async def test_captured_effort_is_canonical_before_validation_and_storage(
     )
     assert result is not None and result.consume
     assert result.match.slots["effort"] == display
+    assert result.response == f"Using {display}"
     saved = runtime.get("session")
     assert saved == {
         "chat_model": model,

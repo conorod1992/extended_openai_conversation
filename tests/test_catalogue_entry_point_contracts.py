@@ -37,14 +37,14 @@ def isolate_catalogue():
     data.activate_catalog(None)
 
 
-@pytest.mark.parametrize("choices, api_mode, allowed", [
-    ("{effort=low|high}", "responses", False),
-    ("{effort=low|medium}", "responses", True),
-    ("{effort}", "responses", False),
-    ("{effort=low|max}", "chat_completions", True),
+@pytest.mark.parametrize("effort, api_mode, allowed", [
+    ("high", "responses", False),
+    ("low", "responses", True),
+    ("medium", "responses", True),
+    ("low", "chat_completions", True),
 ])
-async def test_catalogue_apply_preserves_usable_captured_reasoning(
-    hass, monkeypatch, choices, api_mode, allowed
+async def test_catalogue_apply_preserves_usable_fixed_reasoning(
+    hass, monkeypatch, effort, api_mode, allowed
 ):
     raw = deepcopy(dict(data.BUNDLED_CATALOG))
     raw["catalog_version"] += 1
@@ -55,7 +55,7 @@ async def test_catalogue_apply_preserves_usable_captured_reasoning(
     manager.store = MemoryStore()
     manager.available_catalog = candidate
     child = _catalogue_assistant("one")
-    child.data["api_mode"] = api_mode
+    child.data.update(api_mode=api_mode, functions=[], max_function_calls_per_conversation=0)
     hass.config_entries.async_entries.return_value = [
         SimpleNamespace(entry_id="entry", data={}, subentries={"one": child})
     ]
@@ -63,11 +63,11 @@ async def test_catalogue_apply_preserves_usable_captured_reasoning(
     await rules.async_initialize()
     await rules.async_create({
         "name": "Set effort for next answer",
-        "phrases": [f"reason at {choices}"],
-        "match_type": "sentence_pattern",
+        "phrases": [f"reason at {effort}"],
+        "match_type": "equals",
         "action_type": "model_routing",
         "action": {
-            "model": "gpt-5.6", "reasoning_effort": "{effort}",
+            "model": "gpt-5.6", "reasoning_effort": effort,
             "scope": "request", "continue_to_ai": True,
         },
     })

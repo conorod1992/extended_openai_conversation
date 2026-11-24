@@ -53,7 +53,7 @@ A condition inside `if`, `choose`, `repeat`, or another nested sequence halts on
 
 ## AI routing
 
-An **AI routing** rule can override the model, reasoning effort, or both. Matching and request flow are separate choices: **Equals**, **Starts with**, **Ends with**, **Contains**, and **ExtendedOpenAI sentence pattern** decide only whether a rule matches.
+An **AI routing** rule saves a fixed model, reasoning effort, or both. Leaving a choice blank keeps the current value. Matching and request flow are separate choices: **Equals**, **Starts with**, **Ends with**, **Contains**, and **ExtendedOpenAI sentence pattern** decide only whether a rule matches.
 
 Use **Continue to AI** to choose what happens after a routing rule matches:
 
@@ -73,6 +73,18 @@ A reset follows the same explicit flow choice. With **Continue to AI** on and **
 Existing routing rules created before this option was added retain their previous behaviour when first loaded: Equals and Sentence pattern rules remain standalone, while Starts with, Ends with, and Contains rules continue to the provider. Once normalized, that choice is stored explicitly and no longer changes when the match type changes.
 
 Reasoning effort is validated against the model that will actually receive it, including a model supplied by another active conversation override. Model-specific values are supported where the model allows them; for example, GPT-6 Astra routing can use `xhigh` and `max` in addition to the normal reasoning levels.
+
+### Example: deep think about a question
+
+Create a sentence-pattern rule with the trigger `deep think about {question}`. Choose the model and set **Reasoning effort** to **High** if that model supports it. Turn on **Continue to AI** and choose **Captured value** with **question** as the AI input. Saying “Deep think about why the dishwasher smells” sends “why the dishwasher smells” with the saved model and effort. **This request only** applies these settings for that answer.
+
+For a standalone “Use low reasoning” command, leave the model blank, choose **Low**, and turn off **Continue to AI**. The effort applies to the rest of the conversation if the active model supports it. To select different models or efforts by voice, create a rule for each choice and give it one or more phrases.
+
+### Repair rules that captured a routing choice
+
+Older rules that used a capture in **Model**, **Underlying Azure model**, or **Reasoning effort** retain their values when loaded or restored. An enabled affected rule that matches and passes its **Only when** conditions stops with a repair message before changing routes, trying lower-priority rules, or sending a request to AI.
+
+Open the rule and replace the previous captures with fixed values. You can also explicitly choose **Reset to configured defaults**. Save and check **Match Preview**. Captures in trigger phrases, acknowledgement text, and the selected AI input remain available. Disable the rule to let lower-priority rules handle the request while you repair it.
 
 ## Matching modes
 

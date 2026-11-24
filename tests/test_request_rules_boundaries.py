@@ -461,7 +461,7 @@ def test_wording_rule_and_stored_slot_validation_limits() -> None:
         (
             "model_routing",
             {"reasoning_effort": "{effort}-extra"},
-            "must be a single",
+            "Captured routing choices were removed",
         ),
         (
             "model_routing",
@@ -646,12 +646,10 @@ async def test_active_function_context_and_guest_slot_boundaries() -> None:
 
 
 def test_routing_and_name_helpers_cover_remaining_guards() -> None:
-    with pytest.raises(HomeAssistantError, match="Captured routing model is empty"):
-        rr._resolved_routing_value("{model}", {"model": " "}, "model")
     with pytest.raises(HomeAssistantError, match="does not support reasoning"):
         rr._validate_effective_reasoning("gpt-4o", "high")
-    with pytest.raises(HomeAssistantError, match="Unsupported captured reasoning"):
-        rr._validate_effective_reasoning("gpt-5.6", "imaginary", captured=True)
+    with pytest.raises(HomeAssistantError, match="is not supported by model"):
+        rr._validate_effective_reasoning("gpt-5.6", "imaginary")
 
     rules = [
         {"name": "A very long rule name copy"},

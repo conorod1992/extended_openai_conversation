@@ -70,7 +70,7 @@ def test_guard_native_actions_handles_non_list_container_values() -> None:
         {"action_type": "model_routing", "action": {"model": "{captured}"}},
     ],
 )
-def test_rule_model_validation_defers_non_routes_resets_and_capture_values(
+def test_rule_model_validation_skips_non_routes_resets_and_retired_captures(
     monkeypatch, rule
 ) -> None:
     validate = Mock(side_effect=AssertionError("no static route validation expected"))

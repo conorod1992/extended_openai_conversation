@@ -66,7 +66,10 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
     rule = match.rule
     action = rule["action"]
     would_do: dict[str, Any]
-    if rule.get(request_rules.MATCH_REPAIR):
+    if rule.get(request_rules.MATCH_REPAIR) or (
+        rule["action_type"] == "model_routing"
+        and request_rules.request_rule_repair(rule)
+    ):
         continue_to_ai = False
         would_do = {
             "type": rule["action_type"],

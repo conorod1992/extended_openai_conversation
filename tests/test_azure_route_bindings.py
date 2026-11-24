@@ -193,7 +193,7 @@ async def test_azure_route_replaces_the_whole_retained_binding(
     )
 
 
-async def test_dynamic_azure_binding_and_later_effort_reuse_its_deployment(hass):
+async def test_fixed_azure_binding_and_later_effort_reuse_its_deployment(hass):
     defaults = {
         "chat_model": "main",
         "azure_model": "gpt-4.1-mini",
@@ -203,12 +203,11 @@ async def test_dynamic_azure_binding_and_later_effort_reuse_its_deployment(hass)
     }
     route = validate_rule(
         _rule(
-            "dynamic",
-            "route {deployment} using {underlying}",
-            match_type="sentence_pattern",
+            "fixed",
+            "route custom-deployment using gpt-5",
             action={
-                "model": "{deployment}",
-                "azure_model": "{underlying}",
+                "model": "custom-deployment",
+                "azure_model": "gpt-5",
                 "scope": "conversation",
             },
         )

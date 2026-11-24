@@ -338,15 +338,16 @@ for (const bundled of [false, true]) {
     expect(await panel.evaluate(host => host._azureRuleLookups.filter(Boolean).every(model => model === "gpt-5.6"))).toBe(true);
     await panel.locator("#rule-match").selectOption("sentence_pattern");
     await panel.locator("#rule-phrases").fill("switch to {deployment}");
-    const lookups = await panel.evaluate(host => host._azureRuleLookups.length);
     await panel.locator("#rule-model").fill("{deployment}");
-    await expect.poll(() => panel.evaluate(host => host._azureRuleLookups.length)).toBeGreaterThan(lookups);
+    await panel.locator("#rule-save").click();
+    await expect(panel.locator("#rule-error")).toContainText("Replace routing captures");
+    await panel.locator("#rule-model").fill("another-deployment");
     await expect.poll(() => panel.evaluate(host => host._azureRuleLookups.at(-1))).toBe("gpt-5.6");
     await expect(panel.locator('#rule-reasoning option[value="minimal"]')).toHaveCount(0);
     await expect(panel.locator("#rule-reasoning")).toHaveValue("high");
     await panel.locator("#rule-save").click();
     const saved = await page.evaluate(() => browserHarness.getState().requestRules.rules.find(rule => rule.name === "Azure preserved route"));
-    expect(saved.action.model).toBe("{deployment}");
+    expect(saved.action.model).toBe("another-deployment");
     expect(saved.action.azure_model).toBe("gpt-5.6");
     expect(saved.action.reasoning_effort).toBe("high");
     await expectHarnessClean(page, errors);
@@ -388,24 +389,69 @@ for (const bundled of [false, true]) {
 }
 
 
-for (const bundled of [false, true]) test(`Routing rules can select a reasoning capture (${bundled})`, async ({page}) => {
+for (const bundled of [false, true]) test(`Routing rules use fixed choices with captured AI input (${bundled})`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
   const panel = panelFor(page);
   await panel.locator("#rule-add").click();
-  await panel.locator("#rule-name").fill("Captured model and reasoning");
+  await panel.locator("#rule-name").fill("Deep think");
   await panel.locator("#rule-match").selectOption("sentence_pattern");
   await panel.locator("#rule-action-type").selectOption("model_routing");
-  await panel.locator("#rule-model").fill("{model}");
-  await panel.locator("#rule-phrases").fill("route {model} with {effort}");
-  await panel.locator("#rule-reasoning").selectOption("{effort}");
+  await panel.locator("#rule-phrases").fill("deep think about {question}");
   await panel.locator("#rule-continue-to-ai").check();
+  await panel.locator("#rule-ai-input-mode").selectOption("capture");
+  await expect(panel.locator("#rule-ai-input-capture")).toHaveValue("question");
+  await expect(panel.locator('#rule-reasoning option[value="{question}"]')).toHaveCount(0);
+  await panel.locator("#rule-model").fill("{question}");
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-error")).toContainText("Replace routing captures");
+  const calls = await page.evaluate(() => browserHarness.calls.filter(
+    call => call.section === "request_rules" && call.action === "create"
+  ));
+  expect(calls).toEqual([]);
+  await panel.locator("#rule-model").fill("gpt-5.6");
+  await panel.locator("#rule-reasoning").selectOption("high");
   await panel.locator("#rule-save").click();
   await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
   const saved = await page.evaluate(() => browserHarness.calls.findLast(
     call => call.section === "request_rules" && call.action === "create"
   ).rule);
-  expect(saved.action.model).toBe("{model}");
-  expect(saved.action.reasoning_effort).toBe("{effort}");
+  expect(saved.action.model).toBe("gpt-5.6");
+  expect(saved.action.reasoning_effort).toBe("high");
+  expect(saved.ai_input_capture).toBe("question");
+  await expectHarnessClean(page, errors);
+});
+
+test("A legacy routing choice stays visible until replaced", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/request-rules"));
+  const panel = panelFor(page);
+  const edit = panel.locator(".rule-edit").first();
+  await expect(edit).toBeVisible();
+  await panel.evaluate(host => {
+    const rule = host._result.rules[0];
+    Object.assign(rule, {
+      action_type: "model_routing", match_type: "sentence_pattern",
+      phrases: ["reason {effort}"],
+      action: {model: "{effort}", reasoning_effort: "{effort}", scope: "request", continue_to_ai: true},
+    });
+    host._result.diagnostics[rule.id] = "Captured routing choices were removed. Replace captures with fixed choices.";
+  });
+  await edit.click();
+  await expect(panel.locator("#rule-action-repair")).toContainText("Captured routing choices were removed.");
+  await expect(panel.locator("#rule-model")).toHaveValue("{effort}");
+  await expect(panel.locator("#rule-reasoning")).toHaveValue("{effort}");
+  await expect(panel.locator('#rule-reasoning option[value="{effort}"]')).toHaveJSProperty("disabled", true);
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-error")).toContainText("Replace routing captures");
+  await panel.locator("#rule-model").fill("gpt-5.6");
+  await panel.locator("#rule-reasoning").selectOption("low");
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
+  const saved = await page.evaluate(() => browserHarness.calls.findLast(
+    call => call.section === "request_rules" && call.action === "update"
+  ).rule);
+  expect(saved.action).toMatchObject({model: "gpt-5.6", reasoning_effort: "low"});
+  expect(saved.phrases).toEqual(["reason {effort}"]);
   await expectHarnessClean(page, errors);
 });

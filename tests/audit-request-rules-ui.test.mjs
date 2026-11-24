@@ -15,7 +15,7 @@ syncRequestRuleRoutingControls(root, ["low", "high"]);
 assert.equal(scope.value,"request");
 assert.equal(scope.disabled,false);
 assert.equal(reasoning.value,"{effort}");
-assert.ok(reasoning.options.some((entry)=>entry.value==="{effort}"));
+assert.ok(reasoning.options.find((entry)=>entry.value==="{effort}").disabled);
 reasoning.value="xhigh";
 syncRequestRuleRoutingControls(root, []);
 assert.equal(reasoning.value,"");

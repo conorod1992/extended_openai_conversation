@@ -196,9 +196,14 @@ async def test_new_target_profile_cannot_invalidate_an_azure_route(
     candidate["models"].append(model)
     data.validate_catalog(candidate)
     data.validate_catalog_transition(None, candidate)
-    assert (await manager.async_apply_update())["source"] == "bundled"
-    assert manager.catalog is None
-    assert manager.available_catalog is candidate
+    status = await manager.async_apply_update()
+    if dynamic:
+        assert status["source"] == "downloaded"
+        assert manager.catalog is candidate
+    else:
+        assert status["source"] == "bundled"
+        assert manager.catalog is None
+        assert manager.available_catalog is candidate
 
 
 @pytest.mark.parametrize(
@@ -230,7 +235,7 @@ async def test_inferred_azure_provider_uses_the_route_binding(hass, monkeypatch)
     assert (await manager.async_reset())["source"] == "bundled"
 
 
-async def test_captured_underlying_model_remains_deferred(hass, monkeypatch):
+async def test_retired_captured_underlying_model_does_not_block_catalogue_changes(hass, monkeypatch):
     manager, options, rule, entry, _candidate = setup_manager(
         hass, monkeypatch, "{underlying}", "high"
     )

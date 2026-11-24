@@ -49,6 +49,10 @@ Function result aliases have been removed. Native `call_function` now returns th
 
 Rules using aliases or an older captured Function response are preserved on upgrade and private restore. They need to be reviewed and saved before they can run. Also review separately configured Home Assistant scripts that call the service on a rule's behalf. See [Repair rules from earlier versions](features/request-rules.md#repair-rules-from-earlier-versions).
 
+### Request Rule model and reasoning choices
+
+Select a fixed model or deployment, a fixed reasoning effort, or both in each routing rule. Set a fixed Azure binding where the deployment needs one. Existing rules and private backups retain captured routing values for explicit repair before the rule can run. Sentence-pattern captures can still supply the question sent to AI. See [AI routing](features/request-rules.md#ai-routing) for examples and repair steps.
+
 ### Before upgrading
 
 1. Run **Home Assistant 2026.7.0 or newer**, as required by this repository's HACS metadata. Take a Home Assistant backup and a private agent backup before updating. Keep backups secure; agent backups do not include every Home Assistant dependency or global setting.

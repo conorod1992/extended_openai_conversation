@@ -80,7 +80,7 @@ def test_static_route_validates_inherited_request(overrides):
         rr.validate_rule_model_request(rule, overrides, {})
 
 
-async def test_invalid_captured_route_does_not_poison_conversation_state(hass):
+async def test_retired_dynamic_route_does_not_poison_conversation_state(hass):
     rule = routing_rule(scope="conversation")
     rule["action"]["model"] = "{model}"
     rule["action"]["reasoning_effort"] = None
@@ -88,10 +88,9 @@ async def test_invalid_captured_route_does_not_poison_conversation_state(hass):
     rule["match_type"] = "sentence_pattern"
     rules = rr.RequestRules(MemoryStore())
     await rules.async_initialize()
-    await rules.async_create(rule)
+    await rules.async_replace_backup({"rules": [rule]})
     runtime = rr.RequestRuleRuntime()
-    with pytest.raises(HomeAssistantError):
-        await rr.async_evaluate_rule(
+    result = await rr.async_evaluate_rule(
             hass,
             rules,
             runtime,
@@ -99,7 +98,9 @@ async def test_invalid_captured_route_does_not_poison_conversation_state(hass):
             "session",
             request_options={"chat_model": "gpt-5.6", "web_search": True},
             entry_data={},
-        )
+    )
+    assert result is not None and result.consume and not result.successful
+    assert "Captured routing choices were removed" in result.response
     assert runtime.get("session", 30) == {}
 
 
@@ -120,7 +121,7 @@ async def test_rule_override_repair_reconciles_committed_rules(hass, monkeypatch
             rule["action"]["model"] = "{model}"
             rule["match_type"] = "sentence_pattern"
             rule["phrases"] = ["route {model}"]
-        await rules.async_create(rule)
+        await rules.async_replace_backup({"rules": [rule]})
     subentry = SimpleNamespace(
         subentry_id="agent",
         subentry_type="conversation",
@@ -149,4 +150,4 @@ async def test_rule_override_repair_reconciles_committed_rules(hass, monkeypatch
     delete = Mock()
     monkeypatch.setattr(model_lifecycle.ir, "async_delete_issue", delete)
     model_lifecycle.sync_entry_model_lifecycle(hass, entry)
-    assert delete.called == (mode in {"deleted", "disabled", "changed"})
+    assert delete.called == (mode in {"deleted", "disabled", "changed", "captured"})

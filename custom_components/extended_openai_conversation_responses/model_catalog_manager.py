@@ -56,12 +56,11 @@ from .model_routing import routed_model_override
 from .operation_settlement import async_wait_owned_cleanup
 from .operational_errors import log_handled_failure
 from .provider_credentials import require_provider_restore_complete
-from .request_rule_patterns import compile_sentence_pattern
 from .request_rules import (
     _MANAGERS as _RULE_MANAGERS,
-    SLOT_REFERENCE,
     RequestRules,
     async_get_request_rules,
+    request_rule_repair,
 )
 from .strict_store import PropagatingWriteStore
 
@@ -102,7 +101,6 @@ class _SavedRules:
     revision: str | None
     rules: tuple[Mapping[str, Any], ...]
     registered: bool
-    inactive: frozenset[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,7 +369,6 @@ class ModelCatalogManager:
                                 for rule in snapshot["rules"]
                             ),
                             self.hass.data.get(_RULE_MANAGERS, {}).get(key) is owner,
-                            frozenset(snapshot.get("diagnostics", {})),
                         ),
                     )
                 assistants.append(assistant)
@@ -488,7 +485,6 @@ class ModelCatalogManager:
     ) -> bool:
         """Check concrete saved agent and routing choices from one inventory."""
         from .request import capability_model_identity, validate_runtime_readiness
-        from .request_rules import request_rule_repair
 
         if inventory is None:
             inventory = await self._candidate_inventory(candidate)
@@ -519,7 +515,6 @@ class ModelCatalogManager:
                         and not saved_action.get("reset")
                         and isinstance(saved_effort, str)
                         and saved_effort
-                        and not SLOT_REFERENCE.search(saved_effort)
                     ):
                         if saved_action.get("scope", "conversation") == "conversation":
                             inherited_efforts.add(saved_effort)
@@ -540,17 +535,6 @@ class ModelCatalogManager:
                     routed_model = action.get("model")
                     routed_effort = action.get("reasoning_effort")
                     routed_binding = action.get("azure_model")
-                    if routed_binding and SLOT_REFERENCE.search(str(routed_binding)):
-                        continue
-                    if (
-                        routed_model
-                        and SLOT_REFERENCE.search(str(routed_model))
-                        and not (provider == "azure" and routed_binding)
-                    ):
-                        continue
-                    dynamic_effort = bool(
-                        routed_effort and SLOT_REFERENCE.search(str(routed_effort))
-                    )
                     fixed_route = bool(routed_model or routed_binding)
                     if not (fixed_route or routed_effort):
                         continue
@@ -585,7 +569,7 @@ class ModelCatalogManager:
                         if fixed_route and action.get("scope") == "conversation":
                             # A saved conversation route can affect later turns.
                             possible_efforts.update(effort_only_routes)
-                        if routed_effort and not dynamic_effort and not fixed_route:
+                        if routed_effort and not fixed_route:
                             # Protect the default only if it could use this effort.
                             # Other fixed models are checked with their own identity.
                             possible_efforts.add(routed_effort)
@@ -626,73 +610,6 @@ class ModelCatalogManager:
                                 )
                             if not fixed_route:
                                 continue
-                        if dynamic_effort:
-                            # Defer the captured value, not the fixed model's
-                            # recognition or previously available effort support.
-                            current_metadata = catalog_model_metadata(
-                                self.catalog,
-                                capability_model_identity(effective, entry_data),
-                                provider=provider,
-                            )
-                            if (
-                                current_metadata["reasoning"]["supported"]
-                                and not routed_metadata["reasoning"]["supported"]
-                            ):
-                                return False
-                            capture = SLOT_REFERENCE.fullmatch(str(routed_effort))
-                            if (
-                                capture
-                                and rule.get("match_type") == "sentence_pattern"
-                                and rule.get("id") not in assistant.rules.inactive
-                            ):
-                                patterns = [
-                                    compile_sentence_pattern(phrase)
-                                    for phrase in rule["phrases"]
-                                ]
-                                for effort in current_metadata["reasoning"]["efforts"]:
-                                    if not any(
-                                        pattern.allows_text_capture(capture[1], effort)
-                                        for pattern in patterns
-                                    ):
-                                        continue
-                                    concrete = {
-                                        **effective,
-                                        CONF_REASONING_EFFORT: effort,
-                                    }
-                                    try:
-                                        validate_runtime_readiness(
-                                            concrete,
-                                            entry_data,
-                                            model_capabilities=current_metadata,
-                                            client=client,
-                                        )
-                                    except HomeAssistantError:
-                                        continue
-                                    self._validate_candidate_request(
-                                        concrete, connection, routed_metadata
-                                    )
-                            # A captured effort must not hide fixed API, tool,
-                            # tier or output requirements. Try the finite effort
-                            # set rather than assuming the recommendation: a
-                            # conditional capability can require another value.
-                            for possible_effort in routed_metadata["reasoning"][
-                                "efforts"
-                            ] or [None]:
-                                try:
-                                    self._validate_candidate_request(
-                                        {
-                                            **effective,
-                                            CONF_REASONING_EFFORT: possible_effort,
-                                        },
-                                        connection,
-                                        routed_metadata,
-                                    )
-                                except HomeAssistantError:
-                                    continue
-                                break
-                            else:
-                                return False
-                            continue
                         # Explicit Rule efforts are validated at execution; the
                         # request builder may omit stale agent-only preferences.
                         if routed_effort and (
@@ -950,28 +867,18 @@ class ModelCatalogManager:
                     if (
                         not rule.get("enabled", True)
                         or rule.get("action_type") != "model_routing"
+                        or request_rule_repair(rule)
                     ):
                         continue
                     action = rule.get("action", {})
                     if action.get("reset"):
                         continue
                     effort = action.get("reasoning_effort")
-                    if (
-                        not isinstance(effort, str)
-                        or not effort
-                        or SLOT_REFERENCE.search(effort)
-                    ):
+                    if not isinstance(effort, str) or not effort:
                         continue
                     model = action.get("model")
                     binding = action.get("azure_model")
-                    if (
-                        not (model or binding)
-                        or (isinstance(binding, str) and SLOT_REFERENCE.search(binding))
-                    ) or (
-                        isinstance(model, str)
-                        and SLOT_REFERENCE.search(model)
-                        and not (provider == "azure" and binding)
-                    ):
+                    if not (model or binding):
                         if effort not in bundled_efforts:
                             return True
                         continue
