@@ -38,6 +38,9 @@ These notes describe the development branch being prepared for 7.0.0, compared w
 - Home Assistant caller permissions, Assist exposure, Guest restrictions, and delayed-job authorization are checked at their relevant execution boundaries. Voice data mappings do not grant action permissions.
 - Provider stream handling and retained history better preserve complete replies and tool-call/result relationships. Failed or cancelled requests retain available provider-reported Usage without adding local context estimates.
 - Management saves and restores retain committed outcomes across lost or malformed acknowledgements and refresh failures. Editors recover their own drafts without treating a failed refresh as proof that a save failed.
+- Direct `process` calls keep another agent's cached Home Assistant conversation separate. Persistent Memory selections follow the lifetime of their managed conversation across successful AI and local turns.
+- Malformed Knowledge tool arguments use the configured pre-dispatch error handling. Invalid History and Statistics dates and out-of-range delayed Function Tool schedules produce validation errors. Corrupted compressed backup data produces a backup corruption error.
+- Archive transcript pages stay visible when loading another page fails, and the failed request can be retried. Knowledge and Temporary Memory order restored timestamps by their actual instants across timezone offsets.
 
 ### Retired optional Request Rules fuzzy matching
 

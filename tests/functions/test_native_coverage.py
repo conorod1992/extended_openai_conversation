@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, Mock
@@ -21,6 +22,7 @@ from custom_components.extended_openai_conversation_responses.functions.native i
 )
 from homeassistant.core import Context, State
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 
 def test_automation_parser_accepts_single_item_list_and_rejects_bad_yaml() -> None:
@@ -483,6 +485,64 @@ async def test_history_surfaces_recorder_unavailability(
         )
 
 
+@pytest.mark.parametrize("method", ["get_history", "get_statistics"])
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("start_time", "2026-02-30T00:00:00Z"),
+        ("end_time", "2026-08-02T25:00:00Z"),
+        ("start_time", "0001-01-01T00:00:00+14:00"),
+        ("end_time", "9999-12-31T23:59:59-14:00"),
+    ],
+)
+async def test_recorder_rejects_calendar_clock_and_utc_overflow_before_dispatch(
+    hass, exposed_entities, monkeypatch, method, field, invalid
+) -> None:
+    recorder_instance = Mock()
+    monkeypatch.setattr(native_module.recorder, "get_instance", recorder_instance)
+    arguments = {
+        "entity_ids": ["sensor.temperature"],
+        "statistic_ids": ["custom:metric"],
+        "start_time": "2026-08-01T00:00:00Z",
+        "end_time": "2026-08-02T00:00:00Z",
+    }
+    arguments[field] = invalid
+
+    with pytest.raises(HomeAssistantError, match=f"{field} must be an ISO 8601 datetime"):
+        await getattr(NativeFunction(), method)(
+            hass, {}, arguments, None, exposed_entities
+        )
+
+    recorder_instance.assert_not_called()
+
+
+async def test_history_at_datetime_limit_uses_explicit_end_without_evaluating_default(
+    hass, exposed_entities, monkeypatch
+) -> None:
+    execute = AsyncMock(return_value=[])
+    recorder_instance = Mock(
+        return_value=SimpleNamespace(async_add_executor_job=execute)
+    )
+    monkeypatch.setattr(native_module.recorder, "get_instance", recorder_instance)
+    arguments = {
+        "entity_ids": ["sensor.temperature"],
+        "start_time": "9999-12-31T22:00:00+01:00",
+        "end_time": "9999-12-31T23:00:00Z",
+    }
+    get_history = NativeFunction().get_history
+    assert await get_history(hass, {}, arguments, None, exposed_entities) == []
+    execute.assert_awaited_once()
+    assert execute.await_args.args[2:4] == (
+        datetime(9999, 12, 31, 21, tzinfo=UTC),
+        datetime(9999, 12, 31, 23, tzinfo=UTC),
+    )
+
+    del arguments["end_time"]
+    with pytest.raises(HomeAssistantError, match="Default end_time is outside"):
+        await get_history(hass, {}, arguments, None, exposed_entities)
+    recorder_instance.assert_called_once_with(hass)
+
+
 @pytest.mark.parametrize(
     ("start_time", "end_time", "invalid_label"),
     [
@@ -537,10 +597,16 @@ async def test_user_lookup_returns_safe_name(hass, user, expected: str) -> None:
 
 def test_datetime_and_state_conversion_edges() -> None:
     function = NativeFunction()
-    sentinel = object()
-    assert function.as_utc(None, sentinel, "bad") is sentinel
-    with pytest.raises(HomeAssistantError, match="bad time"):
-        function.as_utc("not-a-time", sentinel, "bad time")
+    start, end = native_module._validate_history_request(
+        {
+            "entity_ids": ["sensor.temperature"],
+            "start_time": "2026-08-01T01:00:00",
+            "end_time": "2026-08-01T06:00:00+02:00",
+        }
+    )
+    expected = datetime(2026, 8, 1, 1, tzinfo=dt_util.DEFAULT_TIME_ZONE)
+    assert start == expected.astimezone(UTC)
+    assert end == datetime(2026, 8, 1, 4, tzinfo=UTC)
 
     state = State("sensor.temperature", "21")
     assert function.as_dict(state)["entity_id"] == "sensor.temperature"

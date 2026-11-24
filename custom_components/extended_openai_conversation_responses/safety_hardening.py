@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import MAXYEAR, MINYEAR, date, datetime, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -21,6 +21,13 @@ MAX_STATISTIC_SPAN_BY_PERIOD: dict[str, timedelta] = {
     "week": timedelta(days=366 * 20),
     "month": timedelta(days=366 * 20),
     "year": timedelta(days=366 * 100),
+}
+# Recorder extends the local end time to the start of the next calendar period.
+_LATEST_STATISTICS_LOCAL_END = {
+    "day": date(MAXYEAR, 12, 30),
+    "week": date.max - timedelta(days=date.max.weekday() + 1),
+    "month": date(MAXYEAR, 11, 30),
+    "year": date(MAXYEAR - 1, 12, 31),
 }
 
 
@@ -43,17 +50,29 @@ async def _async_require_admin(hass: HomeAssistant, llm_context: Any) -> None:
         )
 
 
-def _parse_datetime(value: Any, label: str) -> Any:
+def _parse_datetime(value: Any, label: str) -> datetime:
     """Parse one required ISO datetime to UTC."""
     if not isinstance(value, str):
         raise HomeAssistantError(f"{label} must be an ISO 8601 datetime")
-    parsed = dt_util.parse_datetime(value)
-    if parsed is None:
-        raise HomeAssistantError(f"{label} must be an ISO 8601 datetime")
-    return dt_util.as_utc(parsed)
+    try:
+        parsed = dt_util.parse_datetime(value)
+        if parsed is not None:
+            return dt_util.as_utc(parsed)
+    except (ValueError, OverflowError) as err:
+        raise HomeAssistantError(f"{label} must be an ISO 8601 datetime") from err
+    raise HomeAssistantError(f"{label} must be an ISO 8601 datetime")
 
 
-def _validate_time_window(start: Any, end: Any, maximum: timedelta) -> None:
+def _offset_datetime(value: datetime, offset: timedelta, label: str) -> datetime:
+    try:
+        return value + offset
+    except OverflowError as err:
+        raise HomeAssistantError(
+            f"Default {label} is outside the supported date range"
+        ) from err
+
+
+def _validate_time_window(start: datetime, end: datetime, maximum: timedelta) -> None:
     """Reject inverted and excessively expensive Recorder windows."""
     if end <= start:
         raise HomeAssistantError("end_time must be after start_time")
@@ -63,8 +82,8 @@ def _validate_time_window(start: Any, end: Any, maximum: timedelta) -> None:
         )
 
 
-def _validate_history_request(arguments: dict[str, Any]) -> None:
-    """Bound history cardinality and time before Recorder materializes results."""
+def _validate_history_request(arguments: dict[str, Any]) -> tuple[datetime, datetime]:
+    """Bound history cardinality and return the effective UTC Recorder window."""
     entity_ids = arguments.get("entity_ids")
     if (
         not isinstance(entity_ids, list)
@@ -79,20 +98,21 @@ def _validate_history_request(arguments: dict[str, Any]) -> None:
             f"entity_ids may contain at most {MAX_HISTORY_ENTITY_IDS} IDs"
         )
 
-    now = dt_util.utcnow()
+    one_day = timedelta(days=1)
     raw_start = arguments.get("start_time")
     start = (
         _parse_datetime(raw_start, "start_time")
         if raw_start is not None
-        else now - timedelta(days=1)
+        else _offset_datetime(dt_util.utcnow(), -one_day, "start_time")
     )
     raw_end = arguments.get("end_time")
     end = (
         _parse_datetime(raw_end, "end_time")
         if raw_end is not None
-        else start + timedelta(days=1)
+        else _offset_datetime(start, one_day, "end_time")
     )
     _validate_time_window(start, end, MAX_HISTORY_SPAN)
+    return start, end
 
 
 def _validate_execute_service_request(arguments: dict[str, Any]) -> None:
@@ -107,7 +127,7 @@ def _validate_execute_service_request(arguments: dict[str, Any]) -> None:
 
 
 def _normalized_statistics_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Validate the period/window and normalize the optional period default."""
+    """Prepare the period and the UTC window for Recorder statistics."""
     normalized = dict(arguments)
     period = normalized.get("period") or "day"
     if period not in MAX_STATISTIC_SPAN_BY_PERIOD:
@@ -116,4 +136,26 @@ def _normalized_statistics_arguments(arguments: dict[str, Any]) -> dict[str, Any
     start = _parse_datetime(normalized.get("start_time"), "start_time")
     end = _parse_datetime(normalized.get("end_time"), "end_time")
     _validate_time_window(start, end, MAX_STATISTIC_SPAN_BY_PERIOD[period])
+    _validate_statistics_calendar_bounds(start, end, period)
+    normalized.update(start_time=start, end_time=end)
     return normalized
+
+
+def _validate_statistics_calendar_bounds(
+    start: datetime, end: datetime, period: str
+) -> None:
+    """Reject ranges whose Recorder period cannot be aligned in HA's timezone."""
+    latest_end = _LATEST_STATISTICS_LOCAL_END.get(period)
+    if latest_end is None or (start.year > MINYEAR and end.year < MAXYEAR - 1):
+        return
+    try:
+        dt_util.as_local(start)
+        local_end = dt_util.as_local(end)
+    except (ValueError, OverflowError) as err:
+        raise HomeAssistantError(
+            "Recorder time range is outside the supported dates in Home Assistant's timezone"
+        ) from err
+    if local_end.date() > latest_end:
+        raise HomeAssistantError(
+            f"end_time is outside the supported date range for {period} statistics"
+        )

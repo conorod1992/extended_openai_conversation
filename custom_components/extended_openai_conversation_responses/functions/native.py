@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable
 from copy import deepcopy
-from datetime import datetime, timedelta
 from io import StringIO
 import logging
 import os
@@ -24,7 +23,6 @@ from homeassistant.const import SERVICE_RELOAD
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import llm, target as target_helpers
-import homeassistant.util.dt as dt_util
 from homeassistant.util.yaml import Secrets, parse_yaml
 
 from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
@@ -851,19 +849,12 @@ class NativeFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> list[list[dict[str, Any]]]:
-        _validate_history_request(arguments)
-        start_time = arguments.get("start_time")
-        end_time = arguments.get("end_time")
+        start_time, end_time = _validate_history_request(arguments)
         entity_ids = arguments.get("entity_ids", [])
         include_start_time_state = arguments.get("include_start_time_state", True)
         significant_changes_only = arguments.get("significant_changes_only", True)
         minimal_response = arguments.get("minimal_response", True)
         no_attributes = arguments.get("no_attributes", True)
-
-        now = dt_util.utcnow()
-        one_day = timedelta(days=1)
-        start_time = self.as_utc(start_time, now - one_day, "start_time not valid")
-        end_time = self.as_utc(end_time, start_time + one_day, "end_time not valid")
 
         self.validate_entity_ids(
             hass,
@@ -967,35 +958,16 @@ class NativeFunction(Function):
             raise entity_access_error(hass, unexposed)
 
         statistic_ids = set(raw_statistic_ids)
-        start_time = dt_util.as_utc(
-            cast(datetime, dt_util.parse_datetime(arguments["start_time"]))
-        )
-        end_time = dt_util.as_utc(
-            cast(datetime, dt_util.parse_datetime(arguments["end_time"]))
-        )
-
         return await recorder.get_instance(hass).async_add_executor_job(
             bounded_statistics,
             hass,
-            start_time,
-            end_time,
+            arguments["start_time"],
+            arguments["end_time"],
             statistic_ids,
             arguments.get("period", "day"),
             arguments.get("units"),
             arguments.get("types", {"change"}),
         )
-
-    def as_utc(
-        self, value: str | None, default_value: Any, parse_error_message: str
-    ) -> Any:
-        if value is None:
-            return default_value
-
-        parsed_datetime = dt_util.parse_datetime(value)
-        if parsed_datetime is None:
-            raise HomeAssistantError(parse_error_message)
-
-        return dt_util.as_utc(parsed_datetime)
 
     def as_dict(self, state: State | dict[str, Any]) -> dict[str, Any]:
         if isinstance(state, State):

@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections import deque
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
-
-from homeassistant.core import Context
-from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import safety_hardening
 from custom_components.extended_openai_conversation_responses.ha_permissions import (
     get_active_ha_context,
     set_active_ha_context,
 )
+from homeassistant.core import Context
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 
 @pytest.mark.asyncio
@@ -146,6 +147,66 @@ def test_statistics_validation_defaults_period_and_rejects_bad_period_or_window(
                 "end_time": "2026-01-09T00:00:00+00:00",
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("period", "first_invalid_end"),
+    [
+        ("day", "9999-12-31T00:00:00+00:00"),
+        ("week", "9999-12-27T00:00:00+00:00"),
+        ("month", "9999-12-01T00:00:00+00:00"),
+        ("year", "9999-01-01T00:00:00+00:00"),
+    ],
+)
+def test_statistics_rejects_time_windows_whose_local_period_overflows(
+    monkeypatch, period, first_invalid_end
+) -> None:
+    monkeypatch.setattr(dt_util, "DEFAULT_TIME_ZONE", UTC)
+    end = datetime.fromisoformat(first_invalid_end)
+    safe_end = end - timedelta(microseconds=1)
+    arguments = {
+        "period": period,
+        "start_time": (end - timedelta(hours=1)).isoformat(),
+        "end_time": first_invalid_end,
+    }
+
+    with pytest.raises(HomeAssistantError, match=f"outside.*{period} statistics"):
+        safety_hardening._normalized_statistics_arguments(arguments)
+    arguments["end_time"] = safe_end.isoformat()
+    assert (
+        safety_hardening._normalized_statistics_arguments(arguments)["end_time"]
+        == safe_end
+    )
+
+
+def test_statistics_edges_use_home_assistant_time_zone_for_calendar_periods(
+    monkeypatch,
+) -> None:
+    with (
+        monkeypatch.context() as patch,
+        pytest.raises(HomeAssistantError, match=r"outside.*year statistics"),
+    ):
+        patch.setattr(dt_util, "DEFAULT_TIME_ZONE", ZoneInfo("Pacific/Kiritimati"))
+        safety_hardening._normalized_statistics_arguments(
+            {
+                "period": "year",
+                "start_time": "9998-12-31T20:00:00Z",
+                "end_time": "9998-12-31T23:00:00Z",
+            }
+        )
+
+    arguments = {
+        "start_time": "0001-01-01T00:00:00Z",
+        "end_time": "0001-01-01T13:00:00Z",
+    }
+    with monkeypatch.context() as patch:
+        patch.setattr(dt_util, "DEFAULT_TIME_ZONE", ZoneInfo("Etc/GMT+12"))
+        with pytest.raises(HomeAssistantError, match="Home Assistant's timezone"):
+            safety_hardening._normalized_statistics_arguments(arguments)
+        arguments["period"] = "hour"
+        assert safety_hardening._normalized_statistics_arguments(arguments)[
+            "start_time"
+        ] == datetime.min.replace(tzinfo=UTC)
 
 
 class _Delivery:
