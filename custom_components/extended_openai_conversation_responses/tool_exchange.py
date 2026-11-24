@@ -18,6 +18,7 @@ from .function_execution import (
     async_validate_function_arguments,
     validated_function_call,
 )
+from .function_tool_policy import runtime_function_tool_name
 from .function_tool_recovery import (
     CorrectableToolFailure,
     ToolRecoveryState,
@@ -410,11 +411,11 @@ async def _async_validate_recoverable_call(
     except HomeAssistantError as err:
         return correctable_validation_failure(err)
 
-    if function.get("operation") == "search" and function.get("type") in {
-        "archive",
-        "knowledge",
-        "memory",
-    }:
+    if (
+        function.get("operation") == "search"
+        and (family := function.get("type")) in {"archive", "knowledge", "memory"}
+        and tool_input.tool_name == runtime_function_tool_name(family, "search")
+    ):
         try:
             _require_nonblank_query(arguments)
         except ValueError as err:
