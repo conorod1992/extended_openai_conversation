@@ -1,4 +1,4 @@
-"""Repeated publication, replacement, legacy-removal recovery and discovery."""
+"""Reload installed Skills after repeated manual additions, edits and removals."""
 
 from __future__ import annotations
 
@@ -11,16 +11,23 @@ import pytest
 from custom_components.extended_openai_conversation_responses.skills import SkillManager
 from homeassistant.core import HomeAssistant
 from tests.lock_probe import LockProbe
-from tests.skill_transaction_fixtures import stage_legacy_removal
 from tests_stress.conftest import record
 
 
 def _write_skill(directory: Path, description: str) -> None:
-    directory.mkdir(parents=True)
+    directory.mkdir(parents=True, exist_ok=True)
     (directory / "SKILL.md").write_text(
         f"---\ndescription: {description}\n---\nStable instructions.\n",
         encoding="utf-8",
     )
+
+
+def _remove_skill(directory: Path) -> bool:
+    if not directory.is_dir():
+        return False
+    (directory / "SKILL.md").unlink()
+    directory.rmdir()
+    return True
 
 
 @pytest.mark.asyncio
@@ -47,7 +54,7 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
     monkeypatch.setattr(manager, "_filesystem_lock", probe)
     rng = random.Random(stress_seed)
     operations = 20 * stress_scale
-    publishes = removals = scans = blocked_mutations = 0
+    updates = removals = scans = blocked_reloads = 0
     successful_removals = 0
 
     def verify() -> None:
@@ -62,33 +69,30 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
     for index in range(operations):
         name = f"skill-{rng.randrange(24):02d}"
         action = (
-            "publish"
+            "edit"
             if index == 0
-            else rng.choices(("publish", "remove", "scan"), (5, 3, 2))[0]
+            else rng.choices(("edit", "remove", "scan"), (5, 3, 2))[0]
         )
-        if action == "publish":
+        if action == "edit":
             description = f"Revision {index} of {name}"
-            staged = manager.staging_dir / f"{name}.stage-{index}"
-            _write_skill(staged, description)
+            _write_skill(root / name, description)
             if index % 5 == 0:
                 while not probe.attempts.empty():
                     probe.attempts.get_nowait()
                 async with manager.async_skill_read():
                     await probe.next_attempt()  # The held read lease.
-                    pending = asyncio.create_task(
-                        manager.async_publish_staged_skill(name, staged)
-                    )
-                    await probe.next_attempt()  # Publisher reached the same lock.
+                    pending = asyncio.create_task(manager.async_load_skills())
+                    assert await probe.next_attempt() is pending
                     assert not pending.done()
                     verify()
-                    blocked_mutations += 1
+                    blocked_reloads += 1
                 await pending
             else:
-                await manager.async_publish_staged_skill(name, staged)
+                await manager.async_load_skills()
             expected[name] = description
-            publishes += 1
+            updates += 1
         elif action == "remove":
-            removed = stage_legacy_removal(manager, name, committed=True)
+            removed = _remove_skill(root / name)
             await manager.async_load_skills()
             assert removed is (name in expected)
             expected.pop(name, None)
@@ -103,7 +107,7 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
     # Keep the full original random journey, adding only an unexercised minimum.
     if not successful_removals:
         name = next(iter(expected))
-        assert stage_legacy_removal(manager, name, committed=True)
+        assert _remove_skill(root / name)
         await manager.async_load_skills()
         del expected[name]
         removals += 1
@@ -114,16 +118,16 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
     await manager.async_load_skills()
     scans += 1
     verify()
-    assert publishes and removals and successful_removals and scans and blocked_mutations
+    assert updates and removals and successful_removals and scans and blocked_reloads
     record(
         stress_trace,
         "summary",
         layer="real-ha",
         skill_lifecycle_operations=operations,
-        skill_publishes=publishes,
+        skill_local_updates=updates,
         skill_removals=removals,
         skill_scans=scans,
-        skill_blocked_mutations=blocked_mutations,
+        skill_blocked_reloads=blocked_reloads,
     )
 
 

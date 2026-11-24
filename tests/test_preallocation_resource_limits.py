@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 import sqlite3
-from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock
 
 import pytest
@@ -25,24 +24,6 @@ import custom_components.extended_openai_conversation_responses.services as serv
 import custom_components.extended_openai_conversation_responses.skill_resource_limits as skill_limits
 import custom_components.extended_openai_conversation_responses.skills as skills_module
 from custom_components.extended_openai_conversation_responses.skills import SkillManager
-
-
-class _ChunkedContent:
-    """Minimal aiohttp-style response body for bounded-reader tests."""
-
-    def __init__(self, chunks: list[bytes]) -> None:
-        self._chunks = chunks
-
-    async def iter_chunked(self, _size: int):
-        for chunk in self._chunks:
-            yield chunk
-
-
-def _response(*chunks: bytes, content_length: int | None = None) -> SimpleNamespace:
-    return SimpleNamespace(
-        content_length=content_length,
-        content=_ChunkedContent(list(chunks)),
-    )
 
 
 def _make_empty_db(path: Path) -> None:
@@ -76,53 +57,6 @@ def test_sqlite_rejects_generated_large_values_before_materialization(
             10,
             max_result_bytes=1024,
         )
-
-
-async def test_bounded_http_reader_rejects_declared_and_streamed_overflow() -> None:
-    """Remote bodies are capped both before and while bytes arrive."""
-    with pytest.raises(HomeAssistantError, match="download limit"):
-        await skill_limits.async_read_bounded_response(
-            _response(b"unused", content_length=11), 10, "Skill file"
-        )
-
-    with pytest.raises(HomeAssistantError, match="download limit"):
-        await skill_limits.async_read_bounded_response(
-            _response(b"123456", b"78901"), 10, "Skill file"
-        )
-
-
-async def test_bounded_json_reader_rejects_large_listing(monkeypatch) -> None:
-    """GitHub directory JSON cannot be materialized without a response ceiling."""
-    monkeypatch.setattr(skill_limits, "MAX_SKILL_API_RESPONSE_BYTES", 8)
-
-    with pytest.raises(HomeAssistantError, match="download limit"):
-        await skill_limits.async_read_bounded_json(
-            _response(b'[{"name":', b'"too-large"}]'), "Skill listing"
-        )
-
-
-def test_skill_download_budget_caps_depth_count_file_and_total(monkeypatch) -> None:
-    """Every recursive download dimension has an independent hard ceiling."""
-    monkeypatch.setattr(skill_limits, "MAX_SKILL_DOWNLOAD_DEPTH", 1)
-    monkeypatch.setattr(skill_limits, "MAX_SKILL_DOWNLOAD_FILES", 2)
-    monkeypatch.setattr(skill_limits, "MAX_SKILL_FILE_BYTES", 6)
-    monkeypatch.setattr(skill_limits, "MAX_SKILL_TOTAL_BYTES", 10)
-
-    budget = skill_limits.SkillDownloadBudget()
-    budget.check_directory(1)
-    with pytest.raises(HomeAssistantError, match="directory depth"):
-        budget.check_directory(2)
-
-    with pytest.raises(HomeAssistantError, match="per-file limit"):
-        budget.check_file("oversized.bin", 7)
-
-    assert budget.check_file("first.bin", 6) == 6
-    budget.record_file("first.bin", 6)
-    assert budget.check_file("second.bin", 4) == 4
-    budget.record_file("second.bin", 4)
-
-    with pytest.raises(HomeAssistantError, match="file count|combined download"):
-        budget.check_file("third.bin", 1)
 
 
 def test_local_skill_discovery_caps_count_and_metadata_size(

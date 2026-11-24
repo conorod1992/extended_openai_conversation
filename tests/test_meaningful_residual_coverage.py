@@ -17,6 +17,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 from tests.restore_participants import participants
 from tests.test_subsystem_lifecycle_apis import _seeded_continuity
+from tests.skill_transaction_fixtures import write_legacy_transaction
 
 
 @pytest.mark.asyncio
@@ -345,7 +346,7 @@ def test_skill_recovery_rolls_back_interrupted_publish(tmp_path) -> None:
     (staged / "new.txt").write_text("new")
     backup = root / f"demo.backup-{'a' * 32}"
 
-    journal = skill_transactions.prepare_transaction(root, target, backup, staged)
+    journal = write_legacy_transaction(root, target, backup, staged)
     target.rename(backup)
     staged.rename(target)
 
@@ -372,42 +373,13 @@ def test_skill_recovery_removes_interrupted_new_install(tmp_path) -> None:
     (staged / "new.txt").write_text("new")
     backup = root / f"demo.backup-{'b' * 32}"
 
-    journal = skill_transactions.prepare_transaction(root, target, backup, staged)
+    journal = write_legacy_transaction(root, target, backup, staged)
     staged.rename(target)
 
     skill_transactions.recover_transaction(journal, installed)
 
     assert not target.exists()
     assert not journal.exists()
-
-
-def test_skill_publish_failure_restores_previous_target(tmp_path, monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses.skills import (
-        SkillManager,
-    )
-
-    target = tmp_path / "installed" / "demo"
-    target.mkdir(parents=True)
-    (target / "old.txt").write_text("old")
-    staged = tmp_path / "staged"
-    staged.mkdir()
-    (staged / "new.txt").write_text("new")
-    backup = tmp_path / "backup"
-    real_rename = type(staged).rename
-
-    def rename(self, destination):
-        if self == staged:
-            raise OSError("publish failed")
-        return real_rename(self, destination)
-
-    monkeypatch.setattr(type(staged), "rename", rename)
-
-    with pytest.raises(OSError, match="publish failed"):
-        SkillManager._activate_staged_skill_sync(staged, target, backup)
-
-    assert (target / "old.txt").read_text() == "old"
-    assert not backup.exists()
-
 
 
 @pytest.mark.asyncio

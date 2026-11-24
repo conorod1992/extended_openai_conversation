@@ -18,7 +18,6 @@ from custom_components.extended_openai_conversation_responses.services import (
     SERVICE_DISABLE_FUNCTION_GROUPS,
     SERVICE_ENABLE_FUNCTION_GROUPS,
     async_setup_services,
-    async_skill_source_ref,
 )
 from homeassistant.core import Context, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
@@ -280,18 +279,6 @@ async def test_group_actions_do_not_change_member_tool_state(hass, monkeypatch) 
     assert subentry.data["function_groups"][0]["enabled"] is True
     stored_tools = yaml.safe_load(subentry.data["functions"])
     assert [tool.get("enabled", True) for tool in stored_tools] == [True, False]
-
-
-async def test_skill_source_ref_defaults_to_installed_release(monkeypatch) -> None:
-    async def integration(_hass, _domain):
-        return SimpleNamespace(version="6.8.3")
-
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.services.async_get_integration",
-        integration,
-    )
-    assert await async_skill_source_ref(SimpleNamespace()) == "6.8.3"
-    assert await async_skill_source_ref(SimpleNamespace(), "develop") == "develop"
 
 
 async def test_call_function_action_uses_request_scoped_bridge(

@@ -4,27 +4,6 @@ This directory contains example Skills for Extended OpenAI Conversation (Respons
 
 ## Installing Skills
 
-### Method 1: Download from Repository (Recommended)
-
-Use the `download_skill` service to automatically download and install skills:
-
-```yaml
-service: extended_openai_conversation_responses.download_skill
-data:
-  skill_name: crypto
-```
-
-This service:
-
-- Downloads the Skill from the repository tag matching the installed integration version
-- Saves it to `<config>/extended_openai_conversation_responses/skills/`
-- Automatically reloads all skills
-- Returns the list of downloaded files
-
-For a development install, explicitly add `source_ref: develop` (or another branch, tag, or commit) when you intend to use files from that ref. Downloads are staged before publication; an incomplete download does not become an installed Skill.
-
-### Method 2: Manual Installation
-
 1. **Copy the skill directory** to your Home Assistant config:
    ```bash
    cp -r crypto /config/extended_openai_conversation_responses/skills/
@@ -138,7 +117,7 @@ Only enable shell execution for trusted agents and reviewed Skills. A Bash Funct
     restrict_to_workspace: true
 ```
 
-This allows the model to request shell commands, execute scripts, call installed external programs, and process data using command-line tools. Install the example's required Python packages and executables yourself; the Skill downloader does not do so. Prefer a narrowly defined Function Tool over a general shell wherever possible.
+This allows the model to request shell commands, execute scripts, call installed external programs, and process data using command-line tools. Install the example's required Python packages and executables yourself. Prefer a narrowly defined Function Tool over a general shell wherever possible.
 
 **Security Note:** Bash runs with Home Assistant's operating-system privileges. Workspace checks and destructive-command deny patterns are defensive checks, not a sandbox; scripts and shell syntax can access other paths. See [Bash Function Tool](../../docs/functions/bash.md) before enabling it.
 
@@ -163,8 +142,6 @@ This service:
 - After manually creating a new skill
 - After editing existing `SKILL.md` files
 - After modifying the description or renaming a Skill directory
-
-**Note:** You don't need to reload after using `download_skill` service, as it automatically reloads skills.
 
 ## Creating Your Own Skills
 

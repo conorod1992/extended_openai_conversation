@@ -179,8 +179,6 @@
     "catalog_ai_task_reset_rejections": 1,
     "catalog_ai_task_resets": 1,
     "catalog_ai_task_wire_checks": 3,
-    "skill_download_cancellation_cases": 4,
-    "skill_download_unowned_cases": 5,
     "populated_feature_journeys": 4,
     "semantic_oracle_rejections": 28,
     "interrupted_active_speech_listener_cancel": 1,
@@ -242,5 +240,5 @@
     "quiet_service_acknowledgement_recoveries": 2,
     "provider_endpoint_wire_cases": 4
   },
-  "pytest_union_sha256": "d4390dbf1eba082d58af7794135c7bb5ea62b2a56daa1fbd803ee39f0e693e43"
+  "pytest_union_sha256": "328cec6c139ee076e1f66e1dbe1fabefcc1255918109b1b0baaa6c720bd0ce10"
 }

@@ -173,16 +173,6 @@
                 }
             }
         },
-        "download_skill": {
-            "name": "Download skill",
-            "description": "Download a skill from the GitHub repository to your skills directory. Available skills: https://github.com/conorod1992/extended_openai_conversation/tree/develop/examples/skills",
-            "fields": {
-                "skill_name": {
-                    "name": "Skill name",
-                    "description": "The name of the skill to download (e.g., crypto)"
-                }
-            }
-        },
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."

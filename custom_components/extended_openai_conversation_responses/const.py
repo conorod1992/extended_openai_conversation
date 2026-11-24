@@ -552,7 +552,6 @@ SKILL_FILE_NAME = "SKILL.md"
 
 # Skill Services
 SERVICE_RELOAD_SKILLS = "reload_skills"
-SERVICE_DOWNLOAD_SKILL = "download_skill"
 SERVICE_MEMORY_LIST = "memory_list"
 SERVICE_MEMORY_DELETE = "memory_delete"
 SERVICE_MEMORY_CLEAR = "memory_clear"
@@ -567,12 +566,6 @@ SERVICE_PROCESS = "process"
 # Integration-owned UI and storage
 MANAGEMENT_PANEL_URL = "extended-openai"
 MANAGEMENT_PANEL_TITLE = "Extended OpenAI"
-
-# GitHub repository for downloadable skills
-GITHUB_REPO_OWNER = "conorod1992"
-GITHUB_REPO_NAME = "extended_openai_conversation"
-GITHUB_SKILLS_BRANCH = "develop"
-GITHUB_SKILLS_PATH = "examples/skills"
 
 # Working Directory
 DEFAULT_WORKING_DIRECTORY = "extended_openai_conversation_responses/"  # /config/extended_openai_conversation_responses/

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -22,6 +21,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.intercom import (
     IntercomManager,
 )
+from tests.skill_transaction_fixtures import write_legacy_transaction
 
 
 def _patch_intercom_registries(monkeypatch, *, entities, devices, areas) -> None:
@@ -238,7 +238,7 @@ def _first_install_transaction(tmp_path):
     (staged / "SKILL.md").write_text("NEW")
     target = installed / "owned"
     backup = root / f"owned.backup-{'b' * 32}"
-    journal = skill_transactions.prepare_transaction(root, target, backup, staged)
+    journal = write_legacy_transaction(root, target, backup, staged)
     return installed, root, target, staged, backup, journal
 
 
@@ -284,7 +284,7 @@ def test_skill_recovery_requires_known_good_previous_version(tmp_path) -> None:
     staged.mkdir(parents=True)
     (staged / "SKILL.md").write_text("NEW")
     backup = root / f"owned.backup-{'c' * 32}"
-    journal = skill_transactions.prepare_transaction(root, target, backup, staged)
+    journal = write_legacy_transaction(root, target, backup, staged)
 
     # Simulate loss of both the original target and the expected backup before
     # recovery sees the prepared journal.

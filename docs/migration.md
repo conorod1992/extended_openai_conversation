@@ -22,6 +22,10 @@ Live conversation context, loaded Function Groups and conversation-scoped Reques
 
 If recovery reports damaged or ambiguous storage, follow the reported repair instructions and preserve the affected files. Do not assume a blank collection means its previous data was intentionally deleted. See [Troubleshooting](troubleshooting.md).
 
+### Skill installation
+
+The `extended_openai_conversation_responses.download_skill` action has been removed. If an automation, script, or Request Rule calls it, update that action before running the workflow again. Install Skill files by [copying the complete directory and reloading Skills](skills/discover-skills.md). Previously installed files and saved per-agent Skill selections carry over on upgrade.
+
 ## Side-by-side installation
 
 This fork uses:

@@ -550,31 +550,6 @@ async def test_parallel_outcome_cleanup_cancels_pending_task_on_gather_failure(
 
 
 @pytest.mark.asyncio
-async def test_skill_source_ref_explicit_version_and_development_fallback(
-    hass, monkeypatch
-) -> None:
-    from custom_components.extended_openai_conversation_responses import services
-
-    assert await services.async_skill_source_ref(hass, "  custom-ref  ") == "custom-ref"
-    with pytest.raises(HomeAssistantError, match="cannot be empty"):
-        await services.async_skill_source_ref(hass, "   ")
-
-    monkeypatch.setattr(
-        services,
-        "async_get_integration",
-        AsyncMock(return_value=SimpleNamespace(version="7.0.0")),
-    )
-    assert await services.async_skill_source_ref(hass) == "7.0.0"
-
-    monkeypatch.setattr(
-        services,
-        "async_get_integration",
-        AsyncMock(return_value=SimpleNamespace(version="  ")),
-    )
-    assert await services.async_skill_source_ref(hass) == services.GITHUB_SKILLS_BRANCH
-
-
-@pytest.mark.asyncio
 async def test_service_admin_allows_system_context_and_rejects_non_admin(
     hass,
 ) -> None:
@@ -897,35 +872,6 @@ def test_usage_month_summary_merges_only_requested_month() -> None:
     assert result["input_tokens"] == 12
     assert result["output_tokens"] == 18
     assert result["run_count"] == 2
-
-
-def test_skill_activation_failure_restores_previous_target(tmp_path, monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses.skills import (
-        SkillManager,
-    )
-
-    target = tmp_path / "installed" / "demo"
-    target.mkdir(parents=True)
-    (target / "old.txt").write_text("old")
-    staged = tmp_path / "staged"
-    staged.mkdir()
-    (staged / "new.txt").write_text("new")
-    backup = tmp_path / "backup"
-
-    original_rename = type(staged).rename
-
-    def failing_rename(self, destination):
-        if self == staged:
-            raise OSError("publish failed")
-        return original_rename(self, destination)
-
-    monkeypatch.setattr(type(staged), "rename", failing_rename)
-
-    with pytest.raises(OSError, match="publish failed"):
-        SkillManager._activate_staged_skill_sync(staged, target, backup)
-
-    assert target.exists()
-    assert (target / "old.txt").read_text() == "old"
 
 
 def test_skill_directory_capture_records_loaded_directory(tmp_path) -> None:

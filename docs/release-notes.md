@@ -29,6 +29,7 @@ These notes describe the development branch being prepared for 7.0.0, compared w
 
 ### Fixes and reliability improvements
 
+- The built-in Skill downloader has been removed. [Install examples by copying their folders and reloading Skills](skills/discover-skills.md). Existing Skill files and selections carry over.
 - Skill discovery now uses the canonical loader's 1 MiB file limit. Earlier development builds could advertise a `SKILL.md` between 1 and 2 MiB that then failed to load. Oversized instructions are now skipped with a warning; existing files remain on disk and can be split into smaller files before reloading Skills.
 - Storage, restore, and configuration updates have stronger validation and recovery boundaries. Damaged stores are preserved behind repair barriers rather than silently replaced with empty data. A validated restore can recover supported state; an external backup may need a clean assistant if the original cannot initialize.
 - Interrupted provider continuations use execution-recovery checks to avoid automatically repeating completed or uncertain tool effects. This is bounded recovery protection, not an exactly-once guarantee for arbitrary external systems.

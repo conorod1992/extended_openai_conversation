@@ -22,7 +22,6 @@ from custom_components.extended_openai_conversation_responses.agent_maintenance 
 from custom_components.extended_openai_conversation_responses.context_summary import (
     DeferredContextSummaryManager,
 )
-from custom_components.extended_openai_conversation_responses.skills import SkillManager
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_model_catalog_refresh_failures import MemoryStore
@@ -179,16 +178,6 @@ async def test_disabled_quiet_hours_reconciliation_removes_remaining_timer(
     await manager.async_reconcile()
     unsubscribe.assert_called_once()
     assert manager._unsubscribers == [] and manager._active is None
-
-
-def test_new_skill_install_rollback_without_previous_version_removes_candidate(
-    tmp_path,
-):
-    target, backup = tmp_path / "candidate", tmp_path / "absent-backup"
-    target.mkdir()
-    (target / "SKILL.md").write_text("Candidate")
-    SkillManager._rollback_staged_skill_sync(target, backup)
-    assert not target.exists() and not backup.exists()
 
 
 @pytest.mark.parametrize(

@@ -15,7 +15,6 @@ from custom_components.extended_openai_conversation_responses.skills import Skil
 from custom_components.extended_openai_conversation_responses.template import (
     ExtendedOpenAITemplateManager,
 )
-from homeassistant.exceptions import HomeAssistantError
 
 
 def _instructions(size: int) -> bytes:
@@ -118,27 +117,3 @@ async def test_growing_discovered_skill_is_bounded_then_removed_on_reload(skill_
     await manager.async_load_skills()
     assert manager.get_skill("growing") is not None
     assert await _complete_file(load, "growing") == content.decode()
-
-
-@pytest.mark.parametrize("replace_existing", [False, True])
-async def test_oversized_publication_preserves_previous_installed_state(
-    skill_loader, replace_existing
-):
-    manager, root, load = skill_loader
-    original = _instructions(256)
-    if replace_existing:
-        _write(root, "target", original)
-    await manager.async_load_skills()
-    staged = manager.staging_dir / "candidate"
-    _write(manager.staging_dir, "candidate", _instructions(1536 * 1024))
-
-    with pytest.raises(HomeAssistantError, match="not a valid installed Skill"):
-        await manager.async_publish_staged_skill("target", staged)
-
-    if replace_existing:
-        assert manager.get_skill("target") is not None
-        assert (await load("target"))["content"] == original.decode()
-        assert (root / "target" / "SKILL.md").read_bytes() == original
-    else:
-        assert manager.get_skill("target") is None
-        assert not (root / "target").exists()

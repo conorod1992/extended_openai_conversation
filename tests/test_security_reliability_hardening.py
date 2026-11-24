@@ -143,15 +143,3 @@ async def test_query_image_requires_admin(hass) -> None:
 
     with pytest.raises(HomeAssistantError, match="Administrator permission"):
         await handlers["query_image"](call)
-
-
-async def test_download_skill_rejects_path_like_name(hass) -> None:
-    """Skill names must not be usable as local filesystem traversal paths."""
-    handlers = await _service_handlers(hass)
-    hass.auth.async_get_user.return_value = MagicMock(is_admin=True)
-    call = SimpleNamespace(
-        context=Context(user_id="admin"), data={"skill_name": "../outside"}
-    )
-
-    with pytest.raises(HomeAssistantError, match="letters, numbers"):
-        await handlers["download_skill"](call)

@@ -40,36 +40,11 @@ The built-in `load_skill` tool is likewise exposed only when at least one select
 
 These checks affect the live conversation path and the effective-request Preview in the management UI, so Preview reflects the same advertised Skill/tool set as a real request. Discovery does not guarantee a later read: a file that grows beyond the shared 1 MiB limit after discovery is still rejected when loaded.
 
-## Download a skill
+## Install a Skill
 
-The integration provides a Home Assistant action for downloading supported skills. For example:
+Copy the complete Skill directory into the Skills directory, then run **Reload skills** in Home Assistant. Add its directory name to the relevant agent’s selection. See [Discover and install Skills](../skills/discover-skills.md).
 
-```yaml
-service: extended_openai_conversation_responses.download_skill
-data:
-  skill_name: crypto
-```
-
-For a normal installed release, the action downloads the example Skill from the Git tag matching the integration version. This keeps a released integration paired with the Skill files that were released with it instead of silently pulling later changes from the moving `develop` branch.
-
-Development and testing installs can deliberately choose another Git ref with `source_ref`:
-
-```yaml
-service: extended_openai_conversation_responses.download_skill
-data:
-  skill_name: crypto
-  source_ref: develop
-```
-
-Use `source_ref` only when you intentionally want Skill files from a different branch, tag, or commit in this repository.
-
-Downloads are completed in a staging area outside the installed-Skills directory. A completed Skill is then published into the installed directory as one managed operation and the Skill catalogue is refreshed. Reloads, publication/removal, and canonical Skill reads share the same concurrency boundary, so a request does not discover a half-downloaded directory or cross a Skill replacement/removal halfway through reading it. A failed or cancelled publication is brought back to a stable old-or-new state before the boundary is released.
-
-After installation, add the Skill's directory name for the relevant agent in **Extended OpenAI → Capabilities → Web search & Skills**.
-
-Publication and removal now record a durable transaction before moving an installed Skill. After abrupt process termination, discovery restores the previous known-good version for an uncommitted operation and cleans up a committed operation without resurrecting its old version. Recovery checks the recorded path identities; an externally changed or ambiguous target requires manual recovery instead of an automatic overwrite. The canonical Skill loader reads the recovered installed body.
-
-Older backup/removal directories without a transaction record remain preserved and produce an actionable warning. They are not automatically republished, because an old directory alone cannot establish which operation should be recovered.
+After an upgrade, discovery can still recover an interrupted install or removal recorded by an older version. It restores the previous version for an unfinished transaction and cleans up a committed transaction. If files have changed outside the transaction and ownership is uncertain, discovery leaves them for manual recovery.
 
 ## Skills versus custom functions
 

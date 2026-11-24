@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from probatio.error import MultipleInvalid
@@ -21,7 +20,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONFIG_ENTRY_VERSION,
     DOMAIN,
     MEMORY_MODE_MANUAL,
-    SERVICE_DOWNLOAD_SKILL,
     SERVICE_MEMORY_CLEAR,
     SERVICE_MEMORY_DELETE,
     SERVICE_MEMORY_LIST,
@@ -467,20 +465,19 @@ async def test_broadcast_service_denies_caller_without_control_permission(
 @pytest.mark.asyncio
 async def test_skill_services_validate_admin_input_and_reload_via_registry(
     hass: HomeAssistant,
-    monkeypatch: pytest.MonkeyPatch,
     hass_admin_user: MockUser,
     hass_read_only_user: MockUser,
 ) -> None:
-    """Skill services must retain HA auth, validation, and response semantics."""
+    """The registry reloads existing Skills and exposes no downloader."""
     entry = _entry()
     await _setup_entry(hass, entry)
 
-    manager = SimpleNamespace(
-        async_load_skills=AsyncMock(),
-        get_all_skills=MagicMock(return_value=[object(), object()]),
-    )
-    get_instance = AsyncMock(return_value=manager)
-    monkeypatch.setattr(skills.SkillManager, "async_get_instance", get_instance)
+    assert not hass.services.has_service(DOMAIN, "download_skill")
+    manager = await skills.SkillManager.async_get_instance(hass)
+    directory = manager.user_skills_dir / "existing-skill"
+    directory.mkdir(parents=True)
+    skill_file = directory / "SKILL.md"
+    skill_file.write_text("---\ndescription: Installed example\n---\nInstructions\n")
 
     with pytest.raises(HomeAssistantError, match="Administrator permission"):
         await _response_service_call(
@@ -489,7 +486,7 @@ async def test_skill_services_validate_admin_input_and_reload_via_registry(
             {},
             user_id=hass_read_only_user.id,
         )
-    get_instance.assert_not_awaited()
+    assert manager.get_skill("existing-skill") is None
 
     reloaded = await _response_service_call(
         hass,
@@ -497,16 +494,9 @@ async def test_skill_services_validate_admin_input_and_reload_via_registry(
         {},
         user_id=hass_admin_user.id,
     )
-    assert reloaded == {"loaded_skills": 2}
-    manager.async_load_skills.assert_awaited_once()
-
-    with pytest.raises(HomeAssistantError, match="letters, numbers"):
-        await _response_service_call(
-            hass,
-            SERVICE_DOWNLOAD_SKILL,
-            {"skill_name": "../escape"},
-            user_id=hass_admin_user.id,
-        )
+    assert reloaded == {"loaded_skills": 1}
+    assert manager.get_skill("existing-skill").description == "Installed example"
+    assert skill_file.read_text().endswith("Instructions\n")
 
 
 @pytest.mark.asyncio

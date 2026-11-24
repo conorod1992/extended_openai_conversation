@@ -12,6 +12,7 @@ import pytest
 from tests.test_subsystem_lifecycle_apis import _seeded_continuity
 
 from homeassistant.exceptions import HomeAssistantError
+from tests.skill_transaction_fixtures import write_legacy_transaction
 
 
 def test_backup_recovery_preserves_absence_of_function_fields(monkeypatch) -> None:
@@ -283,39 +284,11 @@ def test_skill_recovery_detects_missing_known_good_target(tmp_path) -> None:
     target = installed / "demo"
     target.mkdir()
     backup = root / f"demo.remove-{'c' * 32}"
-    journal = skill_transactions.prepare_transaction(root, target, backup, None)
+    journal = write_legacy_transaction(root, target, backup, None)
     target.rename(tmp_path / "moved-away")
 
     with pytest.raises(HomeAssistantError, match="Known-good Skill is unavailable"):
         skill_transactions.recover_transaction(journal, installed)
-
-
-def test_skill_publish_failure_without_existing_target_needs_no_restore(
-    tmp_path, monkeypatch
-) -> None:
-    from custom_components.extended_openai_conversation_responses.skills import (
-        SkillManager,
-    )
-
-    staged = tmp_path / "staged"
-    staged.mkdir()
-    target = tmp_path / "installed" / "demo"
-    backup = tmp_path / "backup"
-
-    real_rename = type(staged).rename
-
-    def rename(self, destination):
-        if self == staged:
-            raise OSError("publish failed")
-        return real_rename(self, destination)
-
-    monkeypatch.setattr(type(staged), "rename", rename)
-
-    with pytest.raises(OSError, match="publish failed"):
-        SkillManager._activate_staged_skill_sync(staged, target, backup)
-
-    assert not target.exists()
-    assert not backup.exists()
 
 
 def test_speech_final_link_buffer_flush_directly() -> None:

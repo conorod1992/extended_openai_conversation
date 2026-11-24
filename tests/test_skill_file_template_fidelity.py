@@ -149,15 +149,15 @@ async def test_read_holds_skill_boundary_until_bounded_read_finishes(
         )
     )
     await started.wait()
-    staged = manager.staging_dir / "heating.replacement"
-    staged.mkdir(parents=True)
-    (staged / "SKILL.md").write_text("---\ndescription: Replacement\n---\nNew instructions")
-    publication = asyncio.create_task(manager.async_publish_staged_skill("heating", staged))
+    manager.get_skill("heating").path.write_text(
+        "---\ndescription: Replacement\n---\nNew instructions"
+    )
+    reload = asyncio.create_task(manager.async_load_skills())
     await asyncio.sleep(0)
-    assert not publication.done()
+    assert not reload.done()
     release.set()
     assert (await reading)["content"] == "heating setup"
-    await publication
+    await reload
     assert manager.get_skill("heating").description == "Replacement"
 
 
