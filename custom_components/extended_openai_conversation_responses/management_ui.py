@@ -535,22 +535,10 @@ def _parse_import_document(
     }
 
 
-def _prepare_request_rule(
-    value: Any,
-    rule_id: str | None = None,
-    rules: Any = None,
-    *,
-    confirm_function_response_change: bool = False,
-) -> dict[str, Any]:
-    """Prepare rule identity and review provenance for dependency validation."""
+def _prepare_request_rule(value: Any) -> dict[str, Any]:
+    """Assign the new rule's identity before dependency validation."""
     if not isinstance(value, Mapping):
         raise HomeAssistantError("rule must be an object")
-    if rule_id is not None:
-        return rules.prepare_update(
-            rule_id,
-            value,
-            confirm_function_response_change=confirm_function_response_change,
-        )
     raw = dict(value)
     if not isinstance(raw.get("id"), str) or not str(raw["id"]).strip():
         raw["id"] = uuid4().hex
@@ -832,10 +820,11 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             update_revision = rules.revision()
         confirm_function_response_change = message.get("confirm") is True
         raw = message.get("rule")
-        candidate = _prepare_request_rule(
-            raw,
+        if not isinstance(raw, Mapping):
+            raise HomeAssistantError("rule must be an object")
+        candidate = rules.prepare_update(
             rule_id,
-            rules,
+            raw,
             confirm_function_response_change=confirm_function_response_change,
         )
         check_configuration = await _async_validate_request_rule_mutation(
