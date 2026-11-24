@@ -211,7 +211,7 @@ The same overnight job uses pinned axe-core 4.11.0 inside the genuine HA shell. 
 
 ## Overnight concurrency and resource boundaries
 
-The functions campaign now gates parallel-safe native tools through public Assist and both SDK protocols: safe calls must overlap, mixed side-effectful calls must remain serial, and provider outputs retain call order. Local REST/Scrape servers exercise oversized declared and chunked bodies, trickled timeouts, truncated bodies and invalid encoding, followed by a healthy call through the same tool.
+The Functions campaign uses public Assist and both SDK protocols to verify that read-only and mixed batches run one call at a time. A successful batch sends its outputs in call order in one provider continuation. Failure and cancellation stop dispatch, leave paired tool history, and allow a subsequent turn to recover. Local REST/Scrape servers exercise oversized declared and chunked bodies, trickled timeouts, truncated bodies and invalid encoding, followed by a healthy call through the same tool.
 
 Composite acceptance rejects cyclic, excessively deep and excessively wide trees before side effects, including singleton sequences accepted by HA validation. Nested cancellation must stop later script actions and leave the next Assist request healthy. This exposed unbounded recursive validation and adds explicit limits of 32 levels and 256 functions. Remote decoding and unavailable scrape results now become recoverable HA errors.
 

@@ -22,7 +22,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 - **Temporary & Persistent Memory** — retain short-lived context with expiry or longer-term useful facts and preferences.
 - **Knowledge Library** — give agents larger local reference material that can be searched on demand.
 - **Request Rules & local handling** — build conditional local shortcuts, chain native Home Assistant actions and Function Tools, and route selected AI requests. Use native Home Assistant response variables to branch on Function results and **Set conversation response** to speak templated replies. Stop and false conditions follow Home Assistant script flow. Continue to AI runs only after normal local completion. New rules start enabled. Restoring Request Rules from a private backup replaces the destination rule set and preserves the saved enabled states, subject to validation. See the [Request Rules guide](https://conorod1992.github.io/extended_openai_conversation/features/request-rules/) for response and variable semantics.
-- **Function Tools & Function Groups** — add custom capabilities and load large tool collections only when needed.
+- **Function Tools & Function Groups** — add custom capabilities and load large tool collections only when needed. When the model requests a batch of Function Tools, Extended OpenAI runs the calls one at a time and returns their results together.
 - **Delayed Function Tools** — persist eligible delayed work and re-check current authorization before it executes.
 - **Voice Identity** — map Assist devices/satellites to Home Assistant users so retained data can follow the person speaking.
 - **Voice follow-ups, speech cleanup & Quiet Hours** — improve spoken conversations and manage satellite behaviour overnight.

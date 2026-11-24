@@ -20,7 +20,6 @@ Depending on the model/provider, Responses mode can support:
 
 - streaming responses
 - Home Assistant function calls
-- sequential tool calls
 - image input
 - PDF input
 - structured outputs
@@ -48,7 +47,7 @@ See [Compatibility](../reference/compatibility.md) for a concise capability matr
 
 Responses mode keeps tool calls and their results as native conversation items. The integration also protects context truncation from splitting a tool call away from its corresponding result.
 
-This matters particularly in long Home Assistant conversations where a model may call several services or functions before answering.
+With both API formats, a model response can request several Function Tools at once. Extended OpenAI runs those calls one at a time and sends their results together in the next model request. See [Function Tools](../functions/index.md#tool-call-limits-and-error-correction) for limits and error handling.
 
 ## Reasoning effort
 

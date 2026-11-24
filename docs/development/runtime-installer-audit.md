@@ -9,7 +9,7 @@ its source and request/context ordering are unchanged.
 | Owner | Explicit responsibilities |
 | --- | --- |
 | `ExtendedOpenAIBaseLLMEntity._execute_function_tool` | Configured argument validation, HA LLM dispatch, durable delay scheduling/replay, execution errors, and compatible result construction. |
-| `tool_exchange` validation and execution boundaries | Recoverable validation before dispatch, exact prepared-call binding, serial/parallel order, budgets, and completion of retained calls after failure or cancellation. |
+| `tool_exchange` validation and execution boundaries | Recoverable validation before dispatch, exact prepared-call binding, ordered single-call dispatch, per-call budget accounting, and completion of retained calls after failure or cancellation. |
 | `ExtendedOpenAIAgentEntity._execute_function_tool` | Dispatch to configured/integration tools, bounded and compact model results through the existing HA semantic compatibility helpers, and attempt diagnostics in `finally`. |
 | `_async_dispatch_function_tool` | Live configured-tool resolution, existing Guest authorization, integration dispatch, and subsystem-specific error labels. |
 | `_async_retrieve_memories` / `_async_select_memories` | Live memory gate, embedding-provider synchronization, Temporary Memory prefetch and cancellation cleanup, retrieval diagnostics, and existing scoped/pinned memory selection. |
