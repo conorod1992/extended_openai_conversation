@@ -173,8 +173,8 @@ async def test_archive_liveness_checks_the_preexisting_conversation(monkeypatch,
     if mode == "native-recreated":
         active = SimpleNamespace(conversation_id=conversation_id, last_updated=now, async_on_cleanup=lambda _: None)
     entity.hass.data[DATA_CHAT_SESSION] = {conversation_id: active}
-    entity.hass.data[DATA_CHAT_LOGS] = {conversation_id: log}
     conversation_id_ownership.claim_conversation_id(entity.hass, "agent", scope, conversation_id, guest_active=False)
+    entity.hass.data[DATA_CHAT_LOGS] = {conversation_id: log}
     conversation_id_ownership.register_conversation_id_cleanup(prior, entity.hass, conversation_id, ("agent", scope.scope_id))
 
     def enter(*_args, **_kwargs):

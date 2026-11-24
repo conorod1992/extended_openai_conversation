@@ -6,7 +6,7 @@ run ends and a later wake-word or Assist request begins. It is different from
 immediately after an answer.
 
 - **Home Assistant default** uses the caller-supplied or returned conversation ID,
-  with separate history for an already-open unowned parent log (see below).
+  with separate history for an existing unowned parent log (see below).
 - **Per device** lets the same Assist satellite/device resume recent context.
   Device context is isolated by resolved privacy owner: changing the authenticated
   user or device mapping cannot resume another owner's history or session settings.
@@ -22,12 +22,14 @@ device/user modes that fall back to Home Assistant default. Separate conversatio
 IDs can still run concurrently.
 
 On HA 2026.11, Assist or another conversation agent can open a live parent log
-before calling EOAI. EOAI keeps that unowned parent separate and returns the ID of
-its own conversation. While the parent log remains live, later calls using the
-parent ID resume EOAI's conversation for the same assistant, privacy owner and
-Guest state. Activity through the parent ID refreshes its native inactivity clock when that
-native session permits the caller. Clients should use the returned conversation ID
-for subsequent turns.
+before calling EOAI. EOAI keeps that unowned parent separate and returns the ID
+of its own conversation. Across supported HA versions, this also applies to
+direct `process` service calls that supply the ID of a parent log still cached
+by Home Assistant. While that log remains live, later calls using the parent ID
+resume EOAI's conversation for the same assistant, privacy owner and Guest state.
+Activity through the parent ID refreshes its native inactivity clock when that
+native session permits the caller. Clients should use the returned conversation
+ID for subsequent turns.
 Parent history is preserved rather than copied into model context. Explicit resets
 and Core session expiry start fresh context; a replacement parent log does not
 inherit the old log's binding merely because its ID is the same.
@@ -38,7 +40,9 @@ the current owned log or the configured continuity cache.
 ## Inactivity and lifecycle
 
 The conversation timeout is an inactivity timeout and every successful turn resets
-it. Context remains subject to the normal threshold, truncation, summarization, and
+it. For per-device and per-user continuity, successful local responses also keep
+the conversation's selected Persistent Memory bundle active. Context remains
+subject to the normal threshold, truncation, summarization, and
 token limits. Continuity mappings and conversation-scoped Function Group and Request
 Rule state are intentionally kept in memory rather than persisted. A Home Assistant
 restart therefore starts a fresh live conversation even if the configured inactivity

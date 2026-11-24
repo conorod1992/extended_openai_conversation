@@ -102,39 +102,34 @@ class _UnclaimedHistory:
 
 def retain_unclaimed_chat_log(source: ChatLog) -> None:
     """Keep the parent foreign and bind EOAI continuations to its exact lifetime."""
-    if conversation_id_is_owned(source.hass, source.conversation_id) or (
-        source.hass.data.get(DATA_CHAT_LOGS, {}).get(source.conversation_id)
-        is not source
-    ):
-        return
-    histories: dict[str, _UnclaimedHistory] = source.hass.data.setdefault(
+    if source.hass.data.get(DATA_CHAT_LOGS, {}).get(source.conversation_id) is source:
+        _unclaimed_live_history(source.hass, source.conversation_id)
+
+
+def _unclaimed_live_history(
+    hass: HomeAssistant, conversation_id: str
+) -> _UnclaimedHistory | None:
+    """Discover unowned logs even when the caller has no active ChatLog."""
+    if conversation_id_is_owned(hass, conversation_id):
+        return None
+    source = hass.data.get(DATA_CHAT_LOGS, {}).get(conversation_id)
+    if source is None:
+        return None
+    histories: dict[str, _UnclaimedHistory] = hass.data.setdefault(
         _UNCLAIMED_CHAT_LOGS, {}
     )
-    conversation_id = source.conversation_id
     existing = histories.get(conversation_id)
     if existing is not None and existing.source() is source:
-        return
+        return existing
 
     def release(reference: ref[ChatLog]) -> None:
         current = histories.get(conversation_id)
         if current is not None and current.source is reference:
             histories.pop(conversation_id)
 
-    histories[conversation_id] = _UnclaimedHistory(ref(source, release))
-
-
-def _unclaimed_live_history(
-    hass: HomeAssistant, conversation_id: str
-) -> _UnclaimedHistory | None:
-    histories: dict[str, _UnclaimedHistory] = hass.data.get(_UNCLAIMED_CHAT_LOGS, {})
-    retained = histories.get(conversation_id)
-    if (
-        retained is not None
-        and (source := retained.source()) is not None
-        and source is hass.data.get(DATA_CHAT_LOGS, {}).get(conversation_id)
-    ):
-        return retained
-    return None
+    history = _UnclaimedHistory(ref(source, release))
+    histories[conversation_id] = history
+    return history
 
 
 def resolve_parent_conversation_id(

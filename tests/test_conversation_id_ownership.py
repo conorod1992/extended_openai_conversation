@@ -178,7 +178,6 @@ def test_unclaimed_history_is_excluded_only_while_that_exact_core_log_is_live():
     hass.data[DATA_CHAT_LOGS]["foreign"] = source
     reference = weakref.ref(source)
     assert not ownership.conversation_id_is_owned(hass, "foreign")
-    ownership.retain_unclaimed_chat_log(source)
     routed = ownership.claim_conversation_id(
         hass, "agent", _scope(), "foreign", guest_active=False
     )
@@ -196,25 +195,6 @@ def test_unclaimed_history_is_excluded_only_while_that_exact_core_log_is_live():
         == "foreign"
     )
 
-
-def test_replacement_log_does_not_inherit_a_retained_foreign_logs_exclusion():
-    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
-
-    hass = SimpleNamespace(data={DATA_CHAT_LOGS: {}})
-    source = _UnownedLog(hass=hass, conversation_id="reused")
-    hass.data[DATA_CHAT_LOGS]["reused"] = source
-    ownership.retain_unclaimed_chat_log(source)
-    replacement = _UnownedLog(hass=hass, conversation_id="reused")
-    hass.data[DATA_CHAT_LOGS]["reused"] = replacement
-    assert (
-        ownership.claim_conversation_id(
-            hass, "agent", _scope(), "reused", guest_active=False
-        )
-        == "reused"
-    )
-    assert hass.data[ownership._UNCLAIMED_CHAT_LOGS]["reused"].source() is source
-    assert not ownership.conversation_id_is_owned(None, "reused")
-    assert not ownership.conversation_id_is_owned(SimpleNamespace(data=None), "reused")
 
 def test_parent_binding_is_scoped_and_does_not_outlive_its_owned_target():
     from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
@@ -284,11 +264,14 @@ def test_replacement_parent_and_retired_weak_callback_cannot_reuse_or_remove_new
         )
         == "parent"
     )
-    ownership.retain_unclaimed_chat_log(replacement)
     new_target = ownership.claim_conversation_id(
         hass, "agent", _scope(), "parent", guest_active=False
     )
     assert new_target != old_target
+    assert new_target != "parent"
+    assert hass.data[ownership._UNCLAIMED_CHAT_LOGS]["parent"].source() is replacement
+    assert not ownership.conversation_id_is_owned(None, "parent")
+    assert not ownership.conversation_id_is_owned(SimpleNamespace(data=None), "parent")
     del source
     assert old_record.source() is None
     assert (
@@ -305,7 +288,6 @@ def test_actual_guest_target_can_bind_to_parent_after_namespace_resolution():
     hass = SimpleNamespace(data={DATA_CHAT_LOGS: {}})
     source = _UnownedLog(hass=hass, conversation_id="parent")
     hass.data[DATA_CHAT_LOGS]["parent"] = source
-    ownership.retain_unclaimed_chat_log(source)
     assert (
         ownership.claim_conversation_id(
             hass, "agent", _scope(), "actual-guest", guest_active=True

@@ -594,6 +594,117 @@ async def test_expired_memory_bundle_is_pruned_on_read() -> None:
     assert key not in manager._memory_bundles
 
 
+async def test_success_only_extends_the_claimed_managed_memory_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = ConversationContinuity("agent")
+    now = dt_util.utcnow()
+    monkeypatch.setattr(continuity, "dt_util", SimpleNamespace(utcnow=lambda: now))
+    first = [("alice", "memory-a")]
+    second = [("bob", "memory-b")]
+    alice_scope = user_scope("alice", source="test")
+    alice = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, alice_scope, None, None, 5
+    )
+    bob = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, user_scope("bob", source="test"), None, None, 5
+    )
+    alice_bundle = f"continuity:{alice.key}"
+    bob_bundle = f"continuity:{bob.key}"
+    ha_bundle = "conversation:existing"
+    await manager.async_set_memory_bundle(alice_bundle, first, 5)
+    await manager.async_set_memory_bundle(bob_bundle, second, 5)
+    await manager.async_set_memory_bundle(ha_bundle, first, 5)
+    await manager.async_release(bob.key, bob.claim_token)
+
+    now += timedelta(minutes=3)
+    await manager.async_record_success(bob.key, alice.claim_token, [])
+    await manager.async_record_success(alice.key, alice.claim_token, [])
+    await manager.async_record_success(None, alice.claim_token, [])
+
+    now += timedelta(minutes=3)
+    resumed = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, alice_scope, None, None, 5
+    )
+    assert resumed.resumed
+    assert await manager.async_get_memory_bundle(alice_bundle, 5) == first
+    assert await manager.async_get_memory_bundle(bob_bundle, 5) is None
+    assert await manager.async_get_memory_bundle(ha_bundle, 5) is None
+    assert alice.key is not None
+    assert await manager.async_end(alice.key)
+    assert await manager.async_get_memory_bundle(alice_bundle, 5) is None
+
+
+@pytest.mark.parametrize("successful", [False, True])
+async def test_unrelated_memory_reads_preserve_an_in_flight_managed_bundle(
+    monkeypatch: pytest.MonkeyPatch, successful: bool
+) -> None:
+    manager = ConversationContinuity("agent")
+    now = dt_util.utcnow()
+    monkeypatch.setattr(continuity, "dt_util", SimpleNamespace(utcnow=lambda: now))
+    scope = user_scope("alice", source="test")
+    references = [("alice", "memory-a")]
+    first = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, scope, None, None, 5
+    )
+    bundle_key = f"continuity:{first.key}"
+    await manager.async_set_memory_bundle(bundle_key, references, 5)
+    await manager.async_record_success(first.key, first.claim_token, [])
+
+    now += timedelta(minutes=3)
+    active = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, scope, None, None, 5
+    )
+    assert active.resumed
+    now += timedelta(minutes=3)
+    assert await manager.async_get_memory_bundle("conversation:unrelated", 5) is None
+
+    if successful:
+        await manager.async_record_success(active.key, active.claim_token, [])
+    else:
+        await manager.async_release(active.key, active.claim_token)
+
+    following = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, scope, None, None, 5
+    )
+    assert following.resumed is successful
+    assert await manager.async_get_memory_bundle(bundle_key, 5) == (
+        references if successful else None
+    )
+
+
+async def test_managed_memory_bundle_uses_current_conversation_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = ConversationContinuity("agent")
+    now = dt_util.utcnow()
+    monkeypatch.setattr(continuity, "dt_util", SimpleNamespace(utcnow=lambda: now))
+    scope = user_scope("alice", source="test")
+    references = [("alice", "memory-a")]
+    first = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, scope, None, None, 5
+    )
+    bundle_key = f"continuity:{first.key}"
+    await manager.async_set_memory_bundle(bundle_key, references, 5)
+    await manager.async_record_success(first.key, first.claim_token, [])
+
+    now += timedelta(minutes=6)
+    assert await manager.async_get_memory_bundle("conversation:unrelated", 5) is None
+    resumed = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, scope, None, None, 10
+    )
+    assert resumed.resumed
+    assert await manager.async_get_memory_bundle(bundle_key, 10) == references
+    await manager.async_release(resumed.key, resumed.claim_token)
+
+    now += timedelta(minutes=5)
+    expired = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_USER, scope, None, None, 10
+    )
+    assert not expired.resumed
+    assert await manager.async_get_memory_bundle(bundle_key, 10) is None
+
+
 async def test_list_stats_and_session_removal_include_ephemeral_state() -> None:
     manager = ConversationContinuity("agent")
     resolved = await manager.async_resolve(

@@ -767,8 +767,15 @@ class ConversationContinuity:
     def _prune_memory_bundles_locked(self, now: Any) -> None:
         for key, bundle in list(self._memory_bundles.items()):
             cutoff = now - timedelta(minutes=bundle.timeout_minutes)
-            if bundle.last_active < cutoff:
-                del self._memory_bundles[key]
+            if bundle.last_active >= cutoff:
+                continue
+            # Managed session expiry and reset already remove the exact bundle.
+            if (
+                key.startswith("continuity:")
+                and key.removeprefix("continuity:") in self._sessions
+            ):
+                continue
+            del self._memory_bundles[key]
 
 
 _MANAGERS = "extended_openai_conversation_responses.continuity_managers"
