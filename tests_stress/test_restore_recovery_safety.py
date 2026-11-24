@@ -101,16 +101,16 @@ async def test_pending_restore_rejects_writes_until_durable_recovery(
     agent, memory, knowledge, target, previous = await _populated(hass)
     entry, subentry = agent.entry, agent.subentry
     replace = atomicwrites.replace_atomic
-    destination = (
-        knowledge._storage._store.path
-        if phase == "rollback"
-        else hass.config_entries._store.path
-    )
+    knowledge_path = Path(knowledge._storage._store.path)
+    memory_path = Path(memory._storage._store.path)
     faults = []
 
     def fail_replace(source, path):
-        if Path(path) == Path(destination):
-            faults.append(str(path))
+        destination = Path(path)
+        # Target memory is written before knowledge. Fail the target knowledge
+        # write, then deny the rollback of the already persisted target memory.
+        if destination == knowledge_path or (faults and destination == memory_path):
+            faults.append(destination)
             raise OSError(errno.EROFS, "restore destination is read-only")
         return replace(source, path)
 
@@ -128,7 +128,10 @@ async def test_pending_restore_rejects_writes_until_durable_recovery(
             )
         with pytest.raises(backup.BackupError, match="pending"):
             await backup.async_restore_backup(hass, entry, subentry, target)
-        assert len(faults) >= (2 if phase == "rollback" else 1)
+        if phase == "rollback":
+            assert faults == [knowledge_path, memory_path]
+        else:
+            assert faults
         store = restore_recovery._journal_store(
             hass, entry.entry_id, subentry.subentry_id
         )

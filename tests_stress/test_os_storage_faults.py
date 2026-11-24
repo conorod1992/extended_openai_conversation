@@ -98,7 +98,9 @@ async def test_delayed_scheduler_same_process_recovers_after_write_and_read_fail
     )
     from homeassistant.core import Context
     from homeassistant.helpers import storage as ha_storage
+    from homeassistant.helpers.intent import IntentResponseErrorCode
     from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
+    from tests_real_ha.test_cross_feature_acceptance import _speech
     from tests_real_ha.test_provider_wire_e2e import (
         _chat_sse_text,
         _chat_sse_tool_call,
@@ -132,7 +134,7 @@ async def test_delayed_scheduler_same_process_recovers_after_write_and_read_fail
     manager = await async_setup_delayed_tools(hass)
     path = Path(manager._store.path)
 
-    async def schedule(call_id):
+    async def schedule(call_id, *, expect_uncertain=False):
         arguments = {
             "delay": {"seconds": 2},
             "list": [
@@ -159,6 +161,13 @@ async def test_delayed_scheduler_same_process_recovers_after_write_and_read_fail
             language="en",
             agent_id=entry.entry_id,
         )
+        if expect_uncertain:
+            assert result.response.error_code == IntentResponseErrorCode.UNKNOWN
+            assert "Check the result before retrying" in _speech(
+                result, successful=False
+            )
+            assert len(wire.requests) == 1
+            return None
         assert result.response.error_code is None
         return next(
             json.loads(message["content"])
@@ -191,8 +200,8 @@ async def test_delayed_scheduler_same_process_recovers_after_write_and_read_fail
         fault.setattr(atomicwrites, "replace_atomic", failed_replace)
         fault.setattr(ha_storage.json_util, "load_json", failed_read)
         if phase == "schedule":
-            with pytest.raises(OSError):
-                await schedule("unacknowledged")
+            await schedule("unacknowledged", expect_uncertain=True)
+            assert write_attempted.is_set()
         else:
             await asyncio.wait_for(write_attempted.wait(), 8)
             await asyncio.gather(original_worker, return_exceptions=True)

@@ -17,6 +17,7 @@ from custom_components.extended_openai_conversation_responses.function_tool_reco
     bind_tool_recovery_state,
     correctable_validation_failure,
     recovery_tool_result,
+    should_report_uncertain_effects,
     strict_execution_failures_enabled,
 )
 from custom_components.extended_openai_conversation_responses.function_tool_resolution import (
@@ -101,6 +102,18 @@ def test_strict_execution_failures_follow_bound_recovery_policy() -> None:
         assert strict_execution_failures_enabled() is True
 
     assert strict_execution_failures_enabled() is False
+
+
+def test_uncertain_effect_reporting_is_owned_by_the_bound_request() -> None:
+    assert should_report_uncertain_effects() is False
+    with bind_tool_recovery_state(
+        ToolRecoveryState(enabled=False, report_uncertain_effects=True)
+    ):
+        assert should_report_uncertain_effects() is True
+        with bind_tool_recovery_state(ToolRecoveryState(enabled=True)):
+            assert should_report_uncertain_effects() is False
+        assert should_report_uncertain_effects() is True
+    assert should_report_uncertain_effects() is False
 
 
 def test_recovery_feedback_has_bounded_text_and_stable_protocol_fields() -> None:

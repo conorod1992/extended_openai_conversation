@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 import json
 
+import pytest
 from pytest_homeassistant_custom_component.common import MockUser
 import yaml
 
@@ -123,22 +124,33 @@ async def _held_restore(hass, monkeypatch):
     entered, release = asyncio.Event(), asyncio.Event()
     update = restore_recovery._update_configuration
 
-    async def gated_update(*args):
+    async def gated_update(*args, **kwargs):
         if args[1].entry_id != entry.entry_id or release.is_set():
-            return await update(*args)
-        assert await archive.async_backup_data() == target["archive"]
-        assert subentry.data[CONF_ARCHIVE_RETENTION_DAYS] == 7
-        assert (await rules.async_backup_data())["rules"][0]["id"] == "rule-beta"
+            return await update(*args, **kwargs)
         entered.set()
         await release.wait()
-        return await update(*args)
+        return await update(*args, **kwargs)
 
     monkeypatch.setattr(restore_recovery, "_update_configuration", gated_update)
     task = asyncio.create_task(
         backup.async_restore_backup(hass, entry, subentry, target)
     )
-    await asyncio.wait_for(entered.wait(), 15)
-    assert len(callbacks) == 1
+    task.add_done_callback(lambda _: entered.set())
+    try:
+        await asyncio.wait_for(entered.wait(), 15)
+        if task.done():
+            await task
+            pytest.fail("Restore completed before reaching configuration publication")
+        # The public archive read still uses the old retention policy here.
+        staged = await archive.async_recovery_data()
+        assert staged == {**target["archive"], "active": {}}
+        assert subentry.data[CONF_ARCHIVE_RETENTION_DAYS] == 7
+        assert (await rules.async_backup_data())["rules"][0]["id"] == "rule-beta"
+        assert len(callbacks) == 1
+    except BaseException:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
     return entry, subentry, archive, target, callbacks[0], release, task
 
 
