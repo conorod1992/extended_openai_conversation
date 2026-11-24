@@ -1292,8 +1292,12 @@ def _string_set(value: Any) -> set[str]:
 def _parse_timestamp(hass: HomeAssistant | None, value: str, field: str) -> datetime:
     parsed = dt_util.parse_datetime(value) if isinstance(value, str) else None
     if parsed is None:
+        if hass is None:
+            raise ValueError(f"{field} is invalid")
         raise ValueError(f"{field} must be an ISO 8601 timestamp")
-    if parsed.tzinfo is None and hass is not None:
+    if parsed.tzinfo is None:
+        if hass is None:
+            raise ValueError(f"{field} is invalid")
         zone = dt_util.get_time_zone(hass.config.time_zone)
         if zone is None:
             raise ValueError("Home Assistant timezone is unavailable")

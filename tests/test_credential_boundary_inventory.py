@@ -19,6 +19,7 @@ PARSERS = {
     "yaml.full_load",
     "json.loads",
     "json.load",
+    "strict_json.strict_json_loads",
     "orjson.loads",
     "ijson.basic_parse",
 }

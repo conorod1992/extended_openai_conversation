@@ -43,9 +43,14 @@ DECODER_LIMIT_ARGUMENTS = [
 
 def _use_recursive_json_decoder(monkeypatch):
     """Exercise the standard library fallback without depending on C stack size."""
-    decoder = json.JSONDecoder()
-    decoder.scan_once = py_make_scanner(decoder)
-    monkeypatch.setattr(json, "_default_decoder", decoder)
+    decoder_type = json.JSONDecoder
+
+    def decoder_factory(*args, **kwargs):
+        decoder = decoder_type(*args, **kwargs)
+        decoder.scan_once = py_make_scanner(decoder)
+        return decoder
+
+    monkeypatch.setattr(json, "JSONDecoder", decoder_factory)
 
 
 class Stream(FakeStream):
