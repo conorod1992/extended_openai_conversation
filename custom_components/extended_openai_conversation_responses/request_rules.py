@@ -2370,7 +2370,7 @@ def _has_retired_result_placeholder(action: Mapping[str, Any]) -> bool:
             return any(contains(item) for item in value)
         return False
 
-    return contains(action["actions"]) or contains(action["success_response"])
+    return contains(action["actions"]) or contains(action.get("success_response"))
 
 
 def _function_response_needs_review(rule: Mapping[str, Any]) -> bool:
