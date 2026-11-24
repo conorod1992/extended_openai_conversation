@@ -11,6 +11,43 @@ const action = (kind, operation) => kind === "knowledge" ? operation === "edit" 
 const editor = kind => kind === "knowledge" ? "knowledge" : "memory";
 const field = kind => kind === "knowledge" ? "#knowledge-title" : "#memory-content";
 
+for (const bundled of [false, true]) {
+  test(`Knowledge save and deletion retain server chronological order (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const panel = await openDataCollection(page, "knowledge", 3, bundled);
+    await panel.evaluate(async host => {
+      const backend = window.dataCollectionBackend;
+      const [latest, oldest, middle] = backend.state.sources;
+      latest.updated_at = "2026-09-01T12:03:00Z";
+      oldest.updated_at = "2026-09-01T14:00:00+02:00";
+      middle.updated_at = "2026-09-01T10:02:00-02:00";
+      backend.state.sources = [latest, middle, oldest];
+      const call = backend.call;
+      backend.call = async message => {
+        const response = await call(message);
+        return message.section === "knowledge" && message.action === "create"
+          ? {...response, source_order: ["source-0", "source-2", "source-3", "source-1"]}
+          : response;
+      };
+      host._eocSectionCacheTimes.set(host._sectionCacheKey(), 1);
+      await host._loadSection(true);
+    });
+    const order = () => list(panel, "knowledge").locator("[data-source-id]").evaluateAll(
+      cards => cards.map(card => card.dataset.sourceId)
+    );
+    await expect.poll(order).toEqual(["source-0", "source-2", "source-1"]);
+
+    await panel.locator("#add-source").click();
+    await panel.locator("#knowledge-title").fill("New source");
+    await panel.locator("#knowledge-content").fill("Reference");
+    await panel.locator("#knowledge-save").click();
+    await expect.poll(order).toEqual(["source-0", "source-2", "source-3", "source-1"]);
+
+    await card(panel, "knowledge", 0).locator(".delete-source").click();
+    await acceptConfirmation(panel);
+    await expect.poll(order).toEqual(["source-2", "source-3", "source-1"]);
+  });
+}
+
 for (const kind of ["knowledge", "persistent"]) {
   for (const bundled of [false, true]) {
     test(`${kind}: edit, delete and add preserve unrelated cards (${bundled ? "bundle" : "source"})`, async ({page}) => {

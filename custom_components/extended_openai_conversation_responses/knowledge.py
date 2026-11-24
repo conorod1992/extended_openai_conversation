@@ -29,6 +29,7 @@ from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
+from .record_timestamps import stored_timestamp_instant
 from .retrieval_text import (
     _CJK_RUN,
     _LEXICAL_TOKEN,
@@ -398,13 +399,20 @@ class KnowledgeLibrary:
     async def async_list(self) -> list[dict[str, Any]]:
         """List all source metadata for management, including disabled sources."""
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
-            sources = sorted(
-                self._sources.values(),
-                key=lambda source: source.updated_at,
-                reverse=True,
-            )
-            return [source_summary(source) for source in sources]
+            return [
+                source_summary(source) for source in self._management_ordered_sources()
+            ]
+
+    def management_source_order(self) -> list[str]:
+        """Return source IDs in the committed management list order."""
+        return [source.source_id for source in self._management_ordered_sources()]
+
+    def _management_ordered_sources(self) -> list[KnowledgeSource]:
+        return sorted(
+            self._published_sources().values(),
+            key=lambda source: stored_timestamp_instant(source.updated_at),
+            reverse=True,
+        )
 
     async def async_get(self, source_id: str) -> KnowledgeSource:
         """Get one complete source for the management UI."""
@@ -458,7 +466,11 @@ class KnowledgeLibrary:
                     )
                 ]
             sources.sort(
-                key=lambda source: (source.updated_at, source.source_id), reverse=True
+                key=lambda source: (
+                    stored_timestamp_instant(source.updated_at),
+                    source.source_id,
+                ),
+                reverse=True,
             )
             total = len(sources)
             selected = sources[offset : offset + limit]
@@ -676,11 +688,17 @@ class KnowledgeLibrary:
                 best_by_source[chunk.source_id] = (exact_salient, score, chunk)
 
         ranked = [
-            (exact, score, self._sources[source_id].updated_at, source_id, chunk)
+            (
+                exact,
+                score,
+                stored_timestamp_instant(self._sources[source_id].updated_at),
+                source_id,
+                chunk,
+            )
             for source_id, (exact, score, chunk) in best_by_source.items()
             if score > 0
         ]
-        ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        ranked.sort(key=lambda item: item[:4], reverse=True)
         results: list[SearchResult] = []
         for _, score, _, source_id, chunk in ranked[
             offset : offset + limit + int(lookahead)

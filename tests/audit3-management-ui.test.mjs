@@ -66,7 +66,7 @@ let activate;
 conversation._ensureOwnedDialog = () => {};
 conversation._loading = () => "loading";
 conversation._activate = (_el, callback) => {activate = callback;};
-conversation._call = async (_section, _action, extra) => {request = extra; throw new Error("stop after checking request");};
+conversation._call = async (_section, _action, extra) => {request = extra; dialog.open = false;};
 conversation.shadowRoot = {
  querySelector(selector) {
    if (selector === "#archive-query") return {closest: () => host, addEventListener() {}};

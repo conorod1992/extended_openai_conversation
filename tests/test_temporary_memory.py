@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -316,6 +316,52 @@ async def test_management_list_is_not_limited_by_model_injection_selection() -> 
     assert sum(len(item.content) for item in managed) > 6000
 
 
+async def test_restored_mixed_timestamps_follow_instants_at_injection_budget(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(dt_util, "utcnow", lambda: datetime(2026, 1, 1, tzinfo=UTC))
+    monkeypatch.setattr(temporary_memory, "MAX_INJECT_CHARACTERS", 82)
+    stamps = [
+        ("2026-10-25T02:10:00+02:00", "2027-01-01T03:00:00+03:00"),
+        ("2026-10-25T00:20:00Z", "2027-01-01T01:00:00Z"),
+        ("2026-10-25T01:15:00+01:00", "2027-01-01T01:00:00+01:00"),
+        ("2026-10-25T00:15:00", "2027-01-01T00:00:00-02:00"),
+        ("2026-10-24T19:15:00-05:00", "2027-01-01T03:00:00+01:00"),
+        ("9999-12-31T23:59:59-14:00", "9999-12-31T23:59:59Z"),
+    ]
+    records = [
+        {
+            **stored_record(i, content_length=100 if i == 5 else 32),
+            "updated_at": updated,
+            "expires_at": expires,
+        }
+        for i, (updated, expires) in enumerate(stamps)
+    ]
+    memory = TemporaryMemory(Storage())
+    await memory.async_initialize()
+    backup = {"records": records}
+    await memory.async_replace_backup(TemporaryMemory.validate_backup_data(backup))
+
+    injected = await memory.async_active("conversation:one", owner_scope_id="user:alice")
+    assert [item.memory_id for item in injected] == ["memory-001", "memory-003"]
+    managed = await memory.async_list_owned("user:alice")
+    assert [item.memory_id for item in managed] == [
+        "memory-000",
+        "memory-002",
+        "memory-001",
+        "memory-003",
+        "memory-004",
+        "memory-005",
+    ]
+    assert await memory.async_backup_data() == backup
+
+
+def test_backup_reports_unrepresentable_temporary_expiry_as_validation_error() -> None:
+    record = {**stored_record(0), "expires_at": "9999-12-31T23:59:59-14:00"}
+    with pytest.raises(ValueError, match="expires_at must be within"):
+        TemporaryMemory.validate_backup_data({"records": [record]})
+
+
 async def test_startup_enforces_existing_record_ceiling_with_diagnostics() -> None:
     records = [stored_record(index) for index in range(MAX_ACTIVE_RECORDS + 5)]
     storage = Storage({"records": records})
@@ -328,6 +374,28 @@ async def test_startup_enforces_existing_record_ceiling_with_diagnostics() -> No
     assert len(storage.data["records"]) == MAX_ACTIVE_RECORDS
     assert "memory-104" in {record.memory_id for record in managed}
     assert "memory-000" not in {record.memory_id for record in managed}
+
+
+async def test_startup_ceiling_uses_chronological_recency_across_offsets(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(temporary_memory, "MAX_ACTIVE_RECORDS", 2)
+    stamps = [
+        "2026-10-25T02:10:00+02:00",
+        "2026-10-25T00:20:00Z",
+        "9999-12-31T23:59:59-14:00",
+        "2026-10-25T00:19:00",
+    ]
+    records = [
+        {**stored_record(i), "updated_at": stamp} for i, stamp in enumerate(stamps)
+    ]
+    storage = Storage({"records": records})
+    memory = TemporaryMemory(storage)
+    await memory.async_initialize()
+
+    managed = await memory.async_list_owned("user:alice")
+    assert {record.memory_id for record in managed} == {"memory-001", "memory-002"}
+    assert memory.stats()["startup_overflow_records_pruned"] == 2
 
 
 async def test_backup_restore_keeps_device_memory_separate_from_inferred_owner() -> None:

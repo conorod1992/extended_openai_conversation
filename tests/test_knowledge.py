@@ -88,6 +88,64 @@ async def test_phrase_ranking_preserves_programming_identifiers() -> None:
     assert results[0].source_id == matching.source_id
 
 
+async def test_restored_mixed_timestamps_rank_and_page_by_instant() -> None:
+    stamps = {
+        "older": "2026-10-25T02:10:00+02:00",
+        "newer": "2026-10-25T00:20:00Z",
+        "first-tie": "2026-10-25T01:15:00+01:00",
+        "legacy-tie": "2026-10-25T00:15:00",
+        "newest": "2026-10-25T00:20:00.000001+00:00",
+        "maximum": "9999-12-31T23:59:59-14:00",
+        "minimum": "0001-01-01T00:00:00+14:00",
+    }
+    payload = {
+        "sources": [
+            {
+                "source_id": source_id,
+                "title": "Kitchen instructions",
+                "description": "Reference",
+                "content": "Kitchen instructions.",
+                "created_at": stamp,
+                "updated_at": stamp,
+                "enabled": True,
+            }
+            for source_id, stamp in stamps.items()
+        ],
+    }
+    library = await _library()
+    await library.async_replace_backup(KnowledgeLibrary.validate_backup_data(payload))
+
+    managed = await library.async_list()
+    assert [source["source_id"] for source in managed] == [
+        "maximum",
+        "newest",
+        "newer",
+        "first-tie",
+        "legacy-tie",
+        "older",
+        "minimum",
+    ]
+    assert library.management_source_order() == [source["source_id"] for source in managed]
+    assert {source["source_id"]: source["updated_at"] for source in managed} == stamps
+    catalogue = []
+    search = []
+    for offset in range(0, len(stamps), 2):
+        page = await library.async_catalog(limit=2, offset=offset)
+        catalogue.extend(source["source_id"] for source in page["sources"])
+        matches = await library.async_search("kitchen", limit=2, offset=offset)
+        search.extend(result.source_id for result in matches)
+    assert catalogue == search == [
+        "maximum",
+        "newest",
+        "newer",
+        "legacy-tie",
+        "first-tie",
+        "older",
+        "minimum",
+    ]
+    assert await library.async_backup_data() == payload
+
+
 async def test_empty_initialization_and_crud_persistence() -> None:
     storage = FakeStorage()
     library = await _library(storage)
@@ -784,6 +842,7 @@ async def test_management_api_crud_and_list_omits_content() -> None:
             },
         )
         source_id = created["source"]["source_id"]
+        assert created["source_order"] == [source_id]
         listed = await async_management_command(
             hass, "admin", True, {**base, "action": "list"}
         )
@@ -793,7 +852,7 @@ async def test_management_api_crud_and_list_omits_content() -> None:
             hass, "admin", True, {**base, "action": "get", "source_id": source_id}
         )
         assert fetched["source"]["content"] == "Tea towels beside oven"
-        await async_management_command(
+        updated = await async_management_command(
             hass,
             "admin",
             True,
@@ -804,6 +863,7 @@ async def test_management_api_crud_and_list_omits_content() -> None:
                 "content": "Tea towels in drawer",
             },
         )
+        assert updated["source_order"] == [source_id]
         with pytest.raises(HomeAssistantError, match="confirmation"):
             await async_management_command(
                 hass,

@@ -2884,6 +2884,7 @@ def _knowledge_mutation_result(
     }
     if source is not None:
         enrichments["summary"] = lambda: source_summary(source)
+        enrichments["source_order"] = lambda: library.management_source_order()
     for name, build in enrichments.items():
         try:
             result[name] = build()

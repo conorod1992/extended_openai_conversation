@@ -25,6 +25,7 @@ from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
+from .record_timestamps import stored_timestamp_instant
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .storage_namespaces import TEMPORARY_MEMORY_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
@@ -258,7 +259,13 @@ class TemporaryMemory:
             if _matches_owner(record, scope_id, owner_scope_id)
             and _parse_expiry(record.expires_at) > now
         ]
-        records.sort(key=lambda item: (item.updated_at, item.expires_at), reverse=True)
+        records.sort(
+            key=lambda item: (
+                stored_timestamp_instant(item.updated_at),
+                stored_timestamp_instant(item.expires_at),
+            ),
+            reverse=True,
+        )
         selected: list[TemporaryMemoryRecord] = []
         characters = 0
         for record in records:
@@ -709,7 +716,12 @@ class TemporaryMemory:
             if record.owner_scope_id == owner
             and (dt_util.parse_datetime(record.expires_at) or now) > now
         ]
-        records.sort(key=lambda record: (record.expires_at, record.memory_id))
+        records.sort(
+            key=lambda record: (
+                stored_timestamp_instant(record.expires_at),
+                record.memory_id,
+            )
+        )
         return records
 
     def _prune_expired_locked(self) -> bool:
@@ -854,13 +866,16 @@ def _matches_owner(
     return owner is not None and record.owner_scope_id == owner
 
 
-def _parse_expiry(value: str):
+def _parse_expiry(value: str) -> datetime:
     parsed = dt_util.parse_datetime(value)
     if parsed is None:
         raise ValueError("expires_at must be an ISO date-time with a timezone")
     if parsed.tzinfo is None:
         raise ValueError("expires_at must include a timezone")
-    return dt_util.as_utc(parsed)
+    try:
+        return dt_util.as_utc(parsed)
+    except OverflowError as err:
+        raise ValueError("expires_at must be within the supported date range") from err
 
 
 def _parse_future_expiry(value: str):
@@ -1131,17 +1146,15 @@ def _bounded_records(
     return [record for record in records if record.memory_id not in discarded]
 
 
-def _owner_record_sort_key(record: TemporaryMemoryRecord) -> tuple[Any, ...]:
+def _owner_record_sort_key(
+    record: TemporaryMemoryRecord,
+) -> tuple[datetime, datetime, datetime, str]:
     """Keep the newest bounded records deterministically during startup recovery."""
 
-    def parsed(value: str) -> float:
-        parsed_value = dt_util.parse_datetime(value)
-        return parsed_value.timestamp() if parsed_value is not None else 0.0
-
     return (
-        parsed(record.updated_at),
-        parsed(record.expires_at),
-        parsed(record.created_at),
+        stored_timestamp_instant(record.updated_at),
+        stored_timestamp_instant(record.expires_at),
+        stored_timestamp_instant(record.created_at),
         record.memory_id,
     )
 

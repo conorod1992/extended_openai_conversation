@@ -176,7 +176,7 @@ function renderTurns(panel, data) {
   return (data.turns || []).map((turn) => `<article class="turn"><div class="message user"><strong>You</strong><p>${panel._e(turn.user_text)}</p></div><div class="message assistant"><strong>Assistant</strong><p>${panel._e(turn.assistant_text)}</p></div><small>${panel._e(panel._formatDate(turn.timestamp))}</small></article>`).join("") || panel._empty("No turns retained on this page.");
 }
 
-function appendTurnPager(panel, body, sessionId, data, history, future, current) {
+function renderTurnPager(data, history, future, current, navigate) {
   const pager = document.createElement("div");
   pager.className = "section-actions eoc-turn-pager";
   const status = document.createElement("small");
@@ -193,13 +193,10 @@ function appendTurnPager(panel, body, sessionId, data, history, future, current)
     start.type = "button";
     start.className = "secondary";
     start.textContent = "Start of conversation";
-    start.addEventListener("click", () => void openSession(panel, sessionId));
+    start.addEventListener("click", () => void navigate({mode: "get", start_turn: 0, text_offset: 0}, [], []));
     pager.append(start);
   }
 
-  const navigate = (cursor, previous, next) => openSession(
-    panel, sessionId, cursor.start_turn, cursor.text_offset, previous, next, cursor.mode || "get",
-  );
   const previous = document.createElement("button");
   previous.type = "button";
   previous.className = "secondary";
@@ -235,8 +232,29 @@ function appendTurnPager(panel, body, sessionId, data, history, future, current)
     }
   });
   pager.append(next);
-  body.append(pager);
+  return pager;
 }
+
+function appendSessionStatus(body, message, retry) {
+  const status = document.createElement("div");
+  status.className = "section-actions";
+  const text = document.createElement("span");
+  text.setAttribute("role", retry ? "alert" : "status");
+  text.textContent = message;
+  status.append(text);
+  if (retry) {
+    text.className = "inline-error";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.textContent = "Retry loading turns";
+    button.addEventListener("click", retry);
+    status.append(button);
+  }
+  body.append(status);
+  return status;
+}
+
 export function bindConversationActions(panel) {
   const root = panel.shadowRoot;
   const host = root.querySelector("#archive-query")?.closest(".content-card");
@@ -264,10 +282,12 @@ async function searchArchive(panel) {
   await loadConversationPage(panel, 0);
 }
 
-async function openSession(panel, sessionId, startTurn = 0, textOffset = 0, history = [], future = [], mode = "get") {
+async function openSession(panel, sessionId, startTurn = 0, textOffset = 0) {
   const agentId = panel._agentId;
   const scopeId = panel._scopeId;
-  const current = {mode, start_turn: integer(startTurn), text_offset: integer(textOffset)};
+  const authenticationGeneration = panel._eocAuthenticationGeneration || 0;
+  const entryId = panel._selectedAgent?.()?.entry_id;
+  const userId = panel.hass?.user?.id;
   panel._ensureOwnedDialog("session-dialog");
   const root = panel.shadowRoot;
   const dialog = root.querySelector("#session-dialog");
@@ -275,28 +295,58 @@ async function openSession(panel, sessionId, startTurn = 0, textOffset = 0, hist
   const body = root.querySelector("#session-body");
   const token = (panel._eocSessionLoadToken || 0) + 1;
   panel._eocSessionLoadToken = token;
-  title.textContent = "Loading conversation…";
-  body.innerHTML = panel._loading();
+  const stillCurrent = () => panel._eocSessionLoadToken === token
+    && dialog.open && root.querySelector("#session-dialog") === dialog
+    && panel._agentId === agentId && panel._scopeId === scopeId
+    && panel._selectedAgent?.()?.entry_id === entryId && panel.hass?.user?.id === userId
+    && (panel._eocAuthenticationGeneration || 0) === authenticationGeneration;
+  let hasPage = false;
+  let pending = false;
+  let feedback;
+  const navigate = async (current, history, future) => {
+    if (pending || !stillCurrent()) return;
+    pending = true;
+    feedback?.remove();
+    if (hasPage) {
+      feedback = appendSessionStatus(body, "Loading turns…");
+    } else {
+      title.textContent = "Loading conversation…";
+      body.innerHTML = panel._loading();
+    }
+    try {
+      const before = current.mode === "before";
+      const cursor = before
+        ? {before_turn: current.start_turn, before_text_offset: current.text_offset}
+        : {start_turn: current.start_turn, text_offset: current.text_offset};
+      const data = await panel._call("conversations", before ? "get_before" : "get", {
+        scope_id: scopeId,
+        session_id: sessionId,
+        ...cursor,
+        limit: TURN_PAGE_LIMIT,
+      });
+      if (!stillCurrent()) return;
+      const turns = renderTurns(panel, data);
+      const pager = renderTurnPager(data, history, future, current, navigate);
+      title.textContent = data.session?.title || "Untitled conversation";
+      body.innerHTML = turns;
+      body.append(pager);
+      feedback = undefined;
+      hasPage = true;
+    } catch (err) {
+      if (!stillCurrent()) return;
+      feedback?.remove();
+      if (!hasPage) {
+        title.textContent = "Unable to load conversation";
+        body.innerHTML = "";
+      }
+      feedback = appendSessionStatus(body, `Unable to load turns. ${err?.message || String(err)}`,
+        () => void navigate(current, history, future));
+    } finally {
+      pending = false;
+    }
+  };
   if (!dialog.open) dialog.showModal();
-  try {
-    const cursor = mode === "before"
-      ? {before_turn: current.start_turn, before_text_offset: current.text_offset}
-      : {start_turn: current.start_turn, text_offset: current.text_offset};
-    const data = await panel._call("conversations", mode === "before" ? "get_before" : "get", {
-      scope_id: scopeId,
-      session_id: sessionId,
-      ...cursor,
-      limit: TURN_PAGE_LIMIT,
-    });
-    if (panel._eocSessionLoadToken !== token || !dialog.open || panel._agentId !== agentId || panel._scopeId !== scopeId) return;
-    title.textContent = data.session?.title || "Untitled conversation";
-    body.innerHTML = renderTurns(panel, data);
-    appendTurnPager(panel, body, sessionId, data, history, future, current);
-  } catch (err) {
-    if (panel._eocSessionLoadToken !== token || !dialog.open || panel._agentId !== agentId || panel._scopeId !== scopeId) return;
-    title.textContent = "Unable to load conversation";
-    body.innerHTML = `<div class="error" role="alert">${panel._e(err.message || String(err))}</div>`;
-  }
+  await navigate({mode: "get", start_turn: integer(startTurn), text_offset: integer(textOffset)}, [], []);
 }
 
 export {

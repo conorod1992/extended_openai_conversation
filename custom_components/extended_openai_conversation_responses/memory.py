@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime
 from functools import lru_cache
 import hashlib
 import json
@@ -47,6 +46,7 @@ from .persistence_hardening import (
     _async_settle_transactional_save,
 )
 from .provider_errors import provider_failure_category, provider_log_remediation
+from .record_timestamps import stored_timestamp_instant
 from .retrieval_text import _stem, bounded_phrase, ordered_term_phrase, word_tokens
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 from .storage_namespaces import MEMORY_PREFIX as STORAGE_KEY_PREFIX
@@ -1011,7 +1011,7 @@ class PersistentMemory:
                 and (category_filter is None or memory.category == category_filter)
             ]
             memories.sort(
-                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                key=lambda memory: stored_timestamp_instant(memory.updated_at),
                 reverse=True,
             )
             return memories[offset : offset + limit]
@@ -1037,7 +1037,7 @@ class PersistentMemory:
                 and (category_filter is None or memory.category == category_filter)
             ]
             memories.sort(
-                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                key=lambda memory: stored_timestamp_instant(memory.updated_at),
                 reverse=True,
             )
             end = offset + limit
@@ -1082,7 +1082,7 @@ class PersistentMemory:
                 ).casefold()
             ]
             memories.sort(
-                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                key=lambda memory: stored_timestamp_instant(memory.updated_at),
                 reverse=True,
             )
             total = len(memories)
@@ -2880,25 +2880,11 @@ def _clean_key(value: str | None) -> str | None:
     return value
 
 
-@lru_cache(maxsize=20_000)
-def _memory_timestamp_instant(value: str) -> datetime:
-    """Sort validated timestamps by instant; legacy naive values mean UTC.
-
-    Keep stored strings intact and reuse parsing across management pages. Python's
-    stable sort retains storage insertion order when instants are equal.
-    """
-    parsed = dt_util.parse_datetime(value)
-    assert parsed is not None  # Record validation precedes publication.
-    # Aware datetime comparisons already compare instants. Converting to UTC
-    # would overflow for valid offset timestamps at the year 1/9999 boundaries.
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
-
-
 def _same_validity_instant(first: str | None, second: str | None) -> bool:
     return first == second or (
         first is not None
         and second is not None
-        and _memory_timestamp_instant(first) == _memory_timestamp_instant(second)
+        and stored_timestamp_instant(first) == stored_timestamp_instant(second)
     )
 
 
