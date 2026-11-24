@@ -1,7 +1,7 @@
 """Retained native output and owned prompt slots across genuine HA requests."""
 
 import base64
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 import json
 
 import httpx
@@ -11,6 +11,10 @@ import pytest
 import voluptuous as vol
 
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
+from custom_components.extended_openai_conversation_responses.conversation_id_ownership import (
+    claim_conversation_id,
+    register_conversation_id_cleanup,
+)
 from custom_components.extended_openai_conversation_responses.entity import (
     _convert_content_to_responses_param,
 )
@@ -21,6 +25,7 @@ from custom_components.extended_openai_conversation_responses.ha_llm_tools impor
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     make_tool_result_content,
 )
+from custom_components.extended_openai_conversation_responses.scope import unretained_scope
 from homeassistant.components import conversation
 from homeassistant.core import Context
 from homeassistant.helpers import llm
@@ -33,6 +38,23 @@ from tests_real_ha.test_provider_wire_e2e import (
     _responses_sse_text,
     _responses_sse_tool_call,
 )
+
+
+@contextmanager
+def _owned_chat_session(hass, agent):
+    """Register a fixture session before seeding the agent's retained content."""
+    scope = unretained_scope()
+    agent_id = agent.subentry.subentry_id
+    with async_get_chat_session(hass) as session:
+        conversation_id = session.conversation_id
+        claimed_id = claim_conversation_id(
+            hass, agent_id, scope, conversation_id, guest_active=False
+        )
+        assert claimed_id == conversation_id
+        register_conversation_id_cleanup(
+            session, hass, conversation_id, (agent_id, scope.scope_id)
+        )
+        yield session
 
 
 @asynccontextmanager
@@ -73,7 +95,7 @@ async def test_native_only_history_has_valid_chat_follow_up_and_intact_call_pair
         yield {"role": "assistant", "content": "Prior textual answer"}
         yield {"role": "assistant", "tool_calls": [call]}
 
-    with async_get_chat_session(hass) as session:
+    with _owned_chat_session(hass, agent) as session:
         conversation_id = session.conversation_id
         with conversation.async_get_chat_log(hass, session) as log:
             log.async_add_user_content(
@@ -272,7 +294,7 @@ async def test_primary_prompt_transitions_preserve_users_summaries_and_attachmen
         attachment = conversation.Attachment(
             media_content_id="local-history", mime_type="image/png", path=path
         )
-        with async_get_chat_session(hass) as session:
+        with _owned_chat_session(hass, agent) as session:
             conversation_id = session.conversation_id
             with conversation.async_get_chat_log(hass, session) as log:
                 log.content.append(
@@ -372,7 +394,7 @@ async def test_retained_attachment_ledger_bounds_replay_and_resets_for_new_sessi
     attachment = conversation.Attachment(
         media_content_id="local-ledger", mime_type="image/png", path=path
     )
-    with async_get_chat_session(hass) as session:
+    with _owned_chat_session(hass, agent) as session:
         cid = session.conversation_id
         with conversation.async_get_chat_log(hass, session) as log:
             for index in range(count):
@@ -553,7 +575,7 @@ async def test_historical_attachment_unavailability_does_not_break_public_follow
     path = tmp_path / ("historical.pdf" if "pdf" in kind else "historical.png")
     if kind == "pdf-after-api-change":
         path.write_bytes(b"%PDF-1.4\n%%EOF")
-    with async_get_chat_session(hass) as session:
+    with _owned_chat_session(hass, agent) as session:
         cid = session.conversation_id
         with conversation.async_get_chat_log(hass, session) as log:
             attachment = conversation.Attachment(
@@ -611,7 +633,7 @@ async def test_full_handler_bulk_context_measurement_runs_in_workers(
         memory_mode="off",
         temporary_memory="off",
     )
-    with async_get_chat_session(hass) as session:
+    with _owned_chat_session(hass, agent) as session:
         cid = session.conversation_id
         with conversation.async_get_chat_log(hass, session) as log:
             for i in range(96):
@@ -648,6 +670,7 @@ async def test_full_handler_bulk_context_measurement_runs_in_workers(
     async with _transport(agent.entry, [reply("Current answer")]) as wire:
         result = await _say(hass, agent, "Current question", cid)
         assert _speech(result) == "Current answer"
+        assert result.conversation_id == cid
         wire.assert_complete(1)
         assert "Current question" in json.dumps(wire.requests[0]["body"])
         assert "Older question" not in json.dumps(wire.requests[0]["body"])
@@ -669,7 +692,7 @@ async def test_foreground_preflight_summary_belongs_to_current_usage_run(hass, m
         memory_mode="off",
         temporary_memory="off",
     )
-    with async_get_chat_session(hass) as session:
+    with _owned_chat_session(hass, agent) as session:
         cid = session.conversation_id
         with conversation.async_get_chat_log(hass, session) as log:
             log.content.extend(
@@ -790,7 +813,7 @@ async def test_incompatible_historical_pdfs_do_not_consume_chat_image_budget(
         return original_read(path, total)
 
     monkeypatch.setattr(entity_module, "read_bounded_local_file", read)
-    with async_get_chat_session(hass) as session:
+    with _owned_chat_session(hass, agent) as session:
         cid = session.conversation_id
         with conversation.async_get_chat_log(hass, session) as log:
             log.async_add_user_content(
