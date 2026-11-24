@@ -104,10 +104,15 @@ def should_report_uncertain_effects() -> bool:
 
 
 def provider_argument_text(arguments: Any) -> str:
-    """Return raw malformed JSON when retained, otherwise signal normal encoding."""
+    """Return wire-safe text for retained malformed provider JSON."""
     if isinstance(arguments, MalformedToolArguments):
-        return arguments.raw
+        return utf8_safe_provider_arguments(arguments.raw)
     raise TypeError("arguments are not malformed provider input")
+
+
+def utf8_safe_provider_arguments(raw: str) -> str:
+    """Escape literal surrogates on the wire without changing retained raw text."""
+    return raw if raw.isascii() else raw.encode("utf-8", "backslashreplace").decode()
 
 
 def correctable_validation_failure(error: BaseException) -> CorrectableToolFailure:

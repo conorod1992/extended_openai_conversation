@@ -117,6 +117,7 @@ from .function_tool_recovery import (
     current_tool_recovery_state,
     provider_argument_text,
     strict_execution_failures_enabled,
+    utf8_safe_provider_arguments,
 )
 from .functions import get_function
 from .ha_llm_tools import async_discover, current_snapshot, is_ha_tool, reference_key
@@ -161,6 +162,7 @@ from .resource_limits import (
 from .responses_stream_order import ordered_output_events
 from .schema_normalization import normalize_exclusive_bounds
 from .speech import async_streaming_speech_cleanup
+from .strict_json import strict_json_loads
 from .tool_exchange import (
     append_unresolved_tool_results,
     async_execute_tool_exchange,
@@ -699,6 +701,10 @@ def _serialize_response_item(item: Any) -> dict[str, Any]:
             for key in ("type", "id", "summary", "encrypted_content")
             if (value := serialized.get(key)) is not None
         }
+    if serialized.get("type") == "function_call" and isinstance(
+        arguments := serialized.get("arguments"), str
+    ):
+        serialized["arguments"] = utf8_safe_provider_arguments(arguments)
     return serialized
 
 
@@ -2479,7 +2485,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         args = (
                             {}
                             if isinstance(raw_args, str) and not raw_args.strip()
-                            else json.loads(raw_args)
+                            else strict_json_loads(raw_args)
                         )
                     except (ValueError, RecursionError) as err:
                         if recovery_state is None or not recovery_state.enabled:
@@ -2783,7 +2789,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             arguments = (
                                 {}
                                 if isinstance(raw_args, str) and not raw_args.strip()
-                                else json.loads(raw_args)
+                                else strict_json_loads(raw_args)
                             )
                         except (ValueError, RecursionError) as err:
                             if recovery_state is None or not recovery_state.enabled:

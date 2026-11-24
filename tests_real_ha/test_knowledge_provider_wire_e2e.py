@@ -434,13 +434,29 @@ async def test_nonobject_knowledge_arguments_follow_error_recovery(
 
 @pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
 @pytest.mark.parametrize("recovery_enabled", [False, True])
-async def test_oversized_integer_arguments_follow_error_recovery(
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        '{"value":' + "9" * 5000 + "}",
+        '{"query":"calibration","nested":[{"value":NaN}]}',
+        '{"query":"calibration","nested":[{"value":Infinity}]}',
+        '{"query":"calibration","nested":[{"value":-Infinity}]}',
+        '{"query":"calibration","nested":[{"value":1e400}]}',
+        r'{"query":"calibration","nested":[{"value":"\ud800"}]}',
+        r'{"query":"calibration","nested":[{"\udfff":"value"}]}',
+    ],
+    ids=[
+        "oversized-int", "nan", "infinity", "negative-infinity", "float-overflow",
+        "surrogate-value", "surrogate-key",
+    ],
+)
+async def test_invalid_provider_json_arguments_follow_error_recovery(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
     api_mode: str,
     recovery_enabled: bool,
+    arguments: str,
 ) -> None:
-    arguments = '{"value":' + "9" * 5000 + "}"
     agent = await _knowledge_agent(
         hass, api_mode, function_tool_error_recovery=recovery_enabled
     )

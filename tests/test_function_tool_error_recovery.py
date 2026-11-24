@@ -14,6 +14,7 @@ from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
     _convert_content_to_param,
     _convert_content_to_responses_param,
+    _serialize_response_item,
 )
 from custom_components.extended_openai_conversation_responses.exceptions import (
     FunctionNotFound,
@@ -829,21 +830,37 @@ def test_blank_arguments_do_not_bypass_required_function_parameters() -> None:
         validate_function_arguments(spec, {})
 
 
-@pytest.mark.parametrize("converter", [_convert_content_to_param, _convert_content_to_responses_param])
-def test_malformed_arguments_replay_raw_provider_text_in_both_protocols(hass, converter) -> None:
+@pytest.mark.parametrize(
+    "converter", [_convert_content_to_param, _convert_content_to_responses_param]
+)
+@pytest.mark.parametrize(
+    ("raw", "wire"), [("{", "{"), ('{"x":"\ud800"}', r'{"x":"\ud800"}')]
+)
+def test_malformed_arguments_replay_raw_provider_text_in_both_protocols(
+    hass, converter, raw, wire
+) -> None:
+    arguments = MalformedToolArguments(raw)
     call = llm.ToolInput(
         id="bad-1",
         tool_name="action",
-        tool_args=MalformedToolArguments("{"),
+        tool_args=arguments,
         external=True,
     )
-    content = [conversation.AssistantContent(agent_id="conversation.recovery", tool_calls=[call])]
+    content = [
+        conversation.AssistantContent(
+            agent_id="conversation.recovery", tool_calls=[call]
+        )
+    ]
 
     serialized = converter(content)
     if converter is _convert_content_to_param:
-        assert serialized[0]["tool_calls"][0]["function"]["arguments"] == "{"
+        assert serialized[0]["tool_calls"][0]["function"]["arguments"] == wire
     else:
-        assert serialized[0]["arguments"] == "{"
+        assert serialized[0]["arguments"] == wire
+        native = {"type": "function_call", "call_id": call.id, "arguments": raw}
+        assert _serialize_response_item(native)["arguments"] == wire
+        assert native["arguments"] == raw
+    assert arguments.raw == raw
 
 
 def test_recovery_error_text_is_bounded(hass) -> None:
