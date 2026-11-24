@@ -679,10 +679,10 @@ async def test_script_function_executes_local_ha_service_on_provider_wire(
 
 
 @pytest.mark.parametrize(
-    "safe_batch", [False, True], ids=["serial-prefix", "safe-atomic"]
+    "read_only_batch", [False, True], ids=["serial-prefix", "read-only-prefix"]
 )
 async def test_public_budget_loading_multicall_and_completed_replay(
-    hass, monkeypatch, stress_trace, safe_batch
+    hass, monkeypatch, stress_trace, read_only_batch
 ):
     """Loader exemption and request-local limits compose with completed-call refusal."""
     from pytest_homeassistant_custom_component.common import MockUser
@@ -720,7 +720,7 @@ async def test_public_budget_loading_multicall_and_completed_replay(
             "type": "script",
             "sequence": [{"action": "budget_probe.record", "data": {"marker": marker}}],
         }
-        if safe_batch and marker != "warm":
+        if read_only_batch and marker != "warm":
             function = {"type": "native", "name": "get_user_from_user_id"}
         tools.append(
             {
@@ -800,7 +800,7 @@ async def test_public_budget_loading_multicall_and_completed_replay(
     assert executions == ["budget_warm", "budget_a"]
     assert len(wire.requests) == 4
     ledger.append({"requests": len(wire.requests), "effects": len(effects)})
-    assert effects == (["warm"] if safe_batch else ["warm", "a"])
+    assert effects == (["warm"] if read_only_batch else ["warm", "a"])
     assert results == ["load", "warm", "batch-a", "batch-b"]
     # A fresh turn gets a fresh budget; a completed acknowledged id still cannot replay.
     wire = _install_wire(
@@ -844,11 +844,11 @@ async def test_public_budget_loading_multicall_and_completed_replay(
         ],
     )
     assert _speech(await say()) == "Fresh budget healthy"
-    assert effects == (before if safe_batch else [*before, "a", "b"])
+    assert effects == (before if read_only_batch else [*before, "a", "b"])
     assert executions == ["budget_warm", "budget_a", "budget_warm", "budget_a", "budget_b"]
     assert len(wire.requests) == 3
     ledger.append({"requests": len(wire.requests), "effects": len(effects)})
-    assert ledger == [{"requests": requests, "effects": completed} for requests, completed in zip([4, 3, 1, 3], [1, 2, 2, 2] if safe_batch else [2, 3, 3, 5], strict=True)]
+    assert ledger == [{"requests": requests, "effects": completed} for requests, completed in zip([4, 3, 1, 3], [1, 2, 2, 2] if read_only_batch else [2, 3, 3, 5], strict=True)]
     assert sum(row["requests"] for row in ledger) == 11
     record(
         stress_trace,
@@ -856,8 +856,8 @@ async def test_public_budget_loading_multicall_and_completed_replay(
         layer="provider-wire",
         budget_loading_replay_cases=1,
         aggregate_budget_ledger=ledger,
-        budget_atomic_cases=int(safe_batch),
-        budget_serial_prefix_cases=int(not safe_batch),
+        budget_read_only_prefix_cases=int(read_only_batch),
+        budget_serial_prefix_cases=int(not read_only_batch),
         completed_replay_rejections=1,
         recovery_conversations=1,
     )

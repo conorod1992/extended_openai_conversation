@@ -641,7 +641,7 @@ async def test_successful_serial_sibling_is_never_replayed(hass) -> None:
     assert [result.tool_call_id for result in _results(chat_log)] == ["call-1", "call-2"]
 
 
-async def test_parallel_safe_sibling_executes_once_when_other_call_is_malformed(hass) -> None:
+async def test_read_only_sibling_executes_once_when_previous_call_is_malformed(hass) -> None:
     first = _tool("history", function={"type": "native", "name": "get_history"})
     second = _tool("statistics", function={"type": "native", "name": "get_statistics"})
     first_call = _call("call-1", "history")

@@ -170,39 +170,23 @@ def test_function_call_budget_counts_individual_calls() -> None:
     assert budget.used == 2
 
 
-def test_parallel_budget_reservation_is_atomic() -> None:
-    budget = FunctionCallBudget(limit=2, used=1)
-
-    with pytest.raises(
-        HomeAssistantError,
-        match=r"Function call limit of 2 reached; refusing to execute additional tool `third`",
-    ):
-        budget.claim_many(("second", "third"))
-
-    assert budget.used == 1
-    assert budget.remaining == 1
-    assert budget.exhausted is False
-
-
-def test_function_call_budget_unlimited_and_empty_batch_edges() -> None:
+def test_function_call_budget_unlimited_and_zero_limit() -> None:
     unlimited = FunctionCallBudget(limit=-1)
 
-    assert unlimited.remaining is None
     assert unlimited.exhausted is False
 
-    unlimited.claim_many(("first_tool", "second_tool"))
+    unlimited.claim("first_tool")
+    unlimited.claim("second_tool")
 
     assert unlimited.used == 2
-    assert unlimited.remaining is None
     assert unlimited.exhausted is False
 
     exhausted = FunctionCallBudget(limit=0)
     assert exhausted.exhausted is True
 
-    exhausted.claim_many(())
-
+    with pytest.raises(HomeAssistantError, match="refusing to execute additional tool"):
+        exhausted.claim("first_tool")
     assert exhausted.used == 0
-    assert exhausted.remaining == 0
 
 
 def test_provider_safety_ceiling_is_separate_from_function_budget() -> None:
@@ -210,7 +194,7 @@ def test_provider_safety_ceiling_is_separate_from_function_budget() -> None:
     assert MAX_PROVIDER_REQUESTS > 30
 
 
-async def test_one_parallel_batch_cannot_overshoot_remaining_budget(hass) -> None:
+async def test_one_read_only_batch_cannot_overshoot_remaining_budget(hass) -> None:
     tools = [
         _tool("memory_one", {"type": "memory", "operation": "search"}),
         _tool("memory_two", {"type": "memory", "operation": "search"}),

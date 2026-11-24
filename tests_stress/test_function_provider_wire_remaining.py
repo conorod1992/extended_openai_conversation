@@ -1102,12 +1102,12 @@ async def test_composite_late_failure_preserves_one_completed_side_effect(
 
 @pytest.mark.parametrize("api_mode", API_MODES)
 @pytest.mark.parametrize(
-    "variant", ["safe-overlap", "mixed-serial", "sibling-failure", "parent-cancel"]
+    "variant", ["read-only-serial", "mixed-serial", "sibling-failure", "parent-cancel"]
 )
-async def test_public_assist_multicall_dispatch_concurrency(
+async def test_public_assist_multicall_dispatch_order(
     hass, monkeypatch, stress_trace, api_mode, variant
 ):
-    """SDK parsing and public Assist retain safe overlap and serial side effects."""
+    """Both SDK protocols return one ordered continuation for a serial batch."""
     import asyncio
 
     from pytest_homeassistant_custom_component.common import MockUser
@@ -1136,7 +1136,7 @@ async def test_public_assist_multicall_dispatch_concurrency(
     from homeassistant.exceptions import HomeAssistantError
 
     owner = MockUser(
-        id="parallel-owner", name="Parallel owner", is_owner=True
+        id="batch-owner", name="Batch owner", is_owner=True
     ).add_to_hass(hass)
     started = {name: asyncio.Event() for name in ("a", "b")}
     release = {name: asyncio.Event() for name in ("a", "b")}
@@ -1148,6 +1148,8 @@ async def test_public_assist_multicall_dispatch_concurrency(
 
     async def gated(*args):
         marker = args[2].get("marker", "a")
+        if marker == "b":
+            assert completed["a"].is_set()
         started[marker].set()
         try:
             await release[marker].wait()
@@ -1164,6 +1166,7 @@ async def test_public_assist_multicall_dispatch_concurrency(
     monkeypatch.setattr(native, "get_user_from_user_id", gated)
 
     async def effect(call):
+        assert completed["a"].is_set()
         started["b"].set()
         effects.append(call.data["marker"])
         completed["b"].set()
@@ -1199,7 +1202,7 @@ async def test_public_assist_multicall_dispatch_concurrency(
     )
 
     entry = _make_entry(
-        "Assist concurrency",
+        "Assist batched tool order",
         include_ai_task=False,
         conversation_options={
             CONF_API_MODE: api_mode,
@@ -1228,28 +1231,24 @@ async def test_public_assist_multicall_dispatch_concurrency(
     )
     try:
         await asyncio.wait_for(started["a"].wait(), 10)
-        if mixed:
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(started["b"].wait(), 0.1)
-            assert effects == []
-        else:
-            await asyncio.wait_for(started["b"].wait(), 10)
-            assert not completed["a"].is_set()
-            if variant == "parent-cancel":
-                turn.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await turn
-                assert cancelled == {"a", "b"}
-                assert len(wire.requests) == 1
-            else:
-                release["b"].set()
-                await asyncio.wait_for(completed["b"].wait(), 10)
-                assert not completed["a"].is_set()
-                assert not turn.done()
-                assert cancelled == set()
-        release["a"].set()
+        assert not started["b"].is_set()
+        assert effects == []
+        assert len(wire.requests) == 1
         if variant == "parent-cancel":
-            release["b"].set()
+            turn.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await turn
+            assert cancelled == {"a"}
+            assert not started["b"].is_set()
+            assert len(wire.requests) == 1
+            assert [content.tool_call_id for content in captured] == [
+                "call-a",
+                "call-b",
+            ]
+            assert [
+                tool_result_data(content)["result"]["status"] for content in captured
+            ] == ["error", "skipped"]
+            release["a"].set()
             healthy_wire = _install_wire(
                 monkeypatch,
                 agent,
@@ -1279,6 +1278,13 @@ async def test_public_assist_multicall_dispatch_concurrency(
                 recovery_conversations=1,
             )
             return
+        release["a"].set()
+        await asyncio.wait_for(started["b"].wait(), 10)
+        assert completed["a"].is_set()
+        if not mixed:
+            assert len(wire.requests) == 1
+            assert not completed["b"].is_set()
+            release["b"].set()
         result = await asyncio.wait_for(turn, 10)
         if variant == "sibling-failure":
             assert result.response.error_code is not None
@@ -1286,7 +1292,7 @@ async def test_public_assist_multicall_dispatch_concurrency(
                 "call-a",
                 "call-b",
             ]
-            assert "Parallel owner" in json.dumps(tool_result_data(captured[0]))
+            assert "Batch owner" in json.dumps(tool_result_data(captured[0]))
             sibling_result = tool_result_data(captured[1])
             assert sibling_result == {
                 "result": {
@@ -1345,21 +1351,19 @@ async def test_public_assist_multicall_dispatch_concurrency(
             item["call_id" if api_mode == API_MODE_RESPONSES else "tool_call_id"]
             for item in outputs
         ] == ["call-a", "call-b"]
-        assert "Parallel owner" in json.dumps(outputs[0])
+        assert "Batch owner" in json.dumps(outputs[0])
         assert len(wire.requests) == 2
         record(
             stress_trace,
             "summary",
-            campaign_action="public_assist_concurrency",
+            campaign_action="public_assist_serial_tool_batch",
             layer="provider-wire",
             api_mode=api_mode,
             mixed=mixed,
             function_executions=2,
             conversations=1,
-            safe_overlap=int(not mixed),
-            assist_safe_overlap=int(not mixed),
+            assist_read_only_serial=int(not mixed),
             assist_mixed_serial=int(mixed),
-            assist_sibling_failure_cases=int(variant == "sibling-failure"),
         )
     finally:
         for event in release.values():

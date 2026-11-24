@@ -13,13 +13,13 @@ The existing default campaign. It mutates critical Function Tool execution logic
 - `function_call_budget.py`
 - `function_tool_resolution.py`
 - `function_tool_recovery.py`
-- `parallel_tool_execution.py`
+- `read_only_tools.py`
 
 It runs the existing focused Function Tool mutation-contract test set.
 
 The runner keeps the original unfiltered selection within this four-module allowlist. Mutmut 3.7.0 generates no mutants for the decorated `FunctionCallBudget` class, so the runner checks that the campaign generates mutants rather than incorrectly requiring mutants from every configured file. This does not claim mutation coverage of that decorated class.
 
-This campaign applies a 10-second pytest timeout per test. Reversing the unfinished-task cancellation check creates a real deadlock in an existing cancellation test; the test timeout reports it as a failure before Mutmut's worker deadline. The runner still rejects incomplete worker results and no Function Tool behavioural tests are changed.
+This campaign applies a 10-second pytest timeout per test. The runner requires complete results from every mutation worker.
 
 ### `guest-security`
 

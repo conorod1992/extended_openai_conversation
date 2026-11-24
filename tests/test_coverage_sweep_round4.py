@@ -511,45 +511,6 @@ def test_native_statistics_migration_non_mapping_parameters_is_rejected(
 
 
 @pytest.mark.asyncio
-async def test_parallel_outcome_cleanup_cancels_pending_task_on_gather_failure(
-    monkeypatch,
-) -> None:
-    from custom_components.extended_openai_conversation_responses import (
-        parallel_tool_execution,
-    )
-
-    pending = asyncio.get_running_loop().create_future()
-    monkeypatch.setattr(
-        parallel_tool_execution.asyncio,
-        "ensure_future",
-        Mock(return_value=pending),
-    )
-
-    calls = 0
-
-    async def broken_gather(*_tasks, **_kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise RuntimeError("gather failed")
-        return []
-
-    monkeypatch.setattr(
-        parallel_tool_execution.asyncio,
-        "gather",
-        broken_gather,
-    )
-
-    with pytest.raises(RuntimeError, match="gather failed"):
-        await parallel_tool_execution.async_execute_parallel_safe_batch_outcomes(
-            [(object(), object())],
-            Mock(return_value=pending),
-        )
-
-    assert pending.cancelled()
-
-
-@pytest.mark.asyncio
 async def test_service_admin_allows_system_context_and_rejects_non_admin(
     hass,
 ) -> None:

@@ -1012,37 +1012,6 @@ def test_native_statistics_schema_migration_skips_already_strict_schema() -> Non
     assert migration._migrate_statistics_schema(tool) is False
 
 
-@pytest.mark.asyncio
-async def test_parallel_safe_outcomes_cancel_children_when_parent_is_cancelled() -> None:
-    from custom_components.extended_openai_conversation_responses import (
-        parallel_tool_execution,
-    )
-
-    started = asyncio.Event()
-    cancelled = asyncio.Event()
-
-    async def executor(_tool, _input):
-        started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            cancelled.set()
-            raise
-
-    task = asyncio.create_task(
-        parallel_tool_execution.async_execute_parallel_safe_batch_outcomes(
-            [(object(), object())],
-            executor,
-        )
-    )
-    await started.wait()
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert cancelled.is_set()
-
-
 def test_skill_transaction_remove_unlinks_regular_file(tmp_path) -> None:
     from custom_components.extended_openai_conversation_responses import (
         skill_transactions,

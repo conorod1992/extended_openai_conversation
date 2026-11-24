@@ -58,8 +58,8 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
     tool_result_data,
     unwrap_tool_result,
 )
-from custom_components.extended_openai_conversation_responses.parallel_tool_execution import (
-    is_parallel_safe_integration_tool,
+from custom_components.extended_openai_conversation_responses.read_only_tools import (
+    is_integration_owned_read_only_tool,
 )
 from custom_components.extended_openai_conversation_responses.request import (
     format_function_tools,
@@ -342,7 +342,7 @@ async def test_caller_api_uses_existing_exchange_budget_and_single_execution(has
     api = TestAPI(hass)
     ctx = context()
     snapshot, tools = caller_api_tools(await api.async_get_api_instance(ctx))
-    assert not is_parallel_safe_integration_tool(tools[0])
+    assert not is_integration_owned_read_only_tool(tools[0])
     entity = object.__new__(ExtendedOpenAIBaseLLMEntity)
     entity.hass = hass
     entity.entity_id = "conversation.test"

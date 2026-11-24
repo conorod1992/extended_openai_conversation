@@ -24,7 +24,7 @@ PROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
                 "function_call_budget",
                 "function_tool_resolution",
                 "function_tool_recovery",
-                "parallel_tool_execution",
+                "read_only_tools",
             },
             8,
         ),
@@ -91,7 +91,7 @@ def test_function_tool_default_accepts_generated_modules_without_decorated_budge
         for module in (
             "function_tool_resolution",
             "function_tool_recovery",
-            "parallel_tool_execution",
+            "read_only_tools",
         )
     )
     assert len(selected_results(output, selectors)) == 3

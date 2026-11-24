@@ -513,7 +513,6 @@ async def test_serial_exchange_failure_closes_current_and_later_retained_calls(
     calls = [_call("a", "alpha"), _call("b", "beta")]
     chat_log = FakeChatLog([FakeAssistantContent(calls)])
     entity = SimpleNamespace(entity_id="agent", _execute_function_tool=AsyncMock())
-    monkeypatch.setattr(tool_exchange, "resolve_parallel_safe_batch", lambda *_: None)
 
     with pytest.raises(FunctionNotFound):
         await tool_exchange.async_execute_tool_exchange(
@@ -533,97 +532,7 @@ async def test_serial_exchange_failure_closes_current_and_later_retained_calls(
 
 
 @pytest.mark.asyncio
-async def test_parallel_exchange_budget_failure_marks_the_first_refused_call(
-    monkeypatch,
-) -> None:
-    _patch_content_types(monkeypatch)
-    calls = [_call("a", "alpha"), _call("b", "beta")]
-    tools = [_tool("alpha"), _tool("beta")]
-    chat_log = FakeChatLog([FakeAssistantContent(calls)])
-    entity = SimpleNamespace(entity_id="agent", hass=None)
-    monkeypatch.setattr(tool_exchange, "async_validate_function_arguments", AsyncMock(return_value={}))
-    monkeypatch.setattr(
-        tool_exchange,
-        "latest_function_tool_for_execution",
-        lambda _entity, candidate: candidate,
-    )
-    monkeypatch.setattr(
-        tool_exchange,
-        "resolve_parallel_safe_batch",
-        lambda pending, indexed: [(indexed[call.tool_name], call) for call in pending],
-    )
-
-    success = FakeToolResultContent("agent", "a", "alpha", {"result": "ok"})
-    execute = AsyncMock(return_value=[success])
-    monkeypatch.setattr(tool_exchange, "async_execute_parallel_safe_batch_outcomes", execute)
-    await tool_exchange.async_execute_tool_exchange(
-        entity,
-        chat_log,
-        calls,
-        tools,
-        FunctionCallBudget(1),
-        None,
-        [],
-    )
-
-    assert [item.tool_call_id for item in chat_log.added] == ["b", "a"] or [
-        item.tool_call_id for item in chat_log.added
-    ] == ["a", "b"]
-    by_id = {item.tool_call_id: item for item in chat_log.added}
-    assert tool_result_data(by_id["b"])["result"]["status"] == "not_executed"
-    assert len(execute.await_args.args[0]) == 1
-    assert tool_result_data(by_id["a"]) == {"result": "ok"}
-
-
-@pytest.mark.asyncio
-async def test_parallel_exchange_records_success_and_failure_then_raises_first_error(
-    monkeypatch,
-) -> None:
-    _patch_content_types(monkeypatch)
-    calls = [_call("a", "alpha"), _call("b", "beta")]
-    tools = [_tool("alpha"), _tool("beta")]
-    chat_log = FakeChatLog([FakeAssistantContent(calls)])
-    success = FakeToolResultContent("agent", "a", "alpha", {"result": "ok"})
-    failure = RuntimeError("beta failed")
-    entity = SimpleNamespace(entity_id="agent", hass=None)
-    monkeypatch.setattr(tool_exchange, "async_validate_function_arguments", AsyncMock(return_value={}))
-    monkeypatch.setattr(
-        tool_exchange,
-        "latest_function_tool_for_execution",
-        lambda _entity, candidate: candidate,
-    )
-    monkeypatch.setattr(
-        tool_exchange,
-        "resolve_parallel_safe_batch",
-        lambda pending, indexed: [(indexed[call.tool_name], call) for call in pending],
-    )
-    monkeypatch.setattr(
-        tool_exchange,
-        "async_execute_parallel_safe_batch_outcomes",
-        AsyncMock(return_value=[success, failure]),
-    )
-
-    with pytest.raises(RuntimeError, match="beta failed"):
-        await tool_exchange.async_execute_tool_exchange(
-            entity,
-            chat_log,
-            calls,
-            tools,
-            FunctionCallBudget(5),
-            None,
-            [],
-        )
-
-    by_id = {item.tool_call_id: item for item in chat_log.added}
-    assert by_id["a"] is success
-    assert tool_result_data(by_id["b"])["result"] == {
-        "status": "error",
-        "error": "SanitizedUnexpectedBackendError: Function execution failed. Check the tool configuration and permissions.",
-    }
-
-
-@pytest.mark.asyncio
-async def test_recovery_parallel_validation_exhaustion_closes_exchange(
+async def test_recovery_validation_exhaustion_closes_exchange(
     monkeypatch,
 ) -> None:
     _patch_content_types(monkeypatch)
@@ -643,11 +552,6 @@ async def test_recovery_parallel_validation_exhaustion_closes_exchange(
         tool_exchange,
         "latest_function_tool_for_execution",
         lambda _entity, candidate: candidate,
-    )
-    monkeypatch.setattr(
-        tool_exchange,
-        "resolve_parallel_safe_batch",
-        lambda pending, indexed: [(indexed[call.tool_name], call) for call in pending],
     )
     monkeypatch.setattr(
         tool_exchange,
@@ -672,11 +576,11 @@ async def test_recovery_parallel_validation_exhaustion_closes_exchange(
 
 
 @pytest.mark.asyncio
-async def test_recovery_parallel_mixes_correctable_success_and_runtime_failure(
+async def test_recovery_keeps_prior_feedback_and_success_on_later_runtime_failure(
     monkeypatch,
 ) -> None:
     _patch_content_types(monkeypatch)
-    calls = [_call("recover", "recover"), _call("ok", "ok"), _call("bad", "bad")]
+    calls = [_call(name, name) for name in ("recover", "ok", "bad", "skipped")]
     tools = [_tool(call.tool_name) for call in calls]
     chat_log = FakeChatLog([FakeAssistantContent(calls)])
     entity = SimpleNamespace(entity_id="agent")
@@ -695,21 +599,13 @@ async def test_recovery_parallel_mixes_correctable_success_and_runtime_failure(
         "latest_function_tool_for_execution",
         lambda _entity, candidate: candidate,
     )
-    monkeypatch.setattr(
-        tool_exchange,
-        "resolve_parallel_safe_batch",
-        lambda pending, indexed: [(indexed[call.tool_name], call) for call in pending],
-    )
 
     async def validate(_entity, _tool_value, call, _state):
         return correctable if call.id == "recover" else call
 
     monkeypatch.setattr(tool_exchange, "_async_validate_recoverable_call", validate)
-    monkeypatch.setattr(
-        tool_exchange,
-        "async_execute_parallel_safe_batch_outcomes",
-        AsyncMock(return_value=[success, runtime_error]),
-    )
+    execute = AsyncMock(side_effect=[success, runtime_error])
+    entity._execute_function_tool = execute
 
     with pytest.raises(RuntimeError, match="runtime bad"):
         await tool_exchange.async_execute_tool_exchange(
@@ -730,5 +626,7 @@ async def test_recovery_parallel_mixes_correctable_success_and_runtime_failure(
     )
     assert by_id["ok"] is success
     assert tool_result_data(by_id["bad"])["result"]["status"] == "error"
+    assert tool_result_data(by_id["skipped"])["result"]["status"] == "skipped"
+    assert list(by_id) == ["recover", "ok", "bad", "skipped"]
+    assert [args.args[1].id for args in execute.await_args_list] == ["ok", "bad"]
     assert state.used == 1
-

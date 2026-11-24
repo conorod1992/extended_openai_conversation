@@ -28,7 +28,7 @@ from .function_execution import (
     validate_function_arguments,
 )
 from .ha_tool_result_compat import is_tool_result_content
-from .parallel_tool_execution import is_parallel_safe_integration_tool
+from .read_only_tools import is_integration_owned_read_only_tool
 from .schema_errors import SCHEMA_ERRORS
 
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
@@ -343,7 +343,7 @@ def record_dispatch(
         read_only = entity._read_only_tool_inputs = {}
     verified_read = (
         function_tool is not None
-        and is_parallel_safe_integration_tool(function_tool)
+        and is_integration_owned_read_only_tool(function_tool)
         # Scheduling even a read creates a durable side effect.
         and "delay" not in tool_input.tool_args
     )
