@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -37,7 +38,7 @@ _RELEVANT_MARKER = "orion-cobalt"
 _IRRELEVANT_MARKER = "cedar-amber"
 
 
-def _chat_sse_tool_call(call_id: str, name: str, arguments: dict[str, Any]) -> bytes:
+def _chat_sse_tool_call(call_id: str, name: str, arguments: Any) -> bytes:
     """Return one real Chat Completions function-call stream."""
     chunk = {
         "id": f"chatcmpl-{call_id}",
@@ -89,7 +90,7 @@ def _chat_sse_text(text: str) -> bytes:
 
 
 def _responses_sse_tool_call(
-    call_id: str, name: str, arguments: dict[str, Any]
+    call_id: str, name: str, arguments: Any
 ) -> bytes:
     """Return one real Responses API function-call stream."""
     encoded = json.dumps(arguments, separators=(",", ":"))
@@ -357,7 +358,7 @@ async def test_knowledge_search_requires_array_source_filter_at_provider_boundar
     call = _chat_sse_tool_call if chat else _responses_sse_tool_call
     text = _chat_sse_text if chat else _responses_sse_text
     decode = _chat_tool_result if chat else _responses_tool_result
-    for source_ids in ("", " \t", "0", [], ["0"], [blocked.source_id]):
+    for source_ids in ("", " \t", "0", None, [], ["0"], [blocked.source_id]):
         wire = _install_wire(
             monkeypatch,
             agent,
@@ -374,7 +375,7 @@ async def test_knowledge_search_requires_array_source_filter_at_provider_boundar
             "Search complete"
         )
         result = decode(wire.requests[1]["body"], _SEARCH_CALL_ID)
-        if isinstance(source_ids, str):
+        if source_ids is None or isinstance(source_ids, str):
             assert result.get("code") == "invalid_arguments", (source_ids, result)
             assert "source_ids" in result["error"]
         else:
@@ -382,3 +383,38 @@ async def test_knowledge_search_requires_array_source_filter_at_provider_boundar
                 [] if source_ids else [allowed.source_id]
             )
         assert "private-orion" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+@pytest.mark.parametrize("recovery", [False, True])
+@pytest.mark.parametrize("arguments", [None, [], "calibration token"], ids=["null", "array", "string"])
+async def test_nonobject_knowledge_arguments_follow_error_recovery(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, api_mode: str,
+    recovery: bool, arguments: Any,
+) -> None:
+    agent = await _knowledge_agent(hass, api_mode, function_tool_error_recovery=recovery)
+    await _seed_knowledge(agent)
+    search = AsyncMock()
+    monkeypatch.setattr(agent, "_async_execute_knowledge_tool", search)
+    chat = api_mode == API_MODE_CHAT_COMPLETIONS
+    call = _chat_sse_tool_call if chat else _responses_sse_tool_call
+    text = _chat_sse_text if chat else _responses_sse_text
+    decode = _chat_tool_result if chat else _responses_tool_result
+    replies = [call(_SEARCH_CALL_ID, "knowledge_search", arguments)]
+    if recovery:
+        replies.append(text("Recovered"))
+    wire = _install_wire(monkeypatch, agent, replies)
+
+    result = await _say(hass, agent, "Check the calibration token")
+    search.assert_not_awaited()
+    if recovery:
+        assert _speech(result) == "Recovered"
+        assert len(wire.requests) == 2
+        feedback = decode(wire.requests[1]["body"], _SEARCH_CALL_ID)
+        assert feedback["code"] == "invalid_arguments"
+        assert feedback["stage"] == "pre_dispatch_validation"
+        assert feedback["error"] == "Function input must be an object"
+    else:
+        assert len(wire.requests) == 1
+        assert result.response.error_code is not None
+        assert "Function input must be an object" in result.response.as_dict()["speech"]["plain"]["speech"]

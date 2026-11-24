@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextvars import ContextVar
 from dataclasses import replace
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -84,6 +84,71 @@ def test_delay_normalization_accepts_ha_time_period_shapes() -> None:
 
     with pytest.raises(HomeAssistantError, match="Invalid Function Tool delay"):
         _delay_as_timedelta("not-a-duration")
+
+
+@pytest.mark.parametrize("catch_up", [False, True])
+@pytest.mark.parametrize(
+    ("delay", "error"),
+    [
+        ({"days": 4_000_000}, "exceeds the supported scheduling range"),
+        ({"seconds": 10**80}, "Invalid Function Tool delay"),
+    ],
+    ids=["due-at-overflow", "duration-overflow"],
+)
+async def test_schedule_rejects_overflow_before_save_or_waiter(
+    hass, monkeypatch, delay, error, catch_up
+) -> None:
+    manager = DelayedToolManager(hass)
+    manager._started = manager._setup_complete = True
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    arm = MagicMock()
+    monkeypatch.setattr(manager, "_arm", arm)
+
+    with pytest.raises(HomeAssistantError, match=error):
+        await manager.async_schedule(
+            _entity(hass), "control_light", {"delay": delay}, None,
+            function_tool={**_valid_tool(), "delay_catch_up": catch_up},
+        )
+
+    manager._store.async_save.assert_not_awaited()
+    arm.assert_not_called()
+    assert manager._records == {}
+
+
+def test_delay_normalization_wraps_core_conversion_overflow(monkeypatch) -> None:
+    from homeassistant.helpers import config_validation as cv
+
+    monkeypatch.setattr(cv, "time_period", MagicMock(side_effect=OverflowError))
+    with pytest.raises(HomeAssistantError, match="Invalid Function Tool delay"):
+        _delay_as_timedelta("9999999999999999:00:00")
+
+
+@pytest.mark.parametrize("catch_up", [False, True])
+async def test_schedule_expiry_overflow_depends_on_catch_up(
+    hass, monkeypatch, catch_up
+) -> None:
+    now = datetime(9999, 12, 31, 23, 45, tzinfo=timezone.utc)
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    manager = DelayedToolManager(hass)
+    manager._started = manager._setup_complete = True
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    arm = MagicMock()
+    monkeypatch.setattr(manager, "_arm", arm)
+    arguments = (_entity(hass), "control_light", {"delay": {"seconds": 5}}, None)
+    function_tool = {**_valid_tool(), "delay_catch_up": catch_up}
+
+    if catch_up:
+        record = await manager.async_schedule(*arguments, function_tool=function_tool)
+        assert record.due_at == "9999-12-31T23:45:05+00:00"
+        assert record.expires_at is None
+        manager._store.async_save.assert_awaited_once()
+        arm.assert_called_once_with(record.call_id)
+    else:
+        with pytest.raises(HomeAssistantError, match="exceeds the supported scheduling range"):
+            await manager.async_schedule(*arguments, function_tool=function_tool)
+        manager._store.async_save.assert_not_awaited()
+        arm.assert_not_called()
+        assert manager._records == {}
 
 
 async def test_schedule_is_persisted_before_becoming_live(hass) -> None:

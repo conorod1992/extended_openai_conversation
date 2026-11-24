@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from asyncio import CancelledError
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Any, cast
 
@@ -394,9 +394,12 @@ async def _async_validate_recoverable_call(
         if (
             function.get("type") == "knowledge"
             and function.get("operation") == "search"
-            and isinstance(tool_input.tool_args.get("source_ids"), str)
         ):
-            raise HomeAssistantError("Function input `source_ids` must be an array")
+            arguments = tool_input.tool_args
+            if not isinstance(arguments, Mapping):
+                raise HomeAssistantError("Function input must be an object")
+            if isinstance(arguments.get("source_ids"), str):
+                raise HomeAssistantError("Function input `source_ids` must be an array")
         arguments = await async_validate_function_arguments(
             entity.hass,
             function_tool.get("spec", {}),

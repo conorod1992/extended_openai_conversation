@@ -24,6 +24,7 @@ import time
 from typing import IO, Any, cast
 from uuid import uuid4
 import zipfile
+import zlib
 
 import ijson
 from ijson.common import JSONError, ObjectBuilder
@@ -741,7 +742,7 @@ def _read_archive_member_bounded(
                     raise backup.BackupError(overflow_message)
     except backup.BackupError:
         raise
-    except (RuntimeError, zipfile.BadZipFile, OSError, EOFError) as err:
+    except (RuntimeError, zipfile.BadZipFile, OSError, EOFError, zlib.error) as err:
         raise backup.BackupError(corruption_message) from err
     return bytes(data)
 
@@ -790,7 +791,7 @@ def _load_archive_payload(
                     pass
     except backup.BackupError:
         raise
-    except (RuntimeError, zipfile.BadZipFile, OSError, EOFError) as err:
+    except (RuntimeError, zipfile.BadZipFile, OSError, EOFError, zlib.error) as err:
         raise backup.BackupError("The backup archive payload is corrupted") from err
     if reader.length != expected_bytes:
         raise backup.BackupError("The backup archive payload is incomplete")

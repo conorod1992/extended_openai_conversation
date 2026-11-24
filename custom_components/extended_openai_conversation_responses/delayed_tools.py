@@ -255,6 +255,10 @@ def _delay_as_timedelta(value: Any) -> timedelta:
     """Normalize the same time-period shapes accepted by Home Assistant scripts."""
     try:
         delay = cast(timedelta, cv.time_period(value))
+    except OverflowError as err:
+        raise HomeAssistantError(
+            "Invalid Function Tool delay: duration is too large"
+        ) from err
     except (TypeError, ValueError, vol.Invalid) as err:
         raise HomeAssistantError(f"Invalid Function Tool delay: {err}") from err
     if delay.total_seconds() < 0:
@@ -494,18 +498,25 @@ class DelayedToolManager:
                 self._records, entity.entry.entry_id, entity.subentry.subentry_id
             )
             _validate_argument_budget(arguments)
+            try:
+                due_at = now + delay
+                expires_at = (
+                    None
+                    if catch_up
+                    else due_at + timedelta(seconds=_DEFAULT_GRACE_SECONDS)
+                )
+            except OverflowError as err:
+                raise HomeAssistantError(
+                    "Function Tool delay exceeds the supported scheduling range"
+                ) from err
             record = DelayedToolCall(
                 call_id=uuid4().hex,
                 entry_id=entity.entry.entry_id,
                 subentry_id=entity.subentry.subentry_id,
                 tool_name=tool_name,
                 arguments=deepcopy(arguments),
-                due_at=(now + delay).isoformat(),
-                expires_at=None
-                if catch_up
-                else (
-                    now + delay + timedelta(seconds=_DEFAULT_GRACE_SECONDS)
-                ).isoformat(),
+                due_at=due_at.isoformat(),
+                expires_at=expires_at.isoformat() if expires_at is not None else None,
                 created_at=now.isoformat(),
                 user_id=getattr(context, "user_id", None),
                 device_id=getattr(llm_context, "device_id", None),
