@@ -59,7 +59,6 @@ from .const import (
 )
 from .guest_mode import async_get_guest_mode
 from .ha_schema import schema_for_ha
-from .ha_tool_result_compat import tool_result_data
 from .helpers import get_api_mode, get_authenticated_client, is_native_openai_connection
 from .live_subentry_updates import update_live_subentry
 from .memory import async_get_memory, memory_as_dict, memory_user_id
@@ -127,8 +126,6 @@ CALL_FUNCTION_SCHEMA = vol.Schema(
     {
         vol.Required("function"): cv.string,
         vol.Optional("arguments", default=dict): dict,
-        vol.Optional("result_alias"): cv.string,
-        vol.Optional("step_id"): cv.string,
     }
 )
 
@@ -785,14 +782,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
     async def call_function(call: ServiceCall) -> ServiceResponse:
         """Bridge a native HA script action into the active configured function."""
-        arguments = call.data.get("arguments", {})
-        if "result_alias" in call.data:
-            result = await async_call_active_function(
-                call.data["function"], arguments, call.data["result_alias"]
-            )
-        else:
-            result = await async_call_active_function(call.data["function"], arguments)
-        result = tool_result_data(result, default=result)
+        result = await async_call_active_function(
+            call.data["function"], call.data.get("arguments", {})
+        )
         return cast(ServiceResponse, {"result": result})
 
     hass.services.async_register(

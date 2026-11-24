@@ -20,6 +20,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
     DOMAIN,
     EVENT_CONVERSATION_FINISHED,
+    SERVICE_CALL_FUNCTION,
 )
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
     DATA_DELAYED_TOOL_MANAGER,
@@ -619,9 +620,12 @@ async def test_real_rule_stops_after_backend_failure(
         if backend == "native"
         else {}
     )
-    action = {"type": "function", "function": "audit_function", "arguments": arguments}
+    action = {
+        "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+        "data": {"function": "audit_function", "arguments": arguments},
+    }
     if capture:
-        action["result_alias"] = "captured"
+        action["response_variable"] = "captured"
     await agent._request_rules.async_create(
         _rule(
             "local_action",

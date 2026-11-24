@@ -187,14 +187,13 @@ async def test_nested_rule_uses_callee_group_and_restores_parent_group(
                     "data": {
                         "function": "surface_value_a",
                         "arguments": {},
-                        "result_alias": "answer",
                     },
                     "response_variable": "reply",
                 },
                 {"action": "nested_group_probe.record", "data": {"value": "{{ reply.result }}"}},
+                {"set_conversation_response": "Child value {{ reply.result }}"},
             ],
             phrase="grouped child request",
-            success="Child value {answer}",
             failure="Child function failed",
         )
     )

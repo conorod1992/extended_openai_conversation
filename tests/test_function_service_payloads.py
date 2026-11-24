@@ -145,7 +145,7 @@ async def test_native_script_dispatches_shallow_merged_payload(hass):
     }
 
 
-def test_result_alias_and_step_identity_use_effective_payload(hass):
+async def test_retired_alias_in_service_payload_is_preserved_for_repair():
     raw = local_rule("Result", ["echo now"])
     raw["action"]["actions"] = [
         {
@@ -159,12 +159,12 @@ def test_result_alias_and_step_identity_use_effective_payload(hass):
         }
     ]
     raw["action"]["success_response"] = "{answer}"
-    assigned = rr._assign_missing_result_step_ids(raw)
-    rule = rr.validate_rule(assigned)
-    step = rule["action"]["actions"][0]
-    assert len(step["data_template"]["step_id"]) == 32
-    assert "step_id" not in step["data"]
-    assert rr._native_action_sequence([step], {}) == [step]
+
+    rules = await manager(raw)
+    assert "result aliases were removed" in rules.snapshot()["diagnostics"][raw["id"]]
+    saved = (await rules.async_backup_data())["rules"][0]
+    assert saved["action"]["actions"] == raw["action"]["actions"]
+    assert saved["action"]["success_response"] == "{answer}"
 
 
 async def test_native_rule_dispatch_and_result_follow_effective_payload(tmp_path):
@@ -176,7 +176,6 @@ async def test_native_rule_dispatch_and_result_follow_effective_payload(tmp_path
             "result": await rr.async_call_active_function(
                 call.data["function"],
                 call.data.get("arguments", {}),
-                call.data.get("result_alias"),
             )
         }
 
@@ -197,20 +196,21 @@ async def test_native_rule_dispatch_and_result_follow_effective_payload(tmp_path
             "data": {
                 "function": "echo",
                 "arguments": {"message": "discarded"},
-                "result_alias": "shadowed",
             },
             "data_template": {
                 "function": "actual_b",
                 "arguments": {"message": "{{ 'hello' }}"},
-                "result_alias": "answer",
             },
-        }
+            "response_variable": "answer",
+        },
+        {"set_conversation_response": "Value {{ answer.result.value }}"},
     ]
-    rule["action"]["success_response"] = "Value {answer.value}"
     try:
+        rules = await manager()
+        await rules.async_create(rule)
         result = await rr.async_evaluate_rule(
             hass,
-            await manager(rule),
+            rules,
             rr.RequestRuleRuntime(),
             "echo now",
             "session",

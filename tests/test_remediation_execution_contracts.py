@@ -32,12 +32,13 @@ from tests.test_function_groups import _group, _tool
 def test_captured_result_preserves_whole_data_template():
     actions = [
         {
-            "action": "extended_openai_conversation_responses.execute_function",
-            "data": {"name": "answer", "result_alias": "answer"},
+            "action": "extended_openai_conversation_responses.call_function",
+            "data": {"function": "answer"},
+            "response_variable": "answer",
         },
         {
             "action": "persistent_notification.create",
-            "data": "{{ {'message': answer} }}",
+            "data": "{{ {'message': answer.result} }}",
         },
     ]
     original = deepcopy(actions)

@@ -489,9 +489,8 @@ async def test_config_flow_unexpected_validation_never_logs_candidate(
     assert SECRET not in caplog.text
 
 
-@pytest.mark.parametrize("response", ["{missing}", "{lookup.missing}"])
 async def test_rule_final_response_failure_does_not_rerun_successful_actions(
-    hass, monkeypatch, caplog, response
+    hass, monkeypatch, caplog
 ) -> None:
     rule = {
         "id": "rule",
@@ -499,7 +498,7 @@ async def test_rule_final_response_failure_does_not_rerun_successful_actions(
         "action_type": "local_action",
         "action": {
             "actions": [{"variables": {"ok": True}}],
-            "success_response": response,
+            "success_response": "{missing}",
             "failure_response": "Actions failed",
             "continue_to_ai": False,
         },
@@ -522,11 +521,6 @@ async def test_rule_final_response_failure_does_not_rerun_successful_actions(
         async_unload=AsyncMock(),
     )
 
-    async def run(*_args):
-        request_rules._ACTIVE_RULE_ACTION.get().function_results["lookup"] = {"available": SECRET}
-        return SimpleNamespace(variables={marker: True}, conversation_response=None)
-
-    script.async_run.side_effect = run
     monkeypatch.setattr(request_rules, "Script", Mock(return_value=script))
     result = await request_rules._async_evaluate_matched_rule(
         hass,

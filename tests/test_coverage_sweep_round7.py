@@ -284,10 +284,11 @@ async def test_intercom_shutdown_unsubscribes_expires_and_cancels(hass, monkeypa
         ("Kitchen / Voice #1", "kitchen-voice-1"),
     ],
 )
-def test_transfer_safe_title(title: str, expected: str) -> None:
-    from custom_components.extended_openai_conversation_responses import transfer
+def test_private_backup_filename_normalizes_assistant_title(title: str, expected: str) -> None:
+    from custom_components.extended_openai_conversation_responses import backup_transfer
 
-    assert transfer._safe_title(title) == expected
+    document = {"agent": {"title": title}, "created_at": "2026-11-24T00:00:00+00:00"}
+    assert backup_transfer._safe_export_filename(document) == f"{expected}-full-backup-2026-11-24.zip"
 
 
 def test_transfer_configuration_mapping_without_device_mapping_keeps_other_fields() -> None:
@@ -1273,59 +1274,6 @@ def test_request_rule_local_action_validation_rejects_invalid_shapes(value) -> N
 
     with pytest.raises(ValueError):
         request_rules._validate_action("local_action", value)
-
-
-def test_request_rule_rejects_action_result_placeholders() -> None:
-    from custom_components.extended_openai_conversation_responses import request_rules
-
-    action = {
-        "actions": [
-            {
-                "action": "light.turn_on",
-                "data": {"message": "{later.value}"},
-            },
-            {
-                "action": f"{request_rules.DOMAIN}.{request_rules.SERVICE_CALL_FUNCTION}",
-                "data": {
-                    "function": "demo",
-                    "result_alias": "later",
-                    "step_id": "step-2",
-                },
-            },
-        ]
-    }
-
-    with pytest.raises(ValueError, match="only available in the success response"):
-        request_rules._validate_response_only_aliases(action)
-
-
-def test_request_rule_result_dependencies_reject_nested_capture() -> None:
-    from custom_components.extended_openai_conversation_responses import request_rules
-
-    action = {
-        "actions": [
-            {
-                "choose": [
-                    {
-                        "conditions": [],
-                        "sequence": [
-                            {
-                                "action": f"{request_rules.DOMAIN}.{request_rules.SERVICE_CALL_FUNCTION}",
-                                "data": {
-                                    "function": "demo",
-                                    "result_alias": "nested",
-                                    "step_id": "nested-step",
-                                },
-                            }
-                        ],
-                    }
-                ]
-            }
-        ]
-    }
-
-    with pytest.raises(ValueError, match="top-level"):
-        request_rules._validate_result_dependencies(action, set())
 
 
 def test_request_rule_outcome_probes_wrap_enabled_stop_steps() -> None:

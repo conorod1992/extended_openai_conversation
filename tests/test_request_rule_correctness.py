@@ -17,16 +17,10 @@ from homeassistant.helpers.intent import IntentResponseErrorCode
 from tests.test_request_rules import MemoryStore, routing_rule
 
 
-@pytest.mark.parametrize("slots", [{}, {"name": "Kitchen"}])
-def test_returned_braces_remain_opaque(slots):
-    results = {"lookup": {"text": "Use {name} and {missing.path}"}}
-    assert (
-        rr.resolve_result_values("Result: {lookup.text}", slots, results)
-        == "Result: Use {name} and {missing.path}"
-    )
-    assert (
-        rr.resolve_result_values("{lookup.text}", slots, results)
-        == results["lookup"]["text"]
+def test_substituted_sentence_capture_braces_remain_opaque():
+    slots = {"value": "Use {name} and {missing.path}", "name": "Kitchen"}
+    assert rr.resolve_slot_values("Result: {value}", slots) == (
+        "Result: Use {name} and {missing.path}"
     )
 
 

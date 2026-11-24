@@ -187,7 +187,7 @@ from .ha_llm_tools import (
     tool_snapshot_scope,
 )
 from .ha_permissions import bind_active_ha_context
-from .ha_tool_result_compat import make_tool_result_content
+from .ha_tool_result_compat import make_tool_result_content, tool_result_data
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
@@ -1804,7 +1804,7 @@ class ExtendedOpenAIAgentEntity(
                 propagate_function_execution_errors(),
                 local_function_results(),
             ):
-                return await self._execute_function_tool(
+                content = await self._execute_function_tool(
                     function_tool,
                     llm.ToolInput(
                         id="request_rule",
@@ -1815,6 +1815,9 @@ class ExtendedOpenAIAgentEntity(
                     llm_context,
                     self._get_exposed_entities(),
                 )
+                # This local producer always wraps the complete Function value
+                # once. Read that envelope here, before HA adds its service result.
+                return tool_result_data(content)["result"]
         finally:
             _ACTIVE_FUNCTION_CONFIG.reset(function_config_token)
 

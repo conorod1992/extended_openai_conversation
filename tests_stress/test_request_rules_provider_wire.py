@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 from typing import Any
 
@@ -192,30 +193,27 @@ async def test_function_result_values_survive_public_request_rule(
     async def marker(call):
         calls.append(call.data["message"])
 
-    from custom_components.extended_openai_conversation_responses import services
+    async def observe(call):
+        captured.append(json.loads(call.data["native_value"].removeprefix("result:")))
 
-    original = services.async_call_active_function
-
-    async def observe(*args, **kwargs):
-        value = await original(*args, **kwargs)
-        if capture:
-            captured.append(value)
-        return value
-
-    monkeypatch.setattr(services, "async_call_active_function", observe)
     hass.services.async_register("rule_probe", "record", marker)
-    data = {"function": "reading", "arguments": {}}
+    hass.services.async_register("rule_probe", "observe", observe)
+    producer = {
+        "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+        "data": {"function": "reading", "arguments": {}},
+    }
+    actions = [_record_action("before"), producer]
     if capture:
-        data["result_alias"] = "reading"
-    await agent._request_rules.async_create(
-        _local(
-            [
-                _record_action("before"),
-                {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": data},
-                _record_action("after"),
-            ]
+        producer["response_variable"] = "reading"
+        actions.append(
+            {
+                "action": "rule_probe.observe",
+                # Prefix the JSON to preserve its type across HA template parsing.
+                "data": {"native_value": "result:{{ reading.result | to_json }}"},
+            }
         )
-    )
+    actions.append(_record_action("after"))
+    await agent._request_rules.async_create(_local(actions))
     assert (
         _cross_feature_speech(await _cross_feature_say(hass, agent, "run rule"))
         == "Done"
@@ -276,14 +274,17 @@ async def test_function_execution_failure_stops_rule_independently_of_capture(
 
     hass.services.async_register("rule_probe", "record", marker)
     hass.services.async_register("rule_probe", "fail", fail)
-    data = {"function": "failing", "arguments": {}}
+    producer = {
+        "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+        "data": {"function": "failing", "arguments": {}},
+    }
     if capture:
-        data["result_alias"] = "failure"
+        producer["response_variable"] = "failure"
     await agent._request_rules.async_create(
         _local(
             [
                 _record_action("before"),
-                {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": data},
+                producer,
                 _record_action("after"),
             ]
         )

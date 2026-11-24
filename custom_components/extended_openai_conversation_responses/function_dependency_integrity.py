@@ -229,14 +229,9 @@ async def _async_require_unreferenced_state_controls(
 
 def _is_template_string(value: Any) -> bool:
     """Return whether a saved Request Rule value is resolved only at runtime."""
-    return (
-        isinstance(value, str) and any(marker in value for marker in _TEMPLATE_MARKERS)
-    ) or (
-        isinstance(value, str)
-        and bool(
-            request_rules.RESULT_REFERENCE.search(value)
-            or request_rules.SLOT_REFERENCE.search(value)
-        )
+    return isinstance(value, str) and (
+        any(marker in value for marker in _TEMPLATE_MARKERS)
+        or request_rules.SLOT_REFERENCE.search(value) is not None
     )
 
 
@@ -538,7 +533,7 @@ async def async_rename_function_reference_recursive(
                         validate_sentence_pattern=not manager.preserves_inactive_pattern(
                             updated["id"], updated
                         ),
-                        allow_legacy_action_aliases=True,
+                        allow_legacy_function_responses=True,
                         allow_legacy_matching=True,
                         allow_empty_normalized_phrases=True,
                     )

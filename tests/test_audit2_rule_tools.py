@@ -53,11 +53,11 @@ async def test_typed_function_results_are_dynamic_but_runtime_remains_strict(has
         },
     }
     await async_validate_static_function_arguments(
-        hass, spec, {"level": "{reading.level}", "mode": "safe"}
+        hass, spec, {"level": "{{ reading.result.level }}", "mode": "safe"}
     )
     with pytest.raises(HomeAssistantError):
         await async_validate_static_function_arguments(
-            hass, spec, {"level": "{reading.level}", "mode": "unsafe"}
+            hass, spec, {"level": "{{ reading.result.level }}", "mode": "unsafe"}
         )
     with pytest.raises(HomeAssistantError):
         await async_validate_function_arguments(

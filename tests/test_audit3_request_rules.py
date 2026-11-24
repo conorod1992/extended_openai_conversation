@@ -1,8 +1,6 @@
 """Native action shorthand and typed Function result regression contracts."""
 
-from dataclasses import replace
 
-from types import SimpleNamespace
 
 import pytest
 
@@ -74,7 +72,7 @@ async def test_successful_stop_in_shorthand_container_is_success(hass, container
     assert outcome.successful
 
 
-async def test_authored_response_variable_and_alias_both_available(hass):
+async def test_authored_response_variable_feeds_conversation_response(hass):
     hass.config.legacy_templates = False
 
     async def execute(*_args):
@@ -92,29 +90,6 @@ async def test_authored_response_variable_and_alias_both_available(hass):
     )
     assert outcome.successful
     assert outcome.response == "62"
-
-
-@pytest.mark.parametrize(
-    "value", ["123456", "false", "null", '{"level":62}', False, 0, None, {"level": 62}]
-)
-async def test_result_alias_preserves_native_return_type(value):
-    async def execute(*_args):
-        return SimpleNamespace(tool_result={"result": value})
-
-    results = {}
-    executor = rules._ACTIVE_RULE_ACTION.set(
-        replace(rules._ACTIVE_RULE_ACTION.get(), function_executor=execute)
-    )
-    context = rules._ACTIVE_RULE_ACTION.set(
-        replace(rules._ACTIVE_RULE_ACTION.get(), function_results=results)
-    )
-    try:
-        captured = await rules.async_call_active_function("lookup", {}, "reading")
-        assert captured == value
-        assert type(captured) is type(value)
-    finally:
-        rules._ACTIVE_RULE_ACTION.reset(context)
-        rules._ACTIVE_RULE_ACTION.reset(executor)
 
 
 @pytest.mark.parametrize(
@@ -177,7 +152,7 @@ def test_parallel_normalization_preserves_templates_and_service_payload():
 
 @pytest.mark.parametrize("legacy", [True, False])
 @pytest.mark.parametrize("value", ["123456", "True", "None", "[1,2]", '{"level":62}', "  spaced  ", False, 0, None, {"level": 62}, [1, 2]])
-async def test_alias_assignment_preserves_type_in_real_script(hass, legacy, value):
+async def test_response_variable_preserves_type_in_real_script(hass, legacy, value):
     hass.config.legacy_templates = legacy
 
     async def execute(*_args):
@@ -205,7 +180,7 @@ async def test_exact_reference_preserves_type_in_script_with_live_privacy_guard(
     async def dispatch(domain, service, service_data, **_kwargs):
         data = service_data
         if service == "call_function":
-            return {"result": await rules.async_call_active_function(data["function"], data.get("arguments", {}), data.get("result_alias"))}
+            return {"result": await rules.async_call_active_function(data["function"], data.get("arguments", {}))}
         if domain == "rule_probe":
             captured.append(data["message"])
         return None
@@ -213,7 +188,9 @@ async def test_exact_reference_preserves_type_in_script_with_live_privacy_guard(
     hass.services.async_call.side_effect = dispatch
     rule = local_rule(phrases=["run"])
     rule["action"]["actions"] = [function_step(response_variable="reply"), {"action": "rule_probe.record", "data": {"message": "{{ reply.result is string }}"}}]
-    outcome = await rules.async_evaluate_rule(hass, await manager(rule), rules.RequestRuleRuntime(), "run", "session", function_executor=execute, live_guest_policy=GuestCapabilityPolicy.unrestricted)
+    configured = await manager()
+    await configured.async_create(rule)
+    outcome = await rules.async_evaluate_rule(hass, configured, rules.RequestRuleRuntime(), "run", "session", function_executor=execute, live_guest_policy=GuestCapabilityPolicy.unrestricted)
     assert outcome.successful
     assert captured == [str(isinstance(value, str)) if legacy else isinstance(value, str)]
 
@@ -263,10 +240,7 @@ async def test_parallel_guest_preflight_prevents_partial_effects(hass):
 
 
 @pytest.mark.parametrize("level", [0, 62])
-@pytest.mark.parametrize("with_alias", [False, True])
-async def test_response_only_alias_can_share_function_with_native_branch(
-    tmp_path, level, with_alias
-):
+async def test_function_response_feeds_native_branch_and_speech(tmp_path, level):
     from custom_components.extended_openai_conversation_responses import services
     from homeassistant.core import HomeAssistant
 
@@ -275,7 +249,7 @@ async def test_response_only_alias_can_share_function_with_native_branch(
     effects = []
 
     async def execute(*_args):
-        return SimpleNamespace(tool_result={"result": {"level": level}})
+        return {"level": level}
 
     async def record(call):
         effects.append(call.service)
@@ -284,27 +258,25 @@ async def test_response_only_alias_can_share_function_with_native_branch(
     hass.services.async_register("rule_probe", "record", record)
     rule = local_rule(phrases=["run"])
     producer = function_step(response_variable="reading")
-    if not with_alias:
-        producer["data"].pop("result_alias")
-    result_path = "reading.result" if with_alias else "reading.result.result"
-    success = "Battery {lookup.level}" if with_alias else "Done"
     rule["action"].update(
         actions=[
             producer,
             {
-                "if": [{"condition": "template", "value_template": "{{ " + result_path + ".level < 20 }}"}],
+                "if": [{"condition": "template", "value_template": "{{ reading.result.level < 20 }}"}],
                 "then": [{"action": "rule_probe.record"}],
             },
+            {"set_conversation_response": "Battery {{ reading.result.level }}"},
         ],
-        success_response=success,
     )
     try:
+        configured = await manager()
+        await configured.async_create(rule)
         outcome = await rules.async_evaluate_rule(
-            hass, await manager(rule), rules.RequestRuleRuntime(), "run", "session",
+            hass, configured, rules.RequestRuleRuntime(), "run", "session",
             function_executor=execute,
         )
         assert outcome.successful
-        assert outcome.response == (f"Battery {level}" if with_alias else "Done")
+        assert outcome.response == f"Battery {level}"
         assert effects == (["record"] if level < 20 else [])
     finally:
         await hass.async_stop(force=True)

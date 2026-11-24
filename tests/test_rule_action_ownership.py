@@ -1,4 +1,4 @@
-"""Rule action callbacks and captured results belong to one native script run."""
+"""Rule action callbacks belong to one native script run."""
 
 import asyncio
 from types import SimpleNamespace
@@ -16,7 +16,6 @@ from tests.test_request_rules import local_rule
 def rule_runs(hass, monkeypatch):
     callbacks = {}
     executors = {}
-    captured = {}
     guards = {}
     calls = []
     monkeypatch.setattr(rr.cv, "SCRIPT_SCHEMA", lambda actions: actions)
@@ -39,9 +38,6 @@ def rule_runs(hass, monkeypatch):
             assert (
                 rr._ACTIVE_RULE_ACTION.get().function_executor is executors[self.owner]
             )
-            values = rr._ACTIVE_RULE_ACTION.get().function_results
-            assert values == {}
-            captured[self.owner] = values
             guards[self.owner] = rr._ACTIVE_RULE_ACTION.get().authorize_action
             assert guards[self.owner] is not None
             await callbacks[self.owner]()
@@ -64,7 +60,7 @@ def rule_runs(hass, monkeypatch):
     async def run(owner, callback):
         async def execute(function, arguments):
             calls.append((owner, function, arguments))
-            return {"result": {"owner": owner}}
+            return {"owner": owner}
 
         callbacks[owner] = callback
         executors[owner] = execute
@@ -84,38 +80,33 @@ def rule_runs(hass, monkeypatch):
         )
 
     return SimpleNamespace(
-        run=run, captured=captured, guards=guards, calls=calls, executors=executors
+        run=run, guards=guards, calls=calls, executors=executors
     )
 
 
-async def test_nested_rules_restore_callback_guard_and_result_owner(rule_runs):
+async def test_nested_rules_restore_executor_and_guard(rule_runs):
     async def child():
-        assert await rr.async_call_active_function("read", {}, "child") == {
+        assert await rr.async_call_active_function("read", {}) == {
             "owner": "b"
         }
 
     async def parent():
-        await rr.async_call_active_function("read", {}, "before")
+        assert await rr.async_call_active_function("read", {}) == {"owner": "a"}
         assert (await rule_runs.run("b", child)).successful
         assert (
             rr._ACTIVE_RULE_ACTION.get().function_executor is rule_runs.executors["a"]
         )
         assert rr._ACTIVE_RULE_ACTION.get().authorize_action is rule_runs.guards["a"]
-        assert rr._ACTIVE_RULE_ACTION.get().function_results is rule_runs.captured["a"]
-        await rr.async_call_active_function("read", {}, "after")
+        assert await rr.async_call_active_function("read", {}) == {"owner": "a"}
 
     assert (await rule_runs.run("a", parent)).successful
-    assert rule_runs.captured == {
-        "a": {"before": {"owner": "a"}, "after": {"owner": "a"}},
-        "b": {"child": {"owner": "b"}},
-    }
     assert rule_runs.guards["a"] is not rule_runs.guards["b"]
     assert [owner for owner, *_rest in rule_runs.calls] == ["a", "b", "a"]
     with pytest.raises(HomeAssistantError, match="only available"):
         await rr.async_call_active_function("outside", {})
 
 
-async def test_concurrent_rules_share_only_their_own_result_map(rule_runs):
+async def test_concurrent_rules_use_only_their_own_executor(rule_runs):
     ready = {owner: asyncio.Event() for owner in ("a", "b")}
 
     async def body(owner, other):
@@ -124,17 +115,13 @@ async def test_concurrent_rules_share_only_their_own_result_map(rule_runs):
         assert (
             rr._ACTIVE_RULE_ACTION.get().function_executor is rule_runs.executors[owner]
         )
-        await rr.async_call_active_function("read", {}, "value")
-        assert rr._ACTIVE_RULE_ACTION.get().function_results == {
-            "value": {"owner": owner}
-        }
+        assert await rr.async_call_active_function("read", {}) == {"owner": owner}
 
     results = await asyncio.gather(
         rule_runs.run("a", lambda: body("a", "b")),
         rule_runs.run("b", lambda: body("b", "a")),
     )
     assert all(result.successful for result in results)
-    assert rule_runs.captured["a"] is not rule_runs.captured["b"]
 
 
 @pytest.mark.parametrize("cancel", [False, True])
@@ -159,10 +146,8 @@ async def test_failed_child_rule_restores_parent_before_continuing(rule_runs, ca
         assert (
             rr._ACTIVE_RULE_ACTION.get().function_executor is rule_runs.executors["a"]
         )
-        await rr.async_call_active_function("read", {}, "healthy")
+        assert await rr.async_call_active_function("read", {}) == {"owner": "a"}
 
     assert (await rule_runs.run("a", parent)).successful
-    assert rule_runs.captured["a"] == {"healthy": {"owner": "a"}}
     assert rr._ACTIVE_RULE_ACTION.get().function_executor is None
     assert rr._ACTIVE_RULE_ACTION.get().authorize_action is None
-    assert rr._ACTIVE_RULE_ACTION.get().function_results is None

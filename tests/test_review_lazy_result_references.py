@@ -58,7 +58,7 @@ async def test_legacy_action_alias_stops_eligible_match_without_execution(
     saved = configured.rule_snapshot(legacy["id"])
     assert saved["action"]["actions"][1] == consumer
     status = configured.diagnostic_snapshot()
-    assert "success response" in status["diagnostics"][legacy["id"]]
+    assert "result_alias" in status["diagnostics"][legacy["id"]]
     assert status["matching_diagnostic_ids"] == [legacy["id"]]
     assert rules.MATCH_REPAIR not in saved
     preview = await async_request_rule_match_preview(hass, configured, "good night")
@@ -79,7 +79,7 @@ async def test_legacy_action_alias_stops_eligible_match_without_execution(
     assert "needs repair" in outcome.response
     execute.assert_not_awaited()
     hass.services.async_call.assert_not_awaited()
-    with pytest.raises(ValueError, match="only available in the success response"):
+    with pytest.raises(ValueError, match="result_alias"):
         await configured.async_update(legacy["id"], saved)
 
     disabled = deepcopy(saved)
@@ -89,6 +89,7 @@ async def test_legacy_action_alias_stops_eligible_match_without_execution(
     assert configured.match("good night").rule["id"] == fallback["id"]
 
     repaired = deepcopy(saved)
+    repaired["action"]["actions"][0]["data"].pop("result_alias")
     repaired["action"]["actions"][0]["response_variable"] = "sensor_data"
     repaired["action"]["actions"][1] = {
         "set_conversation_response": "{{ sensor_data.result.value }}"
@@ -151,22 +152,6 @@ async def test_restore_preflight_retains_legacy_rule_with_unavailable_function(h
     active = await manager()
     await active.async_replace_backup(backup)
     assert legacy["id"] in active.snapshot()["diagnostics"]
-
-
-@pytest.mark.parametrize(
-    ("template", "needs_repair"),
-    [("{{ lookup.value", True), ("{{ something.value", False)],
-)
-def test_unparseable_templates_use_conservative_alias_detection(template, needs_repair):
-    rule = local_rule()
-    rule["action"]["actions"] = [
-        {
-            "action": f"{DOMAIN}.call_function",
-            "data": {"function": "read_sensor", "result_alias": "lookup"},
-        },
-        {"set_conversation_response": template},
-    ]
-    assert bool(rules.request_rule_alias_repair(rule)) is needs_repair
 
 
 async def test_group_removal_preserves_legacy_alias_execution_block():
@@ -232,3 +217,94 @@ async def test_capacity_mutations_keep_admitted_alias_repair_in_matching(
     restored = await manager()
     await restored.async_replace_backup(await configured.async_backup_data())
     assert restored.match("check sensor").rule[rules.MATCH_REPAIR]
+
+
+@pytest.mark.parametrize("service", [f"{DOMAIN}.call_function", "{{ selected_action }}"])
+async def test_legacy_native_response_review_survives_backup_and_reorder(hass, service):
+    legacy = local_rule("Read battery")
+    steps = [
+        {"action": "test.before"},
+        {"action": service, "data": {"function": "read_sensor"}, "response_variable": "battery"},
+        {"set_conversation_response": "{{ battery.get('result').get('result').level }}"},
+    ]
+    legacy["action"].update(actions=steps, continue_to_ai=True)
+    fallback = local_rule("Fallback", order=1)
+    spare = local_rule("Spare", ["other"], order=2)
+    configured = await manager(legacy, fallback, spare)
+    assert configured.snapshot()["diagnostics"][legacy["id"]].startswith(
+        "Function response format changed."
+    )
+
+    exported = await configured.async_backup_data()
+    assert "function_response_version" not in exported["rules"][0]
+    await configured.async_replace_backup(exported)
+    saved = configured.rule_snapshot(legacy["id"])
+    assert saved["action"]["actions"] == steps
+    await configured.async_move(spare["id"], "top")
+    assert configured.match("good night").rule[rules.MATCH_REPAIR]
+
+    execute = AsyncMock()
+    outcome = await rules.async_evaluate_rule(
+        hass, configured, rules.RequestRuleRuntime(), "good night", "session",
+        function_executor=execute,
+    )
+    assert outcome.consume and outcome.terminal and not outcome.successful
+    assert "Function response format changed." in outcome.response
+    execute.assert_not_awaited()
+    hass.services.async_call.assert_not_awaited()
+    preview = await async_request_rule_match_preview(hass, configured, "good night")
+    assert preview["would_do"]["needs_repair"]
+    assert preview["would_do"]["provider_input"] == "none"
+
+    candidate = deepcopy(saved)
+    candidate["action"]["actions"][2]["set_conversation_response"] = "{{ battery.result.level }}"
+    with pytest.raises(ValueError, match="Function response format changed"):
+        await configured.async_update(legacy["id"], candidate)
+    assert configured.match("good night").rule[rules.MATCH_REPAIR]
+
+    await configured.async_update(legacy["id"], {"enabled": False})
+    assert configured.match("good night").rule["id"] == fallback["id"]
+    with pytest.raises(ValueError, match="Function response format changed"):
+        await configured.async_update(
+            legacy["id"], {"enabled": True}, confirm_function_response_change=True
+        )
+    await configured.async_update(
+        legacy["id"], candidate, confirm_function_response_change=True
+    )
+    fresh = await manager()
+    await fresh.async_replace_backup(await configured.async_backup_data())
+    assert legacy["id"] not in fresh.snapshot()["diagnostics"]
+    assert fresh.rule_snapshot(legacy["id"])["action"]["actions"] == candidate["action"]["actions"]
+
+
+async def test_legacy_native_response_review_requires_management_confirmation(
+    hass, management_agent, management_message, monkeypatch
+):
+    from custom_components.extended_openai_conversation_responses import management_ui
+
+    legacy = local_rule("Battery lookup")
+    legacy["action"]["actions"] = [
+        {"action": f"{DOMAIN}.call_function", "data": {"function": "read_sensor"}, "response_variable": "reply"},
+        {"set_conversation_response": "{{ reply.result.result.level }}"},
+    ]
+    configured = await manager(legacy)
+    monkeypatch.setattr(management_ui, "async_get_request_rules", AsyncMock(return_value=configured))
+    monkeypatch.setattr(management_ui, "_async_validate_request_rule_mutation", AsyncMock(return_value=None))
+    edited = configured.rule_snapshot(legacy["id"])
+    edited["function_response_version"] = 2  # Browser metadata cannot acknowledge a repair.
+    edited["action"]["actions"][1]["set_conversation_response"] = "{{ reply.result.level }}"
+
+    async def save(**extras):
+        return await management_ui.async_management_command(
+            hass, "admin", True, management_message(
+                "request_rules", "update", rule_id=legacy["id"], rule=edited,
+                revision=configured.revision(), **extras
+            )
+        )
+
+    with pytest.raises(ValueError, match="Function response format changed"):
+        await save()
+    assert configured.snapshot()["matching_diagnostic_ids"] == [legacy["id"]]
+    result = await save(confirm=True)
+    assert not result["diagnostics"]
+    assert result["rule"]["function_response_version"] == 2

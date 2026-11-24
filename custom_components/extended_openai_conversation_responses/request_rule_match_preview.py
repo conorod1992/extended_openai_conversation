@@ -82,10 +82,7 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
         terminal = continuation == "terminal"
         conditional = continuation == "conditional" and continue_to_ai
         functions = [
-            {
-                "name": data["function"],
-                "result_alias": data.get("result_alias"),
-            }
+            {"name": data["function"]}
             for step in iter_script_actions(
                 action.get("actions", []),
                 max_depth=request_rules.MAX_SCRIPT_DEPTH,

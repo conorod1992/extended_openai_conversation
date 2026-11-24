@@ -138,7 +138,7 @@ async def _agent_after_reload(hass, entry_id):
 
 @pytest.mark.parametrize("key", ["result_alias", "step_id"])
 @pytest.mark.parametrize("payload_field", ["data", "data_template"])
-async def test_alias_rename_preserves_metadata_named_function_arguments(hass, monkeypatch, key, payload_field):
+async def test_response_variable_edit_preserves_metadata_named_function_arguments(hass, monkeypatch, key, payload_field):
     from copy import deepcopy
 
     tools = [
@@ -190,7 +190,7 @@ async def test_alias_rename_preserves_metadata_named_function_arguments(hass, mo
         {
             "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
             "response_variable": "reply",
-            "data": {"function": "produce", "arguments": {}, "result_alias": "lookup", "step_id": "1" * 32},
+            "data": {"function": "produce", "arguments": {}},
         },
         {
             "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
@@ -204,7 +204,11 @@ async def test_alias_rename_preserves_metadata_named_function_arguments(hass, mo
     assert _speech(await _say(hass, agent, "run rule")) == "Done"
     assert observed == [{"special": "working", "ordinary": "working"}]
     edited = deepcopy(saved)
-    edited["action"]["actions"][0]["data"]["result_alias"] = "updated"
+    edited["action"]["actions"][0]["response_variable"] = "updated"
+    edited["action"]["actions"][1][payload_field]["arguments"] = {
+        key: "{{ updated.result.value }}",
+        "ordinary_key": "{{ updated.result.value }}",
+    }
     await agent._request_rules.async_update(saved["id"], edited)
     assert _speech(await _say(hass, agent, "run rule")) == "Done"
     assert observed == [{"special": "working", "ordinary": "working"}] * 2
@@ -276,11 +280,9 @@ async def test_result_path_agrees_across_later_action_and_spoken_response(
         calls.append(call.data["message"])
 
     hass.services.async_register("rule_probe", "record", record)
-    alias = "payload"
-    reference = "{" + alias + "." + path + "}"
     capture = {
         "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-        "data": {"function": "produce_reading", "arguments": {}, "result_alias": alias},
+        "data": {"function": "produce_reading", "arguments": {}},
         "response_variable": "reply",
     }
     expression = "reply.result"
@@ -292,14 +294,13 @@ async def test_result_path_agrees_across_later_action_and_spoken_response(
     # Observe the native value inside Jinja before HA parses action field text.
     action = _record_action("{{ (" + expression + ") == " + repr(value) + " }}")
     await agent._request_rules.async_create(
-        _local([capture, action], success="Result: " + reference)
+        _local([capture, action, {"set_conversation_response": "Result: [{{ " + expression + " | to_json if " + expression + " is not string else " + expression + " }}]"}])
     )
     expected = _lookup(_DATA, path)
-    # Spoken responses JSON-format non-string values, while subsequent script
-    # actions continue to receive the native result value.
+    # Author JSON formatting in the response while inspecting the native value in the action.
     spoken = expected if isinstance(expected, str) else json.dumps(expected)
     result = await _say(hass, agent, "run rule")
-    assert _speech(result) == f"Result: {spoken}"
+    assert _speech(result) == f"Result: [{spoken}]"
     assert calls == [True]
 
 
@@ -398,10 +399,8 @@ async def test_generated_two_step_dataflow_preserves_nested_value(
         "data": {
             "function": "produce_reading",
             "arguments": {},
-            "result_alias": "payload",
         },
     }
-    reference = "{payload.reading." + field + "}"
     expression = "reply.result['reading']"
     for component in field.split("."):
         key = int(component) if component.isdigit() and field.startswith("rows.") else component
@@ -412,8 +411,8 @@ async def test_generated_two_step_dataflow_preserves_nested_value(
                 capture,
                 {"variables": {"intermediate": "{{ " + expression + " }}"}},
                 _record_action("{{ intermediate }}"),
+                {"set_conversation_response": "Result: {{ intermediate | to_json }}"},
             ],
-            success="Result: " + reference,
         )
     )
     result = await _say(hass, agent, "run rule")

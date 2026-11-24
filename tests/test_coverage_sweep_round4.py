@@ -678,21 +678,18 @@ async def test_archive_query_cancels_without_waiting_for_snapshot_worker(monkeyp
     archive._ensure_initialized.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_service_call_function_without_result_alias_uses_active_executor(
-    monkeypatch,
-) -> None:
-    from custom_components.extended_openai_conversation_responses import services
+@pytest.mark.parametrize("field", ["result_alias", "step_id"])
+def test_call_function_service_schema_rejects_retired_metadata(field):
+    import voluptuous as vol
 
-    executor = AsyncMock(return_value={"result": {"ok": True}})
-    monkeypatch.setattr(services, "async_call_active_function", executor)
+    from custom_components.extended_openai_conversation_responses.services import (
+        CALL_FUNCTION_SCHEMA,
+    )
 
-    # Exercise the registered closure indirectly by reproducing its deliberately
-    # tiny branch contract through the public helper inputs.
-    result = await services.async_call_active_function("demo", {"value": 1})
-
-    assert result == {"result": {"ok": True}}
-    executor.assert_awaited_once_with("demo", {"value": 1})
+    with pytest.raises(vol.Invalid, match=field):
+        CALL_FUNCTION_SCHEMA({"function": "demo", field: "old"})
+    payload = CALL_FUNCTION_SCHEMA({"function": "demo", "arguments": {field: "business data"}})
+    assert payload["arguments"] == {field: "business data"}
 
 
 @pytest.mark.asyncio

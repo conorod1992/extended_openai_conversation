@@ -322,7 +322,6 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
                                     "data": {
                                         "function": "business_probe",
                                         "arguments": arguments,
-                                        "result_alias": "business_value",
                                     },
                                     "response_variable": "business_data",
                                 },

@@ -536,33 +536,25 @@ def _parse_import_document(
 
 
 def _prepare_request_rule(
-    value: Any, rule_id: str | None = None, rules: Any = None
+    value: Any,
+    rule_id: str | None = None,
+    rules: Any = None,
+    *,
+    confirm_function_response_change: bool = False,
 ) -> dict[str, Any]:
-    """Assign/preserve rule identity before canonical validation."""
+    """Prepare rule identity and review provenance for dependency validation."""
     if not isinstance(value, Mapping):
         raise HomeAssistantError("rule must be an object")
-    raw = dict(value)
     if rule_id is not None:
-        if rules is not None and set(raw) == {"enabled"}:
-            # A checkbox owns only enabled. Never round-trip arbitrary action
-            # values through the browser to change this one field.
-            stored = rules.rule_snapshot(rule_id)
-            raw = {**stored, "enabled": raw["enabled"]}
-        raw["id"] = rule_id
-    elif not isinstance(raw.get("id"), str) or not str(raw["id"]).strip():
+        return rules.prepare_update(
+            rule_id,
+            value,
+            confirm_function_response_change=confirm_function_response_change,
+        )
+    raw = dict(value)
+    if not isinstance(raw.get("id"), str) or not str(raw["id"]).strip():
         raw["id"] = uuid4().hex
-    preserve_inactive = (
-        rules is not None
-        and rule_id is not None
-        and rules.preserves_inactive_pattern(rule_id, raw)
-    )
-    return validate_rule(
-        raw,
-        validate_sentence_pattern=not preserve_inactive,
-        validate_script_schema=not preserve_inactive,
-        allow_legacy_matching=preserve_inactive,
-        allow_empty_normalized_phrases=preserve_inactive,
-    )
+    return validate_rule(raw)
 
 
 def _request_rule_function_tools(
@@ -833,23 +825,28 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
     if not isinstance(rule_id, str):
         raise HomeAssistantError("rule_id is required")
     if action == "update":
-        field_only = isinstance(message.get("rule"), Mapping) and set(
-            message["rule"]
-        ) == {"enabled"}
-        # Validation awaits HA. Bind the server-owned snapshot to its revision
-        # even for older callers that did not supply an optimistic revision.
         update_revision = message.get("revision")
-        if field_only and update_revision is None:
+        if update_revision is None:
+            # Validation awaits HA. Bind the server-owned snapshot to its revision
+            # even for older callers that did not supply an optimistic revision.
             update_revision = rules.revision()
-        candidate = _prepare_request_rule(message.get("rule"), rule_id, rules)
+        confirm_function_response_change = message.get("confirm") is True
+        raw = message.get("rule")
+        candidate = _prepare_request_rule(
+            raw,
+            rule_id,
+            rules,
+            confirm_function_response_change=confirm_function_response_change,
+        )
         check_configuration = await _async_validate_request_rule_mutation(
             hass, candidate, request.entry, subentry
         )
         rule = await rules.async_update(
             rule_id,
-            candidate,
+            raw,
             expected_revision=update_revision,
             check_configuration=check_configuration,
+            confirm_function_response_change=confirm_function_response_change,
         )
         return {
             "rule": rule,

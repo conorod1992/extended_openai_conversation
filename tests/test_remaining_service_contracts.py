@@ -140,20 +140,14 @@ async def test_query_image_requires_token_limit_before_reading_files(hass, monke
     hass.config_entries.async_get_entry.assert_not_called()
 
 
-async def test_function_service_forwards_result_alias_and_unwraps_response(
-    hass, monkeypatch
-):
-    execute = AsyncMock(return_value={"status": "ok", "value": 7})
+@pytest.mark.parametrize("value", [False, 0, "", None, {"result": {"level": 62}}])
+async def test_function_service_wraps_the_complete_native_value(hass, monkeypatch, value):
+    execute = AsyncMock(return_value=value)
     monkeypatch.setattr(services, "async_call_active_function", execute)
     handler = (await _handlers(hass))["call_function"]
-    result = await handler(
-        _call(
-            {
-                "function": "read",
-                "arguments": {"room": "kitchen"},
-                "result_alias": "reading",
-            }
-        )
-    )
-    execute.assert_awaited_once_with("read", {"room": "kitchen"}, "reading")
-    assert result == {"result": {"status": "ok", "value": 7}}
+
+    result = await handler(_call({"function": "read", "arguments": {"room": "kitchen"}}))
+
+    execute.assert_awaited_once_with("read", {"room": "kitchen"})
+    assert result == {"result": value}
+    assert result["result"] is value

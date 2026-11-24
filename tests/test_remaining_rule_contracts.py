@@ -104,7 +104,7 @@ async def test_captured_results_with_live_policy_remain_guarded(hass, local_scri
     rule["action"]["actions"] = [
         {
             "action": f"{rr.DOMAIN}.call_function",
-            "data": {"function": "read", "arguments": {}, "result_alias": "reading"},
+            "data": {"function": "read", "arguments": {}},
             "response_variable": "reply",
         }
     ]
@@ -149,7 +149,7 @@ async def test_script_failure_rechecks_revision_and_cleans_up(hass, local_script
 async def test_response_format_failure_does_not_repeat_completed_actions(
     hass, monkeypatch, local_script, error
 ):
-    monkeypatch.setattr(rr, "resolve_result_values", Mock(side_effect=error))
+    monkeypatch.setattr(rr, "resolve_slot_values", Mock(side_effect=error))
     result = await _evaluate(hass, rr.validate_rule(local_rule()))
     assert not result.successful
     assert "action execution succeeded" in result.response

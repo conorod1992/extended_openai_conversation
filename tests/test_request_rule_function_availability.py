@@ -136,6 +136,7 @@ async def test_request_rule_uses_latest_configured_definition() -> None:
         '{"level":62}',
         '{"status":"error","error":"business data"}',
         {"status": "denied", "error": "business data"},
+        {"result": {"level": 62}, "other": "business data"},
     ],
 )
 async def test_request_rule_bridge_preserves_successful_results(value):
@@ -151,9 +152,8 @@ async def test_request_rule_bridge_preserves_successful_results(value):
         return result
 
     agent._execute_function_tool.side_effect = execute
-    assert (
-        await agent._async_execute_request_rule_function("notify", {}, None) is result
-    )
+    actual = await agent._async_execute_request_rule_function("notify", {}, None)
+    assert actual is value
     assert not function_execution_errors_propagate()
 
 

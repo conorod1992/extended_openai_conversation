@@ -32,7 +32,7 @@ from homeassistant.exceptions import HomeAssistantError, TemplateError
 from homeassistant.helpers import condition as ha_condition, config_validation as cv
 from homeassistant.helpers.script import Script, async_validate_actions_config
 from homeassistant.helpers.script_variables import ScriptVariables
-from homeassistant.helpers.template import Template
+from homeassistant.helpers.template import Template, is_template_string
 from homeassistant.helpers.trace import StopReason, script_execution_cv
 from homeassistant.helpers.typing import UNDEFINED
 
@@ -82,11 +82,7 @@ from .request_rule_patterns import (
 )
 from .retrieval_text import word_character_projection
 from .script_lifecycle import async_cleanup_script, async_run_script
-from .script_payload import (
-    effective_service_payload,
-    is_function_service_action,
-    set_effective_service_field,
-)
+from .script_payload import effective_service_payload, is_function_service_action
 from .script_structure import (
     MAX_SCRIPT_DEPTH,
     MAX_SCRIPT_NODES,
@@ -103,6 +99,9 @@ from .template_diagnostics import private_template_diagnostics
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 6
+FUNCTION_RESPONSE_VERSION = 2
+FUNCTION_RESPONSE_VERSION_FIELD = "function_response_version"
+_RETIRED_FUNCTION_RESULT_FIELDS = frozenset({"result_alias", "step_id"})
 REQUEST_RULES_UNAVAILABLE = (
     "Request Rules persistence is unavailable; retry after storage recovery"
 )
@@ -115,20 +114,9 @@ MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains", "sentence_patte
 ACTION_TYPES = ("local_action", "model_routing")
 SLOT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 SLOT_REFERENCE = re.compile(r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]{0,63})\}(?!\})")
-RESULT_REFERENCE = re.compile(
-    r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]*)(\.[A-Za-z_0-9][A-Za-z0-9_]*)+\}(?!\})"
+RETIRED_RESULT_REFERENCE = re.compile(
+    r"(?<!\{)\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_0-9][A-Za-z0-9_]*)+\}(?!\})"
 )
-RESERVED_RESULT_ALIASES = {
-    "request",
-    "conversation",
-    "system",
-    "trigger",
-    "this",
-    "repeat",
-    "wait",
-} | RESERVED_CAPTURE_NAMES
-MAX_RESULT_BYTES = 16384
-MAX_RESULT_DEPTH = 8
 JINJA_SLOT_REFERENCE = re.compile(
     r"\{\{\s*(?:request\.slots\.([A-Za-z_][A-Za-z0-9_]{0,63})"
     r"|request\.slots\['([A-Za-z_][A-Za-z0-9_]{0,63})'\]"
@@ -167,15 +155,10 @@ class _NativeActionDenied(GuestModeDenied, TemplateError):
 
 @dataclass(frozen=True, slots=True)
 class RuleActionExecution:
-    """One native script's callbacks and intentionally shared captured results.
-
-    Child script tasks inherit this immutable binding and the same result map.
-    A nested rule installs its own binding and restores the enclosing execution.
-    """
+    """One native script's callbacks, inherited by its child script tasks."""
 
     function_executor: RequestRuleFunctionExecutor | None = None
     authorize_action: Callable[[Mapping[str, Any]], None] | None = None
-    function_results: dict[str, Any] | None = None
 
 
 _NO_RULE_ACTION = RuleActionExecution()
@@ -545,7 +528,6 @@ class RequestRules:
                         candidate, scope_migrated = (
                             _normalize_legacy_consumed_request_scope(raw)
                         )
-                        candidate = _assign_missing_result_step_ids(candidate)
                         if scope_migrated:
                             _LOGGER.warning(
                                 "Migrating stored complete Request Rule %s from request "
@@ -772,7 +754,7 @@ class RequestRules:
             self._groups = prepared["groups"]
             self._rules = [
                 validate_rule(
-                    _assign_missing_result_step_ids(rule),
+                    rule,
                     validate_sentence_pattern=False,
                     validate_script_schema=False,
                     allow_legacy_matching=True,
@@ -851,7 +833,7 @@ class RequestRules:
             raw = dict(value)
             raw.setdefault("id", uuid4().hex)
             raw.setdefault("order", len(self._rules))
-            rule = validate_rule(_assign_missing_result_step_ids(raw))
+            rule = validate_rule(raw)
             self._require_group(rule)
             if any(item["id"] == rule["id"] for item in self._rules):
                 raise ValueError("rule id already exists")
@@ -901,6 +883,48 @@ class RequestRules:
             )
         )
 
+    def prepare_update(
+        self,
+        rule_id: str,
+        value: Any,
+        *,
+        confirm_function_response_change: bool = False,
+    ) -> dict[str, Any]:
+        """Prepare an edit using the current stored rule as the provenance owner."""
+        if not isinstance(value, Mapping):
+            raise ValueError("rule must be an object")
+        previous = self._rules[self._index(rule_id)]
+        field_only = set(value) == {"enabled"}
+        # The enabled switch never round-trips or reviews the action sequence.
+        raw = {**previous, **value} if field_only else dict(value)
+        raw["id"] = rule_id
+        raw.setdefault("order", previous["order"])
+        # Ignore caller-supplied provenance. Review at the owning write, using
+        # the same rule that supplies field-only edits.
+        if FUNCTION_RESPONSE_VERSION_FIELD in previous:
+            raw[FUNCTION_RESPONSE_VERSION_FIELD] = previous[
+                FUNCTION_RESPONSE_VERSION_FIELD
+            ]
+        else:
+            raw.pop(FUNCTION_RESPONSE_VERSION_FIELD, None)
+        _require_exact_integer_update(previous, raw)
+        preserve_inactive = self.preserves_inactive_pattern(rule_id, raw)
+        if (
+            not preserve_inactive
+            and _function_response_needs_review(previous)
+            and (field_only or not confirm_function_response_change)
+        ):
+            raise ValueError(FUNCTION_RESPONSE_REPAIR)
+        return validate_rule(
+            raw,
+            validate_sentence_pattern=not preserve_inactive,
+            validate_script_schema=not preserve_inactive,
+            allow_legacy_function_responses=field_only
+            and not request_rule_repair(previous),
+            allow_legacy_matching=preserve_inactive,
+            allow_empty_normalized_phrases=preserve_inactive,
+        )
+
     async def async_update(
         self,
         rule_id: str,
@@ -908,39 +932,20 @@ class RequestRules:
         *,
         expected_revision: str | None = None,
         check_configuration: Callable[[], None] | None = None,
+        confirm_function_response_change: bool = False,
     ) -> dict[str, Any]:
         """Replace a Rule, checking its prepared configuration under the write lock."""
-        if not isinstance(value, Mapping):
-            raise ValueError("rule must be an object")
         async with self._lock:
             self._require_revision_locked(expected_revision)
             if check_configuration is not None:
                 check_configuration()
             index = self._index(rule_id)
-            raw = dict(value)
-            raw["id"] = rule_id
-            raw.setdefault("order", self._rules[index]["order"])
             previous = self._rules[index]
-            _require_exact_integer_update(previous, raw)
-            preserve_inactive = self.preserves_inactive_pattern(rule_id, raw)
-            rule = validate_rule(
-                _assign_missing_result_step_ids(raw),
-                validate_sentence_pattern=not preserve_inactive,
-                validate_script_schema=not preserve_inactive,
-                allow_legacy_matching=preserve_inactive,
-                allow_empty_normalized_phrases=preserve_inactive,
+            rule = self.prepare_update(
+                rule_id,
+                value,
+                confirm_function_response_change=confirm_function_response_change,
             )
-            if (
-                not preserve_inactive
-                and previous["action_type"] == rule["action_type"] == "local_action"
-            ):
-                removed_aliases = _response_alias_names(
-                    previous["action"]
-                ) - _response_alias_names(rule["action"])
-                if removed_aliases:
-                    _validate_response_only_aliases(
-                        rule["action"], previous_aliases=removed_aliases
-                    )
             self._require_group(rule)
             prospective = deepcopy(self._rules)
             prospective[index] = rule
@@ -995,7 +1000,7 @@ class RequestRules:
                 name=_duplicate_rule_name(source["name"], self._rules),
                 order=source_index + 1,
             )
-            rule = validate_rule(source)
+            rule = validate_rule(source, allow_legacy_function_responses=True)
             prospective = deepcopy(self._rules)
             prospective.insert(source_index + 1, rule)
             for order, item in enumerate(prospective):
@@ -1772,7 +1777,7 @@ def validate_rule(
     *,
     validate_sentence_pattern: bool = True,
     validate_script_schema: bool = True,
-    allow_legacy_action_aliases: bool = False,
+    allow_legacy_function_responses: bool = False,
     allow_legacy_matching: bool = False,
     allow_empty_normalized_phrases: bool = False,
 ) -> dict[str, Any]:
@@ -1796,6 +1801,7 @@ def validate_rule(
         "continue_matching",
         "ai_input_mode",
         "ai_input_capture",
+        FUNCTION_RESPONSE_VERSION_FIELD,
     }
     unknown = set(value) - allowed
     if unknown:
@@ -1913,13 +1919,23 @@ def validate_rule(
     if group_id is not None:
         group_id = _clean(group_id, 64, "group id")
     referenced_slots = _referenced_slots(action) | _legacy_action_slots(raw_action)
+    response_version = value.get(FUNCTION_RESPONSE_VERSION_FIELD)
+    if FUNCTION_RESPONSE_VERSION_FIELD in value and type(response_version) is not int:
+        raise ValueError("Function response version must be an integer")
+    preserve_legacy = not validate_script_schema or allow_legacy_function_responses
+    if not preserve_legacy:
+        response_version = None
     if action_type == "local_action":
-        _validate_result_dependencies(action, set(slot_names))
-        if validate_script_schema and not allow_legacy_action_aliases:
-            _validate_response_only_aliases(action)
-        # Retain legacy bare action placeholders on load and backup restore.
-        # The matching snapshot marks their actions as requiring repair.
-        referenced_slots -= _response_alias_names(action)
+        response_capture, alias_fields, alias_names = _function_response_usage(action)
+        if alias_fields and preserve_legacy:
+            # Historical static placeholders can refer to a retired alias. Keep
+            # their authored text for repair instead of rejecting on load.
+            referenced_slots -= alias_names
+        elif not preserve_legacy:
+            if alias_fields or _has_retired_result_placeholder(action):
+                raise ValueError(FUNCTION_RESULT_ALIAS_REPAIR)
+            if response_capture:
+                response_version = FUNCTION_RESPONSE_VERSION
     unknown_slots = referenced_slots - set(slot_names)
     if unknown_slots and (validate_sentence_pattern or sentence_valid):
         raise ValueError("unknown captured value: " + ", ".join(sorted(unknown_slots)))
@@ -1960,6 +1976,11 @@ def validate_rule(
         **({"continue_matching": True} if needs_matching_repair else {}),
         "ai_input_mode": ai_input_mode,
         "ai_input_capture": ai_input_capture,
+        **(
+            {FUNCTION_RESPONSE_VERSION_FIELD: response_version}
+            if response_version is not None
+            else {}
+        ),
     }
 
 
@@ -2277,207 +2298,111 @@ def _validate_script_sequence(
     return migrated
 
 
-def _assign_missing_result_step_ids(value: Any) -> Any:
-    """Give newly saved result-producing steps identities once at a write boundary."""
-    if not isinstance(value, Mapping):
-        return value
-    rule = deepcopy(dict(value))
-    action = rule.get("action")
-    if not isinstance(action, dict) or not isinstance(action.get("actions"), list):
-        return rule
-    for step in action["actions"]:
-        if not isinstance(step, dict):
-            continue
-        if step.get("type") == "function":
-            if step.get("result_alias") and not step.get("step_id"):
-                step["step_id"] = uuid4().hex
-            continue
-        data = effective_service_payload(step)
-        if (
-            _is_function_action(step)
-            and isinstance(data, dict)
-            and data.get("result_alias")
-            and not data.get("step_id")
-        ):
-            set_effective_service_field(step, "step_id", uuid4().hex)
-    return rule
-
-
-def _result_references(value: Any) -> set[str]:
-    if isinstance(value, str):
-        return {match.group(1) for match in RESULT_REFERENCE.finditer(value)}
-    if isinstance(value, Mapping):
-        result: set[str] = set()
-        # Declaration aliases and step IDs are validated bare identifiers, so
-        # cannot match reference syntax. Ordinary payloads may use either key.
-        for item in value.values():
-            result.update(_result_references(item))
-        return result
-    if isinstance(value, list):
-        result = set()
-        for item in value:
-            result.update(_result_references(item))
-        return result
-    return set()
-
-
-def _is_function_action(step: Mapping[str, Any]) -> bool:
-    """Recognize only a statically identified EOAI Function service action."""
-    return is_function_service_action(step)
-
-
 MATCH_REPAIR = "_match_repair"
 CONTINUE_MATCHING_REPAIR = (
     "Continue matching was removed. Combine the required steps in one Request Rule, "
     "or enable Continue to AI if it should hand off after those steps."
 )
+FUNCTION_RESPONSE_REPAIR_PREFIX = "Function response format changed."
+FUNCTION_RESPONSE_REPAIR = (
+    f"{FUNCTION_RESPONSE_REPAIR_PREFIX} Review templates that read Function response "
+    "variables, remove the old extra result layer where used, then confirm and save "
+    "the rule."
+)
+FUNCTION_RESULT_ALIAS_REPAIR = (
+    "Function result aliases were removed. Remove the result_alias and step_id fields "
+    "and replace alias references with a Home Assistant response variable and a "
+    "Set conversation response action."
+)
 
 
-def _response_alias_names(action: Mapping[str, Any]) -> set[str]:
-    return {
-        alias
-        for step in action["actions"]
-        if _is_function_action(step)
-        and isinstance(data := effective_service_payload(step), Mapping)
-        and isinstance(alias := data.get("result_alias"), str)
-    }
+def _could_call_function(step: Mapping[str, Any]) -> bool:
+    """Find direct or potentially dynamic EOAI service selectors."""
+    if is_function_service_action(step):
+        return True
+    service = step.get("action", step.get("service", step.get("service_template")))
+    if not isinstance(service, str):
+        return False
+    capture = SLOT_REFERENCE.search(service)
+    if not (capture or is_template_string(service)):
+        return False
+    marker_starts = [
+        index for marker in ("{{", "{%", "{#") if (index := service.find(marker)) >= 0
+    ]
+    if capture:
+        marker_starts.append(capture.start())
+    prefix = service[: min(marker_starts)].strip().lower()
+    return f"{DOMAIN}.{SERVICE_CALL_FUNCTION}".startswith(prefix)
 
 
-def _validate_response_only_aliases(
-    action: Mapping[str, Any], *, previous_aliases: Collection[str] = ()
-) -> None:
-    """Detect legacy action consumers without trying to infer HA variable scope."""
-    from jinja2 import Environment, TemplateSyntaxError, nodes
+def _function_response_usage(action: Mapping[str, Any]) -> tuple[bool, bool, set[str]]:
+    """Detect affected native actions without rendering or rewriting templates."""
+    response_capture = False
+    alias_fields = False
+    alias_names: set[str] = set()
+    for step in _iter_script_actions(action["actions"]):
+        if not _could_call_function(step):
+            continue
+        response_capture |= "response_variable" in step
+        # Examine only service data at its own level. An arguments object or an
+        # unrelated service may legitimately use either of these field names.
+        for data_field in ("data", "data_template"):
+            payload = step.get(data_field)
+            if not isinstance(payload, Mapping):
+                continue
+            alias_fields = alias_fields or bool(
+                _RETIRED_FUNCTION_RESULT_FIELDS.intersection(payload)
+            )
+            if isinstance(alias := payload.get("result_alias"), str):
+                alias_names.add(alias)
+    return response_capture, alias_fields, alias_names
 
-    aliases = _response_alias_names(action) | set(previous_aliases)
-    bindings = aliases | {f"__eoai_result_{alias}" for alias in aliases}
-    environment = (
-        Environment(extensions=["jinja2.ext.do", "jinja2.ext.loopcontrols"])
-        if bindings
-        else None
-    )
 
-    def references(value: Any, *, template_key: bool = False) -> bool:
+def _has_retired_result_placeholder(action: Mapping[str, Any]) -> bool:
+    """Keep single-brace dotted aliases blocked without interpreting Jinja."""
+
+    def contains(value: Any) -> bool:
+        if isinstance(value, str):
+            return RETIRED_RESULT_REFERENCE.search(value) is not None
         if isinstance(value, Mapping):
-            return any(
-                references(key, template_key=True) or references(item)
-                for key, item in value.items()
-            )
+            return any(contains(item) for item in value.values())
         if isinstance(value, list):
-            return any(references(item) for item in value)
-        if not isinstance(value, str):
-            return False
-        if not template_key and (
-            RESULT_REFERENCE.search(value)
-            or aliases.intersection(SLOT_REFERENCE.findall(value))
-        ):
-            return True
-        if environment is not None and ("{{" in value or "{%" in value):
-            try:
-                template = environment.parse(value)
-            except TemplateSyntaxError, RecursionError:
-                # HA validates templates separately. Conservatively flag an
-                # unrecognised template that could refer to a retired binding.
-                return any(
-                    name in bindings
-                    for name in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", value)
-                )
-            return any(
-                node.ctx == "load" and node.name in bindings
-                for node in template.find_all(nodes.Name)
-            )
+            return any(contains(item) for item in value)
         return False
 
-    if references(action["actions"]):
-        raise ValueError(
-            "Function result aliases are only available in the success response. "
-            "Set a distinct Home Assistant response_variable on the producing "
-            "action and use that variable's result in later actions."
-        )
+    return contains(action["actions"]) or contains(action["success_response"])
 
 
-def request_rule_alias_repair(rule: Mapping[str, Any]) -> str | None:
-    """Describe a legacy action alias dependency before admitting execution."""
-    if rule.get("action_type") == "local_action":
-        try:
-            _validate_response_only_aliases(rule["action"])
-        except ValueError as err:
-            return str(err)
-    return None
+def _function_response_needs_review(rule: Mapping[str, Any]) -> bool:
+    return (
+        rule.get("action_type") == "local_action"
+        and rule.get(FUNCTION_RESPONSE_VERSION_FIELD) != FUNCTION_RESPONSE_VERSION
+        and _function_response_usage(rule["action"])[0]
+    )
 
 
 def request_rule_repair(rule: Mapping[str, Any]) -> str | None:
     """Describe rules that must block before executing their saved actions."""
+    if rule.get("action_type") == "local_action":
+        action = rule["action"]
+        capture, alias_fields, _ = _function_response_usage(action)
+        retired_alias = alias_fields or _has_retired_result_placeholder(action)
+        if (
+            capture
+            and rule.get(FUNCTION_RESPONSE_VERSION_FIELD) != FUNCTION_RESPONSE_VERSION
+        ):
+            return (
+                f"{FUNCTION_RESPONSE_REPAIR} {FUNCTION_RESULT_ALIAS_REPAIR}"
+                if retired_alias
+                else FUNCTION_RESPONSE_REPAIR
+            )
+        if retired_alias:
+            return FUNCTION_RESULT_ALIAS_REPAIR
     if rule.get("continue_matching") and not rule.get("action", {}).get(
         "continue_to_ai"
     ):
         return CONTINUE_MATCHING_REPAIR
-    return request_rule_alias_repair(rule)
-
-
-def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) -> None:
-    produced: set[str] = set()
-    step_ids: set[str] = set()
-    top_level_ids = {id(step) for step in action["actions"]}
-    for nested in _iter_script_actions(action["actions"]):
-        data = effective_service_payload(nested)
-        if (
-            _is_function_action(nested)
-            and isinstance(data, Mapping)
-            and data.get("result_alias")
-            and id(nested) not in top_level_ids
-        ):
-            raise ValueError("Function results can be captured only by top-level steps")
-    all_aliases = {
-        data.get("result_alias")
-        for step in action["actions"]
-        if isinstance(step, Mapping)
-        and _is_function_action(step)
-        and isinstance(data := effective_service_payload(step), Mapping)
-    }
-    for step in action["actions"]:
-        if not isinstance(step, Mapping):
-            continue
-        data = effective_service_payload(step)
-        if not _is_function_action(step) or not isinstance(data, Mapping):
-            continue
-        alias = data.get("result_alias")
-        if alias is None:
-            continue
-        if (
-            not isinstance(alias, str)
-            or not SLOT_NAME.fullmatch(alias)
-            or alias in RESERVED_RESULT_ALIASES
-            or alias in slots
-        ):
-            raise ValueError(
-                "Function result alias must be a distinct simple identifier"
-            )
-        if alias in produced:
-            raise ValueError("Function result aliases must be unique within a rule")
-        step_id = data.get("step_id")
-        if step_id is not None and (
-            not isinstance(step_id, str)
-            or not re.fullmatch(r"[0-9a-f]{32}", step_id)
-            or step_id in step_ids
-        ):
-            raise ValueError("Function result step IDs must be unique")
-        if step_id is not None:
-            step_ids.add(step_id)
-        produced.add(alias)
-    missing = (
-        _result_references(action["success_response"])
-        | (_referenced_slots(action["success_response"]) & all_aliases)
-    ) - produced
-    if missing:
-        raise ValueError(
-            "Success response references a missing Function result: "
-            + ", ".join(sorted(missing))
-        )
-    if _result_references(action["failure_response"]) or (
-        _referenced_slots(action["failure_response"]) & all_aliases
-    ):
-        raise ValueError("Failure response cannot reference Function results")
+    return None
 
 
 def _mask_script_templates(
@@ -2686,9 +2611,7 @@ def rule_has_sensitive_actions(rule: Mapping[str, Any]) -> bool:
     return False
 
 
-async def async_call_active_function(
-    function: str, arguments: Any, result_alias: str | None = None
-) -> Any:
+async def async_call_active_function(function: str, arguments: Any) -> Any:
     """Execute an integration function in the active Request Rule context."""
     executor = _ACTIVE_RULE_ACTION.get().function_executor
     if executor is None:
@@ -2697,58 +2620,7 @@ async def async_call_active_function(
         )
     if not isinstance(arguments, Mapping):
         raise HomeAssistantError("Function arguments must be an object")
-    result = await executor(function, dict(arguments))
-    if result_alias is not None:
-        results = _ACTIVE_RULE_ACTION.get().function_results
-        if results is None:
-            raise HomeAssistantError("Function results require an active Request Rule")
-        from .ha_tool_result_compat import tool_result_data
-
-        payload = tool_result_data(result, default=result)
-        if isinstance(payload, Mapping) and "result" in payload:
-            payload = payload["result"]
-        results[result_alias] = _bounded_function_result(payload)
-        return results[result_alias]
-    return result
-
-
-def _bounded_function_result(
-    value: Any, depth: int = 0, budget: list[int] | None = None
-) -> Any:
-    """Retain only bounded JSON values; false, zero, empty text and null are valid."""
-    if budget is None:
-        budget = [0, 0]
-    budget[0] += 1
-    if budget[0] > MAX_SCRIPT_NODES:
-        raise HomeAssistantError("Function result contains too many values")
-    if depth > MAX_RESULT_DEPTH:
-        raise HomeAssistantError("Function result is too deeply nested")
-    result: Any
-    if isinstance(value, Mapping):
-        result = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise HomeAssistantError("Function result object keys must be text")
-            budget[1] += len(key.encode("utf-8"))
-            if budget[1] > MAX_RESULT_BYTES:
-                raise HomeAssistantError("Function result is too large")
-            result[key] = _bounded_function_result(item, depth + 1, budget)
-    elif isinstance(value, list):
-        result = [_bounded_function_result(item, depth + 1, budget) for item in value]
-    elif value is None or isinstance(value, (str, int, float, bool)):
-        result = value
-        budget[1] += len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
-        if budget[1] > MAX_RESULT_BYTES:
-            raise HomeAssistantError("Function result is too large")
-    else:
-        raise HomeAssistantError("Function result must contain JSON values")
-    if (
-        depth == 0
-        and len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
-        > MAX_RESULT_BYTES
-    ):
-        raise HomeAssistantError("Function result is too large")
-    return result
+    return await executor(function, dict(arguments))
 
 
 def _require_exact_integer_update(previous: Any, updated: Any) -> None:
@@ -2777,77 +2649,6 @@ def _require_exact_integer_update(previous: Any, updated: Any) -> None:
                 (item, items[index] if index < len(items) else None)
                 for index, item in enumerate(before)
             )
-
-
-class RuleResponseValueError(ValueError):
-    """An unavailable, validated variable/path in a rule's final response."""
-
-
-def _lookup_result_value(token: str, results: Mapping[str, Any]) -> Any:
-    """Traverse only mapping keys and list indices, never attributes or scalars."""
-    alias, *path = token.split(".")
-    if alias not in results:
-        raise RuleResponseValueError(f"Function result {alias} is unavailable")
-    current = results[alias]
-    for part in path:
-        if isinstance(current, Mapping) and part in current:
-            current = current[part]
-        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
-            current = current[int(part)]
-        else:
-            raise RuleResponseValueError(f"Function result path {token} is unavailable")
-    return current
-
-
-def _rule_response_text(value: Any) -> str:
-    """Render spoken structured results as JSON rather than Python repr."""
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False, default=str, allow_nan=False)
-
-
-def resolve_result_values(
-    value: Any,
-    slots: Mapping[str, str],
-    results: Mapping[str, Any],
-    *,
-    stringify: Callable[[Any], str] = str,
-) -> Any:
-    """Resolve result paths while preserving native script argument values."""
-
-    def lookup(token: str) -> Any:
-        return _lookup_result_value(token, results)
-
-    if isinstance(value, str):
-        exact = re.fullmatch(
-            r"\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_0-9][A-Za-z0-9_]*)*)\}", value
-        )
-        if exact and exact.group(1).split(".")[0] in results:
-            return lookup(exact.group(1))
-
-        def replace_reference(match: re.Match[str]) -> str:
-            token = match.group(0)[1:-1]
-            if "." in token:
-                return stringify(lookup(token))
-            return stringify(results[token]) if token in results else slots[token]
-
-        # Scan only authored references: substituted tool data is opaque text.
-        return re.sub(
-            f"(?:{RESULT_REFERENCE.pattern})|(?:{SLOT_REFERENCE.pattern})",
-            replace_reference,
-            value,
-        )
-    if isinstance(value, Mapping):
-        return {
-            key: resolve_result_values(item, slots, results, stringify=stringify)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [
-            resolve_result_values(item, slots, results, stringify=stringify)
-            for item in value
-        ]
-    return value
 
 
 def _native_action_sequence(
@@ -2998,7 +2799,7 @@ def _guest_script_allowed(
         if action_name is not None:
             if not isinstance(action_name, str):
                 return False
-            if _is_function_action(item):
+            if is_function_service_action(item):
                 data = effective_service_payload(item)
                 if not isinstance(data, Mapping):
                     return False
@@ -3043,7 +2844,7 @@ async def _async_guest_functions_allowed(
 
     tools = None
     for step in _iter_script_actions(sequence):
-        if not _is_function_action(step):
+        if not is_function_service_action(step):
             continue
         if tools is None:
             tools = _runtime_configured_function_tools(request_options or {})
@@ -3079,7 +2880,7 @@ async def _async_guest_functions_allowed(
             return False
         arguments = data.get("arguments", {})
         # Never guess a Guest target from an unresolved legacy result reference.
-        if RESULT_REFERENCE.search(json.dumps(arguments, ensure_ascii=False)):
+        if RETIRED_RESULT_REFERENCE.search(json.dumps(arguments, ensure_ascii=False)):
             return False
         await async_validate_function_arguments(hass, tool["spec"], arguments)
         control = level == FunctionSecurity.CONTROL
@@ -3617,7 +3418,6 @@ async def _async_evaluate_matched_rule(
                     validated_actions,
                     lambda value: _guard_template_reads(value, current_policy),
                 )
-            result_values: dict[str, Any] = {}
             if require_matching_revision is not None:
                 require_matching_revision()
             if match.slots:
@@ -3676,9 +3476,7 @@ async def _async_evaluate_matched_rule(
             )
 
             action_token = _ACTIVE_RULE_ACTION.set(
-                RuleActionExecution(
-                    function_executor, authorize_prepared, result_values
-                )
+                RuleActionExecution(function_executor, authorize_prepared)
             )
             execution = StopReason()
             execution_token = script_execution_cv.set(execution)
@@ -3747,19 +3545,11 @@ async def _async_evaluate_matched_rule(
                 match, False, provider_input=rule_provider_input(match, original_text)
             )
         try:
-            response = resolve_result_values(
-                action["success_response"],
-                match.slots,
-                result_values,
-                stringify=_rule_response_text,
-            )
-            response = _rule_response_text(response)
+            response = resolve_slot_values(action["success_response"], match.slots)
         except (ValueError, KeyError, TypeError) as err:
             # These actions have already occurred. Never rerun the script or
             # misrepresent this as an action failure to the user.
-            if isinstance(err, RuleResponseValueError):
-                issue = str(err)
-            elif (
+            if (
                 isinstance(err, KeyError)
                 and err.args
                 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", str(err.args[0]))

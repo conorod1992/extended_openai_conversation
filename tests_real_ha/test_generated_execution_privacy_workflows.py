@@ -148,7 +148,6 @@ async def run_execution_workflows(hass, monkeypatch, cases):
         }
         # A failed service has no response to capture, even with native continuation.
         if case.failure == "none" and case.guest == "off":
-            capture["data"]["result_alias"] = "answer"
             capture["response_variable"] = "answer_data"
         actions = [record_action("outer-first"), capture]
         if case.failure == "none" and case.guest == "off":

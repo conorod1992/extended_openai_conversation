@@ -100,7 +100,7 @@ query_image:
           mode: box
 call_function:
   name: Call configured function
-  description: Call an enabled Extended OpenAI configured function from a Request Rule action sequence.
+  description: Call an enabled Extended OpenAI configured function from a Request Rule action sequence. A response variable contains the return value under result.
   fields:
     function:
       name: Function tool
