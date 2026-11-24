@@ -353,18 +353,13 @@ async def test_conversation_multiple_tool_calls_follow_current_ordering_contract
         [_tool_stream(first_call, second_call), _final_stream("Both complete.")],
         tools=[first_tool, second_tool],
     )
-    both_started = asyncio.Event()
-    started: list[str] = []
-    completed: list[str] = []
+    execution_order: list[tuple[str, str]] = []
 
     async def execute(_function_tool, tool_input, _llm_context, _entities):
-        started.append(tool_input.id)
-        if len(started) == 2:
-            both_started.set()
-        await asyncio.wait_for(both_started.wait(), timeout=1)
-        if tool_input.id == "call-1":
-            await asyncio.sleep(0.02)
-        completed.append(tool_input.id)
+        assert client.responses.create.await_count == 1
+        execution_order.append((tool_input.id, "started"))
+        await asyncio.sleep(0)
+        execution_order.append((tool_input.id, "completed"))
         return _result(entity, tool_input, tool_input.id)
 
     entity._execute_function_tool.side_effect = execute
@@ -372,10 +367,19 @@ async def test_conversation_multiple_tool_calls_follow_current_ordering_contract
     result = await invoke()
 
     assert result.response.speech["plain"]["speech"] == "Both complete."
-    assert set(started) == {"call-1", "call-2"}
-    assert completed[0] == "call-2"
+    assert execution_order == [
+        ("call-1", "started"),
+        ("call-1", "completed"),
+        ("call-2", "started"),
+        ("call-2", "completed"),
+    ]
+    assert client.responses.create.await_count == 2
     outputs = _function_outputs(client.responses.create.await_args_list[1])
     assert [item["call_id"] for item in outputs] == ["call-1", "call-2"]
+    assert [json.loads(item["output"]) for item in outputs] == [
+        {"result": "call-1"},
+        {"result": "call-2"},
+    ]
     assert entity._execute_function_tool.await_count == 2
 
 

@@ -82,6 +82,31 @@ def test_programme_union_and_all_semantic_minimums_are_preserved():
         )
     )
     nodes = set().union(*(expected_cases(policy, c) for c in policy["selections"]))
+
+    # Retain the historical programme digest while requiring every reviewed
+    # sequential replacement in the Functions campaign.
+    assist = "tests_stress/test_function_provider_wire_remaining.py::"
+    budget = (
+        "tests_stress/test_function_provider_wire.py::"
+        "test_public_budget_loading_multicall_and_completed_replay"
+    )
+    replaced_cases = {
+        f"{assist}test_public_assist_multicall_dispatch_concurrency[{old}-{api}]": (
+            f"{assist}test_public_assist_multicall_dispatch_order[{new}-{api}]"
+        )
+        for old, new in (
+            ("mixed-serial", "mixed-serial"),
+            ("parent-cancel", "parent-cancel"),
+            ("safe-overlap", "read-only-serial"),
+            ("sibling-failure", "sibling-failure"),
+        )
+        for api in ("chat_completions", "responses")
+    }
+    replaced_cases[f"{budget}[safe-atomic]"] = f"{budget}[read-only-prefix]"
+    assert set(replaced_cases.values()) <= expected_cases(policy, "functions")
+    assert set(replaced_cases).isdisjoint(nodes)
+    nodes.difference_update(replaced_cases.values())
+    nodes.update(replaced_cases)
     assert (
         sha256("\n".join(sorted(nodes)).encode()).hexdigest()
         == baseline["pytest_union_sha256"]
@@ -90,6 +115,15 @@ def test_programme_union_and_all_semantic_minimums_are_preserved():
     for minimums in policy["minimums"].values():
         for name, value in minimums.items():
             metrics[name] = max(value, metrics.get(name, 0))
+
+    # Compare the two replaced obligations at their original minimum counts.
+    for old, new in (
+        ("assist_safe_overlap", "assist_read_only_serial"),
+        ("budget_atomic_cases", "budget_read_only_prefix_cases"),
+    ):
+        assert old not in metrics
+        assert policy["minimums"]["functions"][new] == baseline["minimums"][old]
+        metrics[old] = metrics.pop(new)
     assert metrics == baseline["minimums"]
 
 
