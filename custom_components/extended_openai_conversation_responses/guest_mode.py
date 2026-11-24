@@ -491,27 +491,17 @@ class GuestModeManager:
         }:
             raise ValueError("Guest Mode schedule backup is invalid")
         schedule = GuestModeSchedule(**dict(raw))
-        for field, timestamp in (
-            ("active_from", schedule.active_from),
-            ("active_until", schedule.active_until),
-            ("updated_at", schedule.updated_at),
-        ):
-            if timestamp is None and field != "active_from":
-                continue
-            if not isinstance(timestamp, str):
-                raise ValueError(f"Guest Mode {field} is invalid")
-            parsed = dt_util.parse_datetime(timestamp)
-            if parsed is None or parsed.tzinfo is None:
-                raise ValueError(f"Guest Mode {field} is invalid")
-        if not isinstance(schedule.source, str) or not schedule.source:
-            raise ValueError("Guest Mode source is invalid")
-        start = dt_util.parse_datetime(schedule.active_from)
+        start = _parse_timestamp(None, schedule.active_from, "Guest Mode active_from")
         end = (
-            dt_util.parse_datetime(schedule.active_until)
+            _parse_timestamp(None, schedule.active_until, "Guest Mode active_until")
             if schedule.active_until is not None
             else None
         )
-        if start is not None and end is not None and end <= start:
+        if schedule.updated_at is not None:
+            _parse_timestamp(None, schedule.updated_at, "Guest Mode updated_at")
+        if not isinstance(schedule.source, str) or not schedule.source:
+            raise ValueError("Guest Mode source is invalid")
+        if end is not None and end <= start:
             raise ValueError("Guest Mode interval is invalid")
         return schedule
 
@@ -1299,19 +1289,24 @@ def _string_set(value: Any) -> set[str]:
     return {item for item in value if isinstance(item, str) and item}
 
 
-def _parse_timestamp(hass: HomeAssistant, value: str, field: str) -> Any:
-    parsed = dt_util.parse_datetime(value)
+def _parse_timestamp(hass: HomeAssistant | None, value: str, field: str) -> datetime:
+    parsed = dt_util.parse_datetime(value) if isinstance(value, str) else None
     if parsed is None:
         raise ValueError(f"{field} must be an ISO 8601 timestamp")
-    if parsed.tzinfo is None:
+    if parsed.tzinfo is None and hass is not None:
         zone = dt_util.get_time_zone(hass.config.time_zone)
         if zone is None:
             raise ValueError("Home Assistant timezone is unavailable")
         parsed = parsed.replace(tzinfo=zone)
-    return dt_util.as_utc(parsed)
+    return _as_utc(parsed, field=field)
 
 
-def _as_utc(value: Any) -> Any:
+def _as_utc(value: datetime, *, field: str = "timestamp") -> datetime:
     if value.tzinfo is None:
-        raise ValueError("timestamp must include timezone information")
-    return dt_util.as_utc(value)
+        raise ValueError(f"{field} must include timezone information")
+    try:
+        return dt_util.as_utc(value)
+    except OverflowError as err:
+        raise ValueError(
+            f"{field} is outside the supported UTC timestamp range"
+        ) from err
