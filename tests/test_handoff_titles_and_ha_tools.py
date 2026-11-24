@@ -58,10 +58,12 @@ async def test_native_assistant_title_limit(hass, tmp_path, length):
         setup = _portable_document(mode="setup")
         setup["agent"]["title"] = result["title"]
         setup["sections"]["configuration"] = result["data"]
+        assert transfer.inspect_transfer(setup, "agent").title == result["title"]
         exported = transfer.finalize_setup_export(setup)
+        assert result["title"] not in exported["json"]
         assert (
             transfer.inspect_transfer(exported["document"], "agent").title
-            == result["title"]
+            == "Shared conversation agent"
         )
 
 
