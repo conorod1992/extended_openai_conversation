@@ -83,8 +83,8 @@ def test_programme_union_and_all_semantic_minimums_are_preserved():
     )
     nodes = set().union(*(expected_cases(policy, c) for c in policy["selections"]))
 
-    # Retain the historical programme digest while requiring every reviewed
-    # sequential replacement in the Functions campaign.
+    # Use the original identifiers in the digest for the reviewed sequential
+    # replacements in the Functions campaign.
     assist = "tests_stress/test_function_provider_wire_remaining.py::"
     budget = (
         "tests_stress/test_function_provider_wire.py::"
