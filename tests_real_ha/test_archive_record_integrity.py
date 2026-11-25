@@ -181,6 +181,38 @@ async def test_native_archive_salvages_records_repairs_counts_and_reloads_unicod
 
 
 @pytest.mark.usefixtures("real_store_io")
+async def test_native_archive_quarantines_utc_overflow_without_rewriting_disk(hass):
+    storage = HomeAssistantArchiveStorage(hass, "archive-entry", "archive-agent")
+    await storage.async_save_metadata(
+        {
+            "sessions": [asdict(_session(turn_count=2))],
+            "active": {},
+            "partitions": ["2026-09", "9999-12"],
+        }
+    )
+    await storage.async_save_partition("2026-09", {"turns": [asdict(_turn())]})
+    malformed = {
+        "turns": [
+            asdict(
+                _turn(turn_id="overflow", timestamp="9999-12-31T23:59:59-01:00")
+            )
+        ]
+    }
+    await storage.async_save_partition("9999-12", malformed)
+    before = await storage.async_load_metadata()
+
+    archive = ConversationArchive(storage, "archive-agent")
+    await archive.async_initialize()
+
+    page = await archive.async_search("user:alice", "running shoes")
+    assert [item["turn_id"] for item in page["results"]] == ["turn-1"]
+    with pytest.raises(ValueError, match="needs repair"):
+        await archive.async_backup_data()
+    assert await storage.async_load_metadata() == before
+    assert await storage.async_load_partition("9999-12") == malformed
+
+
+@pytest.mark.usefixtures("real_store_io")
 async def test_native_archive_quarantine_can_be_replaced_under_journal_authority(hass):
     storage = HomeAssistantArchiveStorage(hass, "archive-entry", "archive-agent")
     await storage.async_save_partition(

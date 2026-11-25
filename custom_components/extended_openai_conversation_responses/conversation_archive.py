@@ -220,11 +220,8 @@ def archive_session_inactive(
     session: ArchiveSession, now: datetime, inactivity_minutes: int
 ) -> bool:
     """Apply the same inactivity boundary during live turns and restore."""
-    return (
-        _parse_time(session.last_activity_at or session.last_message_at)
-        + timedelta(minutes=max(1, inactivity_minutes))
-        < now
-    )
+    last_activity = _parse_time(session.last_activity_at or session.last_message_at)
+    return now - last_activity > timedelta(minutes=max(1, inactivity_minutes))
 
 
 @callback
@@ -2468,6 +2465,15 @@ def _search_archive_query(
     return _search_archive_snapshot(snapshot, *args)
 
 
+def _search_result_date(timestamp: datetime, time_zone: tzinfo) -> str:
+    try:
+        local = timestamp.astimezone(time_zone)
+    except OverflowError:
+        # A valid UTC instant at either calendar limit can exceed the local calendar.
+        local = timestamp.astimezone(dt_util.UTC)
+    return local.date().isoformat()
+
+
 def _search_archive_snapshot(
     snapshot: tuple[tuple[ArchiveSession, tuple[ArchiveTurn, ...]], ...],
     query: str,
@@ -2522,7 +2528,7 @@ def _search_archive_snapshot(
                 "session_id": session.session_id,
                 "turn_id": turn.turn_id,
                 "turn_index": turn_index,
-                "date": timestamp.astimezone(time_zone).date().isoformat(),
+                "date": _search_result_date(timestamp, time_zone),
                 "timestamp": turn.timestamp,
                 "title": session.title,
                 "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
@@ -2585,13 +2591,11 @@ def _validated_session(raw: Any, *, allow_unretained: bool = False) -> ArchiveSe
         or isinstance(session.turn_count, bool)
         or session.turn_count < 0
         or len(session.title) > MAX_TITLE_LENGTH
-        or _parse_time(session.started_at) == datetime.min.replace(tzinfo=dt_util.UTC)
-        or _parse_time(session.last_message_at)
-        == datetime.min.replace(tzinfo=dt_util.UTC)
+        or not _valid_archive_timestamp(session.started_at)
+        or not _valid_archive_timestamp(session.last_message_at)
         or (
             session.last_activity_at is not None
-            and _parse_time(session.last_activity_at)
-            == datetime.min.replace(tzinfo=dt_util.UTC)
+            and not _valid_archive_timestamp(session.last_activity_at)
         )
     ):
         raise ValueError("archive session metadata is invalid")
@@ -2641,7 +2645,7 @@ def _validated_turn(raw: Any) -> ArchiveTurn:
         or len(turn.turn_id) > 128
         or len(turn.user_text) > MAX_TEXT_LENGTH
         or len(turn.assistant_text) > MAX_TEXT_LENGTH
-        or _parse_time(turn.timestamp) == datetime.min.replace(tzinfo=dt_util.UTC)
+        or not _valid_archive_timestamp(turn.timestamp)
     ):
         raise ValueError("archive turn metadata is invalid")
     return turn
@@ -2832,6 +2836,15 @@ def _parse_time(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=dt_util.UTC)
     return parsed
+
+
+def _valid_archive_timestamp(value: str) -> bool:
+    try:
+        return _parse_time(value).astimezone(dt_util.UTC) != datetime.min.replace(
+            tzinfo=dt_util.UTC
+        )
+    except OverflowError:
+        return False
 
 
 def _session_payload(session: ArchiveSession) -> dict[str, Any]:

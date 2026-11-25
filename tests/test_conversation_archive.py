@@ -28,8 +28,12 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
     _stem,
     _title,
     _tokens,
+    archive_session_inactive,
     archive_tools,
     async_get_archive,
+)
+from custom_components.extended_openai_conversation_responses.management_history_queries import (
+    archive_search_page,
 )
 from custom_components.extended_openai_conversation_responses.scope import (
     shared_scope,
@@ -37,6 +41,12 @@ from custom_components.extended_openai_conversation_responses.scope import (
     user_scope,
 )
 from homeassistant.util import dt as dt_util
+
+
+UTC_OVERFLOW_TIMESTAMPS = (
+    "0001-01-01T00:00:00+01:00",
+    "9999-12-31T23:59:59-01:00",
+)
 
 
 class FakeArchiveStorage:
@@ -1292,6 +1302,18 @@ def test_validate_backup_rejects_invalid_session_metadata(mutator) -> None:
         ConversationArchive.validate_backup_data(data, "target-agent")
 
 
+@pytest.mark.parametrize("timestamp", UTC_OVERFLOW_TIMESTAMPS)
+@pytest.mark.parametrize("field", ["started_at", "last_message_at", "last_activity_at"])
+def test_validate_backup_rejects_session_timestamp_outside_utc(field, timestamp):
+    data = {
+        "sessions": [asdict(_session(turn_count=0)) | {field: timestamp}],
+        "turns": [],
+    }
+
+    with pytest.raises(ValueError, match="session metadata is invalid"):
+        ConversationArchive.validate_backup_data(data, "target-agent")
+
+
 def test_validate_backup_rebinds_agent_and_rejects_duplicate_sessions() -> None:
     session = _session(turn_count=0)
     sessions, turns = ConversationArchive.validate_backup_data(
@@ -1318,6 +1340,7 @@ def test_validate_backup_rebinds_agent_and_rejects_duplicate_sessions() -> None:
         {**asdict(_turn()), "run_id": 7},
         {**asdict(_turn()), "successful": 1},
         {**asdict(_turn()), "timestamp": "bad"},
+        *(asdict(_turn(timestamp=value)) for value in UTC_OVERFLOW_TIMESTAMPS),
         {**asdict(_turn()), "user_text": "x" * (MAX_TEXT_LENGTH + 1)},
         {**asdict(_turn()), "assistant_text": "x" * (MAX_TEXT_LENGTH + 1)},
     ],
@@ -1378,6 +1401,72 @@ async def test_replace_backup_rebuilds_partitions_and_clears_active() -> None:
     assert set(storage.partitions) >= {"2026-01", "2026-02"}
     result = await archive.async_get("user:alice", "replacement")
     assert [turn["turn_id"] for turn in result["turns"]] == ["jan", "feb"]
+
+
+async def test_replace_backup_rejects_utc_overflow_before_writing() -> None:
+    storage = CoverageArchiveStorage()
+    archive = await _coverage_archive(storage)
+
+    with pytest.raises(ValueError, match="turn metadata is invalid"):
+        await archive.async_replace_backup(
+            [_session()], [_turn(timestamp=UTC_OVERFLOW_TIMESTAMPS[1])]
+        )
+
+    assert not storage.metadata_writes
+    assert not storage.partition_writes
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "local_zone", "expected_date"),
+    [
+        ("0001-01-01T00:01:00+00:00", "Etc/GMT+1", "0001-01-01"),
+        ("9999-12-31T23:59:59+00:00", "Etc/GMT-1", "9999-12-31"),
+    ],
+)
+async def test_search_after_restore_and_timezone_change_keeps_boundary_turn(
+    monkeypatch, timestamp, local_zone, expected_date
+) -> None:
+    archive = await _archive()
+    session = _session(turn_count=3)
+    foreign_session = _session("foreign", scope_id="user:bob")
+    mixed_offset = "2026-09-02T00:30:00+02:00"
+    await archive.async_replace_backup(
+        [session, foreign_session],
+        [
+            _turn(turn_id="boundary", timestamp=timestamp),
+            _turn(turn_id="mixed", timestamp=mixed_offset),
+            _turn(turn_id="legacy", timestamp="2026-09-03T10:00:00"),
+            _turn("foreign", turn_id="foreign", timestamp=timestamp),
+        ],
+    )
+    with monkeypatch.context() as local:
+        local.setattr(dt_util, "DEFAULT_TIME_ZONE", ZoneInfo(local_zone))
+        pages = (
+            await archive.async_search(session.scope_id, "running shoes"),
+            await archive_search_page(archive, session.scope_id, "running shoes"),
+        )
+
+    for page in pages:
+        results = {item["turn_id"]: item for item in page["results"]}
+        assert set(results) == {"boundary", "mixed", "legacy"}
+        assert results["boundary"]["date"] == expected_date
+        assert results["boundary"]["timestamp"] == timestamp
+        assert results["mixed"]["date"] == "2026-09-01"
+        assert results["mixed"]["timestamp"] == mixed_offset
+        assert results["legacy"]["timestamp"] == "2026-09-03T10:00:00+00:00"
+
+
+def test_archive_inactivity_uses_elapsed_time_at_both_expiry_and_calendar_limits():
+    session = replace(_session(), last_activity_at="2026-09-01T12:00:00+02:00")
+    deadline = datetime(2026, 9, 1, 10, 30, tzinfo=dt_util.UTC)
+
+    assert not archive_session_inactive(session, deadline, 30)
+    assert archive_session_inactive(session, deadline + timedelta(microseconds=1), 30)
+
+    future = replace(
+        session, last_activity_at=None, last_message_at="9999-12-31T23:59:59+00:00"
+    )
+    assert not archive_session_inactive(future, deadline, 30)
 
 
 async def test_uninitialized_operations_fail_fast() -> None:
