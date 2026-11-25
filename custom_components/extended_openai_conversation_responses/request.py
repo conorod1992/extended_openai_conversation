@@ -51,7 +51,6 @@ from .const import (
     DEFAULT_TOP_P,
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_CONTEXT,
-    DOMAIN,
     TEMPORARY_MEMORY_OFF,
 )
 from .conversation_archive import archive_tools
@@ -945,10 +944,8 @@ async def async_capacity_ha_snapshot(
     """Resolve eligible HA definitions when a management edit can hit a cap."""
     import yaml
 
-    from homeassistant.core import Context
-
     from .agent_config import parse_configured_function_tools
-    from .ha_llm_tools import async_discover
+    from .ha_llm_tools import async_discover, preview_context
     from .management_function_quarantine import (
         inspect_function_groups,
         inspect_function_tools,
@@ -971,17 +968,9 @@ async def async_capacity_ha_snapshot(
     if not references:
         return None
 
-    from homeassistant.helpers import llm
-
     discovered = await async_discover(
         hass,
-        llm.LLMContext(
-            platform=DOMAIN,
-            context=Context(user_id=user_id),
-            language=hass.config.language,
-            assistant="conversation",
-            device_id=None,
-        ),
+        preview_context(hass, user_id),
         references,
     )
     return discovered.with_delayed_action_preference(config)

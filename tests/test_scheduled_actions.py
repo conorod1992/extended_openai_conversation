@@ -517,6 +517,46 @@ async def test_native_timer_restriction_preserves_schema_and_authoritative_valid
     assert should_handle_locally(match, (), True)
 
 
+@pytest.mark.parametrize("is_native", [True, False])
+async def test_dedicated_ha_delayed_command_uses_native_identity(is_native):
+    tool_type = type(
+        "ScheduleCommandTool",
+        (llm.Tool,),
+        {
+            "__module__": "homeassistant.components.intent.llm" if is_native else "custom",
+            "name": "intent__schedule_command",
+            "parameters": vol.Schema({vol.Required("command"): str}),
+        },
+    )
+    tool = tool_type()
+    reference = {
+        "type": "ha_llm",
+        "source_type": "platform",
+        "source_id": "intent",
+        "api_id": llm.LLM_API_ASSIST,
+        "tool_name": tool.name,
+    }
+    instance = SimpleNamespace(
+        tools=[tool], async_call_tool=AsyncMock(return_value={"success": True})
+    )
+    live = LiveTool(reference, tool, instance, "HA", "", {})
+    key = reference_key(reference)
+    source = ToolSnapshot(tools={key: live})
+    configured = {"spec": {"name": "custom_alias"}, "function": reference}
+    restricted = source.with_delayed_action_preference(
+        {CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI: True}
+    )
+    assert restricted.project([configured])[0]["ha_available"] is not is_native
+    call = llm.ToolInput(
+        tool_name="custom_alias", id="command", tool_args={"command": "later"}
+    )
+    if is_native:
+        with pytest.raises(HomeAssistantError, match="Use an EOAI Function Tool"):
+            await live.restrict_delayed_commands().async_call(call)
+        instance.async_call_tool.assert_not_awaited()
+    assert await source.tools[key].async_call(call) == {"success": True}
+
+
 async def test_unavailable_expiry_and_invalid_id(
     hass, manager, owner, agent, monkeypatch
 ):

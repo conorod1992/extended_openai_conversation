@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, UnsupportedStorageVersionError
 
 from .agent_config import (
@@ -34,7 +34,7 @@ from .const import (
 from .function_groups import admit_function_group_loader, assemble_function_tools
 from .guest_function_tools import filter_guest_tools_and_groups
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
-from .ha_llm_tools import ToolSnapshot, async_discover
+from .ha_llm_tools import ToolSnapshot, async_discover, preview_context
 from .helpers import get_exposed_entities
 from .knowledge import get_loaded_knowledge
 from .memory import get_loaded_memory, memory_enabled
@@ -184,17 +184,9 @@ async def async_preview_effective_request(
         references = ha_tool_discovery_references(configured_tools, groups, options)
         ha_snapshot = ToolSnapshot()
         if references and not guest_policy.guest_active:
-            from homeassistant.helpers import llm
-
             ha_snapshot = await async_discover(
                 hass,
-                llm.LLMContext(
-                    platform=DOMAIN,
-                    context=Context(user_id=user_id),
-                    language=hass.config.language,
-                    assistant="conversation",
-                    device_id=None,
-                ),
+                preview_context(hass, user_id, subentry_id=subentry.subentry_id),
                 references,
             )
         ha_snapshot = ha_snapshot.with_delayed_action_preference(options)

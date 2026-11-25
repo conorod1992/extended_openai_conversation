@@ -111,6 +111,7 @@ from .ha_llm_tools import (
     async_discover,
     is_ha_tool,
     new_reference_tool,
+    preview_context,
     reference_key,
     validate_reference,
 )
@@ -1972,7 +1973,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
     action = request.message["action"]
     _require_admin(is_admin)
     if action in {"ha_catalog", "ha_add"}:
-        from homeassistant.helpers import entity_registry as er, llm
+        from homeassistant.helpers import entity_registry as er
 
         preview_devices: dict[str, str] = {}
         satellites = hass.states.async_all("assist_satellite")
@@ -2013,12 +2014,11 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             ]
         ha_catalog_snapshot = await async_discover(
             hass,
-            llm.LLMContext(
-                platform=DOMAIN,
-                context=Context(user_id=user_id),
-                language=hass.config.language,
-                assistant="conversation",
+            preview_context(
+                hass,
+                user_id,
                 device_id=device_id,
+                subentry_id=subentry_id,
             ),
             discovery_references,
         )
@@ -2113,7 +2113,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 "available": True,
                 "name": tool["function"]["tool_name"],
                 "source": ha_catalog_snapshot.tools[key].source_label,
-                "description": ha_catalog_snapshot.tools[key].tool.description or "",
+                "description": ha_catalog_snapshot.tools[key].spec.get("description", ""),
             }
             for key, tool in ha_existing.items()
             if key in selected_keys

@@ -10,6 +10,7 @@ import voluptuous as vol
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
     async_discover,
+    preview_context,
     reference_key,
 )
 from homeassistant.core import Context, HomeAssistant
@@ -306,30 +307,36 @@ async def test_real_ha_assist_timer_schema_and_dispatch_preserve_ordinary_timers
     manager = hass.data[timers.TIMER_DATA]
     try:
         source = await async_discover(
-            hass, llm.LLMContext(
-                platform=DOMAIN, context=Context(), language="en",
-                assistant="conversation", device_id=device_id,
-            )
+            hass, preview_context(hass, None, device_id=device_id)
         )
         key, native = next(
-            (key, live) for key, live in source.tools.items()
+            (key, live)
+            for key, live in source.tools.items()
             if live.reference["api_id"] == llm.LLM_API_ASSIST
             and live.reference["tool_name"] in {"HassStartTimer", "intent__HassStartTimer"}
         )
         saved = new_reference_tool(native.reference, set())
         assert saved["spec"]["name"] != native.tool.name
+        native_properties = set(native.spec["parameters"]["properties"])
+        native_parameters = native.tool.parameters
         snapshot = source.with_delayed_action_preference(
             {CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI: prefer_eoai},
         )
-        properties = snapshot.project([saved])[0]["spec"]["parameters"]["properties"]
-        assert ("conversation_command" in properties) is not prefer_eoai
-        assert "conversation_command" in native.spec["parameters"]["properties"]
+        properties = set(
+            snapshot.project([saved])[0]["spec"]["parameters"]["properties"]
+        )
+        assert properties == native_properties - (
+            {"conversation_command"} if prefer_eoai else set()
+        )
+        assert set(native.spec["parameters"]["properties"]) == native_properties
+        assert native.tool.parameters is native_parameters
 
         live = snapshot.tools[key]
 
         def timer_call(**extra):
             return llm.ToolInput(
-                id="timer", tool_name=saved["spec"]["name"],
+                id="timer",
+                tool_name=saved["spec"]["name"],
                 tool_args={"minutes": 1, **extra},
             )
 
@@ -337,11 +344,39 @@ async def test_real_ha_assist_timer_schema_and_dispatch_preserve_ordinary_timers
             with pytest.raises(HomeAssistantError, match="ordinary timers"):
                 await live.async_call(timer_call(conversation_command="turn the light off"))
             assert not manager.timers
-        else:
+        elif "conversation_command" in native_properties:
             await live.async_call(timer_call(conversation_command="turn the light off"))
-            assert [timer.conversation_command for timer in manager.timers.values()] == [
-                "turn the light off"
-            ]
+
+        if "conversation_command" not in native_properties:
+            schedule_key, schedule_tool = next(
+                (key, tool)
+                for key, tool in source.tools.items()
+                if tool.is_native_delayed_command
+            )
+            saved_schedule = new_reference_tool(schedule_tool.reference, set())
+            command_call = llm.ToolInput(
+                id="schedule",
+                tool_name=saved_schedule["spec"]["name"],
+                tool_args={"minutes": 1, "command": "turn the light off"},
+            )
+            assert command_call.tool_name != schedule_tool.tool.name
+            assert (
+                snapshot.project([saved_schedule])[0]["ha_available"] is not prefer_eoai
+            )
+            if prefer_eoai:
+                assert schedule_key not in snapshot.tools
+                with pytest.raises(
+                    HomeAssistantError, match="Use an EOAI Function Tool"
+                ):
+                    await schedule_tool.restrict_delayed_commands().async_call(
+                        command_call
+                    )
+            else:
+                await snapshot.tools[schedule_key].async_call(command_call)
+
+        assert [timer.conversation_command for timer in manager.timers.values()] == (
+            [] if prefer_eoai else ["turn the light off"]
+        )
         with pytest.raises(HomeAssistantError, match="requested schema"):
             await live.async_call(timer_call(minutes=-1))
         event.assert_not_called()

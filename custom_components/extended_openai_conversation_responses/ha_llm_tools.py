@@ -22,10 +22,12 @@ import logging
 from types import ModuleType
 from typing import Any
 
-from homeassistant.core import HomeAssistant
+from homeassistant.components import conversation
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import intent, llm
+from homeassistant.helpers import entity_registry as er, intent, llm
 
+from .const import DOMAIN
 from .exceptions import EffectOutcomeUnknown, EffectReplayBlocked
 from .function_tool_recovery import should_report_uncertain_effects
 from .ha_tool_result_compat import HAToolResultError, execution_tool_result
@@ -38,6 +40,7 @@ _LOGGER = logging.getLogger(__name__)
 TOOL_TYPE = "ha_llm"
 _TIMER_COMMAND_ARGUMENT = "conversation_command"
 _TIMER_ONLY_DESCRIPTION = "Start an ordinary Home Assistant timer."
+_NATIVE_COMMAND_TOOL = "homeassistant.components.intent.llm.ScheduleCommandTool"
 _DELAYED_ROUTING = (
     "The assistant preference Use EOAI for delayed actions is enabled. This rule "
     "takes precedence over Home Assistant tool instructions for delayed actions. "
@@ -156,6 +159,28 @@ def _schema(tool: llm.Tool, serializer: Callable[[Any], Any] | None) -> dict[str
     return dict(compatible_to_openapi(tool.parameters, custom_serializer=serializer))
 
 
+def preview_context(
+    hass: HomeAssistant,
+    user_id: str | None,
+    *,
+    device_id: str | None = None,
+    subentry_id: str | None = None,
+) -> llm.LLMContext:
+    """Describe a conversation for tool discovery, never for tool dispatch."""
+    agent_id = None
+    if subentry_id is not None and (registry := hass.data.get(er.DATA_REGISTRY)):
+        agent_id = registry.async_get_entity_id(conversation.DOMAIN, DOMAIN, subentry_id)
+    return conversation.ConversationInput(
+        text="",
+        context=Context(user_id=user_id),
+        conversation_id=None,
+        language=hass.config.language,
+        device_id=device_id,
+        satellite_id=None,
+        agent_id=agent_id or conversation.HOME_ASSISTANT_AGENT,
+    ).as_llm_context(DOMAIN)
+
+
 @dataclass(slots=True)
 class LiveTool:
     """One capability owned exclusively by the current request."""
@@ -167,9 +192,20 @@ class LiveTool:
     prompt: str
     spec: dict[str, Any]
     timer_only: bool = False
+    delayed_command_blocked: bool = False
+
+    @property
+    def is_native_delayed_command(self) -> bool:
+        """Identify HA's dedicated scheduling capability by its native implementation."""
+        return (
+            self.reference["api_id"] == llm.LLM_API_ASSIST
+            and _implementation(self.tool) == _NATIVE_COMMAND_TOOL
+        )
 
     def restrict_delayed_commands(self) -> LiveTool:
-        """Project the native timer intent as an ordinary timer for this request."""
+        """Restrict the native HA scheduling paths for this request."""
+        if self.is_native_delayed_command:
+            return replace(self, delayed_command_blocked=True)
         native_name = getattr(self.tool, "intent_type", self.reference["tool_name"])
         # Older IntentTool dispatches by its native name. Newer HA stores the
         # intent_type separately and can prefix the tool name by integration.
@@ -196,6 +232,8 @@ class LiveTool:
         matches = [tool for tool in self.instance.tools if tool.name == self.tool.name]
         if len(matches) != 1 or matches[0] is not self.tool:
             raise HomeAssistantError("HA tool changed before dispatch")
+        if self.delayed_command_blocked:
+            raise HomeAssistantError("Use an EOAI Function Tool for delayed actions")
         if self.timer_only and _TIMER_COMMAND_ARGUMENT in tool_input.tool_args:
             raise HomeAssistantError(
                 "Use an EOAI Function Tool for delayed actions. This Home Assistant tool starts ordinary timers."
@@ -276,6 +314,7 @@ class ToolSnapshot:
             tools={
                 key: live.restrict_delayed_commands()
                 for key, live in self.tools.items()
+                if not live.is_native_delayed_command
             },
             use_eoai_delayed_actions=True,
         )
