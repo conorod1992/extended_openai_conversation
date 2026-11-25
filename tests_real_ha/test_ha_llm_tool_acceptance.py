@@ -384,6 +384,12 @@ async def test_real_ha_assist_timer_schema_and_dispatch_preserve_ordinary_timers
         event.assert_called_once()
         assert event.call_args.args[0] == timers.TimerEventType.STARTED
     finally:
-        for timer_id in tuple(manager.timers):
-            manager.cancel_timer(timer_id)
-        unregister()
+        try:
+            async_cancel_timer = getattr(manager, "async_cancel_timer", None)
+            for timer_id in tuple(manager.timers):
+                if async_cancel_timer is None:
+                    manager.cancel_timer(timer_id)
+                else:
+                    await async_cancel_timer(timer_id)
+        finally:
+            unregister()
