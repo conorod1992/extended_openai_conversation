@@ -231,7 +231,10 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
     def _remove_owned_publication(self) -> None:
         published = self._published_state
         self._published_state = None
-        if published is not None and self.hass.states.get(published.entity_id) is published:
+        if (
+            published is not None
+            and self.hass.states.get(published.entity_id) is published
+        ):
             self.hass.states.async_remove(published.entity_id)
 
     def _unpublish_state(self) -> None:

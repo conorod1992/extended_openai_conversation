@@ -70,7 +70,7 @@ def _parse_scheduled_utc(value: str) -> datetime | None:
     try:
         parsed = parse_datetime(value)
         return dt_util.as_utc(parsed) if parsed is not None else None
-    except (ValueError, OverflowError):
+    except ValueError, OverflowError:
         return None
 
 

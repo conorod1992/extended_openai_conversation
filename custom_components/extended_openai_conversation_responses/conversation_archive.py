@@ -457,7 +457,9 @@ class HomeAssistantArchiveStorage:
                 for turn in session_turns:
                     if turn.sequence is not None and turn.sequence >= 2**64:
                         # HA's native JSON reader would turn this integer into a float.
-                        raise ValueError("Archive turn sequence exceeds the storage limit")
+                        raise ValueError(
+                            "Archive turn sequence exceeds the storage limit"
+                        )
                     result[turn.timestamp[:7]].append(turn)
             return result
 
@@ -474,7 +476,9 @@ class HomeAssistantArchiveStorage:
 
             def write(month: str = month, store: Store[dict[str, Any]] = store) -> None:
                 payload = {
-                    "turns": [_turn_payload(turn) for turn in by_partition.get(month, [])]
+                    "turns": [
+                        _turn_payload(turn) for turn in by_partition.get(month, [])
+                    ]
                 }
                 write_verified_store(store, payload, max_bytes=321 * 1024 * 1024)
 
@@ -1955,7 +1959,9 @@ class ConversationArchive:
             try:
                 await storage.async_remove_partition(month)
             except OSError:
-                _LOGGER.warning("Unable to remove obsolete conversation archive partition %s", month)
+                _LOGGER.warning(
+                    "Unable to remove obsolete conversation archive partition %s", month
+                )
 
     def _require_session(self, session_id: str) -> ArchiveSession:
         session = self._sessions.get(session_id)

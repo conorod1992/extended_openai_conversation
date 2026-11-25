@@ -2861,7 +2861,9 @@ class QuietHoursManager:
             unsubscribe()
         except Exception as err:
             log_handled_failure(
-                logging.getLogger(__name__), "Unable to detach Quiet Hours callback", err
+                logging.getLogger(__name__),
+                "Unable to detach Quiet Hours callback",
+                err,
             )
 
     def _reschedule(self) -> None:

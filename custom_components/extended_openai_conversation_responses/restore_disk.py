@@ -61,7 +61,9 @@ def _check_json_round_trip(value: Any) -> None:
         for child in value:
             _check_json_round_trip(child)
     elif value is not None and not isinstance(value, (str, int, float)):
-        raise ValueError("Restore data contains a value which cannot round-trip as JSON")
+        raise ValueError(
+            "Restore data contains a value which cannot round-trip as JSON"
+        )
 
 
 def read_large_journal(stream: IO[bytes]) -> Any:
@@ -74,7 +76,9 @@ def _contains_surrogate_escape(stream: IO[bytes]) -> bool:
     tail = b""
     try:
         while chunk := stream.read(256 * 1024):
-            if _SURROGATE_ESCAPE.search(chunk) or _SURROGATE_ESCAPE.search(tail + chunk[:5]):
+            if _SURROGATE_ESCAPE.search(chunk) or _SURROGATE_ESCAPE.search(
+                tail + chunk[:5]
+            ):
                 return True
             tail = (tail + chunk)[-5:] if len(chunk) < 5 else chunk[-5:]
         return False
@@ -119,7 +123,9 @@ def write_verified_store(
     }
     path = Path(store.path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    encoder = json.JSONEncoder(
+        ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    )
     digest = hashlib.sha256()
     remaining = max_bytes
     temporary = path.with_name(path.name + RESTORE_STAGING_SUFFIX)
@@ -131,14 +137,18 @@ def write_verified_store(
                 chunk = text.encode("utf-8")
                 remaining -= len(chunk)
                 if remaining < 0:
-                    raise ValueError("Restore data exceeds the private storage safety limit")
+                    raise ValueError(
+                        "Restore data exceeds the private storage safety limit"
+                    )
                 file.write(chunk)
                 digest.update(chunk)
             file.flush()
             os.fsync(file.fileno())
         os.replace(temporary, path)
         if os.name == "posix":
-            descriptor = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            descriptor = os.open(
+                path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            )
             try:
                 os.fsync(descriptor)
             finally:

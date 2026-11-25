@@ -67,7 +67,15 @@ _PHASE_COMMITTED = "committed"
 _PHASES = {_PHASE_APPLYING, _PHASE_COMMITTED}
 _STREAM_JOURNAL_BYTES = 16 * 1024 * 1024
 _JOURNAL_REQUIRED_FIELDS = frozenset(
-    {"transaction_id", "entry_id", "subentry_id", "phase", "created_at", "target", "rollback"}
+    {
+        "transaction_id",
+        "entry_id",
+        "subentry_id",
+        "phase",
+        "created_at",
+        "target",
+        "rollback",
+    }
 )
 _DATA_SECTIONS = frozenset(
     {
@@ -1412,7 +1420,10 @@ async def _async_restore_backup_recoverably(
 
     async with backup._backup_lock(hass, entry_id, subentry_id):
         store = _journal_store(hass, entry_id, subentry_id)
-        if await _async_read_restore_journal(hass, entry_id, subentry_id, store) is not None:
+        if (
+            await _async_read_restore_journal(hass, entry_id, subentry_id, store)
+            is not None
+        ):
             raise backup.BackupError(
                 "A previous full restore still has pending recovery; restart Home "
                 "Assistant before starting another restore"
@@ -1624,9 +1635,13 @@ async def _async_recover_pending_restore(
         raw = await _async_read_restore_journal(hass, entry_id, subentry_id, store)
         if isinstance(store, _RestoreJournalStore):
             try:
-                await hass.async_add_executor_job(remove_restore_staging, Path(store.path))
+                await hass.async_add_executor_job(
+                    remove_restore_staging, Path(store.path)
+                )
             except OSError as err:
-                log_handled_failure(_LOGGER, "Unable to remove unpublished restore staging", err)
+                log_handled_failure(
+                    _LOGGER, "Unable to remove unpublished restore staging", err
+                )
         if raw is None:
             return False
         from .helpers import entry_api_provider
@@ -1901,7 +1916,9 @@ async def async_recover_pending_provider_restore(
         except Exception as err:
             # A readable agent-only failure keeps its own maintenance gate.
             # A shared journal has already claimed its provider's gate.
-            log_handled_failure(_LOGGER, "Assistant restore recovery is still pending", err)
+            log_handled_failure(
+                _LOGGER, "Assistant restore recovery is still pending", err
+            )
     require_provider_restore_complete(hass, entry.entry_id)
 
 
