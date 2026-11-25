@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import logging
 from typing import Any
@@ -16,6 +17,7 @@ from .global_runtime import (
     global_runtime_lock,
     require_global_runtime,
 )
+from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .quiet_hours_runtime import (
     DEFAULT_END,
@@ -47,8 +49,39 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         self._registered_state_entity_id: str | None = None
         self._published_state: State | None = None
         self._registry_unsubscribe: Callable[[], None] | None = None
+        self._setup_lock = asyncio.Lock()
 
     async def async_setup(self) -> None:
+        async with self._setup_lock:
+            if self._initialized:
+                await self._async_setup_generation()
+            else:
+                await async_settle_owned_operation(self._async_setup_generation())
+
+    async def _async_setup_generation(self) -> None:
+        try:
+            await self._async_setup_and_listen()
+        except Exception as err:
+            reason = self._startup_unavailable_reason or (
+                "Quiet Hours could not finish initialization. Saved restoration "
+                "data is retained. Restart Home Assistant after resolving the failure."
+            )
+            self._startup_unavailable_reason = reason
+            log_handled_failure(logging.getLogger(__name__), reason, err)
+            async with self._lock:
+                self._cancel_scheduled_callbacks()
+                self._detach_timezone_listener()
+                self._detach_registry_listener()
+                try:
+                    self._remove_owned_publication()
+                except Exception as cleanup_error:
+                    log_handled_failure(
+                        logging.getLogger(__name__),
+                        "Unable to remove the Quiet Hours state publication",
+                        cleanup_error,
+                    )
+
+    async def _async_setup_and_listen(self) -> None:
         await super().async_setup()
         if self._stopping or self.startup_unavailable:
             return
@@ -180,14 +213,26 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
 
     def snapshot(self) -> dict[str, Any]:
         result = super().snapshot()
-        result["state_entity_id"] = self._state_entity_id()
+        if not self.startup_unavailable:
+            result["state_entity_id"] = self._state_entity_id()
         return result
 
+    def _detach_registry_listener(self) -> None:
+        unsubscribe = self._registry_unsubscribe
+        self._registry_unsubscribe = None
+        if unsubscribe is not None:
+            self._unsubscribe_callback(unsubscribe)
+
     async def async_shutdown(self) -> None:
-        if self._registry_unsubscribe is not None:
-            self._registry_unsubscribe()
-            self._registry_unsubscribe = None
+        self._stopping = True
+        self._detach_registry_listener()
         await super().async_shutdown()
+
+    def _remove_owned_publication(self) -> None:
+        published = self._published_state
+        self._published_state = None
+        if published is not None and self.hass.states.get(published.entity_id) is published:
+            self.hass.states.async_remove(published.entity_id)
 
     def _unpublish_state(self) -> None:
         entity_id = self._state_entity_id()
@@ -289,7 +334,15 @@ async def async_get_quiet_hours(hass: HomeAssistant) -> QuietHoursManager:
         domain_data[_RUNTIME_KEY] = manager
     await manager.async_setup()
     require_global_runtime(hass)
-    _register_quiet_hours_actions(hass)
+    current: object = domain_data.get(_RUNTIME_KEY)
+    if current is not manager:
+        raise HomeAssistantError("Quiet Hours is shutting down")
+    try:
+        _register_quiet_hours_actions(hass)
+    except Exception as err:
+        log_handled_failure(
+            logging.getLogger(__name__), "Unable to register Quiet Hours actions", err
+        )
     return manager
 
 

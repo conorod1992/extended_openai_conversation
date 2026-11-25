@@ -388,6 +388,7 @@ class ExtendedOpenAIAgentEntity(
     _function_groups_runtime: FunctionGroupRuntime | None = None
     _guest_mode: GuestModeManager | None = None
     _request_rules: RequestRules | None = None
+    _request_rules_load_pending = False
     _request_rule_runtime: RequestRuleRuntime | None = None
     _agent_ready: asyncio.Event | None = None
     _agent_initialization_failed = False
@@ -509,9 +510,21 @@ class ExtendedOpenAIAgentEntity(
         self._function_groups_runtime = reset_function_group_runtime(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
-        self._request_rules = await async_get_request_rules(
-            self.hass, self.entry.entry_id, self.subentry.subentry_id
-        )
+        self._request_rules = None
+        self._request_rules_load_pending = True
+        try:
+            self._request_rules = await async_get_request_rules(
+                self.hass, self.entry.entry_id, self.subentry.subentry_id
+            )
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER,
+                "Request Rules could not be initialized. The assistant remains "
+                "registered and will retry loading rules before routing requests.",
+                err,
+            )
+        else:
+            self._request_rules_load_pending = False
         self._request_rule_runtime = get_request_rule_runtime(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
@@ -1146,7 +1159,7 @@ class ExtendedOpenAIAgentEntity(
                         else nullcontext(None)
                     ) as run:
                         try:
-                            if (
+                            if self._request_rules_load_pending or (
                                 isinstance(self._request_rules, RequestRules)
                                 and not self._request_rules.initialized
                             ):
@@ -1157,11 +1170,10 @@ class ExtendedOpenAIAgentEntity(
                                         self.subentry.subentry_id,
                                     )
                                 except Exception:
-                                    # Preserve the unavailable manager and reject this
-                                    # turn through the existing local failure boundary.
                                     raise HomeAssistantError(
                                         REQUEST_RULES_UNAVAILABLE
                                     ) from None
+                                self._request_rules_load_pending = False
                             evaluation = (
                                 await async_evaluate_rule(
                                     self.hass,

@@ -436,16 +436,39 @@ class PersistentMemory:
             if self._embedding_provider != provider:
                 self._embedding_provider = provider
             return
+        self._install_embedding_binding(provider, model, space_id, identity)
+        self._set_hybrid_status(
+            "ready" if provider is not None else "lexical_fallback",
+            None if provider is not None else "provider_not_configured",
+        )
+
+    def mark_embedding_binding_unavailable(self, model: str, error_type: str) -> bool:
+        """Revoke the previous binding and report whether failure diagnostics changed."""
+        changed = (
+            self._embedding_provider is not None
+            or self._embedding_model != model
+            or self._hybrid_status.get("reason") != "provider_binding_failed"
+            or self._hybrid_status.get("error_type") != error_type
+        )
+        self._install_embedding_binding(None, model, "", None)
+        self._set_hybrid_status(
+            "lexical_fallback", "provider_binding_failed", error_type=error_type
+        )
+        return changed
+
+    def _install_embedding_binding(
+        self,
+        provider: EmbeddingProvider | None,
+        model: str,
+        space_id: str,
+        identity: object,
+    ) -> None:
         self._embedding_retry_identity = identity
         self._query_embedding_model = self._embedding_model_changed_at = None
         self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
         self._embedding_provider = provider
         self._embedding_model = model
         self._embedding_space_id = space_id
-        self._set_hybrid_status(
-            "ready" if provider is not None else "lexical_fallback",
-            None if provider is not None else "provider_not_configured",
-        )
 
     def hybrid_status(self) -> dict[str, Any]:
         """Return non-sensitive hybrid-retrieval availability diagnostics."""
@@ -789,7 +812,6 @@ class PersistentMemory:
         """Prepare embeddings for the search corpus and return the query vector."""
         category_filter = _clean_category(category) if category else None
         if self._embedding_provider is None:
-            self._set_hybrid_status("lexical_fallback", "provider_not_configured")
             return None
         if monotonic() < self._hybrid_retry_at:
             return None
@@ -804,6 +826,25 @@ class PersistentMemory:
                 return None
         attempt_identity = self._embedding_retry_identity
         attempt_provider = self._embedding_provider
+        if attempt_provider is None:
+            return None
+        model = self._embedding_model
+        space_id = self._embedding_space_id
+
+        def binding_changed() -> bool:
+            if (
+                self._embedding_provider is attempt_provider
+                and self._embedding_retry_identity == attempt_identity
+            ):
+                return False
+            # A stale request must not replace diagnostics for a new binding.
+            if (
+                self._embedding_provider is None
+                and self._hybrid_status.get("reason") != "provider_binding_failed"
+            ):
+                self._set_hybrid_status("lexical_fallback", "provider_changed")
+            return True
+
         migrated_model = None
         batch_budget = iter(
             range(
@@ -813,28 +854,19 @@ class PersistentMemory:
             )
         )
         try:
-            if not await self._async_refresh_missing_embeddings(
+            prepared = await self._async_refresh_missing_embeddings(
                 scope_ids, category_filter=category_filter, batch_budget=batch_budget
-            ):
+            )
+            if binding_changed():
+                return None
+            if not prepared:
                 self._set_hybrid_status(
                     "lexical_fallback",
                     "embedding_preparation_failed",
                 )
                 return None
-            provider = self._embedding_provider
-            model = self._embedding_model
-            space_id = self._embedding_space_id
-            if provider is None:
-                self._set_hybrid_status("lexical_fallback", "provider_changed")
-                return None
-            batch = _embedding_batch(await provider([query]))
-            if (
-                self._embedding_provider is not provider
-                or self._embedding_model != model
-                or self._embedding_space_id != space_id
-                or self._embedding_retry_identity != attempt_identity
-            ):
-                self._set_hybrid_status("lexical_fallback", "provider_changed")
+            batch = _embedding_batch(await attempt_provider([query]))
+            if binding_changed():
                 return None
             if len(batch.vectors) != 1:
                 raise ValueError(
@@ -892,7 +924,10 @@ class PersistentMemory:
                 provider_model=batch.provider_model,
                 batch_budget=batch_budget,
             ):
-                self._set_hybrid_status("lexical_fallback", "provider_changed")
+                if not binding_changed():
+                    self._set_hybrid_status("lexical_fallback", "provider_changed")
+                return None
+            if binding_changed():
                 return None
             self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
             self._set_hybrid_status(
@@ -903,15 +938,13 @@ class PersistentMemory:
             )
             return vector
         except _EmbeddingPreparationBudgetExhausted:
-            self._set_hybrid_status(
-                "lexical_fallback", "embedding_preparation_budget_exhausted"
-            )
+            if not binding_changed():
+                self._set_hybrid_status(
+                    "lexical_fallback", "embedding_preparation_budget_exhausted"
+                )
             return None
         except Exception as err:
-            if (
-                attempt_identity != self._embedding_retry_identity
-                or attempt_provider is not self._embedding_provider
-            ):
+            if binding_changed():
                 return None
             self._hybrid_retry_delay = min(
                 HYBRID_RETRY_MAX_SECONDS,
@@ -969,10 +1002,8 @@ class PersistentMemory:
             self._embedding_cache_retry_at = 0.0
             self._query_embedding_model = self._embedding_model_changed_at = None
             self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
-            self._set_hybrid_status(
-                "ready" if self._embedding_provider else "lexical_fallback",
-                None if self._embedding_provider else "provider_not_configured",
-            )
+            if self._embedding_provider is not None:
+                self._set_hybrid_status("ready")
             self._committed_state = self._snapshot_mutation_state()
 
         async with async_storage_lock(self._storage, self._lock):
@@ -1638,6 +1669,8 @@ class PersistentMemory:
         try:
             batch_model = provider_model
             for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
+                if not provider_is_current():
+                    return False
                 if batch_budget is not None and next(batch_budget, None) is None:
                     raise _EmbeddingPreparationBudgetExhausted
                 batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
@@ -1694,12 +1727,11 @@ class PersistentMemory:
             # Save once per refill, including progress before a failed batch.
             # A warm scope still retries a previous failed save after cooldown.
             async with async_storage_lock(self._storage, self._lock):
-                same_provider = provider_is_current()
-                if same_provider:
+                if provider_is_current():
                     await async_settle_owned_operation(
                         self._async_save_embedding_cache_locked()
                     )
-        return same_provider
+        return provider_is_current()
 
     async def _async_save_locked(self, *, replacing: bool = False) -> None:
         """Settle writes and rebuild memory indexes from authoritative storage."""

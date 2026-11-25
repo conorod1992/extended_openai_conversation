@@ -34,6 +34,7 @@ from .provider_errors import classify_config_provider_error
 
 WS_UPDATE_API_KEY = f"{DOMAIN}/management/update_api_key"
 PROVIDER_RESTORE_OWNERS = f"{DOMAIN}.provider_restore_owners"
+PROVIDER_RESTORE_UNREADABLE = f"{DOMAIN}.provider_restore_unreadable"
 _WS_SETUP = f"{DOMAIN}.provider_credentials_ws_setup"
 _VALIDATION_MESSAGES = {
     "invalid_auth": "The provider rejected the new API key.",
@@ -136,7 +137,10 @@ def incompatible_provider_agent(
 
 def require_provider_restore_complete(hass: HomeAssistant, entry_id: str) -> None:
     """Refuse provider requests while the shared connection is being recovered."""
-    if entry_id in getattr(hass, "data", {}).get(PROVIDER_RESTORE_OWNERS, {}):
+    data = getattr(hass, "data", {})
+    if entry_id in data.get(PROVIDER_RESTORE_OWNERS, {}) or entry_id in data.get(
+        PROVIDER_RESTORE_UNREADABLE, {}
+    ):
         raise HomeAssistantError(
             "The shared provider connection is unavailable until backup restore recovery completes."
         )

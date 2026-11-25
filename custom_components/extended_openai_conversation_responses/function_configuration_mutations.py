@@ -19,6 +19,7 @@ from .agent_config import (
     normalized_function_call_budget,
     project_agent_config_fields,
     project_agent_config_updates,
+    require_persistable_function_yaml,
     validate_function_groups,
     validate_function_tools,
 )
@@ -99,8 +100,8 @@ def prepare_valid_function_configuration(
         else:
             candidate.pop(CONF_FUNCTION_TOOLS, None)
     else:
-        candidate[CONF_FUNCTION_TOOLS] = dump_yaml(
-            candidate[CONF_FUNCTION_TOOLS], sort_keys=False
+        candidate[CONF_FUNCTION_TOOLS] = require_persistable_function_yaml(
+            dump_yaml(candidate[CONF_FUNCTION_TOOLS], sort_keys=False)
         )
     # Function edits must not turn implicit model-dependent defaults into saved
     # settings. For example, an absent effort follows each routed model's profile;
@@ -297,8 +298,8 @@ def prepare_quarantined_function_configuration(
     persisted = dict(raw)
     authored_tools = deepcopy(tools)
     if not authored_function_configuration_equal(authored_tools, state.valid):
-        persisted[CONF_FUNCTION_TOOLS] = dump_yaml(
-            [*authored_tools, *quarantined_raw], sort_keys=False
+        persisted[CONF_FUNCTION_TOOLS] = require_persistable_function_yaml(
+            dump_yaml([*authored_tools, *quarantined_raw], sort_keys=False)
         )
     else:
         # Group-only edits must not reserialize untouched Tools.

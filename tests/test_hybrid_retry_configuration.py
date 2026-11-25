@@ -8,9 +8,60 @@ from openai import AsyncOpenAI
 import pytest
 
 from custom_components.extended_openai_conversation_responses.agent_configuration import (
+    async_reconcile_runtime_configuration,
     sync_memory_embedding_provider,
 )
+from tests.test_configuration_lifecycle_hardening import _disabled_runtime_config
 from tests.test_hybrid_memory_cold_path import _memory
+
+
+async def test_binding_failure_retires_old_provider_and_retries_unchanged_runtime():
+    memory = await _memory()
+    await memory.async_add("alice", "Alice likes tea", "preferences", "explicit")
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def embeddings(texts, *, model):
+        if texts == ["old query"]:
+            entered.set()
+            await release.wait()
+        return [[1.0, 0.0] for _ in texts]
+
+    client = SimpleNamespace(default_query={})
+    entity = SimpleNamespace(
+        hass=SimpleNamespace(data={}),
+        _memory=memory,
+        subentry=SimpleNamespace(
+            subentry_id="agent",
+            data={
+                **_disabled_runtime_config(),
+                "memory_mode": "manual",
+                "memory_retrieval_mode": "hybrid",
+            },
+        ),
+        entry=SimpleNamespace(entry_id="entry", data={}, runtime_data=client),
+        _async_create_embeddings=embeddings,
+    )
+    assert sync_memory_embedding_provider(entity)
+    first = asyncio.create_task(memory.async_prepare_hybrid(["alice"], "old query"))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        client.default_query["invalid"] = object()
+        await async_reconcile_runtime_configuration(entity)
+        release.set()
+        assert await first is None
+        assert await memory.async_prepare_hybrid(["alice"], "tea") is None
+        assert memory.hybrid_status()["reason"] == "provider_binding_failed"
+        assert [fact.content for fact in await memory.async_search("alice", "tea")] == [
+            "Alice likes tea"
+        ]
+
+        client.default_query.clear()
+        await async_reconcile_runtime_configuration(entity)
+        assert await memory.async_prepare_hybrid(["alice"], "new query") == [1.0, 0.0]
+        assert memory.hybrid_status()["status"] == "active"
+    finally:
+        release.set()
+        await asyncio.gather(first, return_exceptions=True)
 
 
 async def test_embedding_space_tracks_sdk_environment_endpoint(monkeypatch):

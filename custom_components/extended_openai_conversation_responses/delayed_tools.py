@@ -65,6 +65,15 @@ class _DelayedQueueLimitError(HomeAssistantError):
     """A saved queue cannot safely be admitted to the scheduler."""
 
 
+def _parse_scheduled_utc(value: str) -> datetime | None:
+    """Validate an instant with the same time zone rules used for execution."""
+    try:
+        parsed = parse_datetime(value)
+        return dt_util.as_utc(parsed) if parsed is not None else None
+    except (ValueError, OverflowError):
+        return None
+
+
 def _validate_argument_budget(arguments: dict[str, Any]) -> None:
     size = 0
     try:
@@ -170,12 +179,11 @@ class DelayedToolCall:
         retry_count = raw.get("retry_count", 0)
         if not isinstance(retry_count, int) or retry_count < 0:
             raise ValueError("stored delayed call has invalid retry_count")
-        for timestamp_key in ("due_at", "created_at"):
-            parsed = parse_datetime(raw[timestamp_key])
-            if parsed is None:
-                raise ValueError(
-                    f"stored delayed call has invalid {timestamp_key} timestamp"
-                )
+        due = _parse_scheduled_utc(raw["due_at"])
+        if due is None:
+            raise ValueError("stored delayed call has invalid due_at timestamp")
+        if _parse_scheduled_utc(raw["created_at"]) is None:
+            raise ValueError("stored delayed call has invalid created_at timestamp")
         user_id = raw.get("user_id")
         device_id = raw.get("device_id")
         satellite_id = raw.get("satellite_id")
@@ -183,13 +191,8 @@ class DelayedToolCall:
         if expires_at is not None:
             if not isinstance(expires_at, str):
                 raise ValueError("stored delayed call has invalid expires_at")
-            expiry = parse_datetime(expires_at)
-            due = parse_datetime(raw["due_at"])
-            if (
-                expiry is None
-                or due is None
-                or dt_util.as_utc(expiry) < dt_util.as_utc(due)
-            ):
+            expiry = _parse_scheduled_utc(expires_at)
+            if expiry is None or expiry < due:
                 raise ValueError("stored delayed call has invalid expires_at timestamp")
         fingerprint = raw.get("definition_fingerprint")
         if fingerprint is not None and (
@@ -674,13 +677,13 @@ class DelayedToolManager:
                 record = self._records.get(call_id)
                 if record is None or record.status != _PENDING:
                     return
-                due_at = parse_datetime(record.due_at)
+                due_at = _parse_scheduled_utc(record.due_at)
                 if due_at is None:
                     if await self._async_discard(call_id, "invalid due timestamp"):
                         return
                     await asyncio.sleep(_AGENT_RETRY_SECONDS)
                     continue
-                remaining = (dt_util.as_utc(due_at) - dt_util.utcnow()).total_seconds()
+                remaining = (due_at - dt_util.utcnow()).total_seconds()
                 if remaining > 0:
                     # asyncio sleeps against a monotonic clock. Bound the wait
                     # and resample wall time for both forward and backward jumps.
@@ -735,8 +738,8 @@ class DelayedToolManager:
     def _execution_grace_expired(record: DelayedToolCall, now: datetime) -> bool:
         if record.expires_at is None:
             return False
-        expiry = parse_datetime(record.expires_at)
-        return expiry is None or now >= dt_util.as_utc(expiry)
+        expiry = _parse_scheduled_utc(record.expires_at)
+        return expiry is None or now >= expiry
 
     async def _async_execute_due_detached(self, call_id: str) -> bool:
         """Re-authorize a due call against live configuration and execute it once."""
@@ -744,11 +747,11 @@ class DelayedToolManager:
         if record is None or record.status != _PENDING:
             return False
 
-        due_at = parse_datetime(record.due_at)
+        due_at = _parse_scheduled_utc(record.due_at)
         if due_at is None:
             return not await self._async_discard(call_id, "invalid due timestamp")
         now = dt_util.utcnow()
-        if dt_util.as_utc(due_at) > now:
+        if due_at > now:
             return True
         if self._execution_grace_expired(record, now):
             return not await self._async_discard(
@@ -845,9 +848,8 @@ class DelayedToolManager:
                     bind_request_satellite(record.satellite_id),
                 ):
                     exposed_entities = get_exposed_entities(self.hass)
-                    due_at = parse_datetime(record.due_at)
-                    if due_at is not None:
-                        scheduled_utc = dt_util.as_utc(due_at)
+                    scheduled_utc = _parse_scheduled_utc(record.due_at)
+                    if scheduled_utc is not None:
                         lateness = (dt_util.utcnow() - scheduled_utc).total_seconds()
                         if lateness > 300:
                             # Persisted IDs need not be UUIDs. Hash rather than
@@ -909,15 +911,15 @@ class DelayedToolManager:
             if record is None or record.status != _PENDING:
                 return False, False
             now = dt_util.utcnow()
-            due = parse_datetime(record.due_at)
+            due = _parse_scheduled_utc(record.due_at)
             if due is None:
                 raise ValueError("invalid due timestamp")
-            if dt_util.as_utc(due) > now:
+            if due > now:
                 return False, True
             updated = dict(self._records)
             if record.expires_at is not None:
-                expiry = parse_datetime(record.expires_at)
-                if expiry is None or now >= dt_util.as_utc(expiry):
+                expiry = _parse_scheduled_utc(record.expires_at)
+                if expiry is None or now >= expiry:
                     updated.pop(call_id)
                     await self._async_save_records_transactionally(updated)
                     _LOGGER.info(

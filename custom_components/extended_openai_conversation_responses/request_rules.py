@@ -400,6 +400,7 @@ class RequestRules:
         self._initialized = False
         self._retired = False
         self._repair_required = False
+        self._routing_repair_required = False
         self._committed_state: dict[str, Any] | None = None
         self._generation = 0
         self._revision_generation = 0
@@ -445,15 +446,16 @@ class RequestRules:
                 self._require_current_owner()
                 migrated = False
                 self._repair_required = False
+                self._routing_repair_required = False
                 raw_rules: Sequence[Any] = ()
                 if stored is None:
                     pass
                 elif not isinstance(stored, Mapping):
                     _LOGGER.warning(
-                        "Reading malformed Request Rules as empty; original store preserved"
+                        "Request Rules routing unavailable: malformed storage container; "
+                        "original store preserved"
                     )
-                    migrated = True
-                    self._repair_required = True
+                    self._repair_required = self._routing_repair_required = True
                 else:
                     generation = stored.get("revision_generation", 0)
                     if type(generation) is int and generation >= 0:
@@ -506,10 +508,10 @@ class RequestRules:
                         stored_rules, (str, bytes)
                     ):
                         _LOGGER.warning(
-                            "Reading malformed Request Rules list as empty; original store preserved"
+                            "Request Rules routing unavailable: malformed rules list; "
+                            "original store preserved"
                         )
-                        migrated = True
-                        self._repair_required = True
+                        self._repair_required = self._routing_repair_required = True
                     else:
                         if len(stored_rules) > MAX_RULES:
                             _LOGGER.warning(
@@ -589,6 +591,11 @@ class RequestRules:
     def initialized(self) -> bool:
         """Whether the retained manager owns an admitted storage generation."""
         return self._initialized
+
+    @property
+    def routing_available(self) -> bool:
+        """Return whether the saved policy is authoritative for requests."""
+        return self._initialized and not self._routing_repair_required
 
     def revision(self) -> str:
         """Return a revision that also detects a committed A -> B -> A cycle."""
@@ -767,7 +774,6 @@ class RequestRules:
             ]
             self._discard_condition_checkers()
             self._sort_and_compile()
-            self._initialized = True
             await self._async_save_locked(replacing=True)
 
     async def async_set_defaults(
@@ -1443,6 +1449,13 @@ class RequestRules:
         # The counter belongs to the persisted transaction, so a manager reload
         # keeps its revision and committed A -> B -> A changes remain detectable.
         self._revision_generation += 1
+
+        def commit() -> None:
+            self._remember_committed_state()
+            if replacing:
+                self._initialized = not self._retired
+                self._repair_required = self._routing_repair_required = False
+
         await _async_settle_transactional_save(
             self._store.async_save(
                 {
@@ -1455,12 +1468,10 @@ class RequestRules:
                 }
             ),
             self._restore_committed_state,
-            self._remember_committed_state,
+            commit,
             self._async_reconcile_failed_save if reconcile_failure else None,
             self._invalidate_after_unreadable_store,
         )
-        if replacing:
-            self._repair_required = False
         if self._on_change is not None:
             try:
                 self._on_change()
@@ -1474,6 +1485,7 @@ class RequestRules:
         disk_state = RequestRules(self._store)
         await disk_state.async_initialize()
         self._repair_required = disk_state._repair_required
+        self._routing_repair_required = disk_state._routing_repair_required
         if not disk_state._initialized:
             raise RuntimeError("persisted Request Rules could not be initialized")
         disk_snapshot = {
@@ -1510,6 +1522,7 @@ class RequestRules:
             # The candidate, or another validated Store generation, is now the
             # manager's committed baseline, including its durable revision.
             self._remember_committed_state()
+        self._initialized = not self._retired
 
     def _invalidate_after_unreadable_store(self) -> None:
         """Fail closed when the authoritative Request Rules file cannot be read."""
@@ -3243,7 +3256,7 @@ async def async_evaluate_rule(
     entry_data: Mapping[str, Any] | None = None,
 ) -> RuleEvaluation | None:
     """Apply the first eligible rule, which owns local handling or AI handoff."""
-    if isinstance(rules, RequestRules) and not rules.initialized:
+    if isinstance(rules, RequestRules) and not rules.routing_available:
         raise HomeAssistantError(REQUEST_RULES_UNAVAILABLE)
     matching_generation = rules._generation if isinstance(rules, RequestRules) else None
     matching_snapshot = (
@@ -3954,6 +3967,8 @@ async def async_read_committed_request_rules(
             _request_rule_store(hass, entry_id, subentry_id, read_only=True)
         )
         await manager.async_initialize(persist_migrations=False)
+    if not manager.routing_available:
+        raise HomeAssistantError(REQUEST_RULES_UNAVAILABLE)
     committed = manager._committed_state
     assert committed is not None
     return cast(list[dict[str, Any]], deepcopy(committed["rules"]))

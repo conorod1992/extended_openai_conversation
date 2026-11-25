@@ -48,7 +48,7 @@ from ..safety_hardening import (
     _validate_execute_service_request,
     _validate_history_request,
 )
-from ..yaml_serialization import SecretReference, dump_yaml
+from ..yaml_serialization import SecretReference, dump_yaml, validate_yaml_structure
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -209,6 +209,8 @@ class _AutomationYamlSource(StringIO):
 def _parse_automation_config(raw_config: str) -> tuple[dict[str, Any], bool]:
     """Parse exactly one automation and assign an integration-owned unique ID."""
     try:
+        # Bound construction before the specialized loader resolves !secret syntax.
+        validate_yaml_structure(raw_config)
         loader = _AutomationLoader(raw_config)
         try:
             parsed = loader.get_single_data()

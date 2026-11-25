@@ -11,8 +11,8 @@ from .const import CONF_FUNCTION_TOOLS
 from .yaml_serialization import (
     dump_yaml,
     is_yaml_pair_sequence,
+    load_authored_config,
     load_unicode_yaml,
-    load_yaml_or_json,
 )
 
 # Reserved only on the Management wire. A literal mapping with this key is itself
@@ -250,7 +250,7 @@ def decoded_function_fields(config: Any) -> Any:
     if not isinstance(tools, str):
         return config
     try:
-        decoded = load_yaml_or_json(tools)
+        decoded = load_authored_config(tools)
     except yaml.YAMLError:
         return config  # Malformed text is retained only for private recovery.
     if not isinstance(decoded, list):

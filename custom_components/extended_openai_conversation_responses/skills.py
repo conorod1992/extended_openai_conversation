@@ -24,6 +24,7 @@ from .skill_resource_limits import (
     read_bounded_skill_text,
 )
 from .skill_transactions import recover_transactions
+from .yaml_serialization import load_unicode_yaml
 
 _LOGGER = logging.getLogger(__name__)
 _SKILL_MANAGER_INSTANCE_LOCK = (
@@ -74,7 +75,7 @@ class SkillMdParser:
             )
             return None
         try:
-            frontmatter = yaml.safe_load(match.group(1))
+            frontmatter = load_unicode_yaml(match.group(1))
         except yaml.YAMLError as err:
             log_handled_failure(
                 _LOGGER,

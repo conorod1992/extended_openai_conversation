@@ -141,11 +141,11 @@ async def async_setup_debug_ui(hass: HomeAssistant) -> None:
     static_key = f"{setup_key}.static_paths"
     websocket_key = f"{setup_key}.websocket"
 
-    if not hass.data.get(static_key):
-        await async_register_frontend_assets(hass)
-        hass.data[static_key] = True
     if not hass.data.get(websocket_key):
         websocket_api.async_register_command(hass, websocket_request_debug)
         hass.data[websocket_key] = True
+    if not hass.data.get(static_key):
+        await async_register_frontend_assets(hass)
+        hass.data[static_key] = True
 
     hass.data[setup_key] = True

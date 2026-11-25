@@ -126,6 +126,7 @@ from .native_function_schema_migration import (
 )
 from .openai_compat import apply_openai_compatibility
 from .operation_settlement import async_settle_owned_operation
+from .operational_errors import log_handled_failure
 from .prompt_cache import PerformanceOpenAIClientProxy
 from .provider_credentials import setup_provider_credentials_websocket
 from .quiet_hours import async_get_quiet_hours, async_restore_saved_quiet_hours
@@ -213,13 +214,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_restore_saved_quiet_hours(hass)
     apply_openai_compatibility()
     await async_migrate_integration(hass)
-    from .agent_deletion import (
-        async_reconcile_agent_storage,
-        async_setup_agent_deletion,
-    )
+    from .agent_deletion import async_reconcile_with_retry, async_setup_agent_deletion
 
     async_setup_agent_deletion(hass)
-    await async_reconcile_agent_storage(hass)
+    await async_reconcile_with_retry(hass)
     await async_setup_delayed_tools(hass)
     # Resolve any interrupted cross-store restore before conversation agents load.
     await async_recover_pending_restores(hass)
@@ -246,8 +244,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     setup_backup_transfer_websocket(hass)
     # Request Debug loads lazily from Management; register its asset routes
     # before exposing the panel itself.
-    await async_setup_debug_ui(hass)
-    await async_setup_management_ui(hass)
+    for name, setup_ui in (
+        ("Request Debug", async_setup_debug_ui),
+        ("Management", async_setup_management_ui),
+    ):
+        try:
+            await setup_ui(hass)
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER,
+                f"Unable to set up {name}. Check the integration installation and "
+                "reinstall if the bundled frontend files are missing or invalid.",
+                err,
+            )
     return True
 
 
@@ -266,7 +275,7 @@ async def async_setup_entry(
 ) -> bool:
     """Set up Extended OpenAI Conversation (Responses) from a config entry."""
 
-    from .agent_deletion import KNOWN_AGENTS, async_delete_removed_subentries
+    from .agent_deletion import KNOWN_AGENTS, async_reconcile_with_retry
     from .conversation_archive import async_start_archive_retention
     from .provider_errors import provider_authentication_snapshot
     from .usage import async_retry_unused_volatile_usage
@@ -276,7 +285,7 @@ async def async_setup_entry(
     async_start_model_catalog_refresh(hass)
     # Re-enable can follow subentry deletion while the parent was unloaded.
     # Cleanup must not depend on successful provider authentication.
-    await async_delete_removed_subentries(hass, entry)
+    await async_reconcile_with_retry(hass, entry)
     # The integration-wide recovery pass runs on cold setup. A reload must
     # settle its own shared transaction before clients or entities initialize.
     try:
@@ -413,13 +422,8 @@ async def _async_suspend_global_effects(hass: HomeAssistant) -> None:
     """Retire volatile work; managers retain their durable recovery/settings stores."""
     from .intercom import DATA_KEY
 
-    quiet = hass.data.get(DOMAIN, {}).get("quiet_hours_manager")
     try:
-        if quiet is not None:
-            try:
-                await quiet.async_shutdown()
-            finally:
-                hass.data[DOMAIN].pop("quiet_hours_manager", None)
+        await _async_suspend_quiet_hours(hass)
     finally:
         broadcast = hass.data.get(DATA_KEY)
         if broadcast is not None:
@@ -430,13 +434,29 @@ async def _async_suspend_global_effects(hass: HomeAssistant) -> None:
                 hass.data.pop(DATA_KEY, None)
 
 
+async def _async_suspend_quiet_hours(hass: HomeAssistant) -> None:
+    domain_data = hass.data.get(DOMAIN, {})
+    quiet = domain_data.get("quiet_hours_manager")
+    if quiet is None:
+        return
+    try:
+        await quiet.async_shutdown()
+    except Exception as err:
+        log_handled_failure(_LOGGER, "Quiet Hours shutdown deferred", err)
+    finally:
+        domain_data.pop("quiet_hours_manager", None)
+
+
 async def _async_activate_global_effects(hass: HomeAssistant, entry_id: str) -> None:
     async with global_runtime_lock(hass):
         owners = initialize_global_runtime(hass)
         owners.add(entry_id)
         hass.data.pop(f"{DOMAIN}.removed", None)
         try:
-            await async_get_quiet_hours(hass)
+            try:
+                await async_get_quiet_hours(hass)
+            except Exception as err:
+                log_handled_failure(_LOGGER, "Quiet Hours initialization deferred", err)
             await async_setup_intercom_services(hass)
         except BaseException:
             owners.discard(entry_id)
@@ -455,7 +475,7 @@ async def _async_release_global_effects(hass: HomeAssistant, entry_id: str) -> N
 
 async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
-    from .agent_deletion import async_delete_removed_subentries
+    from .agent_deletion import async_reconcile_with_retry
 
     sync_entry_model_lifecycle(hass, entry)
     if is_live_subentry_update():
@@ -463,12 +483,12 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
         # AI Task and sensor runtimes already consume that live object, while each
         # request boundary reconciles optional managers. Reloading here needlessly
         # reauthenticates the provider and rebuilds every platform.
-        await async_delete_removed_subentries(hass, entry)
+        await async_reconcile_with_retry(hass, entry)
         return
 
     async def reload_and_cleanup() -> None:
         await hass.config_entries.async_reload(entry.entry_id)
-        await async_delete_removed_subentries(hass, entry)
+        await async_reconcile_with_retry(hass, entry)
 
     # A reload outlives the entry being replaced. Keep it tracked by HA rather
     # than that unloading entry, including its normal eager dispatch behavior.
@@ -502,13 +522,8 @@ async def _async_remove_global_effects(hass: HomeAssistant) -> None:
     hass.data[f"{DOMAIN}.removed"] = True
     async_stop_archive_retention(hass)
     async_stop_model_catalog_refresh(hass)
-    quiet_hours = hass.data.get(DOMAIN, {}).get("quiet_hours_manager")
     try:
-        if quiet_hours is not None:
-            try:
-                await quiet_hours.async_shutdown()
-            finally:
-                hass.data[DOMAIN].pop("quiet_hours_manager", None)
+        await _async_suspend_quiet_hours(hass)
     finally:
         try:
             intercom = hass.data.get(DATA_KEY)

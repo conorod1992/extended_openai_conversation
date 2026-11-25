@@ -49,7 +49,7 @@ from .memory import async_get_memory, get_memory_mode
 from .operational_errors import log_handled_failure
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
-from .yaml_serialization import load_yaml_or_json
+from .yaml_serialization import load_authored_config
 
 _T = TypeVar("_T")
 _LOGGER = logging.getLogger(__name__)
@@ -669,7 +669,7 @@ def _snapshot_normalized_configuration(
     if validated:
         function_tools = [] if configured is None else configured
         if isinstance(function_tools, str):
-            function_tools = load_yaml_or_json(function_tools) or []
+            function_tools = load_authored_config(function_tools) or []
     else:
         function_tools = validate_function_tools(configured)
     snapshot[CONF_FUNCTION_TOOLS] = function_tools

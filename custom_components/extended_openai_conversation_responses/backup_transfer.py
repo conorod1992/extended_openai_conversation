@@ -19,8 +19,10 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import struct
 import tempfile
 import time
+from traceback import clear_frames
 from typing import IO, Any, cast
 from uuid import uuid4
 import zipfile
@@ -40,11 +42,18 @@ from homeassistant.util import dt as dt_util
 
 from . import backup, transfer
 from .agent_maintenance import get_agent_maintenance_gate
+from .backup_input import (
+    BackupInputLimit,
+    JSONInputBudget,
+    bounded_legacy_json_text,
+    check_json_structure,
+)
 from .bounded_json import JSONBudgetExceeded, check_redaction_budget, iter_bounded_json
 from .const import DOMAIN
 from .ha_schema import websocket_command as ha_websocket_command
 from .operation_settlement import async_settle_owned_operation, async_wait_owned_cleanup
 from .strict_json import has_surrogate
+from .yaml_serialization import SerializedDocumentLimit
 
 WS_BACKUP_TRANSFER = f"{DOMAIN}/management/backup_transfer"
 ARCHIVE_FORMAT = "extended_openai_conversation_backup_archive"
@@ -58,6 +67,11 @@ MAX_BACKUP_UNCOMPRESSED_BYTES = backup.MAX_BACKUP_BYTES
 # larger payload budget for the streaming ZIP loader.
 MAX_LEGACY_JSON_IMPORT_BYTES = 128 * 1024 * 1024
 MAX_BACKUP_ARCHIVE_MEMBERS = 2
+# A central-directory entry can have three variable-size 16-bit fields.
+_CENTRAL_DIRECTORY_HEADER = struct.Struct("<4s24xHHH12x")
+_MAX_CENTRAL_DIRECTORY_BYTES = MAX_BACKUP_ARCHIVE_MEMBERS * (
+    _CENTRAL_DIRECTORY_HEADER.size + 3 * 65535
+)
 MAX_MANIFEST_BYTES = 64 * 1024
 MAX_TRANSFER_SESSIONS = 4
 MAX_TRANSFER_TEMP_BYTES = 512 * 1024 * 1024
@@ -214,8 +228,7 @@ def _snapshot_revision(
             snapshot["usage_revision"] = value.usage_revision
         elif section in selected:
             snapshot.update((name, getattr(value, name)) for name in names)
-    canonical = json.dumps(
-        snapshot,
+    encoder = json.JSONEncoder(
         sort_keys=True,
         default=lambda item: (
             asdict(item)
@@ -224,7 +237,10 @@ def _snapshot_revision(
         ),
         separators=(",", ":"),
     )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256()
+    for fragment in encoder.iterencode(snapshot):
+        digest.update(fragment.encode("utf-8"))
+    return digest.hexdigest()
 
 
 def _forget_preview(hass: HomeAssistant, session: ImportSession) -> None:
@@ -466,7 +482,12 @@ def _redacted_document(snapshot: dict[str, Any]) -> dict[str, Any]:
     from .private_backup import encode_document, is_private_document
 
     if is_private_document(snapshot):
-        return encode_document(snapshot)
+        try:
+            return encode_document(snapshot)
+        except SerializedDocumentLimit:
+            raise backup.BackupError(
+                "The backup configuration or Request Rules exceed the YAML safety limit"
+            ) from None
     if snapshot.get("format") == transfer.TRANSFER_FORMAT:
         return transfer.redact_transfer_document(snapshot)
     return {
@@ -521,6 +542,7 @@ def _build_archive_file(
             "This backup exceeds the uncompressed safety limit"
         ) from err
     document = _redacted_document(snapshot)
+    backup._validate_import_structure(document)
     fd, path = tempfile.mkstemp(
         prefix="extended-openai-backup-", suffix=".zip", dir=staging_dir
     )
@@ -528,6 +550,7 @@ def _build_archive_file(
     try:
         payload_hash = hashlib.sha256()
         payload_bytes = 0
+        budget = JSONInputBudget()
         with _BoundedArchiveFile(io.FileIO(path, "w+")) as archive_file:
             with zipfile.ZipFile(
                 archive_file,
@@ -540,6 +563,7 @@ def _build_archive_file(
                     for encoded in iter_bounded_json(
                         document, MAX_BACKUP_UNCOMPRESSED_BYTES
                     ):
+                        budget.feed(encoded)
                         payload_bytes += len(encoded)
                         payload_hash.update(encoded)
                         payload.write(encoded)
@@ -571,6 +595,9 @@ def _build_archive_file(
         raise backup.BackupError(
             "This backup exceeds the uncompressed safety limit"
         ) from err
+    except BackupInputLimit as err:
+        _remove_file(path)
+        raise backup.BackupError(str(err)) from None
     except BaseException:
         _remove_file(path)
         raise
@@ -758,6 +785,7 @@ class _ArchivePayloadReader:
         self.digest = hashlib.sha256()
         self._tail = b""
         self.has_surrogate_escape = False
+        self._budget = JSONInputBudget()
 
     def read(self, size: int) -> bytes:
         chunk = self.member.read(
@@ -768,6 +796,11 @@ class _ArchivePayloadReader:
             raise backup.BackupError(
                 "The backup archive exceeds the uncompressed safety limit"
             )
+        try:
+            self._budget.feed(chunk)
+        except BackupInputLimit as err:
+            # Stop on admission failure before the native parser sees this chunk.
+            raise backup.BackupError(str(err)) from None
         self.digest.update(chunk)
         if not self.has_surrogate_escape and chunk:
             self.has_surrogate_escape = bool(
@@ -843,6 +876,48 @@ def _load_archive_payload(
     return builder.value
 
 
+def _preflight_archive_index(file_handle: IO[bytes]) -> None:
+    """Check the byte span and actual entries before ZipFile builds its inventory."""
+    # Reuse CPython's bounded end-record reader so ZIP64 and prepended-data
+    # offsets match the subsequent ZipFile read on this same open file.
+    zip_records: Any = zipfile  # The stdlib's private index API is not typed.
+    end_record = zip_records._EndRecData(file_handle)
+    if end_record is None:
+        raise zipfile.BadZipFile("Missing end of central directory")
+    size = end_record[zip_records._ECD_SIZE]
+    directory_end = end_record[zip_records._ECD_LOCATION]
+    if not 0 <= size <= min(directory_end, _MAX_CENTRAL_DIRECTORY_BYTES):
+        raise backup.BackupError(
+            "The backup archive central directory exceeds its safety limit"
+        )
+    if (
+        end_record[zip_records._ECD_ENTRIES_TOTAL] != MAX_BACKUP_ARCHIVE_MEMBERS
+        or end_record[zip_records._ECD_ENTRIES_THIS_DISK] != MAX_BACKUP_ARCHIVE_MEMBERS
+    ):
+        raise backup.BackupError("The backup archive contains unexpected files")
+
+    position = directory_end - size
+    for _ in range(MAX_BACKUP_ARCHIVE_MEMBERS):
+        if directory_end - position < _CENTRAL_DIRECTORY_HEADER.size:
+            raise zipfile.BadZipFile("Truncated central directory")
+        file_handle.seek(position)
+        signature, filename_bytes, extra_bytes, comment_bytes = (
+            _CENTRAL_DIRECTORY_HEADER.unpack(
+                file_handle.read(_CENTRAL_DIRECTORY_HEADER.size)
+            )
+        )
+        if signature != b"PK\x01\x02":
+            raise zipfile.BadZipFile("Invalid central directory")
+        position += (
+            _CENTRAL_DIRECTORY_HEADER.size
+            + filename_bytes
+            + extra_bytes
+            + comment_bytes
+        )
+    if position != directory_end:
+        raise backup.BackupError("The backup archive contains unexpected files")
+
+
 def _load_archive_document(path: str) -> dict[str, Any]:
     try:
         size = os.path.getsize(path)
@@ -851,74 +926,91 @@ def _load_archive_document(path: str) -> dict[str, Any]:
     if size > MAX_BACKUP_ARCHIVE_BYTES:
         raise backup.BackupError("The compressed backup exceeds the safety limit")
     try:
-        archive = zipfile.ZipFile(path, "r")
-    except (zipfile.BadZipFile, OSError) as err:
+        with open(path, "rb") as file_handle:
+            if os.fstat(file_handle.fileno()).st_size > MAX_BACKUP_ARCHIVE_BYTES:
+                raise backup.BackupError(
+                    "The compressed backup exceeds the safety limit"
+                )
+            _preflight_archive_index(file_handle)
+            with zipfile.ZipFile(file_handle, "r") as archive:
+                return _load_open_archive_document(archive)
+    except (
+        zipfile.BadZipFile,
+        OSError,
+        struct.error,
+        UnicodeError,
+        NotImplementedError,
+    ) as err:
         raise backup.BackupError(
             "The backup archive is incomplete or corrupted"
         ) from err
-    with archive:
-        members = archive.infolist()
-        if len(members) != MAX_BACKUP_ARCHIVE_MEMBERS:
-            raise backup.BackupError("The backup archive contains unexpected files")
-        names = [item.filename for item in members]
-        if len(set(names)) != len(names) or set(names) != {PAYLOAD_NAME, MANIFEST_NAME}:
-            raise backup.BackupError("The backup archive contains unexpected files")
-        if any(not _member_is_safe(item) for item in members):
-            raise backup.BackupError("The backup archive contains an unsafe file entry")
-        if any(
-            item.compress_type not in {zipfile.ZIP_DEFLATED, zipfile.ZIP_STORED}
-            for item in members
-        ):
-            raise backup.BackupError("The backup archive uses unsupported compression")
-        manifest_info = archive.getinfo(MANIFEST_NAME)
-        payload_info = archive.getinfo(PAYLOAD_NAME)
-        if manifest_info.file_size > MAX_MANIFEST_BYTES:
-            raise backup.BackupError("The backup archive manifest is too large")
-        if payload_info.file_size > MAX_BACKUP_UNCOMPRESSED_BYTES:
-            raise backup.BackupError(
-                "The backup archive exceeds the uncompressed safety limit"
-            )
-        total_uncompressed = sum(item.file_size for item in members)
-        if total_uncompressed > MAX_BACKUP_UNCOMPRESSED_BYTES + MAX_MANIFEST_BYTES:
-            raise backup.BackupError(
-                "The backup archive exceeds the uncompressed safety limit"
-            )
-        manifest_payload = _read_archive_member_bounded(
-            archive,
-            MANIFEST_NAME,
-            MAX_MANIFEST_BYTES,
-            "The backup archive manifest is too large",
-            "The backup archive manifest is corrupted",
+
+
+def _load_open_archive_document(archive: zipfile.ZipFile) -> dict[str, Any]:
+    """Validate the admitted archive's exact member schema and payload."""
+    members = archive.infolist()
+    if len(members) != MAX_BACKUP_ARCHIVE_MEMBERS:
+        raise backup.BackupError("The backup archive contains unexpected files")
+    names = [item.filename for item in members]
+    if len(set(names)) != len(names) or set(names) != {PAYLOAD_NAME, MANIFEST_NAME}:
+        raise backup.BackupError("The backup archive contains unexpected files")
+    if any(not _member_is_safe(item) for item in members):
+        raise backup.BackupError("The backup archive contains an unsafe file entry")
+    if any(
+        item.compress_type not in {zipfile.ZIP_DEFLATED, zipfile.ZIP_STORED}
+        for item in members
+    ):
+        raise backup.BackupError("The backup archive uses unsupported compression")
+    manifest_info = archive.getinfo(MANIFEST_NAME)
+    payload_info = archive.getinfo(PAYLOAD_NAME)
+    if manifest_info.file_size > MAX_MANIFEST_BYTES:
+        raise backup.BackupError("The backup archive manifest is too large")
+    if payload_info.file_size > MAX_BACKUP_UNCOMPRESSED_BYTES:
+        raise backup.BackupError(
+            "The backup archive exceeds the uncompressed safety limit"
         )
-        try:
-            manifest = json.loads(manifest_payload)
-        except (UnicodeDecodeError, json.JSONDecodeError) as err:
-            raise backup.BackupError("The backup archive manifest is invalid") from err
-        if not isinstance(manifest, dict) or set(manifest) != {
-            "format",
-            "version",
-            "payload",
-            "payload_bytes",
-            "payload_sha256",
-        }:
-            raise backup.BackupError("The backup archive manifest is invalid")
-        backup._validate_import_unicode(manifest)
-        payload_bytes = manifest.get("payload_bytes")
-        payload_sha256 = manifest.get("payload_sha256")
-        if (
-            manifest.get("format") != ARCHIVE_FORMAT
-            or manifest.get("version") != ARCHIVE_VERSION
-            or manifest.get("payload") != PAYLOAD_NAME
-            or isinstance(payload_bytes, bool)
-            or not isinstance(payload_bytes, int)
-            or payload_bytes < 1
-            or payload_bytes > MAX_BACKUP_UNCOMPRESSED_BYTES
-            or payload_info.file_size != payload_bytes
-            or not isinstance(payload_sha256, str)
-            or _HEX_SHA256.fullmatch(payload_sha256) is None
-        ):
-            raise backup.BackupError("The backup archive manifest is invalid")
-        document = _load_archive_payload(archive, payload_bytes, payload_sha256)
+    total_uncompressed = sum(item.file_size for item in members)
+    if total_uncompressed > MAX_BACKUP_UNCOMPRESSED_BYTES + MAX_MANIFEST_BYTES:
+        raise backup.BackupError(
+            "The backup archive exceeds the uncompressed safety limit"
+        )
+    manifest_payload = _read_archive_member_bounded(
+        archive,
+        MANIFEST_NAME,
+        MAX_MANIFEST_BYTES,
+        "The backup archive manifest is too large",
+        "The backup archive manifest is corrupted",
+    )
+    try:
+        check_json_structure(manifest_payload)
+        manifest = json.loads(manifest_payload)
+    except ValueError, RecursionError:
+        raise backup.BackupError("The backup archive manifest is invalid") from None
+    if not isinstance(manifest, dict) or set(manifest) != {
+        "format",
+        "version",
+        "payload",
+        "payload_bytes",
+        "payload_sha256",
+    }:
+        raise backup.BackupError("The backup archive manifest is invalid")
+    backup._validate_import_unicode(manifest)
+    payload_bytes = manifest.get("payload_bytes")
+    payload_sha256 = manifest.get("payload_sha256")
+    if (
+        manifest.get("format") != ARCHIVE_FORMAT
+        or manifest.get("version") != ARCHIVE_VERSION
+        or manifest.get("payload") != PAYLOAD_NAME
+        or isinstance(payload_bytes, bool)
+        or not isinstance(payload_bytes, int)
+        or payload_bytes < 1
+        or payload_bytes > MAX_BACKUP_UNCOMPRESSED_BYTES
+        or payload_info.file_size != payload_bytes
+        or not isinstance(payload_sha256, str)
+        or _HEX_SHA256.fullmatch(payload_sha256) is None
+    ):
+        raise backup.BackupError("The backup archive manifest is invalid")
+    document = _load_archive_payload(archive, payload_bytes, payload_sha256)
     if not isinstance(document, dict):
         raise backup.BackupError("The backup archive payload is invalid")
     return document
@@ -942,9 +1034,14 @@ def _load_legacy_json_document(path: str) -> dict[str, Any]:
             "The JSON backup exceeds the uncompressed safety limit"
         )
     try:
-        document = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as err:
-        raise backup.BackupError("The JSON backup is incomplete or corrupted") from err
+        text = bounded_legacy_json_text(payload, MAX_LEGACY_JSON_IMPORT_BYTES)
+        del payload
+        document = json.loads(text)
+        del text
+    except BackupInputLimit as err:
+        raise backup.BackupError(str(err)) from None
+    except ValueError, RecursionError:
+        raise backup.BackupError("The JSON backup is incomplete or corrupted") from None
     backup._validate_import_unicode(document)
     if not isinstance(document, dict):
         raise backup.BackupError(
@@ -989,7 +1086,12 @@ async def _async_load_prepared_restore(
 
 
 async def _async_prepare_import(
-    hass: HomeAssistant, session: ImportSession, sections: Any, *, inspect_only: bool
+    hass: HomeAssistant,
+    session: ImportSession,
+    sections: Any,
+    *,
+    inspect_only: bool,
+    permit: backup.BackupImportPermit,
 ) -> transfer.PreparedTransfer:
     """Reuse one session-owned read/validation task across timed-out callers."""
     section_key = None
@@ -1033,6 +1135,7 @@ async def _async_prepare_import(
                     pending.reader = None
 
             task.add_done_callback(release)
+            permit.retain_until(task)
             session.preparation = task
             session.preparation_key = key
     return await asyncio.shield(task)
@@ -1335,6 +1438,24 @@ def _completed_import(
     return session
 
 
+def _release_inspection_traceback(error: BaseException) -> None:
+    """A retained timed-out result owns diagnostics, not decoded frame locals."""
+    failures = [error]
+    seen: set[int] = set()
+    while failures:
+        failure = failures.pop()
+        if id(failure) in seen:
+            continue
+        seen.add(id(failure))
+        if failure.__traceback__ is not None:
+            clear_frames(failure.__traceback__)
+        for cause in (failure.__context__, failure.__cause__):
+            if cause is not None:
+                failures.append(cause)
+        if isinstance(failure, BaseExceptionGroup):
+            failures.extend(failure.exceptions)
+
+
 async def _inspect_import(
     hass: HomeAssistant,
     entry_id: str,
@@ -1355,7 +1476,9 @@ async def _inspect_import(
         def release(completed: asyncio.Task[dict[str, Any]]) -> None:
             session.inspection_tasks.discard(completed)
             if not completed.cancelled():
-                completed.exception()
+                error = completed.exception()
+                if error is not None:
+                    _release_inspection_traceback(error)
 
         task.add_done_callback(release)
 
@@ -1375,11 +1498,21 @@ async def _inspect_import(
 async def _inspect_import_owned(
     hass: HomeAssistant, session: ImportSession, data: dict[str, Any]
 ) -> dict[str, Any]:
+    async with backup.async_backup_import_admission(hass) as permit:
+        return await _inspect_import_admitted(hass, session, data, permit)
+
+
+async def _inspect_import_admitted(
+    hass: HomeAssistant,
+    session: ImportSession,
+    data: dict[str, Any],
+    permit: backup.BackupImportPermit,
+) -> dict[str, Any]:
     """Hold inspection locks only for the lifetime of this session-owned task."""
     entry_id, subentry_id = session.entry_id, session.subentry_id
     inspect_only = data.get("inspect_only") is True
     prepared = await _async_prepare_import(
-        hass, session, data.get("sections"), inspect_only=inspect_only
+        hass, session, data.get("sections"), inspect_only=inspect_only, permit=permit
     )
     if inspect_only:
         async with session.lock:
@@ -1546,6 +1679,17 @@ async def _restore_import(
     subentry: Any,
     data: dict[str, Any],
 ) -> dict[str, Any]:
+    async with backup.async_backup_import_admission(hass) as permit:
+        return await _restore_import_admitted(hass, entry, subentry, data, permit)
+
+
+async def _restore_import_admitted(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    data: dict[str, Any],
+    permit: backup.BackupImportPermit,
+) -> dict[str, Any]:
     await _async_cleanup_expired(hass)
     session = _completed_import(
         hass, data.get("session_id"), entry.entry_id, subentry.subentry_id
@@ -1562,7 +1706,7 @@ async def _restore_import(
         archive_retention_at = session.preview_archive_retention_at
         resolved_user_mappings = dict(session.preview_user_scope_mappings or ())
     prepared = await _async_prepare_import(
-        hass, session, selected_sections, inspect_only=False
+        hass, session, selected_sections, inspect_only=False, permit=permit
     )
     async with session.lock:
         if _imports(hass).get(session.session_id) is not session:

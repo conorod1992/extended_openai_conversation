@@ -18,7 +18,7 @@ Choose an export type according to what you need:
 
 Exports use saved configuration. Save any draft settings first if you want them included.
 
-Private ZIP backups are limited to 160 MiB compressed and 320 MiB uncompressed. Legacy plain JSON imports are limited to 128 MiB. If a Full Backup exceeds a limit, export smaller groups of sections with Custom.
+Private ZIP backups are limited to 160 MiB compressed and 320 MiB uncompressed. Legacy plain JSON imports are limited to 128 MiB of file data and 128 MiB of decoded source text. Imports also limit decoded document size, nesting, and individual values. If a Full Backup exceeds a limit, export smaller groups of sections with Custom.
 
 Backup inspection and Configuration import reject malformed Unicode in JSON and YAML fields. Valid Unicode, including a matched high and low surrogate written as escapes, is accepted.
 
@@ -59,6 +59,8 @@ Validation checks the combined destination configuration, including Request Rule
 
 Every selected section replaces the agent's corresponding saved data rather than merging the backup with what is already there. Private Request Rules are restored with their saved global order and groups. Some legacy Shareable Setup files contain an empty Request Rules section. Deselect it to keep the destination's rules. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
 
+Home Assistant processes one backup preview or restore at a time across all assistants. If another import is busy, wait for it to finish and retry. Large Conversation Archive restores stream the private recovery journal to disk, then write and verify transcript history one monthly file at a time. The journal contains both the previous and incoming Archive data. Its atomic commit can briefly require space for two copies of the journal, in addition to the transcript files. Validating the upload and keeping the active Archive available still require RAM.
+
 Restore is designed to avoid leaving only half of the backup applied. If saving the restored data fails part-way through, Extended OpenAI attempts to return the agent to the state it had before the restore began.
 
 Delayed Function Tools are paused behind the same restore operation, so a due action is not deliberately run while the agent's configuration or restrictions are only partly restored.
@@ -70,6 +72,8 @@ The shared provider connection is updated separately after the agent restore. Ex
 ## Interrupted restore or uncertain result
 
 The integration keeps a private local recovery record for configuration and the data stores the restore can change. If Home Assistant stops during the operation, startup uses the saved decision to recover the previous state or finish the committed restore. If recovery cannot finish, the affected assistant remains blocked rather than processing requests with partly restored state.
+
+An unreadable recovery journal can hide whether the restore changed shared provider credentials. The affected provider stays unavailable until recovery can establish the journal's scope or verify its absence. Assistants on other providers can continue to load.
 
 If the panel reports **Restore recovery is pending** or that completion is pending, restart Home Assistant as directed and resolve any reported storage problem before trying another restore. Keep the recovery files intact. If the browser loses the result and reports **Restore outcome is unknown**, refresh the agent's saved state before deciding whether another restore is needed; losing the response does not prove that nothing changed.
 

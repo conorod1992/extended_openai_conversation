@@ -28,6 +28,7 @@ from .agent_config import (
     validate_agent_title,
     validate_serialized_configuration_unicode,
 )
+from .backup_input import BackupInputLimit, check_json_structure
 from .bounded_json import JSONBudgetExceeded, check_utf8_budget
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
@@ -1136,25 +1137,35 @@ def _decode_transfer_input(value: Any) -> Mapping[str, Any]:
         except UnicodeError as err:
             raise backup.BackupError("The transfer contains malformed Unicode") from err
         try:
+            check_json_structure(value)
             value = json.loads(value)
-        except json.JSONDecodeError as err:
-            raise backup.BackupError("The transfer is not valid JSON") from err
+        except BackupInputLimit as err:
+            raise backup.BackupError(str(err)) from None
+        except ValueError, RecursionError:
+            raise backup.BackupError("The transfer is not valid JSON") from None
     if not isinstance(value, Mapping):
         raise backup.BackupError(
             "This file is not an Extended OpenAI Conversation transfer"
         )
     if value.get("format") == backup.BACKUP_FORMAT:
         return backup._decode_backup_document(value, backup.MAX_BACKUP_BYTES)
-    return _validate_decoded_transfer_unicode(
-        value if is_private_document(value) else dict(value)
-    )
+    return _validate_decoded_transfer_input(value)
 
 
-def _validate_decoded_transfer_unicode(value: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Validate Unicode before handing a decoded transfer to HA schema checks."""
+def _validate_decoded_transfer_input(value: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Bound and validate a decoded transfer before HA schema checks."""
+    backup._validate_import_structure(value)
     backup._validate_import_unicode(value)
     if is_private_document(value):
-        value = decode_document(value)
+        try:
+            decoded = decode_document(value)
+        except ValueError, TypeError, KeyError, yaml.YAMLError:
+            raise backup.BackupError("The private backup encoding is invalid") from None
+        if decoded is not value:
+            backup._validate_import_structure(decoded)
+        value = decoded
+    elif not isinstance(value, dict):
+        value = dict(value)
     if value.get("format") == backup.BACKUP_FORMAT:
         backup._validate_backup_configuration_unicode(value)
     else:
@@ -1191,7 +1202,7 @@ async def async_inspect_decoded_transfer(
     inspect_only: bool = False,
 ) -> PreparedTransfer:
     """Validate HA schemas on-loop, but bulk data categories in a worker."""
-    document = await asyncio.to_thread(_validate_decoded_transfer_unicode, value)
+    document = await asyncio.to_thread(_validate_decoded_transfer_input, value)
     return await _async_inspect_validated_transfer(
         document, target_agent_id, sections=sections, inspect_only=inspect_only
     )

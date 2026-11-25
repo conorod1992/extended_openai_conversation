@@ -199,7 +199,14 @@ from .local_intents import (
 )
 from .memory import get_memory_mode
 from .skill_availability import preserves_skill_loader_availability, skill_loader_status
-from .yaml_serialization import InvalidSerializedUnicode, dump_yaml, load_yaml_or_json
+from .yaml_serialization import (
+    InvalidSerializedUnicode,
+    cacheable_authored_config,
+    dump_yaml,
+    load_authored_config,
+    load_unicode_yaml,
+    validate_yaml_structure,
+)
 
 CONF_GUEST_WEB_SEARCH = "guest_web_search"
 DEFAULT_GUEST_WEB_SEARCH = False
@@ -234,7 +241,16 @@ def validate_agent_title(value: Any, *, default: str | None = None) -> str:
 
 def _tools_yaml(value: Any) -> str:
     tools = validate_function_tools(value)
-    return dump_yaml(tools, sort_keys=False)
+    return require_persistable_function_yaml(dump_yaml(tools, sort_keys=False))
+
+
+def require_persistable_function_yaml(source: str) -> str:
+    """Admit new Function YAML with the same limits that runtime reads use."""
+    try:
+        validate_yaml_structure(source)
+    except yaml.YAMLError as err:
+        raise AgentConfigError(CONF_FUNCTION_TOOLS, f"invalid YAML: {err}") from err
+    return source
 
 
 AGENT_CONFIG_DEFAULTS = MappingProxyType(
@@ -549,7 +565,7 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
     """Parse and validate function tools without executing them."""
     if isinstance(value, str):
         try:
-            value = load_yaml_or_json(value)
+            value = load_authored_config(value)
         except yaml.YAMLError as err:
             raise AgentConfigError(CONF_FUNCTION_TOOLS, f"invalid YAML: {err}") from err
     if value is None:
@@ -678,7 +694,16 @@ def function_tool_enabled(tool: dict[str, Any]) -> bool:
 @lru_cache(maxsize=64)
 def _decoded_function_tools(raw_yaml: str) -> Any:
     """Cache pure decoding separately from HA-aware validation/hydration."""
-    return load_yaml_or_json(raw_yaml)
+    return load_authored_config(raw_yaml)
+
+
+_last_large_function_document = lru_cache(maxsize=1)(load_authored_config)
+
+
+def _decode_function_document(raw: str) -> Any:
+    if cacheable_authored_config(raw):
+        return _decoded_function_tools(raw)
+    return _last_large_function_document(raw)
 
 
 async def async_prepare_runtime_function_tools(
@@ -689,7 +714,7 @@ async def async_prepare_runtime_function_tools(
     if isinstance(raw, str) and raw:
         # Keep malformed saved YAML on the existing quarantine/error path.
         with suppress(yaml.YAMLError):
-            await hass.async_add_executor_job(_decoded_function_tools, raw)
+            await hass.async_add_executor_job(_decode_function_document, raw)
 
 
 def parse_configured_function_tools(data: Mapping[str, Any]) -> Any:
@@ -698,7 +723,7 @@ def parse_configured_function_tools(data: Mapping[str, Any]) -> Any:
     if not configured:
         return deepcopy(DEFAULT_CONF_FUNCTION_TOOLS)
     return (
-        deepcopy(_decoded_function_tools(configured))
+        deepcopy(_decode_function_document(configured))
         if isinstance(configured, str)
         else deepcopy(configured)
     )
@@ -713,7 +738,7 @@ def validate_serialized_configuration_unicode(config: Any) -> None:
         if not isinstance(raw, str) or ("\\u" not in raw and "\\U" not in raw):
             continue
         try:
-            load_yaml_or_json(raw)
+            load_authored_config(raw)
         except InvalidSerializedUnicode:
             raise
         except yaml.YAMLError, ValueError:
@@ -867,7 +892,7 @@ def validate_single_function_tool(value: Any) -> dict[str, Any]:
     """Parse and validate one function tool from a clean editor document."""
     if isinstance(value, str):
         try:
-            value = load_yaml_or_json(value)
+            value = load_authored_config(value)
         except yaml.YAMLError as err:
             raise AgentConfigError(CONF_FUNCTION_TOOLS, f"invalid YAML: {err}") from err
     if isinstance(value, list):
@@ -1427,7 +1452,9 @@ def normalize_agent_config(
     elif CONF_FUNCTION_TOOLS in data and (
         validated_functions is None or not isinstance(data[CONF_FUNCTION_TOOLS], str)
     ):
-        result[CONF_FUNCTION_TOOLS] = dump_yaml(function_tools, sort_keys=False)
+        result[CONF_FUNCTION_TOOLS] = require_persistable_function_yaml(
+            dump_yaml(function_tools, sort_keys=False)
+        )
     result[CONF_SPEECH_REGEX_REPLACEMENTS] = validate_speech_regex_replacements(
         result.get(CONF_SPEECH_REGEX_REPLACEMENTS, [])
     )
@@ -1483,7 +1510,7 @@ def merge_agent_config(
         # falsy/default semantics to an explicitly empty submitted collection.
         candidate_tools = normalized[CONF_FUNCTION_TOOLS]
         if isinstance(candidate_tools, str):
-            candidate_tools = _decoded_function_tools(candidate_tools)
+            candidate_tools = _decode_function_document(candidate_tools)
         after = skill_loader_status(
             normalized[CONF_SKILLS],
             candidate_tools or [],
@@ -1638,11 +1665,23 @@ def _cached_configured_tools(raw_yaml: str | None) -> tuple[dict[str, Any], ...]
     return tuple(_configured_function_tools_from_data(data))
 
 
+_last_large_configured_tools = lru_cache(maxsize=1)(
+    _cached_configured_tools.__wrapped__
+)
+
+
+def _validated_tools_for_data(data: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    raw = _configured_tools_yaml(data)
+    if cacheable_authored_config(raw):
+        return _cached_configured_tools(raw)
+    return _last_large_configured_tools(raw)
+
+
 def configured_function_tool_metadata_from_data(
     data: Mapping[str, Any],
 ) -> dict[str, int]:
     """Return immutable-style metadata without copying hydrated runtime configs."""
-    tools = _cached_configured_tools(_configured_tools_yaml(data))
+    tools = _validated_tools_for_data(data)
     return {
         "usable_count": len(tools),
         "enabled_count": sum(function_tool_enabled(tool) for tool in tools),
@@ -1660,9 +1699,7 @@ def configured_function_tools_from_data(
     # objects hydrated; their normal deepcopy is intentionally the persistence form.
     return cast(
         list[dict[str, Any]],
-        copy_runtime_function_config(
-            list(_cached_configured_tools(_configured_tools_yaml(data)))
-        ),
+        copy_runtime_function_config(list(_validated_tools_for_data(data))),
     )
 
 
@@ -1675,7 +1712,10 @@ def _cached_function_groups(
     groups_yaml: str,
     tool_names: tuple[str, ...],
 ) -> tuple[dict[str, Any], ...]:
-    groups = yaml.safe_load(groups_yaml)
+    try:
+        groups = load_unicode_yaml(groups_yaml)
+    except yaml.YAMLError as err:
+        raise AgentConfigError(CONF_FUNCTION_GROUPS, f"invalid YAML: {err}") from err
     synthetic_tools = [{"spec": {"name": name}} for name in tool_names]
     return tuple(_validate_function_groups(groups, synthetic_tools))
 
@@ -1696,4 +1736,6 @@ def validate_function_groups(
     except Exception:
         # Preserve the existing validation/error path for malformed unexpected data.
         return _validate_function_groups(value, function_tools)
-    return deepcopy(list(_cached_function_groups(groups_yaml, tool_names)))
+    if len(tool_names) <= 256 and cacheable_authored_config(groups_yaml):
+        return deepcopy(list(_cached_function_groups(groups_yaml, tool_names)))
+    return list(_cached_function_groups.__wrapped__(groups_yaml, tool_names))

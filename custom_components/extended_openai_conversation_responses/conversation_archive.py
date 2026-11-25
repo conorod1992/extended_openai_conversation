@@ -35,6 +35,7 @@ from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
+from .restore_disk import RESTORE_STAGING_SUFFIX, write_verified_store
 from .retrieval_text import (
     _stem as _shared_stem,
     word_character_projection,
@@ -324,7 +325,9 @@ class ArchiveStorage(Protocol):
     ) -> None: ...
 
 
-def _stored_archive_partitions(metadata_path: str, prefix: str) -> set[str]:
+def _stored_archive_partitions(
+    metadata_path: str, prefix: str, *, include_restore_staging: bool = False
+) -> set[str]:
     """Inventory exact owned monthly files when damaged metadata lost its index."""
     stem = prefix + ".turns."
     result: set[str] = set()
@@ -332,6 +335,8 @@ def _stored_archive_partitions(metadata_path: str, prefix: str) -> set[str]:
         if not path.name.startswith(stem):
             continue
         month = path.name[len(stem) :]
+        if include_restore_staging:
+            month = month.removesuffix(RESTORE_STAGING_SUFFIX)
         if re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", month) and stat.S_ISREG(
             path.stat(follow_symlinks=False).st_mode
         ):
@@ -386,6 +391,11 @@ class _ArchiveMetadataStore(PropagatingWriteStore):
         if self.migration_deferred:
             raise OSError("Archive metadata must be upgraded before changing history")
 
+    def require_restore_write(self) -> None:
+        self.require_migrated()
+        if self._read_only or self._load_empty or self.corruption_unavailable:
+            raise OSError("Archive metadata is unavailable for restore writes")
+
 
 class HomeAssistantArchiveStorage:
     """Small metadata store plus independent monthly transcript stores."""
@@ -428,6 +438,48 @@ class HomeAssistantArchiveStorage:
     async def async_save_partition(self, partition: str, data: dict[str, Any]) -> None:
         self._metadata.require_migrated()
         await self._partition_store(partition).async_save(data)
+
+    async def async_write_restore_partitions(
+        self,
+        turns: dict[str, list[ArchiveTurn]],
+        previous: set[str],
+    ) -> set[str]:
+        """Apply a verified outer journal with one native Store file at a time."""
+        gate = get_agent_maintenance_gate(self._hass, *self._agent_identity)
+        if not gate.owns_exclusive():
+            raise RuntimeError("Archive restore requires exclusive maintenance")
+        gate.require_available()
+        self._metadata.require_restore_write()
+
+        def partition_turns() -> dict[str, list[ArchiveTurn]]:
+            result: dict[str, list[ArchiveTurn]] = defaultdict(list)
+            for session_turns in turns.values():
+                for turn in session_turns:
+                    if turn.sequence is not None and turn.sequence >= 2**64:
+                        # HA's native JSON reader would turn this integer into a float.
+                        raise ValueError("Archive turn sequence exceeds the storage limit")
+                    result[turn.timestamp[:7]].append(turn)
+            return result
+
+        by_partition = await asyncio.to_thread(partition_turns)
+        # A crash may have left a new month on disk before it was indexed.
+        existing = await asyncio.to_thread(
+            _stored_archive_partitions,
+            self._metadata.path,
+            self._prefix,
+            include_restore_staging=True,
+        )
+        for month in sorted(previous | existing | by_partition.keys()):
+            store = self._partition_store(month)
+
+            def write(month: str = month, store: Store[dict[str, Any]] = store) -> None:
+                payload = {
+                    "turns": [_turn_payload(turn) for turn in by_partition.get(month, [])]
+                }
+                write_verified_store(store, payload, max_bytes=321 * 1024 * 1024)
+
+            await self._hass.async_add_executor_job(write)
+        return (previous | existing) - by_partition.keys()
 
     async def async_remove_partition(self, partition: str) -> None:
         """Remove an obsolete monthly transcript store."""
@@ -1811,6 +1863,7 @@ class ConversationArchive:
         turns: list[ArchiveTurn],
         *,
         active: dict[str, str] | None = None,
+        disk_backed: bool = False,
     ) -> None:
         """Replace durable archive data through the same restart-safe journal."""
         sessions, turns = await asyncio.to_thread(
@@ -1826,7 +1879,8 @@ class ConversationArchive:
             else {}
         )
         async with self._lock:
-            self._ensure_initialized()
+            if not disk_backed:
+                self._ensure_initialized()
             session_map = {
                 session.session_id: replace(session, title="")
                 if session.retention_state == "private"
@@ -1845,6 +1899,11 @@ class ConversationArchive:
                 session_map[session_id] = prior
                 bindings[key] = session_id
             turn_map = _replacement_turn_map(turns)
+            if disk_backed and isinstance(self._storage, HomeAssistantArchiveStorage):
+                await self._async_replace_from_outer_journal(
+                    session_map, dict(turn_map), bindings
+                )
+                return
             new_partitions = {turn.timestamp[:7] for turn in turns}
             await self._async_commit_state_locked(
                 sessions=session_map,
@@ -1853,6 +1912,50 @@ class ConversationArchive:
                 changed_partitions=set(self._partitions) | new_partitions,
                 replacing=True,
             )
+
+    async def _async_replace_from_outer_journal(
+        self,
+        sessions: dict[str, ArchiveSession],
+        turns: dict[str, list[ArchiveTurn]],
+        active: dict[str, str],
+    ) -> None:
+        """Keep partition data out of the Archive's nested metadata journal."""
+        storage = self._storage
+        assert isinstance(storage, HomeAssistantArchiveStorage)
+        if not self._initialized:
+            try:
+                self._durable_metadata = await storage.async_load_metadata()
+            except StorageRepairRequired:
+                # The outer journal has validated both Archive generations.
+                # A fresh writer can replace rejected metadata during recovery.
+                storage = HomeAssistantArchiveStorage(
+                    storage._hass, *storage._agent_identity
+                )
+                self._storage = storage
+        partitions, _, metadata, latest = await asyncio.to_thread(
+            self._prepare_commit_payloads, sessions, active, turns, set(), set()
+        )
+        obsolete = await storage.async_write_restore_partitions(
+            turns, self._partitions | self._pending_partitions
+        )
+
+        def publish() -> None:
+            self._sessions = sessions
+            self._turns = defaultdict(list, turns)
+            self._latest_turn_at = latest
+            self._active = active
+            self._partitions = partitions
+            self._pending_partitions.clear()
+            self._expired_pending_prune.clear()
+            self._repair_required = False
+            self._initialized = True
+
+        await self._async_commit_metadata(metadata, publish, record_execution=True)
+        for month in sorted(obsolete):
+            try:
+                await storage.async_remove_partition(month)
+            except OSError:
+                _LOGGER.warning("Unable to remove obsolete conversation archive partition %s", month)
 
     def _require_session(self, session_id: str) -> ArchiveSession:
         session = self._sessions.get(session_id)
@@ -2225,32 +2328,41 @@ async def async_get_archive(
     async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared(
         maintenance=True
     ):
-        managers: dict[tuple[str, str], ConversationArchive] = hass.data.setdefault(
-            _ARCHIVE_MANAGERS, {}
-        )
-        key = (entry_id, subentry_id)
-        if key not in managers:
+        manager = archive_manager(hass, entry_id, subentry_id)
+        await manager.async_initialize()
+        return manager
 
-            def retention_days() -> int | None:
-                from .agent_config import normalized_agent_integer
 
-                entry = hass.config_entries.async_get_entry(entry_id)
-                subentry = entry.subentries.get(subentry_id) if entry else None
-                if subentry is None or not isinstance(subentry.data, Mapping):
-                    return None
-                return normalized_agent_integer(
-                    subentry.data,
-                    CONF_ARCHIVE_RETENTION_DAYS,
-                    DEFAULT_ARCHIVE_RETENTION_DAYS,
-                )
+def archive_manager(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> ConversationArchive:
+    """Get the manager without loading possibly half-restored partitions."""
+    get_agent_maintenance_gate(hass, entry_id, subentry_id).require_available()
+    managers: dict[tuple[str, str], ConversationArchive] = hass.data.setdefault(
+        _ARCHIVE_MANAGERS, {}
+    )
+    key = (entry_id, subentry_id)
+    if key not in managers:
 
-            managers[key] = ConversationArchive(
-                HomeAssistantArchiveStorage(hass, entry_id, subentry_id),
-                subentry_id,
-                retention_days=retention_days,
+        def retention_days() -> int | None:
+            from .agent_config import normalized_agent_integer
+
+            entry = hass.config_entries.async_get_entry(entry_id)
+            subentry = entry.subentries.get(subentry_id) if entry else None
+            if subentry is None or not isinstance(subentry.data, Mapping):
+                return None
+            return normalized_agent_integer(
+                subentry.data,
+                CONF_ARCHIVE_RETENTION_DAYS,
+                DEFAULT_ARCHIVE_RETENTION_DAYS,
             )
-        await managers[key].async_initialize()
-        return managers[key]
+
+        managers[key] = ConversationArchive(
+            HomeAssistantArchiveStorage(hass, entry_id, subentry_id),
+            subentry_id,
+            retention_days=retention_days,
+        )
+    return managers[key]
 
 
 def archive_tools() -> list[dict[str, Any]]:

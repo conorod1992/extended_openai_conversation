@@ -8,14 +8,21 @@ from typing import Any
 
 import yaml
 
-from .bounded_json import check_redaction_budget, check_utf8_budget
+from .bounded_json import check_redaction_budget
 from .strict_json import check_document_unicode
-from .yaml_serialization import load_unicode_yaml
+from .yaml_serialization import YamlLimits, load_unicode_yaml, validate_yaml_structure
 
 PRIVATE_BACKUP_VERSION = 6
 PRIVATE_TRANSFER_VERSION = 3
 _ENCODING = "yaml-safe-v1"
 _LIMIT = 128 * 1024 * 1024
+# These fields can contain a complete Request Rules collection. They get a
+# separate composition budget; the archive and other sections keep their limits.
+_FIELD_LIMITS = YamlLimits(
+    max_source_bytes=8 * 1024 * 1024,
+    max_nodes=125_000,
+    max_expanded_nodes=250_000,
+)
 
 
 class DecodedPrivateDocument(dict[str, Any]):
@@ -26,7 +33,7 @@ def encode_field(value: Any) -> dict[str, Any]:
     check_redaction_budget(value, _LIMIT)
     # Escape Unicode line separators: YAML otherwise folds NEL into spaces.
     content = yaml.safe_dump(value, sort_keys=False, allow_unicode=False)
-    check_utf8_budget(content, _LIMIT)
+    validate_yaml_structure(content, limits=_FIELD_LIMITS)
     return {"encoding": _ENCODING, "content": content}
 
 
@@ -35,8 +42,7 @@ def decode_field(value: Any) -> Any:
         raise ValueError("Invalid private field encoding")
     if value["encoding"] != _ENCODING or not isinstance(value["content"], str):
         raise ValueError("Unsupported private field encoding")
-    check_utf8_budget(value["content"], _LIMIT)
-    decoded = load_unicode_yaml(value["content"])
+    decoded = load_unicode_yaml(value["content"], limits=_FIELD_LIMITS)
     check_redaction_budget(decoded, _LIMIT)
     check_document_unicode(decoded)
     return decoded

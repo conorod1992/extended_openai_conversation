@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Final
@@ -10,8 +11,10 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
+from .operation_settlement import async_settle_owned_operation
 
 _FRONTEND_ASSET_SETUP: Final = f"{DOMAIN}.frontend_asset_setup"
+_FRONTEND_ASSET_LOCK: Final = f"{DOMAIN}.frontend_asset_lock"
 _FRONTEND_ENTRY_URLS: Final = f"{DOMAIN}.frontend_entry_urls"
 _PRODUCTION_DIR: Final = Path(__file__).parent / "frontend" / "dist"
 _MANIFEST_PATH: Final = _PRODUCTION_DIR / "manifest.json"
@@ -22,7 +25,7 @@ def _load_entry_urls_sync() -> dict[str, str]:
     """Load and validate Vite entry URLs off the Home Assistant event loop."""
     try:
         data = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as err:
+    except (OSError, UnicodeError, json.JSONDecodeError) as err:
         raise RuntimeError("Production frontend manifest is unavailable") from err
     if not isinstance(data, dict):
         raise RuntimeError("Production frontend manifest is invalid")
@@ -63,15 +66,22 @@ async def async_register_frontend_assets(hass: HomeAssistant) -> None:
     if hass.data.get(_FRONTEND_ASSET_SETUP):
         return
 
-    entry_urls = await hass.async_add_executor_job(_load_entry_urls_sync)
-    await hass.http.async_register_static_paths(
-        [
-            StaticPathConfig(
-                _ASSET_URL_PREFIX,
-                str(_PRODUCTION_DIR),
-                cache_headers=True,
+    async with hass.data.setdefault(_FRONTEND_ASSET_LOCK, asyncio.Lock()):
+        if hass.data.get(_FRONTEND_ASSET_SETUP):
+            return
+        entry_urls = await hass.async_add_executor_job(_load_entry_urls_sync)
+
+        async def register() -> None:
+            await hass.http.async_register_static_paths(
+                [
+                    StaticPathConfig(
+                        _ASSET_URL_PREFIX,
+                        str(_PRODUCTION_DIR),
+                        cache_headers=True,
+                    )
+                ]
             )
-        ]
-    )
-    hass.data[_FRONTEND_ENTRY_URLS] = entry_urls
-    hass.data[_FRONTEND_ASSET_SETUP] = True
+            hass.data[_FRONTEND_ENTRY_URLS] = entry_urls
+            hass.data[_FRONTEND_ASSET_SETUP] = True
+
+        await async_settle_owned_operation(register())

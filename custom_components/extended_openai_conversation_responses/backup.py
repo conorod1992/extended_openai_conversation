@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 import json
@@ -29,6 +30,11 @@ from .agent_config import (
 from .agent_maintenance import (
     _async_run_exclusive_operation,
     get_agent_maintenance_gate,
+)
+from .backup_input import (
+    BackupInputLimit,
+    check_decoded_structure,
+    check_json_structure,
 )
 from .bounded_json import (
     JSONBudgetExceeded,
@@ -65,7 +71,11 @@ from .temporary_memory import (
     temporary_memory_record_counts,
 )
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
-from .yaml_serialization import InvalidSerializedUnicode, load_yaml_or_json
+from .yaml_serialization import (
+    InvalidSerializedUnicode,
+    SerializedDocumentLimit,
+    load_authored_config,
+)
 
 type ValidatedUsage = tuple[
     UsageTotals, dict[str, dict[str, Any]], list[UsageRequest], list[UsageRun]
@@ -82,11 +92,48 @@ MAX_BACKUP_BYTES = 320 * 1024 * 1024
 # never grow into a WebSocket frame large enough to destabilize Home Assistant.
 MAX_LEGACY_EXPORT_BYTES = 16 * 1024 * 1024
 _BACKUP_LOCKS = f"{DOMAIN}.backup_locks"
+_IMPORT_ADMISSION = f"{DOMAIN}.backup_import_admission"
+_MAX_ACTIVE_IMPORTS = 1
 _LOGGER = logging.getLogger(__name__)
 
 
 class BackupError(HomeAssistantError):
     """A safe, user-facing backup validation or restore error."""
+
+
+class BackupImportPermit:
+    """Keep a permit until both the caller and its detached worker settle."""
+
+    def __init__(self, semaphore: asyncio.BoundedSemaphore) -> None:
+        self._semaphore = semaphore
+        self._owners = 1
+
+    def retain_until(self, task: asyncio.Future[Any]) -> None:
+        self._owners += 1
+        task.add_done_callback(self.release)
+
+    def release(self, _task: asyncio.Future[Any] | None = None) -> None:
+        self._owners -= 1
+        if not self._owners:
+            self._semaphore.release()
+
+
+@asynccontextmanager
+async def async_backup_import_admission(
+    hass: HomeAssistant,
+) -> AsyncIterator[BackupImportPermit]:
+    """Bound overlapping import decoding and materialization for this HA."""
+    semaphore = hass.data.setdefault(
+        _IMPORT_ADMISSION, asyncio.BoundedSemaphore(_MAX_ACTIVE_IMPORTS)
+    )
+    if semaphore.locked():
+        raise BackupError("Other backup imports are in progress; retry shortly")
+    await semaphore.acquire()
+    permit = BackupImportPermit(semaphore)
+    try:
+        yield permit
+    finally:
+        permit.release()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -140,6 +187,9 @@ class PreparedRestore:
     usage_snapshotted: bool = True
     # Destination preview only, captured before export retention filtering.
     usage_revision: str | None = None
+    # The verified outer journal is authoritative for partition writes during
+    # this restore. Never accepted from a portable document.
+    archive_disk_backed: bool = False
 
     def restores(self, section: str) -> bool:
         return self.journaled_sections is None or section in self.journaled_sections
@@ -225,7 +275,7 @@ def _configuration_snapshot_preserving_quarantine(
                 if frontend_shape and isinstance(snapshot[key], str):
                     # Redaction must see mappings, including quarantined siblings.
                     try:
-                        snapshot[key] = load_yaml_or_json(snapshot[key])
+                        snapshot[key] = load_authored_config(snapshot[key])
                     except yaml.YAMLError as err:
                         raise BackupError(
                             "Repair malformed Function YAML before exporting configuration"
@@ -326,20 +376,29 @@ def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             "This backup is too large for the legacy one-message JSON export; "
             "use the full backup transfer interface"
         ) from err
-    document = (
-        encode_document(snapshot)
-        if snapshot.get("version") == PRIVATE_BACKUP_VERSION
-        else {
-            **snapshot,
-            "agent": {
-                **snapshot["agent"],
-                "config": _safe_configuration(snapshot["agent"]["config"]),
-            },
-            "request_rules": _safe_configuration(snapshot["request_rules"]),
-        }
-    )
     try:
+        document = (
+            encode_document(snapshot)
+            if snapshot.get("version") == PRIVATE_BACKUP_VERSION
+            else {
+                **snapshot,
+                "agent": {
+                    **snapshot["agent"],
+                    "config": _safe_configuration(snapshot["agent"]["config"]),
+                },
+                "request_rules": _safe_configuration(snapshot["request_rules"]),
+            }
+        )
+    except SerializedDocumentLimit:
+        raise BackupError(
+            "The backup configuration or Request Rules exceed the YAML safety limit"
+        ) from None
+    try:
+        _validate_import_structure(document)
         serialized = bounded_json_dumps(document, MAX_LEGACY_EXPORT_BYTES)
+        check_json_structure(serialized)
+    except BackupInputLimit as err:
+        raise BackupError(str(err)) from None
     except JSONBudgetExceeded as err:
         raise BackupError(
             "This backup is too large for the legacy one-message JSON export; "
@@ -470,6 +529,7 @@ def _decode_backup_document(
     if isinstance(value, DecodedPrivateDocument):
         _validate_import_unicode(value)
         if not private_journal:
+            _validate_import_structure(value)
             _validate_backup_configuration_unicode(value)
         return value
     if (
@@ -490,12 +550,16 @@ def _decode_backup_document(
         except UnicodeError as err:
             raise BackupError("The backup contains malformed Unicode") from err
         try:
+            check_json_structure(value)
             value = json.loads(value)
-        except json.JSONDecodeError as err:
-            raise BackupError("The backup is incomplete or corrupted") from err
+        except BackupInputLimit as err:
+            raise BackupError(str(err)) from None
+        except ValueError, RecursionError:
+            raise BackupError("The backup is incomplete or corrupted") from None
         _validate_import_unicode(value)
     else:
         try:
+            _validate_import_structure(value)
             for _chunk in iter_bounded_json(value, max_bytes):
                 pass
         except JSONBudgetExceeded as err:
@@ -516,6 +580,8 @@ def _decode_backup_document(
         )
     except (ValueError, TypeError, KeyError, yaml.YAMLError) as err:
         raise BackupError("The private backup encoding is invalid") from err
+    if document is not value:
+        _validate_import_structure(document)
     if not private_journal:
         _validate_backup_configuration_unicode(document)
     return document
@@ -525,6 +591,13 @@ def _validate_import_unicode(value: Any) -> None:
     try:
         check_document_unicode(value)
     except ValueError as err:
+        raise BackupError(str(err)) from None
+
+
+def _validate_import_structure(value: Any) -> None:
+    try:
+        check_decoded_structure(value)
+    except BackupInputLimit as err:
         raise BackupError(str(err)) from None
 
 

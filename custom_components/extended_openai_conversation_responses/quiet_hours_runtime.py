@@ -240,9 +240,9 @@ def _config_from_data(value: Any) -> QuietHoursConfig:
     volume = value.get("max_volume", value.get("volume_level", DEFAULT_MAX_VOLUME))
     if isinstance(volume, bool) or not isinstance(volume, (int, float)):
         raise ValueError("max_volume must be a number")
-    volume = float(volume)
-    if not math.isfinite(volume) or not 0.0 <= volume <= 1.0:
+    if not 0.0 <= volume <= 1.0:
         raise ValueError("max_volume must be between 0 and 1")
+    volume = float(volume)
 
     wake_sound = value.get("wake_sound")
     if wake_sound is None and "wake_sound_enabled" in value:
@@ -311,8 +311,7 @@ def _current_volume(hass: HomeAssistant, entity_id: str) -> float | None:
     value = state.attributes.get("volume_level")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    result = float(value)
-    return result if math.isfinite(result) and 0.0 <= result <= 1.0 else None
+    return float(value) if 0.0 <= value <= 1.0 else None
 
 
 def _current_switch(hass: HomeAssistant, entity_id: str) -> bool | None:
@@ -688,12 +687,16 @@ class QuietHoursManager:
     async def async_shutdown(self) -> None:
         # Unsubscribing cannot retract callbacks already queued on this lock.
         self._stopping = True
-        if self._timezone_unsubscribe is not None:
-            self._timezone_unsubscribe()
-            self._timezone_unsubscribe = None
+        self._detach_timezone_listener()
         # Removal discards this manager after the await. Retain ownership through
         # lock acquisition, restoration and cleanup before forwarding cancellation.
         await _async_settle_store_io(self._async_finish_shutdown())
+
+    def _detach_timezone_listener(self) -> None:
+        unsubscribe = self._timezone_unsubscribe
+        self._timezone_unsubscribe = None
+        if unsubscribe is not None:
+            self._unsubscribe_callback(unsubscribe)
 
     async def _async_finish_shutdown(self) -> None:
         async with self._lock:
@@ -876,6 +879,9 @@ class QuietHoursManager:
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a boolean")
         async with self._lock:
+            self._require_startup_available()
+            if self._stopping:
+                raise HomeAssistantError("Quiet Hours is shutting down")
             if not await self._async_recover_configuration_locked():
                 raise ValueError(
                     "Quiet Hours configuration recovery is pending; retry later"
@@ -913,6 +919,7 @@ class QuietHoursManager:
         candidate = _config_from_data(value)
         failure: BaseException | None = None
         async with self._lock:
+            self._require_startup_available()
             if getattr(self, "_stopping", False):
                 raise HomeAssistantError("Quiet Hours is shutting down")
             if not await self._async_recover_configuration_locked():
@@ -2844,9 +2851,18 @@ class QuietHoursManager:
 
     def _cancel_scheduled_callbacks(self) -> None:
         self._callback_schedule = None
-        for unsubscribe in self._unsubscribers:
+        unsubscribers, self._unsubscribers = self._unsubscribers, []
+        for unsubscribe in unsubscribers:
+            self._unsubscribe_callback(unsubscribe)
+
+    @staticmethod
+    def _unsubscribe_callback(unsubscribe: Callable[[], None]) -> None:
+        try:
             unsubscribe()
-        self._unsubscribers.clear()
+        except Exception as err:
+            log_handled_failure(
+                logging.getLogger(__name__), "Unable to detach Quiet Hours callback", err
+            )
 
     def _reschedule(self) -> None:
         self._cancel_scheduled_callbacks()
@@ -2977,6 +2993,9 @@ async def async_get_quiet_hours(hass: HomeAssistant) -> QuietHoursManager:
         domain_data[_RUNTIME_KEY] = manager
     await manager.async_setup()
     require_global_runtime(hass)
+    current: object = domain_data.get(_RUNTIME_KEY)
+    if current is not manager:
+        raise HomeAssistantError("Quiet Hours is shutting down")
     return manager
 
 

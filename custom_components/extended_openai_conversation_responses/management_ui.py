@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
-import json
 import logging
 from time import perf_counter
 from types import MappingProxyType
@@ -52,7 +52,12 @@ from .agent_config import (
     validate_single_function_tool,
 )
 from .agent_maintenance import management_command_lease
-from .backup import async_create_backup, async_inspect_backup, async_restore_backup
+from .backup import (
+    async_backup_import_admission,
+    async_create_backup,
+    async_inspect_backup,
+    async_restore_backup,
+)
 from .built_in_functions import built_in_function_catalog
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
@@ -179,6 +184,7 @@ from .mutation_outcomes import (
     mutation_error_code,
     mutation_failure,
 )
+from .operation_settlement import async_settle_owned_operation
 from .regex_execution import async_process_speech_text
 from .request import (
     async_capacity_ha_snapshot as _async_capacity_ha_snapshot,
@@ -198,7 +204,11 @@ from .secret_redaction import is_redacted_secret
 from .strict_json import check_document_unicode
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_finish_usage_retention_write, async_get_usage
-from .yaml_serialization import InvalidSerializedUnicode, dump_yaml, load_unicode_yaml
+from .yaml_serialization import (
+    InvalidSerializedUnicode,
+    dump_yaml,
+    load_authored_config,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _PERFORMANCE_LOGGER = logging.getLogger(f"{__name__}.performance")
@@ -506,16 +516,13 @@ def _parse_import_document(
     validate_unicode = True
     if isinstance(value, str):
         try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            try:
-                value = load_unicode_yaml(value)
-            except InvalidSerializedUnicode as err:
-                raise AgentConfigError("document", str(err)) from None
-            except yaml.YAMLError as err:
-                raise AgentConfigError("document", f"invalid JSON/YAML: {err}") from err
-            # The YAML loader already checked every scalar, including aliases.
-            validate_unicode = False
+            value = load_authored_config(value)
+        except InvalidSerializedUnicode as err:
+            raise AgentConfigError("document", str(err)) from None
+        except yaml.YAMLError as err:
+            raise AgentConfigError("document", f"invalid JSON/YAML: {err}") from err
+        # The loader already checked every scalar, including aliases.
+        validate_unicode = False
     if not isinstance(value, dict):
         raise AgentConfigError("document", "must be an object")
     if validate_unicode:
@@ -1146,20 +1153,22 @@ async def async_backup_command(request: _ManagementRequest) -> dict[str, Any]:
     if action == "create":
         return await async_create_backup(hass, entry, subentry)
     if action == "inspect":
-        prepared = await async_inspect_backup(
-            message.get("document"), subentry.subentry_id
-        )
-        return {
-            "valid": True,
-            "title": prepared.title,
-            "summary": prepared.summary(),
-        }
+        async with async_backup_import_admission(hass):
+            prepared = await async_settle_owned_operation(
+                async_inspect_backup(message.get("document"), subentry.subentry_id)
+            )
+            return {
+                "valid": True,
+                "title": prepared.title,
+                "summary": prepared.summary(),
+            }
     if action == "restore":
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
-        return await async_restore_backup(
-            hass, entry, subentry, message.get("document")
-        )
+        async with async_backup_import_admission(hass):
+            return await async_restore_backup(
+                hass, entry, subentry, message.get("document")
+            )
 
     return _unknown_management_action(request)
 
@@ -3546,22 +3555,22 @@ async def async_setup_management_ui(hass: HomeAssistant) -> None:
     websocket_key = f"{setup_key}.websocket"
     panel_key = f"{setup_key}.panel"
 
-    if not hass.data.get(static_key):
-        await async_register_frontend_assets(hass)
-        hass.data[static_key] = True
     if not hass.data.get(websocket_key):
         websocket_api.async_register_command(hass, websocket_management)
         hass.data[websocket_key] = True
-    if not hass.data.get(panel_key):
-        await panel_custom.async_register_panel(
-            hass,
-            webcomponent_name="extended-openai-management-panel",
-            frontend_url_path=MANAGEMENT_PANEL_URL,
-            module_url=frontend_entry_url(hass, "management"),
-            sidebar_title=MANAGEMENT_PANEL_TITLE,
-            sidebar_icon="mdi:robot-outline",
-            require_admin=False,
-        )
-        hass.data[panel_key] = True
-
-    hass.data[setup_key] = True
+    async with hass.data.setdefault(f"{setup_key}.lock", asyncio.Lock()):
+        if not hass.data.get(static_key):
+            await async_register_frontend_assets(hass)
+            hass.data[static_key] = True
+        if not hass.data.get(panel_key):
+            await panel_custom.async_register_panel(
+                hass,
+                webcomponent_name="extended-openai-management-panel",
+                frontend_url_path=MANAGEMENT_PANEL_URL,
+                module_url=frontend_entry_url(hass, "management"),
+                sidebar_title=MANAGEMENT_PANEL_TITLE,
+                sidebar_icon="mdi:robot-outline",
+                require_admin=False,
+            )
+            hass.data[panel_key] = True
+        hass.data[setup_key] = True

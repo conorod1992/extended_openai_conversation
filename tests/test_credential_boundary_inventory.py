@@ -11,6 +11,7 @@ SOURCE = REPO / "custom_components/extended_openai_conversation_responses"
 INVENTORY = REPO / "docs/development/credential-boundaries.json"
 PARSERS = {
     "_AutomationLoader",
+    "_BoundedSafeLoader",
     "homeassistant.util.yaml.parse_yaml",
     "yaml.safe_load",
     "yaml.safe_load_all",

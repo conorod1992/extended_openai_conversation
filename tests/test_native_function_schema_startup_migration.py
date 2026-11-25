@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 
 from custom_components.extended_openai_conversation_responses import (
@@ -102,9 +103,50 @@ async def test_startup_persists_schema_without_touching_group_or_metadata(hass) 
     assert migrated_tool["enabled"] is False
     assert migrated_tool["guest_allowed"] is True
     assert migrated_tool["spec"]["strict"] is False
-    service_data = migrated_tool["spec"]["parameters"]["properties"]["list"][
-        "items"
-    ]["properties"]["service_data"]
+    service_data = migrated_tool["spec"]["parameters"]["properties"]["list"]["items"][
+        "properties"
+    ]["service_data"]
     assert service_data["additionalProperties"] is True
     assert saved[CONF_FUNCTION_GROUPS] == groups
     assert saved["unrelated"] == "keep-me"
+
+
+@pytest.mark.parametrize("disabled", [False, True])
+async def test_invalid_calendar_scalar_keeps_saved_functions_and_migrates_siblings(
+    hass, disabled
+) -> None:
+    malformed = "keep: 2026-02-29\n"
+    bad_agent = MagicMock(
+        subentry_type="conversation", data={CONF_FUNCTION_TOOLS: malformed}
+    )
+    bad_entry = MagicMock(
+        data={},
+        disabled_by="user" if disabled else None,
+        version=CONFIG_ENTRY_VERSION,
+        subentries={"invalid": bad_agent},
+    )
+    good_agent = MagicMock(
+        subentry_type="conversation",
+        data={
+            CONF_FUNCTION_TOOLS: yaml.safe_dump(
+                [_historical_execute_service_preset()], sort_keys=False
+            )
+        },
+    )
+    good_entry = MagicMock(
+        data={},
+        disabled_by=None,
+        version=CONFIG_ENTRY_VERSION,
+        subentries={"healthy": good_agent},
+    )
+    with (
+        patch.object(
+            hass.config_entries, "async_entries", return_value=[bad_entry, good_entry]
+        ),
+        patch.object(hass.config_entries, "async_update_subentry") as update_subentry,
+    ):
+        await async_migrate_integration(hass)
+
+    update_subentry.assert_called_once()
+    assert update_subentry.call_args.args[:2] == (good_entry, good_agent)
+    assert bad_agent.data[CONF_FUNCTION_TOOLS] == malformed

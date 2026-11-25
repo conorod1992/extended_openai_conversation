@@ -35,7 +35,8 @@ from .const import (
     TEMPORARY_MEMORY_OFF,
 )
 from .helpers import effective_api_provider
-from .memory import EmbeddingResult, memory_enabled
+from .memory import EmbeddingResult, PersistentMemory, memory_enabled
+from .operational_errors import log_handled_failure
 from .speech import has_custom_speech_replacements
 from .usage import usage_retention_policy
 
@@ -57,25 +58,29 @@ class MemoryEmbeddingProvider:
         return await self.create(inputs, model=self.model)
 
 
-def sync_memory_embedding_provider(entity: Any) -> None:
-    """Apply the entity's current Hybrid-memory settings to its shared manager."""
+def sync_memory_embedding_provider(entity: Any) -> bool:
+    """Bind Hybrid Memory, keeping lexical retrieval available on failure."""
     memory = getattr(entity, "_memory", None)
     setter = getattr(memory, "set_embedding_provider", None)
     if not callable(setter):
         # Some callers/tests use a minimal search-only memory implementation. Provider
         # synchronization applies only to the real PersistentMemory capability.
-        return
-    options = entity.subentry.data
-    model = (
-        str(
-            options.get(CONF_MEMORY_EMBEDDING_MODEL, DEFAULT_MEMORY_EMBEDDING_MODEL)
-        ).strip()
-        or DEFAULT_MEMORY_EMBEDDING_MODEL
-    )
-    if (
-        options.get(CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE)
-        == MEMORY_RETRIEVAL_HYBRID
-    ):
+        return True
+    model = DEFAULT_MEMORY_EMBEDDING_MODEL
+    try:
+        options = entity.subentry.data
+        model = str(options.get(CONF_MEMORY_EMBEDDING_MODEL, model)).strip() or model
+        if (
+            options.get(CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE)
+            != MEMORY_RETRIEVAL_HYBRID
+        ):
+            # A manager can outlive the entity that supplied its previous provider.
+            setter(None, model)
+            return True
+
+        create = entity._async_create_embeddings
+        if not callable(create):
+            raise TypeError("Hybrid Memory embedding callback is unavailable")
         entry_data = getattr(entity.entry, "data", {})
         client = getattr(entity.entry, "runtime_data", None)
         base_url = getattr(client, "base_url", None)
@@ -103,7 +108,7 @@ def sync_memory_embedding_provider(entity: Any) -> None:
             ).encode()
         ).hexdigest()
         setter(
-            MemoryEmbeddingProvider(entity._async_create_embeddings, model),
+            MemoryEmbeddingProvider(create, model),
             model,
             space_id=space_id,
             # A transient, nonsecret identity: wrapper recreation is irrelevant,
@@ -114,11 +119,18 @@ def sync_memory_embedding_provider(entity: Any) -> None:
                 hashlib.sha256(str(entry_data.get(CONF_API_KEY, "")).encode()).digest(),
             ),
         )
-    else:
-        # The manager is shared per agent and can outlive one entity instance. Clear
-        # a provider left by a previous Hybrid configuration/entity when Lexical is
-        # now selected.
-        setter(None, model)
+    except Exception as err:
+        if not isinstance(memory, PersistentMemory) or (
+            memory.mark_embedding_binding_unavailable(model, type(err).__name__)
+        ):
+            log_handled_failure(
+                _LOGGER,
+                "Hybrid Memory could not bind its embedding provider. "
+                "Using lexical retrieval until the provider can be bound.",
+                err,
+            )
+        return False
+    return True
 
 
 def _set_subsystem_status(
@@ -409,7 +421,8 @@ async def async_reconcile_runtime_configuration(
         elif not knowledge_enabled:
             _set_subsystem_status(entity, "knowledge", False)
 
-        sync_memory_embedding_provider(entity)
+        if sync_memory_embedding_provider(entity) is False:
+            retry = True
         setattr(entity, _RUNTIME_CONFIG_DATA, options)
         setattr(entity, _RUNTIME_CONFIG_CLIENT, getattr(entry, "runtime_data", None))
         setattr(entity, _RUNTIME_CONFIG_RETRY, retry)

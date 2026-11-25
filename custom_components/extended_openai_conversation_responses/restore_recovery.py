@@ -47,6 +47,12 @@ from .mutation_outcomes import mark_mutation_failure, mutation_failure
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .record_timestamps import parse_datetime
+from .restore_disk import (
+    large_archive_document,
+    read_large_journal,
+    remove_restore_staging,
+    write_verified_store,
+)
 from .scope import ResolvedDataScope
 from .storage_namespaces import RESTORE_JOURNAL_PREFIX as RESTORE_JOURNAL_PREFIX
 from .strict_store import PropagatingWriteStore
@@ -59,6 +65,10 @@ RESTORE_RELOAD_PENDING = f"{DOMAIN}.restore_reload_pending"
 _PHASE_APPLYING = "applying"
 _PHASE_COMMITTED = "committed"
 _PHASES = {_PHASE_APPLYING, _PHASE_COMMITTED}
+_STREAM_JOURNAL_BYTES = 16 * 1024 * 1024
+_JOURNAL_REQUIRED_FIELDS = frozenset(
+    {"transaction_id", "entry_id", "subentry_id", "phase", "created_at", "target", "rollback"}
+)
 _DATA_SECTIONS = frozenset(
     {
         "memories",
@@ -74,6 +84,10 @@ _DATA_SECTIONS = frozenset(
 
 class _JournalVerificationUnavailable(Exception):
     """The durable outcome of one journal write could not be determined."""
+
+
+class _UnreadableRestoreJournal(backup.BackupError):
+    """The journal cannot establish whether the provider connection was affected."""
 
 
 def _sync_journal_directory(path: str) -> None:
@@ -110,7 +124,7 @@ class _RestoreJournalStore(PropagatingWriteStore):
                     _sync_journal_directory, self.path
                 )
             except OSError as err:
-                raise backup.BackupError(
+                raise _UnreadableRestoreJournal(
                     "Restore journal absence could not be durably verified"
                 ) from err
         return result
@@ -128,11 +142,15 @@ class _RestoreJournalStore(PropagatingWriteStore):
     async def _async_load_data(self) -> dict[str, Any] | None:
         def read() -> dict[str, Any] | None:
             try:
-                envelope = json.loads(Path(self.path).read_text(encoding="utf-8"))
+                with Path(self.path).open("rb") as file:
+                    if os.fstat(file.fileno()).st_size >= _STREAM_JOURNAL_BYTES:
+                        envelope = read_large_journal(file)
+                    else:
+                        envelope = json.loads(file.read().decode("utf-8"))
             except FileNotFoundError:
                 return None
-            except (OSError, UnicodeError, ValueError) as err:
-                raise backup.BackupError(
+            except (OSError, ValueError, ArithmeticError, RecursionError) as err:
+                raise _UnreadableRestoreJournal(
                     "Restore journal is unreadable; recovery is required"
                 ) from err
             if (
@@ -142,7 +160,7 @@ class _RestoreJournalStore(PropagatingWriteStore):
                 or envelope.get("key") != self.key
                 or not isinstance(envelope.get("data"), dict)
             ):
-                raise backup.BackupError(
+                raise _UnreadableRestoreJournal(
                     "Restore journal is corrupted; recovery is required"
                 )
             return cast(dict[str, Any], envelope["data"])
@@ -337,20 +355,11 @@ async def _async_load_journal(
     value: Any, entry_id: str, subentry_id: str, *, provider: str | None = None
 ) -> tuple[dict[str, Any], backup.PreparedRestore, backup.PreparedRestore]:
     """Validate a pending transaction without trusting mutable journal fields."""
-    required = {
-        "transaction_id",
-        "entry_id",
-        "subentry_id",
-        "phase",
-        "created_at",
-        "target",
-        "rollback",
-    }
     if (
         not isinstance(value, Mapping)
-        or not required <= set(value)
+        or not value.keys() >= _JOURNAL_REQUIRED_FIELDS
         or set(value)
-        - required
+        - _JOURNAL_REQUIRED_FIELDS
         - {"configuration_providers", "data_sections", "provider_connections"}
     ):
         raise backup.BackupError("Pending restore transaction is corrupted")
@@ -430,6 +439,15 @@ async def _async_write_journal_verified(
 ) -> bool:
     """Require both writer success and matching on-disk journal content."""
     try:
+        if isinstance(store, _RestoreJournalStore) and await asyncio.to_thread(
+            large_archive_document, journal
+        ):
+            await store.hass.async_add_executor_job(
+                lambda: write_verified_store(
+                    store, journal, max_bytes=2 * backup.MAX_BACKUP_BYTES + 1024 * 1024
+                )
+            )
+            return True
         await store.async_save(await asyncio.to_thread(deepcopy, journal))
         persisted = await store.async_load()
     except Exception as err:
@@ -438,10 +456,15 @@ async def _async_write_journal_verified(
 
 
 async def _durable_managers(
-    hass: HomeAssistant, entry_id: str, subentry_id: str, *, include_usage: bool = True
+    hass: HomeAssistant,
+    entry_id: str,
+    subentry_id: str,
+    *,
+    include_usage: bool = True,
+    recover_archive: bool = False,
 ) -> backup.AgentDataParticipants:
     """Load the actual durable managers; restore must never target Usage fallback RAM."""
-    from .conversation_archive import async_get_archive
+    from .conversation_archive import archive_manager, async_get_archive
     from .guest_mode import async_get_guest_mode
     from .knowledge import async_get_knowledge
     from .memory import async_get_memory
@@ -453,7 +476,11 @@ async def _durable_managers(
         memory=await async_get_memory(hass, entry_id, subentry_id),
         temporary=await async_get_temporary_memory(hass, entry_id, subentry_id),
         knowledge=await async_get_knowledge(hass, entry_id, subentry_id),
-        archive=await async_get_archive(hass, entry_id, subentry_id),
+        archive=(
+            archive_manager(hass, entry_id, subentry_id)
+            if recover_archive
+            else await async_get_archive(hass, entry_id, subentry_id)
+        ),
         usage=(
             await async_get_durable_usage(hass, entry_id, subentry_id)
             if include_usage
@@ -486,14 +513,19 @@ async def _apply_prepared(
     if prepared.restores("knowledge"):
         await managers.knowledge.async_replace_backup(prepared.knowledge)
     if prepared.restores("archive"):
-        archive_kwargs = (
-            {"active": prepared.archive_active}
-            if prepared.archive_active is not None
-            else {}
-        )
-        await managers.archive.async_replace_backup(
-            prepared.archive_sessions, prepared.archive_turns, **archive_kwargs
-        )
+        archive_args = (prepared.archive_sessions, prepared.archive_turns)
+        if prepared.archive_disk_backed:
+            await managers.archive.async_replace_backup(
+                *archive_args,
+                active=prepared.archive_active,
+                disk_backed=True,
+            )
+        elif prepared.archive_active is not None:
+            await managers.archive.async_replace_backup(
+                *archive_args, active=prepared.archive_active
+            )
+        else:
+            await managers.archive.async_replace_backup(*archive_args)
     if prepared.restores("usage"):
         assert managers.usage is not None
         await managers.usage.async_replace_backup(
@@ -526,9 +558,10 @@ async def _recovery_managers(
     from .usage import async_verify_rejected_usage_stores
 
     include_usage = selected.restores("usage")
+    archive_options = {"recover_archive": True} if selected.archive_disk_backed else {}
     try:
         managers = await _durable_managers(
-            hass, entry_id, subentry_id, include_usage=include_usage
+            hass, entry_id, subentry_id, include_usage=include_usage, **archive_options
         )
         if include_usage:
             await async_verify_rejected_usage_stores(hass, entry_id, subentry_id)
@@ -615,19 +648,20 @@ async def _recovery_managers(
                 payload = await asyncio.to_thread(serialize)
                 await storage_factory(hass, entry_id, subentry_id).async_save(payload)
                 repaired = True
-        try:
-            await async_get_archive(hass, entry_id, subentry_id)
-        except ValueError:
-            if not selected.restores("archive"):
-                raise
-            await HomeAssistantArchiveStorage(
-                hass, entry_id, subentry_id
-            ).async_stage_journal_recovery(
-                selected.archive_sessions,
-                selected.archive_turns,
-                selected.archive_active,
-            )
-            repaired = True
+        if not selected.archive_disk_backed:
+            try:
+                await async_get_archive(hass, entry_id, subentry_id)
+            except ValueError:
+                if not selected.restores("archive"):
+                    raise
+                await HomeAssistantArchiveStorage(
+                    hass, entry_id, subentry_id
+                ).async_stage_journal_recovery(
+                    selected.archive_sessions,
+                    selected.archive_turns,
+                    selected.archive_active,
+                )
+                repaired = True
         for section, recovery_getter, stage in (
             (
                 "guest_mode",
@@ -669,7 +703,7 @@ async def _recovery_managers(
         if not repaired:
             raise initial_error
         return await _durable_managers(
-            hass, entry_id, subentry_id, include_usage=include_usage
+            hass, entry_id, subentry_id, include_usage=include_usage, **archive_options
         )
 
 
@@ -989,6 +1023,40 @@ def _claim_provider_restore(
         )
 
 
+async def _async_read_restore_journal(
+    hass: HomeAssistant,
+    entry_id: str,
+    subentry_id: str,
+    store: Store[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Track unknown scope until an authoritative read identifies the owner."""
+    from .provider_credentials import PROVIDER_RESTORE_UNREADABLE
+
+    try:
+        raw = await store.async_load()
+        if raw is not None:
+            if "provider_connections" in raw:
+                _claim_provider_restore(hass, entry_id, subentry_id)
+            elif (
+                not raw.keys() >= _JOURNAL_REQUIRED_FIELDS
+                or raw["entry_id"] != entry_id
+                or raw["subentry_id"] != subentry_id
+            ):
+                raise _UnreadableRestoreJournal(
+                    "Restore journal is corrupted and its scope could not be verified"
+                )
+    except _UnreadableRestoreJournal:
+        entries = hass.data.setdefault(PROVIDER_RESTORE_UNREADABLE, {})
+        entries.setdefault(entry_id, set()).add(subentry_id)
+        raise
+    entries = hass.data.get(PROVIDER_RESTORE_UNREADABLE, {})
+    if (unreadable := entries.get(entry_id)) is not None:
+        unreadable.discard(subentry_id)
+        if not unreadable:
+            entries.pop(entry_id)
+    return raw
+
+
 async def _async_publish_provider_pair(
     hass: HomeAssistant,
     entry: Any,
@@ -1074,10 +1142,9 @@ async def async_settle_deleted_agent_provider(
 
     entry_id = entry.entry_id
     store = _journal_store(hass, entry_id, subentry_id)
-    raw = await store.async_load()
+    raw = await _async_read_restore_journal(hass, entry_id, subentry_id, store)
     if raw is None or "provider_connections" not in raw:
         return
-    _claim_provider_restore(hass, entry_id, subentry_id)
     provider = entry_api_provider(entry)
     journal, _, _ = await _async_load_journal(
         raw, entry_id, subentry_id, provider=provider
@@ -1345,7 +1412,7 @@ async def _async_restore_backup_recoverably(
 
     async with backup._backup_lock(hass, entry_id, subentry_id):
         store = _journal_store(hass, entry_id, subentry_id)
-        if await store.async_load() is not None:
+        if await _async_read_restore_journal(hass, entry_id, subentry_id, store) is not None:
             raise backup.BackupError(
                 "A previous full restore still has pending recovery; restart Home "
                 "Assistant before starting another restore"
@@ -1450,6 +1517,9 @@ async def _async_restore_backup_recoverably(
                     f"Restore cannot start because its {section} recovery snapshot is not recoverable: {err}"
                 ) from err
 
+        if await asyncio.to_thread(large_archive_document, journal):
+            prepared.archive_disk_backed = rollback.archive_disk_backed = True
+
         # This is the write-ahead boundary. If it cannot be verified, no category
         # has changed and a possibly-written journal remains harmless recovery data.
         if connections:
@@ -1551,18 +1621,24 @@ async def _async_recover_pending_restore(
     store = _journal_store(hass, entry_id, subentry_id)
 
     async with backup._backup_lock(hass, entry_id, subentry_id):
-        raw = await store.async_load()
+        raw = await _async_read_restore_journal(hass, entry_id, subentry_id, store)
+        if isinstance(store, _RestoreJournalStore):
+            try:
+                await hass.async_add_executor_job(remove_restore_staging, Path(store.path))
+            except OSError as err:
+                log_handled_failure(_LOGGER, "Unable to remove unpublished restore staging", err)
         if raw is None:
             return False
         from .helpers import entry_api_provider
 
-        if isinstance(raw, Mapping) and "provider_connections" in raw:
-            _claim_provider_restore(hass, entry_id, subentry_id)
         journal, target, rollback = await _async_load_journal(
             raw, entry_id, subentry_id, provider=entry_api_provider(entry)
         )
         side = "target" if journal["phase"] == _PHASE_COMMITTED else "rollback"
         selected = target if side == "target" else rollback
+        selected.archive_disk_backed = await asyncio.to_thread(
+            large_archive_document, journal
+        )
         providers = _journal_providers(journal, entry_api_provider(entry))
         selected_provider = providers[side]
         connections = _journal_provider_connections(journal, providers)
@@ -1650,9 +1726,12 @@ async def _async_recovery_operation[T](
             finally:
                 try:
                     absent = (
-                        await _journal_store(
-                            hass, entry.entry_id, subentry.subentry_id
-                        ).async_load()
+                        await _async_read_restore_journal(
+                            hass,
+                            entry.entry_id,
+                            subentry.subentry_id,
+                            _journal_store(hass, entry.entry_id, subentry.subentry_id),
+                        )
                         is None
                     )
                 except Exception:
@@ -1740,22 +1819,89 @@ async def async_recover_pending_restores(hass: HomeAssistant) -> None:
                 )
 
 
+def _stored_restore_owners(hass: HomeAssistant, entry_id: str) -> set[str]:
+    """Discover journal identities separately from ordinary orphan storage."""
+    prefix = f"{RESTORE_JOURNAL_PREFIX}.{entry_id}."
+    try:
+        with os.scandir(hass.config.path(".storage")) as directory:
+            return {
+                owner
+                for path in directory
+                if path.name.startswith(prefix)
+                and (owner := path.name[len(prefix) :])
+                # Native subentry IDs have no suffix. Ignore manual backups.
+                and "." not in owner
+            }
+    except FileNotFoundError:
+        return set()
+
+
+async def _async_recover_deleted_provider_owner(
+    hass: HomeAssistant, entry: ConfigEntry, owner_id: str
+) -> None:
+    from .provider_credentials import PROVIDER_RESTORE_OWNERS
+
+    gate = get_agent_maintenance_gate(hass, entry.entry_id, owner_id)
+
+    async def settle() -> None:
+        if gate.deleted:
+            return
+        # A live owner is handled by the regular restore path.
+        if (subentry := entry.subentries.get(owner_id)) is not None:
+            await async_recover_pending_restore(hass, entry, subentry)
+            return
+        with gate.recovery_work():
+            await async_settle_deleted_agent_provider(hass, entry, owner_id)
+            owners = hass.data.get(PROVIDER_RESTORE_OWNERS, {})
+            if owners.get(entry.entry_id) == owner_id:
+                owners.pop(entry.entry_id)
+
+    if gate.owns_exclusive():
+        await settle()
+    else:
+        await _async_run_exclusive_operation(gate, settle)
+
+
 async def async_recover_pending_provider_restore(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
     """Settle this entry's shared provider transaction before it loads platforms."""
     from .provider_credentials import (
         PROVIDER_RESTORE_OWNERS,
+        PROVIDER_RESTORE_UNREADABLE,
         require_provider_restore_complete,
     )
 
-    owner_id = hass.data.get(PROVIDER_RESTORE_OWNERS, {}).get(entry.entry_id)
-    if owner_id is None:
-        return
-    if (subentry := entry.subentries.get(owner_id)) is not None:
+    known_owner = hass.data.get(PROVIDER_RESTORE_OWNERS, {}).get(entry.entry_id)
+    if (
+        known_owner is not None
+        and (subentry := entry.subentries.get(known_owner)) is not None
+    ):
         await async_recover_pending_restore(hass, entry, subentry)
-    # Entry setup already ran orphan cleanup. If a deleted owner's journal
-    # could not be settled there, keep the shared provider quarantined.
+
+    discovered_owners = await hass.async_add_executor_job(
+        _stored_restore_owners, hass, entry.entry_id
+    )
+    unresolved = hass.data.get(PROVIDER_RESTORE_UNREADABLE, {}).get(entry.entry_id, ())
+    discovered_owners.update(unresolved)
+    if known_owner is not None:
+        if known_owner not in entry.subentries:
+            discovered_owners.add(known_owner)
+        else:
+            discovered_owners.discard(known_owner)
+    for owner_id in sorted(discovered_owners):
+        subentry = entry.subentries.get(owner_id)
+        if subentry is None:
+            await _async_recover_deleted_provider_owner(hass, entry, owner_id)
+            continue
+        try:
+            await async_recover_pending_restore(hass, entry, subentry)
+        except _UnreadableRestoreJournal:
+            raise
+        except Exception as err:
+            # A readable agent-only failure keeps its own maintenance gate.
+            # A shared journal has already claimed its provider's gate.
+            log_handled_failure(_LOGGER, "Assistant restore recovery is still pending", err)
     require_provider_restore_complete(hass, entry.entry_id)
 
 

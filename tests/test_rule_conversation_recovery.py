@@ -6,8 +6,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-
-from tests.ha_store_test_helpers import disk_write_boundary
 from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses import (
@@ -18,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.agent_maintenance 
     get_agent_maintenance_gate,
 )
 from homeassistant.core import HomeAssistant
+from tests.ha_store_test_helpers import disk_write_boundary
 from tests.test_configuration_lifecycle_hardening import _disabled_runtime_config
 from tests.test_conversation_orchestration import _assist_fixture
 from tests.test_request_rules import local_rule
@@ -34,6 +33,101 @@ async def real_hass(tmp_path):
         yield hass
     finally:
         await hass.async_stop(force=True)
+
+
+async def test_request_rules_retries_failed_startup_load_before_ai(
+    real_hass, monkeypatch, caplog
+):
+    entity, invoke, _logs, provider_calls = _assist_fixture(monkeypatch)
+    entity.hass = real_hass
+    entity.subentry.data = {**_disabled_runtime_config(), "functions": "[]"}
+    entity._extended_openai_runtime_config_data = entity.subentry.data
+    entity._request_rules_load_pending = True
+    entity._request_rule_runtime = rr.get_request_rule_runtime(
+        real_hass, "entry", "agent"
+    )
+    rules = await rr.async_get_request_rules(real_hass, "entry", "agent")
+    retry = AsyncMock(side_effect=[OSError("PRIVATE-STARTUP-READ"), rules])
+    monkeypatch.setattr(conversation_module, "async_get_request_rules", retry)
+
+    unavailable, _ = await invoke(direct=True)
+    assert "unavailable" in unavailable.response.speech["plain"]["speech"]
+    assert provider_calls == []
+    assert entity._request_rules_load_pending
+
+    recovered, _ = await invoke(direct=True)
+    assert recovered.response.speech["plain"]["speech"] == "Model reply"
+    assert len(provider_calls) == 1
+    assert not entity._request_rules_load_pending
+    assert "PRIVATE-STARTUP-READ" not in caplog.text
+
+
+async def test_legacy_defaults_only_store_preserves_empty_routing(real_hass):
+    store = rr._request_rule_store(real_hass, "entry", "agent")
+    await store.async_save({"defaults": dict(rr.DEFAULT_MATCHING)})
+
+    rules = await rr.async_get_request_rules(real_hass, "entry", "agent")
+
+    assert rules.routing_available
+    assert rules.snapshot()["rules"] == []
+    assert "storage_repair_required" not in rules.snapshot()
+
+
+@pytest.mark.parametrize("stored", [["invalid"], {"rules": "invalid"}])
+@pytest.mark.parametrize("after_write", [False, True], ids=["rejected", "written"])
+async def test_malformed_rule_container_blocks_ai_until_replacement(
+    real_hass, monkeypatch, stored, after_write
+):
+    entity, invoke, _logs, provider_calls = _assist_fixture(monkeypatch)
+    entity.hass = real_hass
+    entity.subentry.data = {**_disabled_runtime_config(), "functions": "[]"}
+    entity._extended_openai_runtime_config_data = entity.subentry.data
+    store = rr._request_rule_store(real_hass, "entry", "agent")
+    await store.async_save(stored)
+    rules = await rr.async_get_request_rules(real_hass, "entry", "agent")
+    entity._request_rules = rules
+    entity._request_rule_runtime = rr.get_request_rule_runtime(
+        real_hass, "entry", "agent"
+    )
+
+    unavailable, _ = await invoke(direct=True)
+    assert "unavailable" in unavailable.response.speech["plain"]["speech"]
+    assert provider_calls == []
+    assert rules.snapshot()["storage_repair_required"]
+    assert await store.async_load() == stored
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    save = rules._store.async_save
+
+    async def failed_replace(value):
+        entered.set()
+        await release.wait()
+        if after_write:
+            await save(value)
+        raise OSError("replacement write failed")
+
+    monkeypatch.setattr(rules._store, "async_save", failed_replace)
+    replacing = asyncio.create_task(rules.async_replace_backup({"rules": []}))
+    try:
+        await entered.wait()
+        during_replace, _ = await invoke(direct=True)
+        assert "unavailable" in during_replace.response.speech["plain"]["speech"]
+        assert provider_calls == []
+        release.set()
+        with pytest.raises(OSError, match="replacement write failed"):
+            await replacing
+    finally:
+        release.set()
+        await asyncio.gather(replacing, return_exceptions=True)
+    monkeypatch.setattr(rules._store, "async_save", save)
+    if not after_write:
+        assert not rules.routing_available
+        assert await store.async_load() == stored
+        await rules.async_replace_backup({"rules": []})
+    assert rules.routing_available
+    recovered, _ = await invoke(direct=True)
+    assert recovered.response.speech["plain"]["speech"] == "Model reply"
+    assert len(provider_calls) == 1
 
 
 @pytest.mark.parametrize("after_write", [False, True], ids=["not_written", "written"])

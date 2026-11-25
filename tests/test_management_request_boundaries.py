@@ -11,6 +11,7 @@ from custom_components.extended_openai_conversation_responses import (
     management_function_repair as repair,
     management_ui,
     services,
+    yaml_serialization,
 )
 from tests.test_conversation_orchestration import _assist_fixture
 from tests.test_management_single_agent_prewarm import _Entry, _hass, _read_request
@@ -84,14 +85,14 @@ async def test_cold_multi_agent_get_decodes_saved_yaml_once_in_worker(
     raw = subentry.data["functions"]
     main_thread = threading.get_ident()
     calls = []
-    original = yaml.safe_load
+    original = yaml_serialization._load_yaml_or_json
 
-    def decode(value):
+    def decode(value, **kwargs):
         if value == raw:
             calls.append(threading.get_ident())
-        return original(value)
+        return original(value, **kwargs)
 
-    monkeypatch.setattr(yaml, "safe_load", decode)
+    monkeypatch.setattr(yaml_serialization, "_load_yaml_or_json", decode)
     result = await management_ui.async_configuration_command(
         _read_request(local_hass, entry)
     )

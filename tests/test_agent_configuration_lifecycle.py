@@ -141,6 +141,32 @@ async def test_startup_publishes_agent_only_after_required_state_is_ready(startu
     assert startup.agent._continuity is not None
 
 
+async def test_request_rules_startup_failure_still_registers_agent(startup):
+    startup.getters["request_rules"].side_effect = OSError("private rule store")
+
+    await startup.agent.async_added_to_hass()
+
+    conversation.conversation.async_set_agent.assert_called_once()
+    assert startup.agent._agent_ready.is_set()
+    assert startup.agent._request_rules_load_pending
+    assert startup.agent._request_rules is None
+    assert startup.agent._request_rule_runtime is not None
+
+
+async def test_hybrid_provider_binding_failure_still_registers_agent(startup):
+    startup.agent.entry.runtime_data = SimpleNamespace(
+        default_query={"unsupported": object()}
+    )
+
+    await startup.agent.async_added_to_hass()
+
+    conversation.conversation.async_set_agent.assert_called_once()
+    assert startup.agent._agent_ready.is_set()
+    assert startup.agent._knowledge is not None
+    assert startup.agent._memory is startup.memory
+    assert startup.memory.hybrid_status()["reason"] == "provider_binding_failed"
+
+
 async def test_archive_retention_remains_owned_by_the_configured_assistant(startup):
     agent = startup.agent
     conversation_archive.async_start_archive_retention(agent.hass)

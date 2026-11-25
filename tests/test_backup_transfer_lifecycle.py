@@ -641,10 +641,10 @@ def _completed_import_session(path: str, **overrides) -> backup_transfer.ImportS
 
 
 @pytest.mark.parametrize("termination", ["cancel", "timeout"])
-async def test_cancelling_stalled_full_inspection_releases_maintenance_for_new_session(
+async def test_stalled_full_inspection_holds_import_slot_until_reader_settles(
     hass, tmp_path, monkeypatch, termination
 ):
-    """Cancelling A stops its inspection and lets B obtain a valid restore token."""
+    """A timed-out or cancelled preview keeps the slot until its reader exits."""
     sessions = []
     if termination == "timeout":
         monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 0.05)
@@ -693,34 +693,43 @@ async def test_cancelling_stalled_full_inspection_releases_maintenance_for_new_s
     old = asyncio.create_task(
         backup_transfer._inspect_import(hass, "entry-1", "agent-1", {"session_id": "A"})
     )
-    await started.wait()
-    if termination == "timeout":
-        # A's deadline is already armed; B gets its own full validation budget.
+    cancel = None
+    try:
+        await started.wait()
+        if termination == "cancel":
+            cancel = asyncio.create_task(backup_transfer._discard_import(hass, "A"))
+        expected = (
+            "inspection was cancelled"
+            if termination == "cancel"
+            else "inspection is still running"
+        )
+        with pytest.raises(backup.BackupError, match=expected):
+            await old
         monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 1)
-    new = asyncio.create_task(
-        backup_transfer._inspect_import(hass, "entry-1", "agent-1", {"session_id": "B"})
-    )
-    if termination == "cancel":
-        cancel = asyncio.create_task(backup_transfer._discard_import(hass, "A"))
-    expected = (
-        "inspection was cancelled"
-        if termination == "cancel"
-        else "inspection is still running"
-    )
-    with pytest.raises(backup.BackupError, match=expected):
-        await old
-    result = await asyncio.wait_for(new, timeout=1)
-    assert os.path.exists(sessions[0].path)
-    if termination == "timeout":
-        cancel = asyncio.create_task(backup_transfer._discard_import(hass, "A"))
-        await asyncio.sleep(0)
-    release.set()
-    assert await asyncio.wait_for(cancel, timeout=1)
-    assert result["preview_token"]
-    assert backup_transfer._latest_previews(hass)[("entry-1", "agent-1")][0] == "B"
-    assert not sessions[0].inspection_tasks
-    assert not os.path.exists(sessions[0].path)
-    await backup_transfer._discard_import(hass, "B")
+        with pytest.raises(backup.BackupError, match="Other backup imports"):
+            await backup_transfer._inspect_import(
+                hass, "entry-1", "agent-1", {"session_id": "B"}
+            )
+        assert os.path.exists(sessions[0].path)
+        if cancel is None:
+            cancel = asyncio.create_task(backup_transfer._discard_import(hass, "A"))
+            await asyncio.sleep(0)
+        release.set()
+        assert await asyncio.wait_for(cancel, timeout=1)
+        result = await backup_transfer._inspect_import(
+            hass, "entry-1", "agent-1", {"session_id": "B"}
+        )
+        assert result["preview_token"]
+        assert backup_transfer._latest_previews(hass)[("entry-1", "agent-1")][0] == "B"
+        assert not sessions[0].inspection_tasks
+        assert not os.path.exists(sessions[0].path)
+    finally:
+        release.set()
+        if cancel is not None:
+            await asyncio.gather(cancel, return_exceptions=True)
+        await backup_transfer._discard_import(hass, "A")
+        await backup_transfer._discard_import(hass, "B")
+        await asyncio.gather(old, return_exceptions=True)
 
 
 def _staged_export_session(path: str, **overrides) -> backup_transfer.ExportSession:
@@ -806,7 +815,8 @@ async def test_native_upload_worker_survives_timeout_without_blocking_agent(hass
 async def test_retired_upload_keeps_file_and_quota_until_native_reader_settles(
     hass, tmp_path, monkeypatch, retirement
 ):
-    """An overlapping inspection owns its staged file through restore or expiry."""
+    """Exercise upload retirement with an intentionally overlapping reader."""
+    monkeypatch.setattr(backup, "_MAX_ACTIVE_IMPORTS", 2)
     path = tmp_path / "overlapping-upload.json"
     path.write_bytes(b"data")
     session = _completed_import_session(
