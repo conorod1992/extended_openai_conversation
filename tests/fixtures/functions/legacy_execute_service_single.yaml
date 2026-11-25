@@ -1,0 +1,29 @@
+# The last picker preset for the supported single-service implementation.
+- spec:
+    name: execute_service_single
+    description: >-
+      Execute one Home Assistant service on an exposed target. Supply
+      service-specific fields inside service_data when the requested action needs them.
+    parameters:
+      type: object
+      properties:
+        domain:
+          type: string
+          description: The Home Assistant service domain.
+        service:
+          type: string
+          description: The service name to call.
+        service_data:
+          type: object
+          description: >-
+            Any valid Home Assistant service data accepted by the selected service. Include
+            a target such as entity_id, device_id, area_id, floor_id, or label_id.
+            Service-specific fields are also allowed, for example brightness_pct,
+            color_name, color_temp_kelvin, rgb_color, temperature, hvac_mode, transition,
+            effect, or volume_level.
+          additionalProperties: true
+      required: [domain, service, service_data]
+    strict: false
+  function:
+    type: native
+    name: execute_service_single

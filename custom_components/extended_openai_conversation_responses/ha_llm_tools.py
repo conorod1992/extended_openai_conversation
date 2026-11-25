@@ -44,12 +44,13 @@ _NATIVE_COMMAND_TOOL = "homeassistant.components.intent.llm.ScheduleCommandTool"
 _DELAYED_ROUTING = (
     "The assistant preference Use EOAI for delayed actions is enabled. This rule "
     "takes precedence over Home Assistant tool instructions for delayed actions. "
-    "For a request to perform an action later, use a suitable EOAI Function Tool "
-    "with a positive delay, or load its Function Group if available. If no suitable "
-    "scheduling tool is available, explain that the action cannot be scheduled. "
-    "Never perform the requested action immediately, start an ordinary timer instead, "
-    "create an automation, or use Home Assistant's delayed conversation commands. "
+    "If the user asks to perform an action later, including in a follow-up, use "
+    "a suitable EOAI Function Tool with a positive delay, or load its Function Group "
+    "if available. If no suitable tool is available for that action, explain that "
+    "it cannot be scheduled. For that delayed action, never execute immediately, substitute a "
+    "timer, create an automation, or use Home Assistant's delayed conversation commands. "
     "Confirm scheduling only after the Function Tool reports a saved action ID. "
+    "Use the normal tools for immediate actions and other requests. "
     "Continue to use Home Assistant timer tools for ordinary timers and timer management."
 )
 _REFERENCE_FIELDS = frozenset(
@@ -396,6 +397,9 @@ class ToolSnapshot:
                 prompts[
                     "No delay-capable EOAI Function Tool is available in this request. "
                     "Tell the user that the delayed action cannot be scheduled."
+                    if self.require_positive_delay
+                    else "If the user requested a delayed action, explain that it cannot be scheduled "
+                    "because no delay-capable EOAI Function Tool is available in this request."
                 ] = None
         return "\n".join(prompts)
 

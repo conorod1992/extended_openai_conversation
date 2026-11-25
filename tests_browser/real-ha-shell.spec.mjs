@@ -767,6 +767,8 @@ test("genuine HA native YAML editor saves with Ctrl+S and survives a fresh panel
   await expect(fallback).toBeHidden();
   await expect(nativeEditor).toHaveJSProperty("tagName", "HA-YAML-EDITOR");
   expect(await nativeEditor.evaluate(() => Boolean(customElements.get("ha-yaml-editor")))).toBe(true);
+  await expect(panel.locator('#built-in-function option[value="execute_service"]')).toHaveCount(1);
+  await expect(panel.locator('#built-in-function option[value="execute_service_single"]')).toHaveCount(0);
 
   const initialTool = {
     spec: {

@@ -4,8 +4,12 @@ import logging
 from types import SimpleNamespace
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockUser
+from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
 
+from custom_components.extended_openai_conversation_responses.delayed_tools import (
+    DelayedToolManager,
+    ScheduledActionOwner,
+)
 from custom_components.extended_openai_conversation_responses.exceptions import (
     EntityNotExposed,
 )
@@ -18,6 +22,12 @@ from custom_components.extended_openai_conversation_responses.ha_actions import 
 )
 from custom_components.extended_openai_conversation_responses.ha_service_compat import (
     prepare_service_dispatch,
+)
+from custom_components.extended_openai_conversation_responses.ha_permissions import (
+    async_setup_ha_permissions,
+)
+from custom_components.extended_openai_conversation_responses.scheduled_action_summary import (
+    describe_native_action,
 )
 from homeassistant.auth.models import Group
 from homeassistant.auth.permissions.const import (
@@ -32,7 +42,9 @@ from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
     area_registry,
+    device_registry,
     entity_registry,
+    floor_registry,
     label_registry,
     target as target_helpers,
 )
@@ -71,6 +83,68 @@ async def switch_targets(hass):
     async_expose_entity(hass, "conversation", visible, True)
     async_expose_entity(hass, "conversation", hidden, False)
     return visible, hidden, area.id, label.label_id, effects
+
+
+async def test_scheduled_summary_only_names_visible_indirect_targets(
+    hass, switch_targets
+):
+    visible, hidden, mixed_area, hidden_label, _ = switch_targets
+    floor = floor_registry.async_get(hass).async_create("Ground floor")
+    area = area_registry.async_get(hass).async_create("Hall", floor_id=floor.floor_id)
+    label = label_registry.async_get(hass).async_create("Evening lights")
+    entry = MockConfigEntry(domain="test")
+    entry.add_to_hass(hass)
+    device = device_registry.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={("test", "summary-device")},
+        name="Hall switch",
+    )
+    registry = entity_registry.async_get(hass)
+    registry.async_update_entity(
+        visible,
+        area_id=area.id,
+        device_id=device.id,
+        labels={label.label_id, hidden_label},
+    )
+    # The old area is hidden by exposure. The visible label and floor contain
+    # only the visible switch, and the old label includes a hidden switch.
+    allowed = MockUser(
+        is_owner=False,
+        groups=[
+            Group(
+                name="Read visible switch",
+                policy={
+                    CAT_ENTITIES: {ENTITY_ENTITY_IDS: {visible: {POLICY_READ: True}}}
+                },
+            )
+        ],
+    ).add_to_hass(hass)
+    denied = MockUser(is_owner=False, groups=[]).add_to_hass(hass)
+    await async_setup_ha_permissions(hass)
+    manager = DelayedToolManager(hass)
+
+    def show(targets, user=allowed):
+        owner = ScheduledActionOwner("provider", "agent", user_id=user.id)
+        return describe_native_action(
+            hass,
+            "execute_service_single",
+            {"domain": "switch", "service": "turn_on", "service_data": targets},
+            lambda entities: manager._visible_summary_entities(entities, owner),
+        )
+
+    assert show({"area_id": area.id, "device_id": device.id}) == (
+        "switch.turn_on (area Hall, device Hall switch)"
+    )
+    assert show({"floor_id": floor.floor_id, "label_id": label.label_id}) == (
+        "switch.turn_on (floor Ground floor, label Evening lights)"
+    )
+    assert show(
+        {"area_id": mixed_area, "label_id": hidden_label, "entity_id": hidden}
+    ) == ("switch.turn_on (additional targets omitted)")
+    assert (
+        show({"area_id": area.id}, denied)
+        == "switch.turn_on (additional targets omitted)"
+    )
 
 
 @pytest.mark.skipif(

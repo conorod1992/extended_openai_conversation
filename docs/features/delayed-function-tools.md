@@ -77,7 +77,7 @@ You can also ask the assistant “What actions are scheduled?” or “Cancel th
 
 Signed-in callers can manage their own actions for the current assistant. Unsigned voice requests can manage unsigned jobs from the same identifiable Assist satellite or device. Anyone using that same voice origin shares this access. Voice Identity assignments for memory and archives do not change it. Requests without an identifiable origin and conversations in Guest Mode have no scheduled action access. If the provider has no room for both tools, use Management to inspect and cancel actions.
 
-The page and the assistant use the same summaries. Native service calls can show service and visible entity identifiers. Other tools use their names. Tool arguments such as messages and credentials are excluded. Pending actions stay manageable after the underlying tool is removed or disabled, until the scheduler removes them under its normal rules. Assistant duplication starts with an empty queue. Deleting an assistant removes its queued work.
+The page and the assistant use the same summaries. Native service calls can show service and visible entity identifiers, permitted area, device, floor, or label names, and selected values such as brightness or target temperature. Summaries flag omitted targets. Other tools use their names. Pending actions stay manageable after the underlying tool is removed or disabled, until the scheduler removes them under its normal rules. Assistant duplication starts with an empty queue. Deleting an assistant removes its queued work.
 
 ## Choose how delayed commands are routed
 
@@ -85,7 +85,7 @@ Home Assistant handles ordinary timers such as “set a 20-minute timer” and c
 
 Under **Capabilities → Home Assistant & local handling**, enable **Use EOAI for delayed actions** to route delayed commands that reach EOAI to its Function Tools. An ordinary timer still uses Home Assistant. On the AI path, the preference blocks the native timer's delayed-command argument and Home Assistant's dedicated Schedule command tool on versions that provide it. This applies even when EOAI local handling is off. The setting retains its previous saved value and defaults to off for new assistants. Changing it does not change any already queued jobs.
 
-Enable a suitable Function Tool with the documented `delay` parameter. If Home Assistant recognises the utterance as a delayed command, EOAI requires a positive delay before it allows the requested action to execute. For other wording, the model is instructed to use a positive delay and explain when it cannot schedule the action. For an Assist pipeline to apply the EOAI preference consistently, turn off Home Assistant's pipeline-level **Prefer local handling** so requests reach EOAI. Existing Request Rules still run first.
+Enable a suitable Function Tool with the documented `delay` parameter. If Home Assistant recognises the utterance as a delayed command, EOAI requires a positive delay before the requested action can execute. Indirect wording and follow-ups such as “actually, do that in 20 minutes” can fall back to model interpretation. If the model interprets the request as a delayed action, it should use a positive delay or explain that it cannot schedule the action. Ordinary requests use their usual tools. For an Assist pipeline to apply the EOAI preference consistently, turn off Home Assistant's pipeline-level **Prefer local handling** so requests reach EOAI. Existing Request Rules still run first.
 
 ### Capacity limits
 

@@ -102,6 +102,7 @@
     "tests_real_ha/test_script_transformer_migration.py",
     "tests_real_ha/test_service_handler_contracts.py",
     "tests_real_ha/test_service_registry_acceptance.py",
+    "tests_real_ha/test_service_target_exclusions.py",
     "tests_real_ha/test_shared_service_lifecycle.py",
     "tests_real_ha/test_sibling_subentry_inflight_reload.py",
     "tests_real_ha/test_subentry_runtime_policy_isolation.py",
@@ -555,6 +556,12 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_service_registry_acceptance runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
+    },
+    "tests_real_ha/test_service_target_exclusions.py": {
+      "workflow": "ci.yml",
+      "job": "stable-test",
+      "selector": "tests_real_ha/test_service_target_exclusions.py",
+      "reason": "Stable CI runs the full native target exclusion and Scheduled Action description suite against genuine Home Assistant."
     },
     "tests_real_ha/test_shared_service_lifecycle.py": {
       "workflow": "real-ha.yml",

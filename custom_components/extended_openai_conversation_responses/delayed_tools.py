@@ -33,7 +33,6 @@ from .agent_config import function_tool_enabled
 from .agent_maintenance import AgentRestoreRecoveryRequired, get_agent_maintenance_gate
 from .const import DOMAIN
 from .exceptions import EffectOutcomeUnknown, EffectReplayBlocked
-from .execution_arguments import prepare_service_arguments
 from .function_tool_quarantine import (
     _runtime_configured_function_tools as configured_function_tools_from_data,
 )
@@ -43,12 +42,14 @@ from .ha_permissions import bind_active_ha_context, filter_entities_for_active_u
 from .ha_tool_result_compat import ExecutionFailure, tool_result_data
 from .helpers import get_exposed_entities
 from .mutation_outcomes import mark_mutation_failure
+from .operational_errors import log_handled_failure
 from .persistence_hardening import (
     _async_repair_private_store_mode,
     _async_settle_transactional_save,
 )
 from .record_timestamps import parse_datetime
 from .request_origin import bind_request_satellite, get_request_satellite
+from .scheduled_action_summary import describe_native_action, present_entities
 from .strict_store import PropagatingWriteStore, _async_settle_store_io
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,8 +70,6 @@ _EXECUTING = "executing"
 _DELAYED_EXECUTION_MARKER = "_extended_openai_delayed_execution"
 _ACTION_ID = re.compile(r"(?:[0-9a-f]{32}|legacy_[0-9a-f]{64})")
 _TOOL_LABEL = re.compile(r"[A-Za-z0-9_-]{1,64}")
-_HA_IDENTIFIER = re.compile(r"[a-z0-9_]{1,64}")
-_ENTITY_ID = re.compile(r"[a-z0-9_]{1,64}\.[a-z0-9_]{1,128}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -635,28 +634,8 @@ class DelayedToolManager:
             ]
         # The records are immutable snapshots. The per-assistant admission limit
         # also bounds projection work and the size of this reply.
-        entry = self.hass.config_entries.async_get_entry(owner.entry_id)
-        subentry = (
-            entry.subentries.get(owner.subentry_id) if entry is not None else None
-        )
-        native_tools: dict[str, dict[str, Any]] = {}
-        if pending and subentry is not None:
-            try:
-                # Avoid the runtime quarantine ContextVars, which belong to the
-                # active conversation's own tool/group assembly.
-                from .function_configuration_repair import isolated_function_tools
-
-                tools, _, _ = isolated_function_tools(dict(subentry.data))
-                native_tools = {
-                    tool["spec"]["name"]: tool
-                    for tool in tools
-                    if tool["function"].get("type") == "native"
-                    and tool["function"].get("name")
-                    in {"execute_service", "execute_service_single"}
-                }
-            except HomeAssistantError, TypeError, ValueError:
-                # Descriptions can always fall back to the recorded tool name.
-                pass
+        native_tools = self._summary_tools(owner) if pending else {}
+        fingerprints: dict[str, str | None] = {}
         return {
             "status": "ok",
             "actions": [
@@ -664,7 +643,7 @@ class DelayedToolManager:
                     "action_id": _public_action_id(record.call_id),
                     "scheduled_at": due.isoformat(),
                     "description": self._action_description(
-                        record, native_tools.get(record.tool_name), owner
+                        record, native_tools.get(record.tool_name), owner, fingerprints
                     ),
                 }
                 for due, record in sorted(
@@ -673,68 +652,71 @@ class DelayedToolManager:
             ],
         }
 
+    def _summary_tools(self, owner: ScheduledActionOwner) -> dict[str, dict[str, Any]]:
+        """Read tool definitions for display, independently of the live tool scope."""
+        try:
+            entry = self.hass.config_entries.async_get_entry(owner.entry_id)
+            subentry = (
+                entry.subentries.get(owner.subentry_id) if entry is not None else None
+            )
+            if subentry is not None:
+                from .function_configuration_repair import isolated_function_tools
+
+                tools, _, _ = isolated_function_tools(dict(subentry.data))
+                return {
+                    tool["spec"]["name"]: tool
+                    for tool in tools
+                    if tool["function"].get("type") == "native"
+                    and tool["function"].get("name")
+                    in {"execute_service", "execute_service_single"}
+                }
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER, "Could not read Scheduled Action summary tools", err
+            )
+        return {}
+
     def _action_description(
         self,
         record: DelayedToolCall,
         tool: dict[str, Any] | None,
         owner: ScheduledActionOwner,
+        fingerprints: dict[str, str | None],
     ) -> str:
         name = record.tool_name
         fallback = (
             f"Function Tool: {name}" if _TOOL_LABEL.fullmatch(name) else "Function Tool"
         )
-        if (
-            tool is None
-            or tool_definition_fingerprint(tool) != record.definition_fingerprint
-        ):
+        if tool is None or record.definition_fingerprint is None:
             return fallback
-        arguments = record.arguments
-        calls = (
-            arguments.get("list")
-            if tool["function"]["name"] == "execute_service"
-            else [arguments]
-        )
-        if not isinstance(calls, list):
-            return fallback
-        descriptions = []
-        for call in calls[:3]:
-            if not isinstance(call, dict):
-                return fallback
-            try:
-                call = prepare_service_arguments(call)
-            except TypeError, ValueError:
-                return fallback
-            domain, service = call.get("domain"), call.get("service")
-            if not (
-                isinstance(domain, str)
-                and _HA_IDENTIFIER.fullmatch(domain)
-                and isinstance(service, str)
-                and _HA_IDENTIFIER.fullmatch(service)
-                and self.hass.services.has_service(domain, service)
-            ):
-                return fallback
-            targets = call["service_data"].get("entity_id")
-            targets = targets if isinstance(targets, list) else [targets]
-            entities = [
-                target
-                for target in targets[:3]
-                if isinstance(target, str)
-                and _ENTITY_ID.fullmatch(target)
-                and self.hass.states.get(target) is not None
-            ]
-            if not owner.administrator:
-                entities = self._visible_summary_entities(entities, owner)
-            description = f"{domain}.{service}"
-            if entities:
-                description += f" ({', '.join(entities)})"
-            descriptions.append(description)
-        remainder = f" (+{len(calls) - 3} more)" if len(calls) > 3 else ""
-        summary = "; ".join(descriptions)
-        return f"{summary[:480]}{remainder}" if summary else fallback
+
+        try:
+            if name not in fingerprints:
+                # Remember an unavailable fingerprint for this listing only.
+                fingerprints[name] = None
+                fingerprints[name] = tool_definition_fingerprint(tool)
+            if fingerprints[name] == record.definition_fingerprint:
+                return (
+                    describe_native_action(
+                        self.hass,
+                        tool["function"]["name"],
+                        record.arguments,
+                        lambda entities: self._visible_summary_entities(
+                            entities, owner
+                        ),
+                    )
+                    or fallback
+                )
+        except Exception as err:
+            log_handled_failure(_LOGGER, "Could not describe a Scheduled Action", err)
+        return fallback
 
     def _visible_summary_entities(
         self, entities: list[str], owner: ScheduledActionOwner
     ) -> list[str]:
+        entities = present_entities(self.hass, entities)
+        if owner.administrator:
+            return entities
         if not entities or DATA_EXPOSED_ENTITIES not in self.hass.data:
             return []
         exposed = [

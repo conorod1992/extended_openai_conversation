@@ -35,6 +35,7 @@ from custom_components.extended_openai_conversation_responses.request import (
 from custom_components.extended_openai_conversation_responses.resource_limits import (
     MAX_NATIVE_SERVICE_ACTIONS,
 )
+from tests.helpers import get_function_tool_from_yaml
 
 _STATISTICS_PERIODS = ["5minute", "hour", "day", "week", "month", "year"]
 _STATISTICS_TYPES = [
@@ -49,6 +50,8 @@ _STATISTICS_TYPES = [
 
 
 def _preset_tool(implementation: str) -> dict[str, Any]:
+    if implementation == "execute_service_single":
+        return get_function_tool_from_yaml("legacy_execute_service_single.yaml")
     preset = next(
         item
         for item in BUILT_IN_FUNCTION_PRESETS

@@ -440,14 +440,18 @@ async def test_guest_service_casing_cannot_dispatch_indirect_actions(
     from custom_components.extended_openai_conversation_responses.const import (
         CONF_GUEST_FUNCTION_POLICY,
     )
+    from tests.helpers import get_function_tool_from_yaml
 
-    name = "execute_service" if batch else "execute_service_single"
-    tool = deepcopy(
-        next(
-            item["tool"]
-            for item in BUILT_IN_FUNCTION_PRESETS
-            if item["tool"]["function"]["name"] == name
+    tool = (
+        deepcopy(
+            next(
+                item["tool"]
+                for item in BUILT_IN_FUNCTION_PRESETS
+                if item["implementation"] == "execute_service"
+            )
         )
+        if batch
+        else get_function_tool_from_yaml("legacy_execute_service_single.yaml")
     )
     effects = []
 

@@ -6,8 +6,7 @@ Native Function Tools are implemented by Extended OpenAI. Open **Extended OpenAI
 
 | Function name | Purpose |
 |---|---|
-| `execute_service` | Run a list of Home Assistant service calls on Assist-exposed targets. The built-in schema caps each invocation at 20 calls. |
-| `execute_service_single` | Run one Home Assistant service call with top-level `domain`, `service`, and `service_data` arguments. |
+| `execute_service` | Run one or more Home Assistant service calls on Assist-exposed targets. The built-in schema caps each invocation at 20 calls. |
 | `send_broadcast` | Send a spoken message to a destination or, with `whole_home`, all eligible Assist Satellites except the origin. Busy satellites are queued. |
 | `add_automation` | Register an automation from a complete YAML configuration. Review this permission carefully and monitor the integration's automation-registration event. |
 | `get_history` | Retrieve history for Assist-exposed entities over an optional ISO 8601 time range. |
@@ -17,7 +16,7 @@ Native Function Tools are implemented by Extended OpenAI. Open **Extended OpenAI
 
 ## Service execution
 
-`execute_service` accepts a list. Each item has `domain`, `service`, and `service_data`:
+For new configurations, insert **Execute services**. Use a one-item list for a single action. Each item has `domain`, `service`, and `service_data`:
 
 ```yaml
 - spec:
@@ -43,7 +42,9 @@ Native Function Tools are implemented by Extended OpenAI. Open **Extended OpenAI
 
 Include an authorized target such as `entity_id`, `device_id`, `area_id`, `floor_id`, or `label_id` in `service_data`, together with fields required by the selected Home Assistant service. The schema allows service-specific keys because valid data varies by service. Home Assistant exposure and permission checks still apply. Do not assume the model may control every entity or call every service.
 
-`execute_service_single` uses the same Home Assistant checks with one call:
+### Legacy and advanced single-service implementation
+
+`execute_service_single` remains supported in existing tools and custom YAML. It uses top-level `domain`, `service`, and `service_data` arguments and returns a single result object. It applies the same Home Assistant checks as **Execute services**.
 
 ```yaml
 function:
@@ -51,7 +52,7 @@ function:
   name: execute_service_single
 ```
 
-Use the built-in preset to retain the current parameter schema.
+Keep the existing schema and tool name when editing, importing, or restoring one of these tools. Scheduled jobs continue to use their saved tool definitions.
 
 ## History and statistics
 

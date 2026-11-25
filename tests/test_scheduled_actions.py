@@ -14,6 +14,7 @@ import voluptuous as vol
 import yaml
 
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
+from custom_components.extended_openai_conversation_responses import delayed_tools
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
     DATA_DELAYED_TOOL_MANAGER,
     MAX_DELAYED_CALLS_PER_AGENT,
@@ -53,6 +54,9 @@ from custom_components.extended_openai_conversation_responses.request import (
 )
 from custom_components.extended_openai_conversation_responses.request_origin import (
     bind_request_satellite,
+)
+from custom_components.extended_openai_conversation_responses.scheduled_action_summary import (
+    describe_native_action,
 )
 from custom_components.extended_openai_conversation_responses.scheduled_action_tools import (
     async_execute_scheduled_action_tool,
@@ -328,12 +332,215 @@ async def test_native_summary_is_bounded_and_omits_private_arguments(
     result = await manager.async_list_scheduled_actions(
         replace(owner, administrator=True)
     )
-    assert result["actions"][0]["description"] == "light.turn_off (light.living_room)"
+    assert result["actions"][0]["description"] == (
+        "light.turn_off (light.living_room, additional targets omitted)"
+    )
     assert "password" not in str(result) and "private_key" not in str(result)
     agent.subentry.data = {"functions": "[]"}
     assert (await manager.async_list_scheduled_actions(owner))["actions"][0][
         "description"
     ].startswith("Function Tool")
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "fingerprint", "service", "entity", "permission"]
+)
+async def test_summary_failures_are_local_and_fingerprints_are_reused(
+    manager, hass, owner, agent, monkeypatch, caplog, fault
+):
+    tool = deepcopy(_valid_tool())
+    tool["function"] = {"type": "native", "name": "execute_service_single"}
+    other = deepcopy(tool)
+    other["spec"]["name"] = "other_lights"
+    agent.subentry.data = {"functions": yaml.safe_dump([tool, other], sort_keys=False)}
+    for service in ("turn_on", "turn_off"):
+        hass.services.async_register("light", service, lambda _call: None)
+    for seconds, (chosen, target, service, brightness) in enumerate(
+        (
+            (tool, "living_room", "turn_on", 25),
+            (tool, "bedroom", "turn_on", 70),
+            (other, "hall", "turn_off", False),
+        ),
+        start=60,
+    ):
+        await _schedule(
+            manager,
+            agent,
+            tool=chosen,
+            seconds=seconds,
+            arguments={
+                "domain": "light",
+                "service": service,
+                "service_data": {
+                    "entity_id": f"light.{target}",
+                    "brightness_pct": brightness,
+                    "message": "SHOULD_STAY_PRIVATE",
+                },
+            },
+        )
+
+    def fail():
+        raise RuntimeError("SHOULD_STAY_PRIVATE")
+
+    calculate = delayed_tools.tool_definition_fingerprint
+
+    def fingerprint(candidate):
+        if fault == "fingerprint" and candidate["spec"]["name"] == tool["spec"]["name"]:
+            fail()
+        return calculate(candidate)
+
+    def has_service(domain, service):
+        if fault == "service" and service == "turn_on":
+            fail()
+        return (domain, service) in {("light", "turn_on"), ("light", "turn_off")}
+
+    def state(entity_id):
+        if fault == "entity" and entity_id == "light.living_room":
+            fail()
+        return object()
+
+    def filter_readable(_hass, entities):
+        if fault == "permission" and {"entity_id": "light.living_room"} in entities:
+            fail()
+        return entities
+
+    fingerprint_probe = Mock(side_effect=fingerprint)
+    monkeypatch.setattr(delayed_tools, "tool_definition_fingerprint", fingerprint_probe)
+    monkeypatch.setattr(hass.services, "has_service", has_service)
+    monkeypatch.setattr(hass.states.get, "side_effect", state)
+    monkeypatch.setitem(hass.data, delayed_tools.DATA_EXPOSED_ENTITIES, {})
+    monkeypatch.setattr(delayed_tools, "async_should_expose", lambda *_: True)
+    monkeypatch.setattr(
+        delayed_tools, "filter_entities_for_active_user", filter_readable
+    )
+
+    result = await manager.async_list_scheduled_actions(owner)
+    assert result["status"] == "ok"
+    assert fingerprint_probe.call_count == 2
+    descriptions = [item["description"] for item in result["actions"]]
+    assert descriptions == [
+        "light.turn_on (light.living_room, brightness 25%)"
+        if fault is None
+        else f"Function Tool: {tool['spec']['name']}",
+        f"Function Tool: {tool['spec']['name']}"
+        if fault in {"fingerprint", "service"}
+        else "light.turn_on (light.bedroom, brightness 70%)",
+        "light.turn_off (light.hall)",
+    ]
+    assert "SHOULD_STAY_PRIVATE" not in str(result) + caplog.text
+    if fault:
+        assert "Could not describe a Scheduled Action" in caplog.text
+    first = result["actions"][0]["action_id"]
+    assert (await manager.async_cancel_scheduled_action(owner, first))[
+        "status"
+    ] == "cancelled"
+    assert len((await manager.async_list_scheduled_actions(owner))["actions"]) == 2
+    assert fingerprint_probe.call_count == 4
+    assert (
+        await manager.async_list_scheduled_actions(owner, authorized=lambda: False)
+    ) == {"status": "denied"}
+
+
+def test_native_summary_bounds_batches_targets_and_allowlisted_numbers(hass):
+    hass.services.async_register("climate", "set_temperature", lambda _call: None)
+
+    def summarize(value, **extra):
+        return describe_native_action(
+            hass,
+            "execute_service",
+            {
+                "list": [
+                    {
+                        "domain": "climate",
+                        "service": "set_temperature",
+                        "service_data": {
+                            "entity_id": [
+                                "climate.hall",
+                                "climate.kitchen",
+                                "climate.dining",
+                                "climate.living_room",
+                            ],
+                            "temperature": value,
+                            **extra,
+                        },
+                    }
+                ]
+                * 4
+            },
+            lambda entities: entities,
+        )
+
+    low = summarize(19, target_temp_low=17, target_temp_high=21, code="PRIVATE")
+    high = summarize(22, target_temp_low=False, target_temp_high="PRIVATE")
+    assert low is not None and high is not None
+    assert "temperature 19, minimum temperature 17, maximum temperature 21" in low
+    assert "temperature 22" in high
+    assert "additional targets omitted" in low
+    assert "climate.living_room" not in low + high
+    assert "PRIVATE" not in low + high and "temperature False" not in high
+    assert low.endswith("(+1 more)") and high.endswith("(+1 more)")
+    assert len(low) <= 480 and len(high) <= 480
+    assert "temperature True" not in summarize(True)
+    assert "2000" not in summarize(2000)
+
+
+@pytest.mark.parametrize(
+    ("utterance", "recognized"),
+    [
+        ("Turn off the hall lights in twenty minutes", True),
+        ("Actually, do that twenty minutes after we leave", False),
+        ("Give the hall another quarter hour before making it dark", False),
+        ("Turn off the hall lights", False),
+        ("Start a twenty-minute timer", False),
+        ("What is the temperature in the hall?", False),
+        ("Tell me a story", False),
+    ],
+)
+async def test_missing_scheduler_guidance_follows_ha_recognition(
+    hass, monkeypatch, utterance, recognized
+):
+    from custom_components.extended_openai_conversation_responses.local_intents import (
+        async_try_handle_local_intent,
+    )
+    from homeassistant.components import conversation
+
+    async def match(_hass, user_input, _log, *, intent_filter):
+        assert user_input.text == utterance
+        if recognized:
+            result = SimpleNamespace(
+                intent=SimpleNamespace(name=intent.INTENT_START_TIMER),
+                entities={"conversation_command": object()},
+            )
+            assert intent_filter(result)
+        return None
+
+    monkeypatch.setattr(conversation, "async_handle_intents", match)
+    options = {CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI: True}
+    on_delayed = Mock()
+    await async_try_handle_local_intent(
+        hass,
+        SimpleNamespace(context=Context(), text=utterance),
+        SimpleNamespace(content=[]),
+        options,
+        guest_active=False,
+        on_delayed_action=on_delayed,
+    )
+    assert on_delayed.called is recognized
+    snapshot = ToolSnapshot(
+        require_positive_delay=on_delayed.called
+    ).with_delayed_action_preference(options)
+    guidance = snapshot.prompt_for([])
+    assert ("Home Assistant recognised the current request" in guidance) is recognized
+    assert (
+        "Tell the user that the delayed action cannot be scheduled." in guidance
+    ) is recognized
+    assert (
+        "If the user requested a delayed action, explain that it cannot be scheduled"
+        in guidance
+    ) is not recognized
+    assert "including in a follow-up" in guidance
+    assert "Use the normal tools for immediate actions and other requests." in guidance
+    assert "timer tools for ordinary timers" in guidance
 
 
 async def test_management_list_cancel_requires_admin_without_loaded_entity(
@@ -489,7 +696,10 @@ async def test_native_timer_restriction_preserves_schema_and_authoritative_valid
     )
     assert "conversation_command" in original["parameters"]["properties"]
     assert "Always use intent tools." in restricted.prompt_for(projected)
-    assert "No delay-capable EOAI Function Tool" in restricted.prompt_for(projected)
+    assert (
+        "because no delay-capable EOAI Function Tool is available"
+        in restricted.prompt_for(projected)
+    )
 
     def timer_call(**arguments):
         return llm.ToolInput(tool_name="my_timer", id="timer", tool_args=arguments)
@@ -633,6 +843,7 @@ async def test_recognized_delayed_commands_can_be_routed_without_local_execution
     assert not snapshot.delayed_action_tool_available(immediate)
     assert snapshot.delayed_action_tool_available(suitable)
     assert "No delay-capable EOAI Function Tool" in snapshot.prompt_for([])
+    assert "No delay-capable EOAI Function Tool" not in snapshot.prompt_for([suitable])
 
 
 async def test_unknown_cancel_does_not_interrupt_another_executing_waiter(
