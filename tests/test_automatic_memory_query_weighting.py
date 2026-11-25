@@ -23,6 +23,7 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
     GuestCapabilityPolicy,
 )
 from custom_components.extended_openai_conversation_responses.memory import (
+    _RECALL_REQUEST_FRAMING,
     PersistentMemory,
     _automatic_query_weights,
     _bm25_score,
@@ -68,6 +69,10 @@ async def test_standalone_reminder_request_preserves_topic_matches(automatic_rec
 
     question = "Where is the Selene indigo laboratory envelope?"
     reminder = "I would appreciate a quick reminder of something from before"
+    refresher = "Can you give me a little refresher on something we covered earlier?"
+    brief_refresher = (
+        "I would appreciate a brief refresher about something from earlier."
+    )
     short = await memory.async_search(
         "alice", question, automatic_recall=automatic_recall, allow_fuzzy_only=False
     )
@@ -81,7 +86,10 @@ async def test_standalone_reminder_request_preserves_topic_matches(automatic_rec
         f"{question} Please remind me when you have a moment.",
         f"When you have a moment, could you help me think back to this? {question} "
         "I just want to remember, if you can help.",
-        f"{question.removesuffix('?')} I’d appreciate a reminder about something from before",
+        f"{question.removesuffix('?')} I\u2019d appreciate a reminder about something from before",
+        f"{refresher} {question}",
+        f"{question} {refresher}",
+        f"{brief_refresher} {question}",
     ):
         results = await memory.async_search(
             "alice", query, automatic_recall=automatic_recall, allow_fuzzy_only=False
@@ -90,6 +98,8 @@ async def test_standalone_reminder_request_preserves_topic_matches(automatic_rec
 
     for query in (
         reminder,
+        refresher,
+        f"{refresher} Where is Selene's turquoise compass?",
         f"{reminder}: where is Selene's turquoise compass?",
         "Please help me remember something we discussed previously. "
         "Where is Selene's turquoise compass? Please recall the details right now.",
@@ -97,6 +107,12 @@ async def test_standalone_reminder_request_preserves_topic_matches(automatic_rec
         assert not await memory.async_search(
             "alice", query, automatic_recall=automatic_recall, allow_fuzzy_only=False
         )
+
+    embedded_topic = (
+        "Can you give me a little refresher on something we covered earlier "
+        "about the Selene indigo laboratory envelope?"
+    )
+    assert _RECALL_REQUEST_FRAMING.sub("", embedded_topic) == embedded_topic
 
 
 async def test_phrase_discount_preserves_admitted_score_with_surviving_anchors():

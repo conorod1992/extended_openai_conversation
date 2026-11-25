@@ -177,8 +177,8 @@ _AUTOMATIC_MEMORY_FILLER_TERMS = frozenset(
 # Topic-bearing requests such as "remind me when the train arrives" must keep
 # their terms. The ranking fallback still requires strong topic overlap.
 _REMINDER_REQUEST = (
-    r"i(?:\s+would|['\u2019]d)\s+appreciate\s+a\s+(?:quick\s+)?"
-    r"reminder\s+(?:of|about)\s+something\s+from\s+before"
+    r"i(?:\s+would|['\u2019]d)\s+appreciate\s+a\s+(?:(?:brief|quick)\s+)?"
+    r"(?:reminder|refresher)\s+(?:of|about)\s+something\s+from\s+(?:before|earlier)"
 )
 _RECALL_COURTESY_CLAUSE = (
     r"(?:"
@@ -190,6 +190,9 @@ _RECALL_COURTESY_CLAUSE = (
     r"(?:would\s+you\s+mind\s+refreshing\s+my\s+memory"
     r"|could\s+you\s+help\s+me\s+think\s+back\s+to\s+this)"
     r"|i\s+just\s+want\s+to\s+remember,?\s+if\s+you\s+can\s+help"
+    r"|(?:can|could|would)\s+you\s+give\s+me\s+a\s+"
+    r"(?:(?:little|brief|quick|short)\s+)?refresher\s+(?:on|about)\s+something\s+we\s+"
+    r"(?:covered|discussed|talked\s+about)\s+(?:earlier|before|previously)"
     r")"
 )
 _RECALL_REQUEST_FRAMING = re.compile(
