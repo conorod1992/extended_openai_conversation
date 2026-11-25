@@ -56,8 +56,8 @@ MUTATIONS = (
     Mutation(
         "restoration",
         COMPONENT + "quiet_hours_runtime.py",
-        "current = _current_volume(self.hass, entity_id)\n                        if current is None:\n                            continue",
-        "current = _current_volume(self.hass, entity_id)\n                        if current is None:\n                            controls.pop(entity_id)\n                            continue",
+        'control["restore_before_apply"] = True\n            if current is None:\n                continue',
+        'control["restore_before_apply"] = True\n            if current is None:\n                if kind == "volume":\n                    controls.pop(entity_id)\n                continue',
         "tests_real_ha/test_quiet_hours_acceptance.py::test_unavailable_quiet_hours_controls_restore_after_return",
         'assert set(manager.active["controls"]) == {media, wake}',
     ),

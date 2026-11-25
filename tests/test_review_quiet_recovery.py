@@ -35,11 +35,11 @@ def timers(monkeypatch):
     return clock, interval
 
 
-async def _manager(hass, monkeypatch, enabled):
+async def _manager(hass, monkeypatch, enabled, *, wake_sound="off"):
     _install_registry(monkeypatch, "bedroom")
     _seed_room(hass, "bedroom", volume=0.8)
     manager = _stateful_public_manager(hass)
-    manager._config = _config(enabled=enabled)
+    manager._config = _config(enabled=enabled, wake_sound=wake_sound)
     await _install_services(hass)
     await manager.async_reconcile()
     return manager
@@ -139,10 +139,13 @@ async def test_failed_readback_suspends_device_changes_and_keeps_recovery_timer(
     assert manager._unsubscribers == []
 
 
+@pytest.mark.parametrize(
+    "receipt_saved", [False, True], ids=["before-dispatch", "after-dispatch"]
+)
 async def test_restore_save_failure_keeps_retry_without_repeating_manual_changes(
-    hass, monkeypatch, timers
+    hass, monkeypatch, timers, receipt_saved
 ):
-    manager = await _manager(hass, monkeypatch, True)
+    manager = await _manager(hass, monkeypatch, True, wake_sound="unchanged")
     persisted = {
         "config": manager.config.as_dict(),
         "active": deepcopy(manager._active),
@@ -154,15 +157,24 @@ async def test_restore_save_failure_keeps_retry_without_repeating_manual_changes
         writes += 1
         if writes == 1:
             persisted.update(deepcopy(data))
+        elif writes == 2 and receipt_saved:
+            persisted.update(deepcopy(data))
+            return
         raise OSError("storage failure")
 
     manager._store = SimpleNamespace(
         async_save=save, async_load=AsyncMock(side_effect=lambda: deepcopy(persisted))
     )
     with pytest.raises(OSError, match="storage failure"):
-        await manager.async_update_config(_config(enabled=False).as_dict())
-    # The first recovery restored devices but could not clear durable ownership.
-    assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.8
+        await manager.async_update_config(
+            _config(enabled=False, wake_sound="unchanged").as_dict()
+        )
+    # A restore can dispatch once its receipt is durable. The later cleanup
+    # write can then fail while the receipt and baseline remain saved.
+    volume = hass.states.get("media_player.bedroom").attributes["volume_level"]
+    assert volume == (0.8 if receipt_saved else 0.2)
+    control = persisted["active"]["controls"]["media_player.bedroom"]
+    assert ("restoration_context_id" in control) is receipt_saved
     hass.states.async_set("media_player.bedroom", "idle", {"volume_level": 0.4})
     restarted = _stateful_public_manager(hass)
     restarted._initialized = False

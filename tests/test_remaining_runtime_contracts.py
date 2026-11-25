@@ -22,7 +22,7 @@ from custom_components.extended_openai_conversation_responses.local_intents impo
     LocalIntentResult,
 )
 from homeassistant.components import conversation
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import intent
 from tests.test_intercom import _coverage_message
@@ -272,6 +272,7 @@ async def test_quiet_hours_pending_restore_releases_observed_control(hass, monke
                 "original_value": True,
                 "quiet_value": False,
                 "restoration_pending": True,
+                "application_context_id": "quiet-application",
             }
         },
         "observed_controls": ["switch.wake"],
@@ -280,9 +281,14 @@ async def test_quiet_hours_pending_restore_releases_observed_control(hass, monke
     await manager._async_restore_locked(pending_only=True)
     assert manager._active["observed_controls"] == []
     assert manager._active["controls"] == {}
+    context = hass.services.async_call.await_args.kwargs["context"]
+    assert isinstance(context, Context)
+    assert context.id != "quiet-application"
     hass.services.async_call.assert_awaited_once_with(
-        "switch", "turn_on", {"entity_id": "switch.wake"}, blocking=True, context=None
+        "switch", "turn_on", {"entity_id": "switch.wake"}, blocking=True, context=context
     )
+    prepared = manager._store.async_save.await_args_list[0].args[0]["active"]
+    assert prepared["controls"]["switch.wake"]["restoration_context_id"] == context.id
 
 
 async def test_quiet_hours_new_period_retains_and_retries_unavailable_control(
