@@ -1694,6 +1694,16 @@ class QuietHoursManager:
         controls = self._active.get("controls", {})
         for entity_id, control in list(controls.items()):
             self._require_current_callback_schedule()
+            if self._restoration_attained(entity_id, control):
+                self._settle_control_restoration(entity_id, control, restored=True)
+                await self._async_save_control_state_locked()
+                continue
+            if self._observe_owned_volume(
+                entity_id,
+                control,
+                allow_application_context="pending_quiet_value" not in control,
+            ):
+                await self._async_save_control_state_locked()
             if control.get("restore_before_apply"):
                 # A changed return value belongs to neither our old effect nor
                 # a current-period observation. Let the pending restore settle
@@ -1708,10 +1718,6 @@ class QuietHoursManager:
                     control["kind"], current, self._attained_quiet_value(control)
                 ):
                     continue
-            if "pending_quiet_value" not in control and self._observe_owned_volume(
-                entity_id, control
-            ):
-                await self._async_save_control_state_locked()
             target = desired.get(entity_id)
             if target is None and self._retain_ambiguous_control(
                 entity_id, control, capabilities
@@ -1800,10 +1806,13 @@ class QuietHoursManager:
                 if control.pop("restore_before_apply", False):
                     await self._async_save_control_state_locked()
                 continue
-            control["pending_quiet_value"] = value
-            # A new operation identity distinguishes its rounded report from the
-            # previous Quiet Hours action while the new intent is still pending.
-            control["pending_application_context_id"] = Context().id
+            if control.get("pending_quiet_value") != value or not control.get(
+                "pending_application_context_id"
+            ):
+                # Keep the same receipt when retrying this target so a late
+                # report from the first attempt can still be attributed.
+                control["pending_quiet_value"] = value
+                control["pending_application_context_id"] = Context().id
             control.pop("restoration_pending", None)
             control.pop("restore_before_apply", None)
             await self._async_save_control_state_locked()
@@ -1842,36 +1851,70 @@ class QuietHoursManager:
                     "retarget", entity_id, kind, err, ownership="retained"
                 )
                 continue
-            self._commit_pending_quiet(entity_id, control)
+            self._commit_pending_quiet(entity_id, control, acknowledged=True)
             await self._async_save_control_state_locked()
 
     @staticmethod
     def _attained_quiet_value(control: dict[str, Any]) -> Any:
         return control.get("attained_value", control["quiet_value"])
 
-    def _observe_owned_volume(self, entity_id: str, control: dict[str, Any]) -> bool:
-        """Retain rounding only when HA attributes the report to our operation."""
+    def _observe_owned_volume(
+        self,
+        entity_id: str,
+        control: dict[str, Any],
+        *,
+        allow_application_context: bool = True,
+    ) -> bool:
+        """Accept attributed rounding or the exact target of an acknowledged retarget."""
         if control["kind"] != "volume":
             return False
         context_id = control.get("application_context_id")
-        if not context_id or self._control_context_id(entity_id) != context_id:
+        attributed = (
+            allow_application_context
+            and context_id
+            and self._control_context_id(entity_id) == context_id
+        )
+        waiting = control.get("retarget_awaiting_feedback")
+        if not attributed and not waiting:
             return False
+        if not attributed:
+            state = self.hass.states.get(entity_id)
+            if getattr(getattr(state, "context", None), "user_id", None):
+                return False
         current = _current_volume(self.hass, entity_id)
-        if current is None or (
-            control.get("attained_value") == current
-            and control.get("attained_context_id") == context_id
+        if current is None or not (
+            attributed
+            or (
+                waiting
+                and self._control_values_equal(
+                    "volume", current, control["quiet_value"]
+                )
+            )
         ):
             return False
+        previous_context = control.get("attained_context_id")
+        changed = bool(control.pop("retarget_awaiting_feedback", False))
+        changed |= current != control.get("attained_value")
         control["attained_value"] = current
-        control["attained_context_id"] = context_id
-        return True
+        if attributed:
+            control["attained_context_id"] = context_id
+        else:
+            control.pop("attained_context_id", None)
+        return changed or previous_context != control.get("attained_context_id")
 
-    def _commit_pending_quiet(self, entity_id: str, control: dict[str, Any]) -> None:
+    def _commit_pending_quiet(
+        self, entity_id: str, control: dict[str, Any], *, acknowledged: bool = False
+    ) -> None:
+        if acknowledged and control["kind"] == "volume":
+            # The new target can arrive without context after the service returns.
+            # Until it arrives, an unchanged previous physical step stays owned.
+            control.setdefault("attained_value", control["quiet_value"])
+            control["retarget_awaiting_feedback"] = True
+        else:
+            control.pop("retarget_awaiting_feedback", None)
         control["quiet_value"] = control.pop("pending_quiet_value")
         if context_id := control.pop("pending_application_context_id", None):
             control["application_context_id"] = context_id
-        # A retarget may quantize to the same reported volume without publishing
-        # a new state/context. Keep the last owned report until a new one arrives.
         self._observe_owned_volume(entity_id, control)
 
     def _pending_quiet_attained(self, entity_id: str, control: dict[str, Any]) -> bool:
@@ -2220,6 +2263,59 @@ class QuietHoursManager:
             return left is not None and abs(left - right) <= _VOLUME_TOLERANCE
         return left is right
 
+    def _restoration_attained(self, entity_id: str, control: dict[str, Any]) -> bool:
+        context_id = control.get("restoration_context_id")
+        if not context_id and not (
+            control.get("restoration_pending")
+            and control.get("application_state") == "applied"
+        ):
+            return False
+        state_context = self._control_context_id(entity_id)
+        kind = control["kind"]
+        if not context_id and kind == "volume" and "attained_value" not in control:
+            return False
+        current = (
+            _current_volume(self.hass, entity_id)
+            if kind == "volume"
+            else _current_switch(self.hass, entity_id)
+        )
+        if current is None:
+            return False
+        at_baseline = self._control_values_equal(
+            kind, current, control["original_value"]
+        )
+        away_from_quiet = not self._control_values_equal(
+            kind, current, self._attained_quiet_value(control)
+        )
+        if context_id:
+            # A device may round even the saved baseline. The restore receipt
+            # attributes a changed step while an unchanged quiet step can retry.
+            return state_context == context_id and (at_baseline or away_from_quiet)
+        # Older pending restores reused the application receipt. Recognize
+        # only an exact baseline distinct from the prior attained quiet value.
+        old_context = control.get(
+            "pending_application_context_id", control.get("application_context_id")
+        )
+        return bool(
+            old_context
+            and state_context == old_context
+            and at_baseline
+            and away_from_quiet
+        )
+
+    def _settle_control_restoration(
+        self, entity_id: str, control: dict[str, Any], *, restored: bool
+    ) -> None:
+        assert self._active is not None
+        self._active["controls"].pop(entity_id)
+        if restored or control.get("restore_before_apply"):
+            # A restored baseline, or a value from a later occurrence, can
+            # become eligible on the next application pass.
+            observed = self._active.get("observed_controls", [])
+            if entity_id in observed:
+                observed.remove(entity_id)
+            self._active.get("observed_identities", {}).pop(entity_id, None)
+
     async def _async_restore_locked(
         self,
         *,
@@ -2235,103 +2331,106 @@ class QuietHoursManager:
             settle_pending=False
         ):
             return
-        self._require_current_callback_schedule()
-        # Manager replacement does not start a new policy period. Retain only
-        # independently released choices; successfully restored controls must
-        # remain eligible for the replacement manager's cold-start catch-up.
-        released = set((self._active or {}).get("observed_controls", [])) - set(
-            (self._active or {}).get("controls", {})
-        )
-        if self._active is not None:
-            controls = self._active.get("controls", {})
-            for entity_id, control in list(controls.items()):
-                if pending_only and not control.get("restoration_pending"):
-                    continue
-                if control.get("application_state") != "prepared":
-                    continue
-                state = self.hass.states.get(entity_id)
-                context_id = control.get("application_context_id")
-                if state is None or state.state in {"unavailable", "unknown"}:
-                    continue
-                if not context_id or state.context.id != context_id:
-                    # Ending a period must not restore a value merely because an
-                    # unacknowledged intent happens to match an independent effect.
-                    controls.pop(entity_id)
-                    released.add(entity_id)
-                    if pending_only and control.get("restore_before_apply"):
-                        observed = self._active.get("observed_controls", [])
-                        if entity_id in observed:
-                            observed.remove(entity_id)
         if self._active is None:
             return
+        self._require_current_callback_schedule()
         controls = self._active.get("controls", {})
         if not isinstance(controls, dict):
             controls = {}
-        if isinstance(controls, dict):
-            for entity_id, raw in list(controls.items()):
-                self._require_current_callback_schedule()
-                if not isinstance(entity_id, str) or not isinstance(raw, dict):
-                    controls.pop(entity_id)
+        for entity_id, control in list(controls.items()):
+            self._require_current_callback_schedule()
+            if not isinstance(entity_id, str) or not isinstance(control, dict):
+                controls.pop(entity_id)
+                continue
+            if pending_only and not control.get("restoration_pending"):
+                continue
+            kind = control.get("kind")
+            if kind not in ("volume", "switch"):
+                self._settle_control_restoration(entity_id, control, restored=True)
+                continue
+            if self._restoration_attained(entity_id, control):
+                self._settle_control_restoration(entity_id, control, restored=True)
+                continue
+            if self._pending_quiet_attained(entity_id, control):
+                self._commit_pending_quiet(entity_id, control)
+            else:
+                self._observe_owned_volume(entity_id, control)
+            original = control["original_value"]
+            quiet = self._attained_quiet_value(control)
+            current = (
+                _current_volume(self.hass, entity_id)
+                if kind == "volume"
+                else _current_switch(self.hass, entity_id)
+            )
+            control["restoration_pending"] = True
+            if period_ended:
+                control["restore_before_apply"] = True
+            if current is None:
+                continue
+            state_context = self._control_context_id(entity_id)
+            at_baseline = self._control_values_equal(kind, current, original)
+            if control.get("application_state") == "prepared" and not (
+                state_context and state_context == control.get("application_context_id")
+            ):
+                unchanged = at_baseline and self._baseline_context_matches(
+                    entity_id, control
+                )
+                if (
+                    preserve_released
+                    and unchanged
+                    and not control.get("restore_before_apply")
+                ):
+                    # Preserve the prepared receipt, including its effect context,
+                    # so setup can revalidate the baseline or see a delayed effect.
+                    control.pop("restoration_pending", None)
                     continue
-                if pending_only and not raw.get("restoration_pending"):
+                self._settle_control_restoration(entity_id, control, restored=unchanged)
+                continue
+            if not self._control_values_equal(kind, current, quiet):
+                self._settle_control_restoration(entity_id, control, restored=False)
+                continue
+            if at_baseline:
+                self._settle_control_restoration(entity_id, control, restored=True)
+                continue
+            context_id = control.get("restoration_context_id")
+            if not context_id:
+                context_id = control["restoration_context_id"] = Context().id
+                await self._async_save_control_state_locked()
+                # Persisting the receipt can yield to a newer independent choice.
+                latest = (
+                    _current_volume(self.hass, entity_id)
+                    if kind == "volume"
+                    else _current_switch(self.hass, entity_id)
+                )
+                if (
+                    not self._control_values_equal(kind, latest, current)
+                    or self._control_context_id(entity_id) != state_context
+                ):
                     continue
-                if self._pending_quiet_attained(entity_id, raw):
-                    self._commit_pending_quiet(entity_id, raw)
-                else:
-                    self._observe_owned_volume(entity_id, raw)
-                kind = raw.get("kind")
-                original = raw.get("original_value")
-                quiet = self._attained_quiet_value(raw)
-                raw["restoration_pending"] = True
-                if period_ended:
-                    raw["restore_before_apply"] = True
-                try:
-                    if (
-                        kind == "volume"
-                        and isinstance(original, (int, float))
-                        and not isinstance(original, bool)
-                        and isinstance(quiet, (int, float))
-                        and not isinstance(quiet, bool)
-                    ):
-                        current = _current_volume(self.hass, entity_id)
-                        if current is None:
-                            continue
-                        if not math.isclose(
-                            current, float(quiet), abs_tol=_VOLUME_TOLERANCE
-                        ):
-                            released.add(entity_id)
-                        elif not math.isclose(
-                            current, float(original), abs_tol=_VOLUME_TOLERANCE
-                        ):
-                            await self._async_set_volume(entity_id, float(original))
-                    elif (
-                        kind == "switch"
-                        and isinstance(original, bool)
-                        and isinstance(quiet, bool)
-                    ):
-                        current_switch = _current_switch(self.hass, entity_id)
-                        if current_switch is None:
-                            continue
-                        if current_switch is not quiet:
-                            released.add(entity_id)
-                        elif current_switch is not original:
-                            await self._async_set_switch(entity_id, original)
-                    # A confirmed independent value releases ownership too.
-                    controls.pop(entity_id)
-                    if pending_only:
-                        observed = self._active.get("observed_controls", [])
-                        if entity_id in observed:
-                            observed.remove(entity_id)
-                except _ObsoleteQuietHoursCallback:
-                    raise
-                except Exception as err:
-                    self._log_control_failure(
-                        "restore", entity_id, str(kind), err, ownership="retained"
+            try:
+                if kind == "volume":
+                    await self._async_set_volume(
+                        entity_id, original, context_id=context_id
                     )
+                else:
+                    await self._async_set_switch(
+                        entity_id, original, context_id=context_id
+                    )
+            except _ObsoleteQuietHoursCallback:
+                raise
+            except Exception as err:
+                self._log_control_failure(
+                    "restore", entity_id, kind, err, ownership="retained"
+                )
+                continue
+            self._settle_control_restoration(entity_id, control, restored=True)
         if not pending_only:
             retained_observations = set(controls)
             if preserve_released:
-                retained_observations.update(released)
+                retained_observations.update(self._active.get("observed_controls", []))
+                retained_observations.update(self._active.get("pending_controls", {}))
+            else:
+                self._active["pending_controls"] = {}
             detached = self._active.get("detached_controls", {})
             for control in detached.values():
                 control["restoration_pending"] = True
@@ -2345,7 +2444,14 @@ class QuietHoursManager:
                 or self._active.get("detached_observations")
             ):
                 self._active["observed_controls"] = sorted(retained_observations)
-                self._active["pending_controls"] = {}
+                if "observed_identities" in self._active:
+                    self._active["observed_identities"] = {
+                        entity_id: identity
+                        for entity_id, identity in self._active[
+                            "observed_identities"
+                        ].items()
+                        if entity_id in retained_observations
+                    }
             else:
                 self._active = None
         if (
@@ -2361,18 +2467,36 @@ class QuietHoursManager:
         ):
             await self._async_restore_locked(pending_only=True)
 
-    async def _async_set_volume(self, entity_id: str, volume_level: float) -> None:
+    async def _async_set_volume(
+        self, entity_id: str, volume_level: float, *, context_id: str | None = None
+    ) -> None:
         await self._async_call_control_service(
-            "media_player", "volume_set", entity_id, {"volume_level": volume_level}
+            "media_player",
+            "volume_set",
+            entity_id,
+            {"volume_level": volume_level},
+            context_id=context_id,
         )
 
-    async def _async_set_switch(self, entity_id: str, enabled: bool) -> None:
+    async def _async_set_switch(
+        self, entity_id: str, enabled: bool, *, context_id: str | None = None
+    ) -> None:
         await self._async_call_control_service(
-            "switch", "turn_on" if enabled else "turn_off", entity_id, {}
+            "switch",
+            "turn_on" if enabled else "turn_off",
+            entity_id,
+            {},
+            context_id=context_id,
         )
 
     async def _async_call_control_service(
-        self, domain: str, service: str, entity_id: str, data: dict[str, Any]
+        self,
+        domain: str,
+        service: str,
+        entity_id: str,
+        data: dict[str, Any],
+        *,
+        context_id: str | None = None,
     ) -> None:
         """Associate an observable HA effect with its persisted prepared intent."""
         self._require_current_callback_schedule()
@@ -2403,7 +2527,7 @@ class QuietHoursManager:
             raise HomeAssistantError(
                 "Quiet Hours control identity changed; retry reconciliation"
             )
-        context_id = control.get(
+        context_id = context_id or control.get(
             "pending_application_context_id", control.get("application_context_id")
         )
         await self.hass.services.async_call(
@@ -2566,6 +2690,16 @@ class QuietHoursManager:
             if not isinstance(attained_context, str) or not attained_context:
                 raise ValueError("Quiet Hours attained context is invalid")
             control["attained_context_id"] = attained_context
+        if (
+            control["kind"] == "volume"
+            and raw.get("retarget_awaiting_feedback") is True
+        ):
+            control["retarget_awaiting_feedback"] = True
+        restoration_context = raw.get("restoration_context_id")
+        if restoration_context is not None:
+            if not isinstance(restoration_context, str) or not restoration_context:
+                raise ValueError("Quiet Hours restoration context is invalid")
+            control["restoration_context_id"] = restoration_context
 
     def _normalize_active_values(self, value: Any) -> dict[str, Any] | None:
         if not isinstance(value, Mapping):

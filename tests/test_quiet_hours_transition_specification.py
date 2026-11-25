@@ -10,10 +10,13 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     quiet_hours_runtime as runtime,
 )
+from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
 from tests.quiet_hours_transition_histories import (
     HISTORIES,
+    VOLUME_RETARGET_HISTORIES,
     exercise_history,
+    restore_while_suspended,
     retire_without_restoration,
 )
 from tests.test_quiet_hours_runtime import (
@@ -28,7 +31,7 @@ class MemoryTransitionDriver:
     def __init__(self, hass, monkeypatch, kind, deferred):
         self.hass, self.kind, self.deferred = hass, kind, deferred
         self.values = (
-            {"quiet": 0.2, "baseline": 0.8, "alternate": 0.6}
+            {"quiet": 0.2, "baseline": 0.8, "alternate": 0.6, "retargeted": 0.3}
             if kind == "volume"
             else {"quiet": False, "baseline": True, "alternate": True}
         )
@@ -36,7 +39,9 @@ class MemoryTransitionDriver:
             "media_player.bedroom" if kind == "volume" else "switch.bedroom_wake_sound"
         )
         self.commands, self.pending = [], []
-        self.lose_ack = False
+        self.command_contexts = []
+        self.lose_ack = self.reject = False
+        self.contextless = self.hold_feedback = False
         _install_registry(monkeypatch, "bedroom")
         self.manager = _stateful_public_manager(hass)
         _seed_room(hass, "bedroom", volume=0.8)
@@ -46,6 +51,7 @@ class MemoryTransitionDriver:
         if kind == "switch":
             # Isolate wake-sound ownership from independent volume application.
             hass.states.async_set("media_player.bedroom", "idle", {"volume_level": 0.1})
+        self.report(self.values["baseline"], Context())
         self.now = datetime(2026, 11, 1, 22, 30, tzinfo=UTC)
         monkeypatch.setattr(runtime.dt_util, "now", lambda: self.now)
         self.config = self.manager._config
@@ -72,9 +78,7 @@ class MemoryTransitionDriver:
             self.hass.states.async_set(self.entity, "idle", {"volume_level": value})
         else:
             self.hass.states.async_set(self.entity, "on" if value else "off")
-        self.hass.states.get(self.entity).context = context or SimpleNamespace(
-            id="independent"
-        )
+        self.hass.states.get(self.entity).context = context or Context()
 
     def offline(self):
         self.hass.states.async_set(self.entity, "unavailable")
@@ -94,18 +98,26 @@ class MemoryTransitionDriver:
             data["volume_level"] if domain == "media_player" else service == "turn_on"
         )
         self.commands.append((domain, service, data["entity_id"], value))
+        self.command_contexts.append(kwargs.get("context"))
         assert data["entity_id"] == self.entity
         assert domain == ("media_player" if self.kind == "volume" else "switch")
+        if self.reject:
+            self.reject = False
+            raise HomeAssistantError("Service rejected without a report")
+        context = None if self.contextless else kwargs.get("context")
+        self.contextless = False
         if self.lose_ack:
             self.lose_ack = False
-            self.report(value, kwargs.get("context"))
-            raise HomeAssistantError("Acknowledgement lost after attributed effect")
-        if self.deferred:
-            self.pending.append((value, kwargs.get("context")))
+            self.report(value, context)
+            raise HomeAssistantError("Acknowledgement lost after device report")
+        if self.deferred or self.hold_feedback:
+            self.pending.append((value, context))
         else:
-            self.report(value, kwargs.get("context"))
+            self.report(value, context)
 
     def feedback(self):
+        if self.hold_feedback:
+            return
         for value, context in self.pending:
             self.report(value, context)
         self.pending.clear()
@@ -117,11 +129,22 @@ class MemoryTransitionDriver:
         self.departed = True
         self.manager._discover_capabilities = lambda: []
 
-    async def crash(self):
-        # Drop the manager without executing graceful shutdown restoration.
+    def return_to_policy(self):
+        self.departed = False
+        del self.manager._discover_capabilities
+
+    def replace_manager(self):
         retire_without_restoration(self.manager)
         self.manager = type(self.manager)(self.hass)
         self.bind()
+
+    async def startup_restore(self):
+        self.replace_manager()
+        await restore_while_suspended(self.manager)
+
+    async def crash(self):
+        # Drop the manager without executing graceful shutdown restoration.
+        self.replace_manager()
         await self.manager.async_setup()
 
     async def reconcile(self, hour):
@@ -135,3 +158,10 @@ class MemoryTransitionDriver:
 async def test_transition_specification(hass, monkeypatch, history, kind, deferred):
     driver = MemoryTransitionDriver(hass, monkeypatch, kind, deferred)
     await exercise_history(driver, HISTORIES[history])
+
+
+@pytest.mark.parametrize("history", VOLUME_RETARGET_HISTORIES)
+@pytest.mark.parametrize("deferred", [False, True])
+async def test_contextless_retarget_history(hass, monkeypatch, history, deferred):
+    driver = MemoryTransitionDriver(hass, monkeypatch, "volume", deferred)
+    await exercise_history(driver, VOLUME_RETARGET_HISTORIES[history])

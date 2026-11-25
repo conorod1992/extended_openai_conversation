@@ -357,9 +357,13 @@ async def test_quiet_hours_apply_and_restore_failures_retain_context(
         }
     }
     await manager._async_restore_locked()
+    restore = manager._async_set_volume if kind == "volume" else manager._async_set_switch
+    restore_context = restore.await_args.kwargs["context_id"]
+    assert isinstance(restore_context, str) and restore_context
     assert manager._active["controls"][entity_id] == {
         "kind": kind, "original_value": original, "quiet_value": quiet,
         "restoration_pending": True,
+        "restoration_context_id": restore_context,
     }
     assert "ownership=retained" in caplog.text
     assert "operation=apply" in caplog.text and "operation=restore" in caplog.text

@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -292,7 +292,9 @@ async def test_quiet_hours_pending_volume_restore_releases_ownership(
 
     await manager._async_restore_locked(pending_only=True)
 
-    manager._async_set_volume.assert_awaited_once_with("media_player.kitchen", 0.7)
+    manager._async_set_volume.assert_awaited_once_with(
+        "media_player.kitchen", 0.7, context_id=ANY
+    )
     assert manager._active["controls"] == {}
     assert manager._active["observed_controls"] == []
 
@@ -324,7 +326,7 @@ async def test_quiet_hours_pending_switch_restore_releases_ownership(
     await manager._async_restore_locked(pending_only=True)
 
     manager._async_set_switch.assert_awaited_once_with(
-        "switch.kitchen_wake_sound", True
+        "switch.kitchen_wake_sound", True, context_id=ANY
     )
     assert manager._active["controls"] == {}
 

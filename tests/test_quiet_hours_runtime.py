@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock, call
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call
 
 import pytest
 
@@ -1394,8 +1394,12 @@ async def test_restore_respects_manual_changes_and_retains_failed_ownership() ->
     manager._async_save_locked = AsyncMock()
 
     await manager._async_restore_locked()
-    manager._async_set_volume.assert_awaited_once_with("media_player.owned", 0.7)
-    manager._async_set_switch.assert_awaited_once_with("switch.owned", True)
+    manager._async_set_volume.assert_awaited_once_with(
+        "media_player.owned", 0.7, context_id=ANY
+    )
+    manager._async_set_switch.assert_awaited_once_with(
+        "switch.owned", True, context_id=ANY
+    )
     assert manager._active is None
 
     manager._active = {

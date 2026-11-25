@@ -1,7 +1,7 @@
 """Regressions for authorization and Home Assistant action audit findings."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -104,7 +104,10 @@ async def test_quiet_hours_restores_same_registered_speaker_after_rename(hass, m
     manager._active = _active("media_player.old", "volume")
     manager._active["controls"]["media_player.old"]["registry_identity"] = ["media_player", "esphome", "speaker-unique"]
     monkeypatch.setattr(quiet_hours.er, "async_get", lambda _h: SimpleNamespace(async_get_entity_id=lambda *_: "media_player.new"))
-    hass.states.get.side_effect = lambda entity_id: State(entity_id, "idle", {"volume_level":0.2}) if entity_id == "media_player.new" else None
+    state = State("media_player.new", "idle", {"volume_level": 0.2})
+    hass.states.get.side_effect = lambda entity_id: state if entity_id == state.entity_id else None
     manager._async_set_volume = AsyncMock()
     await manager._async_restore_locked()
-    manager._async_set_volume.assert_awaited_once_with("media_player.new", 0.8)
+    manager._async_set_volume.assert_awaited_once_with(
+        "media_player.new", 0.8, context_id=ANY
+    )

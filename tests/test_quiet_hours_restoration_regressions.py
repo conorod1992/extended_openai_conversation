@@ -3,7 +3,7 @@
 from copy import deepcopy
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
 
@@ -65,7 +65,9 @@ async def test_unavailable_control_retains_baseline_until_return(
     method = (
         manager._async_set_volume if kind == "volume" else manager._async_set_switch
     )
-    method.assert_awaited_once_with(entity_id, 0.8 if kind == "volume" else True)
+    method.assert_awaited_once_with(
+        entity_id, 0.8 if kind == "volume" else True, context_id=ANY
+    )
     assert manager.active is None
     manager._store.async_save.assert_awaited()
 

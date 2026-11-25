@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -580,7 +580,8 @@ async def test_restore_reverts_prepared_control_owned_by_quiet_hours(hass) -> No
 
     await manager._async_restore_locked()
 
-    manager._async_set_volume.assert_awaited_once_with(entity_id, 0.8)
+    manager._async_set_volume.assert_awaited_once_with(entity_id, 0.8, context_id=ANY)
+    assert manager._async_set_volume.await_args.kwargs["context_id"] != "quiet-hours-operation"
     assert manager.active is None
 
 
@@ -630,7 +631,10 @@ async def test_pending_only_restore_leaves_non_pending_prepared_control_alone(ha
         "media_player.bedroom": quiet_hours_control
     }
     manager._async_set_volume.assert_not_awaited()
-    manager._async_set_switch.assert_awaited_once_with("switch.wake_sound", True)
+    manager._async_set_switch.assert_awaited_once_with(
+        "switch.wake_sound", True, context_id=pending_control["restoration_context_id"]
+    )
+    assert pending_control["restoration_context_id"] != "operation"
 
 
 @pytest.mark.asyncio
