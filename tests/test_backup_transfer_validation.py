@@ -636,6 +636,7 @@ def test_archive_loader_rejects_invalid_manifest_shapes(tmp_path):
     cases = [
         ["not", "an", "object"],
         {**base, "extra": True},
+        *({**base, "version": version} for version in ([], {}, True, 1.0)),
         {**base, "payload_bytes": True},
         {**base, "payload_bytes": 0},
         {**base, "payload_sha256": "not-a-sha"},
@@ -676,11 +677,12 @@ def test_setup_backup_transfer_websocket_registers_once(hass, monkeypatch):
     listen_once.assert_called_once()
 
 
-async def test_start_export_rejects_unknown_mode_before_collection(hass):
+@pytest.mark.parametrize("mode", ["mystery", [], {}, True])
+async def test_start_export_rejects_unknown_mode_before_collection(hass, mode):
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(subentry_id="agent-1")
     with pytest.raises(backup.BackupError, match="mode must be full or custom"):
-        await backup_transfer._start_export(hass, entry, subentry, {"mode": "mystery"})
+        await backup_transfer._start_export(hass, entry, subentry, {"mode": mode})
 
 
 async def test_import_chunk_rejects_missing_wrong_owner_and_completed_upload(

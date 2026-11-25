@@ -1039,13 +1039,16 @@ def test_revision_and_reference_helpers_cover_validation_edges() -> None:
         ("config: [", "invalid JSON/YAML"),
         ([], "must be an object"),
         ({"schema": "wrong", "version": 1, "config": {}}, "export schema"),
-        (
-            {
-                "schema": "extended_openai_conversation.agent",
-                "version": 3,
-                "config": {},
-            },
-            "export version",
+        *(
+            (
+                {
+                    "schema": "extended_openai_conversation.agent",
+                    "version": version,
+                    "config": {},
+                },
+                "export version",
+            )
+            for version in (3, [], {}, True, 1.0)
         ),
         (
             {

@@ -237,11 +237,16 @@ class LiveTool:
             raise HomeAssistantError("HA tool changed before dispatch")
         if self.delayed_command_blocked:
             raise HomeAssistantError("Use an EOAI Function Tool for delayed actions")
-        if self.timer_only and _TIMER_COMMAND_ARGUMENT in tool_input.tool_args:
+        raw_args = tool_input.tool_args
+        if not isinstance(raw_args, Mapping):
+            raise HomeAssistantError(
+                "Home Assistant tool arguments do not match the requested schema"
+            )
+        if self.timer_only and _TIMER_COMMAND_ARGUMENT in raw_args:
             raise HomeAssistantError(
                 "Use an EOAI Function Tool for delayed actions. This Home Assistant tool starts ordinary timers."
             )
-        original_args = deepcopy(tool_input.tool_args)
+        original_args = deepcopy(dict(raw_args))
         try:
             args = self.tool.parameters(deepcopy(original_args))
         except SCHEMA_ERRORS:

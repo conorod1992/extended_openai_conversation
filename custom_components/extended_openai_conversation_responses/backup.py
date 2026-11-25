@@ -572,10 +572,11 @@ def _decode_backup_document(
             raise BackupError("The backup is incomplete or corrupted") from err
     if not isinstance(value, dict):
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
+    version = value.get("version")
     try:
         document = (
             decode_document(value)
-            if value.get("version") == PRIVATE_BACKUP_VERSION
+            if type(version) is int and version == PRIVATE_BACKUP_VERSION
             else value
         )
     except (ValueError, TypeError, KeyError, yaml.YAMLError) as err:
@@ -623,8 +624,15 @@ def _inspect_decoded_backup(
     if value.get("format") != BACKUP_FORMAT:
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     version = value.get("version")
-    if version not in {1, 2, 3, 4, BACKUP_VERSION, PRIVATE_BACKUP_VERSION}:
-        if isinstance(version, int) and version > BACKUP_VERSION:
+    if type(version) is not int or version not in {
+        1,
+        2,
+        3,
+        4,
+        BACKUP_VERSION,
+        PRIVATE_BACKUP_VERSION,
+    }:
+        if type(version) is int and version > BACKUP_VERSION:
             raise BackupError(
                 "This backup was created using a newer unsupported backup format"
             )

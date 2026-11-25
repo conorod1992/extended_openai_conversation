@@ -997,9 +997,11 @@ def _load_open_archive_document(archive: zipfile.ZipFile) -> dict[str, Any]:
     backup._validate_import_unicode(manifest)
     payload_bytes = manifest.get("payload_bytes")
     payload_sha256 = manifest.get("payload_sha256")
+    manifest_version = manifest.get("version")
     if (
         manifest.get("format") != ARCHIVE_FORMAT
-        or manifest.get("version") != ARCHIVE_VERSION
+        or type(manifest_version) is not int
+        or manifest_version != ARCHIVE_VERSION
         or manifest.get("payload") != PAYLOAD_NAME
         or isinstance(payload_bytes, bool)
         or not isinstance(payload_bytes, int)
@@ -1186,7 +1188,7 @@ async def _start_export(
             _ensure_session_capacity(hass, MAX_BACKUP_ARCHIVE_BYTES)
 
         mode = data.get("mode", "full")
-        if mode not in {"full", "custom"}:
+        if not isinstance(mode, str) or mode not in {"full", "custom"}:
             raise backup.BackupError("Export mode must be full or custom")
         gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
         async with gate.exclusive():

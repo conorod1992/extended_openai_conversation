@@ -393,3 +393,90 @@ async def test_real_ha_assist_timer_schema_and_dispatch_preserve_ordinary_timers
                     await async_cancel_timer(timer_id)
         finally:
             unregister()
+
+
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("recovery", [False, True])
+@pytest.mark.parametrize(
+    "arguments", ["null", "42", "true", '"conversation_command"', "[]"]
+)
+async def test_real_ha_timer_handles_non_object_provider_arguments(
+    hass, monkeypatch, api_mode, recovery, arguments
+):
+    """Settle malformed provider calls without dispatching a native timer."""
+    from unittest.mock import Mock
+
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        new_reference_tool,
+    )
+    from custom_components.extended_openai_conversation_responses.local_intents import (
+        CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
+    )
+    from homeassistant.components.intent import timers
+    from homeassistant.setup import async_setup_component
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _say, _speech
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _chat_sse_tool_call,
+        _install_wire,
+        _responses_sse_text,
+        _responses_sse_tool_call,
+    )
+
+    assert await async_setup_component(hass, "conversation", {})
+    assert await async_setup_component(hass, "intent", {})
+    device_id = "test-timer-device"
+    event = Mock()
+    unregister = timers.async_register_timer_handler(hass, device_id, event)
+    try:
+        source = await async_discover(
+            hass, preview_context(hass, None, device_id=device_id)
+        )
+        native = next(
+            live
+            for live in source.tools.values()
+            if live.reference["api_id"] == llm.LLM_API_ASSIST
+            and live.reference["tool_name"]
+            in {"HassStartTimer", "intent__HassStartTimer"}
+        )
+        saved = new_reference_tool(native.reference, set())
+        alias = saved["spec"]["name"]
+        agent = await _agent(
+            hass,
+            api_mode=api_mode,
+            functions=[saved],
+            function_tool_error_recovery=recovery,
+            **{CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI: True},
+        )
+        responses = api_mode == "responses"
+        tool_frame = _responses_sse_tool_call if responses else _chat_sse_tool_call
+        text_frame = _responses_sse_text if responses else _chat_sse_text
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            [
+                tool_frame("invalid-timer", alias, raw_arguments=arguments),
+                text_frame("Please give a valid timer duration."),
+            ],
+        )
+        result = await _say(
+            hass, agent, "Try calling the timer tool", device_id=device_id
+        )
+        if recovery:
+            assert len(wire.requests) == 1
+            error = _speech(result, successful=False)
+        else:
+            assert len(wire.requests) == 2
+            assert _speech(result) == "Please give a valid timer duration."
+            body = wire.requests[1]["body"]
+            error = next(
+                item["output" if responses else "content"]
+                for item in body["input" if responses else "messages"]
+                if item.get("call_id" if responses else "tool_call_id") == "invalid-timer"
+                and (not responses or item["type"] == "function_call_output")
+            )
+        assert "arguments do not match the requested schema" in error
+        assert not hass.data[timers.TIMER_DATA].timers
+        event.assert_not_called()
+    finally:
+        unregister()

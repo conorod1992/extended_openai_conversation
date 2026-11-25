@@ -885,6 +885,12 @@ def _validate_transfer_document(
     *,
     validated_categories: dict[str, Any] | None = None,
 ) -> PreparedTransfer:
+    version = value.get("version")
+    if type(version) is not int:
+        raise backup.BackupError("This transfer uses an unsupported format version")
+    mode = value.get("mode")
+    if not isinstance(mode, str) or mode not in {"setup", "custom"}:
+        raise backup.BackupError("The transfer mode is invalid")
     expected = {
         "format",
         "version",
@@ -894,38 +900,27 @@ def _validate_transfer_document(
         "agent",
         "sections",
     }
-    private = (
-        value.get("version") == PRIVATE_TRANSFER_VERSION
-        and value.get("mode") == "custom"
-    )
-    if (value.get("version") == PRIVATE_TRANSFER_VERSION and not private) or (
-        value.get("version") == LEGACY_SHARING_EXPORT_VERSION
-        and value.get("mode") != "setup"
+    private = version == PRIVATE_TRANSFER_VERSION
+    if (private and mode != "custom") or (
+        version == LEGACY_SHARING_EXPORT_VERSION and mode != "setup"
     ):
         raise backup.BackupError("This transfer uses an unsupported format version")
     if private and "provider_connection" in value:
         expected.add("provider_connection")
-    if (
-        value.get("version") == LEGACY_SHARING_EXPORT_VERSION
-        and value.get("mode") == "setup"
-    ):
+    if version == LEGACY_SHARING_EXPORT_VERSION:
         expected.add("security")
     if set(value) != expected:
         raise backup.BackupError("The transfer file is incomplete or corrupted")
-    if value.get("version") not in {
+    if version not in {
         TRANSFER_VERSION,
         LEGACY_SHARING_EXPORT_VERSION,
         PRIVATE_TRANSFER_VERSION,
     }:
-        version = value.get("version")
-        if isinstance(version, int) and version > TRANSFER_VERSION:
+        if version > TRANSFER_VERSION:
             raise backup.BackupError(
                 "This transfer was created using a newer unsupported format"
             )
         raise backup.BackupError("This transfer uses an unsupported format version")
-    mode = value.get("mode")
-    if mode not in {"setup", "custom"}:
-        raise backup.BackupError("The transfer mode is invalid")
     title, created_at, integration_version = _validate_metadata(value)
     raw_sections = value.get("sections")
     if not isinstance(raw_sections, Mapping):
@@ -1022,7 +1017,8 @@ def _validate_transfer_document(
 def _inspect_legacy_setup(
     value: Mapping[str, Any], *, inspect_only: bool = False
 ) -> PreparedTransfer:
-    if value.get("version") not in {
+    version = value.get("version")
+    if type(version) is not int or version not in {
         AGENT_CONFIG_EXPORT_VERSION,
         LEGACY_SHARING_EXPORT_VERSION,
     }:
@@ -1276,7 +1272,7 @@ def _inspect_decoded_transfer(
     Re-encoding their decoded document on HA's loop would block unrelated work.
     """
     if value.get("format") == TRANSFER_FORMAT:
-        if value.get("version") == PRIVATE_TRANSFER_VERSION:
+        if is_private_document(value):
             value = decode_document(value)
         return _validate_transfer_document(
             value,

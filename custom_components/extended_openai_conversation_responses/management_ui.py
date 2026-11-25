@@ -534,7 +534,8 @@ def _parse_import_document(
             raise AgentConfigError("document", str(err)) from None
     if value.get("schema") != "extended_openai_conversation.agent":
         raise AgentConfigError("schema", "unsupported or missing export schema")
-    if value.get("version") not in {
+    version = value.get("version")
+    if type(version) is not int or version not in {
         AGENT_CONFIG_EXPORT_VERSION,
         LEGACY_SHARING_EXPORT_VERSION,
     }:

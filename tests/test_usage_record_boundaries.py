@@ -138,6 +138,29 @@ async def test_unrepresentable_saved_usage_requires_repair_and_import_rejects_it
         manager.validate_backup_data(snapshot, "agent")
 
 
+async def test_unrepresentable_saved_daily_usage_preserves_a_readable_neighbour():
+    totals, daily, details = FakeStorage(), FakeStorage(), FakeStorage()
+    good, bad = "2026-11-01", "2026-11-02"
+    maximum = (1 << 64) - 1
+    daily.data = {
+        "totals": usage.UsageManager(totals).as_dict(),
+        "days": {
+            good: usage._empty_day(good)
+            | {"run_count": 1, "run_total_tokens": maximum},
+            bad: usage._empty_day(bad) | {"run_count": 1, "run_total_tokens": 10**309},
+        },
+    }
+    original = deepcopy(daily.data)
+    manager = usage.UsageManager(totals, daily, details)
+    await manager.async_initialize()
+    assert not manager.is_volatile
+    assert set(manager.daily) == {good}
+    assert manager.daily[good]["average_tokens_per_completed_run"] == maximum
+    assert daily.data == original
+    with pytest.raises(ValueError, match="needs repair"):
+        await manager.async_backup_data()
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

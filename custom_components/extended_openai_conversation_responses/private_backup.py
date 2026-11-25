@@ -49,16 +49,15 @@ def decode_field(value: Any) -> Any:
 
 
 def is_private_document(value: Any) -> bool:
-    return isinstance(value, dict) and (
-        (
-            value.get("format") == "extended_openai_conversation_backup"
-            and value.get("version") == PRIVATE_BACKUP_VERSION
-        )
-        or (
-            value.get("format") == "extended_openai_conversation_transfer"
-            and value.get("version") == PRIVATE_TRANSFER_VERSION
-            and value.get("mode") == "custom"
-        )
+    if not isinstance(value, dict) or type(value.get("version")) is not int:
+        return False
+    return (
+        value.get("format") == "extended_openai_conversation_backup"
+        and value.get("version") == PRIVATE_BACKUP_VERSION
+    ) or (
+        value.get("format") == "extended_openai_conversation_transfer"
+        and value.get("version") == PRIVATE_TRANSFER_VERSION
+        and value.get("mode") == "custom"
     )
 
 
