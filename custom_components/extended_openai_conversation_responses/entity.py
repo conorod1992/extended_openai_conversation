@@ -121,7 +121,13 @@ from .function_tool_recovery import (
     utf8_safe_provider_arguments,
 )
 from .functions import get_function
-from .ha_llm_tools import async_discover, current_snapshot, is_ha_tool, reference_key
+from .ha_llm_tools import (
+    ToolSnapshot,
+    async_discover,
+    current_snapshot,
+    is_ha_tool,
+    reference_key,
+)
 from .ha_schema import SchemaValidator
 from .ha_tool_result_compat import (
     HAToolResultError,
@@ -1338,6 +1344,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         if tool.get("function", {}).get("type")
                         == "function_group_loader"
                     ]
+                snapshot = current_snapshot()
+                if isinstance(snapshot, ToolSnapshot):
+                    candidates = snapshot.admit_delayed_action_tools(candidates)
+                from .scheduled_action_tools import fit_scheduled_action_tools
+
+                candidates = fit_scheduled_action_tools(
+                    candidates, capacity, extra_tool_count=int(conditional_continue)
+                )
                 candidates = admit_function_group_loader(
                     candidates,
                     capacity,
@@ -2895,7 +2909,17 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             execution_arguments, execution_delay = split_legacy_execution_delay(
                 spec, arguments
             )
-            if not delayed and self.should_run_in_background(execution_delay):
+            schedule = not delayed and self.should_run_in_background(execution_delay)
+            if not schedule and getattr(
+                current_snapshot(), "require_positive_delay", False
+            ):
+                from .function_tool_policy import is_integration_owned_read_only_tool
+
+                if not is_integration_owned_read_only_tool(function_tool):
+                    raise HomeAssistantError(
+                        "This request requires a positive EOAI Function Tool delay"
+                    )
+            if schedule:
                 from .delayed_tools import _delay_as_timedelta
 
                 _delay_as_timedelta(execution_delay)
@@ -2906,7 +2930,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
                 # The scheduler owns the receipt at its transactional write,
                 # after admission checks and before a durable effect is possible.
-                await manager.async_schedule(
+                record = await manager.async_schedule(
                     self,
                     str(spec.get("name", tool_input.tool_name)),
                     arguments,
@@ -2918,7 +2942,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     agent_id=self.entity_id,
                     tool_call_id=tool_input.id,
                     tool_name=tool_input.tool_name,
-                    tool_result={"result": "Scheduled"},
+                    tool_result={
+                        "result": "Scheduled",
+                        "action_id": record.call_id,
+                        "scheduled_at": record.due_at,
+                    },
                 )
         execution_error = False
         try:
@@ -2927,6 +2955,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     raise HomeAssistantError("HA tool request context unavailable")
                 reference = function_tool["function"]
                 snapshot = current_snapshot()
+                restrict_delayed = getattr(snapshot, "use_eoai_delayed_actions", False)
                 if not snapshot.caller_provided:
                     snapshot = await async_discover(self.hass, llm_context, [reference])
                 live = snapshot.tools.get(reference_key(reference))
@@ -2941,8 +2970,19 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if user is None or not user.is_active:
                         raise HomeAssistantError("HA tool caller is no longer active")
                 # Recheck after discovery/auth awaits, immediately before dispatch.
-                from .function_tool_resolution import latest_function_tool_for_execution
+                from .function_tool_resolution import (
+                    current_configuration_data,
+                    latest_function_tool_for_execution,
+                )
+                from .local_intents import CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI
 
+                if not snapshot.caller_provided and (
+                    restrict_delayed
+                    or (current_configuration_data(self) or {}).get(
+                        CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI
+                    )
+                ):
+                    live = live.restrict_delayed_commands()
                 latest_function_tool_for_execution(self, function_tool)
                 guest_policy = getattr(self, "_effective_guest_policy", None)
                 if callable(guest_policy) and guest_policy().guest_active:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextvars import Context as TaskContext
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
@@ -10,6 +11,7 @@ from datetime import datetime, timedelta
 import hashlib
 import json
 import logging
+import re
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
@@ -17,6 +19,10 @@ from uuid import uuid4
 import voluptuous as vol
 
 from homeassistant.components import conversation
+from homeassistant.components.homeassistant.exposed_entities import (
+    DATA_EXPOSED_ENTITIES,
+    async_should_expose,
+)
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import Context, CoreState, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -26,15 +32,17 @@ from homeassistant.util import dt as dt_util
 from .agent_config import function_tool_enabled
 from .agent_maintenance import AgentRestoreRecoveryRequired, get_agent_maintenance_gate
 from .const import DOMAIN
-from .exceptions import EffectOutcomeUnknown
+from .exceptions import EffectOutcomeUnknown, EffectReplayBlocked
+from .execution_arguments import prepare_service_arguments
 from .function_tool_quarantine import (
     _runtime_configured_function_tools as configured_function_tools_from_data,
 )
 from .function_tool_resolution import latest_function_tool_for_execution
 from .function_yaml import dump_authored_function_configuration
-from .ha_permissions import bind_active_ha_context
+from .ha_permissions import bind_active_ha_context, filter_entities_for_active_user
 from .ha_tool_result_compat import ExecutionFailure, tool_result_data
 from .helpers import get_exposed_entities
+from .mutation_outcomes import mark_mutation_failure
 from .persistence_hardening import (
     _async_repair_private_store_mode,
     _async_settle_transactional_save,
@@ -59,6 +67,64 @@ _MAX_AGENT_RETRIES = 10
 _PENDING = "pending"
 _EXECUTING = "executing"
 _DELAYED_EXECUTION_MARKER = "_extended_openai_delayed_execution"
+_ACTION_ID = re.compile(r"(?:[0-9a-f]{32}|legacy_[0-9a-f]{64})")
+_TOOL_LABEL = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_HA_IDENTIFIER = re.compile(r"[a-z0-9_]{1,64}")
+_ENTITY_ID = re.compile(r"[a-z0-9_]{1,64}\.[a-z0-9_]{1,128}")
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledActionOwner:
+    """Trusted request identity for one assistant's queue."""
+
+    entry_id: str
+    subentry_id: str
+    user_id: str | None = None
+    device_id: str | None = None
+    satellite_id: str | None = None
+    administrator: bool = False
+
+    def allows(self, record: DelayedToolCall) -> bool:
+        if (self.entry_id, self.subentry_id) != (record.entry_id, record.subentry_id):
+            return False
+        if self.administrator:
+            return True
+        if self.user_id or record.user_id is not None:
+            return bool(self.user_id) and self.user_id == record.user_id
+        # Prefer the most specific origin. Older records may only have a device
+        # ID, but a stored satellite must never match a different satellite.
+        if record.satellite_id and self.satellite_id:
+            return record.satellite_id == self.satellite_id
+        return (
+            not record.satellite_id
+            and bool(self.device_id)
+            and record.device_id == self.device_id
+        )
+
+
+def _public_action_id(call_id: str) -> str:
+    if len(call_id) == 32 and _ACTION_ID.fullmatch(call_id):
+        return call_id
+    # Historical stores accepted arbitrary strings. Keep them manageable without
+    # echoing stored text or rewriting the queue's identifiers.
+    return (
+        "legacy_" + hashlib.sha256(call_id.encode("utf-8", "surrogatepass")).hexdigest()
+    )
+
+
+def valid_scheduled_action_id(value: Any) -> bool:
+    """Accept only a complete ID returned by the scheduler."""
+    return (
+        isinstance(value, str)
+        and len(value) <= 71
+        and _ACTION_ID.fullmatch(value) is not None
+    )
+
+
+def delayed_tool_manager(hass: HomeAssistant) -> DelayedToolManager | None:
+    """Get the existing scheduler without initiating recovery or startup."""
+    manager = hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
+    return manager if isinstance(manager, DelayedToolManager) else None
 
 
 class _DelayedQueueLimitError(HomeAssistantError):
@@ -541,6 +607,237 @@ class DelayedToolManager:
                         self._arm(record.call_id)
         return record
 
+    @property
+    def available(self) -> bool:
+        """Whether management can inspect an authoritative queue generation."""
+        return self._setup_complete and not self._quarantined
+
+    async def async_list_scheduled_actions(
+        self,
+        owner: ScheduledActionOwner,
+        *,
+        authorized: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """Return a bounded, safe view of this owner's pending actions."""
+        async with self._lock:
+            if authorized is not None and not authorized():
+                return {"status": "denied"}
+            if not self.available:
+                return {"status": "unavailable"}
+            now = dt_util.utcnow()
+            pending = [
+                (due, record)
+                for record in self._records.values()
+                if record.status == _PENDING
+                and owner.allows(record)
+                and not self._execution_grace_expired(record, now)
+                and (due := _parse_scheduled_utc(record.due_at)) is not None
+            ]
+        # The records are immutable snapshots. The per-assistant admission limit
+        # also bounds projection work and the size of this reply.
+        entry = self.hass.config_entries.async_get_entry(owner.entry_id)
+        subentry = (
+            entry.subentries.get(owner.subentry_id) if entry is not None else None
+        )
+        native_tools: dict[str, dict[str, Any]] = {}
+        if pending and subentry is not None:
+            try:
+                # Avoid the runtime quarantine ContextVars, which belong to the
+                # active conversation's own tool/group assembly.
+                from .function_configuration_repair import isolated_function_tools
+
+                tools, _, _ = isolated_function_tools(dict(subentry.data))
+                native_tools = {
+                    tool["spec"]["name"]: tool
+                    for tool in tools
+                    if tool["function"].get("type") == "native"
+                    and tool["function"].get("name")
+                    in {"execute_service", "execute_service_single"}
+                }
+            except HomeAssistantError, TypeError, ValueError:
+                # Descriptions can always fall back to the recorded tool name.
+                pass
+        return {
+            "status": "ok",
+            "actions": [
+                {
+                    "action_id": _public_action_id(record.call_id),
+                    "scheduled_at": due.isoformat(),
+                    "description": self._action_description(
+                        record, native_tools.get(record.tool_name), owner
+                    ),
+                }
+                for due, record in sorted(
+                    pending, key=lambda item: (item[0], item[1].call_id)
+                )
+            ],
+        }
+
+    def _action_description(
+        self,
+        record: DelayedToolCall,
+        tool: dict[str, Any] | None,
+        owner: ScheduledActionOwner,
+    ) -> str:
+        name = record.tool_name
+        fallback = (
+            f"Function Tool: {name}" if _TOOL_LABEL.fullmatch(name) else "Function Tool"
+        )
+        if (
+            tool is None
+            or tool_definition_fingerprint(tool) != record.definition_fingerprint
+        ):
+            return fallback
+        arguments = record.arguments
+        calls = (
+            arguments.get("list")
+            if tool["function"]["name"] == "execute_service"
+            else [arguments]
+        )
+        if not isinstance(calls, list):
+            return fallback
+        descriptions = []
+        for call in calls[:3]:
+            if not isinstance(call, dict):
+                return fallback
+            try:
+                call = prepare_service_arguments(call)
+            except TypeError, ValueError:
+                return fallback
+            domain, service = call.get("domain"), call.get("service")
+            if not (
+                isinstance(domain, str)
+                and _HA_IDENTIFIER.fullmatch(domain)
+                and isinstance(service, str)
+                and _HA_IDENTIFIER.fullmatch(service)
+                and self.hass.services.has_service(domain, service)
+            ):
+                return fallback
+            targets = call["service_data"].get("entity_id")
+            targets = targets if isinstance(targets, list) else [targets]
+            entities = [
+                target
+                for target in targets[:3]
+                if isinstance(target, str)
+                and _ENTITY_ID.fullmatch(target)
+                and self.hass.states.get(target) is not None
+            ]
+            if not owner.administrator:
+                entities = self._visible_summary_entities(entities, owner)
+            description = f"{domain}.{service}"
+            if entities:
+                description += f" ({', '.join(entities)})"
+            descriptions.append(description)
+        remainder = f" (+{len(calls) - 3} more)" if len(calls) > 3 else ""
+        summary = "; ".join(descriptions)
+        return f"{summary[:480]}{remainder}" if summary else fallback
+
+    def _visible_summary_entities(
+        self, entities: list[str], owner: ScheduledActionOwner
+    ) -> list[str]:
+        if not entities or DATA_EXPOSED_ENTITIES not in self.hass.data:
+            return []
+        exposed = [
+            {"entity_id": entity_id}
+            for entity_id in entities
+            if async_should_expose(self.hass, "conversation", entity_id)
+        ]
+        with bind_active_ha_context(Context(user_id=owner.user_id)):
+            return [
+                item["entity_id"]
+                for item in filter_entities_for_active_user(self.hass, exposed)
+            ]
+
+    async def async_cancel_scheduled_action(
+        self,
+        owner: ScheduledActionOwner,
+        action_id: str,
+        *,
+        authorized: Callable[[], bool] | None = None,
+    ) -> dict[str, str]:
+        """Durably cancel one authorized pending action under the claim lock."""
+        if not valid_scheduled_action_id(action_id):
+            raise HomeAssistantError("A complete scheduled action ID is required")
+        from .execution_outcomes import (
+            execution_completed,
+            execution_operation,
+            execution_rejected,
+        )
+
+        async with self._lock:
+            if authorized is not None and not authorized():
+                return {"status": "denied"}
+            if not self.available:
+                return {"status": "unavailable"}
+            record = self._records.get(action_id)
+            if action_id.startswith("legacy_"):
+                record = next(
+                    (
+                        item
+                        for item in self._records.values()
+                        if _public_action_id(item.call_id) == action_id
+                    ),
+                    None,
+                )
+            if (
+                record is None
+                or not owner.allows(record)
+                or record.status != _PENDING
+                or self._execution_grace_expired(record, dt_util.utcnow())
+            ):
+                return {"status": "not_pending"}
+            call_id = record.call_id
+            updated = dict(self._records)
+            del updated[call_id]
+            with execution_operation(
+                "delayed_job",
+                {
+                    "operation": "cancel",
+                    "entry_id": owner.entry_id,
+                    "subentry_id": owner.subentry_id,
+                    "action_id": action_id,
+                },
+            ) as operation:
+                try:
+                    await self._async_save_records_transactionally(updated)
+                except EffectReplayBlocked:
+                    raise
+                except BaseException as err:
+                    if self.available and call_id not in self._records:
+                        # A successful write with cancelled acknowledgement, or
+                        # authoritative reconciliation after a write error.
+                        execution_completed(operation.receipt)
+                    elif self.available:
+                        execution_rejected(operation.receipt)
+                        if isinstance(err, Exception):
+                            raise mark_mutation_failure(
+                                HomeAssistantError(
+                                    "The scheduled action could not be cancelled"
+                                ),
+                                "rejected",
+                            ) from None
+                    elif isinstance(err, Exception):
+                        if operation.receipt is not None:
+                            raise EffectOutcomeUnknown() from None
+                        raise mark_mutation_failure(
+                            HomeAssistantError(
+                                "Cancellation could not be confirmed. Refresh before trying again."
+                            ),
+                            "uncertain",
+                        ) from None
+                    if not isinstance(err, Exception):
+                        raise
+                finally:
+                    # Request cancellation only. Awaiting this task under
+                    # the store lock or a maintenance lease can deadlock.
+                    if (
+                        self.available
+                        and call_id not in self._records
+                        and (task := self._tasks.pop(call_id, None)) is not None
+                    ):
+                        task.cancel()
+        return {"status": "cancelled", "action_id": action_id}
+
     async def async_remove_agent(self, entry_id: str, subentry_id: str) -> None:
         """Erase scheduled arguments belonging to a deleted assistant."""
         async with self._lock:
@@ -609,12 +906,14 @@ class DelayedToolManager:
 
     def _invalidate_after_unreadable_store(self) -> None:
         """Stop the scheduler rather than execute from unverified in-memory data."""
-        self._records.clear()
         self._setup_complete = False
         self._started = False
-        for task in self._tasks.values():
+        for call_id, task in self._tasks.items():
             self._invalidated_tasks.add(task)
-            task.cancel()
+            record = self._records.get(call_id)
+            if record is None or record.status != _EXECUTING:
+                task.cancel()
+        self._records.clear()
         self._tasks.clear()
 
     async def _async_save_records_transactionally(

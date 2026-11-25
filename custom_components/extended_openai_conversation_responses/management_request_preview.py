@@ -197,6 +197,7 @@ async def async_preview_effective_request(
                 ),
                 references,
             )
+        ha_snapshot = ha_snapshot.with_delayed_action_preference(options)
         configured_tools = ha_snapshot.project(configured_tools)
         exposed_entities = get_exposed_entities(hass)
         if guest_policy.guest_active:
@@ -254,6 +255,7 @@ async def async_preview_effective_request(
             archive_session_available=archive_session_available,
             guest_policy=guest_policy,
             lifecycle_active=True,
+            scheduled_action_owner_available=bool(user_id),
         )
         conditional_continue = (
             options.get(CONF_CONTINUE_CONVERSATION, DEFAULT_CONTINUE_CONVERSATION)
@@ -273,6 +275,18 @@ async def async_preview_effective_request(
         formatted_provider = (
             list(provider.provider_tools) if guest_policy.web_search else []
         )
+        from .scheduled_action_tools import fit_scheduled_action_tools
+
+        fitted_tools = fit_scheduled_action_tools(
+            [*grouped.tools, *integration_tools],
+            provider.tool_limit,
+            extra_tool_count=int(conditional_continue) + len(formatted_provider),
+        )
+        if len(fitted_tools) < len(grouped.tools) + len(integration_tools):
+            integration_tools = fitted_tools[len(grouped.tools) :]
+            notes.append(
+                "The provider tool limit leaves no room for the Scheduled Actions tools."
+            )
         admitted_grouped_tools = admit_function_group_loader(
             grouped.tools,
             provider.tool_limit,

@@ -280,3 +280,75 @@ async def test_public_assist_stops_after_ha_tool_loses_acknowledgement(
     result = await _say(hass, agent, "Call the test action")
     assert "may have taken effect" in _speech(result, successful=False)
     assert len(sent) == len(tool.calls) == 1
+
+
+@pytest.mark.parametrize("prefer_eoai", [False, True])
+async def test_real_ha_assist_timer_schema_and_dispatch_preserve_ordinary_timers(
+    hass, prefer_eoai
+):
+    """Use the supported HA version's actual Assist tool and timer manager."""
+    from unittest.mock import Mock
+
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        new_reference_tool,
+    )
+    from custom_components.extended_openai_conversation_responses.local_intents import (
+        CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
+    )
+    from homeassistant.components.intent import timers
+    from homeassistant.setup import async_setup_component
+
+    assert await async_setup_component(hass, "conversation", {})
+    assert await async_setup_component(hass, "intent", {})
+    event = Mock()
+    device_id = "test-timer-device"
+    unregister = timers.async_register_timer_handler(hass, device_id, event)
+    manager = hass.data[timers.TIMER_DATA]
+    try:
+        source = await async_discover(
+            hass, llm.LLMContext(
+                platform=DOMAIN, context=Context(), language="en",
+                assistant="conversation", device_id=device_id,
+            )
+        )
+        key, native = next(
+            (key, live) for key, live in source.tools.items()
+            if live.reference["api_id"] == llm.LLM_API_ASSIST
+            and live.reference["tool_name"] in {"HassStartTimer", "intent__HassStartTimer"}
+        )
+        saved = new_reference_tool(native.reference, set())
+        assert saved["spec"]["name"] != native.tool.name
+        snapshot = source.with_delayed_action_preference(
+            {CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI: prefer_eoai},
+        )
+        properties = snapshot.project([saved])[0]["spec"]["parameters"]["properties"]
+        assert ("conversation_command" in properties) is not prefer_eoai
+        assert "conversation_command" in native.spec["parameters"]["properties"]
+
+        live = snapshot.tools[key]
+
+        def timer_call(**extra):
+            return llm.ToolInput(
+                id="timer", tool_name=saved["spec"]["name"],
+                tool_args={"minutes": 1, **extra},
+            )
+
+        if prefer_eoai:
+            with pytest.raises(HomeAssistantError, match="ordinary timers"):
+                await live.async_call(timer_call(conversation_command="turn the light off"))
+            assert not manager.timers
+        else:
+            await live.async_call(timer_call(conversation_command="turn the light off"))
+            assert [timer.conversation_command for timer in manager.timers.values()] == [
+                "turn the light off"
+            ]
+        with pytest.raises(HomeAssistantError, match="requested schema"):
+            await live.async_call(timer_call(minutes=-1))
+        event.assert_not_called()
+        await live.async_call(timer_call())
+        event.assert_called_once()
+        assert event.call_args.args[0] == timers.TimerEventType.STARTED
+    finally:
+        for timer_id in tuple(manager.timers):
+            manager.cancel_timer(timer_id)
+        unregister()

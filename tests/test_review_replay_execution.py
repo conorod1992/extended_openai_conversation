@@ -217,7 +217,10 @@ async def test_scheduler_receipts_follow_authoritative_queue_generation(hass, mo
     _retain_calls(log, [call])
     if mode in {"success", "committed_error"}:
         result = await _execute(entity, tool, call)
-        assert tool_result_data(result) == {"result": "Scheduled"}
+        record = next(iter(manager._records.values()))
+        assert tool_result_data(result) == {
+            "result": "Scheduled", "action_id": record.call_id, "scheduled_at": record.due_at,
+        }
     elif mode == "rejected_write":
         with pytest.raises(OSError, match="write acknowledgement"):
             await _execute(entity, tool, call)

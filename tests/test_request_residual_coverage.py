@@ -152,7 +152,7 @@ def test_assemble_tools_covers_reserved_names_guest_filtering_and_schema_guard(
     monkeypatch.setattr(
         request,
         "resolve_effective_capabilities",
-        lambda *_args, **_kwargs: SimpleNamespace(persistent_memory=True),
+        lambda *_args, **_kwargs: SimpleNamespace(persistent_memory=True, scheduled_actions=False),
     )
 
     with pytest.raises(HomeAssistantError, match="lifecycle"):
@@ -227,7 +227,7 @@ def test_assemble_tools_covers_temporary_conflict(monkeypatch) -> None:
     monkeypatch.setattr(
         request,
         "resolve_effective_capabilities",
-        lambda *_args, **_kwargs: SimpleNamespace(persistent_memory=False),
+        lambda *_args, **_kwargs: SimpleNamespace(persistent_memory=False, scheduled_actions=False),
     )
 
     with pytest.raises(HomeAssistantError, match="temporary-memory"):
@@ -247,7 +247,7 @@ def test_assemble_tools_covers_archive_filter_knowledge_and_guest_conflicts(
     monkeypatch.setattr(
         request,
         "resolve_effective_capabilities",
-        lambda *_args, **_kwargs: SimpleNamespace(persistent_memory=False),
+        lambda *_args, **_kwargs: SimpleNamespace(persistent_memory=False, scheduled_actions=False),
     )
     monkeypatch.setattr(request, "temporary_memory_tools", lambda: [])
     monkeypatch.setattr(

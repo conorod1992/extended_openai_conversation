@@ -198,7 +198,12 @@ from .ha_tool_result_compat import make_tool_result_content, tool_result_data
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
-from .local_intents import LocalIntentResult, async_try_handle_local_intent
+from .local_intents import (
+    CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
+    CONF_LOCAL_INTENTS_ENABLED,
+    LocalIntentResult,
+    async_try_handle_local_intent,
+)
 from .memory import (
     MEMORY_OPTIONAL_ARGUMENTS,
     EmbeddingBatch,
@@ -252,6 +257,11 @@ from .request_rules import (
 )
 from .request_static_cache import formatted_tool_cache, tools_for_available_skills
 from .runtime_failure_hardening import _conversation_error_result
+from .scheduled_action_tools import (
+    SCHEDULED_ACTION_TOOL_TYPE,
+    async_execute_scheduled_action_tool,
+    conversation_scheduled_action_owner,
+)
 from .scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
     ResolvedDataScope,
@@ -1372,24 +1382,40 @@ class ExtendedOpenAIAgentEntity(
         guest_active: bool,
     ) -> ConversationResult:
         """Dispatch within the caller's run; a local failure never retries via AI."""
-        if try_locally:
+        recognized_delayed = False
+
+        def require_delay() -> None:
+            nonlocal recognized_delayed
+            recognized_delayed = True
+
+        use_eoai_delay = request_options.get(CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI)
+        if try_locally or use_eoai_delay:
             try:
-                local_intent = await async_try_broadcast_command(
-                    self.hass,
-                    user_input,
-                    request_options,
-                    guest_active=guest_active,
-                    live_guest_active=lambda: (
-                        self._effective_guest_policy().guest_active
-                    ),
-                )
+                local_intent = None
+                if try_locally:
+                    local_intent = await async_try_broadcast_command(
+                        self.hass,
+                        user_input,
+                        request_options,
+                        guest_active=guest_active,
+                        live_guest_active=lambda: (
+                            self._effective_guest_policy().guest_active
+                        ),
+                    )
                 if local_intent is None:
                     local_intent = await async_try_handle_local_intent(
                         self.hass,
                         user_input,
                         chat_log,
-                        request_options,
+                        request_options
+                        if try_locally
+                        else {**request_options, CONF_LOCAL_INTENTS_ENABLED: False},
                         guest_active=guest_active,
+                        **(
+                            {"on_delayed_action": require_delay}
+                            if use_eoai_delay
+                            else {}
+                        ),
                     )
             except HomeAssistantError as err:
                 metadata = _ACTIVE_INVOCATION.get().metadata
@@ -1401,7 +1427,10 @@ class ExtendedOpenAIAgentEntity(
             if local_intent is not None:
                 return self._local_intent_result(user_input, chat_log, local_intent)
         return await self._async_handle_message_with_ha_tools(
-            user_input, chat_log, request_options
+            user_input,
+            chat_log,
+            request_options,
+            **({"recognized_delayed": True} if recognized_delayed else {}),
         )
 
     async def _async_handle_message_with_ha_tools(
@@ -1409,6 +1438,8 @@ class ExtendedOpenAIAgentEntity(
         user_input: ConversationInput,
         chat_log: ChatLog,
         request_options: Mapping[str, Any] | None = None,
+        *,
+        recognized_delayed: bool = False,
     ) -> ConversationResult:
         """Resolve HA references and cache one validated config revision per request."""
         llm_context = _request_llm_context(user_input)
@@ -1421,13 +1452,20 @@ class ExtendedOpenAIAgentEntity(
         references = ha_tool_discovery_references(
             configured, groups, {**config_data, **(request_options or {})}
         )
-        snapshot = ToolSnapshot()
-        if references and not self._effective_guest_policy().guest_active:
+        snapshot = ToolSnapshot(require_positive_delay=recognized_delayed)
+        if (
+            references
+            and not recognized_delayed
+            and not self._effective_guest_policy().guest_active
+        ):
             snapshot = await async_discover(self.hass, llm_context, references)
         if self.subentry.data is not config_data:
             raise HomeAssistantError(
                 "Agent configuration changed during this request; please retry"
             )
+        snapshot = snapshot.with_delayed_action_preference(
+            {**config_data, **(request_options or {})}
+        )
         with tool_snapshot_scope(snapshot):
             function_config_token = _ACTIVE_FUNCTION_CONFIG.set(
                 (snapshot.project(configured), groups)
@@ -2323,6 +2361,12 @@ class ExtendedOpenAIAgentEntity(
                         archive_available=self._archive_reads_available,
                         archive_session_available=self._archive_session_available,
                         guest_policy=policy,
+                        scheduled_action_owner_available=(
+                            conversation_scheduled_action_owner(
+                                self, _ACTIVE_LLM_CONTEXT.get()
+                            )
+                            is not None
+                        ),
                     )
                 )
                 record_tool_assembly(self, result, assembly_started)
@@ -2488,6 +2532,14 @@ class ExtendedOpenAIAgentEntity(
         policy = self._effective_guest_policy()
         if function_type == "ha_llm" and policy.guest_active:
             return self._tool_result(tool_input, guest_mode_denial_result())
+        if function_type == SCHEDULED_ACTION_TOOL_TYPE:
+            result = await async_execute_scheduled_action_tool(
+                self,
+                conversation_scheduled_action_owner(self, _ACTIVE_LLM_CONTEXT.get()),
+                function_tool["function"]["operation"],
+                tool_input.tool_args,
+            )
+            return self._tool_result(tool_input, result)
         if function_type == "guest_mode":
             try:
                 result = await self._async_execute_guest_mode_tool(tool_input.tool_args)

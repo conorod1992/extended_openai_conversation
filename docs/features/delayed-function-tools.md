@@ -69,11 +69,23 @@ Delayed execution is also coordinated with maintenance operations such as full B
 
 Full agent backups do not contain the delayed-call queue. Restoring an agent on another installation does not migrate its pending jobs; schedule the required actions again on that installation.
 
-## Local handling
+## Review and cancel pending actions
 
-Home Assistant may interpret both ordinary timers and delayed device requests through timer-related intents. Under **Capabilities → Home Assistant & local handling**, you can choose to send delayed device commands onward to AI/Function Tools while still allowing ordinary requests such as "set a 20 minute timer" to stay on the local Home Assistant path.
+Open **Extended OpenAI → Capabilities → Scheduled Actions**, then select an assistant. Administrators can review and cancel its pending EOAI actions even during a conversation entity reload. Times use Home Assistant's configured time zone. Refresh to see recent changes. If a cancellation could not be confirmed, refresh before retrying. An action that has already started is no longer eligible for cancellation.
 
-Use delayed Function Tools when the eventual action needs the Function Tool path and its authorization checks; use Home Assistant timers when the request is simply a timer.
+You can also ask the assistant “What actions are scheduled?” or “Cancel the scheduled command for the living room lights.” The assistant can use an exact action ID from the list or an earlier result. If several actions match, it should ask which one you mean. A successful scheduling result includes the saved ID and execution time. EOAI reserves the tool names `list_scheduled_actions` and `cancel_scheduled_action`. If a custom Function Tool used either name, rename it through the Functions repair view.
+
+Signed-in callers can manage their own actions for the current assistant. Unsigned voice requests can manage unsigned jobs from the same identifiable Assist satellite or device. Anyone using that same voice origin shares this access. Voice Identity assignments for memory and archives do not change it. Requests without an identifiable origin and conversations in Guest Mode have no scheduled action access. If the provider has no room for both tools, use Management to inspect and cancel actions.
+
+The page and the assistant use the same summaries. Native service calls can show service and visible entity identifiers. Other tools use their names. Tool arguments such as messages and credentials are excluded. Pending actions stay manageable after the underlying tool is removed or disabled, until the scheduler removes them under its normal rules. Assistant duplication starts with an empty queue. Deleting an assistant removes its queued work.
+
+## Choose how delayed commands are routed
+
+Home Assistant handles ordinary timers such as “set a 20-minute timer” and can also schedule native delayed conversation commands such as “turn off the lights in 20 minutes.” EOAI scheduled actions belong to its Function Tool queue. The Scheduled Actions page and conversation tools manage only that queue.
+
+Under **Capabilities → Home Assistant & local handling**, enable **Use EOAI for delayed actions** to route delayed commands that reach EOAI to its Function Tools. An ordinary timer still uses Home Assistant. The preference also blocks the native delayed-command argument in Home Assistant's timer tool on the AI path, including when EOAI local handling is off. The setting retains its previous saved value and defaults to off for new assistants. Changing it does not change any already queued jobs.
+
+Enable a suitable Function Tool with the documented `delay` parameter. If Home Assistant recognises the utterance as a delayed command, EOAI requires a positive delay before it allows the requested action to execute. For other wording, the model is instructed to use a positive delay and explain when it cannot schedule the action. For an Assist pipeline to apply the EOAI preference consistently, turn off Home Assistant's pipeline-level **Prefer local handling** so requests reach EOAI. Existing Request Rules still run first.
 
 ### Capacity limits
 

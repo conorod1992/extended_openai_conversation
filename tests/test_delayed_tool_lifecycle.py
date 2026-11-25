@@ -154,7 +154,9 @@ async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> No
     )
 
     manager = DelayedToolManager(hass)
-    manager.async_schedule = AsyncMock()
+    manager.async_schedule = AsyncMock(
+        return_value=SimpleNamespace(call_id="a" * 32, due_at="2026-11-25T14:00:00+00:00")
+    )
     hass.data.setdefault(DOMAIN, {})[DATA_DELAYED_TOOL_MANAGER] = manager
     arguments = {"value": 1, "delay": {"seconds": 5}}
     tool_input = llm.ToolInput(
@@ -175,7 +177,9 @@ async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> No
         function_tool=_tool(_legacy_delay_schema()),
         execution_delay={"seconds": 5},
     )
-    assert tool_result_data(result) == {"result": "Scheduled"}
+    assert tool_result_data(result) == {
+        "result": "Scheduled", "action_id": "a" * 32, "scheduled_at": "2026-11-25T14:00:00+00:00",
+    }
 
 
 async def test_recovered_delayed_execution_strips_scheduler_metadata(

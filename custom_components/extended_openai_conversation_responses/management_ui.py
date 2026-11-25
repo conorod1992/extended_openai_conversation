@@ -2029,6 +2029,9 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             raise HomeAssistantError("Agent no longer exists")
         entry = latest_entry
         subentry = entry.subentries[subentry_id]
+        ha_catalog_snapshot = ha_catalog_snapshot.with_delayed_action_preference(
+            subentry.data
+        )
         tools = inspect_function_tools(subentry.data)
         ha_existing = {
             reference_key(tool["function"]): tool for tool in tools if is_ha_tool(tool)
@@ -2046,7 +2049,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                     {
                         "reference": live.reference,
                         "name": live.tool.name,
-                        "description": live.tool.description or "",
+                        "description": live.spec.get("description", ""),
                         "source": live.source_label,
                         "already_added": key in ha_existing,
                     }
@@ -2059,8 +2062,9 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                         "source": ha_catalog_snapshot.tools[key].source_label
                         if key in ha_catalog_snapshot.tools
                         else tool["function"]["source_id"],
-                        "description": ha_catalog_snapshot.tools[key].tool.description
-                        or ""
+                        "description": ha_catalog_snapshot.tools[key].spec.get(
+                            "description", ""
+                        )
                         if key in ha_catalog_snapshot.tools
                         else "Unavailable in this preview context",
                     }
@@ -3191,6 +3195,30 @@ async def async_function_repair_command(request: _ManagementRequest) -> dict[str
     )
 
 
+async def async_scheduled_actions_command(
+    request: _ManagementRequest,
+) -> dict[str, Any]:
+    """Manage the selected assistant's queue without resolving its entity."""
+    from .delayed_tools import ScheduledActionOwner, delayed_tool_manager
+
+    _require_admin(request.is_admin)
+    action = request.message["action"]
+    if action not in {"list", "cancel"}:
+        return _unknown_management_action(request)
+    manager = delayed_tool_manager(request.hass)
+    if manager is None:
+        return {"status": "unavailable"}
+    owner = ScheduledActionOwner(
+        request.entry_id, request.subentry_id, administrator=True
+    )
+    if action == "list":
+        return await manager.async_list_scheduled_actions(owner)
+    action_id = request.message.get("action_id")
+    if not isinstance(action_id, str):
+        raise HomeAssistantError("A complete scheduled action ID is required")
+    return await manager.async_cancel_scheduled_action(owner, action_id)
+
+
 _MANAGEMENT_SECTION_HANDLERS: Final = MappingProxyType(
     {
         "overview": async_overview_command,
@@ -3207,6 +3235,7 @@ _MANAGEMENT_SECTION_HANDLERS: Final = MappingProxyType(
         "conversations": async_conversations_command,
         "memories": async_memories_command,
         "knowledge": async_knowledge_command,
+        "scheduled_actions": async_scheduled_actions_command,
         "settings": async_settings_command,
     }
 )
@@ -3230,6 +3259,8 @@ async def async_management_command(
         message = decode_management_function_request(message)
     except yaml.YAMLError as err:
         raise HomeAssistantError("Invalid typed YAML in Management request") from err
+    if message.get("section") == "scheduled_actions":
+        _require_admin(is_admin)
     action = message.get("action")
     trace_configuration = is_configuration_timing_operation(
         message.get("section"), action
@@ -3261,6 +3292,8 @@ def _acknowledged_management_write(
             return result.get("valid") is True
         case "configuration", "import":
             return result.get("status") in ("created", "updated")
+        case "scheduled_actions", "cancel":
+            return result.get("status") == "cancelled"
         case "settings", "update":
             return isinstance(result.get("revision"), str)
         case "request_rules", "create" | "update" | "duplicate" | "move":
@@ -3432,6 +3465,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("group_id"): vol.Any(None, str),
         vol.Optional("preview_device_id"): str,
         vol.Optional("rule_id"): str,
+        vol.Optional("action_id"): str,
         vol.Optional("rule"): dict,
         vol.Optional("revision"): str,
         vol.Optional("selection"): str,

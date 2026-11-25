@@ -82,6 +82,7 @@ from .model_capabilities import (
     validate_reasoning_effort,
 )
 from .model_payload import count_model_function_tools, prepare_model_function_tools
+from .scheduled_action_tools import fit_scheduled_action_tools, scheduled_action_tools
 from .temporary_memory import TEMPORARY_MEMORY_TOOL_NAMES, temporary_memory_tools
 
 _LOGGER = logging.getLogger(__name__)
@@ -839,6 +840,7 @@ def assemble_integration_function_tools(
     archive_session_available: bool = True,
     guest_policy: GuestCapabilityPolicy | None = None,
     lifecycle_active: bool | None = None,
+    scheduled_action_owner_available: bool = False,
 ) -> list[dict[str, Any]]:
     """Assemble non-configured tools from the same feature/scope decisions."""
     result: list[dict[str, Any]] = []
@@ -846,6 +848,7 @@ def assemble_integration_function_tools(
     capabilities = resolve_effective_capabilities(
         options,
         memory_scope_available=memory_scope_available,
+        scheduled_action_owner_available=scheduled_action_owner_available,
         guest_policy=guest_policy,
     )
     if START_FRESH_CONVERSATION_TOOL_NAME in configured_names:
@@ -859,6 +862,8 @@ def assemble_integration_function_tools(
         else lifecycle_active
     ):
         result.append(START_FRESH_CONVERSATION_TOOL)
+    if capabilities.scheduled_actions:
+        result.extend(scheduled_action_tools())
     if capabilities.persistent_memory:
         conflicts = configured_names & MEMORY_TOOL_NAMES
         if conflicts:
@@ -968,7 +973,7 @@ async def async_capacity_ha_snapshot(
 
     from homeassistant.helpers import llm
 
-    return await async_discover(
+    discovered = await async_discover(
         hass,
         llm.LLMContext(
             platform=DOMAIN,
@@ -979,6 +984,7 @@ async def async_capacity_ha_snapshot(
         ),
         references,
     )
+    return discovered.with_delayed_action_preference(config)
 
 
 def validate_runtime_readiness(
@@ -1038,7 +1044,9 @@ def validate_runtime_readiness(
     budget_available = function_call_budget_available(options)
     reserve_configured_ha_tools = reserve_ha_tools
     if ha_snapshot is not None:
-        configured = ha_snapshot.project(configured)
+        configured = ha_snapshot.with_delayed_action_preference(options).project(
+            configured
+        )
     elif (
         previous_model_capabilities is not None
         and budget_available
@@ -1101,15 +1109,18 @@ def validate_runtime_readiness(
                 ),
                 knowledge_available=bool(options.get(CONF_KNOWLEDGE_ENABLED)),
                 lifecycle_active=True,
+                scheduled_action_owner_available=True,
             )
         )
     conditional_continue = (
         options.get(CONF_CONTINUE_CONVERSATION) == CONTINUE_CONVERSATION_CONDITIONAL
     )
+    extra_tool_count = int(conditional_continue) + len(snapshot.provider_tools)
+    tools = fit_scheduled_action_tools(
+        tools, snapshot.tool_limit, extra_tool_count=extra_tool_count
+    )
     tools = admit_function_group_loader(
-        tools,
-        snapshot.tool_limit,
-        extra_tool_count=int(conditional_continue) + len(snapshot.provider_tools),
+        tools, snapshot.tool_limit, extra_tool_count=extra_tool_count
     )
     tools = request_function_tools(tools, conditional_continue=conditional_continue)
     validate_provider_tool_count(

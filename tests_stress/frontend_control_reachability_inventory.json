@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 446,
+  "expected_total_markers": 447,
   "viewports": [
     {
       "name": "small-phone",
@@ -31,7 +31,7 @@
     }
   ],
   "files": {
-    "agent-config-editor-base.js": 57,
+    "agent-config-editor-base.js": 56,
     "agent-config-help-content.js": 1,
     "agent-config-help.js": 2,
     "agent-config-sections-capabilities.js": 1,
@@ -64,6 +64,7 @@
     "management-panel.js": 34,
     "management-provider-credentials.js": 6,
     "management-renderer.js": 3,
+    "management-scheduled-actions.js": 2,
     "management-temporary-memory.js": 18,
     "memory-settings-ui.js": 5,
     "model-catalog.js": 2,

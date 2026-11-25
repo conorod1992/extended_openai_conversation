@@ -52,6 +52,10 @@ _RUNTIME_FUNCTION_TOOLS: dict[str, dict[str | None, _RuntimeFunctionTool]] = {
         "update": _RuntimeFunctionTool("memory_update"),
         "delete": _RuntimeFunctionTool("memory_delete"),
     },
+    "scheduled_actions": {
+        "list": _RuntimeFunctionTool("list_scheduled_actions", read_only=True),
+        "cancel": _RuntimeFunctionTool("cancel_scheduled_action"),
+    },
     "temporary_memory": {
         "add": _RuntimeFunctionTool("temporary_memory_add"),
         "update": _RuntimeFunctionTool("temporary_memory_update"),

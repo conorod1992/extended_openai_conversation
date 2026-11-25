@@ -805,6 +805,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._eocPresentationBlocked) return false;
     if (page === "data-memory" && subsection === "memory-settings" && this._data?.is_admin === false) return false;
     if (this._data?.is_admin === false && isRestrictedManagementView(page, subsection)) return false;
+    if (page === "capabilities" && subsection === "scheduled-actions") return this._data?.is_admin === true;
     if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
     if (this._data?.is_admin !== false) return true;
     if (page === "assistant") return false;
@@ -1522,6 +1523,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         result = await scopedCollection();
       } else if (view === "data-memory/knowledge") {
         result = await consumeIntentRead(this, view, "knowledge", "list");
+      } else if (view === "capabilities/scheduled-actions") {
+        result = await this._call("scheduled_actions", "list");
       } else if (view === "capabilities/guest-mode") {
         const detailsPromise = this._call("guest_mode", "details").then(
           (value) => ({status: "fulfilled", value}),
@@ -2097,6 +2100,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     if (view === "capabilities/quiet-hours") return getRouteFeature(view)?.renderQuietHours(this) || this._loading();
     if (view === "usage-maintenance/request-debug") return getRouteFeature(view)?.renderManagementDebug(this) || this._loading();
+    if (view === "capabilities/scheduled-actions") return getRouteFeature(view)?.renderScheduledActions(this) || this._loading();
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return this._memories();
     if (view === "data-memory/knowledge") return `<section class="page-intro"><h1>Knowledge Library</h1><p>Manage reference sources the assistant can search when needed. <button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn more</button></p></section>${this._knowledge()}`;
@@ -2392,6 +2396,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         void this._loadAgents(retry.selectedId, retry.context.owner, retry.context.intent);
       } else void this._loadSection();
     });
+    if (view === "capabilities/scheduled-actions") getRouteFeature(view)?.bindScheduledActions(this);
     if (view === "data-memory/knowledge") getRouteFeature(view)?.bindKnowledge(this);
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
     if (view === "data-memory/conversations") {

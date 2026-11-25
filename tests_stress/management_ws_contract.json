@@ -41,6 +41,7 @@
     {"journey": "knowledge", "section": "knowledge", "action": "update", "keys": ["source_id", "expected_revision", "content", "title", "description", "enabled"]},
     {"journey": "knowledge", "section": "knowledge", "action": "delete", "keys": ["source_id", "confirm"]},
     {"journey": "knowledge", "section": "knowledge", "action": "set_enabled", "keys": ["enabled"], "min_calls": 2},
+    {"journey": "scheduled_actions", "section": "scheduled_actions", "action": "cancel", "keys": ["action_id"]},
     {"journey": "guest_quiet", "section": "guest_mode", "action": "save_policy", "keys": ["config", "revision"]},
     {"journey": "guest_operations", "section": "guest_mode", "action": "update", "keys": ["indefinite"], "contains": {"indefinite": true}},
     {"journey": "guest_operations", "section": "guest_mode", "action": "disable", "keys": ["entry_id", "subentry_id"]},

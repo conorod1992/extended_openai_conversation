@@ -5,7 +5,7 @@ Home Assistant's native integration flow focuses on the provider connection: API
 Configure conversation-agent behaviour from **Extended OpenAI** in the sidebar:
 
 - **Assistant** contains Basics, Model & responses, Conversation, Prompt & context, Voice & identity, and Speech.
-- **Capabilities** contains Home Assistant & local handling, Web search & Skills, Request Rules, Functions/Groups, Quiet Hours, and Guest Mode.
+- **Capabilities** contains Home Assistant & local handling, Web search & Skills, Request Rules, [Scheduled Actions](features/delayed-function-tools.md#review-and-cancel-pending-actions), Functions/Groups, Quiet Hours, and Guest Mode.
 - **Data & Memory** contains Memory settings, Memories, Knowledge Library, and Conversation history. **Usage & Maintenance** contains Usage, Request debugging, Backup & Restore, Diagnostics, and Usage data retention.
 - **Guide** provides searchable, concise orientation and links back into the relevant management subsection. The global settings search navigates directly to settings across sections.
 

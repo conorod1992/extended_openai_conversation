@@ -710,6 +710,35 @@
       },
       "durability_evidence": {}
     },
+    "scheduled_actions": {
+      "actions": [
+        "cancel",
+        "list"
+      ],
+      "evidence": [
+        "tests/test_scheduled_actions.py",
+        "tests_real_ha/test_management_authorization_matrix.py"
+      ],
+      "semantic_classes": {
+        "cancel": "destructive_mutation",
+        "list": "read_only"
+      },
+      "authorization_classes": {
+        "cancel": "admin_only",
+        "list": "admin_only"
+      },
+      "behavioral_evidence": {
+        "cancel": "tests/test_scheduled_actions.py::test_management_list_cancel_requires_admin_without_loaded_entity",
+        "list": "tests/test_scheduled_actions.py::test_management_list_cancel_requires_admin_without_loaded_entity"
+      },
+      "durability_evidence": {
+        "cancel": {
+          "boundary": "fresh_manager",
+          "evidence": "tests/test_scheduled_actions.py::test_scheduled_actions_list_cancel_and_restart",
+          "outcome": "A fresh scheduler recovers the other job and omits the durably cancelled action."
+        }
+      }
+    },
     "settings": {
       "actions": [
         "update"

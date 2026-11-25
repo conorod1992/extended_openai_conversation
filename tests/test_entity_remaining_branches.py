@@ -398,7 +398,9 @@ async def test_tool_execution_error_and_background_branches(monkeypatch) -> None
     )
 
     manager = object.__new__(DelayedToolManager)
-    manager.async_schedule = AsyncMock()
+    manager.async_schedule = AsyncMock(
+        return_value=SimpleNamespace(call_id="a" * 32, due_at="2026-11-25T14:00:00+00:00")
+    )
     entity.hass.data = {module.DOMAIN: {DATA_DELAYED_TOOL_MANAGER: manager}}
     scheduled = await entity._execute_function_tool(
         {
@@ -424,7 +426,9 @@ async def test_tool_execution_error_and_background_branches(monkeypatch) -> None
         None,
         [],
     )
-    assert tool_result_data(scheduled) == {"result": "Scheduled"}
+    assert tool_result_data(scheduled) == {
+        "result": "Scheduled", "action_id": "a" * 32, "scheduled_at": "2026-11-25T14:00:00+00:00",
+    }
 
     monkeypatch.setattr(
         module,

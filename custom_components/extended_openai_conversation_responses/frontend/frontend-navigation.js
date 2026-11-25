@@ -13,6 +13,7 @@ export const NAVIGATION = [
     {id: "home-assistant", label: "Home Assistant & local handling", description: "Review Home Assistant access and choose which simple commands should stay local."},
     {id: "web-skills", label: "Web search & Skills", description: "Configure current-information search and installed instruction sets."},
     {id: "request-rules", label: "Request Rules", description: "Create fast local commands and route AI requests by phrase."},
+    {id: "scheduled-actions", label: "Scheduled Actions", description: "Review and cancel pending EOAI scheduled actions."},
     {id: "functions", label: "Functions", description: "Manage custom Function Tools and on-demand groups."},
     {id: "quiet-hours", label: "Quiet Hours", description: "Make Assist satellites quieter at set times each day and expose that period to Home Assistant automations."},
     {id: "guest-mode", label: "Guest Mode", description: "Limit what visitors can see, use, and remember."},

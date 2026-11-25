@@ -698,6 +698,17 @@ def _is_legacy_delay_schema(schema: object) -> bool:
     )
 
 
+def supports_function_tool_delay(spec: Mapping[str, Any]) -> bool:
+    """Check the same scheduling contract used at Function Tool execution."""
+    parameters = spec.get("parameters")
+    properties = (
+        parameters.get("properties") if isinstance(parameters, Mapping) else None
+    )
+    return isinstance(properties, Mapping) and _is_legacy_delay_schema(
+        properties.get("delay")
+    )
+
+
 def split_legacy_execution_delay(
     spec: Mapping[str, Any], arguments: Mapping[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -709,15 +720,8 @@ def split_legacy_execution_delay(
     part of the configured Function Tool's argument namespace.
     """
     execution_arguments = dict(arguments)
-    parameters = spec.get("parameters")
-    if not isinstance(parameters, Mapping):
-        return execution_arguments, None
-    properties = parameters.get("properties")
-    if not isinstance(properties, Mapping):
-        return execution_arguments, None
-    delay_schema = properties.get("delay")
     delay_value = execution_arguments.get("delay")
-    if not _is_legacy_delay_schema(delay_schema):
+    if not supports_function_tool_delay(spec):
         return execution_arguments, None
     if delay_value is not None and not isinstance(delay_value, Mapping):
         return execution_arguments, None

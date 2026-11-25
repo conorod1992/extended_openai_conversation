@@ -129,8 +129,10 @@ async def test_positive_delay_remains_durably_scheduled(hass, monkeypatch):
         None,
         [],
     )
-    assert tool_result_data(result) == {"result": "Scheduled"}
     record = next(iter(manager._records.values()))
+    assert tool_result_data(result) == {
+        "result": "Scheduled", "action_id": record.call_id, "scheduled_at": record.due_at,
+    }
     assert manager._store.async_save.await_args.args[0] == {"calls": [record.as_dict()]}
 
 

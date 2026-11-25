@@ -114,6 +114,7 @@ const featureLoaders = {
   "memory-browser": () => import("./guest-mode-ui.js"),
   "data-memory/memories": () => import("./management-memory-feature.js"),
   "data-memory/knowledge": () => import("./management-knowledge-feature.js"),
+  "capabilities/scheduled-actions": () => import("./management-scheduled-actions.js"),
   "capabilities/guest-mode": () => selectorFeature(import("./management-guest-feature.js")),
   "capabilities/request-rules": () => selectorFeature(import("./request-rules-ui.js")),
   "capabilities/quiet-hours": () => import("./quiet-hours-ui.js"),

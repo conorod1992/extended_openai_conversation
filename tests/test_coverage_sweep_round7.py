@@ -129,7 +129,7 @@ def test_delayed_tool_invalidate_cancels_tasks_and_resets_scheduler(hass) -> Non
     manager = delayed_tools.DelayedToolManager(hass)
     task = Mock()
     manager._tasks = {"call": task}
-    manager._records = {"call": object()}
+    manager._records = {"call": SimpleNamespace(status="pending")}
     manager._started = True
     manager._setup_complete = True
 

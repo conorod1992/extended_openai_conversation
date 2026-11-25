@@ -1397,7 +1397,11 @@ async def test_owned_executor_schedules_background_call_and_returns_receipt(
         function_tool=tool,
         execution_delay=timedelta(seconds=10),
     )
-    assert tool_result_data(result) == {"result": "Scheduled"}
+    assert tool_result_data(result) == {
+        "result": "Scheduled",
+        "action_id": manager.async_schedule.return_value.call_id,
+        "scheduled_at": manager.async_schedule.return_value.due_at,
+    }
 
 
 def _race_record(*, due_at: str | None = None) -> DelayedToolCall:

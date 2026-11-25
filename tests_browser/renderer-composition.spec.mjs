@@ -86,7 +86,7 @@ test("configuration emits the shipped local, exposed-attribute, group and transf
     const group = root.content.querySelector('[data-group-id="group"]');
     return {...configuration, group:{disabled:group.classList.contains("is-disabled"), badge:group.querySelector(".group-disabled-badge").textContent, edit:group.querySelector(".edit-group").disabled, checked:group.querySelector(".group-enabled").checked, name:group.querySelector("h3").textContent}};
   }, frontend);
-  expect(result.delayed).toEqual([true, true, true]);
+  expect(result.delayed).toEqual([true, false, false]);
   expect(result.jumps).toBe(0);
   expect(result.local).toBe(1);
   expect(result.exposed).toContain("exposed-attribute");

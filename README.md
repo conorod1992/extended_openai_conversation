@@ -23,7 +23,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 - **Knowledge Library** — give agents larger local reference material that can be searched on demand.
 - **Request Rules & local handling** — build conditional local shortcuts, chain native Home Assistant actions and Function Tools, and route selected AI requests with a fixed model or reasoning choice. Use native Home Assistant response variables to branch on Function results and **Set conversation response** to speak templated replies. Stop and false conditions follow Home Assistant script flow. Continue to AI runs only after normal local completion. New rules start enabled. Restoring Request Rules from a private backup replaces the destination rule set and preserves the saved enabled states, subject to validation. See the [Request Rules guide](https://conorod1992.github.io/extended_openai_conversation/features/request-rules/) for response and variable semantics.
 - **Function Tools & Function Groups** — add custom capabilities and load large tool collections only when needed. When the model requests a batch of Function Tools, Extended OpenAI runs the calls one at a time and returns their results together.
-- **Delayed Function Tools** — persist eligible delayed work and re-check current authorization before it executes.
+- **Delayed Function Tools** — persist eligible delayed work, review and cancel pending actions, and re-check current authorization before execution.
 - **Voice Identity** — map Assist devices/satellites to Home Assistant users so retained data can follow the person speaking.
 - **Voice follow-ups, speech cleanup & Quiet Hours** — improve spoken conversations and manage satellite behaviour overnight.
 - **Broadcast** — send one-way spoken announcements to selected Assist satellites or the whole home.
@@ -131,7 +131,7 @@ Back up Home Assistant before updating, and check the [release notes](https://co
 | Handle predictable requests specially | [Request Rules](https://conorod1992.github.io/extended_openai_conversation/features/request-rules/) |
 | Add or organise model-callable tools | [Functions](https://conorod1992.github.io/extended_openai_conversation/functions/) and [Function Groups](https://conorod1992.github.io/extended_openai_conversation/features/function-groups/) |
 | Add reusable instructions for a task | [Skills](https://conorod1992.github.io/extended_openai_conversation/features/skills/) and [Manual installation](https://conorod1992.github.io/extended_openai_conversation/skills/discover-skills/) |
-| Delay a configured Function Tool safely | [Delayed Function Tools](https://conorod1992.github.io/extended_openai_conversation/features/delayed-function-tools/) |
+| Schedule, review or cancel a delayed Function Tool | [Delayed Function Tools](https://conorod1992.github.io/extended_openai_conversation/features/delayed-function-tools/) |
 | Understand entity exposure and permissions | [Home Assistant access](https://conorod1992.github.io/extended_openai_conversation/features/home-assistant-access/) |
 | Associate voice requests with individual users | [Voice Identity](https://conorod1992.github.io/extended_openai_conversation/features/voice-identity/) |
 | Keep Assist listening for follow-up speech | [Voice follow-ups](https://conorod1992.github.io/extended_openai_conversation/features/voice-followups/) |

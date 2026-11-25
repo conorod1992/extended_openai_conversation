@@ -488,10 +488,15 @@ async def test_ha_tool_add_validation_refresh_and_group_assignment(
     reference = {"source_id": "assist", "tool_name": "Light"}
     monkeypatch.setattr(management_ui, "validate_reference", lambda _value: reference)
     monkeypatch.setattr(management_ui, "reference_key", lambda _value: "assist:Light")
-    snapshot = SimpleNamespace(tools={
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        ToolSnapshot,
+    )
+
+    snapshot = ToolSnapshot(tools={
         "assist:Light": SimpleNamespace(
             source_label="Assist",
             tool=SimpleNamespace(description="Control lights"),
+            spec={"description": "Control lights"},
         )
     })
     monkeypatch.setattr(
