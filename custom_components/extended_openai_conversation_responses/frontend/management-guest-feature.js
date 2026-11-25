@@ -153,6 +153,39 @@ export function captureGuestInterval(panel, field = null) {
   return {state, values:clone(state.values)};
 }
 
+export function guestIntervalUpdatePayload(panel, submission, now) {
+  const root = panel.shadowRoot;
+  const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
+  const startInput = root.querySelector("#guest-start");
+  const endInput = root.querySelector("#guest-end");
+  // Omission asks the backend to start now, independently of browser time.
+  const start = now ? undefined : startInput?.value;
+  const end = endInput?.value;
+  if (!now && startInput?.validity?.badInput) {
+    startInput.focus();
+    throw new Error("Complete the start time or leave it empty to start now.");
+  }
+  if (!indefinite && (!end || !endInput.checkValidity())) {
+    throw new Error("Choose an end time or select Remain active indefinitely.");
+  }
+  const displayed = submission.state.timestampStatus || panel._result?.status || {};
+  const localTimes = {};
+  const instant = (field, value) => {
+    const original = displayed[field];
+    if (original && value === guestIntervalWallTime(displayed, field, value => panel._dateTimeLocal(value))) return original;
+    if (displayed[`${field}_local`] === null) return `${value}Z`;
+    localTimes[field] = value;
+    return value;
+  };
+  submission.implicitStart = now || !start;
+  return {
+    ...(start ? {active_from: instant("active_from", start)} : {}),
+    ...(!indefinite && end ? {active_until: instant("active_until", end)} : {}),
+    indefinite,
+    local_times: localTimes,
+  };
+}
+
 export function acknowledgeGuestInterval(panel, submission, status) {
   const state = submission?.state;
   if (!state || panel._guestIntervalDraft !== state || !configurationSubmissionIsCurrent(panel, state.owner)) return;

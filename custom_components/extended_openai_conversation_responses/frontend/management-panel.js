@@ -3,7 +3,7 @@ import {clearRequestRuleUncertainty, requestRuleUncertainty, requireRequestRuleA
 import {mutationEffects} from "./management-mutation-effects.js";
 import {clearVoiceMappingDraft} from "./voice-mapping-draft.js";
 import {observeCatalogGeneration} from "./model-catalog.js";
-import {guestIntervalWallTime, scheduleWallTime} from "./schedule-time.js";
+import {scheduleWallTime} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
 import {updateAuthenticationPresentation} from "./authentication-presentation.js";
 import {stopLiveStatus, pauseLiveStatus, resumeLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
@@ -2261,44 +2261,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _updateGuestMode(now = false) {
     return this._runGuestOperation(async () => {
-      const root = this.shadowRoot;
       const agentId = this._agentId;
       const submission = captureConfigurationOwner(this);
-      const intervalSubmission = getRouteFeature("capabilities/guest-mode")?.captureGuestInterval(this);
+      const guest = getRouteFeature("capabilities/guest-mode");
+      const intervalSubmission = guest?.captureGuestInterval(this);
       if (!intervalSubmission) {
         this._toast("Reload Guest Mode before changing its interval.", true);
         return;
       }
-      const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
-      // Omission asks the backend to start now, independently of browser time.
-      const startInput = root.querySelector("#guest-start");
-      const start = now ? undefined : startInput?.value;
-      const endInput = root.querySelector("#guest-end");
-      const end = endInput?.value;
-      const status = this._result?.status || {};
-      const displayed = intervalSubmission.state?.timestampStatus || status;
-      const localTimes = {};
-      const originalInstant = (field, value, original) => {
-        if (original && value === guestIntervalWallTime(displayed, field, value => this._dateTimeLocal(value))) return original;
-        if (displayed[`${field}_local`] === null) return `${value}Z`;
-        localTimes[field] = value;
-        return value;
-      };
       try {
-        if (!now && startInput?.validity?.badInput) {
-          startInput.focus();
-          throw new Error("Complete the start time or leave it empty to start now.");
-        }
-        if (!indefinite && (!end || !endInput.checkValidity())) {
-          throw new Error("Choose an end time or select Remain active indefinitely.");
-        }
-        intervalSubmission.implicitStart = now || !start;
-        const result = await this._call("guest_mode", "update", {
-          ...(start ? {active_from: originalInstant("active_from", start, displayed.active_from)} : {}),
-          ...(!indefinite && end ? {active_until: originalInstant("active_until", end, displayed.active_until)} : {}),
-          indefinite,
-          local_times: localTimes,
-        });
+        const payload = guest.guestIntervalUpdatePayload(this, intervalSubmission, now);
+        const result = await this._call("guest_mode", "update", payload);
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
         await presentAcknowledgedMutation(this, submission, "Guest Mode updated", () => {
           getRouteFeature("capabilities/guest-mode")?.acknowledgeGuestInterval(this, intervalSubmission, result.status);
