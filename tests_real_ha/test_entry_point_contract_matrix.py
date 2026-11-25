@@ -40,8 +40,9 @@ from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_function_groups import _group, _tool
 from tests_real_ha.device_info_compat import device_info_field
-from tests_real_ha.test_cross_feature_acceptance import _agent, _rule, _say, _speech
+from tests_real_ha.test_cross_feature_acceptance import _agent, _rule, _speech
 from tests_real_ha.test_management_backend_acceptance import (
+    ADMIN_ID,
     _admin_client,
     _management_call,
 )
@@ -182,9 +183,15 @@ async def test_guest_mode_tool_matches_saved_request_preview(
     )
     wire = _install_wire(monkeypatch, agent, [reply])
     preview = await preview_sections()
-    assert _speech(await _say(hass, agent, "Give me the provider response")) == (
-        "Provider replied"
+    result = await conversation.async_converse(
+        hass=hass,
+        text="Give me the provider response",
+        conversation_id=None,
+        context=Context(user_id=ADMIN_ID),
+        language="en",
+        agent_id=agent.entry.entry_id,
     )
+    assert _speech(result) == "Provider replied"
     [request] = wire.requests
     assert request["body"]["tools"] == [
         *preview["provider_tools"],
@@ -192,6 +199,9 @@ async def test_guest_mode_tool_matches_saved_request_preview(
         *preview["function_group_loader"],
         *preview["integration_tools"],
     ]
+    assert {"list_scheduled_actions", "cancel_scheduled_action"} <= {
+        tool.get("function", tool)["name"] for tool in preview["integration_tools"]
+    }
     assert request["body"]["tool_choice"] == preview["request_settings"]["tool_choice"]
     assert (guest_tool(preview["integration_tools"]) is not None) is enabled
 
