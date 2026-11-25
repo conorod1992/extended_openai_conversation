@@ -649,21 +649,27 @@ class StreamingSpeechSanitizer:
         self._suppressed_line_break = False
         # A held list prefix has emitted no content on this line. Keep its
         # preceding line boundary so removing the item cannot duplicate it.
+        trimmed = 0
         while (
             not self._pending_list_prefix
             and output
             and output[-1]
             and output[-1][-1].isspace()
         ):
-            output[-1] = output[-1].rstrip()
+            stripped = output[-1].rstrip()
+            trimmed += len(output[-1]) - len(stripped)
+            output[-1] = stripped
             if not output[-1]:
                 output.pop()
         if not output and not self._pending_list_prefix:
             # The adjacent whitespace may still be waiting for an emphasis
             # closer in the next stage. Apply the same removal in either stage.
-            self._format_buffer = self._format_buffer.rstrip()
-        if not self._pending_list_prefix:
-            self._last_output = self._last_output.rstrip()
+            stripped = self._format_buffer.rstrip()
+            trimmed += len(self._format_buffer) - len(stripped)
+            self._format_buffer = stripped
+        if trimmed:
+            # Whitespace already sent to the listener cannot be retracted.
+            self._last_output = self._last_output[:-trimmed]
         self._needs_separator = True
         self.suppressed_constructs += 1
         return end

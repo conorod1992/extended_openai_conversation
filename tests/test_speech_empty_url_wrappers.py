@@ -1,10 +1,18 @@
 """Resolve actual empty wrappers at the URL/formatting stage boundary."""
 
+from types import SimpleNamespace
+
 import pytest
 
+from custom_components.extended_openai_conversation_responses.const import (
+    CONF_SPEECH_PROCESSING_ENABLED,
+    CONF_SPEECH_STRIP_MARKDOWN,
+    CONF_SPEECH_STRIP_URLS,
+)
 from custom_components.extended_openai_conversation_responses.speech import (
     StreamingSpeechSanitizer,
     _final_whitespace_cleanup as clean,
+    async_streaming_speech_cleanup,
 )
 from tests.test_speech_scope_regressions import all_splits, streamed
 
@@ -117,6 +125,7 @@ def test_long_completed_and_streamed_wrappers_keep_bounded_state():
     "source,expected",
     [
         ("Before **https://a.com https://b.com** after.", "Before after."),
+        ('A. **https://a.com https://b.com** "https://a.com" B.', "A. B."),
         (
             "1) First\n2) **https://a.com https://b.com**\n3) Third",
             "1. First\n3. Third",
@@ -125,9 +134,22 @@ def test_long_completed_and_streamed_wrappers_keep_bounded_state():
 )
 def test_listener_text_needs_no_extra_whitespace_cleanup(source, expected):
     assert StreamingSpeechSanitizer().process_complete(source) == expected
+    config = {
+        CONF_SPEECH_PROCESSING_ENABLED: True,
+        CONF_SPEECH_STRIP_MARKDOWN: True,
+        CONF_SPEECH_STRIP_URLS: True,
+    }
     for chunks in (
         [*source],
         *[[source[:i], source[i:]] for i in range(len(source) + 1)],
     ):
-        z = StreamingSpeechSanitizer()
-        assert "".join(z.feed(part) for part in chunks) + z.finish() == expected
+        received = []
+        chat_log = SimpleNamespace(
+            delta_listener=lambda _, delta, output=received: output.append(
+                delta.get("content", "")
+            )
+        )
+        with async_streaming_speech_cleanup(chat_log, config):
+            for part in chunks:
+                chat_log.delta_listener(chat_log, {"content": part})
+        assert "".join(received) == expected

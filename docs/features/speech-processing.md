@@ -14,7 +14,7 @@ The built-in cleanup can remove content that is useful on screen but awkward whe
 
 It works with Responses, Chat Completions and compatible providers. Cleanup follows links across streamed chunks. When a recognized URL exceeds the streaming buffer, cleanup keeps skipping the URL even if its closing delimiter never arrives.
 
-Link labels such as `Sources`, `References`, and `1` remain spoken. With bare-URL removal enabled, URLs inside a readable label are removed and the remaining words are spoken. Empty labels and address-only citations are suppressed.
+Link labels such as `Sources`, `References`, and `1` remain spoken. With bare-URL removal enabled, URLs inside a readable label are removed and the remaining words are spoken. Empty labels and address-only citations are suppressed. When adjacent citations are removed during streaming, cleanup reuses any word separator already sent to Assist.
 
 An unspaced em dash in a bare URL path can belong to either the address or the surrounding sentence. When it is followed by a short word and whitespace, cleanup keeps that word as prose. Internal en dashes and em dashes in query strings and fragments stay with the URL. Use an explicit Markdown destination, angle brackets, or separating whitespace to make the boundary clear.
 
