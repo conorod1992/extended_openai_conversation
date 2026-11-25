@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+from unittest.mock import Mock
 import zipfile
 
 import pytest
@@ -89,6 +90,30 @@ def test_native_timestamp_formats_are_unchanged():
         ) == record_timestamps.dt_util.parse_datetime(value)
 
 
+def test_timestamp_guard_never_passes_unpaired_surrogates_to_native_parser(monkeypatch):
+    native = Mock(side_effect=AssertionError("malformed timestamp reached HA"))
+    monkeypatch.setattr(record_timestamps.dt_util, "parse_datetime", native)
+    assert (
+        record_timestamps.parse_datetime("2026-11-21T00:12:34Z" + chr(0xD800)) is None
+    )
+    native.assert_not_called()
+
+
+async def test_raw_import_text_rejects_non_unicode_characters_before_decoding():
+    malformed = '{"config": "' + chr(0xD800) + '"}'
+    with pytest.raises(backup.BackupError, match="malformed Unicode"):
+        await backup.async_inspect_backup(malformed, "agent")
+    with pytest.raises(backup.BackupError, match="malformed Unicode"):
+        await transfer.async_inspect_transfer(malformed, "agent")
+
+
+async def test_decoded_transfer_rejects_circular_fields_before_inspection():
+    document = {"sections": {}}
+    document["sections"]["configuration"] = document
+    with pytest.raises(backup.BackupError, match="circular reference"):
+        await transfer.async_inspect_decoded_transfer(document, "agent")
+
+
 async def test_configuration_import_checks_json_yaml_and_decoded_documents():
     document = {
         "schema": "extended_openai_conversation.agent",
@@ -150,6 +175,23 @@ async def test_embedded_function_yaml_is_validated_before_import_quarantine(
             document, "agent", inspect_only=True
         )
     assert len(calls) == 2
+
+    for malformed in (
+        r'[{"function": {"type": "template", "value_template": "\uD800"}}]',
+        config["functions"],
+    ):
+        embedded = {"functions": malformed}
+        custom = {
+            "format": transfer.TRANSFER_FORMAT,
+            "version": transfer.TRANSFER_VERSION,
+            "mode": "custom",
+            "sections": {transfer.SECTION_CONFIGURATION: embedded},
+        }
+        for imported in ({**setup, "config": embedded}, custom):
+            with pytest.raises(backup.BackupError, match="malformed Unicode"):
+                await transfer.async_inspect_decoded_transfer(
+                    imported, "agent", inspect_only=True
+                )
 
     config["functions"] = raw_tools.replace("ESCAPE", r"\uD83D\uDE00")
     saved = management_ui._parse_import_document(setup)["config"]

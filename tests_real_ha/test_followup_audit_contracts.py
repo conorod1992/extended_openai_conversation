@@ -1253,7 +1253,9 @@ async def test_native_memory_cold_preparation_worker(
             "embeddings": {
                 r["memory_id"]: {
                     "model": "default",
-                    "fingerprint": "saved",
+                    "fingerprint": memory._embedding_fingerprint(
+                        memory._validate_persistent_memory_record(r)
+                    ),
                     "vector": [0.5] * 256,
                 }
                 for r in raw

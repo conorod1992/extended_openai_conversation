@@ -588,6 +588,7 @@ async def test_canonical_durable_records_reload_and_reexport_actual_store(hass):
     from custom_components.extended_openai_conversation_responses.knowledge import (
         HomeAssistantKnowledgeStorage,
         KnowledgeLibrary,
+        knowledge_source_as_dict,
     )
     from custom_components.extended_openai_conversation_responses.temporary_memory import (
         TemporaryMemory,
@@ -609,7 +610,9 @@ async def test_canonical_durable_records_reload_and_reexport_actual_store(hass):
     await store.async_save({"sources": [raw]})
     library = KnowledgeLibrary(store)
     await library.async_initialize()
-    expected = asdict(KnowledgeLibrary.validate_backup_data({"sources": [raw]})[0])
+    expected = knowledge_source_as_dict(
+        KnowledgeLibrary.validate_backup_data({"sources": [raw]})[0]
+    )
     assert (await store.async_load())["sources"] == [expected]
     fresh = KnowledgeLibrary(
         HomeAssistantKnowledgeStorage(hass, "contract-entry", "contract-agent")
