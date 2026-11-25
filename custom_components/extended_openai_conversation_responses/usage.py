@@ -14,7 +14,7 @@ from hashlib import sha256
 import json
 import logging
 import time
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeGuard
 from uuid import uuid4
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
@@ -67,6 +67,15 @@ _RUN_ATTRIBUTION_COUNTERS = frozenset(
     {"run_total_tokens", "run_request_count", "unattributed_run_count"}
 )
 MAX_RECENT_LIMIT = 200
+# Home Assistant's JSON encoder supports unsigned 64-bit counters.
+_MAX_USAGE_COUNT = (1 << 64) - 1
+_TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cached_input_tokens",
+    "reasoning_tokens",
+)
 _LOGGER = logging.getLogger(__name__)
 _EXPLICIT_USAGE_SAVE: ContextVar[bool] = ContextVar(
     "explicit_usage_save", default=False
@@ -166,6 +175,13 @@ class RequestUsage:
     reasoning_tokens: int = 0
     details: dict[str, int] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        for name in _TOKEN_FIELDS:
+            setattr(self, name, _integer(getattr(self, name)))
+        self.details = {
+            name: count for name, count in self.details.items() if is_usage_count(count)
+        }
+
 
 @dataclass(slots=True)
 class UsageTotals:
@@ -237,12 +253,22 @@ class UsageRun:
     accounting_date: str | None = None
 
 
-def _integer(value: Any) -> int:
+def is_usage_count(value: object) -> TypeGuard[int]:
+    """Accept integers that can round-trip through HA's JSON encoder."""
     return (
-        value
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0
-        else 0
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= _MAX_USAGE_COUNT
     )
+
+
+def add_usage_counts(current: int, increment: int) -> int:
+    """Keep accumulated Usage counters serializable without resetting prior counts."""
+    return min(_MAX_USAGE_COUNT, current + increment)
+
+
+def _integer(value: Any) -> int:
+    return value if is_usage_count(value) else 0
 
 
 def _value(source: Any, key: str) -> Any:
@@ -532,7 +558,9 @@ class UsageManager:
         """Compatibility API; new conversation code uses ``async_run``."""
         async with async_storage_lock(self._storage, self._lock):
             self._require_aggregates_writable()
-            self.totals.conversation_count += 1
+            self.totals.conversation_count = add_usage_counts(
+                self.totals.conversation_count, 1
+            )
             try:
                 await self._async_save_aggregates()
             finally:
@@ -663,14 +691,20 @@ class UsageManager:
     ) -> None:
         """Count exactly one completed provider request."""
         usage = usage or RequestUsage()
+        duration_ms = _integer(duration_ms)
+        tool_calls_requested = _integer(tool_calls_requested)
         completed_at = dt_util.utcnow()
         async with async_storage_lock(self._storage, self._lock):
             if not self._aggregates_need_repair:
-                self.totals.api_request_count += 1
-                if successful:
-                    self.totals.successful_request_count += 1
-                else:
-                    self.totals.failed_request_count += 1
+                self.totals.api_request_count = add_usage_counts(
+                    self.totals.api_request_count, 1
+                )
+                self.totals.successful_request_count = add_usage_counts(
+                    self.totals.successful_request_count, int(successful)
+                )
+                self.totals.failed_request_count = add_usage_counts(
+                    self.totals.failed_request_count, int(not successful)
+                )
                 self._add_tokens(self.totals, usage)
                 day_key = _local_day_key(completed_at)
                 _add_request_to_day(
@@ -684,10 +718,16 @@ class UsageManager:
 
             run = self._current_run.get()
             if run is not None:
-                run.request_count += 1
-                run.successful_request_count += int(successful)
-                run.failed_request_count += int(not successful)
-                run.tool_call_count += max(0, tool_calls_requested)
+                run.request_count = add_usage_counts(run.request_count, 1)
+                run.successful_request_count = add_usage_counts(
+                    run.successful_request_count, int(successful)
+                )
+                run.failed_request_count = add_usage_counts(
+                    run.failed_request_count, int(not successful)
+                )
+                run.tool_call_count = add_usage_counts(
+                    run.tool_call_count, tool_calls_requested
+                )
                 run.web_search_used = run.web_search_used or web_search_used
                 self._add_tokens(run, usage)
                 for collection, value in (
@@ -717,14 +757,14 @@ class UsageManager:
                         model=model,
                         api_mode=api_mode,
                         successful=successful,
-                        duration_ms=max(0, duration_ms),
+                        duration_ms=duration_ms,
                         input_tokens=usage.input_tokens,
                         output_tokens=usage.output_tokens,
                         total_tokens=usage.total_tokens,
                         cached_input_tokens=usage.cached_input_tokens,
                         reasoning_tokens=usage.reasoning_tokens,
                         request_stage=request_stage,
-                        tool_calls_requested=max(0, tool_calls_requested),
+                        tool_calls_requested=tool_calls_requested,
                         web_search_used=web_search_used,
                         error_type=error_type,
                         details=dict(usage.details),
@@ -764,7 +804,9 @@ class UsageManager:
                 if self.run_retention_days > 0 and not self._repair_required:
                     self.runs.append(run)
                 if not self._aggregates_need_repair:
-                    self.totals.conversation_count += 1
+                    self.totals.conversation_count = add_usage_counts(
+                        self.totals.conversation_count, 1
+                    )
                     _add_run_to_day(
                         self.daily.setdefault(day_key, _empty_day(day_key)), run
                     )
@@ -1065,8 +1107,8 @@ class UsageManager:
                 ("api_modes", "api_mode_breakdown"),
             ):
                 for value, tokens in day.get(day_key, {}).items():
-                    result[output_key][value] = (
-                        result[output_key].get(value, 0) + tokens
+                    result[output_key][value] = add_usage_counts(
+                        result[output_key].get(value, 0), tokens
                     )
         return result
 
@@ -1255,14 +1297,17 @@ class UsageManager:
 
     @staticmethod
     def _add_tokens(target: Any, usage: RequestUsage) -> None:
-        target.input_tokens += usage.input_tokens
-        target.output_tokens += usage.output_tokens
-        target.total_tokens += usage.total_tokens
-        target.cached_input_tokens += usage.cached_input_tokens
-        target.reasoning_tokens += usage.reasoning_tokens
+        for name in _TOKEN_FIELDS:
+            setattr(
+                target,
+                name,
+                add_usage_counts(getattr(target, name), getattr(usage, name)),
+            )
         if isinstance(target, UsageTotals):
             for key, value in usage.details.items():
-                target.details[key] = target.details.get(key, 0) + value
+                target.details[key] = add_usage_counts(
+                    target.details.get(key, 0), value
+                )
 
     async def _async_save_totals(self, *, replacing: bool = False) -> None:
         if not replacing:
@@ -1389,18 +1434,13 @@ class UsageManager:
 
 def _validate_counter_mapping(data: dict[str, Any], keys: set[str]) -> None:
     for key in keys:
-        value = data.get(key)
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        if not is_usage_count(data.get(key)):
             raise ValueError(f"usage counter {key} is invalid")
 
 
 def _validate_breakdown(value: Any, label: str) -> dict[str, int]:
     if not isinstance(value, dict) or not all(
-        isinstance(key, str)
-        and isinstance(amount, int)
-        and not isinstance(amount, bool)
-        and amount >= 0
-        for key, amount in value.items()
+        isinstance(key, str) and is_usage_count(amount) for key, amount in value.items()
     ):
         raise ValueError(f"{label} is invalid")
     return dict(value)
@@ -1507,6 +1547,7 @@ def _validate_usage_day(
             not isinstance(amount, int | float)
             or isinstance(amount, bool)
             or amount < 0
+            or (isinstance(amount, int) and not is_usage_count(amount))
         ):
             raise ValueError(f"daily usage value {key} is invalid")
     result = dict(value)
@@ -1793,36 +1834,39 @@ def _add_request_to_day(
     model: str,
     api_mode: str,
 ) -> None:
-    day["api_request_count"] += 1
-    day["successful_request_count"] += int(successful)
-    day["failed_request_count"] += int(not successful)
-    for key in (
-        "input_tokens",
-        "output_tokens",
-        "total_tokens",
-        "cached_input_tokens",
-        "reasoning_tokens",
-    ):
-        day[key] += getattr(usage, key)
+    day["api_request_count"] = add_usage_counts(day["api_request_count"], 1)
+    day["successful_request_count"] = add_usage_counts(
+        day["successful_request_count"], int(successful)
+    )
+    day["failed_request_count"] = add_usage_counts(
+        day["failed_request_count"], int(not successful)
+    )
+    for key in _TOKEN_FIELDS:
+        day[key] = add_usage_counts(day[key], getattr(usage, key))
     for key, value in (
         ("provider_breakdown", provider),
         ("model_breakdown", model),
         ("api_mode_breakdown", api_mode),
     ):
         if value:
-            day[key][value] = day[key].get(value, 0) + usage.total_tokens
+            day[key][value] = add_usage_counts(
+                day[key].get(value, 0), usage.total_tokens
+            )
     _calculate_averages(day)
 
 
 def _add_run_to_day(day: dict[str, Any], run: UsageRun) -> None:
-    day["run_total_tokens"] += run.total_tokens
-    day["run_request_count"] += run.request_count
-    day["run_count"] += 1
-    day["successful_run_count"] += int(run.successful)
-    day["failed_run_count"] += int(not run.successful)
-    day["tool_call_count"] += run.tool_call_count
-    day["web_search_run_count"] += int(run.web_search_used)
-    day["total_run_duration_ms"] += run.duration_ms
+    for key, increment in (
+        ("run_total_tokens", run.total_tokens),
+        ("run_request_count", run.request_count),
+        ("run_count", 1),
+        ("successful_run_count", int(run.successful)),
+        ("failed_run_count", int(not run.successful)),
+        ("tool_call_count", run.tool_call_count),
+        ("web_search_run_count", int(run.web_search_used)),
+        ("total_run_duration_ms", run.duration_ms),
+    ):
+        day[key] = add_usage_counts(day[key], increment)
     _calculate_averages(day)
 
 
@@ -1831,14 +1875,22 @@ def _merge_day(target: dict[str, Any], source: dict[str, Any]) -> None:
         if isinstance(value, dict):
             bucket = target.setdefault(key, {})
             for name, amount in value.items():
-                bucket[name] = bucket.get(name, 0) + amount
+                bucket[name] = add_usage_counts(bucket.get(name, 0), amount)
         elif key not in {
             "date",
             "average_tokens_per_completed_run",
             "average_requests_per_completed_run",
             "average_duration_ms_per_completed_run",
         } and isinstance(value, int):
-            target[key] += value
+            target[key] = add_usage_counts(target[key], value)
+
+
+def _rounded_token_average(total: int, count: int) -> int:
+    # Round ties to even without a float that can round MAX up to 2**64.
+    quotient, remainder = divmod(total, count)
+    return quotient + int(
+        2 * remainder > count or (2 * remainder == count and quotient % 2)
+    )
 
 
 def _calculate_averages(day: dict[str, Any]) -> None:
@@ -1848,8 +1900,8 @@ def _calculate_averages(day: dict[str, Any]) -> None:
             day["average_tokens_per_completed_run"] = None
             day["average_requests_per_completed_run"] = None
         else:
-            day["average_tokens_per_completed_run"] = round(
-                day["run_total_tokens"] / count
+            day["average_tokens_per_completed_run"] = _rounded_token_average(
+                day["run_total_tokens"], count
             )
             day["average_requests_per_completed_run"] = round(
                 day["run_request_count"] / count, 2
@@ -2234,7 +2286,9 @@ def _serialize_usage_aggregate_snapshots(
         # 6.8.3 expects numeric daily averages and uses these broader totals.
         if day["average_tokens_per_completed_run"] is None:
             count = day["run_count"]
-            day["average_tokens_per_completed_run"] = round(day["total_tokens"] / count)
+            day["average_tokens_per_completed_run"] = _rounded_token_average(
+                day["total_tokens"], count
+            )
             day["average_requests_per_completed_run"] = round(
                 day["api_request_count"] / count, 2
             )

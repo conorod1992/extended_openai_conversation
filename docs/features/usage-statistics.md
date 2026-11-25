@@ -10,7 +10,7 @@ Usage is scoped to the conversation assistant. **Test assistant** counts toward 
 
 Provider-request counters and tokens are committed when each real provider request finishes; the conversation-run counter is committed once when the complete user turn finishes. This keeps one user turn distinct from any additional provider rounds it triggers and preserves completed request usage even if the run is interrupted before its normal final response.
 
-Missing provider metadata is handled safely: the request and run are still counted, while unavailable token fields remain zero. Failed, cancelled, interrupted-stream, and exception paths finalize their run once.
+Requests and runs still count when provider metadata is missing or a count exceeds Home Assistant's unsigned 64-bit JSON range. Valid fields are kept. An unavailable total can be derived from the valid reported input and output counts when their sum fits, and other unavailable token fields remain zero. Accumulated counters stop increasing at that range limit so later requests can still be saved. Failed, cancelled, interrupted-stream, and exception paths finalize their run once.
 
 Local context-size estimates are used only for history management. They are never substituted for provider-reported Usage tokens, so successful context trimming does not mean a provider returned token counts.
 

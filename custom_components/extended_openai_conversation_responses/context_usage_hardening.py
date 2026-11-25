@@ -11,7 +11,7 @@ import logging
 import math
 from typing import Any
 
-from .usage import RequestUsage, extract_usage
+from .usage import RequestUsage, extract_usage, is_usage_count
 
 _LOGGER = logging.getLogger(__name__)
 _TRAILING_USAGE_TIMEOUT = 0.2
@@ -92,11 +92,6 @@ def _usage_value(source: Any, key: str) -> Any:
     )
 
 
-def _reported_count(value: Any) -> bool:
-    """Distinguish an explicitly reported zero from an absent/invalid count."""
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
-
-
 def _reported_details(details: Any) -> Iterator[tuple[str, int]]:
     """Yield valid explicit detail counts, excluding SDK model defaults."""
     supplied = getattr(details, "model_fields_set", None)
@@ -108,7 +103,7 @@ def _reported_details(details: Any) -> Iterator[tuple[str, int]]:
         for name, value in details.items():
             if isinstance(supplied, set) and name not in supplied:
                 continue
-            if _reported_count(value):
+            if is_usage_count(value):
                 yield name, value
 
 
@@ -135,11 +130,11 @@ def _merge_provider_usage(
         ("input_tokens", ("input_tokens", "prompt_tokens")),
         ("output_tokens", ("output_tokens", "completion_tokens")),
     ):
-        if any(_reported_count(_usage_value(raw, alias)) for alias in aliases):
+        if any(is_usage_count(_usage_value(raw, alias)) for alias in aliases):
             setattr(merged, field, getattr(normalized, field))
             components_updated.add(field)
     total = _usage_value(raw, "total_tokens")
-    if _reported_count(total) and total > 0:
+    if is_usage_count(total) and total > 0:
         merged.total_tokens = total
     elif components_updated and (
         len(components_updated) == 2
@@ -148,7 +143,8 @@ def _merge_provider_usage(
     ):
         # Derive from all known provider components, never a local input estimate.
         # Preserve an unexplained provider total until its components are known.
-        merged.total_tokens = merged.input_tokens + merged.output_tokens
+        derived_total = merged.input_tokens + merged.output_tokens
+        merged.total_tokens = derived_total if is_usage_count(derived_total) else 0
 
     for prefix, aliases, key, field in (
         (
@@ -165,7 +161,7 @@ def _merge_provider_usage(
         ),
     ):
         details = _usage_value(raw, aliases[0]) or _usage_value(raw, aliases[1])
-        if _reported_count(_usage_value(details, key)):
+        if is_usage_count(_usage_value(details, key)):
             setattr(merged, field, getattr(normalized, field))
         for name, value in _reported_details(details):
             detail_key = f"{prefix}_{name}"

@@ -5,10 +5,137 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import usage
 from custom_components.extended_openai_conversation_responses.management_history_queries import (
+    usage_breakdowns,
     usage_requests_page,
+    usage_summary,
 )
+from homeassistant.helpers.json import json_bytes
 from homeassistant.util import dt as dt_util
+from homeassistant.util.json import json_loads
 from tests.test_usage import FakeStorage, _coverage_request, _coverage_run
+
+
+class _SerializingStorage(FakeStorage):
+    async def async_save(self, data):
+        await super().async_save(json_loads(json_bytes(data)))
+
+
+def test_unrepresentable_direct_and_derived_request_counts_are_missing():
+    maximum = (1 << 64) - 1
+    assert (
+        usage.RequestUsage(total_tokens=maximum + 1, details={"bad": maximum + 1})
+        == usage.RequestUsage()
+    )
+    assert usage.extract_usage(
+        {"input_tokens": maximum, "output_tokens": 4}
+    ) == usage.RequestUsage(input_tokens=maximum, output_tokens=4)
+
+
+async def test_unrepresentable_provider_tokens_cannot_prevent_later_writes():
+    stores = tuple(_SerializingStorage() for _ in range(3))
+    manager = usage.UsageManager(*stores)
+    await manager.async_initialize()
+    oversized = 10**255
+    report = usage.extract_usage(
+        {
+            "input_tokens": 12,
+            "output_tokens": 6,
+            "total_tokens": oversized,
+            "input_tokens_details": {"cached_tokens": oversized, "audio_tokens": 3},
+            "output_tokens_details": {"reasoning_tokens": 2, "audio_tokens": oversized},
+        }
+    )
+    for counts in (
+        usage.RequestUsage(total_tokens=7),
+        report,
+        usage.RequestUsage(total_tokens=9),
+    ):
+        async with manager.async_run():
+            await manager.async_record_request(successful=True, usage=counts)
+    fresh = usage.UsageManager(*stores)
+    await fresh.async_initialize()
+    assert fresh.totals.api_request_count == fresh.totals.conversation_count == 3
+    assert fresh.totals.total_tokens == 34
+    assert fresh.totals.details == {
+        "input_audio_tokens": 3,
+        "output_reasoning_tokens": 2,
+    }
+    assert fresh.requests[1].cached_input_tokens == 0
+    assert fresh.requests[1].reasoning_tokens == 2
+    assert fresh.runs[-1].total_tokens == 9
+    assert fresh.today_summary()["total_tokens"] == 34
+    json_bytes(await fresh.async_backup_data())
+
+
+async def test_accumulating_representable_counts_cannot_exceed_serializer_range():
+    stores = tuple(_SerializingStorage() for _ in range(3))
+    manager = usage.UsageManager(*stores)
+    await manager.async_initialize()
+    maximum = (1 << 64) - 1
+    async with manager.async_run():
+        for count in (maximum, 3):
+            await manager.async_record_request(
+                successful=True,
+                usage=usage.RequestUsage(
+                    input_tokens=count, total_tokens=count, details={"audio": count}
+                ),
+                provider="test",
+                model="test",
+                api_mode="responses",
+            )
+    fresh = usage.UsageManager(*stores)
+    await fresh.async_initialize()
+    assert fresh.totals.api_request_count == 2
+    assert fresh.totals.total_tokens == fresh.totals.details["audio"] == maximum
+    assert fresh.runs[0].total_tokens == maximum
+    summary = fresh.today_summary()
+    assert summary["total_tokens"] == summary["model_breakdown"]["test"] == maximum
+    assert summary["average_tokens_per_completed_run"] == maximum
+    json_bytes(summary)
+    json_bytes(fresh.month_summary())
+    json_bytes(usage_summary(fresh))
+
+
+async def test_usage_period_and_breakdowns_bound_cross_day_totals():
+    manager = usage.UsageManager(*(_SerializingStorage() for _ in range(3)))
+    await manager.async_initialize()
+    maximum = (1 << 64) - 1
+    snapshot = await manager.async_backup_data()
+    for date, count in (("2026-11-01", maximum), ("2026-11-02", 8)):
+        snapshot["daily"][date] = usage._empty_day(date) | {
+            "total_tokens": count,
+            "provider_breakdown": {"test": count},
+        }
+    await manager.async_replace_backup(*manager.validate_backup_data(snapshot, "agent"))
+    month = manager.month_summary("2026-11")
+    assert month["total_tokens"] == month["provider_breakdown"]["test"] == maximum
+    assert manager.breakdowns()["providers"]["test"] == maximum
+    by_provider = usage_breakdowns(manager)
+    assert by_provider["providers"]["test"] == maximum
+    json_bytes(month)
+    json_bytes(by_provider)
+
+
+async def test_unrepresentable_saved_usage_requires_repair_and_import_rejects_it():
+    store = FakeStorage()
+    original = {"total_tokens": 10**255, "input_tokens": 12}
+    store.data = original
+    manager = usage.UsageManager(store)
+    await manager.async_initialize()
+    assert manager.lifetime_available is False
+    assert manager.as_dict()["input_tokens"] == 12
+    assert store.data == original
+    with pytest.raises(ValueError, match="needs repair"):
+        await manager.async_backup_data()
+
+    snapshot = {
+        "totals": manager.as_dict() | original,
+        "daily": {},
+        "requests": [],
+        "runs": [],
+    }
+    with pytest.raises(ValueError, match="usage counter total_tokens is invalid"):
+        manager.validate_backup_data(snapshot, "agent")
 
 
 @pytest.mark.parametrize(
