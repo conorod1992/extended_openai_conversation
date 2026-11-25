@@ -3,6 +3,10 @@
 from homeassistant.exceptions import HomeAssistantError
 
 
+class DuplicateMemoryEdit(ValueError):
+    """A Management edit would duplicate another memory in its destination."""
+
+
 class EntityNotFound(HomeAssistantError):
     """When referenced entity not found."""
 

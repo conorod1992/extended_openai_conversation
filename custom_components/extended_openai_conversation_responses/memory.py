@@ -34,6 +34,7 @@ from .const import (
     MEMORY_MODE_OFF,
     MEMORY_MODES,
 )
+from .exceptions import DuplicateMemoryEdit
 from .function_tool_policy import (
     runtime_function_tool_name,
     runtime_function_tool_names,
@@ -1139,6 +1140,7 @@ class PersistentMemory:
         source: str | None = None,
         allow_explicit_edit: bool = True,
         model_origin: bool = False,
+        confirm_duplicate: bool = True,
     ) -> MemoryRecord:
         """Revision-checked update; model writes preserve ownership and provenance."""
         if model_origin and expected_revision is None:
@@ -1250,6 +1252,20 @@ class PersistentMemory:
                     self._async_save_embedding_cache_locked()
                 )
                 return current
+            if not model_origin and not confirm_duplicate and new_key is None:
+                candidate = replace(current, **changes)
+                identity = _unkeyed_edit_identity(candidate)
+                if (
+                    current.key is not None
+                    or _unkeyed_edit_identity(current) != identity
+                ) and any(
+                    other.memory_id != memory_id
+                    and other.user_id == candidate.user_id
+                    and other.key is None
+                    and _unkeyed_edit_identity(other) == identity
+                    for other in self._memories.values()
+                ):
+                    raise DuplicateMemoryEdit
             _set_updated_at_if_substantive(current, changes, timestamp)
             updated = self._replace_record(current, **changes)
             await self._async_save_locked()
@@ -2004,6 +2020,17 @@ def memory_as_dict(
             else "Personal"
         )
     return result
+
+
+def _unkeyed_edit_identity(memory: MemoryRecord) -> tuple[Any, ...]:
+    return (
+        memory.user_id,
+        _fact_equality(memory.content),
+        memory.category,
+        memory.source,
+        memory.subject,
+        stored_timestamp_instant(memory.valid_from) if memory.valid_from else None,
+    )
 
 
 def memory_revision(memory: MemoryRecord) -> str:

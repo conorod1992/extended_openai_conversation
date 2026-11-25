@@ -86,6 +86,7 @@ from .const import (
 )
 from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
+from .exceptions import DuplicateMemoryEdit
 from .exposed_attributes import exposed_attribute_catalog
 from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .function_configuration_repair import (
@@ -2823,8 +2824,19 @@ async def _async_temporary_memories_command(
         raise HomeAssistantError("at least one Temporary Memory field is required")
     try:
         record = await manager_any.async_update_owned(
-            owner, memory_id, content, expires_at, category
+            owner,
+            memory_id,
+            content,
+            expires_at,
+            category,
+            **{
+                key: message[key]
+                for key in ("expected_revision", "confirm_duplicate")
+                if key in message
+            },
         )
+    except DuplicateMemoryEdit:
+        return {"status": "duplicate"}
     except ValueError as err:
         raise HomeAssistantError(str(err)) from err
     return _temporary_memory_mutation_result(
@@ -2922,17 +2934,21 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
                     "scope_id": target,
                     "memory": memory_mutation_result(record, include_scope=is_admin),
                 }
-        record = await memory.async_update(
-            owner,
-            str(message.get("memory_id", "")),
-            message.get("content"),
-            message.get("category"),
-            **metadata,
-            target_user_id=_memory_scope(target),
-            expected_revision=message.get("expected_revision"),
-            clear_fields=message.get("clear_fields"),
-            source="explicit",
-        )
+        try:
+            record = await memory.async_update(
+                owner,
+                str(message.get("memory_id", "")),
+                message.get("content"),
+                message.get("category"),
+                **metadata,
+                target_user_id=_memory_scope(target),
+                expected_revision=message.get("expected_revision"),
+                clear_fields=message.get("clear_fields"),
+                source="explicit",
+                confirm_duplicate=message.get("confirm_duplicate", True),
+            )
+        except DuplicateMemoryEdit:
+            return {"status": "duplicate"}
         with after_confirmed_mutation(
             "Memory was saved. Reload Memories before editing it again."
         ):
@@ -3108,14 +3124,19 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
                 request, library, {"status": "created"}, knowledge_source
             )
     if action == "update":
-        knowledge_source = await library.async_update(
-            str(message.get("source_id", "")),
-            message.get("title"),
-            message.get("description"),
-            message.get("content"),
-            message.get("enabled"),
-            expected_revision=message.get("expected_revision"),
-        )
+        try:
+            knowledge_source = await library.async_update(
+                str(message.get("source_id", "")),
+                message.get("title"),
+                message.get("description"),
+                message.get("content"),
+                message.get("enabled"),
+                expected_revision=message.get("expected_revision"),
+                # Editors that predate edit confirmation expect a saved source.
+                confirm_duplicate=message.get("confirm_duplicate", True),
+            )
+        except DuplicateKnowledgeSource:
+            return {"status": "duplicate"}
         with after_confirmed_mutation(
             "Knowledge source was saved. Reload Knowledge to read it."
         ):

@@ -2498,6 +2498,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const dialog = root.querySelector("#knowledge-dialog");
     delete dialog.__eocUncertainMutation;
     delete dialog.__eocKnowledgeCreate;
+    delete dialog.__eocKnowledgeDuplicateEdit;
     const loadToken = (this._knowledgeLoadToken || 0) + 1;
     this._knowledgeLoadToken = loadToken;
     this._editingSource = null;
@@ -2545,7 +2546,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _openMemory(memoryId = null) {
     this._ensureOwnedDialog("memory-dialog");
     beginOperation(this, "memory-editor");
-    delete this.shadowRoot.querySelector("#memory-dialog").__eocUncertainMutation;
+    const dialog = this.shadowRoot.querySelector("#memory-dialog");
+    delete dialog.__eocUncertainMutation;
+    delete dialog.__eocMemoryDuplicateEdit;
     this._setSaving(this.shadowRoot.querySelector("#memory-save"), false);
     const root = this.shadowRoot;
     root.querySelectorAll("#memory-dialog input,#memory-dialog textarea,#memory-dialog select").forEach(control => {control.disabled = false;});
@@ -2668,6 +2671,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const previousCreate = editing ? null : dialog.__eocKnowledgeCreate;
     const retrying = previousCreate?.pending === true;
     const values = retrying ? previousCreate.values : this._knowledgeValues();
+    const edit = editing ? {source_id:this._editingSource.source_id, expected_revision:this._editingSource.updated_at} : null;
     for (const [label, value, limit] of [
       ["Title", normalizedKnowledgeLine(values.title), KNOWLEDGE_TITLE_LIMIT],
       ["Description", normalizedKnowledgeLine(values.description), KNOWLEDGE_DESCRIPTION_LIMIT],
@@ -2698,12 +2702,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // A reconnect read can refresh the same editor's list without changing
       // its operation, dialog or owner. Its save still needs acknowledgement.
       && this._ownsRetainedMutation(owner, {allowRefresh:true});
+    const confirmEdit = editing && same(dialog.__eocKnowledgeDuplicateEdit, {edit, values});
+    delete dialog.__eocKnowledgeDuplicateEdit;
     this._setDialogError("knowledge", "");
     this._setSaving(button, true);
     try {
       const response = await this._call("knowledge", editing ? "update" : "create", {
-        ...(editing ? {source_id:this._editingSource.source_id, expected_revision:this._editingSource.updated_at} : {
-          create_token:create.token, ...(create.confirmDuplicate ? {confirm_duplicate:true} : {}),
+        ...(editing ? {...edit, confirm_duplicate:confirmEdit} : {
+          create_token:create.token, confirm_duplicate:create.confirmDuplicate === true,
         }), ...values,
       });
       if (!current()) {
@@ -2712,14 +2718,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (ownsEditor()) requireMutationAcknowledgement(false, "reconciling the Knowledge save after its owner changed");
         return;
       }
-      if (create && response?.status === "duplicate") {
-        create.pending = false;
-        create.confirmDuplicate = true;
-        this._setDialogError("knowledge", "An identical Knowledge source already exists. Select Save again to create another copy.");
+      if (response?.status === "duplicate") {
+        if (create) create.pending = false;
+        if (same(this._knowledgeValues(), values)) {
+          if (create) create.confirmDuplicate = true;
+          else dialog.__eocKnowledgeDuplicateEdit = {edit, values};
+          this._setDialogError("knowledge", "Another Knowledge source has the same content. Select Save again to keep both sources.");
+        }
         return;
       }
       const ownsList = this._ownsRetainedMutation(owner);
-      this._requireKnowledgeSource(response?.source, editing ? this._editingSource.source_id : null);
+      this._requireKnowledgeSource(response?.source, edit?.source_id ?? null);
       delete dialog.__eocKnowledgeCreate;
       // Retain the committed identity before touching the collection or DOM. A
       // failed patch/close must never turn the next save into another create.
@@ -2793,14 +2802,26 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (this._memoryEditorAgent !== this._agentId || this._memoryEditorScope !== this._scopeId) throw new Error("The selected agent or scope changed. Close and reopen this editor.");
       if (!temporary && this._editingMemory && !this._editingMemory.revision) throw new Error("Refresh the Memory list and reopen this editor before saving.");
       const feature = getRouteFeature("data-memory/memories");
-      const response = await this._call("memories", temporary ? (editing ? "temporary_update" : "temporary_add") : editing ? "update" : "add", {
+      const payload = {
         scope_id: sourceScope,
         ...(this._editingMemory ? {memory_id: this._editingMemory.memory_id, expected_revision: this._editingMemory.revision} : {}),
         ...feature.memoryMutationValues(values, this._editingMemory),
         ...(temporary ? {expires_at: values.expires_at, local_times: {expires_at: values.expires_at}} : {}),
+      };
+      const confirmDuplicate = editing && !temporary && same(dialog.__eocMemoryDuplicateEdit, payload);
+      delete dialog.__eocMemoryDuplicateEdit;
+      const response = await this._call("memories", temporary ? (editing ? "temporary_update" : "temporary_add") : editing ? "update" : "add", {
+        ...payload, ...(editing && !temporary ? {confirm_duplicate:confirmDuplicate} : {}),
       });
       if (!current()) {
         if (ownsEditor()) requireMutationAcknowledgement(false, "reconciling the Memory save after its owner changed");
+        return;
+      }
+      if (!temporary && editing && response?.status === "duplicate") {
+        if (same(this._memoryValues(), values)) {
+          dialog.__eocMemoryDuplicateEdit = payload;
+          this._setDialogError("memory", "An identical memory exists in the selected scope. Select Save again to keep both records.");
+        }
         return;
       }
       const savedScope = response?.scope_id ?? (temporary && editing ? sourceScope : null);

@@ -39,8 +39,11 @@ Select a conversation agent, then use the panel to:
 - delete a source after confirmation.
 
 If a create reply is lost, saving again in the same editor retries the original
-submission. Any newer edits remain in the editor. A separate submission with the
-same title, description, content, and availability prompts before creating a copy.
+submission. Any newer edits remain in the editor. Adding a source or changing its
+content prompts if another source already has the same text, even under a different
+title or description. Select **Save** again with the same draft to keep both sources.
+You can still change the title, description, or availability of an existing copy
+without another warning.
 
 New and existing sources are available by default. Disabling one source does **not** delete it. The source remains stored, visible, editable, included in backups, and can be re-enabled later. While disabled, it is excluded from the model-facing source catalogue, local search index and retrieval. `knowledge_get` cannot bypass the disabled state even if an exact source ID is supplied.
 

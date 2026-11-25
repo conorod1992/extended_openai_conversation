@@ -260,11 +260,11 @@ test("Knowledge warns before a separate submission creates an exact copy", async
       : {status:"duplicate"};
   };
   await panel._saveKnowledge();
-  assert.match(panel.visibleError, /identical Knowledge source already exists/);
+  assert.match(panel.visibleError, /Another Knowledge source has the same content/);
   assert.equal(panel._knowledgeMode, "create");
   await panel._saveKnowledge();
   assert.equal(requests.length, 2);
-  assert.equal(requests[0].confirm_duplicate, undefined);
+  assert.equal(requests[0].confirm_duplicate, false);
   assert.equal(requests[1].confirm_duplicate, true);
   assert.equal(requests[0].create_token, requests[1].create_token);
   assert.equal(panel._editingSource.source_id, "copy");

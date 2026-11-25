@@ -19,6 +19,9 @@ from custom_components.extended_openai_conversation_responses.conversation impor
     _ACTIVE_TURN,
     ExtendedOpenAIAgentEntity,
 )
+from custom_components.extended_openai_conversation_responses.exceptions import (
+    DuplicateMemoryEdit,
+)
 from custom_components.extended_openai_conversation_responses.scope import (
     unretained_scope,
 )
@@ -103,6 +106,36 @@ def stored_record(
         "created_at": now.isoformat(),
         "updated_at": now.isoformat(),
     }
+
+
+@pytest.mark.parametrize("difference", ["category", "source", "expiry", "scope", None])
+async def test_management_edit_duplicate_checks_temporary_identity(difference):
+    expiry = future()
+    original = stored_record(0)
+    peer = stored_record(1) | {
+        "content": "Existing",
+        "source": "manual",
+        "expires_at": expiry,
+    }
+    original |= {"source": "manual", "expires_at": expiry}
+    if difference == "category":
+        peer["category"] = "other"
+    elif difference == "source":
+        peer["source"] = "automatic"
+    elif difference == "expiry":
+        peer["expires_at"] = future(2)
+    elif difference == "scope":
+        peer["scope_id"] = "device:office"
+    storage = Storage({"records": [original, peer]})
+    memory = TemporaryMemory(storage)
+    fields = ("user:alice", original["memory_id"], "Existing", None, None)
+    if difference is None:
+        with pytest.raises(DuplicateMemoryEdit):
+            await memory.async_update_owned(*fields, confirm_duplicate=False)
+        assert storage.data["records"][0]["content"] == original["content"]
+    else:
+        updated = await memory.async_update_owned(*fields, confirm_duplicate=False)
+        assert updated.content == "Existing"
 
 
 async def test_active_records_are_owned_persisted_and_bounded() -> None:

@@ -16,6 +16,7 @@ from uuid import uuid4
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .exceptions import DuplicateMemoryEdit
 from .function_tool_policy import (
     runtime_function_tool_name,
     runtime_function_tool_names,
@@ -71,6 +72,17 @@ class TemporaryMemoryRecord:
             and namespace in {"conversation", "device"}
             and bool(identity)
         )
+
+
+def _edit_identity(record: TemporaryMemoryRecord) -> tuple[Any, ...]:
+    return (
+        record.owner_scope_id,
+        record.scope_id,
+        record.content,
+        record.category,
+        record.source,
+        stored_timestamp_instant(record.expires_at),
+    )
 
 
 def temporary_memory_record_counts(
@@ -361,6 +373,8 @@ class TemporaryMemory:
         *,
         owner_scope_id: str | None = None,
         source: str | None = None,
+        expected_revision: str | None = None,
+        confirm_duplicate: bool = True,
     ) -> TemporaryMemoryRecord:
         """Update/supersede a temporary fact owned by the current request."""
         if source is not None and source not in {"automatic", "manual"}:
@@ -370,6 +384,13 @@ class TemporaryMemory:
             await self._async_initialize_locked()
             await self._async_prune_locked()
             current = self._owned(scope_id, memory_id, owner_scope_id)
+            if (
+                expected_revision is not None
+                and current.updated_at != expected_revision
+            ):
+                raise ValueError(
+                    "Temporary Memory changed since it was loaded; reopen it before saving"
+                )
             new_content = (
                 _clean(content, MAX_CONTENT_LENGTH, "content")
                 if content is not None
@@ -404,6 +425,15 @@ class TemporaryMemory:
                 dt_util.utcnow().isoformat(),
                 current.owner_scope_id,
             )
+            if not confirm_duplicate:
+                identity = _edit_identity(updated)
+                if _edit_identity(current) != identity and any(
+                    other.memory_id != memory_id
+                    and other.owner_scope_id == owner_scope_id
+                    and _edit_identity(other) == identity
+                    for other in self._records.values()
+                ):
+                    raise DuplicateMemoryEdit
             self._records[memory_id] = updated
             await self._async_save_locked()
             return updated
@@ -670,6 +700,9 @@ class TemporaryMemory:
         content: str | None,
         expires_at: str | None,
         category: str | None,
+        *,
+        expected_revision: str | None = None,
+        confirm_duplicate: bool = True,
     ) -> TemporaryMemoryRecord:
         owner = _require_owner_scope_id(owner_scope_id)
         return await self.async_update(
@@ -680,6 +713,8 @@ class TemporaryMemory:
             category,
             owner_scope_id=owner,
             source="manual",
+            expected_revision=expected_revision,
+            confirm_duplicate=confirm_duplicate,
         )
 
     async def async_delete_owned(

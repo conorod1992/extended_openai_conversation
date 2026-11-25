@@ -4,6 +4,7 @@ import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, s
 import {ensureTemporaryScope, memoryCollectionIdentity} from "./management-data-state.js";
 import {embeddedFeatureStatusMarkup} from "./management-feature-status-core.js";
 import {friendlySettingValue} from "./management-setting-metadata.js";
+import {same} from "./unsaved-state.js";
 function validOwnerScope(scope) {
   return scope?.scope_type === "user" || scope?.scope_type === "shared";
 }
@@ -151,6 +152,7 @@ export function openTemporaryMemory(panel, memoryId) {
   const utcExpiry = memory.expires_at_local === null;
   panel._temporaryMemoryDraft = {
     memory_id: memory.memory_id,
+    updated_at: memory.updated_at,
     content: memory.content || "",
     category: memory.category || "general",
     expires_at: utcExpiry ? new Date(memory.expires_at).toISOString().slice(0, 19) : (memory.expires_at_local || memoryLocalDateTime(panel, memory.expires_at)),
@@ -159,6 +161,7 @@ export function openTemporaryMemory(panel, memoryId) {
     owner_scope_id: memory.owner_scope_id || panel._scopeId,
   };
   const dialog = panel.shadowRoot.querySelector("#temporary-memory-dialog");
+  delete dialog.__eocMemoryDuplicateEdit;
   panel.shadowRoot.querySelector("#temporary-memory-content").value = panel._temporaryMemoryDraft.content;
   panel.shadowRoot.querySelector("#temporary-memory-category").value = panel._temporaryMemoryDraft.category;
   const expiry = panel.shadowRoot.querySelector("#temporary-memory-expiry");
@@ -217,17 +220,33 @@ async function saveTemporaryMemory(panel) {
   const save = panel.shadowRoot.querySelector("#temporary-memory-save");
   panel._setSaving(save, true);
   try {
-    const response = await panel._call("memories", "temporary_update", {
+    const payload = {
       scope_id: owner.scope,
       memory_id: draft.memory_id,
+      expected_revision: draft.updated_at,
       content,
       category,
       // An unrelated edit must not reinterpret the displayed wall time if HA's
       // timezone changed while this editor was open.
       expires_at: expiresAt === draft.expires_at ? draft.original_expiry : draft.utc_expiry ? `${expiresAt}Z` : expiresAt,
       ...(expiresAt === draft.expires_at || draft.utc_expiry ? {} : {local_times: {expires_at: expiresAt}}),
+    };
+    const confirmDuplicate = same(dialog.__eocMemoryDuplicateEdit, payload);
+    delete dialog.__eocMemoryDuplicateEdit;
+    const response = await panel._call("memories", "temporary_update", {
+      ...payload, confirm_duplicate:confirmDuplicate,
     });
     if (!configurationSubmissionIsCurrent(panel, submission) || !panel._ownsRetainedMutation(owner)) return;
+    if (response?.status === "duplicate") {
+      if (ownsEditor()
+          && panel.shadowRoot.querySelector("#temporary-memory-content")?.value === content
+          && panel.shadowRoot.querySelector("#temporary-memory-category")?.value === category
+          && panel.shadowRoot.querySelector("#temporary-memory-expiry")?.value === expiresAt) {
+        dialog.__eocMemoryDuplicateEdit = payload;
+        error.textContent = "An identical short-term memory exists in this scope. Select Save again to keep both records.";
+      }
+      return;
+    }
     requireMutationAcknowledgement(response?.memory?.memory_id === draft.memory_id, "saving the temporary memory");
     if (!ownsEditor()) {
       panel._revalidateAcknowledgedCollection(owner);

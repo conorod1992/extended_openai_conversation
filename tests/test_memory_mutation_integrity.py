@@ -8,9 +8,13 @@ from typing import Any
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses.exceptions import (
+    DuplicateMemoryEdit,
+)
 from custom_components.extended_openai_conversation_responses.memory import (
     MemoryRecord,
     PersistentMemory,
+    memory_revision,
 )
 
 
@@ -59,6 +63,67 @@ async def _warm_embedding_cache(memory: PersistentMemory) -> None:
 
     memory.set_embedding_provider(embeddings, "integrity-test-model")
     assert await memory.async_prepare_hybrid(["alice"], "Oscar breed") == [1.0, 0.0]
+
+
+@pytest.mark.parametrize(
+    ("category", "source", "metadata"),
+    [
+        ("pets", "explicit", {}),
+        ("general", "implicit", {}),
+        ("general", "explicit", {"subject": "Different subject"}),
+        ("general", "explicit", {"valid_from": "2026-10-05T12:00:00Z"}),
+        ("general", "explicit", {"key": "household.separate"}),
+    ],
+)
+async def test_edit_duplicate_warning_preserves_distinct_persistent_facts(
+    category, source, metadata
+):
+    memory = await _memory()
+    _, original = await memory.async_add_record(
+        "alice", "Original", category, source, **metadata
+    )
+    await memory.async_add_record("alice", "Existing", "general", "explicit")
+    updated = await memory.async_update(
+        "alice", original.memory_id, content="Existing", confirm_duplicate=False
+    )
+    assert updated.memory_id == original.memory_id
+    assert updated.content == "Existing"
+
+
+async def test_edit_duplicate_confirmation_retains_write_recovery_and_model_semantics():
+    storage = FailableStorage()
+    memory = await _memory(storage)
+    _, original = await memory.async_add_record(
+        "alice", "Original", "general", "explicit"
+    )
+    await memory.async_add_record("alice", "Existing", "general", "explicit")
+    original_state = deepcopy(storage.data)
+    fields = {"content": "Existing", "expected_revision": memory_revision(original)}
+    with pytest.raises(DuplicateMemoryEdit):
+        await memory.async_update(
+            "alice", original.memory_id, **fields, confirm_duplicate=False
+        )
+    assert storage.data == original_state
+
+    storage.fail_next_save = True
+    with pytest.raises(OSError, match="durable storage unavailable"):
+        await memory.async_update(
+            "alice", original.memory_id, **fields, confirm_duplicate=True
+        )
+    assert storage.data == original_state
+
+    updated = await memory.async_update(
+        "alice",
+        original.memory_id,
+        **fields,
+        model_origin=True,
+        confirm_duplicate=False,
+    )
+    assert updated.content == "Existing"
+    assert (
+        await memory.async_update("alice", original.memory_id, confirm_duplicate=False)
+        == updated
+    )
 
 
 @pytest.mark.parametrize(

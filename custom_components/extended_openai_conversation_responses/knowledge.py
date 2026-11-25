@@ -135,7 +135,7 @@ class KnowledgeSource:
 
 
 class DuplicateKnowledgeSource(ValueError):
-    """An independently submitted source matches an existing source."""
+    """A proposed source would duplicate existing Knowledge content."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -499,12 +499,12 @@ class KnowledgeLibrary:
         enabled: bool = True,
         *,
         create_token: str | None = None,
-        confirm_duplicate: bool = False,
+        confirm_duplicate: bool | None = None,
     ) -> KnowledgeSource:
         """Create a source or acknowledge the same submission again."""
         title, description, content = _validated_fields(title, description, content)
         enabled = _validated_enabled(enabled)
-        if not isinstance(confirm_duplicate, bool):
+        if confirm_duplicate is not None and not isinstance(confirm_duplicate, bool):
             raise ValueError("confirm_duplicate must be a boolean")
         fields = (title, description, content, enabled)
         if create_token is not None:
@@ -536,13 +536,19 @@ class KnowledgeLibrary:
                     enabled=enabled,
                     updated_at=existing.created_at,
                 )
+            # A caller that supplies the confirmation flag supports the broader
+            # content warning. Older callers still get their exact-copy check.
             if not confirm_duplicate and any(
-                (source.title, source.description, source.content, source.enabled)
-                == fields
+                (
+                    confirm_duplicate is False
+                    or (source.title, source.description, source.enabled)
+                    == (title, description, enabled)
+                )
+                and source.content == content
                 for source in self._sources.values()
             ):
                 raise DuplicateKnowledgeSource(
-                    "An identical Knowledge source already exists"
+                    "Another Knowledge source has the same content"
                 )
             if len(self._sources) >= MAX_SOURCES_PER_AGENT:
                 raise ValueError(
@@ -575,6 +581,8 @@ class KnowledgeLibrary:
         content: str | None = None,
         enabled: bool | None = None,
         expected_revision: str | None = None,
+        *,
+        confirm_duplicate: bool = False,
     ) -> KnowledgeSource:
         """Update and immediately re-index one source."""
         async with async_storage_lock(self._storage, self._lock):
@@ -604,6 +612,17 @@ class KnowledgeLibrary:
             )
             if updated == current:
                 return current
+            if (
+                not confirm_duplicate
+                and updated.content != current.content
+                and any(
+                    source.source_id != source_id and source.content == updated.content
+                    for source in self._sources.values()
+                )
+            ):
+                raise DuplicateKnowledgeSource(
+                    "Another Knowledge source has the same content"
+                )
             updated = replace(updated, updated_at=dt_util.utcnow().isoformat())
             index = await asyncio.to_thread(_build_index, (updated,))
             self._unindex(source_id)
