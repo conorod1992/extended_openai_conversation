@@ -95,9 +95,11 @@ async def test_quiet_hours_queue_and_restore_share_real_satellite_state(
         morning = evening + timedelta(hours=9)
         freezer.move_to(morning)
         async_fire_time_changed(hass, morning.astimezone(UTC))
-        await hass.async_block_till_done()
+        # The scheduled callback persists its restoration receipts in a background task.
+        await hass.async_block_till_done(wait_background_tasks=True)
         assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.65)
         assert hass.states.get(wake).state == "on"
+        assert quiet.active is None
         history = [item for item in inter.history() if item["id"] == result["id"]]
         assert len(history) == 1
         assert controls == [
