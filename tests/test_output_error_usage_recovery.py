@@ -35,9 +35,13 @@ from tests.test_usage_accounting_recovery import FakeStorage
 
 FULL = {"input_tokens": 120, "output_tokens": 30, "total_tokens": 150}
 CORRECTION = {"output_tokens": 40, "total_tokens": 160}
-DECODER_LIMIT_ARGUMENTS = [
+DECODER_REJECTIONS = [
     pytest.param('{"value":' + "9" * 5000 + "}", ValueError, id="integer-limit"),
     pytest.param("[" * 10000 + "0" + "]" * 10000, RecursionError, id="nesting-limit"),
+    pytest.param('{"value": NaN}', ValueError, id="non-finite-constant"),
+    pytest.param('{"nested": [1e999]}', ValueError, id="non-finite-exponent"),
+    pytest.param(r'{"nested": {"\ud800": 0}}', ValueError, id="unicode-key"),
+    pytest.param(r'{"nested": ["\udfff"]}', ValueError, id="unicode-value"),
 ]
 
 
@@ -185,8 +189,8 @@ async def test_public_request_records_known_and_recovered_usage_once(
 
 @pytest.mark.parametrize("mode", ["chat", "responses"])
 @pytest.mark.parametrize("recovery_enabled", [False, True])
-@pytest.mark.parametrize(("arguments", "decoder_error"), DECODER_LIMIT_ARGUMENTS)
-async def test_decoder_limits_preserve_trailing_usage(
+@pytest.mark.parametrize(("arguments", "decoder_error"), DECODER_REJECTIONS)
+async def test_decoder_rejections_preserve_trailing_usage(
     monkeypatch, mode, arguments, decoder_error, recovery_enabled
 ):
     if decoder_error is RecursionError:
@@ -210,7 +214,9 @@ async def test_decoder_limits_preserve_trailing_usage(
     with bind_tool_recovery_state(state):
         if recovery_enabled:
             deltas = [delta async for delta in transform(log, stream, usage)]
-            call = next(delta["tool_calls"][0] for delta in deltas if "tool_calls" in delta)
+            call = next(
+                delta["tool_calls"][0] for delta in deltas if "tool_calls" in delta
+            )
             feedback = state.pop_malformed(call.id)
             assert feedback is not None
             assert feedback.code == "invalid_json"
@@ -228,7 +234,7 @@ async def test_decoder_limits_preserve_trailing_usage(
 @pytest.mark.parametrize("mode", ["chat", "responses"])
 @pytest.mark.parametrize(
     ("arguments", "decoder_error"),
-    [("{", json.JSONDecodeError), ("{}", None), *DECODER_LIMIT_ARGUMENTS],
+    [("{", json.JSONDecodeError), ("{}", None), *DECODER_REJECTIONS],
 )
 async def test_completed_adapter_captures_usage_before_output(
     monkeypatch, mode, arguments, decoder_error
