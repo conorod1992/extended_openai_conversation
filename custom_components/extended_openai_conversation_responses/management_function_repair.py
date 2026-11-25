@@ -50,6 +50,10 @@ from .function_configuration_repair import (
     has_unavailable_native_tool,
     safe_function_configuration,
 )
+from .function_yaml import (
+    authored_function_configuration_equal,
+    dump_authored_function_configuration,
+)
 from .live_subentry_updates import update_configuration_subentry, update_live_subentry
 from .model_catalog import catalog_generation
 from .mutation_outcomes import mark_mutation_failure
@@ -193,6 +197,14 @@ def repair_state_for_projection(
 
 def agent_config_revision_from_snapshot(config: dict[str, Any], title: str) -> str:
     """Hash authoritative persisted configuration and title for all writers."""
+    tools = config.get(CONF_FUNCTION_TOOLS)
+    if tools is not None and not isinstance(tools, str):
+        config = {
+            **config,
+            CONF_FUNCTION_TOOLS: {
+                "authored": dump_authored_function_configuration(tools)
+            },
+        }
     document = canonical_json({"title": title, "config": config})
     return sha256(document.encode("utf-8")).hexdigest()
 
@@ -200,6 +212,15 @@ def agent_config_revision_from_snapshot(config: dict[str, Any], title: str) -> s
 def agent_config_revision(data: Any, title: str) -> str:
     """Hash persisted state without validating or normalizing unrelated fields."""
     return agent_config_revision_from_snapshot(dict(data), title)
+
+
+def _same_persisted_function_fields(left: Any, right: Any) -> bool:
+    return authored_function_configuration_equal(
+        left.get(CONF_FUNCTION_TOOLS, _MISSING),
+        right.get(CONF_FUNCTION_TOOLS, _MISSING),
+    ) and left.get(CONF_FUNCTION_GROUPS, _MISSING) == right.get(
+        CONF_FUNCTION_GROUPS, _MISSING
+    )
 
 
 def persisted_config_projection(
@@ -261,10 +282,7 @@ def persisted_config_projection(
         cached is not None
         and cached.subentry is subentry
         and cached.repair_state is not None
-        and all(
-            cached.data.get(field, _MISSING) == subentry.data.get(field, _MISSING)
-            for field in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS)
-        )
+        and _same_persisted_function_fields(cached.data, data)
     ):
         projection.repair_state = cached.repair_state
     _persisted_projections[key] = projection
@@ -277,7 +295,11 @@ def persisted_config_projection(
 
 def saved_agent_config_revision(subentry: Any, data: Any, title: str) -> str:
     """Return the authoritative post-save revision after HA replaces its data."""
-    if subentry.title == title and dict(subentry.data) == dict(data):
+    if (
+        subentry.title == title
+        and dict(subentry.data) == dict(data)
+        and _same_persisted_function_fields(subentry.data, data)
+    ):
         return persisted_config_projection(subentry).revision
     # Lightweight test doubles may record a save without applying it.
     return agent_config_revision(data, title)
@@ -412,10 +434,7 @@ def seed_persisted_config_projection(
         previous is not None
         and previous.subentry is current
         and previous.repair_state is not None
-        and all(
-            previous.data.get(field, _MISSING) == current.data.get(field, _MISSING)
-            for field in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS)
-        )
+        and _same_persisted_function_fields(previous.data, current.data)
     ):
         repair_state = previous.repair_state
     projection = _PersistedProjection(
@@ -704,10 +723,18 @@ def _function_fields_unchanged(
     updates: dict[str, Any], safe_config: dict[str, Any]
 ) -> bool:
     """Return whether a normal config save left repair-owned fields untouched."""
-    for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
-        if key in updates and updates[key] != safe_config.get(key):
-            return False
-    return True
+    tools = updates.get(CONF_FUNCTION_TOOLS, _MISSING)
+    if isinstance(tools, str):
+        tools = editable_function_tools(updates)
+    return (
+        tools is _MISSING
+        or authored_function_configuration_equal(
+            tools, safe_config.get(CONF_FUNCTION_TOOLS)
+        )
+    ) and (
+        CONF_FUNCTION_GROUPS not in updates
+        or updates[CONF_FUNCTION_GROUPS] == safe_config.get(CONF_FUNCTION_GROUPS)
+    )
 
 
 def group_collection_is_addressable(raw: Any) -> bool:

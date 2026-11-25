@@ -478,13 +478,16 @@ async def test_runtime_configuration_partial_entity_returns_without_manager_reco
 
 
 def test_agent_config_serialization_falls_back_for_runtime_objects(monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses import agent_config
+    from custom_components.extended_openai_conversation_responses import (
+        agent_config,
+        function_yaml,
+    )
 
     class RuntimeOnly:
         pass
 
     dump = Mock(return_value="fallback-yaml")
-    monkeypatch.setattr(agent_config, "dump_yaml", dump)
+    monkeypatch.setattr(function_yaml, "dump_yaml", dump)
 
     result = agent_config._configured_tools_yaml(
         {agent_config.CONF_FUNCTION_TOOLS: [{"runtime": RuntimeOnly()}]}

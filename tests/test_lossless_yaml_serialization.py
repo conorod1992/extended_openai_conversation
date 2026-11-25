@@ -7,6 +7,10 @@ from hypothesis import given, settings, strategies as st
 import pytest
 import yaml
 
+from custom_components.extended_openai_conversation_responses.function_yaml import (
+    authored_function_configuration_equal,
+    dump_authored_function_configuration,
+)
 from custom_components.extended_openai_conversation_responses.yaml_serialization import (
     dump_yaml,
     load_yaml_or_json,
@@ -60,3 +64,36 @@ def test_safe_dumper_is_local_and_unsafe_python_tags_stay_rejected():
     assert yaml.safe_dump("before\x85after", allow_unicode=True) == source
     with pytest.raises(yaml.representer.RepresenterError):
         dump_yaml(object())
+
+
+@pytest.mark.parametrize("tag", ["omap", "pairs"])
+def test_authored_identity_preserves_yaml_pair_types_and_order(tag):
+    value = load_yaml_or_json(f"lookup: !!{tag} [{{z: 1}}, {{a: 2}}]")
+    assert load_yaml_or_json(dump_yaml(value)) == value == {"lookup": [("z", 1), ("a", 2)]}
+    assert authored_function_configuration_equal(
+        value, load_yaml_or_json(dump_authored_function_configuration(value))
+    )
+    assert not authored_function_configuration_equal(
+        value, {"lookup": [["z", 1], ["a", 2]]}
+    )
+    assert not authored_function_configuration_equal(
+        value, {"lookup": [("a", 2), ("z", 1)]}
+    )
+
+
+def test_authored_yaml_preserves_pair_aliases_and_unhashable_keys():
+    value = load_yaml_or_json(
+        "lookup: &pairs !!pairs\n"
+        "  - ? [one, two]\n"
+        "    : *pairs\n"
+    )
+    decoded = load_yaml_or_json(dump_authored_function_configuration(value))
+    [(key, alias)] = decoded["lookup"]
+    assert key == ["one", "two"]
+    assert alias is decoded["lookup"]
+
+
+def test_authored_identity_keeps_recursive_yaml_collections_reversible():
+    value = load_yaml_or_json("&self [*self]")
+    decoded = load_yaml_or_json(dump_authored_function_configuration(value))
+    assert decoded[0] is decoded

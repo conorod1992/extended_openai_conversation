@@ -15,7 +15,6 @@ from typing import Any, cast
 from uuid import uuid4
 
 import voluptuous as vol
-import yaml
 
 from homeassistant.components import conversation
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP
@@ -32,6 +31,7 @@ from .function_tool_quarantine import (
     _runtime_configured_function_tools as configured_function_tools_from_data,
 )
 from .function_tool_resolution import latest_function_tool_for_execution
+from .function_yaml import dump_authored_function_configuration
 from .ha_permissions import bind_active_ha_context
 from .ha_tool_result_compat import ExecutionFailure, tool_result_data
 from .helpers import get_exposed_entities
@@ -41,7 +41,6 @@ from .persistence_hardening import (
 )
 from .request_origin import bind_request_satellite, get_request_satellite
 from .strict_store import PropagatingWriteStore, _async_settle_store_io
-from .yaml_serialization import dump_yaml
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,42 +100,14 @@ def _validate_call_capacity(
         raise _DelayedQueueLimitError("Delayed Function Tool queue capacity reached")
 
 
-class _StableFingerprintDumper(yaml.SafeDumper):
-    """Preserve YAML types while serializing unordered sets deterministically."""
-
-
-def _represent_fingerprint_set(
-    dumper: yaml.SafeDumper, value: set[Any]
-) -> yaml.nodes.MappingNode:
-    # PyYAML falls back to iteration order when mapping keys have mixed types.
-    # A set then hashes differently across process restarts/PYTHONHASHSEEDs.
-    ordered = sorted(
-        value,
-        key=lambda item: dump_yaml(item, sort_keys=True),
-    )
-    return dumper.represent_mapping(
-        "tag:yaml.org,2002:set", ((item, None) for item in ordered)
-    )
-
-
-_StableFingerprintDumper.add_representer(set, _represent_fingerprint_set)
-
-
 def tool_definition_fingerprint(tool: dict[str, Any]) -> str:
     """Hash the persisted schema and implementation, excluding presentation/state."""
     source = deepcopy(tool)
     payload = {key: source[key] for key in ("spec", "function") if key in source}
-    try:
-        encoded = json.dumps(
-            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        )
-    except TypeError:
-        # Preserve existing JSON fingerprints for pending calls. Typed YAML must
-        # retain its tags so a date and its quoted string never share an identity.
-        encoded = "yaml:" + yaml.dump(
-            payload, Dumper=_StableFingerprintDumper, sort_keys=True, allow_unicode=True
-        )
-    return hashlib.sha256(encoded.encode()).hexdigest()
+    encoded = dump_authored_function_configuration(payload)
+    # V1 omitted information about authored key types and order. Treat it as
+    # unverifiable while keeping the queue's stored hash format readable.
+    return hashlib.sha256(b"eoai-authored-tool-v2\0" + encoded.encode()).hexdigest()
 
 
 @dataclass(slots=True, frozen=True)

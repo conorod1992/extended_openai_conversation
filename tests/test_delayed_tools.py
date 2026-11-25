@@ -6,6 +6,8 @@ import asyncio
 from contextvars import ContextVar
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -703,6 +705,68 @@ async def test_changed_or_unknown_scheduled_definition_never_executes(
     await manager._async_execute_due(record.call_id)
     agent._execute_function_tool.assert_not_awaited()
     assert record.call_id not in manager._records
+
+
+@pytest.mark.parametrize("change", ["key-type", "key-order", "legacy-v1"])
+async def test_delayed_definition_changes_fail_closed_after_storage_roundtrip(
+    hass, monkeypatch, change
+) -> None:
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    tool = _valid_tool(function_type="script")
+    tool["function"] = {
+        "type": "script",
+        "variables": {"z_source": "ready", "a_dependent": "{{ z_source }}"},
+        "sequence": [{"stop": "Done"}],
+    }
+    current = {**tool, "function": {**tool["function"]}}
+    if change == "key-type":
+        tool["function"]["variables"] = {"lookup": {7: "value"}}
+        current["function"]["variables"] = {"lookup": {"7": "value"}}
+    elif change == "key-order":
+        current["function"]["variables"] = dict(
+            reversed(list(tool["function"]["variables"].items()))
+        )
+
+    authored = {key: tool[key] for key in ("spec", "function")}
+    legacy = hashlib.sha256(
+        json.dumps(authored, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert legacy == hashlib.sha256(
+        json.dumps(
+            {key: current[key] for key in ("spec", "function")},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    record = replace(
+        _coverage_record(user_id=None),
+        definition_fingerprint=legacy
+        if change == "legacy-v1"
+        else tool_definition_fingerprint(tool),
+    )
+    stored = record.as_dict()
+    assert DelayedToolCall.from_dict(stored) == record
+
+    manager = DelayedToolManager(hass)
+    manager._store = SimpleNamespace(
+        async_load=AsyncMock(return_value={"calls": [stored]}),
+        async_save=AsyncMock(),
+    )
+    hass.config_entries.async_get_entry.return_value = _live_entry()
+    monkeypatch.setattr(
+        delayed_tools, "configured_function_tools_from_data", lambda _: [current]
+    )
+    agent = SimpleNamespace(_execute_function_tool=AsyncMock())
+    monkeypatch.setattr(manager, "_resolve_agent", lambda *_: agent)
+    await manager.async_setup()
+    assert manager._records[record.call_id] == record
+
+    await manager._async_execute_due(record.call_id)
+
+    agent._execute_function_tool.assert_not_awaited()
+    assert record.call_id not in manager._records
+    manager._store.async_save.assert_awaited_once_with({"calls": []})
 
 
 def _live_entry() -> SimpleNamespace:

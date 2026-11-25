@@ -328,7 +328,7 @@ try {
     assert.deepEqual(harness.editor.values.at(-1), {name: "Delayed definition", type: "script"});
   }
 
-  for (const scalar of ["2026-10-17", "!!binary SGVsbG8="]) {
+  for (const scalar of ["2026-10-17", "!!binary SGVsbG8=", "1.0", "-0.0", "{z: first, '2': second, '1': third}"]) {
     const yaml = `spec:\n  name: typed_tool\nfunction:\n  type: script\n  variables:\n    marker: ${scalar}\n  sequence: []\n`;
     const harness = makeHarness({initialYaml: yaml, call: async () => ({valid: true, config: {
       spec: {name: "typed_tool"}, function: {type: "script", variables: {

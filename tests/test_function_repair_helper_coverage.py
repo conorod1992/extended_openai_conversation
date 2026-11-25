@@ -52,7 +52,7 @@ def test_function_tools_cache_key_round_trips_missing_string_and_json() -> None:
 
     structured = [{"spec": {"name": "example"}}]
     kind, payload = repair._function_tools_cache_key({CONF_FUNCTION_TOOLS: structured})
-    assert kind == "json"
+    assert kind == "structured"
     assert repair._options_from_function_tools_cache_key(kind, payload) == {
         CONF_FUNCTION_TOOLS: structured
     }
@@ -62,7 +62,7 @@ def test_function_tools_cache_key_falls_back_to_yaml_for_non_json_value() -> Non
     raw = [{"spec": {"name": {"not", "json"}}}]
     kind, payload = repair._function_tools_cache_key({CONF_FUNCTION_TOOLS: raw})
 
-    assert kind == "yaml"
+    assert kind == "structured"
     restored = repair._options_from_function_tools_cache_key(kind, payload)
     assert set(restored[CONF_FUNCTION_TOOLS][0]["spec"]["name"]) == {
         "not",

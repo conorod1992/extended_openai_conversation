@@ -6,7 +6,6 @@ from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from copy import deepcopy
 from functools import lru_cache
-import json
 import re
 from types import MappingProxyType
 from typing import Any, cast
@@ -185,7 +184,7 @@ from .function_tool_policy import (
     NATIVE_FUNCTION_IMPLEMENTATIONS,
     RESERVED_FUNCTION_TOOL_NAMES,
 )
-from .function_yaml import contains_yaml_types
+from .function_yaml import dump_authored_function_configuration
 from .functions import FUNCTIONS, get_function
 from .functions.base import copy_runtime_function_config
 from .ha_llm_tools import is_ha_tool, reference_key, validate_reference
@@ -1600,26 +1599,7 @@ def _configured_tools_yaml(data: Mapping[str, Any]) -> str | None:
         return None
     if isinstance(configured, str):
         return configured
-    if contains_yaml_types(configured):
-        return dump_yaml(configured, sort_keys=True)
-    try:
-        # Persisted Function Tool collections are JSON-compatible. Using JSON here
-        # keeps cache-key construction linear and avoids PyYAML's expensive emitter
-        # on every Management/agent catalogue read. The cached decoder recognizes
-        # JSON explicitly, retaining exponent floats and their numeric types.
-        return json.dumps(
-            configured,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )
-    except TypeError, ValueError:
-        # Runtime-only hydrated configs may contain objects such as HA Templates.
-        # Preserve the established fallback for those uncommon call sites.
-        return dump_yaml(
-            configured,
-            sort_keys=True,
-        )
+    return dump_authored_function_configuration(configured)
 
 
 @lru_cache(maxsize=64)

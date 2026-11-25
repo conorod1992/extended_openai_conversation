@@ -172,8 +172,8 @@ def test_delayed_fingerprint_is_stable_across_restart_hash_seeds():
     assert len(fingerprints) == 1  # The replay identity must now remain stable.
 
 
-def test_typed_fingerprint_without_sets_keeps_existing_identity():
-    """Previously queued date-only definitions must retain their fingerprints."""
+def test_typed_fingerprint_without_sets_uses_new_identity():
+    """Legacy YAML digests have the same order ambiguity as legacy JSON digests."""
     import hashlib
 
     tool = {
@@ -187,7 +187,7 @@ def test_typed_fingerprint_without_sets_keeps_existing_identity():
     )
     assert (
         tool_definition_fingerprint(tool)
-        == hashlib.sha256(historical.encode()).hexdigest()
+        != hashlib.sha256(historical.encode()).hexdigest()
     )
 
 

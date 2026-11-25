@@ -12,7 +12,15 @@ from custom_components.extended_openai_conversation_responses import (
     management_function_repair,
 )
 from custom_components.extended_openai_conversation_responses.function_yaml import (
+    authored_function_configuration_equal,
     decode_management_function_values,
+)
+from custom_components.extended_openai_conversation_responses.private_backup import (
+    decode_field,
+    encode_field,
+)
+from custom_components.extended_openai_conversation_responses.yaml_serialization import (
+    dump_yaml,
 )
 from tests_real_ha.test_config_flow import (
     _make_entry,
@@ -32,6 +40,10 @@ from tests_real_ha.test_management_command_contracts import _client, _raw_call
         2**53 + 1,
         -(2**53 + 1),
         {7: "integer key", None: "null key"},
+        {"z": "first", "2": "second", "1": "third"},
+        [("z", 1), ("a", 2)],
+        1.0,
+        -0.0,
         float("inf"),
         {"ordinary", "sk-12345678901234567890"},
         {"__eoai_management_yaml_v1__": "literal administrator data"},
@@ -43,6 +55,10 @@ from tests_real_ha.test_management_command_contracts import _client, _raw_call
         "unsafe-int",
         "negative-unsafe-int",
         "numeric-key",
+        "string-index-key-order",
+        "yaml-pairs",
+        "whole-float",
+        "negative-zero",
         "infinity",
         "secret-set",
         "literal-tag",
@@ -83,20 +99,27 @@ async def test_typed_function_websocket_editor_and_draft_roundtrip(
                 "sequence": [{"stop": "Done"}],
             },
         }
+        source = dump_yaml(tool)
+        validated = await call("tools", "validate_yaml", yaml=source)
+        assert validated["valid"]
+        native_hydration_value = validated["config"]["function"]["variables"]["marker"]
+        assert isinstance(native_hydration_value["__eoai_management_yaml_v1__"], str)
         saved = await call(
-            "tools", "save", yaml=yaml.safe_dump(tool), revision=current["revision"]
+            "tools", "save", yaml=source, revision=current["revision"]
         )
         if type(value) is int and abs(value) > 2**53 - 1:
             assert isinstance(
                 saved["functions"][0]["function"]["variables"]["marker"], dict
             )
-        assert decode_management_function_values(saved)["functions"][0] == tool
+        assert authored_function_configuration_equal(
+            decode_management_function_values(saved)["functions"][0], tool
+        )
         subentry = entry.subentries[subentry_id]
         before = deepcopy(dict(subentry.data))
         editor = await call(
             "tools", "serialize", name="typed_tool", revision=saved["revision"]
         )
-        assert yaml.safe_load(editor["yaml"]) == tool
+        assert authored_function_configuration_equal(yaml.safe_load(editor["yaml"]), tool)
         assert subentry.data == before
         unchanged = await call(
             "tools",
@@ -116,8 +139,10 @@ async def test_typed_function_websocket_editor_and_draft_roundtrip(
         await hass.async_block_till_done()
         subentry = entry.subentries[subentry_id]
         stored = yaml.safe_load(subentry.data["functions"])[0]
-        assert stored["function"] == tool["function"]
+        assert authored_function_configuration_equal(stored["function"], tool["function"])
         assert stored["enabled"] is False
+        restored = decode_field(encode_field(dict(subentry.data)))
+        assert restored["functions"] == subentry.data["functions"]
         for cold in (False, True):
             if cold:
                 management_function_repair.discard_persisted_config_projection(subentry)
