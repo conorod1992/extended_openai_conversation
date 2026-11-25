@@ -2113,7 +2113,9 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 "available": True,
                 "name": tool["function"]["tool_name"],
                 "source": ha_catalog_snapshot.tools[key].source_label,
-                "description": ha_catalog_snapshot.tools[key].spec.get("description", ""),
+                "description": ha_catalog_snapshot.tools[key].spec.get(
+                    "description", ""
+                ),
             }
             for key, tool in ha_existing.items()
             if key in selected_keys

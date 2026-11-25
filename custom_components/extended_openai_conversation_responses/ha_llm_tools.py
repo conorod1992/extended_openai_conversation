@@ -169,7 +169,9 @@ def preview_context(
     """Describe a conversation for tool discovery, never for tool dispatch."""
     agent_id = None
     if subentry_id is not None and (registry := hass.data.get(er.DATA_REGISTRY)):
-        agent_id = registry.async_get_entity_id(conversation.DOMAIN, DOMAIN, subentry_id)
+        agent_id = registry.async_get_entity_id(
+            conversation.DOMAIN, DOMAIN, subentry_id
+        )
     return conversation.ConversationInput(
         text="",
         context=Context(user_id=user_id),
