@@ -47,6 +47,10 @@
       "required": false,
       "kind": "boolean"
     },
+    "confirm_duplicate": {
+      "required": false,
+      "kind": "boolean"
+    },
     "confirm_retention": {
       "required": false,
       "kind": "boolean"
@@ -56,6 +60,10 @@
       "kind": "string"
     },
     "continuity_key": {
+      "required": false,
+      "kind": "string"
+    },
+    "create_token": {
       "required": false,
       "kind": "string"
     },

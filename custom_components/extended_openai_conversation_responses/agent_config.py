@@ -199,7 +199,7 @@ from .local_intents import (
 )
 from .memory import get_memory_mode
 from .skill_availability import preserves_skill_loader_availability, skill_loader_status
-from .yaml_serialization import dump_yaml, load_yaml_or_json
+from .yaml_serialization import InvalidSerializedUnicode, dump_yaml, load_yaml_or_json
 
 CONF_GUEST_WEB_SEARCH = "guest_web_search"
 DEFAULT_GUEST_WEB_SEARCH = False
@@ -702,6 +702,23 @@ def parse_configured_function_tools(data: Mapping[str, Any]) -> Any:
         if isinstance(configured, str)
         else deepcopy(configured)
     )
+
+
+def validate_serialized_configuration_unicode(config: Any) -> None:
+    """Check embedded legacy Function YAML before any quarantine fallback."""
+    if not isinstance(config, Mapping):
+        return
+    for field in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
+        raw = config.get(field)
+        if not isinstance(raw, str) or ("\\u" not in raw and "\\U" not in raw):
+            continue
+        try:
+            load_yaml_or_json(raw)
+        except InvalidSerializedUnicode:
+            raise
+        except yaml.YAMLError, ValueError:
+            # Retain the usual repair path for other malformed Function YAML.
+            continue
 
 
 def _configured_function_tools_from_data(data: Any) -> list[dict[str, Any]]:

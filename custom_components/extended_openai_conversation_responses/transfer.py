@@ -26,6 +26,7 @@ from .agent_config import (
     preserve_unselected_archive_retention,
     shortened_usage_retention,
     validate_agent_title,
+    validate_serialized_configuration_unicode,
 )
 from .bounded_json import JSONBudgetExceeded, check_utf8_budget
 from .const import (
@@ -79,6 +80,7 @@ from .usage import (
     retained_usage_details,
     usage_retention_policy,
 )
+from .yaml_serialization import InvalidSerializedUnicode
 
 TRANSFER_FORMAT = "extended_openai_conversation_transfer"
 TRANSFER_VERSION = 1
@@ -1141,10 +1143,32 @@ def _decode_transfer_input(value: Any) -> Mapping[str, Any]:
         raise backup.BackupError(
             "This file is not an Extended OpenAI Conversation transfer"
         )
-    backup._validate_import_unicode(value)
     if value.get("format") == backup.BACKUP_FORMAT:
-        value = backup._decode_backup_document(value, backup.MAX_BACKUP_BYTES)
-    return decode_document(value) if is_private_document(value) else dict(value)
+        return backup._decode_backup_document(value, backup.MAX_BACKUP_BYTES)
+    return _validate_decoded_transfer_unicode(
+        value if is_private_document(value) else dict(value)
+    )
+
+
+def _validate_decoded_transfer_unicode(value: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Validate Unicode before handing a decoded transfer to HA schema checks."""
+    backup._validate_import_unicode(value)
+    if is_private_document(value):
+        value = decode_document(value)
+    if value.get("format") == backup.BACKUP_FORMAT:
+        backup._validate_backup_configuration_unicode(value)
+    else:
+        sections = value.get("sections")
+        config = (
+            sections.get(SECTION_CONFIGURATION)
+            if isinstance(sections, Mapping)
+            else value.get("config")
+        )
+        try:
+            validate_serialized_configuration_unicode(config)
+        except InvalidSerializedUnicode as err:
+            raise backup.BackupError(str(err)) from None
+    return value
 
 
 async def async_inspect_transfer(
@@ -1154,8 +1178,8 @@ async def async_inspect_transfer(
     if isinstance(value, PreparedTransfer):
         return value
     document = await asyncio.to_thread(_decode_transfer_input, value)
-    return await async_inspect_decoded_transfer(
-        document, target_agent_id, sections=sections
+    return await _async_inspect_validated_transfer(
+        document, target_agent_id, sections=sections, inspect_only=False
     )
 
 
@@ -1167,9 +1191,19 @@ async def async_inspect_decoded_transfer(
     inspect_only: bool = False,
 ) -> PreparedTransfer:
     """Validate HA schemas on-loop, but bulk data categories in a worker."""
-    await asyncio.to_thread(backup._validate_import_unicode, value)
-    if is_private_document(value):
-        value = await asyncio.to_thread(decode_document, value)
+    document = await asyncio.to_thread(_validate_decoded_transfer_unicode, value)
+    return await _async_inspect_validated_transfer(
+        document, target_agent_id, sections=sections, inspect_only=inspect_only
+    )
+
+
+async def _async_inspect_validated_transfer(
+    value: Mapping[str, Any],
+    target_agent_id: str,
+    *,
+    sections: Iterable[str] | None,
+    inspect_only: bool,
+) -> PreparedTransfer:
     header = _inspect_decoded_transfer(value, target_agent_id, inspect_only=True)
     if inspect_only:
         return header

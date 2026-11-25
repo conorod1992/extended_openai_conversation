@@ -528,6 +528,7 @@ async def test_request_cancellation_survives_disabled_prefetch_cleanup(runtime_a
 
 
 async def test_prefetch_is_drained_when_live_policy_check_fails(runtime_agent):
+    runtime_agent._temporary_memory = SimpleNamespace(initialized=True)
     task = asyncio.create_task(asyncio.sleep(60))
     _ACTIVE_INVOCATION.set(replace(_ACTIVE_INVOCATION.get(), temporary_memory_prefetch=task))
     runtime_agent._effective_guest_policy = Mock(
@@ -542,6 +543,8 @@ async def test_prefetch_is_drained_when_live_policy_check_fails(runtime_agent):
 async def test_failed_completed_prefetch_is_drained_on_policy_failure(
     runtime_agent, caplog
 ):
+    runtime_agent._temporary_memory = SimpleNamespace(initialized=True)
+
     async def fail():
         raise RuntimeError("prefetch policy failed")
 

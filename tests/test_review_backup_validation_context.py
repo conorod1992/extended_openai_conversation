@@ -54,10 +54,10 @@ async def test_async_inspection_keeps_all_ha_validation_on_loop(
     decode = backup._decode_backup_document
     validate = backup._inspect_decoded_backup
 
-    def decode_in_worker(*args):
+    def decode_in_worker(*args, **kwargs):
         assert threading.get_ident() != main_thread
         decoded.append(True)
-        return decode(*args)
+        return decode(*args, **kwargs)
 
     def validate_in_loop(*args, **kwargs):
         assert asyncio.get_running_loop() is loop

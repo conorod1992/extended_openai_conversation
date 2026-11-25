@@ -454,27 +454,24 @@ async def test_configuration_update_revision_failure_retains_commit_evidence(
     hass, _, subentry, *_ = function_agent
     baseline = await configuration_baseline(function_agent, legacy)
     before = deepcopy(subentry.data)
-    original = repair.saved_agent_config_revision
-    monkeypatch.setattr(
-        repair,
-        "saved_agent_config_revision",
-        Mock(side_effect=ValueError("PRIVATE-SAVED-REVISION")),
-    )
-    uncertain = await send(
-        function_agent,
-        "update",
-        section="configuration",
-        revision=baseline["revision"],
-        config={"prompt": "Saved settings prompt"},
-    )
-    uncertain.send_result.assert_not_called()
-    assert uncertain.send_error.call_args.args[1] == "eoai_mutation_uncertain"
-    assert "PRIVATE-SAVED-REVISION" not in uncertain.send_error.call_args.args[2]
+    with monkeypatch.context() as patch:
+        unavailable_revision = Mock(side_effect=ValueError("PRIVATE-SAVED-REVISION"))
+        patch.setattr(repair, "saved_agent_config_revision", unavailable_revision)
+        patch.setattr(ui, "saved_agent_config_revision", unavailable_revision)
+        committed = await send(
+            function_agent,
+            "update",
+            section="configuration",
+            revision=baseline["revision"],
+            config={"prompt": "Saved settings prompt"},
+        )
+    committed.send_result.assert_not_called()
+    assert committed.send_error.call_args.args[1] == "eoai_mutation_committed"
+    assert "PRIVATE-SAVED-REVISION" not in committed.send_error.call_args.args[2]
     assert "PRIVATE-SAVED-REVISION" not in caplog.text
     assert subentry.data["prompt"] == "Saved settings prompt"
     assert subentry.data["functions"] == before["functions"]
     assert hass.config_entries.async_update_subentry.call_count == 1
-    monkeypatch.setattr(repair, "saved_agent_config_revision", original)
     stale = await send(
         function_agent,
         "update",

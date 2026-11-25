@@ -359,8 +359,8 @@ async def test_configuration_import_cannot_write_against_a_resetting_catalogue(
     if overlap == "validated":
         validate = ui._async_validate_configuration_dependencies
 
-        async def pause_validation(*args):
-            await validate(*args)
+        async def pause_validation(*args, **kwargs):
+            await validate(*args, **kwargs)
             entered.set()
             await release.wait()
 

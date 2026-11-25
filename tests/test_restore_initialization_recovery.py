@@ -99,7 +99,7 @@ async def test_journal_recovers_malformed_destination_before_normal_initializati
         hass, entry.entry_id, subentry.subentry_id
     )
     assert (await library.async_backup_data())["sources"] == [
-        asdict(record) for record in selected.knowledge
+        knowledge.knowledge_source_as_dict(record) for record in selected.knowledge
     ]
     assert (await temporary.async_backup_data())["records"] == [
         asdict(record) for record in selected.temporary_memories

@@ -120,6 +120,7 @@ async def test_temporary_memory_request_cancellation_drains_prefetch(monkeypatch
     await child_started.wait()
     entity = SimpleNamespace(
         subentry=SimpleNamespace(data={conversation.CONF_TEMPORARY_MEMORY: "enabled"}),
+        _temporary_memory=SimpleNamespace(initialized=True),
         _effective_guest_policy=Mock(
             return_value=SimpleNamespace(temporary_memory=True)
         ),

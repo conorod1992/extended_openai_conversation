@@ -72,15 +72,19 @@ async def test_existing_record_category_bootstrap_preserves_quarantine_evidence(
                 hass, entry.entry_id, subentry.subentry_id
             )
         )
-        field, expected = "records", selected.temporary_memories
+        field = "records"
+        expected = [asdict(record) for record in selected.temporary_memories]
     else:
         fresh = knowledge.KnowledgeLibrary(
             knowledge.HomeAssistantKnowledgeStorage(
                 hass, entry.entry_id, subentry.subentry_id
             )
         )
-        field, expected = "sources", selected.knowledge
+        field = "sources"
+        expected = [
+            knowledge.knowledge_source_as_dict(record) for record in selected.knowledge
+        ]
     await fresh.async_initialize()
-    assert (await fresh.async_backup_data())[field] == [asdict(item) for item in expected]
+    assert (await fresh.async_backup_data())[field] == expected
     assert evidence.read_bytes() == b"{preserved invalid native category JSON"
     assert await journal.async_load() is None

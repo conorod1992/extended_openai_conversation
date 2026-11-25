@@ -20,7 +20,7 @@ Exports use saved configuration. Save any draft settings first if you want them 
 
 Private ZIP backups are limited to 160 MiB compressed and 320 MiB uncompressed. Legacy plain JSON imports are limited to 128 MiB. If a Full Backup exceeds a limit, export smaller groups of sections with Custom.
 
-Backup inspection rejects malformed Unicode in JSON and private YAML fields. Valid Unicode, including a correctly paired pair of JSON Unicode escapes, is accepted.
+Backup inspection and Configuration import reject malformed Unicode in JSON and YAML fields. Valid Unicode, including a matched high and low surrogate written as escapes, is accepted.
 
 To move a custom setup privately, choose **Custom (private)** and select **Agent configuration and Function Tools** and **Request Rules**. The configuration section includes provider credentials. Existing Shareable Setup and configuration export JSON files still work with **Import / Restore**, including older reviewed custom files. Configuration export files also work with **Assistant actions → Import configuration**.
 

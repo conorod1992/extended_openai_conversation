@@ -195,9 +195,10 @@ from .request_rules import (
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .script_payload import set_effective_service_field
 from .secret_redaction import is_redacted_secret
+from .strict_json import check_document_unicode
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_finish_usage_retention_write, async_get_usage
-from .yaml_serialization import dump_yaml
+from .yaml_serialization import InvalidSerializedUnicode, dump_yaml, load_unicode_yaml
 
 _LOGGER = logging.getLogger(__name__)
 _PERFORMANCE_LOGGER = logging.getLogger(f"{__name__}.performance")
@@ -502,16 +503,26 @@ def _function_reference_error(name: str, references: dict[str, Any]) -> str:
 def _parse_import_document(
     value: Any, *, destination: Any = None, provider: str | None = None
 ) -> dict[str, Any]:
+    validate_unicode = True
     if isinstance(value, str):
         try:
             value = json.loads(value)
         except json.JSONDecodeError:
             try:
-                value = yaml.safe_load(value)
+                value = load_unicode_yaml(value)
+            except InvalidSerializedUnicode as err:
+                raise AgentConfigError("document", str(err)) from None
             except yaml.YAMLError as err:
                 raise AgentConfigError("document", f"invalid JSON/YAML: {err}") from err
+            # The YAML loader already checked every scalar, including aliases.
+            validate_unicode = False
     if not isinstance(value, dict):
         raise AgentConfigError("document", "must be an object")
+    if validate_unicode:
+        try:
+            check_document_unicode(value)
+        except ValueError as err:
+            raise AgentConfigError("document", str(err)) from None
     if value.get("schema") != "extended_openai_conversation.agent":
         raise AgentConfigError("schema", "unsupported or missing export schema")
     if value.get("version") not in {

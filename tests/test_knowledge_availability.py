@@ -19,6 +19,9 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
 from custom_components.extended_openai_conversation_responses.live_subentry_updates import (
     is_live_subentry_update,
 )
+from custom_components.extended_openai_conversation_responses.request_rules import (
+    RequestRules,
+)
 
 
 class FakeStorage:
@@ -337,13 +340,20 @@ async def test_enabling_knowledge_after_adding_available_source_returns_current_
     hass = MagicMock()
     hass.config_entries.async_get_entry.return_value = entry
     library = await _library()
+    rules = RequestRules(FakeStorage())
+    await rules.async_initialize()
     base = {
         "section": "knowledge",
         "entry_id": entry.entry_id,
         "subentry_id": subentry.subentry_id,
     }
-    with patch.object(
-        management_ui, "async_get_knowledge", AsyncMock(return_value=library)
+    with (
+        patch.object(
+            management_ui, "async_get_knowledge", AsyncMock(return_value=library)
+        ),
+        patch.object(
+            management_ui, "async_get_request_rules", AsyncMock(return_value=rules)
+        ),
     ):
         created = await management_ui.async_management_command(
             hass,

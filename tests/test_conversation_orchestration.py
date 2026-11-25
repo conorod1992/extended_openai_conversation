@@ -729,7 +729,10 @@ async def test_assist_passes_configured_continuity_scope_timeout_and_guest_names
     # that installed runtime behavior visible to this orchestration fixture too.
     assert args[1].device_id == "kitchen"
     assert args[2:] == ("kitchen", "incoming-ha-id", 37)
-    assert resolve.await_args.kwargs == {"namespace": "guest" if guest else None}
+    assert resolve.await_args.kwargs == {
+        "namespace": "guest" if guest else None,
+        "native_user_id": "alice",
+    }
 
 
 async def test_assist_owner_and_guest_histories_are_isolated_in_both_directions(

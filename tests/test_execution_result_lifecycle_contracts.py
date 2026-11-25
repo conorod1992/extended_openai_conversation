@@ -34,6 +34,7 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 )
 from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeLibrary,
+    knowledge_source_as_dict,
 )
 from custom_components.extended_openai_conversation_responses.model_tool_results import (
     OwnedJSONPayload,
@@ -274,7 +275,7 @@ async def test_canonical_knowledge_survives_storage_reload_and_export():
         "description": "Description here",
         "content": "One\nTwo",
     }
-    assert asdict(records[0]) == expected
+    assert knowledge_source_as_dict(records[0]) == expected
     assert storage.data == {"sources": [expected]}
     fresh = KnowledgeLibrary(storage)
     await fresh.async_initialize()
@@ -709,7 +710,14 @@ async def test_failed_save_reconciliation_decodes_the_actual_durable_generation(
         }
         payload = {"sources": [raw]}
         expected = {
-            "sources": [asdict(KnowledgeLibrary.validate_backup_data(payload)[0])]
+            "sources": [
+                {
+                    **raw,
+                    "title": "Changed title",
+                    "description": "Changed description",
+                    "content": "First\nSecond",
+                }
+            ]
         }
         storage = AmbiguousStorage({"sources": [{**raw, "title": "Original title"}]})
         manager = KnowledgeLibrary(storage)

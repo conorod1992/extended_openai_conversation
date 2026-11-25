@@ -7,6 +7,30 @@ from typing import Any
 import yaml
 from yaml.nodes import MappingNode, ScalarNode, SequenceNode
 
+from .strict_json import check_document_unicode, join_surrogate_escapes
+
+
+class InvalidSerializedUnicode(yaml.YAMLError, ValueError):
+    """An otherwise decoded scalar contains an unmatched surrogate."""
+
+
+class _UnicodeSafeLoader(yaml.SafeLoader):
+    def construct_scalar(self, node: ScalarNode | MappingNode) -> str:
+        value = super().construct_scalar(node)
+        try:
+            return join_surrogate_escapes(value)
+        except ValueError as err:
+            raise InvalidSerializedUnicode(str(err)) from None
+
+
+def load_unicode_yaml(value: str) -> Any:
+    """Decode safe YAML without admitting malformed Unicode scalar values."""
+    # The standard reader already rejects literal surrogates. Only Unicode
+    # escapes can create surrogate code units later during scalar decoding.
+    if "\\u" not in value and "\\U" not in value:
+        return yaml.safe_load(value)
+    return yaml.load(value, Loader=_UnicodeSafeLoader)
+
 
 def load_yaml_or_json(value: str) -> Any:
     """Decode JSON with JSON scalar semantics, otherwise use safe YAML.
@@ -16,9 +40,14 @@ def load_yaml_or_json(value: str) -> Any:
     behavior: authored YAML scalars, quoted strings and safe tags stay intact.
     """
     try:
-        return json.loads(value)
+        decoded = json.loads(value)
     except json.JSONDecodeError:
-        return yaml.safe_load(value)
+        return load_unicode_yaml(value)
+    try:
+        check_document_unicode(decoded)
+    except ValueError as err:
+        raise InvalidSerializedUnicode(str(err)) from None
+    return decoded
 
 
 class _LosslessSafeDumper(yaml.SafeDumper):

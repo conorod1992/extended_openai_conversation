@@ -24,6 +24,7 @@ from .agent_config import (
     normalize_persisted_agent_config,
     project_agent_config_transfer,
     validate_agent_title,
+    validate_serialized_configuration_unicode,
 )
 from .agent_maintenance import (
     _async_run_exclusive_operation,
@@ -64,7 +65,7 @@ from .temporary_memory import (
     temporary_memory_record_counts,
 )
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
-from .yaml_serialization import load_yaml_or_json
+from .yaml_serialization import InvalidSerializedUnicode, load_yaml_or_json
 
 type ValidatedUsage = tuple[
     UsageTotals, dict[str, dict[str, Any]], list[UsageRequest], list[UsageRun]
@@ -379,7 +380,7 @@ def inspect_backup(
     if isinstance(value, PreparedRestore):
         return value
     return _inspect_decoded_backup(
-        _decode_backup_document(value, max_bytes),
+        _decode_backup_document(value, max_bytes, private_journal=private_journal),
         target_agent_id,
         private_journal=private_journal,
         header_only=header_only,
@@ -402,9 +403,12 @@ async def async_inspect_backup(
         _decode_backup_document,
         value,
         MAX_LEGACY_EXPORT_BYTES if max_bytes is None else max_bytes,
+        private_journal=private_journal,
     )
     # Check the envelope before accessing its potentially large Usage section.
-    _inspect_decoded_backup(document, target_agent_id, header_only=True)
+    _inspect_decoded_backup(
+        document, target_agent_id, private_journal=private_journal, header_only=True
+    )
     try:
         categories = await asyncio.to_thread(
             _validate_data_categories,
@@ -459,10 +463,14 @@ def _validate_data_categories(
     return result
 
 
-def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
+def _decode_backup_document(
+    value: Any, max_bytes: int, *, private_journal: bool = False
+) -> dict[str, Any]:
     """Perform only context-free JSON processing and transport size checks."""
     if isinstance(value, DecodedPrivateDocument):
         _validate_import_unicode(value)
+        if not private_journal:
+            _validate_backup_configuration_unicode(value)
         return value
     if (
         isinstance(max_bytes, bool)
@@ -494,18 +502,23 @@ def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
             raise BackupError(
                 f"The backup exceeds the {limit_mb} MB safety limit"
             ) from err
+        except UnicodeError as err:
+            raise BackupError("The backup contains malformed Unicode") from err
         except (TypeError, ValueError) as err:
             raise BackupError("The backup is incomplete or corrupted") from err
     if not isinstance(value, dict):
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     try:
-        return (
+        document = (
             decode_document(value)
             if value.get("version") == PRIVATE_BACKUP_VERSION
             else value
         )
     except (ValueError, TypeError, KeyError, yaml.YAMLError) as err:
         raise BackupError("The private backup encoding is invalid") from err
+    if not private_journal:
+        _validate_backup_configuration_unicode(document)
+    return document
 
 
 def _validate_import_unicode(value: Any) -> None:
@@ -513,6 +526,15 @@ def _validate_import_unicode(value: Any) -> None:
         check_document_unicode(value)
     except ValueError as err:
         raise BackupError(str(err)) from None
+
+
+def _validate_backup_configuration_unicode(document: Mapping[str, Any]) -> None:
+    agent = document.get("agent")
+    if isinstance(agent, Mapping):
+        try:
+            validate_serialized_configuration_unicode(agent.get("config"))
+        except InvalidSerializedUnicode as err:
+            raise BackupError(str(err)) from None
 
 
 def _inspect_decoded_backup(

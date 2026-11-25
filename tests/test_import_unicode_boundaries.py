@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import zipfile
 
 import pytest
@@ -12,10 +13,16 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     backup,
     backup_transfer,
+    management_ui,
     private_backup,
     record_timestamps,
     transfer,
 )
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    AgentConfigError,
+    parse_configured_function_tools,
+)
+from tests.test_backup import _document
 
 
 def test_malformed_timestamp_is_rejected_in_subprocess():
@@ -80,3 +87,71 @@ def test_native_timestamp_formats_are_unchanged():
         assert record_timestamps.parse_datetime(
             value
         ) == record_timestamps.dt_util.parse_datetime(value)
+
+
+async def test_configuration_import_checks_json_yaml_and_decoded_documents():
+    document = {
+        "schema": "extended_openai_conversation.agent",
+        "version": management_ui.AGENT_CONFIG_EXPORT_VERSION,
+        "title": "Imported",
+        "config": {"functions": "[]", "prompt": chr(0xD800)},
+    }
+    yaml_prefix = (
+        "schema: extended_openai_conversation.agent\n"
+        f"version: {management_ui.AGENT_CONFIG_EXPORT_VERSION}\n"
+        "title: Imported\nconfig:\n  functions: '[]'\n  prompt: "
+    )
+    for raw in (document, json.dumps(document), yaml_prefix + r'"\uD800"'):
+        with pytest.raises(AgentConfigError, match="malformed Unicode"):
+            management_ui._parse_import_document(raw)
+    valid_yaml = management_ui._parse_import_document(yaml_prefix + r'"\uD83D\uDE00"')
+    assert valid_yaml["config"]["prompt"] == "😀"
+
+
+async def test_embedded_function_yaml_is_validated_before_import_quarantine(
+    hass, monkeypatch
+):
+    raw_tools = (
+        "- spec:\n    name: echo_template\n    description: Echo\n"
+        "    parameters: {type: object, properties: {}}\n"
+        '  function:\n    type: template\n    value_template: "ESCAPE"\n'
+    )
+    config = {
+        "functions": raw_tools.replace("ESCAPE", r"\uD800"),
+        "function_groups": [],
+    }
+    setup = {
+        "schema": "extended_openai_conversation.agent",
+        "version": management_ui.AGENT_CONFIG_EXPORT_VERSION,
+        "title": "Imported",
+        "config": config,
+    }
+    document = _document()
+    document["agent"]["config"] = config
+    with pytest.raises(AgentConfigError, match="malformed Unicode"):
+        management_ui._parse_import_document(setup)
+
+    owner_thread = threading.get_ident()
+    validate_serialized = backup.validate_serialized_configuration_unicode
+    calls = []
+
+    def validate_in_worker(options):
+        assert threading.get_ident() != owner_thread
+        calls.append(options)
+        validate_serialized(options)
+
+    monkeypatch.setattr(
+        backup, "validate_serialized_configuration_unicode", validate_in_worker
+    )
+    with pytest.raises(backup.BackupError, match="malformed Unicode"):
+        await backup.async_inspect_backup(document, "agent")
+    with pytest.raises(backup.BackupError, match="malformed Unicode"):
+        await transfer.async_inspect_decoded_transfer(
+            document, "agent", inspect_only=True
+        )
+    assert len(calls) == 2
+
+    config["functions"] = raw_tools.replace("ESCAPE", r"\uD83D\uDE00")
+    saved = management_ui._parse_import_document(setup)["config"]
+    [tool] = parse_configured_function_tools(saved)
+    assert tool["function"]["value_template"] == "😀"

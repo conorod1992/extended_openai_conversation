@@ -8,7 +8,12 @@ from typing import Any
 import yaml
 
 from .const import CONF_FUNCTION_TOOLS
-from .yaml_serialization import dump_yaml, is_yaml_pair_sequence, load_yaml_or_json
+from .yaml_serialization import (
+    dump_yaml,
+    is_yaml_pair_sequence,
+    load_unicode_yaml,
+    load_yaml_or_json,
+)
 
 # Reserved only on the Management wire. A literal mapping with this key is itself
 # YAML-encoded, so decoding never confuses user-authored data with a scalar tag.
@@ -108,7 +113,7 @@ def _decode_management_yaml_value(value: Any) -> Any:
         if set(value) == {_MANAGEMENT_YAML} and isinstance(
             value[_MANAGEMENT_YAML], str
         ):
-            return yaml.safe_load(value[_MANAGEMENT_YAML])
+            return load_unicode_yaml(value[_MANAGEMENT_YAML])
         return {key: _decode_management_yaml_value(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_decode_management_yaml_value(item) for item in value]

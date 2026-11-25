@@ -22,6 +22,7 @@ PARSERS = {
     "strict_json.strict_json_loads",
     "orjson.loads",
     "ijson.basic_parse",
+    "ijson.backends.python.basic_parse",
 }
 LOG_METHODS = {"warning", "error", "exception", "debug", "info", "critical", "log"}
 

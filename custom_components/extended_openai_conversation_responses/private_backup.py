@@ -7,10 +7,10 @@ from copy import deepcopy
 from typing import Any
 
 import yaml
-from yaml.nodes import MappingNode, ScalarNode
 
 from .bounded_json import check_redaction_budget, check_utf8_budget
-from .strict_json import check_document_unicode, join_surrogate_escapes
+from .strict_json import check_document_unicode
+from .yaml_serialization import load_unicode_yaml
 
 PRIVATE_BACKUP_VERSION = 6
 PRIVATE_TRANSFER_VERSION = 3
@@ -20,11 +20,6 @@ _LIMIT = 128 * 1024 * 1024
 
 class DecodedPrivateDocument(dict[str, Any]):
     """Internal provenance, never a user-controlled wire marker."""
-
-
-class _PrivateFieldLoader(yaml.SafeLoader):
-    def construct_scalar(self, node: ScalarNode | MappingNode) -> str:
-        return join_surrogate_escapes(super().construct_scalar(node))
 
 
 def encode_field(value: Any) -> dict[str, Any]:
@@ -41,7 +36,7 @@ def decode_field(value: Any) -> Any:
     if value["encoding"] != _ENCODING or not isinstance(value["content"], str):
         raise ValueError("Unsupported private field encoding")
     check_utf8_budget(value["content"], _LIMIT)
-    decoded = yaml.load(value["content"], Loader=_PrivateFieldLoader)
+    decoded = load_unicode_yaml(value["content"])
     check_redaction_budget(decoded, _LIMIT)
     check_document_unicode(decoded)
     return decoded
