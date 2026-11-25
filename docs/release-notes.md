@@ -41,6 +41,8 @@ These notes describe the development branch being prepared for 7.0.0, compared w
 - Direct `process` calls keep another agent's cached Home Assistant conversation separate. Persistent Memory selections follow the lifetime of their managed conversation across successful AI and local turns.
 - Malformed Knowledge tool arguments use the configured pre-dispatch error handling. Invalid History and Statistics dates and out-of-range delayed Function Tool schedules produce validation errors. Corrupted compressed backup data produces a backup corruption error.
 - Archive transcript pages stay visible when loading another page fails, and the failed request can be retried. Knowledge and Temporary Memory order restored timestamps by their actual instants across timezone offsets.
+- Quiet Hours preserves independent adjustments when a satellite leaves and rejoins the same quiet period. Separate restoration receipts let it recover from a lost acknowledgement, and manager replacement preserves retryable applications.
+- Function Tool edits and cached definitions preserve numeric and Boolean types, mapping keys, and authored mapping order, including Home Assistant Script variables. Queued delayed calls created with the earlier definition fingerprint are discarded when they become due. Reschedule any such call that is still needed. See [Delayed Function Tools](features/delayed-function-tools.md).
 
 ### Retired optional Request Rules fuzzy matching
 
