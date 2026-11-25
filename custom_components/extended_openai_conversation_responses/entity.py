@@ -2887,11 +2887,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
     ) -> conversation.ToolResultContent:
         """Execute a configured Function Tool."""
         delayed = getattr(llm_context, _DELAYED_EXECUTION_MARKER, False)
-        if is_ha_tool(function_tool) and delayed:
-            raise HomeAssistantError(
-                "HA LLM Tools cannot execute in the delayed scheduler"
-            )
-        if not is_ha_tool(function_tool):
+        if is_ha_tool(function_tool):
+            if delayed:
+                raise HomeAssistantError(
+                    "HA LLM Tools cannot execute in the delayed scheduler"
+                )
+            if getattr(current_snapshot(), "require_positive_delay", False):
+                raise HomeAssistantError(
+                    "This request requires a positive EOAI Function Tool delay"
+                )
+        else:
             spec = function_tool.get("spec", {})
             arguments = await async_execution_arguments(self.hass, spec, tool_input)
             from .execution_outcomes import execute_backend, execution_prepared

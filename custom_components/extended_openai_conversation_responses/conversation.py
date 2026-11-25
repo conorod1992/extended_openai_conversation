@@ -1450,23 +1450,34 @@ class ExtendedOpenAIAgentEntity(
             config_data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
             configured,
         )
-        references = ha_tool_discovery_references(
-            configured, groups, {**config_data, **(request_options or {})}
-        )
+        options = {**config_data, **(request_options or {})}
+        discovery_tools = configured
+        if recognized_delayed:
+            # Discovery is needed only to distinguish temporarily withheld
+            # tools from unavailable members of already-loaded groups.
+            session = _ACTIVE_TURN.get().function_group_session
+            loaded_ids = session.loaded_group_ids if session is not None else set()
+            loaded_members = {
+                name
+                for group in groups
+                if group["id"] in loaded_ids
+                for name in group["functions"]
+            }
+            discovery_tools = [
+                tool for tool in configured if tool["spec"]["name"] in loaded_members
+            ]
+        references = ha_tool_discovery_references(discovery_tools, groups, options)
         snapshot = ToolSnapshot(require_positive_delay=recognized_delayed)
-        if (
-            references
-            and not recognized_delayed
-            and not self._effective_guest_policy().guest_active
-        ):
-            snapshot = await async_discover(self.hass, llm_context, references)
+        if references and not self._effective_guest_policy().guest_active:
+            snapshot = replace(
+                await async_discover(self.hass, llm_context, references),
+                require_positive_delay=recognized_delayed,
+            )
         if self.subentry.data is not config_data:
             raise HomeAssistantError(
                 "Agent configuration changed during this request; please retry"
             )
-        snapshot = snapshot.with_delayed_action_preference(
-            {**config_data, **(request_options or {})}
-        )
+        snapshot = snapshot.with_delayed_action_preference(options)
         with tool_snapshot_scope(snapshot):
             function_config_token = _ACTIVE_FUNCTION_CONFIG.set(
                 (snapshot.project(configured), groups)

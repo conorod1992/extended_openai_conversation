@@ -20,11 +20,11 @@ from custom_components.extended_openai_conversation_responses.ha_actions import 
     async_authorize_ha_action,
     resolve_action_entity_ids,
 )
-from custom_components.extended_openai_conversation_responses.ha_service_compat import (
-    prepare_service_dispatch,
-)
 from custom_components.extended_openai_conversation_responses.ha_permissions import (
     async_setup_ha_permissions,
+)
+from custom_components.extended_openai_conversation_responses.ha_service_compat import (
+    prepare_service_dispatch,
 )
 from custom_components.extended_openai_conversation_responses.scheduled_action_summary import (
     describe_native_action,
@@ -147,6 +147,108 @@ async def test_scheduled_summary_only_names_visible_indirect_targets(
     )
 
 
+@pytest.mark.parametrize("kind", ["area", "device", "floor", "label"])
+async def test_scheduled_summary_distinguishes_partial_exclusions(
+    hass, switch_targets, kind
+):
+    first, second, area_id, private_label_id, _ = switch_targets
+    area = area_registry.async_get(hass).async_get_area(area_id)
+    floor = floor_registry.async_get(hass).async_create("Test floor")
+    area_registry.async_get(hass).async_update(area_id, floor_id=floor.floor_id)
+    label = label_registry.async_get(hass).async_create("Test label")
+    entry = MockConfigEntry(domain="test")
+    entry.add_to_hass(hass)
+    device = device_registry.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={("test", "shared-summary-device")},
+        name="Test device",
+    )
+    device_registry.async_get(hass).async_update_device(device.id, area_id=area_id)
+    registry = entity_registry.async_get(hass)
+    sensor = registry.async_get_or_create("sensor", "test", "summary_nonparticipant")
+    hass.states.async_set(sensor.entity_id, "42")
+    for entity in (first, second, sensor.entity_id):
+        registry.async_update_entity(
+            entity,
+            device_id=device.id,
+            area_id=None,
+            labels={label.label_id, private_label_id}
+            if entity == second
+            else {label.label_id},
+        )
+        async_expose_entity(hass, "conversation", entity, True)
+    selection, name = {
+        "area": (area_id, area.name),
+        "device": (device.id, device.name),
+        "floor": (floor.floor_id, floor.name),
+        "label": (label.label_id, label.name),
+    }[kind]
+    user = MockUser(is_owner=True).add_to_hass(hass)
+    limited = MockUser(
+        groups=[
+            Group(
+                name="Read only the included switch and sensor",
+                policy={
+                    CAT_ENTITIES: {
+                        ENTITY_ENTITY_IDS: {
+                            item: {POLICY_READ: True}
+                            for item in (first, sensor.entity_id)
+                        }
+                    }
+                },
+            )
+        ]
+    ).add_to_hass(hass)
+    await async_setup_ha_permissions(hass)
+    manager = DelayedToolManager(hass)
+    owner = ScheduledActionOwner("provider", "agent", user_id=user.id)
+
+    def show(exclude=None):
+        data = {f"{kind}_id": selection}
+        if exclude is not None:
+            data["exclude"] = exclude
+        return describe_native_action(
+            hass,
+            "execute_service_single",
+            {"domain": "switch", "service": "turn_on", "service_data": data},
+            lambda entities: manager._visible_summary_entities(entities, owner),
+        )
+
+    full = f"switch.turn_on ({kind} {name})"
+    assert show() == full
+    assert show({"entity_id": [sensor.entity_id]}) == full
+    if not _SUPPORTS_EXCLUSIONS:
+        assert show({"entity_id": [first]}) == full
+        return
+
+    assert show({"entity_id": [first]}) == (
+        f"switch.turn_on ({kind} {name}, excluding {first})"
+    )
+    assert show({"label_id": [private_label_id]}) == (
+        f"switch.turn_on ({kind} {name}, excluding {second})"
+    )
+    excluded_ids = ", ".join(sorted((first, second)))
+    assert show({"entity_id": [second, first]}) == (
+        f"switch.turn_on (additional targets omitted, excluding {excluded_ids})"
+    )
+    async_expose_entity(hass, "conversation", second, False)
+    assert show({"entity_id": [second]}) == (
+        "switch.turn_on (additional targets omitted, with target exclusions)"
+    )
+    assert show({"entity_id": [second, first]}) == (
+        f"switch.turn_on (additional targets omitted, excluding {first} and other targets)"
+    )
+    owner = ScheduledActionOwner("provider", "agent", administrator=True)
+    assert show({"label_id": [private_label_id]}) == (
+        f"switch.turn_on ({kind} {name}, with target exclusions)"
+    )
+    async_expose_entity(hass, "conversation", second, True)
+    owner = ScheduledActionOwner("provider", "agent", user_id=limited.id)
+    assert show({"label_id": [private_label_id]}) == (
+        "switch.turn_on (additional targets omitted, with target exclusions)"
+    )
+
+
 @pytest.mark.skipif(
     not _SUPPORTS_EXCLUSIONS, reason="HA has no target exclusion support"
 )
@@ -257,6 +359,9 @@ async def test_custom_service_keeps_exclude_data_and_target_checks(
     )
     assert prepared["data"] == data
     args = {"domain": "switch", "service": "custom_action", "service_data": data}
+    assert describe_native_action(hass, "execute_service_single", args, list) == (
+        "switch.custom_action (area Exclusion test)"
+    )
     native = NativeFunction()
     with pytest.raises(EntityNotExposed):
         await native.execute_service_single(

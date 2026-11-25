@@ -35,11 +35,17 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
     GuestCapabilityPolicy,
 )
 from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+    LiveTool,
     ToolSnapshot,
+    current_snapshot,
+    reference_key,
     tool_snapshot_scope,
 )
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
+)
+from custom_components.extended_openai_conversation_responses.local_intents import (
+    CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
 )
 from custom_components.extended_openai_conversation_responses.request import (
     ProviderRequestSnapshot,
@@ -48,6 +54,8 @@ from custom_components.extended_openai_conversation_responses.scheduled_action_t
     scheduled_action_tools,
 )
 from homeassistant.core import Context
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import llm
 from tests.test_function_groups import _group, _tool
 from tests.test_tool_exchange_protocol import _chat_log, _entity, _function_call_stream
 
@@ -270,3 +278,124 @@ def test_strict_delayed_turn_keeps_previously_loaded_immediate_group_for_later()
     ordinary = assemble_function_tools(configured, groups, session.loaded_group_ids)
     assert strict.tools == [configured[1]]
     assert ordinary.tools == configured
+
+
+async def test_delayed_turn_preserves_loaded_ha_groups_for_next_turn(hass, monkeypatch):
+    """Resolve existing group membership without offering HA tools on this turn."""
+    ha_groups = ["ha_only", "mixed", "unavailable", "disabled", "removed", "unloaded"]
+    ha_tools = {
+        name: {
+            "spec": {"name": name},
+            "function": {
+                "type": "ha_llm",
+                "source_type": "platform",
+                "source_id": "test",
+                "api_id": "assist",
+                "tool_name": name,
+            },
+        }
+        for name in ha_groups
+    }
+    groups = [
+        _group(name, [name, "disabled_native"] if name == "mixed" else [name])
+        for name in ha_groups
+    ]
+    options = agent_config_defaults()
+    options.update(
+        functions=[
+            *ha_tools.values(),
+            {**_tool("disabled_native"), "enabled": False},
+            _delay_tool("delayed"),
+        ],
+        function_groups=groups,
+    )
+    options[CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI] = True
+    subentry = SimpleNamespace(subentry_id="agent-1", title="Agent", data=options)
+    agent = conversation.ExtendedOpenAIAgentEntity(_entity(hass, []).entry, subentry)
+    agent.hass = hass
+    monkeypatch.setattr(
+        agent, "_effective_guest_policy", GuestCapabilityPolicy.unrestricted
+    )
+    discovery_calls = []
+    unavailable = set()
+
+    async def discover(_hass, _context, references):
+        discovery_calls.append({reference["tool_name"] for reference in references})
+        return ToolSnapshot(
+            tools={
+                reference_key(reference): LiveTool(
+                    reference,
+                    SimpleNamespace(),
+                    SimpleNamespace(),
+                    "HA",
+                    "",
+                    _tool(reference["tool_name"])["spec"],
+                )
+                for reference in references
+                if reference["tool_name"] not in unavailable
+            }
+        )
+
+    async def handle(_input, _log, _options):
+        names = {tool["spec"]["name"] for tool in agent._get_function_tools()}
+        recognized = current_snapshot().require_positive_delay
+        if not session.loaded_group_ids and not recognized:
+            result = agent._load_function_groups(
+                ha_groups[:-1], FunctionToolAdmission()
+            )
+            assert result["status"] == "success"
+        if recognized:
+            with pytest.raises(HomeAssistantError, match="requires a positive"):
+                await entity.ExtendedOpenAIBaseLLMEntity._execute_function_tool(
+                    agent,
+                    ha_tools["ha_only"],
+                    llm.ToolInput(tool_name="ha_only", id="ha", tool_args={}),
+                    None,
+                    [],
+                )
+        return names
+
+    monkeypatch.setattr(conversation, "async_discover", discover)
+    monkeypatch.setattr(agent, "_async_handle_message", handle)
+    session = FunctionGroupRuntime().begin("conversation-id", 30)
+    token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), function_group_session=session)
+    )
+    user_input = SimpleNamespace(as_llm_context=lambda _platform: None)
+    log = _chat_log(hass)
+    try:
+        first_delayed = await agent._async_handle_message_with_ha_tools(
+            user_input, log, recognized_delayed=True
+        )
+        assert "delayed" in first_delayed
+        assert not discovery_calls
+        first = await agent._async_handle_message_with_ha_tools(user_input, log)
+        assert FUNCTION_GROUP_LOADER_TOOL_NAME in first
+        assert session.loaded_group_ids == set(ha_groups[:-1])
+        unavailable.add("unavailable")
+        subentry.data = {
+            **options,
+            "functions": [
+                tool
+                for tool in options["functions"]
+                if tool["spec"]["name"] != "removed"
+            ],
+            "function_groups": [
+                {**group, "enabled": False} if group["id"] == "disabled" else group
+                for group in groups
+                if group["id"] != "removed"
+            ],
+        }
+        strict = await agent._async_handle_message_with_ha_tools(
+            user_input, log, recognized_delayed=True
+        )
+        assert "delayed" in strict
+        assert not strict.intersection([*ha_groups, FUNCTION_GROUP_LOADER_TOOL_NAME])
+        assert discovery_calls[1] == {"ha_only", "mixed", "unavailable"}
+        assert session.loaded_group_ids == {"ha_only", "mixed"}
+        ordinary = await agent._async_handle_message_with_ha_tools(user_input, log)
+        assert ordinary.intersection(ha_groups) == {"ha_only", "mixed"}
+        assert FUNCTION_GROUP_LOADER_TOOL_NAME in ordinary
+        assert session.loaded_group_ids == {"ha_only", "mixed"}
+    finally:
+        conversation._ACTIVE_TURN.reset(token)

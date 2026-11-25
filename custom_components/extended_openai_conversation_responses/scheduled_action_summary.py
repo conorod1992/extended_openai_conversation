@@ -4,6 +4,10 @@ from collections.abc import Callable
 import re
 from typing import Any
 
+from homeassistant.components.homeassistant.exposed_entities import (
+    DATA_EXPOSED_ENTITIES,
+    async_should_expose,
+)
 from homeassistant.const import CONF_EXCLUDE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
@@ -71,9 +75,10 @@ def _target_descriptions(
     shown = []
     omitted = len(targets) > _MAX_TARGETS
     sample = targets[:_MAX_TARGETS]
+    has_exclusions = CONF_EXCLUDE in data
     participants = (
         resolve_action_entity_ids(hass, domain, service, data)
-        if CONF_EXCLUDE in data or any(key != "entity_id" for key, _ in sample)
+        if has_exclusions or any(key != "entity_id" for key, _ in sample)
         else None
     )
     for key, target in sample:
@@ -104,6 +109,35 @@ def _target_descriptions(
             shown.append(description)
     if omitted:
         shown.append("additional targets omitted")
+    if has_exclusions and participants is not None:
+        # Compare the same service's participants so normal domain, feature and
+        # availability filtering is present on both sides of the comparison.
+        without_exclusion = {
+            key: value for key, value in data.items() if key != CONF_EXCLUDE
+        }
+        excluded = (
+            resolve_action_entity_ids(hass, domain, service, without_exclusion)
+            - participants
+        )
+        if excluded:
+            # Management can inspect existing targets across the assistant.
+            # Keep new exclusion detail limited to exposed entities for every viewer.
+            visible_ids = (
+                [
+                    entity_id
+                    for entity_id in visible(sorted(excluded))
+                    if async_should_expose(hass, "conversation", entity_id)
+                ][:_MAX_TARGETS]
+                if DATA_EXPOSED_ENTITIES in hass.data
+                else []
+            )
+            if visible_ids:
+                suffix = (
+                    " and other targets" if len(visible_ids) < len(excluded) else ""
+                )
+                shown.append(f"excluding {', '.join(visible_ids)}{suffix}")
+            else:
+                shown.append("with target exclusions")
     return shown
 
 
