@@ -2276,10 +2276,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const endInput = root.querySelector("#guest-end");
       const end = endInput?.value;
       const status = this._result?.status || {};
+      const displayed = intervalSubmission.state?.timestampStatus || status;
       const localTimes = {};
       const originalInstant = (field, value, original) => {
-        if (original && value === guestIntervalWallTime(status, field, value => this._dateTimeLocal(value))) return original;
-        if (status[`${field}_local`] === null) return `${value}Z`;
+        if (original && value === guestIntervalWallTime(displayed, field, value => this._dateTimeLocal(value))) return original;
+        if (displayed[`${field}_local`] === null) return `${value}Z`;
         localTimes[field] = value;
         return value;
       };
@@ -2293,8 +2294,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         }
         intervalSubmission.implicitStart = now || !start;
         const result = await this._call("guest_mode", "update", {
-          ...(start ? {active_from: originalInstant("active_from", start, status.active_from)} : {}),
-          ...(!indefinite && end ? {active_until: originalInstant("active_until", end, status.active_until)} : {}),
+          ...(start ? {active_from: originalInstant("active_from", start, displayed.active_from)} : {}),
+          ...(!indefinite && end ? {active_until: originalInstant("active_until", end, displayed.active_until)} : {}),
           indefinite,
           local_times: localTimes,
         });

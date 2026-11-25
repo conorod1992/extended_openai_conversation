@@ -124,7 +124,7 @@ async def test_memory_cold_preparation_uses_worker(monkeypatch, count):
             "embeddings": {
                 r["memory_id"]: {
                     "model": "default",
-                    "fingerprint": "test",
+                    "fingerprint": memory._embedding_fingerprint(validate(r)),
                     "vector": [0.5] * 128,
                 }
                 for r in raw

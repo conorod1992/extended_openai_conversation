@@ -910,7 +910,7 @@ async def test_native_function_response_preserves_falsy_values(
 
 
 @pytest.mark.parametrize(
-    "stop_kind", ["removed", "disabled", "template-disabled", "enabled", "error"]
+    "stop_kind", ["removed", "disabled", "template-disabled", "enabled", "error", "text-false", "text-true", "nested-zero"]
 )
 @pytest.mark.parametrize("abort_kind", ["condition", "fatal-wait", "nonfatal-wait"])
 async def test_native_stop_enabled_decision_does_not_mask_later_abort(
@@ -936,9 +936,11 @@ async def test_native_stop_enabled_decision_does_not_mask_later_abort(
             stop["enabled"] = "{{ false }}"
         elif stop_kind == "enabled":
             stop["enabled"] = "{{ true }}"
+        elif stop_kind in {"text-false", "text-true", "nested-zero"}:
+            stop["error"] = {"text-false": "false", "text-true": "on", "nested-zero": 0}[stop_kind]
         else:
             stop.update(enabled=True, error=True)
-        actions.append(stop)
+        actions.append({"sequence": [stop]} if stop_kind == "nested-zero" else stop)
     if abort_kind == "condition":
         actions.append({"condition": "template", "value_template": "{{ false }}"})
     else:
@@ -954,8 +956,8 @@ async def test_native_stop_enabled_decision_does_not_mask_later_abort(
     await agent._request_rules.async_create(
         _local([_record_action("healthy")], phrase="healthy rule")
     )
-    successful = stop_kind == "enabled" or (
-        stop_kind != "error" and abort_kind == "nonfatal-wait"
+    successful = stop_kind in {"enabled", "text-false", "nested-zero"} or (
+        stop_kind not in {"error", "text-true"} and abort_kind == "nonfatal-wait"
     )
     assert _speech(await _say(hass, agent, "run rule"), successful=successful) == (
         "Done" if successful else "Failed safely"

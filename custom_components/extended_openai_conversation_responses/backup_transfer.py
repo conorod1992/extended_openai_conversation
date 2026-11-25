@@ -27,6 +27,7 @@ import zipfile
 import zlib
 
 import ijson
+from ijson.backends import python as ijson_python
 from ijson.common import JSONError, ObjectBuilder
 import voluptuous as vol
 
@@ -43,6 +44,7 @@ from .bounded_json import JSONBudgetExceeded, check_redaction_budget, iter_bound
 from .const import DOMAIN
 from .ha_schema import websocket_command as ha_websocket_command
 from .operation_settlement import async_settle_owned_operation, async_wait_owned_cleanup
+from .strict_json import has_surrogate
 
 WS_BACKUP_TRANSFER = f"{DOMAIN}/management/backup_transfer"
 ARCHIVE_FORMAT = "extended_openai_conversation_backup_archive"
@@ -754,6 +756,8 @@ class _ArchivePayloadReader:
         self.member = member
         self.length = 0
         self.digest = hashlib.sha256()
+        self._tail = b""
+        self.has_surrogate_escape = False
 
     def read(self, size: int) -> bytes:
         chunk = self.member.read(
@@ -765,7 +769,39 @@ class _ArchivePayloadReader:
                 "The backup archive exceeds the uncompressed safety limit"
             )
         self.digest.update(chunk)
+        if not self.has_surrogate_escape and chunk:
+            self.has_surrogate_escape = bool(
+                _SURROGATE_ESCAPE.search(chunk)
+                or _SURROGATE_ESCAPE.search(self._tail + chunk[:5])
+            )
+            self._tail = (self._tail + chunk)[-5:] if len(chunk) < 5 else chunk[-5:]
         return chunk
+
+
+_SURROGATE_ESCAPE = re.compile(rb"\\u[dD][89a-fA-F][0-9a-fA-F]{2}")
+
+
+def _validate_archive_surrogate_escapes(archive: zipfile.ZipFile) -> None:
+    # Some YAJL versions replace malformed escapes before returning a string.
+    # Use the preserving streaming decoder only when escape tokens may occur.
+    try:
+        with archive.open(PAYLOAD_NAME) as member:
+            for event, value in ijson_python.basic_parse(member, use_float=False):
+                if event in {"map_key", "string"} and has_surrogate(value):
+                    raise ValueError("Malformed Unicode")
+    except (
+        JSONError,
+        UnicodeError,
+        ValueError,
+        RuntimeError,
+        zipfile.BadZipFile,
+        OSError,
+        EOFError,
+        zlib.error,
+    ):
+        raise backup.BackupError(
+            "The backup archive payload is not valid JSON"
+        ) from None
 
 
 def _load_archive_payload(
@@ -779,6 +815,8 @@ def _load_archive_payload(
             reader = _ArchivePayloadReader(member)
             try:
                 for event, value in ijson.basic_parse(reader, use_float=False):
+                    if event in {"map_key", "string"} and has_surrogate(value):
+                        raise ValueError("Malformed Unicode")
                     # Keep exact integers (including >64 bits) while preserving
                     # the stdlib decoder's float representation for fractions.
                     builder.event(
@@ -800,6 +838,8 @@ def _load_archive_payload(
     if invalid:
         # Parser diagnostics can include the private source text.
         raise backup.BackupError("The backup archive payload is not valid JSON")
+    if reader.has_surrogate_escape:
+        _validate_archive_surrogate_escapes(archive)
     return builder.value
 
 
@@ -862,6 +902,7 @@ def _load_archive_document(path: str) -> dict[str, Any]:
             "payload_sha256",
         }:
             raise backup.BackupError("The backup archive manifest is invalid")
+        backup._validate_import_unicode(manifest)
         payload_bytes = manifest.get("payload_bytes")
         payload_sha256 = manifest.get("payload_sha256")
         if (
@@ -904,6 +945,7 @@ def _load_legacy_json_document(path: str) -> dict[str, Any]:
         document = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as err:
         raise backup.BackupError("The JSON backup is incomplete or corrupted") from err
+    backup._validate_import_unicode(document)
     if not isinstance(document, dict):
         raise backup.BackupError(
             "This file is not an Extended OpenAI Conversation backup"

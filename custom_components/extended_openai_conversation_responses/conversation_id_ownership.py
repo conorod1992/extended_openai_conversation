@@ -6,9 +6,17 @@ from dataclasses import dataclass, field
 from typing import Any
 from weakref import ref
 
-from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS, ChatLog
+from homeassistant.components.conversation.chat_log import (
+    DATA_CHAT_LOGS,
+    ChatLog,
+    SystemContent,
+)
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers.chat_session import CONVERSATION_TIMEOUT, DATA_CHAT_SESSION
+from homeassistant.helpers.chat_session import (
+    CONVERSATION_TIMEOUT,
+    DATA_CHAT_SESSION,
+    ChatSession,
+)
 from homeassistant.helpers.typing import UNDEFINED
 from homeassistant.util import dt as dt_util
 
@@ -261,6 +269,8 @@ def release_conversation_id_claim(
 class _CleanupRegistration:
     session: Any
     owner: tuple[str, str]
+    ha_default: bool
+    reset_history: bool = False
 
 
 def register_conversation_id_cleanup(
@@ -268,6 +278,8 @@ def register_conversation_id_cleanup(
     hass: HomeAssistant | None,
     conversation_id: str,
     owner: tuple[str, str],
+    *,
+    ha_default: bool = False,
 ) -> None:
     """Register once per session/owner and retire only that exact registration."""
     register = getattr(session, "async_on_cleanup", None)
@@ -279,8 +291,9 @@ def register_conversation_id_cleanup(
     )
     previous = registrations.get(conversation_id)
     if previous is not None and previous.session is session and previous.owner == owner:
+        previous.ha_default = ha_default
         return
-    registration = _CleanupRegistration(session, owner)
+    registration = _CleanupRegistration(session, owner, ha_default)
     registrations[conversation_id] = registration
 
     def release_claim() -> None:
@@ -292,3 +305,48 @@ def register_conversation_id_cleanup(
             release_conversation_id_claim(hass, conversation_id, owner)
 
     register(release_claim)
+
+
+def mark_default_history_for_restore(
+    hass: HomeAssistant, agent_id: str, retained_ids: frozenset[str]
+) -> None:
+    """Reset exact owned native logs at their next admitted turn after restore."""
+    data = hass.data
+    sessions = data.get(DATA_CHAT_SESSION, {})
+    owners = data.get(_CONVERSATION_ID_OWNERS, {})
+    for chat_id, registration in data.get(_CLEANUP_REGISTRATIONS, {}).items():
+        if (
+            registration.ha_default
+            and registration.owner[0] == agent_id
+            and owners.get(chat_id) == registration.owner
+            and sessions.get(chat_id) is registration.session
+            and chat_id not in retained_ids
+        ):
+            registration.reset_history = True
+
+
+def take_default_history_reset(
+    hass: HomeAssistant, session: ChatSession, admitted_log: ChatLog
+) -> bool:
+    """Consume a reset only for the admitted native session it belongs to."""
+    registration = hass.data.get(_CLEANUP_REGISTRATIONS, {}).get(
+        session.conversation_id
+    )
+    if (
+        registration is None
+        or registration.session is not session
+        or not registration.reset_history
+    ):
+        return False
+    cached_log = hass.data.get(DATA_CHAT_LOGS, {}).get(session.conversation_id)
+    if cached_log is not None and cached_log is not admitted_log:
+        # Older Core hands the turn a copy and can discard it after an abort.
+        # Clear the owned backing log too so that an aborted turn cannot
+        # resurrect its pre-restore context at the next admission.
+        cached_log.content[:] = [SystemContent(content="")]
+        cached_log.extra_system_prompt = None
+        cached_log.llm_api = None
+        if hasattr(cached_log, "turn_start"):
+            cached_log.turn_start = len(cached_log.content)
+    registration.reset_history = False
+    return True

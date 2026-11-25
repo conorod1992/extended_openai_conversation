@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -47,6 +48,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     TEMPORARY_MEMORY_OFF,
 )
 from custom_components.extended_openai_conversation_responses.memory import PersistentMemory
+from custom_components.extended_openai_conversation_responses.scope import user_scope
 
 
 class FakeStorage:
@@ -335,8 +337,115 @@ async def test_knowledge_initialization_failure_is_retryable(monkeypatch) -> Non
     assert calls == 2
 
 
+@pytest.mark.parametrize("kind", ["persistent", "temporary"])
+async def test_retained_memory_manager_failure_hides_capability_until_recovery(
+    hass, monkeypatch, kind
+):
+    """A failed write/readback keeps its manager for the next turn's recovery."""
+    entry = SimpleNamespace(entry_id="entry", runtime_data=None, data={})
+    subentry = SimpleNamespace(
+        subentry_id="agent",
+        title="Assistant",
+        data={
+            **_disabled_runtime_config(),
+            const.CONF_PROMPT: "Base prompt",
+            const.CONF_FUNCTION_TOOLS: "[]",
+            "memory_mode": MEMORY_MODE_MANUAL
+            if kind == "persistent"
+            else MEMORY_MODE_OFF,
+            CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED
+            if kind == "temporary"
+            else TEMPORARY_MEMORY_OFF,
+        },
+    )
+    agent = conversation.ExtendedOpenAIAgentEntity(entry, subentry)
+    agent.hass = hass
+    storage = FakeStorage()
+    if kind == "persistent":
+        manager = agent._memory = PersistentMemory(storage)
+        tool_name, guidance = "memory_list", "Search before proposing"
+        module, loader_name = memory_module, "async_get_memory"
+    else:
+        manager = agent._temporary_memory = temporary_memory_module.TemporaryMemory(
+            storage
+        )
+        tool_name, guidance = (
+            "temporary_memory_add",
+            "instead of asking unnecessary clarification",
+        )
+        module, loader_name = temporary_memory_module, "async_get_temporary_memory"
+    await manager.async_initialize()
+
+    async def load_manager(*_args):
+        await manager.async_initialize()
+        return manager
+
+    monkeypatch.setattr(module, loader_name, load_manager)
+    context = SimpleNamespace(device_id=None, context=SimpleNamespace(user_id="alice"))
+    user_input = SimpleNamespace(context=context.context, extra_system_prompt=None)
+    expiry = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+
+    async def write_record(content):
+        if kind == "persistent":
+            return await manager.async_add("alice", content, "general", "explicit")
+        return await manager.async_add_owned("user:alice", content, expiry)
+
+    def tools():
+        return {tool["spec"]["name"] for tool in agent._get_function_tools()}
+
+    def prompt():
+        return agent._build_system_prompt([], context, user_input)
+
+    token = conversation._ACTIVE_TURN.set(
+        replace(
+            conversation._ACTIVE_TURN.get(),
+            scope=user_scope("alice", source="authenticated_user"),
+            temporary_scope="user:alice",
+        )
+    )
+    try:
+        await write_record("Existing fact")
+        assert tool_name in tools()
+        assert guidance in prompt()
+        with monkeypatch.context() as failure:
+            failure.setattr(
+                storage, "async_save", AsyncMock(side_effect=OSError("write failed"))
+            )
+            failure.setattr(
+                storage, "async_load", AsyncMock(side_effect=OSError("readback failed"))
+            )
+            with pytest.raises(OSError, match="write failed"):
+                await write_record("Uncommitted fact")
+            await async_reconcile_runtime_configuration(agent)
+            assert not manager.initialized
+            assert (
+                agent._memory if kind == "persistent" else agent._temporary_memory
+            ) is manager
+            assert tool_name not in tools()
+            assert guidance not in prompt()
+            with pytest.raises(RuntimeError, match="memory is unavailable"):
+                if kind == "persistent":
+                    await agent._async_execute_memory_tool("list", {}, context)
+                else:
+                    await agent._async_execute_temporary_memory_tool("add", {})
+        await async_reconcile_runtime_configuration(agent)
+        assert manager.initialized
+        assert tool_name in tools()
+        assert guidance in prompt()
+        records = await (
+            manager.async_list("alice")
+            if kind == "persistent"
+            else manager.async_list_owned("user:alice")
+        )
+        assert [record.content for record in records] == ["Existing fact"]
+    finally:
+        conversation._ACTIVE_TURN.reset(token)
+
+
 @pytest.mark.asyncio
-async def test_archive_search_enablement_initializes_runtime_without_retention() -> None:
+async def test_archive_search_enablement_initializes_runtime_without_retention() -> (
+    None
+):
     entity = RuntimeEntity(
         {
             **_disabled_runtime_config(),

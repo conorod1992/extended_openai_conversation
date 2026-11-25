@@ -18,6 +18,17 @@ const intervalDirty = state => !same(state.values, state.baseline)
 const completeInterval = status => ["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(status || {}, key));
 const clearSubmission = state => {state.uncertainSubmission = null;state.adoptUnchangedRead = false;state.submissionImplicitStart = false;};
 
+function adoptIntervalTimestamps(state, status, saved) {
+  const displayed = {...state.timestampStatus};
+  for (const [key, field] of [["start", "active_from"], ["end", "active_until"]]) {
+    if (state.values[key] === saved[key] && (key !== "end" || !status.indefinite)) {
+      displayed[field] = status[field];
+      displayed[`${field}_local`] = status[`${field}_local`];
+    }
+  }
+  state.timestampStatus = displayed;
+}
+
 function reconcileIntervalRead(panel, state, status) {
   if (panel._guestIntervalDraft !== state || !configurationSubmissionIsCurrent(panel, state.owner)
       || panel._guestOperation || !completeInterval(status)) return;
@@ -35,6 +46,7 @@ function reconcileIntervalRead(panel, state, status) {
     clearSubmission(state);
   }
   state.baseline = saved;
+  adoptIntervalTimestamps(state, status, saved);
   // Timed reads avoid rebuilding the editor. Update only inputs which still
   // show the values used by this reconciliation, preserving newer DOM input.
   for (const [id, key, property] of [["guest-start", "start", "value"], ["guest-end", "end", "value"], ["guest-indefinite", "indefinite", "checked"]]) {
@@ -59,7 +71,7 @@ function intervalState(panel, status = panel._result?.status || {}) {
   if (state && !configurationSubmissionIsCurrent(panel, state.owner)) return null;
   if (!state) {
     const baseline = intervalValues(panel, status);
-    state = {owner, baseline, values:clone(baseline)};
+    state = {owner, baseline, values:clone(baseline), timestampStatus:status};
     panel._guestIntervalDraft = state;
     const current = () => panel._guestIntervalDraft === state && configurationSubmissionIsCurrent(panel, state.owner);
     pageCoordinator(panel).register("guest-interval", {
@@ -78,6 +90,7 @@ function intervalState(panel, status = panel._result?.status || {}) {
         if (!intervalDirty(state)) {
           if (!["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(saved || {}, key))) return;
           state.baseline = intervalValues(panel, saved, state.baseline.end);
+          adoptIntervalTimestamps(state, saved, state.baseline);
         }
         state.recoveryIntent = false;
       },
@@ -89,6 +102,7 @@ function intervalState(panel, status = panel._result?.status || {}) {
         const saved = panel._result?.status;
         if (completeInterval(saved)) state.baseline = intervalValues(panel, saved, state.baseline.end);
         state.values = clone(state.baseline);
+        if (completeInterval(saved)) adoptIntervalTimestamps(state, saved, state.baseline);
         // Discard authoring, not the read needed to learn what the write did.
         if (state.uncertainSubmission) {
           state.uncertainSubmission = clone(state.baseline);
@@ -108,6 +122,7 @@ function intervalState(panel, status = panel._result?.status || {}) {
         }
         destination.baseline = clone(state.baseline);
         destination.values = clone(state.values);
+        destination.timestampStatus = clone(state.timestampStatus);
         destination.uncertainSubmission = clone(state.uncertainSubmission);
         destination.adoptUnchangedRead = state.adoptUnchangedRead;
         destination.submissionImplicitStart = state.submissionImplicitStart;
@@ -118,9 +133,10 @@ function intervalState(panel, status = panel._result?.status || {}) {
         target._render();
       },
     });
-  } else if (!intervalDirty(state) && !state.recoveryIntent && !state.uncertainSubmission) {
+  } else if (!intervalDirty(state) && !state.recoveryIntent && !state.uncertainSubmission && completeInterval(status)) {
     state.baseline = intervalValues(panel, status, state.values.end);
     state.values = clone(state.baseline);
+    adoptIntervalTimestamps(state, status, state.baseline);
   }
   return state;
 }
@@ -153,6 +169,7 @@ export function acknowledgeGuestInterval(panel, submission, status) {
   const saved = intervalValues(panel, status, submission.values.end);
   state.values = mergeAcknowledgedDraft(state.values, submission.values, saved);
   state.baseline = saved;
+  adoptIntervalTimestamps(state, status, saved);
   clearSubmission(state);
 }
 
@@ -217,9 +234,11 @@ export function guestMode(panel) {
 
 export function guestPolicyView(panel, status, policy, state) {
   const config = panel._guestDraft || panel._result?.config || {};
-  const interval = intervalState(panel, status)?.values || intervalValues(panel, status);
-  const startLabel = intervalLabel("Starts", status.active_from_local);
-  const endLabel = intervalLabel("Ends", status.active_until_local);
+  const draft = intervalState(panel, status);
+  const interval = draft?.values || intervalValues(panel, status);
+  const displayed = draft?.timestampStatus || status;
+  const startLabel = intervalLabel("Starts", displayed.active_from_local);
+  const endLabel = intervalLabel("Ends", displayed.active_until_local);
   const selector = (key, type, label) => `<label class="setting"><span>${label}</span><ha-selector data-guest-key="${key}" data-guest-selector="${type}"></ha-selector></label>`;
   const manager = (key, type, label, description) => `<details class="guest-manager eoc-details-base"><summary><span><strong>${label}</strong><small>${formatUsageNumber((config[key] || []).length)} excluded · ${description}</small></span><span class="manage-label">Manage</span></summary><div class="guest-manager-body">${selector(key,type,`Choose ${label.toLowerCase()}`)}</div></details>`;
   const mode = (key, label, values) => `<label>${label}<select data-guest-mode="${key}">${values.map(([value,text]) => `<option value="${value}" ${config[key] === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`;

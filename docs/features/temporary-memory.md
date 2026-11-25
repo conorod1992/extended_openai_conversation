@@ -46,3 +46,5 @@ Each agent can retain up to 100 active temporary memories. A record holds up to 
 Expiry removes context; it does not schedule a notification, reminder or delayed Home Assistant action.
 
 Dates entered in the panel are resolved and displayed using Home Assistant's timezone rules, independently of the browser's timezone database. Changing another field preserves the existing expiry instant. New expiry times in a repeated DST hour use its first occurrence; nonexistent local times are rejected.
+
+If an imported expiry is outside the range that Home Assistant can display in its timezone, the panel shows the finite expiry in UTC. You can keep that instant, replace it with a future expiry within one year, or delete the memory.

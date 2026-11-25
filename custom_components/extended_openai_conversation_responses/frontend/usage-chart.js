@@ -16,25 +16,31 @@ const diagnosticCounters = [
   "web_search_run_count", "total_run_duration_ms", "run_request_count", "run_total_tokens",
   "unattributed_run_count",
 ];
+const breakdownFields = ["provider_breakdown", "model_breakdown", "api_mode_breakdown"];
 
 function mergeBreakdown(target, source) {
   if (!source || typeof source !== "object") return;
   for (const [name, value] of Object.entries(source)) {
-    target[name] = (target[name] || 0) + tokenCount(value);
+    const tokens = tokenCount(value);
+    if (Object.hasOwn(target, name)) target[name] += tokens;
+    else Object.defineProperty(target, name, {value:tokens, writable:true, enumerable:true});
   }
 }
 
 export function summarizeUsageDiagnostics(days = []) {
   const summary = Object.fromEntries(diagnosticCounters.map((key) => [key, 0]));
-  summary.provider_breakdown = {};
-  summary.model_breakdown = {};
-  summary.api_mode_breakdown = {};
+  summary.breakdown_omitted_tokens = {};
+  for (const field of breakdownFields) {
+    summary[field] = {};
+    summary.breakdown_omitted_tokens[field] = 0;
+  }
   for (const day of Array.isArray(days) ? days : []) {
     for (const key of diagnosticCounters) summary[key] += tokenCount(day?.[key]);
     if (day?.unattributed_run_count === undefined) summary.unattributed_run_count += tokenCount(day?.run_count);
-    mergeBreakdown(summary.provider_breakdown, day?.provider_breakdown);
-    mergeBreakdown(summary.model_breakdown, day?.model_breakdown);
-    mergeBreakdown(summary.api_mode_breakdown, day?.api_mode_breakdown);
+    for (const field of breakdownFields) {
+      mergeBreakdown(summary[field], day?.[field]);
+      summary.breakdown_omitted_tokens[field] += tokenCount(day?.breakdown_meta?.[field]?.omitted_total);
+    }
   }
   summary.cache_percent = summary.input_tokens ? Math.min(100, summary.cached_input_tokens / summary.input_tokens * 100) : null;
   summary.run_success_percent = summary.run_count ? summary.successful_run_count / summary.run_count * 100 : null;
@@ -134,8 +140,9 @@ function diagnosticMetric(panel, title, value, detail = "") {
   return `<article class="usage-diagnostic-metric"><span>${panel._e(title)}</span><strong>${panel._e(value)}</strong>${detail ? `<small>${panel._e(detail)}</small>` : ""}</article>`;
 }
 
-function breakdownList(panel, title, values) {
+function breakdownList(panel, title, values, omittedTokens) {
   const rows = sortedUsageBreakdown(values);
+  if (omittedTokens > 0) rows.push({name:"Other (omitted from daily breakdowns)", tokens:omittedTokens});
   const total = rows.reduce((sum, row) => sum + row.tokens, 0);
   return `<section class="usage-breakdown"><h3>${panel._e(title)}</h3>${rows.length ? `<div class="usage-breakdown-list">${rows.map((row) => {
     const share = total ? row.tokens / total * 100 : 0;
@@ -226,9 +233,9 @@ export function renderUsageDiagnostics(panel, result = {}) {
         </div></section>
       </div>
       <div class="usage-breakdowns">
-        ${breakdownList(panel, "Models", summary.model_breakdown)}
-        ${breakdownList(panel, "Providers", summary.provider_breakdown)}
-        ${breakdownList(panel, "API modes", summary.api_mode_breakdown)}
+        ${breakdownList(panel, "Models", summary.model_breakdown, summary.breakdown_omitted_tokens.model_breakdown)}
+        ${breakdownList(panel, "Providers", summary.provider_breakdown, summary.breakdown_omitted_tokens.provider_breakdown)}
+        ${breakdownList(panel, "API modes", summary.api_mode_breakdown, summary.breakdown_omitted_tokens.api_mode_breakdown)}
       </div>
       ` : ""}
       <section class="usage-diagnostic-panel"><h3>Recent failed runs</h3>${runsState.message ? `<p class="help" role="status">${panel._e(runsState.message)}</p>` : ""}${failedRuns.length ? `<div class="usage-failures">${failedRuns.map((run) => {

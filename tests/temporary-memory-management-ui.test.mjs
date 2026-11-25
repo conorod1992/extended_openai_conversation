@@ -5,6 +5,7 @@ import {
   ensureTemporaryScope,
   ownerLabel,
   renderTemporaryMemories,
+  temporaryMemoryExpiryForSave,
   temporaryScopeOptions,
   validOwnerScope,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-temporary-memory.js";
@@ -70,6 +71,15 @@ for (const [mode, label, description] of [
 }
 assert.doesNotMatch(markup, /Assist device/);
 assert.doesNotMatch(markup, /data-scope=/);
+
+const farExpiry = "9999-12-31T23:59:59.123456+00:00";
+const previousExpiry = panel._result.memories[0].expires_at;
+Object.assign(panel._result.memories[0], {expires_at:farExpiry, expires_at_local:null});
+assert.match(renderTemporaryMemories(panel), /Expires 9999-12-31T23:59:59\.123456\+00:00/);
+const utcDraft = {expires_at:"9999-12-31T23:59:59", original_expiry:farExpiry, utc_expiry:true};
+assert.equal(temporaryMemoryExpiryForSave(panel, utcDraft.expires_at, utcDraft), farExpiry);
+assert.equal(temporaryMemoryExpiryForSave(panel, "2027-01-01T12:00", utcDraft), "2027-01-01T12:00Z");
+Object.assign(panel._result.memories[0], {expires_at:previousExpiry, expires_at_local:undefined});
 
 for (const editor of [false, true]) {
   for (const response of [{deleted:0}, {deleted:1}, {deleted:"1"}]) {

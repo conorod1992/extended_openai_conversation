@@ -54,6 +54,7 @@ from .private_backup import (
     decode_document,
     is_private_document,
 )
+from .record_timestamps import parse_datetime
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import (
     LITERAL_TEXT_KEY,
@@ -851,7 +852,7 @@ def _validate_metadata(value: Mapping[str, Any]) -> tuple[str, str, str]:
     integration_version = value.get("integration_version")
     if (
         not isinstance(created_at, str)
-        or dt_util.parse_datetime(created_at) is None
+        or parse_datetime(created_at) is None
         or not isinstance(integration_version, str)
         or not integration_version
     ):
@@ -1130,6 +1131,8 @@ def _decode_transfer_input(value: Any) -> Mapping[str, Any]:
             raise backup.BackupError(
                 "The transfer exceeds the uncompressed safety limit"
             ) from err
+        except UnicodeError as err:
+            raise backup.BackupError("The transfer contains malformed Unicode") from err
         try:
             value = json.loads(value)
         except json.JSONDecodeError as err:
@@ -1138,6 +1141,7 @@ def _decode_transfer_input(value: Any) -> Mapping[str, Any]:
         raise backup.BackupError(
             "This file is not an Extended OpenAI Conversation transfer"
         )
+    backup._validate_import_unicode(value)
     if value.get("format") == backup.BACKUP_FORMAT:
         value = backup._decode_backup_document(value, backup.MAX_BACKUP_BYTES)
     return decode_document(value) if is_private_document(value) else dict(value)
@@ -1163,6 +1167,7 @@ async def async_inspect_decoded_transfer(
     inspect_only: bool = False,
 ) -> PreparedTransfer:
     """Validate HA schemas on-loop, but bulk data categories in a worker."""
+    await asyncio.to_thread(backup._validate_import_unicode, value)
     if is_private_document(value):
         value = await asyncio.to_thread(decode_document, value)
     header = _inspect_decoded_transfer(value, target_agent_id, inspect_only=True)
@@ -1568,8 +1573,8 @@ async def async_materialize_restore(
         default=prepared.available_sections,
     )
     from .provider_credentials import (
+        async_validate_agent_provider_request,
         incompatible_provider_agent,
-        validate_agent_provider_request,
         validate_provider_connection,
     )
 
@@ -1608,11 +1613,7 @@ async def async_materialize_restore(
         raise backup.BackupError(
             "Cannot safely restore unavailable secrets: " + ", ".join(missing[:50])
         )
-    from .request_rules import (
-        async_read_committed_request_rules,
-        validate_routed_request_options,
-        validate_saved_model_routes,
-    )
+    from .request_rules import async_read_committed_request_rules
 
     provider_data = (
         provider_connection
@@ -1620,25 +1621,23 @@ async def async_materialize_restore(
         else getattr(entry, "data", {})
     )
     from .ha_permissions import get_active_ha_context
-    from .request import async_capacity_ha_snapshot
 
+    context = get_active_ha_context()
+    user_id = context.user_id if context is not None else None
+    previous_provider_data = (
+        getattr(entry, "data", {}) if provider_connection is not None else None
+    )
     try:
-        ha_snapshot = None
-        if selected & SETUP_SECTIONS or provider_connection is not None:
-            context = get_active_ha_context()
-            ha_snapshot = await async_capacity_ha_snapshot(
-                hass,
-                target.config,
-                context.user_id if context is not None else None,
-            )
-        validate_routed_request_options(
-            target.config, provider_data, ha_snapshot=ha_snapshot
-        )
-        validate_saved_model_routes(
-            target.request_rules.get("rules", []),
+        await async_validate_agent_provider_request(
+            hass,
+            "conversation",
             target.config,
             provider_data,
-            ha_snapshot=ha_snapshot,
+            rules=target.request_rules.get("rules", []),
+            user_id=user_id,
+            discover_ha_tools=bool(selected & SETUP_SECTIONS)
+            or provider_connection is not None,
+            previous_provider_data=previous_provider_data,
         )
     except HomeAssistantError as err:
         raise backup.BackupError(
@@ -1652,14 +1651,22 @@ async def async_materialize_restore(
             }:
                 continue
             try:
-                validate_agent_provider_request(
-                    child.subentry_type, child.data, provider_data
-                )
-                if child.subentry_type == "conversation":
-                    rules = await async_read_committed_request_rules(
+                rules = (
+                    await async_read_committed_request_rules(
                         hass, entry.entry_id, child_id
                     )
-                    validate_saved_model_routes(rules, child.data, provider_data)
+                    if child.subentry_type == "conversation"
+                    else ()
+                )
+                await async_validate_agent_provider_request(
+                    hass,
+                    child.subentry_type,
+                    child.data,
+                    provider_data,
+                    rules=rules,
+                    user_id=user_id,
+                    previous_provider_data=previous_provider_data,
+                )
             except HomeAssistantError as err:
                 raise backup.BackupError(
                     str(incompatible_provider_agent(child.title, err))

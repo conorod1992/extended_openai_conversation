@@ -8,10 +8,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
+from .record_timestamps import parse_datetime
+
 
 def local_wall_time(hass: HomeAssistant, value: Any) -> str | None:
     """Project an existing instant using the server's configured timezone."""
-    parsed = dt_util.parse_datetime(value) if isinstance(value, str) else None
+    parsed = parse_datetime(value) if isinstance(value, str) else None
     zone = dt_util.get_time_zone(hass.config.time_zone)
     if parsed is None or parsed.tzinfo is None or zone is None:
         return ""

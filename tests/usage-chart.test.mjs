@@ -82,6 +82,19 @@ assert.match(diagnosticHtml, /Recent failed runs/);
 assert.match(diagnosticHtml, /data-usage-run-id="run-1"/);
 assert.match(diagnosticHtml, /do not estimate API cost/);
 
+const truncatedDays = [
+  {date:"2026-08-28", model_breakdown:{"gpt-test":40}, provider_breakdown:{OpenAI:50}, breakdown_meta:{model_breakdown:{omitted_total:20}}},
+  {date:"2026-08-29", model_breakdown:{"gpt-test":20}, api_mode_breakdown:{responses:50}, breakdown_meta:{model_breakdown:{omitted_total:20}, api_mode_breakdown:{omitted_total:50}}},
+];
+const truncatedSummary = summarizeUsageDiagnostics(truncatedDays);
+assert.deepEqual(truncatedSummary.model_breakdown, {"gpt-test":60});
+assert.deepEqual(truncatedSummary.breakdown_omitted_tokens, {model_breakdown:40, provider_breakdown:0, api_mode_breakdown:50});
+const truncatedHtml = renderUsageDiagnostics({_e:escape, _usageHistoryWindow:"all"}, {days:{days:truncatedDays}});
+assert.match(truncatedHtml, /gpt-test<\/span><strong>60<\/strong><small>60\.0%/);
+assert.match(truncatedHtml, /Other \(omitted from daily breakdowns\)<\/span><strong>40<\/strong><small>40\.0%/);
+assert.match(truncatedHtml, /OpenAI<\/span><strong>50<\/strong><small>100%/);
+assert.match(truncatedHtml, /responses<\/span><strong>50<\/strong><small>50\.0%/);
+
 const panelSource = await (await import("node:fs/promises")).readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const usageSource = await (await import("node:fs/promises")).readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-chart.js", import.meta.url), "utf8");
 assert.match(usageSource, /<time datetime=/);

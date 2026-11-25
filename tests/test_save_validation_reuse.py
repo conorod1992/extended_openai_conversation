@@ -6,15 +6,15 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 import yaml
-from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import (
     agent_config,
     function_configuration_mutations as mutations,
-    management_function_repair as repair,
     management_function_quarantine as quarantine,
+    management_function_repair as repair,
     management_ui,
 )
+from homeassistant.exceptions import HomeAssistantError
 from tests.test_management_loading_performance import (
     _hass_with_agent as base_agent,
     _persisted_invalid_function_tools,
@@ -149,6 +149,11 @@ async def test_specialised_settings_reuse_and_seed_exact_projection(
         management_ui,
         "async_get_knowledge",
         AsyncMock(return_value=SimpleNamespace(source_count=0, total_source_count=0)),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_request_rules",
+        AsyncMock(return_value=SimpleNamespace(snapshot=lambda: {"rules": []})),
     )
     request = management_ui._ManagementRequest(
         hass,

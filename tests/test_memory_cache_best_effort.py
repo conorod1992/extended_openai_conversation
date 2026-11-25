@@ -139,3 +139,151 @@ async def test_query_rejected_after_space_change_with_same_provider_and_model():
 
     memory.set_embedding_provider(provider, "model", space_id="old-space")
     assert await memory.async_prepare_hybrid(["alice"], "query") is None
+
+
+@pytest.mark.parametrize("last_fact_deleted", [False, True])
+async def test_reload_scrubs_stale_embeddings_with_no_hybrid_provider(
+    hass, monkeypatch, last_fact_deleted
+):
+    now = 100.0
+    monkeypatch.setattr(module, "monotonic", lambda: now)
+    storage = module.HomeAssistantMemoryStorage(hass, "entry", "agent")
+    cache = module.HomeAssistantEmbeddingCacheStorage(hass, "entry", "agent")
+    manager = PersistentMemory(storage, cache)
+    await manager.async_initialize()
+    edited = (await manager.async_add("alice", "Old fact", "general", "explicit"))[
+        "memory"
+    ]["memory_id"]
+    deleted = (await manager.async_add("alice", "Delete fact", "general", "explicit"))[
+        "memory"
+    ]["memory_id"]
+    healthy = (await manager.async_add("alice", "Keep fact", "general", "explicit"))[
+        "memory"
+    ]["memory_id"]
+    manager.set_embedding_provider(
+        AsyncMock(side_effect=lambda texts: [[1.0, 2.0] for _ in texts]), "model"
+    )
+    assert await manager.async_prepare_hybrid(["alice"], "fact") == [1.0, 2.0]
+    before = await cache.async_load()
+    assert set(before["embeddings"]) == {edited, deleted, healthy}
+
+    with monkeypatch.context() as fault:
+        fault.setattr(
+            cache, "async_save", AsyncMock(side_effect=OSError("cache unavailable"))
+        )
+        await manager.async_update("alice", edited, content="Revised fact")
+        await manager.async_delete("alice", [deleted])
+        if last_fact_deleted:
+            await manager.async_delete("alice", [edited, healthy])
+
+    reloaded_cache = module.HomeAssistantEmbeddingCacheStorage(hass, "entry", "agent")
+    assert await reloaded_cache.async_load() == before
+    reloaded = PersistentMemory(
+        module.HomeAssistantMemoryStorage(hass, "entry", "agent"), reloaded_cache
+    )
+    with monkeypatch.context() as fault:
+        fault.setattr(
+            reloaded_cache,
+            "async_save",
+            AsyncMock(side_effect=OSError("cache unavailable")),
+        )
+        await reloaded.async_initialize()
+    retained = {} if last_fact_deleted else {healthy: before["embeddings"][healthy]}
+    assert set(reloaded._embedding_cache) == set(retained)
+    assert reloaded._embedding_cache_dirty
+    now += EMBEDDING_CACHE_RETRY_SECONDS
+    records = await reloaded.async_search("alice", "Revised fact")
+    assert bool(records) is not last_fact_deleted
+    assert await reloaded_cache.async_load() == {"embeddings": retained}
+    assert not reloaded._embedding_cache_dirty
+
+
+async def test_cancelled_lexical_search_settles_pending_cache_cleanup(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(module, "monotonic", lambda: now)
+    cache = FakeStorage({"embeddings": {"deleted-id": {}}})
+    save = cache.async_save
+    with monkeypatch.context() as fault:
+        fault.setattr(
+            cache, "async_save", AsyncMock(side_effect=OSError("cache unavailable"))
+        )
+        memory = PersistentMemory(FakeStorage(), cache)
+        await memory.async_initialize()
+    now += EMBEDDING_CACHE_RETRY_SECONDS
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def paused_save(data):
+        entered.set()
+        await release.wait()
+        await save(data)
+
+    monkeypatch.setattr(cache, "async_save", paused_save)
+    search = asyncio.create_task(memory.async_search("alice", "fact"))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        search.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await search
+        assert cache.data == {"embeddings": {}}
+        assert not memory._embedding_cache_dirty
+    finally:
+        release.set()
+        await asyncio.gather(search, return_exceptions=True)
+
+
+async def test_invalid_loaded_vectors_are_removed_and_refilled_selectively():
+    storage = FakeStorage()
+    cache = FakeStorage()
+    manager = PersistentMemory(storage, cache)
+    await manager.async_initialize()
+    for content in ["Unusable vector", "Healthy vector"]:
+        await manager.async_add("alice", content, "general", "explicit")
+    provider = AsyncMock(side_effect=lambda texts: [[1.0, 0.0] for _ in texts])
+    manager.set_embedding_provider(provider, "model")
+    await manager.async_prepare_hybrid(["alice"], "query")
+    records = {
+        record.content: record.memory_id for record in await manager.async_list("alice")
+    }
+    zero, healthy = records["Unusable vector"], records["Healthy vector"]
+    cache.data["embeddings"][zero]["vector"] = [0.0, -0.0]
+    reloaded = PersistentMemory(storage, cache)
+    await reloaded.async_initialize()
+    assert set(cache.data["embeddings"]) == {healthy}
+    provider.reset_mock()
+    reloaded.set_embedding_provider(provider, "model")
+    assert await reloaded.async_prepare_hybrid(["alice"], "query") == [1.0, 0.0]
+    assert [call.args[0] for call in provider.call_args_list] == [
+        ["general | Unusable vector"],
+        ["query"],
+    ]
+    assert set(cache.data["embeddings"]) == {zero, healthy}
+
+
+@pytest.mark.parametrize("failure", ["query", "document", "none"])
+async def test_hybrid_rejects_zero_vectors_and_scores_extreme_finite_vectors(failure):
+    memory = PersistentMemory(FakeStorage())
+    await memory.async_initialize()
+    await memory.async_add("alice", "Relevant word", "general", "explicit")
+
+    async def provider(texts):
+        if texts == ["unrelated"]:
+            return [[0.0, 0.0] if failure == "query" else [1e308, 1e308]]
+        return [[0.0, 0.0] if failure == "document" else [5e-324, 5e-324]]
+
+    memory.set_embedding_provider(provider, "model")
+    query = await memory.async_prepare_hybrid(["alice"], "unrelated")
+    if failure == "none":
+        assert query == [1e308, 1e308]
+        assert await memory.async_search(
+            "alice", "unrelated", query_embedding=query, hybrid=True
+        )
+        assert module._cosine_similarity(
+            [1e308, 1e308], [-5e-324, -5e-324]
+        ) == pytest.approx(-1.0)
+    else:
+        assert query is None
+        assert memory.hybrid_status()["status"] == "lexical_fallback"
+        assert await memory.async_search("alice", "Relevant")
+        if failure == "document":
+            assert not memory._embedding_cache

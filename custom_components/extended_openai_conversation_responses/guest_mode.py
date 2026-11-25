@@ -61,6 +61,7 @@ from .functions.security import FunctionSecurity, classify_tool
 from .helpers import get_exposed_entities
 from .mutation_outcomes import after_confirmed_mutation
 from .persistence_hardening import _async_settle_transactional_save
+from .record_timestamps import parse_datetime
 from .storage_namespaces import GUEST_MODE_PREFIX as GUEST_MODE_STORAGE_PREFIX
 from .strict_store import PropagatingWriteStore
 
@@ -79,6 +80,7 @@ Mode. Do not reveal what the owner normally has access to.
 """
 
 _MANAGERS = f"{DOMAIN}.guest_mode_managers"
+_CLOCK_RECONCILE_SECONDS = 300
 
 
 class GuestModeDenied(HomeAssistantError):
@@ -232,6 +234,7 @@ class GuestModeManager:
         self._schedule: GuestModeSchedule | None = None
         self._listeners: set[Callable[[], None]] = set()
         self._cancel_transition: Callable[[], None] | None = None
+        self._clock_check: asyncio.TimerHandle | None = None
         self._transition_token: object | None = None
         self._mutation_lock = asyncio.Lock()
         self._initialized = False
@@ -290,7 +293,7 @@ class GuestModeManager:
 
         def decode_time(value: str, field: str) -> tuple[str, Any]:
             utc = _parse_timestamp(self.hass, value, field)
-            original = dt_util.parse_datetime(value)
+            original = parse_datetime(value)
             if original is None:
                 raise ValueError(f"{field} must be an ISO 8601 timestamp")
             return (
@@ -431,7 +434,9 @@ class GuestModeManager:
                     end = max(existing_end, requested_end)
             schedule = self._schedule_value(start, end, "llm")
             await self._async_commit_schedule(schedule)
-            with after_confirmed_mutation("Guest Mode was saved. Refresh to read the schedule."):
+            with after_confirmed_mutation(
+                "Guest Mode was saved. Refresh to read the schedule."
+            ):
                 return self.status(current)
 
     async def async_update_trusted(
@@ -461,14 +466,18 @@ class GuestModeManager:
         schedule = self._schedule_value(start, end, "home_assistant")
         async with self._mutation_lock:
             await self._async_commit_schedule(schedule)
-            with after_confirmed_mutation("Guest Mode was saved. Refresh to read the schedule."):
+            with after_confirmed_mutation(
+                "Guest Mode was saved. Refresh to read the schedule."
+            ):
                 return self.status(current)
 
     async def async_disable_trusted(self) -> dict[str, Any]:
         """End or cancel Guest Mode from a trusted HA control surface."""
         async with self._mutation_lock:
             await self._async_commit_schedule(None)
-            with after_confirmed_mutation("Guest Mode was saved. Refresh to read the schedule."):
+            with after_confirmed_mutation(
+                "Guest Mode was saved. Refresh to read the schedule."
+            ):
                 return self.status()
 
     async def async_backup_data(self) -> dict[str, Any]:
@@ -535,10 +544,13 @@ class GuestModeManager:
         cancel, self._cancel_transition = self._cancel_transition, None
         if cancel is not None:
             cancel()
+        if self._clock_check is not None:
+            self._clock_check.cancel()
+            self._clock_check = None
 
     @callback
     def _reschedule_transition(self) -> None:
-        """Track only the next future boundary of the authoritative schedule."""
+        """Track the next UTC boundary and reconcile wall-clock corrections."""
         self._cancel_transition_timer()
         if not self._listeners or not self.authoritative_available:
             return
@@ -552,10 +564,29 @@ class GuestModeManager:
                 _parse_timestamp(self.hass, schedule.active_until, "active_until")
             )
         future = [boundary for boundary in boundaries if now < boundary]
+        token = self._transition_token = object()
+
+        @callback
+        def check_clock() -> None:
+            if self._transition_token is not token:
+                return
+            current = dt_util.utcnow()
+            remaining = sum(current < boundary for boundary in boundaries)
+            if remaining != len(future):
+                self._notify()
+            else:
+                self._clock_check = self.hass.loop.call_later(
+                    _CLOCK_RECONCILE_SECONDS, check_clock
+                )
+
+        # A monotonic watchdog survives backwards wall-clock jumps, including
+        # after the final boundary. It exists only for observed schedules.
+        self._clock_check = self.hass.loop.call_later(
+            _CLOCK_RECONCILE_SECONDS, check_clock
+        )
         if not future:
             return
         next_boundary = min(future)
-        token = self._transition_token = object()
 
         @callback
         def transition(_now: datetime) -> None:
@@ -641,7 +672,9 @@ class GuestModeManager:
                     try:
                         self._notify()
                     except Exception:
-                        _LOGGER.warning("Could not notify Guest Mode listeners during save recovery")
+                        _LOGGER.warning(
+                            "Could not notify Guest Mode listeners during save recovery"
+                        )
 
     def _live_or_future_schedule(self, now: Any) -> GuestModeSchedule | None:
         if self._persistence_unavailable:
@@ -662,7 +695,9 @@ class GuestModeManager:
                 try:
                     listener()
                 except Exception as err:
-                    _LOGGER.warning("Guest Mode listener failed (%s)", type(err).__name__)
+                    _LOGGER.warning(
+                        "Guest Mode listener failed (%s)", type(err).__name__
+                    )
 
 
 async def async_stage_guest_mode_journal_recovery(
@@ -1310,7 +1345,7 @@ def _string_set(value: Any) -> set[str]:
 
 
 def _parse_timestamp(hass: HomeAssistant | None, value: str, field: str) -> datetime:
-    parsed = dt_util.parse_datetime(value) if isinstance(value, str) else None
+    parsed = parse_datetime(value) if isinstance(value, str) else None
     if parsed is None:
         if hass is None:
             raise ValueError(f"{field} is invalid")

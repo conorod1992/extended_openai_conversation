@@ -315,6 +315,128 @@ def rules(monkeypatch):
     return manager
 
 
+@pytest.mark.parametrize(
+    ("section", "field", "authored"),
+    [
+        ("knowledge", "knowledge_enabled", 124),
+        ("guest_mode", "guest_mode_enabled", 126),
+    ],
+)
+async def test_capability_activation_accounts_for_live_ha_tools_and_allows_restrictions(
+    hass, management_agent, management_message, rules, section, field, authored
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+    )
+    from tests.test_ha_llm_tools import Echo, TestAPI, context, register
+
+    hass.config.language = "en"
+    entry, subentry = management_agent
+    api = register(hass, TestAPI(hass, tools=[Echo()]))
+    snapshot = await async_discover(hass, context())
+    reference = new_reference_tool(next(iter(snapshot.tools.values())).reference, set())
+    subentry.data = _options(
+        functions=[*[_tool(f"marker_{i}") for i in range(authored)], reference]
+    )
+    original = deepcopy(subentry.data)
+    candidate = {**original, field: True}
+    request.validate_runtime_readiness(candidate, entry.data)
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        request.validate_runtime_readiness(candidate, entry.data, ha_snapshot=snapshot)
+
+    async def set_feature(enabled, **guest_fields):
+        if section == "guest_mode":
+            message = management_message(
+                section, "save_policy", config={field: enabled, **guest_fields}
+            )
+        else:
+            message = management_message(section, "set_enabled", enabled=enabled)
+        return await ui.async_management_command(hass, "admin", True, message)
+
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        await set_feature(True)
+    assert subentry.data == original
+    hass.config_entries.async_update_subentry.assert_not_called()
+
+    api.tools = []
+    await set_feature(True)
+    assert subentry.data[field] is True
+    api.tools = [Echo()]
+    if section == "guest_mode":
+        await set_feature(True, guest_excluded_areas=["kitchen"])
+        assert subentry.data["guest_excluded_areas"] == ["kitchen"]
+    await set_feature(False)
+    assert subentry.data[field] is False
+
+
+@pytest.mark.parametrize("section", ["knowledge", "guest_mode"])
+async def test_capability_activation_validates_retained_static_routes_and_allows_repair(
+    hass, management_agent, management_message, monkeypatch, section, rules
+):
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRules,
+    )
+    from tests.test_request_rules import MemoryStore, routing_rule
+
+    entry, subentry = management_agent
+    subentry.data = _options()
+    retained = RequestRules(MemoryStore())
+    await retained.async_initialize()
+    route = routing_rule()
+    route["action"]["model"] = "gpt-5-pro"
+    await retained.async_create(route)
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=retained))
+
+    activate = (
+        management_message(section, "set_enabled", enabled=True)
+        if section == "knowledge"
+        else management_message(
+            section, "save_policy", config={"guest_mode_enabled": True}
+        )
+    )
+
+    async def command(message):
+        return await ui.async_management_command(hass, "admin", True, message)
+
+    request.validate_runtime_readiness(subentry.data, entry.data)
+    with pytest.raises(HomeAssistantError, match=r"Request Rule .*gpt-5-pro"):
+        await command(activate)
+    hass.config_entries.async_update_subentry.assert_not_called()
+
+    disabled = await command(
+        management_message(
+            "request_rules",
+            "update",
+            rule_id=route["id"],
+            rule={"enabled": False},
+        )
+    )
+    assert disabled["rule"]["enabled"] is False
+    edited = await command(
+        management_message(
+            "request_rules",
+            "update",
+            rule_id=route["id"],
+            rule={**disabled["rule"], "name": "Repaired label", "enabled": False},
+        )
+    )
+    assert edited["rule"]["name"] == "Repaired label"
+    with pytest.raises(HomeAssistantError, match="gpt-5-pro"):
+        await command(
+            management_message(
+                "request_rules",
+                "update",
+                rule_id=route["id"],
+                rule={"enabled": True},
+            )
+        )
+    assert retained.rule_snapshot(route["id"])["enabled"] is False
+
+    await command(activate)
+    hass.config_entries.async_update_subentry.assert_called_once()
+
+
 async def _save(hass, entry, subentry, updates):
     revision = ui.persisted_config_projection(subentry).revision
     return await ui._async_save_configuration(
@@ -965,6 +1087,106 @@ async def test_prepared_restore_rechecks_readiness_before_journaling(
     assert journal.removed == 1
     sent = await _dispatch(_agent(hass, entry, subentry), conditional=True)
     assert len(sent["tools"]) == 128
+
+
+@pytest.mark.parametrize("new_cap", [False, True])
+async def test_shared_provider_restore_checks_sibling_ha_capacity_before_journaling(
+    hass, monkeypatch, new_cap
+):
+    from unittest.mock import MagicMock
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        request_rules,
+        restore_recovery,
+        transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+    )
+    from homeassistant.config_entries import ConfigEntryState
+    from tests.test_ha_llm_tools import Echo, TestAPI, context, register
+    from tests.test_private_backup_fidelity import private_document
+    from tests.test_selective_restore_concurrency import RestoreHarness
+
+    tx = RestoreHarness(monkeypatch)
+    tx.hass.config = SimpleNamespace(language="en")
+    target_config = _options()
+    tx.subentry.data = deepcopy(target_config)
+    tx.entry.state = ConfigEntryState.NOT_LOADED
+    tx.entry.disabled_by = None
+    previous = {"api_key": "old", "skip_authentication": True}
+    if new_cap:
+        previous["base_url"] = "https://compatible.example/v1"
+    tx.entry.data = previous
+
+    api = register(tx.hass, TestAPI(tx.hass, tools=[Echo()]))
+    snapshot = await async_discover(tx.hass, context())
+    reference = new_reference_tool(next(iter(snapshot.tools.values())).reference, set())
+    if new_cap:
+        # The administrator cannot currently see this tool. Other callers may.
+        api.tools = []
+    tools = [*[_tool(f"marker_{i}") for i in range(126)], reference]
+    sibling = SimpleNamespace(
+        title="Sibling",
+        subentry_id="sibling",
+        subentry_type="conversation",
+        data=_options(functions=tools, continue_conversation="conditional"),
+    )
+    tx.entry.subentries["sibling"] = sibling
+    read_rules = AsyncMock(return_value=[])
+    monkeypatch.setattr(request_rules, "async_read_committed_request_rules", read_rules)
+
+    def update_entry(entry, *, data):
+        entry.data = deepcopy(data)
+        return True
+
+    update_provider = tx.hass.config_entries.async_update_entry = MagicMock(
+        side_effect=update_entry
+    )
+    tx.hass.config_entries.async_schedule_reload = MagicMock()
+    persist_provider = AsyncMock()
+    monkeypatch.setattr(
+        restore_recovery, "async_persist_config_entries", persist_provider
+    )
+
+    connection = {"api_key": "new", "skip_authentication": True}
+    document = private_document()
+    document["agent"]["config"] = target_config
+    document["provider_connection"] = connection
+    document = backup.finalize_backup_snapshot(document)["document"]
+
+    async def restore():
+        return await transfer.async_restore_transfer(
+            tx.hass,
+            tx.entry,
+            tx.subentry,
+            document,
+            sections=[transfer.SECTION_CONFIGURATION],
+            provider_connection=connection,
+            expected_provider_data=previous,
+        )
+
+    old_target = deepcopy(tx.subentry.data)
+    old_sibling = deepcopy(sibling.data)
+    with pytest.raises(backup.BackupError, match=r"Sibling.*128-tool limit"):
+        await restore()
+    assert tx.entry.data == previous
+    assert tx.subentry.data == old_target
+    assert sibling.data == old_sibling
+    assert not tx.journal.saved
+    assert not tx.writes
+    update_provider.assert_not_called()
+    persist_provider.assert_not_awaited()
+    read_rules.assert_awaited_once_with(tx.hass, tx.entry.entry_id, "sibling")
+
+    reference["enabled"] = False
+    sibling.data = _options(functions=tools, continue_conversation="conditional")
+    repaired = deepcopy(sibling.data)
+    assert (await restore())["provider_connection_restored"]
+    assert tx.entry.data == connection
+    assert sibling.data == repaired
 
 
 async def test_provider_owned_tools_are_present_in_accepted_runtime_request(

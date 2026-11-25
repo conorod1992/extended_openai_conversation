@@ -23,6 +23,8 @@ The two systems use independent storage and settings.
 
 The setting defaults to Off. Stored sources are retained while it is Off, which lets you prepare or temporarily disable a library without losing it.
 
+Enabling Knowledge checks that the assistant's default model and enabled AI routing rules can use the additional tools with the current provider. You can still turn off Knowledge while repairing an incompatible configuration.
+
 ## Manage Knowledge sources
 
 Open **Extended OpenAI** from the Home Assistant sidebar, then **Data & Memory → Knowledge Library** (`/extended-openai/data-memory/knowledge`). The integration's **Configure → Manage knowledge** form also displays this path. Conversation-agent reconfiguration points to the sidebar panel rather than offering a separate settings editor. Knowledge management requires an administrator.
@@ -109,7 +111,10 @@ If expected information is not found:
 - verify that **Knowledge Library** is On for the same agent selected in the panel;
 - refresh the management panel and confirm the source is marked **Available**.
 
-The assistant is instructed to start with short keyword searches, broaden an empty search once, and then use `knowledge_list` without a filter to inspect source metadata before concluding that the library lacks an answer. It must use only exact source IDs returned by Knowledge Library tools. A nonempty source filter containing only blank, unknown, disabled, or forbidden IDs returns no matches. Mixed filters search only the valid, permitted IDs. If discovery still finds nothing relevant, the assistant should report that outcome.
+The assistant is instructed to start with short keyword searches, broaden an empty search once, and then use `knowledge_list` without a filter to inspect source metadata before concluding that the library lacks an answer. It must use only exact source IDs returned by Knowledge Library tools. A nonempty source filter containing only empty, unknown, disabled, or forbidden IDs returns no matches. Mixed filters search only the valid, permitted IDs. If discovery still finds nothing relevant, the assistant should report that outcome.
+
+Source IDs are compared exactly across search, direct reads, and Guest Mode
+allow-lists. Existing stored or imported IDs keep their original whitespace.
 
 ## Guest Mode
 

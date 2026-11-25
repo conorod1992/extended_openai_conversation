@@ -47,12 +47,16 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.management_request_preview import (
     async_preview_effective_request,
 )
-from custom_components.extended_openai_conversation_responses.memory import MemoryRecord
+from custom_components.extended_openai_conversation_responses.memory import (
+    MemoryRecord,
+    PersistentMemory,
+)
 from custom_components.extended_openai_conversation_responses.prompt import (
     _DEFAULT_PROMPT_STABLE_PREFIX,
     render_effective_prompt,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
+    TemporaryMemory,
     TemporaryMemoryRecord,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -667,6 +671,56 @@ async def test_preview_observes_retained_storage_failure_without_loading_it(
     assert ('"conversation_private"' in tools) is (status not in {"failed", "read-only"})
     assert ("Use the privacy/deletion tools" in result["prompt"]) is (status not in {"failed", "read-only"})
     assert any("Persistent Memory is unavailable" in note for note in result["notes"]) is (status == "failed")
+
+
+async def test_preview_uses_retained_memory_readiness_before_status_refresh(
+    hass, monkeypatch
+):
+    _setup_area_template_registries(hass)
+    options = _options()
+    options[CONF_PROMPT] = "BASE"
+    options[CONF_KNOWLEDGE_ENABLED] = False
+    entry = SimpleNamespace(entry_id="entry", data={})
+    subentry = SimpleNamespace(subentry_id="assistant", data=options)
+    persistent_store = SimpleNamespace(async_load=AsyncMock(return_value=None))
+    temporary_store = SimpleNamespace(async_load=AsyncMock(return_value=None))
+    memory = PersistentMemory(persistent_store)
+    temporary = TemporaryMemory(temporary_store)
+    hass.data[SUBSYSTEM_STATUS_KEY] = {
+        ("entry", "assistant"): {
+            "persistent_memory": {"status": "healthy"},
+            "temporary_memory": {"status": "healthy"},
+        }
+    }
+    preview_module = "custom_components.extended_openai_conversation_responses.management_request_preview"
+    monkeypatch.setattr(f"{preview_module}.get_loaded_memory", lambda *_args: memory)
+    monkeypatch.setattr(
+        f"{preview_module}.get_loaded_temporary_memory", lambda *_args: temporary
+    )
+    monkeypatch.setattr(f"{preview_module}.get_exposed_entities", lambda _hass: [])
+
+    def tool_payload(result):
+        return next(
+            section["content"]
+            for section in result["sections"]
+            if section["key"] == "integration_tools"
+        )
+
+    result = await async_preview_effective_request(
+        hass, entry, subentry, options, "admin"
+    )
+    assert '"memory_search"' not in tool_payload(result)
+    assert '"temporary_memory_add"' not in tool_payload(result)
+    persistent_store.async_load.assert_not_awaited()
+    temporary_store.async_load.assert_not_awaited()
+
+    await memory.async_initialize()
+    await temporary.async_initialize()
+    result = await async_preview_effective_request(
+        hass, entry, subentry, options, "admin"
+    )
+    assert '"memory_search"' in tool_payload(result)
+    assert '"temporary_memory_add"' in tool_payload(result)
 
 
 async def test_preview_reads_temporary_context_without_mutation(

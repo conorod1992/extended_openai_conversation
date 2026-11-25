@@ -2720,7 +2720,7 @@ def _outcome_probes(
     ) -> list[dict[str, Any]]:
         if kind != "sequence" or "stop" not in action:
             return [descend()]
-        marker = {"variables": {stopped: not action.get("error", False)}}
+        marker = {"variables": {stopped: not cv.boolean(action.get("error", False))}}
         if "enabled" in action:
             # Let HA evaluate enabled once for the probe and its Stop. Do not
             # revisit this generated sequence or instrument its Stop again.
@@ -3105,11 +3105,14 @@ def validate_routed_request_options(
     entry_data: Mapping[str, Any],
     *,
     ha_snapshot: ToolSnapshot | None = None,
+    reserve_ha_tools: bool = False,
 ) -> None:
     """Validate the complete Conversation request selected by a route."""
     from .request import validate_runtime_readiness
 
-    validate_runtime_readiness(options, entry_data, ha_snapshot=ha_snapshot)
+    validate_runtime_readiness(
+        options, entry_data, ha_snapshot=ha_snapshot, reserve_ha_tools=reserve_ha_tools
+    )
 
 
 def validate_rule_model_request(
@@ -3118,6 +3121,7 @@ def validate_rule_model_request(
     entry_data: Mapping[str, Any],
     *,
     ha_snapshot: ToolSnapshot | None = None,
+    reserve_ha_tools: bool = False,
 ) -> None:
     """Reject statically invalid routes at every Request Rule write boundary."""
     if rule.get("action_type") != "model_routing" or request_rule_repair(rule):
@@ -3150,7 +3154,12 @@ def validate_rule_model_request(
                 entry_data.get("api_provider"), entry_data.get("base_url")
             ),
         )
-    validate_routed_request_options(candidate, entry_data, ha_snapshot=ha_snapshot)
+    validate_routed_request_options(
+        candidate,
+        entry_data,
+        ha_snapshot=ha_snapshot,
+        reserve_ha_tools=reserve_ha_tools,
+    )
 
 
 def validate_saved_model_routes(
@@ -3159,13 +3168,18 @@ def validate_saved_model_routes(
     entry_data: Mapping[str, Any],
     *,
     ha_snapshot: ToolSnapshot | None = None,
+    reserve_ha_tools: bool = False,
 ) -> None:
     """Validate enabled static routes against the proposed destination settings."""
     for rule in rules:
         if rule.get("enabled", True):
             try:
                 validate_rule_model_request(
-                    rule, options, entry_data, ha_snapshot=ha_snapshot
+                    rule,
+                    options,
+                    entry_data,
+                    ha_snapshot=ha_snapshot,
+                    reserve_ha_tools=reserve_ha_tools,
                 )
             except HomeAssistantError as err:
                 label = rule.get("name", rule.get("id", "unnamed"))

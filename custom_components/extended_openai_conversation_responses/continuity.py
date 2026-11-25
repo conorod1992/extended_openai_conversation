@@ -14,6 +14,7 @@ from uuid import uuid4
 from homeassistant.components import conversation
 from homeassistant.components.conversation.chat_log import current_chat_log
 from homeassistant.helpers.chat_session import ChatSession, current_session
+from homeassistant.helpers.typing import UNDEFINED, UndefinedType
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -370,6 +371,7 @@ class ConversationContinuity:
         timeout_minutes: int,
         *,
         namespace: str | None = None,
+        native_user_id: str | UndefinedType | None = UNDEFINED,
     ) -> ContinuityResolution:
         """Resolve the owned session and record opt-in latency diagnostics."""
         import time
@@ -384,6 +386,7 @@ class ConversationContinuity:
             incoming_conversation_id,
             timeout_minutes,
             namespace=namespace,
+            native_user_id=native_user_id,
         )
         record_continuity_resolution(
             result,
@@ -406,6 +409,7 @@ class ConversationContinuity:
         timeout_minutes: int,
         *,
         namespace: str | None = None,
+        native_user_id: str | UndefinedType | None = UNDEFINED,
     ) -> ContinuityResolution:
         """Resolve one request using a small lock and no network I/O."""
         if incoming_conversation_id is not None:
@@ -459,6 +463,11 @@ class ConversationContinuity:
             return ContinuityResolution(
                 conversation_id, None, [], False, claim_token=claim_token
             )
+        if native_user_id is None and scope.scope_type == "user":
+            # Voice mappings authorize EOAI's retained-data owner. They never
+            # authenticate the caller to Core or share a native session with a
+            # signed-in request for the same owner.
+            key += ":native-unauthenticated"
         now = dt_util.utcnow()
         cutoff = now - timedelta(minutes=timeout_minutes)
         async with self._lock:

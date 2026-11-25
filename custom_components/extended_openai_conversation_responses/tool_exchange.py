@@ -12,6 +12,7 @@ from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
+from .context import replace_chat_log_content
 from .exceptions import EffectOutcomeUnknown, FunctionNotFound
 from .function_call_budget import FunctionCallBudget, FunctionCallLimitReached
 from .function_execution import (
@@ -124,7 +125,7 @@ def downgrade_native_response_output(
                 retained.append(replace(content, native=None))
         else:
             retained.append(content)
-    chat_log.content[:] = retained
+    replace_chat_log_content(chat_log, retained)
 
 
 def _prune_repeated_completed_calls(
@@ -161,7 +162,7 @@ def _prune_repeated_completed_calls(
                 answered.add(call_id)
         retained.append(content)
     if changed:
-        chat_log.content[:] = retained
+        replace_chat_log_content(chat_log, retained)
         if existing_content_ids is not None:
             downgrade_native_response_output(chat_log, existing_content_ids)
     return changed

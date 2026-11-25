@@ -413,7 +413,7 @@ async def test_backup_restore_keeps_device_memory_separate_from_inferred_owner()
     assert memory.stats()["unassigned_legacy_temporary_memory_count"] == 1
 
 
-def test_balanced_prompt_infers_weekend_expiry_without_clarification() -> None:
+async def test_balanced_prompt_infers_weekend_expiry_without_clarification() -> None:
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.hass = MagicMock()
     entity.hass.config.time_zone = "Europe/Dublin"
@@ -425,6 +425,7 @@ def test_balanced_prompt_infers_weekend_expiry_without_clarification() -> None:
         }
     )
     entity._temporary_memory = TemporaryMemory(Storage())
+    await entity._temporary_memory.async_initialize()
     token = _ACTIVE_TURN.set(
         replace(_ACTIVE_TURN.get(), temporary_scope="user:alice")
     )
@@ -622,6 +623,20 @@ async def test_manual_update_promotes_temporary_memory_provenance() -> None:
     assert record.source == "manual"
     assert record.category == "important"
     assert record.expires_at == manual_expiry
+
+
+async def test_manage_imported_expiry_beyond_the_creation_horizon() -> None:
+    """Preserve an imported finite instant on other edits and allow replacement."""
+    expiry = "9999-12-31T23:59:59.123456+00:00"
+    storage = ValidationStorage({"records": [_record(expires_at=expiry)]})
+    manager = TemporaryMemory(storage)
+    await manager.async_initialize()
+
+    edited = await manager.async_update_owned("user:alice", "memory-1", "Edited", expiry, None)
+    assert edited.expires_at == expiry
+    replacement = _future(hours=2)
+    edited = await manager.async_update_owned("user:alice", "memory-1", None, replacement, None)
+    assert edited.expires_at == replacement
 
 
 def test_injection_budget_skips_large_later_record_but_keeps_smaller_one() -> None:

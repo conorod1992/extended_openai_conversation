@@ -46,7 +46,7 @@ from .persistence_hardening import (
     _async_settle_transactional_save,
 )
 from .provider_errors import provider_failure_category, provider_log_remediation
-from .record_timestamps import stored_timestamp_instant
+from .record_timestamps import parse_datetime, stored_timestamp_instant
 from .retrieval_text import _stem, bounded_phrase, ordered_term_phrase, word_tokens
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 from .storage_namespaces import MEMORY_PREFIX as STORAGE_KEY_PREFIX
@@ -743,6 +743,10 @@ class PersistentMemory:
         scope_ids = {user_id} if isinstance(user_id, str) else set(user_id)
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
+            if self._embedding_cache_dirty:
+                await async_settle_owned_operation(
+                    self._async_save_embedding_cache_locked()
+                )
             corpus = tuple(
                 memory
                 for memory in self._memories.values()
@@ -1718,6 +1722,8 @@ class PersistentMemory:
         await disk_state.async_initialize()
         self._repair_required = disk_state._repair_required
         self._restore_mutation_state(disk_state._snapshot_mutation_state())
+        self._embedding_cache_write_failed = disk_state._embedding_cache_write_failed
+        self._embedding_cache_retry_at = disk_state._embedding_cache_retry_at
         self._initialized = True
         self._committed_state = self._snapshot_mutation_state()
 
@@ -1781,8 +1787,11 @@ class PersistentMemory:
             return
         try:
             data = await self._embedding_cache_storage.async_load()
-            self._embedding_cache = await asyncio.to_thread(
-                _prepare_stored_embedding_cache, data
+            (
+                self._embedding_cache,
+                self._embedding_cache_dirty,
+            ) = await asyncio.to_thread(
+                _prepare_stored_embedding_cache, data, self._memories
             )
         except Exception as err:
             self._embedding_cache.clear()
@@ -1790,6 +1799,11 @@ class PersistentMemory:
                 _LOGGER,
                 "Persistent memory embedding cache is unavailable; it will regenerate",
                 err,
+            )
+            return
+        if self._embedding_cache_dirty:
+            await async_settle_owned_operation(
+                self._async_save_embedding_cache_locked()
             )
 
     async def _async_save_embedding_cache_locked(self) -> bool:
@@ -1890,6 +1904,16 @@ def memory_enabled(options: dict[str, Any] | Any) -> bool:
 def automatic_memory_enabled(options: dict[str, Any] | Any) -> bool:
     """Return whether the model may create memories proactively."""
     return get_memory_mode(options) == MEMORY_MODE_AUTOMATIC
+
+
+def get_loaded_memory(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> PersistentMemory | None:
+    """Return the retained manager without creating or initializing it."""
+    managers: dict[tuple[str, str], PersistentMemory] = hass.data.get(
+        _MEMORY_MANAGERS, {}
+    )
+    return managers.get((entry_id, subentry_id))
 
 
 async def async_get_memory(
@@ -2617,13 +2641,28 @@ def _cosine_similarity(
 ) -> float | None:
     if not left or not right or len(left) != len(right):
         return None
-    left_norm = math.sqrt(sum(value * value for value in left))
-    right_norm = math.sqrt(sum(value * value for value in right))
-    if not left_norm or not right_norm:
+    # Scaling each vector independently keeps all products bounded even for
+    # finite vectors close to the limits of the float representation.
+    left_scale = max(map(abs, left))
+    right_scale = max(map(abs, right))
+    if (
+        not left_scale
+        or not right_scale
+        or not math.isfinite(left_scale)
+        or not math.isfinite(right_scale)
+    ):
         return None
-    return sum(a * b for a, b in zip(left, right, strict=True)) / (
-        left_norm * right_norm
-    )
+    dot = left_squared = right_squared = 0.0
+    for a, b in zip(left, right, strict=True):
+        a /= left_scale
+        b /= right_scale
+        dot += a * b
+        left_squared += a * a
+        right_squared += b * b
+    if not math.isfinite(dot):
+        return None
+    cosine = dot / math.sqrt(left_squared * right_squared)
+    return max(-1.0, min(1.0, cosine))
 
 
 def _embedding_text(memory: MemoryRecord) -> str:
@@ -2644,12 +2683,10 @@ def _embedding_fingerprint(memory: MemoryRecord) -> str:
 def _clean_embedding(value: Any) -> list[float]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         raise ValueError("embedding must be a numeric sequence")
+    if not 0 < len(value) <= 16_384:
+        raise ValueError("embedding is invalid")
     result = [float(item) for item in value]
-    if (
-        not result
-        or len(result) > 16_384
-        or not all(math.isfinite(item) for item in result)
-    ):
+    if not all(math.isfinite(item) for item in result) or not any(result):
         raise ValueError("embedding is invalid")
     return result
 
@@ -2720,19 +2757,36 @@ def _prepare_stored_memories(
     return memories, key_index, payload, repair_required
 
 
-def _prepare_stored_embedding_cache(data: Any) -> dict[str, EmbeddingCacheEntry]:
-    """Validate detached regenerable cache entries before atomic publication."""
+def _prepare_stored_embedding_cache(
+    data: Any, memories: Mapping[str, MemoryRecord]
+) -> tuple[dict[str, EmbeddingCacheEntry], bool]:
+    """Keep only usable embeddings for the loaded generation of memory facts."""
     entries: dict[str, EmbeddingCacheEntry] = {}
-    raw_entries = data.get("embeddings", {}) if isinstance(data, Mapping) else {}
+    if data is None:
+        return entries, False
+    if not isinstance(data, Mapping):
+        return entries, True
+    raw_entries = data.get("embeddings", {})
     if not isinstance(raw_entries, Mapping):
-        raise ValueError("embedding cache entries must be an object")
+        return entries, True
     for memory_id, raw in raw_entries.items():
         if not isinstance(memory_id, str) or not isinstance(raw, Mapping):
-            raise ValueError("embedding cache entry is malformed")
+            continue
+        memory = memories.get(memory_id)
         model = raw.get("model")
         fingerprint = raw.get("fingerprint")
-        if not isinstance(model, str) or not isinstance(fingerprint, str):
-            raise ValueError("embedding cache metadata is malformed")
+        if (
+            memory is None
+            or not isinstance(model, str)
+            or not isinstance(fingerprint, str)
+        ):
+            continue
+        try:
+            if fingerprint != _embedding_fingerprint(memory):
+                continue
+            vector = _clean_embedding(raw.get("vector"))
+        except TypeError, ValueError, OverflowError:
+            continue
         entries[memory_id] = EmbeddingCacheEntry(
             model=model,
             fingerprint=fingerprint,
@@ -2742,9 +2796,9 @@ def _prepare_stored_embedding_cache(data: Any) -> dict[str, EmbeddingCacheEntry]
             provider_model=raw.get("provider_model")
             if isinstance(raw.get("provider_model"), str)
             else None,
-            vector=_clean_embedding(raw.get("vector")),
+            vector=vector,
         )
-    return entries
+    return entries, len(entries) != len(raw_entries)
 
 
 def _record_as_storage_dict(memory: MemoryRecord) -> dict[str, Any]:
@@ -2788,13 +2842,13 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
         key=_clean_key(record.key),
     )
     if (
-        dt_util.parse_datetime(record.created_at) is None
-        or dt_util.parse_datetime(record.updated_at) is None
+        parse_datetime(record.created_at) is None
+        or parse_datetime(record.updated_at) is None
     ):
         raise ValueError("persistent memory timestamp is invalid")
     for value in (record.valid_from,):
         if value is not None and (
-            not isinstance(value, str) or dt_util.parse_datetime(value) is None
+            not isinstance(value, str) or parse_datetime(value) is None
         ):
             raise ValueError("persistent memory timestamp is invalid")
     return record
@@ -2890,7 +2944,7 @@ def _same_validity_instant(first: str | None, second: str | None) -> bool:
 
 def _clean_timestamp(value: str | None, field: str) -> str | None:
     cleaned = _clean_optional(value, field, 64)
-    if cleaned is not None and dt_util.parse_datetime(cleaned) is None:
+    if cleaned is not None and parse_datetime(cleaned) is None:
         raise ValueError(f"{field} must be an ISO 8601 timestamp")
     return cleaned
 

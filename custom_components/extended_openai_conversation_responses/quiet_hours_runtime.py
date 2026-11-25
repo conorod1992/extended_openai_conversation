@@ -40,6 +40,7 @@ from .global_runtime import global_runtime_available, require_global_runtime
 from .local_time import resolve_wall_time as _resolve_quiet_wall_time
 from .operational_errors import log_handled_failure
 from .persistence_hardening import _async_settle_transactional_save
+from .record_timestamps import parse_datetime
 from .strict_store import PropagatingWriteStore, _async_settle_store_io
 
 _STORAGE_VERSION = 3
@@ -299,7 +300,7 @@ def _config_from_data(value: Any) -> QuietHoursConfig:
 def _safe_iso(value: Any) -> datetime | None:
     if not isinstance(value, str):
         return None
-    parsed = dt_util.parse_datetime(value)
+    parsed = parse_datetime(value)
     return parsed if parsed is not None and parsed.tzinfo is not None else None
 
 

@@ -21,7 +21,7 @@ from homeassistant.util import dt as dt_util
 from . import ExtendedOpenAIConfigEntry
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL, DOMAIN
-from .guest_mode import GuestModeManager, async_get_guest_mode
+from .guest_mode import GuestModeManager, async_get_guest_mode, get_loaded_guest_mode
 from .local_time import resolve_wall_time
 from .persistence_hardening import StorageRepairRequired
 from .usage import UsageManager, async_get_usage, usage_retention_policy
@@ -41,13 +41,29 @@ async def async_setup_entry(
     for subentry in config_entry.subentries.values():
         if subentry.subentry_type != "conversation":
             continue
+        guest_mode: GuestModeManager | None
         try:
             usage = await async_get_usage(
                 hass, config_entry.entry_id, subentry.subentry_id
             )
-            guest_mode = await async_get_guest_mode(
-                hass, config_entry.entry_id, subentry.subentry_id
-            )
+            try:
+                guest_mode = await async_get_guest_mode(
+                    hass, config_entry.entry_id, subentry.subentry_id
+                )
+            except (OSError, HomeAssistantError) as err:
+                if not isinstance(err, OSError) and not isinstance(
+                    err.__cause__, OSError
+                ):
+                    raise
+                _LOGGER.error(
+                    "Assistant %s Guest Mode storage is unavailable",
+                    subentry.subentry_id,
+                )
+                # The getter retains the unavailable manager so recovery can
+                # later notify the same entity. Usage and sibling sensors work.
+                guest_mode = get_loaded_guest_mode(
+                    hass, config_entry.entry_id, subentry.subentry_id
+                )
         except StorageRepairRequired as err:
             _LOGGER.error(
                 "Assistant %s sensors remain unavailable because retained storage requires repair: %s",
@@ -75,7 +91,11 @@ async def async_setup_entry(
                 UsageTodaySensor(subentry, usage),
                 UsageMonthSensor(subentry, usage),
                 LastResponseUsageSensor(subentry, usage),
-                GuestModeSensor(subentry, guest_mode),
+                *(
+                    [GuestModeSensor(subentry, guest_mode)]
+                    if guest_mode is not None
+                    else []
+                ),
             ],
             config_subentry_id=subentry.subentry_id,
         )

@@ -142,6 +142,17 @@ START_FRESH_CONVERSATION_TOOL_NAME = runtime_function_tool_name(
 CHAT_COMPLETIONS_TOOL_LIMIT = 128
 
 
+def has_chat_completions_tool_limit(
+    entry_data: Mapping[str, Any], *, client: Any = None
+) -> bool:
+    """Identify endpoints whose Chat Completions requests have a known cap."""
+    return effective_api_provider(
+        entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+    ) == "azure" or is_native_openai_connection(
+        entry_data, client=client, allow_query=True
+    )
+
+
 def validate_provider_tool_count(count: int, limit: int | None) -> None:
     """Enforce the same provider constraint before saves and live dispatch."""
     if limit is not None and count > limit:
@@ -802,12 +813,7 @@ def build_provider_request_snapshot(
         tool_limit=(
             CHAT_COMPLETIONS_TOOL_LIMIT
             if api_mode == API_MODE_CHAT_COMPLETIONS
-            and (
-                provider == "azure"
-                or is_native_openai_connection(
-                    entry_data, client=client, allow_query=True
-                )
-            )
+            and has_chat_completions_tool_limit(entry_data, client=client)
             else None
         ),
         reasoning_items_supported=reasoning_items_supported,
@@ -983,6 +989,7 @@ def validate_runtime_readiness(
     client: Any = None,
     ha_snapshot: ToolSnapshot | None = None,
     previous_model_capabilities: Mapping[str, Any] | None = None,
+    reserve_ha_tools: bool = False,
 ) -> ProviderRequestSnapshot:
     """Validate the initial Conversation catalogue for supported request scopes.
 
@@ -1029,7 +1036,7 @@ def validate_runtime_readiness(
         else validate_function_groups(options.get(CONF_FUNCTION_GROUPS, []), configured)
     )
     budget_available = function_call_budget_available(options)
-    reserve_configured_ha_tools = False
+    reserve_configured_ha_tools = reserve_ha_tools
     if ha_snapshot is not None:
         configured = ha_snapshot.project(configured)
     elif (
@@ -1050,10 +1057,11 @@ def validate_runtime_readiness(
         else:
             if previous.tool_limit is None:
                 reserve_configured_ha_tools = True
-                configured = [
-                    {**tool, "ha_available": True} if is_ha_tool(tool) else tool
-                    for tool in configured
-                ]
+    if reserve_configured_ha_tools:
+        configured = [
+            {**tool, "ha_available": True} if is_ha_tool(tool) else tool
+            for tool in configured
+        ]
 
     selected_skills = options.get(CONF_SKILLS, []) or []
     manager = SkillManager.get_loaded_instance() if selected_skills else None

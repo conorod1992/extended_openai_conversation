@@ -73,6 +73,7 @@ from .context import (
     async_select_summary_history,
     history_as_summary_text,
     partition_history,
+    replace_chat_log_content,
 )
 from .context_summary_performance import (
     ContextSummaryProvider,
@@ -657,7 +658,7 @@ def _discard_conditional_drafts(
             and content.native is not None
         ):
             retained.append(replace(content, content=None))
-    chat_log.content[:] = retained
+    replace_chat_log_content(chat_log, retained)
 
 
 def _responses_reasoning_route(
@@ -1498,6 +1499,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             immediate_estimate,
                             threshold,
                             estimate_history,
+                            chat_log=chat_log,
                         )
                     ):
                         messages = (
@@ -2085,7 +2087,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 else content
                 for content in updated_content
             ]
-        chat_log.content[:] = updated_content
+        replace_chat_log_content(chat_log, updated_content)
         for call in retained_calls:
             chat_log.async_add_assistant_content_without_tools(
                 make_tool_result_content(
@@ -3052,10 +3054,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         if strategy == CONTEXT_TRUNCATE_CLEAR:
             _LOGGER.info("Context threshold exceeded, conversation history cleared")
             parts = partition_history(chat_log.content)
-            chat_log.content[:] = [
-                *parts.prefix[:1],
-                *(parts.turns[-1] if parts.turns else []),
-            ]
+            replace_chat_log_content(
+                chat_log,
+                [*parts.prefix[:1], *(parts.turns[-1] if parts.turns else [])],
+            )
             return
 
         if strategy == CONTEXT_TRUNCATE_SUMMARIZE:
@@ -3078,13 +3080,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     provider_binding=provider_binding,
                 )
                 if summary:
-                    chat_log.content[:] = [
-                        *retained_parts.prefix[:1],
-                        conversation.SystemContent(
-                            content=f"Conversation summary:\n{summary}"
-                        ),
-                        *(item for turn in retained_parts.turns for item in turn),
-                    ]
+                    replace_chat_log_content(
+                        chat_log,
+                        [
+                            *retained_parts.prefix[:1],
+                            conversation.SystemContent(
+                                content=f"Conversation summary:\n{summary}"
+                            ),
+                            *(item for turn in retained_parts.turns for item in turn),
+                        ],
+                    )
                     _LOGGER.info(
                         "Context threshold exceeded, older conversation summarized"
                     )
@@ -3099,7 +3104,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         }:
             strategy = DEFAULT_CONTEXT_TRUNCATE_STRATEGY
         if await async_keep_recent_messages(
-            chat_log.content, observed_input_tokens, threshold, estimate
+            chat_log.content,
+            observed_input_tokens,
+            threshold,
+            estimate,
+            chat_log=chat_log,
         ):
             _LOGGER.info(
                 "Context threshold exceeded, oldest conversation turns removed"

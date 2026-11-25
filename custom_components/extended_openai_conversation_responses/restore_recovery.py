@@ -46,6 +46,7 @@ from .live_subentry_updates import (
 from .mutation_outcomes import mark_mutation_failure, mutation_failure
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
+from .record_timestamps import parse_datetime
 from .scope import ResolvedDataScope
 from .storage_namespaces import RESTORE_JOURNAL_PREFIX as RESTORE_JOURNAL_PREFIX
 from .strict_store import PropagatingWriteStore
@@ -363,7 +364,7 @@ async def _async_load_journal(
         or value["subentry_id"] != subentry_id
         or phase not in _PHASES
         or not isinstance(created_at, str)
-        or dt_util.parse_datetime(created_at) is None
+        or parse_datetime(created_at) is None
     ):
         raise backup.BackupError("Pending restore transaction is corrupted")
     journal = dict(value)
@@ -708,10 +709,15 @@ def reset_restored_runtime(
     managers: backup.AgentDataParticipants | None = None,
     preserve_continuity: bool = False,
     replace_usage: bool = True,
+    *,
+    reset_native_history: bool = True,
 ) -> None:
     """Reset transient state without splitting live agents from manager registries."""
     from . import continuity, function_groups, request_rules, usage
-    from .conversation_id_ownership import has_live_conversation_owner
+    from .conversation_id_ownership import (
+        has_live_conversation_owner,
+        mark_default_history_for_restore,
+    )
 
     key = (entry_id, subentry_id)
     agent = _active_agent(hass, entry_id, subentry_id)
@@ -738,6 +744,8 @@ def reset_restored_runtime(
         and isinstance(archive, backup.ConversationArchive)
         else frozenset()
     )
+    if reset_native_history:
+        mark_default_history_for_restore(hass, subentry_id, retained_ha_default_ids)
     retained_sessions: frozenset[str] = frozenset()
     for current in {
         id(item): item
@@ -1119,7 +1127,13 @@ async def _rollback_transaction(
     # Retain only live identities verified by those restored bindings; portable
     # target replacement must still use its separate reset policy.
     reset_restored_runtime(
-        hass, entry.entry_id, subentry.subentry_id, managers, True, False
+        hass,
+        entry.entry_id,
+        subentry.subentry_id,
+        managers,
+        True,
+        False,
+        reset_native_history=False,
     )
     await _update_configuration(hass, entry, subentry, rollback)
     await store.async_remove()
@@ -1583,6 +1597,7 @@ async def _async_recover_pending_restore(
                 managers,
                 journal["phase"] != _PHASE_COMMITTED,
                 journal["phase"] == _PHASE_COMMITTED and selected.restores("usage"),
+                reset_native_history=side == "target",
             )
             context: dict[str, Any] = {}
             if any(value != entry_api_provider(entry) for value in providers.values()):

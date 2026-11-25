@@ -12,6 +12,7 @@ from .agent_config import (
     normalized_agent_integer,
     validate_function_groups,
 )
+from .agent_configuration import optional_manager_ready
 from .const import (
     CONF_ARCHIVE_ENABLED,
     CONF_CONTINUE_CONVERSATION,
@@ -36,7 +37,7 @@ from .guest_mode import async_get_guest_mode, resolve_guest_policy
 from .ha_llm_tools import ToolSnapshot, async_discover
 from .helpers import get_exposed_entities
 from .knowledge import get_loaded_knowledge
-from .memory import memory_enabled
+from .memory import get_loaded_memory, memory_enabled
 from .model_payload import count_model_function_tools
 from .prompt import render_effective_prompt
 from .request import (
@@ -89,9 +90,10 @@ async def async_preview_effective_request(
     subsystem_status = hass.data.get(SUBSYSTEM_STATUS_KEY, {}).get(
         (entry.entry_id, subentry.subentry_id), {}
     )
-    memory_available = (
-        subsystem_status.get("persistent_memory", {}).get("status") != "failed"
-    )
+    memory = get_loaded_memory(hass, entry.entry_id, subentry.subentry_id)
+    memory_available = subsystem_status.get("persistent_memory", {}).get(
+        "status"
+    ) != "failed" and (memory is None or optional_manager_ready(memory))
     archive_status = subsystem_status.get("archive", {})
     archive_session_available = (
         archive_status.get("status") != "failed"
@@ -127,9 +129,9 @@ async def async_preview_effective_request(
             "Active temporary memories are excluded by the current Guest Mode policy."
         )
     elif temporary_available:
-        temporary_available = (
-            subsystem_status.get("temporary_memory", {}).get("status") != "failed"
-        )
+        temporary_available = subsystem_status.get("temporary_memory", {}).get(
+            "status"
+        ) != "failed" and (temporary is None or optional_manager_ready(temporary))
         if temporary_available:
             try:
                 temporary_memories = (
@@ -162,15 +164,14 @@ async def async_preview_effective_request(
     knowledge_available = bool(
         guest_policy.knowledge_access
         and options.get(CONF_KNOWLEDGE_ENABLED)
-        and knowledge is not None
-        and knowledge.initialized
+        and optional_manager_ready(knowledge)
         and knowledge.source_count > 0
     )
     if (
         guest_policy.knowledge_access
         and options.get(CONF_KNOWLEDGE_ENABLED)
         and knowledge is not None
-        and not knowledge.initialized
+        and not optional_manager_ready(knowledge)
     ):
         notes.append(
             "Knowledge Library is unavailable; its tools and instructions are excluded until storage recovery."

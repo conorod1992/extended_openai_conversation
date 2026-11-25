@@ -15,7 +15,9 @@ immediately after an answer.
   mappings; it does not perform speaker recognition. If a personal user cannot be
   resolved, continuity falls back to that device, or to a new/Home Assistant-default
   session when no usable device exists. Shared household scope is never treated as a
-  personal user.
+  personal user. A voice device mapped to a personal user keeps a separate live
+  conversation from requests authenticated as that user. Both can use eligible
+  retained data under the existing access policy.
 
 Requests using the same Home Assistant conversation ID are serialized, including
 device/user modes that fall back to Home Assistant default. Separate conversation
@@ -43,7 +45,9 @@ The conversation timeout is an inactivity timeout and every successful turn rese
 it. For per-device and per-user continuity, successful local responses also keep
 the conversation's selected Persistent Memory bundle active. Context remains
 subject to the normal threshold, truncation, summarization, and
-token limits. Continuity mappings and conversation-scoped Function Group and Request
+token limits. Local intents and Request Rules that answer without a model keep
+the latest 50 complete turns in live history. Conversation Archive follows its own
+retention settings. Continuity mappings and conversation-scoped Function Group and Request
 Rule state are intentionally kept in memory rather than persisted. A Home Assistant
 restart therefore starts a fresh live conversation even if the configured inactivity
 timeout had not expired.

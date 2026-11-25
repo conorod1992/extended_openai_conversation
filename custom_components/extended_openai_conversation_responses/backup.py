@@ -53,8 +53,10 @@ from .private_backup import (
     decode_document,
     encode_document,
 )
+from .record_timestamps import parse_datetime
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import redact_secrets, restore_redacted_secrets
+from .strict_json import check_document_unicode
 from .temporary_memory import (
     TemporaryMemory,
     TemporaryMemoryRecord,
@@ -460,6 +462,7 @@ def _validate_data_categories(
 def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
     """Perform only context-free JSON processing and transport size checks."""
     if isinstance(value, DecodedPrivateDocument):
+        _validate_import_unicode(value)
         return value
     if (
         isinstance(max_bytes, bool)
@@ -476,10 +479,13 @@ def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
             raise BackupError(
                 f"The backup exceeds the {limit_mb} MB safety limit"
             ) from err
+        except UnicodeError as err:
+            raise BackupError("The backup contains malformed Unicode") from err
         try:
             value = json.loads(value)
         except json.JSONDecodeError as err:
             raise BackupError("The backup is incomplete or corrupted") from err
+        _validate_import_unicode(value)
     else:
         try:
             for _chunk in iter_bounded_json(value, max_bytes):
@@ -500,6 +506,13 @@ def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
         )
     except (ValueError, TypeError, KeyError, yaml.YAMLError) as err:
         raise BackupError("The private backup encoding is invalid") from err
+
+
+def _validate_import_unicode(value: Any) -> None:
+    try:
+        check_document_unicode(value)
+    except ValueError as err:
+        raise BackupError(str(err)) from None
 
 
 def _inspect_decoded_backup(
@@ -548,7 +561,7 @@ def _inspect_decoded_backup(
     integration_version = value["integration_version"]
     if (
         not isinstance(created_at, str)
-        or dt_util.parse_datetime(created_at) is None
+        or parse_datetime(created_at) is None
         or not isinstance(integration_version, str)
         or not integration_version
     ):

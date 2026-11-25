@@ -1,7 +1,9 @@
 """Private Archive activity through Home Assistant's conversation entry point."""
 
+import asyncio
 from datetime import timedelta
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
@@ -612,10 +614,13 @@ async def test_private_followup_after_knowledge_restore(
         await agent._archive.async_backup_data()
     )
     assert agent._archive._sessions[session.session_id].retention_state == "private"
-    if mode != CONVERSATION_CONTINUITY_HA_DEFAULT:
-        # Reusing a privacy identity must not resurrect provider context in Core's log.
-        assert "Before restore content" not in json.dumps(sent[-1])
-        assert "Before restore reply" not in json.dumps(sent[-1])
+    recent = json.dumps(sent[-1]["messages"])
+    if rollback and mode == CONVERSATION_CONTINUITY_HA_DEFAULT:
+        assert "Before restore content" in recent
+        assert "Before restore reply" in recent
+    else:
+        assert "Before restore content" not in recent
+        assert "Before restore reply" not in recent
 
     retained_after = await say(
         "Retained followup", retained_before.conversation_id, retained_user
@@ -758,6 +763,11 @@ async def test_ha_default_knowledge_restore_keeps_only_verified_runtime(
     if retained:
         assert followup.conversation_id == chat_id
         assert "Switch models and remember this turn" in json.dumps(sent[1]["messages"])
+    elif witness == "private":
+        assert followup.conversation_id == chat_id
+        assert (
+            "Switch models and remember this turn" in json.dumps(sent[1]["messages"])
+        ) is rollback
 
 
 async def test_archive_restore_preserves_live_unretained_privacy(hass, monkeypatch):
@@ -822,9 +832,20 @@ async def test_archive_restore_preserves_live_unretained_privacy(hass, monkeypat
     )
 
     agent = conversation.async_get_agent(hass, agent.entry.entry_id)
-    _provider(monkeypatch, agent, ["Answer"])
+    with monkeypatch.context() as interrupted:
+        interrupted.setattr(
+            agent,
+            "_async_begin_archive_session",
+            AsyncMock(side_effect=asyncio.CancelledError),
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await _say(hass, agent, "Aborted first follow-up", conversation_id)
+    after = _provider(monkeypatch, agent, ["Answer"])
     result = await _say(hass, agent, "Private follow-up", conversation_id)
     assert _speech(result) == "Answer"
     assert result.conversation_id == conversation_id
     assert hass.data[DATA_CHAT_SESSION][conversation_id] is native
+    messages = json.dumps(after[0]["messages"])
+    assert "Open conversation" not in messages
+    assert "Make this private" not in messages
     assert "Private follow-up" not in str(await agent._archive.async_backup_data())

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 import logging
 from typing import Any
@@ -72,17 +72,57 @@ def validate_provider_connection(connection: Any) -> str:
     )[0]
 
 
-def validate_agent_provider_request(
-    subentry_type: str, options: Mapping[str, Any], provider_data: Mapping[str, Any]
+async def async_validate_agent_provider_request(
+    hass: HomeAssistant,
+    subentry_type: str,
+    options: Mapping[str, Any],
+    provider_data: Mapping[str, Any],
+    *,
+    rules: Sequence[Mapping[str, Any]] = (),
+    user_id: str | None = None,
+    discover_ha_tools: bool = True,
+    previous_provider_data: Mapping[str, Any] | None = None,
 ) -> None:
-    """Use the agent's production request validation before changing its provider."""
-    from .request import build_provider_request_snapshot
-    from .request_rules import validate_routed_request_options
+    """Validate an affected assistant's defaults and enabled static routes."""
+    from .request import (
+        async_capacity_ha_snapshot,
+        build_provider_request_snapshot,
+        has_chat_completions_tool_limit,
+    )
+    from .request_rules import (
+        validate_routed_request_options,
+        validate_saved_model_routes,
+    )
 
     if subentry_type == "ai_task_data":
         build_provider_request_snapshot(options, provider_data, tools_required=False)
-    else:
-        validate_routed_request_options(options, provider_data)
+        return
+
+    ha_snapshot = (
+        await async_capacity_ha_snapshot(hass, options, user_id)
+        if discover_ha_tools
+        else None
+    )
+    # The validating caller's HA catalogue cannot establish what every future
+    # caller can use. A new cap must also fit eligible saved HA references.
+    reserve_ha_tools = (
+        previous_provider_data is not None
+        and has_chat_completions_tool_limit(provider_data)
+        and not has_chat_completions_tool_limit(previous_provider_data)
+    )
+    validate_routed_request_options(
+        options,
+        provider_data,
+        ha_snapshot=ha_snapshot,
+        reserve_ha_tools=reserve_ha_tools,
+    )
+    validate_saved_model_routes(
+        rules,
+        options,
+        provider_data,
+        ha_snapshot=ha_snapshot,
+        reserve_ha_tools=reserve_ha_tools,
+    )
 
 
 def incompatible_provider_agent(

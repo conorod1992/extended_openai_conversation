@@ -165,6 +165,68 @@ def test_cleanup_registration_releases_claim_and_ignores_unsupported_session() -
         unsupported, hass, "conversation", owner
     )
 
+
+def test_restore_marks_only_exact_owned_native_history() -> None:
+    from homeassistant.components import conversation
+
+    owner = ("assistant", "user:owner")
+    other_owner = ("sibling", "user:owner")
+    hass = SimpleNamespace(
+        data={
+            ownership._CONVERSATION_ID_OWNERS: {
+                "reset": owner,
+                "retained": owner,
+                "managed": owner,
+                "sibling": other_owner,
+                "superseded": owner,
+            },
+            ownership.DATA_CHAT_SESSION: {},
+        }
+    )
+    native = hass.data[ownership.DATA_CHAT_SESSION]
+
+    def register(chat_id, claimant, *, ha_default=True):
+        session = SimpleNamespace(conversation_id=chat_id, async_on_cleanup=Mock())
+        native[chat_id] = session
+        ownership.register_conversation_id_cleanup(
+            session, hass, chat_id, claimant, ha_default=ha_default
+        )
+        return session
+
+    reset = register("reset", owner)
+    retained = register("retained", owner)
+    managed = register("managed", owner, ha_default=False)
+    sibling = register("sibling", other_owner)
+    unclaimed = register("unclaimed", owner)
+    superseded = register("superseded", owner)
+    replacement = SimpleNamespace(conversation_id="superseded")
+    native["superseded"] = replacement
+    cached = SimpleNamespace(
+        content=[
+            conversation.SystemContent(content="Old system"),
+            conversation.UserContent(content="Old question"),
+        ],
+        extra_system_prompt="Old prompt",
+        llm_api=object(),
+    )
+    hass.data[ownership.DATA_CHAT_LOGS] = {"reset": cached}
+    admitted = SimpleNamespace(content=cached.content.copy())
+
+    ownership.mark_default_history_for_restore(
+        hass, "assistant", frozenset({"retained"})
+    )
+
+    assert ownership.take_default_history_reset(hass, reset, admitted)
+    # Legacy Core can abandon the admitted copy instead of publishing it.
+    assert [(item.role, item.content) for item in cached.content] == [("system", "")]
+    assert cached.extra_system_prompt is None
+    assert cached.llm_api is None
+    for unaffected in (
+        reset, retained, managed, sibling, unclaimed, superseded, replacement
+    ):
+        assert not ownership.take_default_history_reset(hass, unaffected, admitted)
+
+
 class _UnownedLog(SimpleNamespace):
     """Weak-referenceable stand-in with Core's lifetime and identity semantics."""
 

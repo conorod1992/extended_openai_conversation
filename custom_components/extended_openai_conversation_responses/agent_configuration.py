@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import logging
-from typing import Any
+from typing import Any, TypeGuard
 
 from homeassistant.const import CONF_API_KEY
 
@@ -136,10 +136,15 @@ def _set_subsystem_status(
         setter(subsystem, configured, error, healthy=healthy)
 
 
+def optional_manager_ready[T](manager: T | None) -> TypeGuard[T]:
+    """Check that a runtime manager can serve its capability."""
+    return manager is not None and getattr(manager, "initialized", True) is not False
+
+
 def _manager_needs_recovery(entity: Any, attribute: str) -> bool:
     """Separate a retained manager reference from its initialization state."""
     manager = getattr(entity, attribute, None)
-    return manager is not None and getattr(manager, "initialized", True) is False
+    return manager is not None and not optional_manager_ready(manager)
 
 
 def _runtime_needs_recovery(entity: Any) -> bool:

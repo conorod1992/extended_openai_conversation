@@ -1018,6 +1018,53 @@ async def _initialized(data=None) -> tuple[knowledge.KnowledgeLibrary, StorageDo
     return library, storage
 
 
+async def test_restored_knowledge_ids_are_exact_across_guest_list_search_and_get(hass):
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        normalize_agent_config,
+    )
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        resolve_guest_policy,
+    )
+
+    wanted, other = " manual ", "manual"
+    backup = {"sources": [_stored_source(wanted), _stored_source(other)]}
+    library, storage = await _initialized()
+    await library.async_replace_backup(KnowledgeLibrary.validate_backup_data(backup))
+    library = await _library(storage)
+
+    options = normalize_agent_config(
+        {
+            "guest_policy_version": 2,
+            "guest_knowledge_policy": "custom",
+            "guest_knowledge_source_ids": [wanted, wanted],
+        }
+    )
+    assert options["guest_knowledge_source_ids"] == [wanted]
+    policy = resolve_guest_policy(
+        hass, options, SimpleNamespace(is_active=lambda: True), exposed_entities=[]
+    )
+    assert policy.knowledge_source_ids == frozenset({wanted})
+
+    entity = _entity(True, 2)
+    entity._knowledge = library
+    entity._effective_guest_policy = lambda: policy
+    listing = await entity._async_execute_knowledge_tool("list", {})
+    assert [source["source_id"] for source in listing["sources"]] == [wanted]
+    wanted_result = await entity._async_execute_knowledge_tool(
+        "search", {"query": "searchable", "source_ids": [wanted]}
+    )
+    assert [result["source_id"] for result in wanted_result["results"]] == [wanted]
+    other_result = await entity._async_execute_knowledge_tool(
+        "search", {"query": "searchable", "source_ids": [other]}
+    )
+    assert other_result["results"] == []
+    assert (await entity._async_execute_knowledge_tool("get", {"source_id": wanted}))[
+        "source_id"
+    ] == wanted
+    with pytest.raises(RuntimeError):
+        await entity._async_execute_knowledge_tool("get", {"source_id": other})
+
+
 @pytest.mark.asyncio
 async def test_home_assistant_storage_adapter_builds_private_atomic_store_and_delegates(
     monkeypatch,

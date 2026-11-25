@@ -1097,7 +1097,6 @@ def agent_config_value_snapshot(
         CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
         CONF_GUEST_CONTROL_EXCLUDED_AREAS,
         CONF_GUEST_CONTROL_EXCLUDED_LABELS,
-        CONF_GUEST_KNOWLEDGE_SOURCE_IDS,
         CONF_GUEST_ALLOWED_FUNCTION_NAMES,
         CONF_GUEST_ALLOWED_GROUP_IDS,
     ):
@@ -1107,6 +1106,17 @@ def agent_config_value_snapshot(
         ):
             raise AgentConfigError(key, "must be a list of non-empty strings")
         result[key] = list(dict.fromkeys(value.strip() for value in values))
+
+    # Source identifiers are opaque. Legacy stores and backups can already
+    # contain two IDs that differ only by leading or trailing whitespace.
+    source_ids = result.get(CONF_GUEST_KNOWLEDGE_SOURCE_IDS, [])
+    if not isinstance(source_ids, list) or not all(
+        isinstance(value, str) and value for value in source_ids
+    ):
+        raise AgentConfigError(
+            CONF_GUEST_KNOWLEDGE_SOURCE_IDS, "must be a list of non-empty strings"
+        )
+    result[CONF_GUEST_KNOWLEDGE_SOURCE_IDS] = list(dict.fromkeys(source_ids))
 
     mode = get_memory_mode(data)
     result[CONF_MEMORY_MODE] = mode

@@ -30,7 +30,7 @@ from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
-from .record_timestamps import stored_timestamp_instant
+from .record_timestamps import parse_datetime, stored_timestamp_instant
 from .retrieval_text import (
     _CJK_RUN,
     _LEXICAL_TOKEN,
@@ -508,9 +508,13 @@ class KnowledgeLibrary:
             raise ValueError("confirm_duplicate must be a boolean")
         fields = (title, description, content, enabled)
         if create_token is not None:
-            if not isinstance(create_token, str) or not re.fullmatch(r"[0-9a-f]{32}", create_token):
+            if not isinstance(create_token, str) or not re.fullmatch(
+                r"[0-9a-f]{32}", create_token
+            ):
                 raise ValueError("Invalid Knowledge create token")
-            source_id = sha256(f"knowledge/create/{create_token}".encode()).hexdigest()[:32]
+            source_id = sha256(f"knowledge/create/{create_token}".encode()).hexdigest()[
+                :32
+            ]
             fingerprint = sha256(json.dumps(fields).encode()).hexdigest()
         else:
             source_id = uuid4().hex
@@ -519,7 +523,9 @@ class KnowledgeLibrary:
             self._require_writable()
             if (existing := self._sources.get(source_id)) is not None:
                 if fingerprint is None or existing.creation_fingerprint != fingerprint:
-                    raise ValueError("Knowledge create token belongs to a different submission")
+                    raise ValueError(
+                        "Knowledge create token belongs to a different submission"
+                    )
                 # A receipt acknowledges the original create. Its revision
                 # must not authorize an edit over a later writer's changes.
                 return replace(
@@ -531,10 +537,13 @@ class KnowledgeLibrary:
                     updated_at=existing.created_at,
                 )
             if not confirm_duplicate and any(
-                (source.title, source.description, source.content, source.enabled) == fields
+                (source.title, source.description, source.content, source.enabled)
+                == fields
                 for source in self._sources.values()
             ):
-                raise DuplicateKnowledgeSource("An identical Knowledge source already exists")
+                raise DuplicateKnowledgeSource(
+                    "An identical Knowledge source already exists"
+                )
             if len(self._sources) >= MAX_SOURCES_PER_AGENT:
                 raise ValueError(
                     "knowledge source limit reached; delete a source before adding more"
@@ -768,11 +777,11 @@ class KnowledgeLibrary:
 
         valid: set[str] = set()
         ignored: list[str] = []
+        sources = self._published_sources()
         for requested_id in source_ids:
-            normalized_id = requested_id.strip()
-            source = self._published_sources().get(normalized_id)
-            if normalized_id and source is not None and source.enabled:
-                valid.add(normalized_id)
+            source = sources.get(requested_id)
+            if source is not None and source.enabled:
+                valid.add(requested_id)
             else:
                 ignored.append(requested_id)
         return valid, ignored
@@ -880,7 +889,11 @@ class KnowledgeLibrary:
         """Return canonical Knowledge sources, excluding the derived index."""
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
-            return {"sources": [_stored_source_dict(source) for source in self._sources.values()]}
+            return {
+                "sources": [
+                    _stored_source_dict(source) for source in self._sources.values()
+                ]
+            }
 
     @staticmethod
     def validate_backup_data(data: Any) -> list[KnowledgeSource]:
@@ -976,7 +989,11 @@ class KnowledgeLibrary:
         # builder. Never fall back to a synchronous complete-index rebuild.
         await _async_settle_transactional_save(
             self._storage.async_save(
-                {"sources": [_stored_source_dict(source) for source in self._sources.values()]}
+                {
+                    "sources": [
+                        _stored_source_dict(source) for source in self._sources.values()
+                    ]
+                }
             ),
             self._invalidate_after_unreadable_store,
             self._remember_committed_state,
@@ -1236,7 +1253,8 @@ def _source_from_stored(raw: Any) -> KnowledgeSource:
         raise ValueError("enabled must be a boolean")
     fingerprint = raw.get("creation_fingerprint")
     if fingerprint is not None and (
-        not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)
+        not isinstance(fingerprint, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)
     ):
         raise ValueError("Knowledge creation fingerprint is invalid")
     source = KnowledgeSource(
@@ -1267,8 +1285,8 @@ def _source_from_stored(raw: Any) -> KnowledgeSource:
     if not source.source_id or len(source.source_id) > 128:
         raise ValueError("invalid source ID")
     if (
-        dt_util.parse_datetime(source.created_at) is None
-        or dt_util.parse_datetime(source.updated_at) is None
+        parse_datetime(source.created_at) is None
+        or parse_datetime(source.updated_at) is None
     ):
         raise ValueError("Knowledge source timestamp is invalid")
     return replace(source, title=title, description=description, content=content)

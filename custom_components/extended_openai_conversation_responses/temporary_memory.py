@@ -25,7 +25,7 @@ from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
-from .record_timestamps import stored_timestamp_instant
+from .record_timestamps import parse_datetime, stored_timestamp_instant
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .storage_namespaces import TEMPORARY_MEMORY_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
@@ -383,7 +383,7 @@ class TemporaryMemory:
             )
             new_expiry = (
                 _parse_future_expiry(expires_at).isoformat()
-                if expires_at is not None
+                if expires_at is not None and expires_at != current.expires_at
                 else current.expires_at
             )
             if (
@@ -701,7 +701,7 @@ class TemporaryMemory:
         counts: Counter[str] = Counter()
         for record in self._records.values():
             owner = _valid_owner_scope_id(record.owner_scope_id)
-            expiry = dt_util.parse_datetime(record.expires_at)
+            expiry = parse_datetime(record.expires_at)
             if owner is not None and expiry is not None and expiry > now:
                 counts[owner] += 1
         return dict(counts)
@@ -714,7 +714,7 @@ class TemporaryMemory:
             record
             for record in self._records.values()
             if record.owner_scope_id == owner
-            and (dt_util.parse_datetime(record.expires_at) or now) > now
+            and (parse_datetime(record.expires_at) or now) > now
         ]
         records.sort(
             key=lambda record: (
@@ -834,8 +834,8 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
         raise _InvalidStoredMetadata("temporary memory metadata is invalid")
     _parse_expiry(record.expires_at)
     if (
-        dt_util.parse_datetime(record.created_at) is None
-        or dt_util.parse_datetime(record.updated_at) is None
+        parse_datetime(record.created_at) is None
+        or parse_datetime(record.updated_at) is None
     ):
         raise _InvalidStoredMetadata("temporary memory timestamp is invalid")
     return replace(
@@ -867,7 +867,7 @@ def _matches_owner(
 
 
 def _parse_expiry(value: str) -> datetime:
-    parsed = dt_util.parse_datetime(value)
+    parsed = parse_datetime(value)
     if parsed is None:
         raise ValueError("expires_at must be an ISO date-time with a timezone")
     if parsed.tzinfo is None:

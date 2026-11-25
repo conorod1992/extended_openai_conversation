@@ -364,6 +364,21 @@ async def _async_validate_configuration_request(
     return config
 
 
+async def _async_validate_capability_activation(
+    request: _ManagementRequest, config: dict[str, Any], field: str
+) -> None:
+    """Admit a newly enabled tool without blocking restrictive-only writes."""
+    if not config.get(field) or request.subentry.data.get(field):
+        return
+    revision = persisted_config_projection(request.subentry).revision
+    model_generation = catalog_generation()
+    await _async_validate_configuration_request(
+        request.hass, request.entry, request.subentry, config, request.user_id
+    )
+    _require_agent_config_revision(request.subentry, revision)
+    require_current_configuration_catalogue(request.hass, model_generation)
+
+
 async def _persist_function_configuration(
     hass: HomeAssistant,
     entry: Any,
@@ -683,7 +698,9 @@ def _unknown_management_action(request: _ManagementRequest) -> dict[str, Any]:
 
 def _request_rule_mutation_result(rules: Any, rule: dict[str, Any]) -> dict[str, Any]:
     """Keep the saved rule and revision independent of editor diagnostics."""
-    with after_confirmed_mutation("Request Rule was saved. Reload Request Rules before editing it again."):
+    with after_confirmed_mutation(
+        "Request Rule was saved. Reload Request Rules before editing it again."
+    ):
         result = {"rule": rule, "revision": rules.revision()}
     try:
         result["sensitive_matching_warning"] = rule_has_sensitive_actions(rule)
@@ -702,6 +719,7 @@ async def _async_validate_request_rule_mutation(
     rule: Mapping[str, Any],
     entry: Any,
     subentry: Any,
+    user_id: str | None = None,
 ) -> Callable[[], None]:
     """Validate dependencies and retain their configuration owner for admission."""
     from .request_rules import request_rule_repair, validate_rule_model_request
@@ -722,8 +740,21 @@ async def _async_validate_request_rule_mutation(
                 "Reload the latest settings before saving."
             )
 
-    check_configuration()
-    validate_rule_model_request(rule, source, getattr(entry, "data", {}))
+    action = rule.get("action", {})
+    if (
+        rule.get("enabled", True)
+        and rule.get("action_type") == "model_routing"
+        and not request_rule_repair(rule)
+        and not action.get("reset")
+        and (action.get("model") or action.get("azure_model"))
+    ):
+        ha_snapshot = await _async_capacity_ha_snapshot(hass, source, user_id)
+        check_configuration()
+        validate_rule_model_request(
+            rule, source, getattr(entry, "data", {}), ha_snapshot=ha_snapshot
+        )
+    else:
+        check_configuration()
     return check_configuration
 
 
@@ -822,7 +853,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
     if action == "create":
         candidate = _prepare_request_rule(message.get("rule"))
         check_configuration = await _async_validate_request_rule_mutation(
-            hass, candidate, request.entry, subentry
+            hass, candidate, request.entry, subentry, request.user_id
         )
         rule = await rules.async_create(
             candidate,
@@ -849,7 +880,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             confirm_function_response_change=confirm_function_response_change,
         )
         check_configuration = await _async_validate_request_rule_mutation(
-            hass, candidate, request.entry, subentry
+            hass, candidate, request.entry, subentry, request.user_id
         )
         rule = await rules.async_update(
             rule_id,
@@ -1067,7 +1098,9 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             snapshot, validated=True, provider=entry_api_provider(entry)
         )
         configured_tools = snapshot[CONF_FUNCTION_TOOLS]
-        _validated_model_request(snapshot, entry.data, subentry.data)
+        await _async_validate_capability_activation(
+            request, normalized, CONF_GUEST_MODE_ENABLED
+        )
         policy_config = guest_policy_editor_snapshot(hass, normalized, configured_tools)
         update_live_subentry(hass, entry, subentry, data=normalized)
         revision = saved_agent_config_revision(subentry, normalized, subentry.title)
@@ -1230,7 +1263,10 @@ async def _finish_saved_usage_retention(
         "Reload the settings and save retention again to retry cleanup."
     ):
         await async_finish_usage_retention_write(
-            request.hass, request.entry_id, request.subentry_id, updated_fields=updated_fields
+            request.hass,
+            request.entry_id,
+            request.subentry_id,
+            updated_fields=updated_fields,
         )
 
 
@@ -1343,7 +1379,9 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     timings["live_runtime_update"] = live_update
     phase = perf_counter()
     try:
-        with after_confirmed_mutation("Configuration was saved. Reload the latest settings before editing again."):
+        with after_confirmed_mutation(
+            "Configuration was saved. Reload the latest settings before editing again."
+        ):
             revision = saved_agent_config_revision(subentry, persisted, saved_title)
             result["revision"] = revision
             timings["revision_calculation_ms"] = _elapsed_ms(phase)
@@ -1642,12 +1680,20 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             try:
                 adopt_saved_configuration_revision(subentry, persisted, result)
             except Exception:
-                with after_confirmed_mutation("Configuration was saved. Reload the latest settings before editing again."):
-                    result["revision"] = saved_agent_config_revision(subentry, persisted, saved_title)
+                with after_confirmed_mutation(
+                    "Configuration was saved. Reload the latest settings before editing again."
+                ):
+                    result["revision"] = saved_agent_config_revision(
+                        subentry, persisted, saved_title
+                    )
             try:
-                seed_persisted_config_projection(entry, subentry, snapshot, result["revision"])
+                seed_persisted_config_projection(
+                    entry, subentry, snapshot, result["revision"]
+                )
             except Exception:
-                _LOGGER.warning("Committed configuration update could not seed its optional cache")
+                _LOGGER.warning(
+                    "Committed configuration update could not seed its optional cache"
+                )
         finally:
             await _finish_saved_usage_retention(request, updates)
         return result
@@ -1703,19 +1749,16 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             if message.get("mode", "current") == "current"
             else None,
         )
-        _validated_model_request(
-            parsed["config"],
-            entry.data,
-            ha_snapshot=await _async_capacity_ha_snapshot(
-                hass, parsed["config"], request.user_id
-            ),
+        ha_snapshot = await _async_capacity_ha_snapshot(
+            hass, parsed["config"], request.user_id
         )
+        _validated_model_request(parsed["config"], entry.data, ha_snapshot=ha_snapshot)
         if message.get("mode", "current") == "current":
             parsed["config"] = preserve_unselected_archive_retention(
                 subentry.data, parsed["config"]
             )
             await _async_validate_configuration_dependencies(
-                hass, entry, subentry, parsed["config"]
+                hass, entry, subentry, parsed["config"], ha_snapshot=ha_snapshot
             )
         preview_config = preserve_agent_model_setting_omissions(
             parsed["config"], agent_config_snapshot(parsed["config"], provider=provider)
@@ -1751,20 +1794,17 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             if message.get("mode", "current") == "current"
             else None,
         )
-        _validated_model_request(
-            parsed["config"],
-            entry.data,
-            ha_snapshot=await _async_capacity_ha_snapshot(
-                hass, parsed["config"], request.user_id
-            ),
+        ha_snapshot = await _async_capacity_ha_snapshot(
+            hass, parsed["config"], request.user_id
         )
+        _validated_model_request(parsed["config"], entry.data, ha_snapshot=ha_snapshot)
         mode = message.get("mode", "current")
         if mode == "current":
             parsed["config"] = preserve_unselected_archive_retention(
                 subentry.data, parsed["config"]
             )
             await _async_validate_configuration_dependencies(
-                hass, entry, subentry, parsed["config"]
+                hass, entry, subentry, parsed["config"], ha_snapshot=ha_snapshot
             )
             if message.get("confirm") is not True:
                 raise HomeAssistantError("Explicit confirmation is required")
@@ -2825,7 +2865,9 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
                 **metadata,
             )
             completion = (
-                nullcontext() if status == "duplicate" else after_confirmed_mutation(
+                nullcontext()
+                if status == "duplicate"
+                else after_confirmed_mutation(
                     "Memory was saved. Reload Memories before editing it again."
                 )
             )
@@ -2846,7 +2888,9 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
             clear_fields=message.get("clear_fields"),
             source="explicit",
         )
-        with after_confirmed_mutation("Memory was saved. Reload Memories before editing it again."):
+        with after_confirmed_mutation(
+            "Memory was saved. Reload Memories before editing it again."
+        ):
             return {
                 "status": "updated",
                 "scope_id": target,
@@ -2964,6 +3008,9 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         snapshot = _snapshot_normalized_configuration(
             response_data, validated=True, provider=entry_api_provider(request.entry)
         )
+        await _async_validate_capability_activation(
+            request, persisted, CONF_KNOWLEDGE_ENABLED
+        )
         result: dict[str, Any] = {
             "revision": None,
             "knowledge_enabled": bool(persisted.get(CONF_KNOWLEDGE_ENABLED, False)),
@@ -3009,7 +3056,9 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             )
         except DuplicateKnowledgeSource:
             return {"status": "duplicate"}
-        with after_confirmed_mutation("Knowledge source was saved. Reload Knowledge to read it."):
+        with after_confirmed_mutation(
+            "Knowledge source was saved. Reload Knowledge to read it."
+        ):
             return _knowledge_mutation_result(
                 request, library, {"status": "created"}, knowledge_source
             )
@@ -3022,7 +3071,9 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             message.get("enabled"),
             expected_revision=message.get("expected_revision"),
         )
-        with after_confirmed_mutation("Knowledge source was saved. Reload Knowledge to read it."):
+        with after_confirmed_mutation(
+            "Knowledge source was saved. Reload Knowledge to read it."
+        ):
             return _knowledge_mutation_result(
                 request, library, {"status": "updated"}, knowledge_source
             )
@@ -3065,10 +3116,14 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
         snapshot = settings_snapshot(candidate)
         update_configuration_subentry(hass, entry, subentry, data=candidate)
         try:
-            with after_confirmed_mutation("Settings were saved. Reload the latest settings before editing again."):
+            with after_confirmed_mutation(
+                "Settings were saved. Reload the latest settings before editing again."
+            ):
                 return {
                     "settings": snapshot,
-                    "revision": saved_agent_config_revision(subentry, candidate, subentry.title),
+                    "revision": saved_agent_config_revision(
+                        subentry, candidate, subentry.title
+                    ),
                 }
         finally:
             await _finish_saved_usage_retention(request, normalized)
@@ -3171,7 +3226,9 @@ async def async_management_command(
                 performance["maintenance_lease_ms"] = lease_ms
                 performance["command_total_ms"] = _elapsed_ms(started)
             except Exception:
-                _PERFORMANCE_LOGGER.warning("Could not record Management command timings")
+                _PERFORMANCE_LOGGER.warning(
+                    "Could not record Management command timings"
+                )
     return result
 
 
@@ -3261,7 +3318,9 @@ async def _async_management_request(
     try:
         from .management_datetime import project_management_dates
 
-        handler_ms = _elapsed_ms(handler_started) if handler_started is not None else None
+        handler_ms = (
+            _elapsed_ms(handler_started) if handler_started is not None else None
+        )
         result = project_management_dates(hass, section, dict(result))
         if isinstance(result.get("config"), dict):
             # Effective defaults and capabilities depend on installation-wide data,
@@ -3296,12 +3355,18 @@ async def _async_management_request(
                 performance["agent_resolution_ms"] = resolution_ms
                 performance["handler_ms"] = handler_ms
     except Exception:
-        if (
-            not _acknowledged_management_write(section, action, committed_result)
-            and not (configuration_action in {"save", "update"} and committed_result.get("valid") is True)
+        if not _acknowledged_management_write(
+            section, action, committed_result
+        ) and not (
+            configuration_action in {"save", "update"}
+            and committed_result.get("valid") is True
         ):
             raise
-        _LOGGER.warning("Saved Management mutation omitted optional response decoration (%s/%s)", section, action)
+        _LOGGER.warning(
+            "Saved Management mutation omitted optional response decoration (%s/%s)",
+            section,
+            action,
+        )
         result = committed_result
     return result
 
@@ -3421,19 +3486,29 @@ async def websocket_management(
 
     section, action = msg.get("section", "overview"), msg.get("action", "")
     try:
-        trace_request = is_configuration_timing_operation(section, action) or is_tool_mutation(section, action)
+        trace_request = is_configuration_timing_operation(
+            section, action
+        ) or is_tool_mutation(section, action)
         if trace_request:
             performance = result.get("_performance")
             if isinstance(performance, dict):
                 performance["websocket_pre_send_ms"] = _elapsed_ms(started)
         send_started = perf_counter() if trace_request else None
-        connection.send_result(msg["id"], management_function_response(result, section=section))
+        connection.send_result(
+            msg["id"], management_function_response(result, section=section)
+        )
     except Exception as err:
         if not _acknowledged_management_write(section, action, result):
             raise
-        _LOGGER.warning("Saved Management mutation could not send its result (%s/%s, %s)", section, action, type(err).__name__)
+        _LOGGER.warning(
+            "Saved Management mutation could not send its result (%s/%s, %s)",
+            section,
+            action,
+            type(err).__name__,
+        )
         connection.send_error(
-            msg["id"], "eoai_mutation_committed",
+            msg["id"],
+            "eoai_mutation_committed",
             "The change was saved, but the reply could not be built. Refresh to see the saved result.",
         )
         return

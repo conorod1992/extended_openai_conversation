@@ -14,6 +14,7 @@ from homeassistant.components import conversation
 from .model_tool_results import model_tool_result_data
 
 HistoryEstimator = Callable[[list[conversation.Content]], int]
+MAX_LOCAL_HISTORY_TURNS = 50
 
 
 @dataclass(slots=True)
@@ -42,6 +43,61 @@ def partition_history(content: list[conversation.Content]) -> HistoryParts:
     if current:
         turns.append(current)
     return HistoryParts(prefix, turns)
+
+
+def replace_chat_log_content(
+    chat_log: conversation.ChatLog, replacement: list[conversation.Content]
+) -> bool:
+    """Publish history changes without moving Core's current-turn trace boundary."""
+    turn_start = getattr(chat_log, "turn_start", None)
+    if isinstance(turn_start, int) and 0 <= turn_start < len(chat_log.content):
+        current = chat_log.content[turn_start]
+        if isinstance(current, conversation.UserContent):
+            # The same text can occur in several turns. Find the actual item
+            # supplied by Core rather than the last user or an equal message.
+            for index, item in enumerate(replacement):
+                if item is current:
+                    chat_log.turn_start = index
+                    break
+            else:
+                return False
+    chat_log.content[:] = replacement
+    return True
+
+
+def discard_chat_log_history(chat_log: conversation.ChatLog) -> None:
+    """Keep the system prefix and current turn when resetting live history."""
+    content = chat_log.content
+    if len(content) <= 1:
+        return
+    boundary = getattr(chat_log, "turn_start", None)
+    if not (
+        isinstance(boundary, int)
+        and 0 < boundary < len(content)
+        and isinstance(content[boundary], conversation.UserContent)
+    ):
+        # Older Core opens this request by appending its user message.
+        boundary = len(content) - 1
+    replace_chat_log_content(chat_log, [content[0], *content[boundary:]])
+
+
+def trim_local_turn_history(chat_log: conversation.ChatLog) -> None:
+    """Bound the live context of local replies without running a provider."""
+    if len(chat_log.content) <= MAX_LOCAL_HISTORY_TURNS:
+        return
+    parts = partition_history(chat_log.content)
+    if len(parts.turns) > MAX_LOCAL_HISTORY_TURNS:
+        replace_chat_log_content(
+            chat_log,
+            [
+                *parts.prefix,
+                *(
+                    item
+                    for turn in parts.turns[-MAX_LOCAL_HISTORY_TURNS:]
+                    for item in turn
+                ),
+            ],
+        )
 
 
 def _weight(items: list[conversation.Content]) -> int:
@@ -202,6 +258,8 @@ async def async_keep_recent_messages(
     observed_input_tokens: int,
     target_tokens: int,
     estimate: HistoryEstimator | None = None,
+    *,
+    chat_log: conversation.ChatLog | None = None,
 ) -> bool:
     """Prepare detached retention in a worker; publish only on the owning loop."""
     snapshot = list(content)
@@ -215,6 +273,8 @@ async def async_keep_recent_messages(
     ):
         return False
     if changed:
+        if chat_log is not None:
+            return replace_chat_log_content(chat_log, retained)
         content[:] = retained
     return changed
 

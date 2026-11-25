@@ -10,6 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 import homeassistant.util.dt as dt_util
 
 from .ha_permissions import get_active_ha_context
+from .record_timestamps import parse_datetime
 from .resource_limits import MAX_NATIVE_SERVICE_ACTIONS
 
 MAX_HISTORY_ENTITY_IDS = 50
@@ -55,7 +56,7 @@ def _parse_datetime(value: Any, label: str) -> datetime:
     if not isinstance(value, str):
         raise HomeAssistantError(f"{label} must be an ISO 8601 datetime")
     try:
-        parsed = dt_util.parse_datetime(value)
+        parsed = parse_datetime(value)
         if parsed is not None:
             return dt_util.as_utc(parsed)
     except (ValueError, OverflowError) as err:

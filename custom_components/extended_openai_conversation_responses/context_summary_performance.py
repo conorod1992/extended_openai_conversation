@@ -81,7 +81,9 @@ async def async_apply_context_summary(entity: Any, chat_log: Any) -> bool:
     conversation_id = str(getattr(chat_log, "conversation_id", "") or "")
     if not conversation_id:
         return False
-    return await _manager(entity).async_apply(conversation_id, chat_log.content)
+    return await _manager(entity).async_apply(
+        conversation_id, chat_log.content, chat_log=chat_log
+    )
 
 
 @asynccontextmanager

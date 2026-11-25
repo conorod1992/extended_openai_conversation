@@ -92,6 +92,10 @@ Recent failed runs are called out separately. Recent-run and provider-request de
 
 **Retained runs without provider requests** uses the same recorded completion day as the daily totals, including after a Home Assistant timezone change or restore. If a legacy run could fall on either side of the selected period’s boundary, this count displays **Unavailable**. Clearing or expiring run details leaves the aggregate totals available.
 
+When a daily model, provider or API mode breakdown exceeds its entry limit, the selected period includes those tokens under **Other (omitted from daily breakdowns)**. The displayed percentages include this remainder.
+
+If a clear or retention write loses its acknowledgement, the integration checks what reached disk before saving further details. If the detail store cannot be read, new detail writes are suspended until storage can be reloaded. Healthy daily and lifetime totals continue to be recorded.
+
 Recent-run timestamps are displayed in Home Assistant's configured timezone using the browser's locale, while the exact provider timestamp remains available on the semantic time element. **Cached input** is request content the provider has seen before and can reuse. It remains part of total tokens rather than additional usage, and may cost less than uncached input when the provider supports discounted caching.
 
 Detailed request and run records are content-free. They never contain prompts, replies, tool arguments, tool results, memories, knowledge text, attachments, provider payloads, web-search bodies, or hidden reasoning.

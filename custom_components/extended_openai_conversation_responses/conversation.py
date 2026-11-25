@@ -43,6 +43,7 @@ from .agent_configuration import (
     _archive_runtime_required,
     async_ensure_optional_manager,
     async_reconcile_runtime_configuration,
+    optional_manager_ready,
     sync_memory_embedding_provider,
 )
 from .agent_maintenance import conversation_request_lease, get_agent_maintenance_gate
@@ -99,6 +100,11 @@ from .const import (
     SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_OFF,
 )
+from .context import (
+    discard_chat_log_history,
+    replace_chat_log_content,
+    trim_local_turn_history,
+)
 from .continuity import (
     GUEST_CONTINUITY_NAMESPACE,
     ConversationContinuity,
@@ -115,6 +121,7 @@ from .conversation_id_ownership import (
     has_live_conversation_owner,
     register_conversation_id_cleanup,
     resolve_parent_conversation_id,
+    take_default_history_reset,
 )
 from .conversation_lifecycle import (
     ConversationLifecycleToken,
@@ -903,6 +910,7 @@ class ExtendedOpenAIAgentEntity(
                         if request_policy.guest_active
                         else None
                     ),
+                    native_user_id=user_input.context.user_id,
                 )
                 provisional_claim = ProvisionalConversationIDClaim(
                     getattr(self, "hass", None)
@@ -1016,7 +1024,11 @@ class ExtendedOpenAIAgentEntity(
                     else scope.scope_id,
                 )
                 register_conversation_id_cleanup(
-                    session, self.hass, claimed_id, claim_owner
+                    session,
+                    self.hass,
+                    claimed_id,
+                    claim_owner,
+                    ha_default=resolution.key is None,
                 )
                 bind_parent_conversation_id(
                     self.hass, incoming_conversation_id, claimed_id, claim_owner
@@ -1037,10 +1049,12 @@ class ExtendedOpenAIAgentEntity(
                     continuity, chat_log.conversation_id, resolution.conversation_id
                 ),
             ):
-                if resolution.discard_history:
+                if resolution.discard_history or take_default_history_reset(
+                    self.hass, session, chat_log
+                ):
                     # A restore preserves only the private Archive identity. Core may
                     # still hold its old log; discard that context before this turn.
-                    chat_log.content[:] = [chat_log.content[0], chat_log.content[-1]]
+                    discard_chat_log_history(chat_log)
                     chat_log.extra_system_prompt = None
                     chat_log.llm_api = None
                 # HA consumes satellite context on its first pipeline invocation.
@@ -1120,7 +1134,9 @@ class ExtendedOpenAIAgentEntity(
                     if resolution.history and len(chat_log.content) <= 2:
                         # Core history can expire before the integration's session.
                         current_user = chat_log.content[-1]
-                        chat_log.content[:] = [*resolution.history, current_user]
+                        replace_chat_log_content(
+                            chat_log, [*resolution.history, current_user]
+                        )
                     async with (
                         self._usage.async_run(
                             home_assistant_conversation_id=user_input.conversation_id,
@@ -1581,6 +1597,7 @@ class ExtendedOpenAIAgentEntity(
         chat_log.content.append(
             conversation.AssistantContent(agent_id=self.entity_id, content=response)
         )
+        trim_local_turn_history(chat_log)
         self._fire_conversation_finished(
             user_input,
             chat_log,
@@ -1626,6 +1643,7 @@ class ExtendedOpenAIAgentEntity(
                 content=speech,
             )
         )
+        trim_local_turn_history(chat_log)
         self._fire_conversation_finished(
             user_input,
             chat_log,
@@ -1849,10 +1867,12 @@ class ExtendedOpenAIAgentEntity(
             knowledge_available=self._knowledge_available,
             guest_policy=policy,
             memory_scope_available=(
-                False if getattr(self, "_memory", None) is None else None
+                None
+                if optional_manager_ready(getattr(self, "_memory", None))
+                else False
             ),
             temporary_scope_available=(
-                getattr(self, "_temporary_memory", None) is not None
+                optional_manager_ready(getattr(self, "_temporary_memory", None))
                 and _ACTIVE_TURN.get().temporary_scope is not None
             ),
             archive_available=self._archive_reads_available,
@@ -1873,7 +1893,7 @@ class ExtendedOpenAIAgentEntity(
         """Retrieve live-enabled memory while overlapping temporary retrieval."""
         existing = _ACTIVE_INVOCATION.get().temporary_memory_prefetch
         task = existing
-        if task is None and self._temporary_memory is not None:
+        if task is None and optional_manager_ready(self._temporary_memory):
             task = asyncio.create_task(self._async_load_temporary_memories())
             set_temporary_memory_prefetch(task)
         try:
@@ -1897,7 +1917,7 @@ class ExtendedOpenAIAgentEntity(
         self, llm_context: llm.LLMContext, query: str
     ) -> list[MemoryRecord]:
         """Select once, then resolve the same bundle without automatic reranking."""
-        if self._memory is None:
+        if not optional_manager_ready(self._memory):
             return []
         readable_scope_ids = self._current_readable_memory_scope_ids(llm_context)
         if not readable_scope_ids:
@@ -2077,8 +2097,8 @@ class ExtendedOpenAIAgentEntity(
         records: list[MemoryRecord],
     ) -> list[MemoryRecord]:
         """Resolve selected Memory IDs against the current committed generation."""
-        if not records or self._memory is None:
-            return records
+        if not records or not optional_manager_ready(self._memory):
+            return []
         scope_ids = self._current_readable_memory_scope_ids(llm_context)
         if not scope_ids:
             return []
@@ -2107,6 +2127,7 @@ class ExtendedOpenAIAgentEntity(
             if (
                 self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
                 == TEMPORARY_MEMORY_OFF
+                or not optional_manager_ready(self._temporary_memory)
                 or _ACTIVE_TURN.get().temporary_scope is None
                 or _owner_from_resolved_scope(_ACTIVE_TURN.get().scope) is None
                 or not self._effective_guest_policy().temporary_memory
@@ -2136,7 +2157,11 @@ class ExtendedOpenAIAgentEntity(
             return []
         scope_id = _ACTIVE_TURN.get().temporary_scope
         owner = _owner_from_resolved_scope(_ACTIVE_TURN.get().scope)
-        if self._temporary_memory is None or scope_id is None or owner is None:
+        if (
+            not optional_manager_ready(self._temporary_memory)
+            or scope_id is None
+            or owner is None
+        ):
             return []
         token = _ACTIVE_OWNER_SCOPE_ID.set(owner)
         started = time.monotonic()
@@ -2275,11 +2300,11 @@ class ExtendedOpenAIAgentEntity(
                         self.subentry.data,
                         configured_names,
                         memory_scope_available=(
-                            getattr(self, "_memory", None) is not None
+                            optional_manager_ready(getattr(self, "_memory", None))
                             and self._current_memory_scope_id() is not None
                         ),
                         temporary_scope_available=(
-                            self._temporary_memory is not None
+                            optional_manager_ready(self._temporary_memory)
                             and _ACTIVE_TURN.get().temporary_scope is not None
                         ),
                         knowledge_available=self._knowledge_available,
@@ -2797,8 +2822,7 @@ class ExtendedOpenAIAgentEntity(
         return bool(
             self._effective_guest_policy().knowledge_access
             and self.subentry.data.get(CONF_KNOWLEDGE_ENABLED, False)
-            and self._knowledge is not None
-            and getattr(self._knowledge, "initialized", True) is not False
+            and optional_manager_ready(self._knowledge)
             and self._knowledge.source_count > 0
         )
 
@@ -2945,7 +2969,7 @@ class ExtendedOpenAIAgentEntity(
             _require_nonblank_query(arguments)
         if not memory_enabled(self.subentry.data):
             raise RuntimeError("persistent memory is disabled")
-        if self._memory is None:
+        if not optional_manager_ready(self._memory):
             raise RuntimeError("persistent memory is unavailable")
         readable_scope_ids = self._current_readable_memory_scope_ids(llm_context)
         if operation in {"search", "list"} and not readable_scope_ids:
@@ -3354,7 +3378,7 @@ class ExtendedOpenAIAgentEntity(
         try:
             if not self._effective_guest_policy().temporary_memory:
                 raise RuntimeError(GUEST_MODE_UNAVAILABLE)
-            if self._temporary_memory is None:
+            if not optional_manager_ready(self._temporary_memory):
                 raise RuntimeError("temporary memory is unavailable")
             scope_id = _ACTIVE_TURN.get().temporary_scope
             if scope_id is None:

@@ -55,6 +55,8 @@ A condition inside `if`, `choose`, `repeat`, or another nested sequence halts on
 
 An **AI routing** rule saves a fixed model, reasoning effort, or both. Leaving a choice blank keeps the current value. Matching and request flow are separate choices: **Equals**, **Starts with**, **Ends with**, **Contains**, and **ExtendedOpenAI sentence pattern** decide only whether a rule matches.
 
+You can disable or edit a disabled rule even when its saved model is incompatible with the provider. Enabling a rule with a fixed model checks it against the current provider and assistant tools. Reasoning-only routes are checked against the effective model when they run.
+
 Use **Continue to AI** to choose what happens after a routing rule matches:
 
 - **On** applies the routing settings and sends the selected AI input to the provider. The default is the unchanged original request. **This request only** applies the selected model/reasoning only to that provider call; **Rest of this conversation** applies it to that call and later requests in the same conversation.

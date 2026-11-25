@@ -80,6 +80,10 @@ Model `memory_update` requires `memory_id` and `expected_revision` obtained from
 
 Hybrid embedding caches are bound to the configured provider, endpoint, API version and embedding model. Changing that space rebuilds affected vectors when needed. Older caches without this identity regenerate safely; stored memory facts are preserved.
 
+When EOAI loads the cache, it removes vectors for deleted or changed facts and
+unusable vectors such as all-zero responses. Healthy vectors stay available.
+Cleanup is best-effort and can retry on later searches even in Lexical mode.
+
 Hybrid Memory also checks any model identity returned by the embedding endpoint. When a provider repoints an alias and continues to report the same name, an administrator can run the **Rebuild memory embeddings** action for the affected agent. The action removes the saved cache before it reports success. Searches regenerate vectors for readable memories as needed.
 
 Model-facing `memory_update` retains the legacy optional source field. The source field has no admission effect and cannot promote or demote provenance. Omitted source also preserves the stored provenance; mode admission depends on intent, not source. Authenticated Management retains separate, revision-checked editing rights. Content, category, subject and key remain subject to structural type, size and syntax validation. Structurally valid previously stored sensitive content and metadata load normally without content-based deletion, including during failed-save recovery. Malformed siblings still preserve the original generation behind a repair barrier.

@@ -464,10 +464,10 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         new_data = dict(original_data)
         new_data.update(updates)
         from .provider_credentials import (
+            async_validate_agent_provider_request,
             incompatible_provider_agent,
             request_provider_reload_after_update,
             require_provider_restore_complete,
-            validate_agent_provider_request,
             validate_provider_connection,
         )
 
@@ -501,23 +501,35 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 f"Provider configuration validation failed: {provider_user_message(err)}"
             ) from err
 
-        from .request_rules import async_get_request_rules, validate_saved_model_routes
+        from .request_rules import async_get_request_rules
 
         children = dict(getattr(entry, "subentries", {}))
         child_data = {key: dict(child.data) for key, child in children.items()}
         rule_revisions = []
+        endpoint_changed = any(
+            original_data.get(key) != new_data.get(key)
+            for key in (CONF_API_PROVIDER, CONF_BASE_URL, CONF_API_VERSION)
+        )
         for child_id, child in children.items():
             if child.subentry_type not in {"conversation", "ai_task_data"}:
                 continue
             options = child_data[child_id]
             try:
-                validate_agent_provider_request(child.subentry_type, options, new_data)
+                saved_rules = []
                 if child.subentry_type == "conversation":
                     rules = await async_get_request_rules(hass, entry_id, child_id)
                     rule_revisions.append((rules, rules.revision()))
-                    validate_saved_model_routes(
-                        rules.snapshot()["rules"], options, new_data
-                    )
+                    saved_rules = rules.snapshot()["rules"]
+                await async_validate_agent_provider_request(
+                    hass,
+                    child.subentry_type,
+                    options,
+                    new_data,
+                    rules=saved_rules,
+                    user_id=call.context.user_id,
+                    discover_ha_tools=endpoint_changed,
+                    previous_provider_data=original_data if endpoint_changed else None,
+                )
             except HomeAssistantError as err:
                 raise incompatible_provider_agent(child.title, err) from err
         if dict(getattr(entry, "subentries", {})) != children or any(

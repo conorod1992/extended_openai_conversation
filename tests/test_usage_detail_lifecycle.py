@@ -11,6 +11,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     usage as usage_module,
 )
+from custom_components.extended_openai_conversation_responses.mutation_outcomes import mutation_failure
 from custom_components.extended_openai_conversation_responses.usage import (
     RequestUsage,
     UsageManager,
@@ -44,6 +45,59 @@ class TotalsStorage:
 
     async def async_save(self, _data) -> None:
         return None
+
+
+@pytest.mark.parametrize("operation", ["clear", "prune"])
+@pytest.mark.parametrize("failure", ["before", "after", "readback"])
+async def test_uncertain_detail_mutation_cannot_resurrect_stale_records(operation, failure):
+    class SettlementStorage(DetailStorage):
+        fail_next = False
+        read_failed = False
+
+        async def async_load(self):
+            if self.read_failed:
+                raise OSError("readback unavailable")
+            return await super().async_load()
+
+        async def async_save(self, data):
+            if self.fail_next:
+                self.fail_next = False
+                if failure != "before":
+                    await super().async_save(data)
+                self.read_failed = failure == "readback"
+                raise OSError("write acknowledgement lost")
+            await super().async_save(data)
+
+    storage = SettlementStorage()
+    old = _request("old", (dt_util.utcnow() - timedelta(days=10)).isoformat())
+    storage.data = {"requests": [asdict(old)], "runs": []}
+    manager = UsageManager(TotalsStorage(), detail_storage=storage)
+    await manager.async_initialize()
+    manager.request_retention_days = 1
+    manager._last_prune_date = dt_util.utcnow().date().isoformat()
+    storage.fail_next = True
+    with pytest.raises(OSError) as raised:
+        if operation == "clear":
+            await manager.async_clear_details(confirm=True)
+        else:
+            await manager.async_prune_details()
+    settlement = mutation_failure(raised.value)
+    assert settlement.outcome == {
+        "before": "rejected", "after": "committed", "readback": "uncertain"
+    }[failure]
+    assert settlement.recovery_pending is (failure == "readback")
+    assert [item.request_id for item in manager.requests] == (["old"] if failure == "before" else [])
+    await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=9))
+    assert manager.totals.total_tokens == 9
+    ids = {item["request_id"] for item in storage.data["requests"]}
+    assert ("old" in ids) is (failure == "before")
+    if failure == "readback":
+        assert manager.dashboard_storage_warning is not None
+        assert not storage.data["requests"]
+    storage.read_failed = False
+    fresh = UsageManager(TotalsStorage(), detail_storage=storage)
+    await fresh.async_initialize()
+    assert {item.request_id for item in fresh.requests} == ids
 
 
 def _request(request_id: str, timestamp: str) -> UsageRequest:

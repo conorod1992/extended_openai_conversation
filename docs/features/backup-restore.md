@@ -20,6 +20,8 @@ Exports use saved configuration. Save any draft settings first if you want them 
 
 Private ZIP backups are limited to 160 MiB compressed and 320 MiB uncompressed. Legacy plain JSON imports are limited to 128 MiB. If a Full Backup exceeds a limit, export smaller groups of sections with Custom.
 
+Backup inspection rejects malformed Unicode in JSON and private YAML fields. Valid Unicode, including a correctly paired pair of JSON Unicode escapes, is accepted.
+
 To move a custom setup privately, choose **Custom (private)** and select **Agent configuration and Function Tools** and **Request Rules**. The configuration section includes provider credentials. Existing Shareable Setup and configuration export JSON files still work with **Import / Restore**, including older reviewed custom files. Configuration export files also work with **Assistant actions → Import configuration**.
 
 ## What a full backup includes
@@ -60,6 +62,8 @@ Every selected section replaces the agent's corresponding saved data rather than
 Restore is designed to avoid leaving only half of the backup applied. If saving the restored data fails part-way through, Extended OpenAI attempts to return the agent to the state it had before the restore began.
 
 Delayed Function Tools are paused behind the same restore operation, so a due action is not deliberately run while the agent's configuration or restrictions are only partly restored.
+
+Before restoring a shared provider connection, Extended OpenAI checks every assistant that uses it and their enabled AI routing rules. When the replacement connection introduces a function-tool limit, the check reserves space for eligible saved Home Assistant tool references even if the current user cannot resolve them. If any assistant is incompatible, restore stops before applying changes.
 
 The shared provider connection is updated separately after the agent restore. Extended OpenAI verifies the connection on disk before reporting it as restored. If verification fails, check the shared connection before retrying. The completed agent restore stays committed.
 
@@ -112,5 +116,10 @@ for rollback and interrupted-transaction recovery. Portable exports omit them;
 explicitly replacing Archive with imported data still starts without imported
 active conversation bindings. A failed restore does not resume saving a private
 conversation when its prior state is recovered.
+
+When a committed restore resets live conversation history, that reset also applies
+to Home Assistant's live context for the affected assistant. Active private
+conversations keep their privacy bindings. A Knowledge-only or Usage-only restore
+can keep verified, retained live conversations.
 
 Local recovery snapshots also preserve content-free active unretained sessions. These sessions are excluded from portable backups and durable Archive metadata, and recovery validation rejects any turns attached to them.

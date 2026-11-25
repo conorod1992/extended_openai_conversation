@@ -14,6 +14,7 @@ import yaml
 from custom_components.extended_openai_conversation_responses import (
     backup,
     backup_transfer,
+    request_rules,
     transfer,
 )
 from custom_components.extended_openai_conversation_responses.private_backup import (
@@ -496,6 +497,9 @@ async def test_provider_restore_rejects_incompatible_sibling_without_writes(
         data={"chat_model": "gpt-5.6", "api_mode": "responses", "web_search": True},
     )
     tx.entry.subentries[sibling.subentry_id] = sibling
+    monkeypatch.setattr(
+        request_rules, "async_read_committed_request_rules", AsyncMock(return_value=[])
+    )
     document = private_document()
     options = {
         "sections": [transfer.SECTION_CONFIGURATION],
