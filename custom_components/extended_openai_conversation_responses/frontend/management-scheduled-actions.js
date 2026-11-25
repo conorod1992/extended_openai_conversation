@@ -23,7 +23,7 @@ export function renderScheduledActions(panel) {
     content = panel._empty("No pending actions for this assistant.");
   } else {
     content = '<div class="list">' + result.actions.map(action => {
-      const date = escape(panel._formatDate(action.scheduled_at));
+      const date = escape(panel._formatDate(action.scheduled_at, "shortOffset"));
       const description = escape(action.description);
       return '<article class="content-card"><div class="section-heading"><div><h2>' + description
         + '</h2><p><time datetime="' + escape(action.scheduled_at) + '">' + date

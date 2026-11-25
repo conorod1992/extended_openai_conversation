@@ -3125,8 +3125,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return "Current user";
   }
 
-  _formatDate(value) {
-    return formatManagementTimestamp(value, this._hass?.config?.time_zone);
+  _formatDate(value, timeZoneName) {
+    return formatManagementTimestamp(value, this._hass?.config?.time_zone, timeZoneName);
   }
   _e(value) { return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]); }
 

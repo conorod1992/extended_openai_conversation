@@ -1,1 +1,0 @@
-import"./management-core-dsrXATP7.js";import{o as e}from"./management-temporary-memory-xlSVTlo-.js";export{e as openTemporaryMemory};

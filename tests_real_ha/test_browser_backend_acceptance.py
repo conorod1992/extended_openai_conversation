@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import socket
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from aiohttp import web
@@ -24,6 +25,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     async_get_archive,
+)
+from custom_components.extended_openai_conversation_responses.delayed_tools import (
+    delayed_tool_manager,
 )
 from custom_components.extended_openai_conversation_responses.scope import user_scope
 from homeassistant.components import conversation, onboarding
@@ -188,12 +192,6 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
     """Chromium CRUD journeys must satisfy the genuine HA management contract."""
     entry = _entry("Browser Backend Acceptance")
     await _setup_entry(hass, entry)
-    from types import SimpleNamespace
-
-    from custom_components.extended_openai_conversation_responses.delayed_tools import (
-        delayed_tool_manager,
-    )
-
     scheduler = delayed_tool_manager(hass)
     assert scheduler is not None
     scheduled = await scheduler.async_schedule(

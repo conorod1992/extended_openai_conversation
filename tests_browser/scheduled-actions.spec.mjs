@@ -60,6 +60,7 @@ test("Scheduled Actions cancellation survives refresh for the selected assistant
   const panel = await openScheduledActions(page);
   await expect(panel.getByRole("heading", {name: "Primary lights"})).toBeVisible();
   await expect(panel.locator("time")).toContainText("1:30");
+  await expect(panel.locator("time")).toContainText("GMT+1");
   await panel.getByRole("button", {name: "Refresh", exact: true}).click();
   await expect.poll(() => page.evaluate(() => scheduledFixture.lists)).toBe(2);
   await panel.getByRole("button", {name: /Cancel Primary lights/}).click();
@@ -77,6 +78,7 @@ test("Scheduled Actions ignores a late read from a previously selected assistant
   await expect.poll(() => page.evaluate(() => scheduledFixture.oldReadStarted)).toBe(true);
   await panel.getByRole("combobox", {name: "Editing assistant"}).selectOption("scale-agent-1");
   await expect(panel.getByRole("heading", {name: "Second assistant lights"})).toBeVisible();
+  await expect(panel.locator("time")).toHaveText(/1:30.* GMT(?:\+0)?$/);
   await page.evaluate(() => { scheduledFixture.release(); });
   await expect(panel.getByRole("heading", {name: "Primary lights"})).toHaveCount(0);
   await expect(panel.getByRole("heading", {name: "Second assistant lights"})).toBeVisible();

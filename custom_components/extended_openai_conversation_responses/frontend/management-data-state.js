@@ -1,8 +1,8 @@
-export function formatManagementTimestamp(value, timeZone) {
+export function formatManagementTimestamp(value, timeZone, timeZoneName = undefined) {
   if (!value) return "Unknown date";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  try { return date.toLocaleString(undefined, timeZone ? {timeZone} : undefined); }
+  try { return date.toLocaleString(undefined, {timeZone, timeZoneName}); }
   catch (_) { return date.toLocaleString(); }
 }
 
