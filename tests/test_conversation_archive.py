@@ -1302,7 +1302,9 @@ def test_validate_backup_rejects_invalid_session_metadata(mutator) -> None:
         ConversationArchive.validate_backup_data(data, "target-agent")
 
 
-@pytest.mark.parametrize("timestamp", UTC_OVERFLOW_TIMESTAMPS)
+@pytest.mark.parametrize(
+    "timestamp", UTC_OVERFLOW_TIMESTAMPS, ids=["before-utc-min", "after-utc-max"]
+)
 @pytest.mark.parametrize("field", ["started_at", "last_message_at", "last_activity_at"])
 def test_validate_backup_rejects_session_timestamp_outside_utc(field, timestamp):
     data = {
@@ -1340,9 +1342,14 @@ def test_validate_backup_rebinds_agent_and_rejects_duplicate_sessions() -> None:
         {**asdict(_turn()), "run_id": 7},
         {**asdict(_turn()), "successful": 1},
         {**asdict(_turn()), "timestamp": "bad"},
-        *(asdict(_turn(timestamp=value)) for value in UTC_OVERFLOW_TIMESTAMPS),
         {**asdict(_turn()), "user_text": "x" * (MAX_TEXT_LENGTH + 1)},
         {**asdict(_turn()), "assistant_text": "x" * (MAX_TEXT_LENGTH + 1)},
+        pytest.param(
+            asdict(_turn(timestamp=UTC_OVERFLOW_TIMESTAMPS[0])), id="before-utc-min"
+        ),
+        pytest.param(
+            asdict(_turn(timestamp=UTC_OVERFLOW_TIMESTAMPS[1])), id="after-utc-max"
+        ),
     ],
 )
 def test_validate_backup_rejects_invalid_turn_metadata(turn_data) -> None:
@@ -1422,6 +1429,7 @@ async def test_replace_backup_rejects_utc_overflow_before_writing() -> None:
         ("0001-01-01T00:01:00+00:00", "Etc/GMT+1", "0001-01-01"),
         ("9999-12-31T23:59:59+00:00", "Etc/GMT-1", "9999-12-31"),
     ],
+    ids=["local-underflow", "local-overflow"],
 )
 async def test_search_after_restore_and_timezone_change_keeps_boundary_turn(
     monkeypatch, timestamp, local_zone, expected_date
