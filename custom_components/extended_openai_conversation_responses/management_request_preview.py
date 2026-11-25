@@ -27,18 +27,20 @@ from .const import (
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
-    FUNCTION_GROUP_LOADER_TOOL_NAME,
     SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_OFF,
 )
-from .function_groups import admit_function_group_loader, assemble_function_tools
+from .function_groups import (
+    FunctionToolAdmission,
+    assemble_function_tools,
+    is_function_group_loader,
+)
 from .guest_function_tools import filter_guest_tools_and_groups
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
 from .ha_llm_tools import ToolSnapshot, async_discover, preview_context
 from .helpers import get_exposed_entities
 from .knowledge import get_loaded_knowledge
 from .memory import get_loaded_memory, memory_enabled
-from .model_payload import count_model_function_tools
 from .prompt import render_effective_prompt
 from .request import (
     assemble_integration_function_tools,
@@ -253,7 +255,8 @@ async def async_preview_effective_request(
             options.get(CONF_CONTINUE_CONVERSATION, DEFAULT_CONTINUE_CONVERSATION)
             == CONTINUE_CONVERSATION_CONDITIONAL
         )
-        if not function_call_budget_available(options):
+        budget_available = function_call_budget_available(options)
+        if not budget_available:
             integration_tools = []
 
         provider = build_provider_request_snapshot(
@@ -267,25 +270,20 @@ async def async_preview_effective_request(
         formatted_provider = (
             list(provider.provider_tools) if guest_policy.web_search else []
         )
-        from .scheduled_action_tools import fit_scheduled_action_tools
-
-        fitted_tools = fit_scheduled_action_tools(
-            [*grouped.tools, *integration_tools],
-            provider.tool_limit,
+        admission = FunctionToolAdmission(
+            max_tools=provider.tool_limit,
             extra_tool_count=int(conditional_continue) + len(formatted_provider),
+            function_calls_available=budget_available,
         )
-        if len(fitted_tools) < len(grouped.tools) + len(integration_tools):
-            integration_tools = fitted_tools[len(grouped.tools) :]
+        admitted_tools = admission.admit([*grouped.tools, *integration_tools])
+        admitted_ids = {id(tool) for tool in admitted_tools}
+        if any(id(tool) not in admitted_ids for tool in integration_tools):
             notes.append(
                 "The provider tool limit leaves no room for the Scheduled Actions tools."
             )
-        admitted_grouped_tools = admit_function_group_loader(
-            grouped.tools,
-            provider.tool_limit,
-            extra_tool_count=count_model_function_tools(integration_tools)
-            + int(conditional_continue)
-            + len(formatted_provider),
-        )
+        admitted_grouped_tools = [
+            tool for tool in grouped.tools if id(tool) in admitted_ids
+        ]
         if len(admitted_grouped_tools) < len(grouped.tools):
             notes.append(
                 "The provider tool limit leaves no slot for the Function Group loader."
@@ -293,15 +291,13 @@ async def async_preview_effective_request(
         custom_tools = [
             tool
             for tool in admitted_grouped_tools
-            if tool.get("spec", {}).get("name") != FUNCTION_GROUP_LOADER_TOOL_NAME
+            if not is_function_group_loader(tool)
         ]
         loader_tools = [
-            tool
-            for tool in admitted_grouped_tools
-            if tool.get("spec", {}).get("name") == FUNCTION_GROUP_LOADER_TOOL_NAME
+            tool for tool in admitted_grouped_tools if is_function_group_loader(tool)
         ]
         request_tools = request_function_tools(
-            [*admitted_grouped_tools, *integration_tools],
+            admitted_tools,
             conditional_continue=conditional_continue,
         )
         formatted_custom = format_function_tools(custom_tools, provider.api_mode)

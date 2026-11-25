@@ -2721,6 +2721,16 @@ async def async_conversations_command(request: _ManagementRequest) -> dict[str, 
     return _unknown_management_action(request)
 
 
+def _temporary_memory_mutation_result(
+    manager: Any, owner: str, result: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        result["memory_order"] = manager.management_memory_order(owner)
+    except Exception:
+        _LOGGER.warning("Committed Temporary Memory mutation omitted optional ordering")
+    return result
+
+
 async def _async_temporary_memories_command(
     request: _ManagementRequest,
 ) -> dict[str, Any]:
@@ -2778,11 +2788,16 @@ async def _async_temporary_memories_command(
             )
         except ValueError as err:
             raise HomeAssistantError(str(err)) from err
-        return {
-            "status": result["status"],
-            "scope_id": target,
-            "memory": result["memory"] | {"scope_id": target, "owner_scope_id": target},
-        }
+        return _temporary_memory_mutation_result(
+            manager,
+            target,
+            {
+                "status": result["status"],
+                "scope_id": target,
+                "memory": result["memory"]
+                | {"scope_id": target, "owner_scope_id": target},
+            },
+        )
     if action == "temporary_clear":
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
@@ -2812,10 +2827,14 @@ async def _async_temporary_memories_command(
         )
     except ValueError as err:
         raise HomeAssistantError(str(err)) from err
-    return {
-        "memory": temporary_memory_as_dict(record, include_scope=True)
-        | {"owner_scope_id": record.owner_scope_id}
-    }
+    return _temporary_memory_mutation_result(
+        manager,
+        owner,
+        {
+            "memory": temporary_memory_as_dict(record, include_scope=True)
+            | {"owner_scope_id": record.owner_scope_id}
+        },
+    )
 
 
 async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:

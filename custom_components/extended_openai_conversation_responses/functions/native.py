@@ -34,6 +34,7 @@ from ..ha_actions import (
     _service_participants,
     action_requires_available_entities,
     async_call_ha_action,
+    resolve_action_entity_ids,
 )
 from ..ha_permissions import entity_access_error, get_active_ha_context
 from ..indirect_targets import validate_indirect_targets
@@ -636,18 +637,18 @@ class NativeFunction(Function):
                 "Native service execution requires a nonempty target"
             )
 
+        # Check the positive selectors in their original shape. Only the
+        # registered service can establish whether "exclude" is a target selector.
         referenced = target_helpers.async_extract_referenced_entity_ids(
             hass, target_helpers.TargetSelection(selection)
         )
-        entity_ids = sorted(referenced.referenced | referenced.indirectly_referenced)
+        entity_ids = referenced.referenced | referenced.indirectly_referenced
         if not entity_ids:
             raise HomeAssistantError(
                 "Service target does not resolve to any Home Assistant entities"
             )
-        participating = set(entity_ids)
+        participating = entity_ids
         if domain is not None and service is not None:
-            from ..ha_actions import resolve_action_entity_ids
-
             participating = resolve_action_entity_ids(
                 hass, domain, service, service_data, participants=_service_participants
             )

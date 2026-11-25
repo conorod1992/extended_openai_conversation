@@ -348,6 +348,50 @@ def test_provider_request_records_timings_usage_and_truncates(monkeypatch) -> No
     assert request.as_dict()["request_id"] == "req-1"
 
 
+@pytest.mark.parametrize("malformed", [False, True])
+def test_provider_event_byte_ceiling_and_terminal_metadata(monkeypatch, malformed):
+    request = _begin(DebugManager()).start_provider_request("responses", (), {})
+    first = {"type": "response.output_text.delta", "delta": "é😀"}
+    size = len(
+        json.dumps(first, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+    # A valid event exactly at the byte ceiling fits. An event with the same
+    # character count but a smaller byte allowance must truncate.
+    monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", size)
+    request.add_event(first)
+    assert request.response_events == [first]
+    assert request.first_text_ms is not None
+
+    if malformed:
+        monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", 1000)
+        request.add_event({"type": "response.output_text.delta", "delta": "\ud800"})
+    else:
+        request = _begin(DebugManager()).start_provider_request("responses", (), {})
+        monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", size - 1)
+        request.add_event(first)
+        assert request.first_text_ms is not None
+    assert request.response_events == ([first] if malformed else [])
+    assert request.response_events_truncated
+
+    request.add_event({"type": "response.function_call_arguments.delta"})
+    request.add_event(
+        {
+            "type": "response.incomplete",
+            "response": {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "usage": {"input_tokens": 2, "output_tokens": 3},
+            },
+        }
+    )
+    request.finish(successful=True)
+    assert request.response_events == ([first] if malformed else [])
+    assert request.first_action_ms is not None
+    assert request.usage["total_tokens"] == 5
+    assert request.successful is False
+    assert request.error_type == "TokenLengthExceededError"
+
+
 def test_trace_request_metrics_summary_and_manager_lifecycle() -> None:
     trace = _trace()
     first = trace.start_provider_request(

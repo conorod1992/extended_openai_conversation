@@ -630,7 +630,8 @@ async def test_recognized_delayed_commands_can_be_routed_without_local_execution
         },
         "function": {"type": "template"},
     }
-    assert snapshot.admit_delayed_action_tools([immediate, suitable]) == [suitable]
+    assert not snapshot.delayed_action_tool_available(immediate)
+    assert snapshot.delayed_action_tool_available(suitable)
     assert "No delay-capable EOAI Function Tool" in snapshot.prompt_for([])
 
 

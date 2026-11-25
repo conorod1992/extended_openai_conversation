@@ -272,11 +272,14 @@ class DebugProviderRequest:
                 self.finish(successful=False, error=TokenLengthExceededError(None))
         if self.response_events_truncated:
             return
-        event_size = len(
-            json.dumps(
+        try:
+            event_json = json.dumps(
                 serialized, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             )
-        )
+            event_size = len(event_json.encode("utf-8"))
+        except UnicodeEncodeError:
+            self.response_events_truncated = True
+            return
         if self._event_bytes + event_size > DEBUG_MAX_EVENT_BYTES:
             self.response_events_truncated = True
             return

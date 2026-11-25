@@ -95,6 +95,7 @@ from .delayed_tools import (
     _DELAYED_EXECUTION_MARKER,
     DATA_DELAYED_TOOL_MANAGER,
     DelayedToolManager,
+    _delay_as_timedelta,
 )
 from .exceptions import (
     EffectOutcomeUnknown,
@@ -110,7 +111,7 @@ from .function_execution import (
     function_execution_errors_propagate,
     split_legacy_execution_delay,
 )
-from .function_groups import admit_function_group_loader
+from .function_groups import FunctionToolAdmission, is_function_group_loader
 from .function_tool_recovery import (
     MalformedToolArguments,
     ToolRecoveryState,
@@ -1018,7 +1019,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         structure: SchemaValidator | None = None,
         conditional_continue: bool = False,
         function_tools_factory: Callable[[], list[dict[str, Any]]] | None = None,
-        function_group_loader: Callable[[Any, int | None, bool], dict[str, Any]]
+        function_group_loader: Callable[[Any, FunctionToolAdmission], dict[str, Any]]
         | None = None,
         reset_loaded_function_groups: Callable[[], bool] | None = None,
         request_options: Mapping[str, Any] | None = None,
@@ -1107,10 +1108,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
                 if int(max_calls) == 0:
                     initial_tools = [
-                        tool
-                        for tool in initial_tools
-                        if tool.get("function", {}).get("type")
-                        == "function_group_loader"
+                        tool for tool in initial_tools if is_function_group_loader(tool)
                     ]
 
                 def request_snapshot(
@@ -1334,35 +1332,36 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             def prepare_round_tools(
                 candidates: list[dict[str, Any]],
-                capacity: int | None,
+                admission: FunctionToolAdmission,
             ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-                if function_call_budget.exhausted:
-                    # The loader and finalizer do not execute ordinary tools.
-                    candidates = [
-                        tool
-                        for tool in candidates
-                        if tool.get("function", {}).get("type")
-                        == "function_group_loader"
-                    ]
-                snapshot = current_snapshot()
-                if isinstance(snapshot, ToolSnapshot):
-                    candidates = snapshot.admit_delayed_action_tools(candidates)
-                from .scheduled_action_tools import fit_scheduled_action_tools
-
-                candidates = fit_scheduled_action_tools(
-                    candidates, capacity, extra_tool_count=int(conditional_continue)
-                )
-                candidates = admit_function_group_loader(
-                    candidates,
-                    capacity,
-                    extra_tool_count=int(conditional_continue),
-                    loader_available=loader_rounds < MAX_FUNCTION_GROUP_LOAD_ROUNDS,
-                )
+                candidates = admission.admit(candidates)
                 return candidates, _format_tools(
                     provider_request_function_tools(
                         candidates, conditional_continue=conditional_continue
                     ),
                     api_mode,
+                )
+
+            def admission_for_round(provider_tool_count: int) -> FunctionToolAdmission:
+                snapshot = current_snapshot()
+                return FunctionToolAdmission(
+                    max_tools=provider_snapshot.tool_limit,
+                    extra_tool_count=int(conditional_continue) + provider_tool_count,
+                    loader_available=loader_rounds < MAX_FUNCTION_GROUP_LOAD_ROUNDS,
+                    function_calls_available=not function_call_budget.exhausted,
+                    request_tool_available=(
+                        snapshot.delayed_action_tool_available
+                        if isinstance(snapshot, ToolSnapshot)
+                        and snapshot.require_positive_delay
+                        else None
+                    ),
+                )
+
+            def current_web_search() -> dict[str, Any] | None:
+                return (
+                    web_search_tool
+                    if web_search_tool and self._provider_tool_allowed("web_search")
+                    else None
                 )
 
             for n_requests in range(MAX_TOOL_ITERATIONS):
@@ -1376,19 +1375,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if function_tools_factory is not None
                     else function_tools
                 )
-                allowed_web_search = (
-                    web_search_tool
-                    if web_search_tool and self._provider_tool_allowed("web_search")
-                    else None
-                )
+                allowed_web_search = current_web_search()
                 limit = provider_snapshot.tool_limit
-                capacity = (
-                    limit - int(allowed_web_search is not None)
-                    if limit is not None
-                    else None
-                )
+                admission = admission_for_round(int(allowed_web_search is not None))
                 request_function_tools, formatted_function_tools = prepare_round_tools(
-                    candidates, capacity
+                    candidates, admission
                 )
                 if (
                     not force_finalizer_only
@@ -1404,11 +1395,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # turn's loaded groups too large. Offer the current loader
                     # again so this turn can select a set that fits.
                     request_function_tools, formatted_function_tools = (
-                        prepare_round_tools(function_tools_factory(), capacity)
+                        prepare_round_tools(function_tools_factory(), admission)
                     )
                 integration_loader_seen = integration_loader_seen or any(
-                    tool.get("function", {}).get("type") == "function_group_loader"
-                    for tool in request_function_tools
+                    map(is_function_group_loader, request_function_tools)
                 )
                 # Keep the request-local formatted list intact when there is no
                 # provider-owned tool so its exact serialized footprint can be reused
@@ -1784,8 +1774,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             else:
                                 loader_result = function_group_loader(
                                     loader_call.tool_args.get("groups"),
-                                    provider_snapshot.tool_limit,
-                                    loader_rounds < MAX_FUNCTION_GROUP_LOAD_ROUNDS,
+                                    admission_for_round(
+                                        int(current_web_search() is not None)
+                                    ),
                                 )
                         except BaseException as err:
                             append_unresolved_tool_results(
@@ -2909,20 +2900,23 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             execution_arguments, execution_delay = split_legacy_execution_delay(
                 spec, arguments
             )
-            schedule = not delayed and self.should_run_in_background(execution_delay)
-            if not schedule and getattr(
+            duration = (
+                _delay_as_timedelta(execution_delay)
+                if not delayed and self.should_run_in_background(execution_delay)
+                else None
+            )
+            if not duration and getattr(
                 current_snapshot(), "require_positive_delay", False
             ):
                 from .function_tool_policy import is_integration_owned_read_only_tool
 
-                if not is_integration_owned_read_only_tool(function_tool):
+                if duration is not None or not is_integration_owned_read_only_tool(
+                    function_tool
+                ):
                     raise HomeAssistantError(
                         "This request requires a positive EOAI Function Tool delay"
                     )
-            if schedule:
-                from .delayed_tools import _delay_as_timedelta
-
-                _delay_as_timedelta(execution_delay)
+            if duration is not None:
                 manager = self.hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
                 if not isinstance(manager, DelayedToolManager):
                     raise HomeAssistantError(
@@ -2936,7 +2930,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     arguments,
                     llm_context,
                     function_tool=function_tool,
-                    execution_delay=execution_delay,
+                    execution_delay=duration,
                 )
                 return make_tool_result_content(
                     agent_id=self.entity_id,

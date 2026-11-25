@@ -321,25 +321,20 @@ class ToolSnapshot:
             use_eoai_delayed_actions=True,
         )
 
-    def admit_delayed_action_tools(
-        self, tools: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Withhold immediate effects for a request recognised as a delayed command."""
-        if not self.require_positive_delay:
-            return tools
+    @staticmethod
+    def delayed_action_tool_available(tool: dict[str, Any]) -> bool:
+        """Return whether a tool is available during a recognised delayed command."""
         from .function_execution import supports_function_tool_delay
         from .function_tool_policy import is_integration_owned_read_only_tool
 
-        return [
-            tool
-            for tool in tools
-            if tool.get("function", {}).get("type") == "function_group_loader"
+        return (
+            tool.get("function", {}).get("type") == "function_group_loader"
             or is_integration_owned_read_only_tool(tool)
             or (
                 not is_ha_tool(tool)
                 and supports_function_tool_delay(tool.get("spec", {}))
             )
-        ]
+        )
 
     def project(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Keep saved references intact while replacing only live runtime specs."""

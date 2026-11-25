@@ -10,7 +10,7 @@ from custom_components.extended_openai_conversation_responses.entity import (
 )
 from custom_components.extended_openai_conversation_responses.function_groups import (
     FunctionGroupRuntime,
-    admit_function_group_loader,
+    FunctionToolAdmission,
     assemble_function_tools,
     load_function_groups,
 )
@@ -100,15 +100,12 @@ def test_group_budget_counts_loader_and_reserved_builtin(size, accepted):
         _group("last", [tools[-1]["spec"]["name"]]),
     ]
     session = FunctionGroupRuntime().begin("boundary", 30)
-    result = load_function_groups(
-        session, ["first"], groups, tools, max_tools=128, extra_tool_count=1
-    )
+    admission = FunctionToolAdmission(max_tools=128, extra_tool_count=1)
+    result = load_function_groups(session, ["first"], groups, tools, admission=admission)
     assert (result["status"] == "success") == accepted
     assert session.loaded_group_ids == ({"first"} if accepted else set())
     effective = assemble_function_tools(tools, groups, set(session.loaded_group_ids))
-    assert len(
-        admit_function_group_loader(effective.tools, 128, extra_tool_count=1)
-    ) + 1 <= 128
+    assert len(admission.admit(effective.tools)) + 1 <= 128
     assert not accepted or result["loadable_groups"] == (
         ["last"] if size == 126 else []
     )

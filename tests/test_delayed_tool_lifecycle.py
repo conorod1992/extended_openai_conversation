@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, sentinel
 
@@ -175,7 +176,7 @@ async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> No
         arguments,
         None,
         function_tool=_tool(_legacy_delay_schema()),
-        execution_delay={"seconds": 5},
+        execution_delay=timedelta(seconds=5),
     )
     assert tool_result_data(result) == {
         "result": "Scheduled", "action_id": "a" * 32, "scheduled_at": "2026-11-25T14:00:00+00:00",

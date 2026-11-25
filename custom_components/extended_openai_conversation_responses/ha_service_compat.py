@@ -18,10 +18,11 @@ from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_FLOOR_ID,
     ATTR_LABEL_ID,
+    CONF_EXCLUDE,
 )
 from homeassistant.core import HomeAssistant, ServiceRegistry
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
-from homeassistant.helpers import service as service_helpers
+from homeassistant.helpers import service as service_helpers, target as target_helpers
 
 from .ha_schema import schema_for_ha
 
@@ -71,16 +72,13 @@ async def _entity_target_identity(
     if not isinstance(processed, Mapping) or not (generic or dispatcher):
         return processed, {}
     from .ha_actions import (
-        _resolve_target_entity_ids,
+        _resolve_action_targets,
         explicit_service_refusal_entity_ids,
-        resolve_action_entity_ids,
         service_target_entity_ids,
     )
 
-    selected = (
-        _resolve_target_entity_ids(hass, processed, None)
-        if generic
-        else resolve_action_entity_ids(hass, domain, service, processed)
+    selected, explicit = _resolve_action_targets(
+        hass, domain, service, processed, None, reject_match_all=not generic
     )
     if generic:
         # Core forwards selector data to its delegates. A callable delegate can
@@ -98,8 +96,6 @@ async def _entity_target_identity(
             return identity, {}
     # Indirect nonparticipants are skipped, but an explicit feature/device-class
     # refusal makes the entire entity call different from its valid correction.
-    explicit = processed.get(ATTR_ENTITY_ID, [])
-    explicit = {explicit} if isinstance(explicit, str) else set(explicit)
     refused = set()
     for entity_domain in domains if generic else (domain,):
         refused.update(
@@ -145,6 +141,8 @@ async def _entity_target_identity(
             ATTR_LABEL_ID,
         }
     }
+    if hasattr(target_helpers, "async_extract_excluded_entity_ids"):
+        identity.pop(CONF_EXCLUDE, None)
     identity[ATTR_ENTITY_ID] = sorted(selected)
     power = {}
     if generic or (

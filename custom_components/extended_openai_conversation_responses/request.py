@@ -81,7 +81,7 @@ from .model_capabilities import (
     validate_reasoning_effort,
 )
 from .model_payload import count_model_function_tools, prepare_model_function_tools
-from .scheduled_action_tools import fit_scheduled_action_tools, scheduled_action_tools
+from .scheduled_action_tools import scheduled_action_tools
 from .temporary_memory import TEMPORARY_MEMORY_TOOL_NAMES, temporary_memory_tools
 
 _LOGGER = logging.getLogger(__name__)
@@ -1002,8 +1002,8 @@ def validate_runtime_readiness(
     from .const import CONF_CONTINUE_CONVERSATION, CONTINUE_CONVERSATION_CONDITIONAL
     from .function_configuration_repair import function_configuration_repair_state
     from .function_groups import (
+        FunctionToolAdmission,
         ToolRuntimeAvailability,
-        admit_function_group_loader,
         assemble_function_tools,
     )
     from .skill_availability import (
@@ -1104,13 +1104,10 @@ def validate_runtime_readiness(
     conditional_continue = (
         options.get(CONF_CONTINUE_CONVERSATION) == CONTINUE_CONVERSATION_CONDITIONAL
     )
-    extra_tool_count = int(conditional_continue) + len(snapshot.provider_tools)
-    tools = fit_scheduled_action_tools(
-        tools, snapshot.tool_limit, extra_tool_count=extra_tool_count
-    )
-    tools = admit_function_group_loader(
-        tools, snapshot.tool_limit, extra_tool_count=extra_tool_count
-    )
+    tools = FunctionToolAdmission(
+        max_tools=snapshot.tool_limit,
+        extra_tool_count=int(conditional_continue) + len(snapshot.provider_tools),
+    ).admit(tools)
     tools = request_function_tools(tools, conditional_continue=conditional_continue)
     validate_provider_tool_count(
         count_model_function_tools(tools) + len(snapshot.provider_tools),

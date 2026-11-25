@@ -505,7 +505,7 @@ class DelayedToolManager:
         llm_context: llm.LLMContext | None,
         *,
         function_tool: dict[str, Any] | None = None,
-        execution_delay: dict[str, Any] | None = None,
+        execution_delay: dict[str, Any] | timedelta | None = None,
     ) -> DelayedToolCall:
         """Persist a delayed call before exposing it as scheduled."""
         if self._quarantined:

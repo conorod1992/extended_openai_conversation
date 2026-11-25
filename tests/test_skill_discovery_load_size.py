@@ -1,5 +1,6 @@
 """Discovered Skill instructions must fit the canonical load_skill reader."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -117,3 +118,32 @@ async def test_growing_discovered_skill_is_bounded_then_removed_on_reload(skill_
     await manager.async_load_skills()
     assert manager.get_skill("growing") is not None
     assert await _complete_file(load, "growing") == content.decode()
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires a POSIX FIFO")
+async def test_discovery_skips_nonregular_metadata_and_loads_regular_neighbors(
+    skill_loader, monkeypatch, caplog
+):
+    manager, root, _load = skill_loader
+    fifo = root / "fifo" / "SKILL.md"
+    fifo.parent.mkdir(parents=True)
+    os.mkfifo(fifo)
+    (root / "directory" / "SKILL.md").mkdir(parents=True)
+    healthy = _write(root, "healthy", _instructions(256))
+    linked = root / "linked" / "SKILL.md"
+    linked.parent.mkdir()
+    linked.symlink_to(healthy)
+
+    open_file = Path.open
+
+    def guarded_open(path, *args, **kwargs):
+        assert path != fifo, "Discovery attempted to open a FIFO"
+        return open_file(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+    await manager.async_load_skills()
+    assert manager.get_skill("fifo") is None
+    assert manager.get_skill("directory") is None
+    assert manager.get_skill("healthy") is not None
+    assert manager.get_skill("linked") is not None
+    assert "Skill 'fifo' could not be read and was skipped" in caplog.text

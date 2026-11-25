@@ -652,6 +652,17 @@ class TemporaryMemory:
             await self._async_prune_locked()
             return self._records_for_owner(owner_scope_id)
 
+    def management_memory_order(self, owner_scope_id: str) -> list[str]:
+        """Return the active owner's IDs from the last settled generation."""
+        if self._committed_state is None:
+            raise RuntimeError("Temporary Memory has no committed state")
+        return [
+            record.memory_id
+            for record in self._records_for_owner(
+                owner_scope_id, records=self._committed_state[0].values()
+            )
+        ]
+
     async def async_update_owned(
         self,
         owner_scope_id: str,
@@ -706,23 +717,30 @@ class TemporaryMemory:
                 counts[owner] += 1
         return dict(counts)
 
-    def _records_for_owner(self, owner_scope_id: str) -> list[TemporaryMemoryRecord]:
+    def _records_for_owner(
+        self,
+        owner_scope_id: str,
+        *,
+        records: Iterable[TemporaryMemoryRecord] | None = None,
+    ) -> list[TemporaryMemoryRecord]:
         """Return every active record belonging to an owner without injection limits."""
         owner = _require_owner_scope_id(owner_scope_id)
         now = dt_util.utcnow()
-        records = [
+        if records is None:
+            records = self._records.values()
+        active = [
             record
-            for record in self._records.values()
+            for record in records
             if record.owner_scope_id == owner
             and (parse_datetime(record.expires_at) or now) > now
         ]
-        records.sort(
+        active.sort(
             key=lambda record: (
                 stored_timestamp_instant(record.expires_at),
                 record.memory_id,
             )
         )
-        return records
+        return active
 
     def _prune_expired_locked(self) -> bool:
         """Remove expired records in RAM; the caller chooses the save boundary."""

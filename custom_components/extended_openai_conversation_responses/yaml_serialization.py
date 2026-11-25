@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 import json
 import re
-from typing import Any
+from typing import Any, NoReturn
 
 import yaml
 from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
@@ -273,6 +273,11 @@ def _check_json_shape(value: str, limits: YamlLimits) -> None:
             _, position = decode_string(value, match.start())
 
 
+def _reject_json_constant(token: str) -> NoReturn:
+    """Allow the bounded YAML parser to interpret nonstandard JSON constants."""
+    raise json.JSONDecodeError("Nonstandard JSON constant", token, 0)
+
+
 def _load_yaml_or_json(value: str, *, allow_recursive: bool) -> Any:
     limits = _AUTHORED_LIMITS
     _bounded_source(value, limits)
@@ -280,7 +285,7 @@ def _load_yaml_or_json(value: str, *, allow_recursive: bool) -> Any:
     if _JSON_START.match(value):
         try:
             _check_json_shape(value, limits)
-            decoded = json.loads(value)
+            decoded = json.loads(value, parse_constant=_reject_json_constant)
         except json.JSONDecodeError, SerializedDocumentLimit:
             # Flow YAML may resemble JSON while using different quoting or
             # token boundaries. Its composer independently enforces these limits.

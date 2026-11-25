@@ -151,6 +151,38 @@ async def test_cancelled_store_save_rolls_back_and_next_mutation_recovers():
     assert store.data == {"records": []}
 
 
+async def test_management_order_excludes_an_unsettled_expiry_change(monkeypatch):
+    store = Storage([record("first"), record("second")])
+    manager = temporary.TemporaryMemory(store)
+    await manager.async_initialize()
+    save_started = asyncio.Event()
+    release_save = asyncio.Event()
+    original_save = store.async_save
+
+    async def pause_save(data):
+        save_started.set()
+        await release_save.wait()
+        await original_save(data)
+
+    monkeypatch.setattr(store, "async_save", pause_save)
+    pending = asyncio.create_task(
+        manager.async_update_owned(
+            "user:alice",
+            "first",
+            None,
+            (dt_util.utcnow() + timedelta(hours=2)).isoformat(),
+            None,
+        )
+    )
+    try:
+        await asyncio.wait_for(save_started.wait(), timeout=5)
+        assert manager.management_memory_order("user:alice") == ["first", "second"]
+    finally:
+        release_save.set()
+        await pending
+    assert manager.management_memory_order("user:alice") == ["second", "first"]
+
+
 async def test_failed_deferred_prune_restores_baseline_but_expiry_stays_invisible():
     store = Storage([record("valid")])
     manager = temporary.TemporaryMemory(store)

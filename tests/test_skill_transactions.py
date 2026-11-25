@@ -1,6 +1,8 @@
 """Deterministic Skill recovery classifications preserve exact owned versions."""
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -81,6 +83,28 @@ def test_unjournaled_backup_is_preserved_for_manual_recovery(tmp_path, caplog):
     recover_transactions(root, tmp_path / "installed")
     assert (backup / "SKILL.md").read_text() == "UNRELATED-OLD"
     assert "recover manually" in caplog.text
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires a POSIX FIFO")
+def test_nonregular_transaction_journal_fails_closed(tmp_path, monkeypatch):
+    installed, root, target, staged, backup, journal = _transaction(tmp_path)
+    journal.unlink()
+    os.mkfifo(journal)
+    target.rename(backup)
+
+    read_text = Path.read_text
+
+    def guarded_read(path, *args, **kwargs):
+        assert path != journal, "Recovery attempted to read a FIFO"
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read)
+    with pytest.raises(HomeAssistantError, match="recovery record is unsafe"):
+        recover_transactions(root, installed)
+    assert journal.exists()
+    assert not target.exists()
+    assert (backup / "SKILL.md").read_text() == "OLD"
+    assert (staged / "SKILL.md").read_text() == "NEW"
 
 
 def test_download_recovery_leaves_active_and_unknown_staging(tmp_path):

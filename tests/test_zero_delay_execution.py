@@ -1,10 +1,14 @@
 """Conversation delay normalization must preserve synchronous results."""
 
+from datetime import datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import (
+    entity as entity_module,
+)
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
@@ -18,6 +22,10 @@ from custom_components.extended_openai_conversation_responses.function_execution
 )
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
+)
+from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+    ToolSnapshot,
+    tool_snapshot_scope,
 )
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
@@ -110,7 +118,12 @@ async def test_zero_delay_returns_actual_result_or_error(
     assert DATA_DELAYED_TOOL_MANAGER not in hass.data.get(DOMAIN, {})
 
 
-async def test_positive_delay_remains_durably_scheduled(hass, monkeypatch):
+@pytest.mark.parametrize(
+    ("strict", "seconds"), [(False, 5), (True, 5), (True, 0.000001)]
+)
+async def test_positive_delay_remains_durably_scheduled(
+    hass, monkeypatch, strict, seconds
+):
     tool = _tool(hass)
     tool["function"]["value_template"] = "{{ value + 1 }}"
     manager = DelayedToolManager(hass)
@@ -118,22 +131,110 @@ async def test_positive_delay_remains_durably_scheduled(hass, monkeypatch):
     manager._store = SimpleNamespace(async_save=AsyncMock())
     hass.data.setdefault(DOMAIN, {})[DATA_DELAYED_TOOL_MANAGER] = manager
     entity = _agent(hass, tool, monkeypatch)
-    result = await entity._execute_function_tool(
-        tool,
-        llm.ToolInput(
-            id="call",
-            tool_name="read_value",
-            tool_args={"value": 6, "delay": {"seconds": 5}},
-            external=True,
-        ),
-        None,
-        [],
-    )
+    with tool_snapshot_scope(ToolSnapshot(require_positive_delay=strict)):
+        result = await entity._execute_function_tool(
+            tool,
+            llm.ToolInput(
+                id="call",
+                tool_name="read_value",
+                tool_args={"value": 6, "delay": {"seconds": seconds}},
+                external=True,
+            ),
+            None,
+            [],
+        )
     record = next(iter(manager._records.values()))
     assert tool_result_data(result) == {
-        "result": "Scheduled", "action_id": record.call_id, "scheduled_at": record.due_at,
+        "result": "Scheduled",
+        "action_id": record.call_id,
+        "scheduled_at": record.due_at,
     }
+    assert datetime.fromisoformat(record.due_at) - datetime.fromisoformat(
+        record.created_at
+    ) == timedelta(seconds=seconds)
     assert manager._store.async_save.await_args.args[0] == {"calls": [record.as_dict()]}
+
+
+@pytest.mark.parametrize(
+    ("delay", "error", "read_only"),
+    [
+        ({"seconds": 0}, "requires a positive", False),
+        ({"hours": 1, "minutes": -60}, "requires a positive", False),
+        ({"seconds": 0.0000001}, "requires a positive", False),
+        ({"seconds": 0.0000001}, "requires a positive", True),
+        ({"hours": 1, "minutes": -61}, "cannot be negative", False),
+        ({"hours": 10**20}, "Invalid Function Tool delay", False),
+    ],
+)
+async def test_strict_delayed_command_rejects_before_execution_or_scheduling(
+    hass, monkeypatch, delay, error, read_only
+):
+    tool = _tool(hass)
+    if read_only:
+        tool["function"] = {"type": "native", "name": "get_user_from_user_id"}
+    # Permissive legacy schemas can specify signed units; total duration still
+    # has to pass Home Assistant's time-period normalization.
+    for unit in tool["spec"]["parameters"]["properties"]["delay"][
+        "properties"
+    ].values():
+        unit.pop("minimum")
+    manager = DelayedToolManager(hass)
+    manager._setup_complete = True
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    arm = Mock()
+    monkeypatch.setattr(manager, "_arm", arm)
+    hass.data.setdefault(DOMAIN, {})[DATA_DELAYED_TOOL_MANAGER] = manager
+    entity = _agent(hass, tool, monkeypatch)
+    execute = AsyncMock()
+    monkeypatch.setattr(
+        entity_module, "get_function", lambda _: SimpleNamespace(execute=execute)
+    )
+
+    with (
+        tool_snapshot_scope(ToolSnapshot(require_positive_delay=True)),
+        pytest.raises(HomeAssistantError, match=error),
+    ):
+        await entity._execute_function_tool(
+            tool,
+            llm.ToolInput(
+                id="call",
+                tool_name="read_value",
+                tool_args={"value": 6, "delay": delay},
+                external=True,
+            ),
+            None,
+            [],
+        )
+
+    execute.assert_not_awaited()
+    manager._store.async_save.assert_not_awaited()
+    arm.assert_not_called()
+    assert not manager._records
+
+
+async def test_immediate_read_only_tool_is_available_during_strict_delayed_turn(
+    hass, monkeypatch
+):
+    tool = _tool(hass)
+    tool["function"] = {"type": "native", "name": "get_user_from_user_id"}
+    entity = _agent(hass, tool, monkeypatch)
+    execute = AsyncMock(return_value="done")
+    monkeypatch.setattr(
+        entity_module, "get_function", lambda _: SimpleNamespace(execute=execute)
+    )
+
+    with tool_snapshot_scope(ToolSnapshot(require_positive_delay=True)):
+        result = await entity._execute_function_tool(
+            tool,
+            llm.ToolInput(
+                id="call", tool_name="read_value", tool_args={}, external=True
+            ),
+            None,
+            [],
+        )
+
+    execute.assert_awaited_once()
+    assert tool_result_data(result) == {"result": "done"}
 
 
 @pytest.mark.parametrize(

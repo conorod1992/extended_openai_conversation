@@ -12,6 +12,7 @@ import zlib
 import aiohttp
 from bs4 import BeautifulSoup
 from multidict import CIMultiDict
+from soupsieve import SelectorSyntaxError
 import voluptuous as vol
 import xmltodict
 from yarl import URL
@@ -45,7 +46,7 @@ from ..execution_outcomes import (
     execution_started,
     owns_execution_receipts,
 )
-from ..public_errors import SanitizedRequestError
+from ..public_errors import InvalidScrapeSelector, SanitizedRequestError
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
 from ..template_diagnostics import private_template_diagnostics
 from .base import Function
@@ -695,7 +696,10 @@ class ScrapeFunction(Function):
         attr = sensor_config.get(CONF_ATTRIBUTE)
         from ..operational_errors import current_function_tool_name
 
-        matches = data.select(select)
+        try:
+            matches = data.select(select)
+        except SelectorSyntaxError:
+            raise InvalidScrapeSelector() from None
         try:
             if attr is not None:
                 value = matches[index][attr]

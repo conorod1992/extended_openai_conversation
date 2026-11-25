@@ -107,6 +107,25 @@ export function reconcileTemporaryMemories(panel) {
   return true;
 }
 
+export function applyTemporaryMemoryMutation(panel, response) {
+  if (!Array.isArray(panel._result?.memories) || !Array.isArray(response.memory_order)) return false;
+  const memory = response.memory;
+  const remaining = new Map(panel._result.memories.map(item => [item.memory_id, item]));
+  remaining.set(memory.memory_id, memory);
+  const memories = [];
+  // A save may coincide with expiry or a write elsewhere. Read the scope again
+  // when the acknowledgement order cannot be applied to this collection.
+  for (const id of response.memory_order) {
+    const item = remaining.get(id);
+    if (!item) return false;
+    memories.push(item);
+    remaining.delete(id);
+  }
+  if (remaining.size) return false;
+  panel._result = {...panel._result, memories};
+  return true;
+}
+
 function temporaryDialog(panel) {
   return `<dialog id="temporary-memory-dialog" class="editor-dialog" aria-labelledby="temporary-memory-dialog-title">
     <form id="temporary-memory-form">
@@ -209,7 +228,7 @@ async function saveTemporaryMemory(panel) {
       ...(expiresAt === draft.expires_at || draft.utc_expiry ? {} : {local_times: {expires_at: expiresAt}}),
     });
     if (!configurationSubmissionIsCurrent(panel, submission) || !panel._ownsRetainedMutation(owner)) return;
-    requireMutationAcknowledgement(response?.memory?.memory_id, "saving the temporary memory");
+    requireMutationAcknowledgement(response?.memory?.memory_id === draft.memory_id, "saving the temporary memory");
     if (!ownsEditor()) {
       panel._revalidateAcknowledgedCollection(owner);
       return;
@@ -217,13 +236,13 @@ async function saveTemporaryMemory(panel) {
     // Advance the saved editor state before rendering or closing the modal.
     panel._temporaryMemoryDraft = {...draft, ...response.memory, content, category, expires_at:expiresAt, original_expiry:response.memory.expires_at};
     return await presentAcknowledgedMutation(panel, submission, "Short-term memory updated", async () => {
-      panel._result = {...panel._result, memories: (panel._result.memories || []).map(item =>
-        item.memory_id === response.memory.memory_id ? response.memory : item)};
+      const patched = applyTemporaryMemoryMutation(panel, response);
       // The submitted values become the comparison baseline. Input entered
       // while the write was pending belongs to the next Save or Discard.
       if (!temporaryMemoryDirty(panel)) await closeTemporaryMemory(panel, true);
       panel._patchScopeCount(owner.scope, "temporary_memory_count", 0);
       panel._render();
+      if (!patched) panel._revalidateAcknowledgedCollection(owner);
     }, response);
   } catch (err) {
     if (ownsEditor() && panel._ownsRetainedMutation(owner)) error.textContent = err.message || String(err);

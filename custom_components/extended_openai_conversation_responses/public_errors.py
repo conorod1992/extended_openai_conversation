@@ -61,6 +61,15 @@ class SanitizedRequestError(HomeAssistantError):
         super().__init__(message)
 
 
+class InvalidScrapeSelector(HomeAssistantError):
+    """Report a configuration error without revealing the authored selector."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Invalid Scrape CSS selector. Check the selector in Functions."
+        )
+
+
 def sanitize_backend_error(error: BaseException) -> BaseException:
     public = sanitize_template_error(error)
     if public is not error or isinstance(
@@ -71,6 +80,7 @@ def sanitize_backend_error(error: BaseException) -> BaseException:
             SanitizedUnexpectedBackendError,
             SanitizedRequestError,
             InvalidIndirectTarget,
+            InvalidScrapeSelector,
             EffectOutcomeUnknown,
         ),
     ):

@@ -152,6 +152,7 @@ from .function_execution import (
 )
 from .function_groups import (
     FunctionGroupRuntime,
+    FunctionToolAdmission,
     assemble_function_tools,
     load_function_groups,
     remove_function_group_runtime,
@@ -2329,6 +2330,7 @@ class ExtendedOpenAIAgentEntity(
                     configured_tools, groups, policy
                 )
                 session = _ACTIVE_TURN.get().function_group_session
+                snapshot = current_snapshot()
                 assembly = assemble_function_tools(
                     tools_for_available_skills(
                         configured_tools,
@@ -2336,37 +2338,18 @@ class ExtendedOpenAIAgentEntity(
                     ),
                     groups,
                     session.loaded_group_ids if session is not None else set(),
+                    request_tool_available=(
+                        snapshot.delayed_action_tool_available
+                        if snapshot.require_positive_delay
+                        else None
+                    ),
                 )
                 if self._function_groups_runtime is not None:
                     self._function_groups_runtime.record_request(assembly)
                 result = list(assembly.tools)
-                configured_names = {
-                    tool.get("spec", {}).get("name")
-                    for tool in configured_tools
-                    if isinstance(tool, dict)
-                }
                 result.extend(
-                    assemble_integration_function_tools(
-                        self.subentry.data,
-                        configured_names,
-                        memory_scope_available=(
-                            optional_manager_ready(getattr(self, "_memory", None))
-                            and self._current_memory_scope_id() is not None
-                        ),
-                        temporary_scope_available=(
-                            optional_manager_ready(self._temporary_memory)
-                            and _ACTIVE_TURN.get().temporary_scope is not None
-                        ),
-                        knowledge_available=self._knowledge_available,
-                        archive_available=self._archive_reads_available,
-                        archive_session_available=self._archive_session_available,
-                        guest_policy=policy,
-                        scheduled_action_owner_available=(
-                            conversation_scheduled_action_owner(
-                                self, _ACTIVE_LLM_CONTEXT.get()
-                            )
-                            is not None
-                        ),
+                    ExtendedOpenAIAgentEntity._get_integration_function_tools(
+                        self, configured_tools, policy
                     )
                 )
                 record_tool_assembly(self, result, assembly_started)
@@ -2381,6 +2364,35 @@ class ExtendedOpenAIAgentEntity(
                 e,
             )
             raise FunctionLoadFailed() from e
+
+    def _get_integration_function_tools(
+        self, configured_tools: list[dict[str, Any]], policy: GuestCapabilityPolicy
+    ) -> list[dict[str, Any]]:
+        """Assemble the integration tools for the active request and owner."""
+        return assemble_integration_function_tools(
+            self.subentry.data,
+            {
+                tool.get("spec", {}).get("name")
+                for tool in configured_tools
+                if isinstance(tool, dict)
+            },
+            memory_scope_available=(
+                optional_manager_ready(getattr(self, "_memory", None))
+                and self._current_memory_scope_id() is not None
+            ),
+            temporary_scope_available=(
+                optional_manager_ready(self._temporary_memory)
+                and _ACTIVE_TURN.get().temporary_scope is not None
+            ),
+            knowledge_available=self._knowledge_available,
+            archive_available=self._archive_reads_available,
+            archive_session_available=self._archive_session_available,
+            guest_policy=policy,
+            scheduled_action_owner_available=(
+                conversation_scheduled_action_owner(self, _ACTIVE_LLM_CONTEXT.get())
+                is not None
+            ),
+        )
 
     def _get_configured_function_tools(self) -> list[dict[str, Any]]:
         """Return this request's projected tools, or build them for direct callers."""
@@ -2398,8 +2410,7 @@ class ExtendedOpenAIAgentEntity(
     def _load_function_groups(
         self,
         requested: Any,
-        max_tools: int | None,
-        loader_available_next_round: bool = True,
+        admission: FunctionToolAdmission,
     ) -> dict[str, Any]:
         """Apply an integration-owned loader call to the active conversation."""
         session = _ACTIVE_TURN.get().function_group_session
@@ -2420,31 +2431,22 @@ class ExtendedOpenAIAgentEntity(
             configured_tools, groups = self._filter_guest_tools_and_groups(
                 configured_tools, groups, policy
             )
-            extra = 0
             available_tools = tools_for_available_skills(
                 configured_tools, policy.skills
             )
-            if max_tools is not None:
-                current = assemble_function_tools(
-                    available_tools, groups, set(session.loaded_group_ids)
-                )
-                from .model_payload import count_model_function_tools
-
-                extra = count_model_function_tools(
-                    self._get_function_tools()
-                ) - count_model_function_tools(current.tools)
-                extra += int(
-                    _get_continue_conversation_mode(self.subentry.data)
-                    == CONTINUE_CONVERSATION_CONDITIONAL
-                )
             return load_function_groups(
                 session,
                 requested,
                 groups,
                 available_tools,
-                max_tools=max_tools,
-                extra_tool_count=extra,
-                loader_available_next_round=loader_available_next_round,
+                admission=admission,
+                integration_tools=(
+                    ExtendedOpenAIAgentEntity._get_integration_function_tools(
+                        self, configured_tools, policy
+                    )
+                    if admission.max_tools is not None
+                    else None
+                ),
             )
 
     @staticmethod

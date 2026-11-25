@@ -12,6 +12,7 @@ import time
 from typing import Any
 from urllib import parse
 
+import orjson
 from sqlalchemy.dialects.sqlite import dialect as sqlite_dialect
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -169,16 +170,16 @@ def _unique_column_names(names: list[str]) -> list[str]:
     return result
 
 
-def _estimated_row_bytes(row: dict[str, Any]) -> int:
-    """Return a conservative encoded-size estimate for one SQLite result row."""
-    return len(repr(row).encode("utf-8", errors="replace"))
-
-
 def _json_safe_sqlite_value(value: Any) -> Any:
     """Represent SQLite BLOBs as explicitly tagged Base64 JSON values."""
     if isinstance(value, bytes):
         return {"type": "base64", "data": base64.b64encode(value).decode("ascii")}
     return value
+
+
+def _serialized_row_bytes(row: dict[str, Any]) -> int:
+    """Measure a row with the compact UTF-8 encoder used for tool results."""
+    return len(orjson.dumps(row))
 
 
 def _set_sqlite_result_limit(conn: sqlite3.Connection, max_result_bytes: int) -> None:
@@ -252,7 +253,7 @@ def _execute_sqlite_query(
                     name: _json_safe_sqlite_value(val)
                     for name, val in zip(names, row, strict=False)
                 }
-                result_bytes = _estimated_row_bytes(result)
+                result_bytes = _serialized_row_bytes(result)
                 if result_bytes > max_result_bytes:
                     raise HomeAssistantError(
                         "SQLite query result exceeded the configured result-size "
@@ -262,7 +263,7 @@ def _execute_sqlite_query(
                 return result
 
             results: list[dict[str, Any]] = []
-            result_bytes = 2
+            result_bytes = 2  # Opening and closing brackets.
             for row_number, row in enumerate(cursor, start=1):
                 check_deadline()
                 if row_number > max_rows:
@@ -274,7 +275,7 @@ def _execute_sqlite_query(
                     name: _json_safe_sqlite_value(val)
                     for name, val in zip(names, row, strict=False)
                 }
-                result_bytes += _estimated_row_bytes(item) + 1
+                result_bytes += _serialized_row_bytes(item) + (1 if results else 0)
                 if result_bytes > max_result_bytes:
                     raise HomeAssistantError(
                         "SQLite query result exceeded the configured result-size "

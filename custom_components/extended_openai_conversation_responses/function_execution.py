@@ -732,8 +732,8 @@ def split_legacy_execution_delay(
     delay = {
         key: value for key, value in (delay_value or {}).items() if value is not None
     }
-    # Inspect individual units, not their sum: mixed positive/negative or
-    # malformed durations must still reach validation rather than execute now.
+    # Only an explicit numeric zero is treated as immediate here. The caller
+    # validates mixed or malformed units and checks the normalized duration.
     if all(
         key in _LEGACY_DELAY_FIELDS
         and isinstance(value, (int, float))

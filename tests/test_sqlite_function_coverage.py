@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
@@ -95,7 +97,7 @@ def test_execute_query_single_empty_and_multi_row_limit(tmp_path: Path) -> None:
         )
 
 
-def test_execute_query_enforces_estimated_result_size(
+def test_execute_query_enforces_result_size(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db_path = _make_db(tmp_path)
@@ -119,6 +121,40 @@ def test_execute_query_enforces_estimated_result_size(
             10,
             max_result_bytes=20,
         )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ['"\'' * 200, "\x00\t\n\r\x1f" * 70, "é日本😀" * 100, b"\x00\xff" * 200],
+)
+@pytest.mark.parametrize("count", [None, 1, 3])
+def test_sqlite_result_size_matches_compact_utf8_json(tmp_path, value, count):
+    db_url = sqlite_module._read_only_sqlite_uri(str(_make_db(tmp_path)))
+    payload = (
+        {"type": "base64", "data": base64.b64encode(value).decode("ascii")}
+        if isinstance(value, bytes)
+        else value
+    )
+    row = {"payload": payload}
+    expected = row if count is None else [row] * count
+    ceiling = len(
+        json.dumps(expected, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+    query = " UNION ALL ".join(["SELECT :value AS payload"] * (count or 1))
+
+    def execute(limit):
+        return sqlite_module._execute_sqlite_query(
+            db_url,
+            query,
+            count is None,
+            3,
+            max_result_bytes=limit,
+            parameters={"value": value},
+        )
+
+    assert execute(ceiling) == expected
+    with pytest.raises(HomeAssistantError, match=f"result-size limit of {ceiling - 1}"):
+        execute(ceiling - 1)
 
 
 class _FakeConnection:
@@ -306,11 +342,11 @@ def test_execute_query_rejects_deadline_expiring_during_result_processing(
         sqlite_module, "time", SimpleNamespace(monotonic=lambda: clock.now)
     )
 
-    def estimate(_row):
+    def serialized_size(_row):
         clock.now = 20.0
         return 10
 
-    monkeypatch.setattr(sqlite_module, "_estimated_row_bytes", estimate)
+    monkeypatch.setattr(sqlite_module, "_serialized_row_bytes", serialized_size)
     with pytest.raises(HomeAssistantError, match="execution deadline"):
         sqlite_module._execute_sqlite_query(
             db_url, "SELECT name FROM items LIMIT 1", single, 10

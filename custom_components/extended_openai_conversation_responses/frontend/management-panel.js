@@ -2823,9 +2823,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       setDialogBaseline(this, "memory-dialog", values);
       return await presentAcknowledgedMutation(this, submission, message, async () => {
         const ownsList = this._ownsRetainedMutation(owner);
+        let needsRefresh = false;
         if (ownsList && temporary) {
           if (savedScope === owner.scope && owner.kind === "temporary") {
-            this._result = {...this._result, memories: [...(this._result.memories || []).filter(memory => memory.memory_id !== response.memory.memory_id), response.memory]};
+            needsRefresh = !feature.applyTemporaryMemoryMutation(this, response);
           }
           if (response.status === "created") this._patchScopeCount(savedScope, "temporary_memory_count", 1);
         } else if (ownsList && owner.kind === "persistent" && !await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
@@ -2851,7 +2852,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (ownsList && !temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
         this._render();
         if (returnFocus && !dialog.open) getRouteFeature("data-memory/memories")?.restoreCollectionFocus(this.shadowRoot, `.memory-edit-button[data-id="${CSS.escape(response.memory.memory_id)}"]`, "#add-memory");
-        if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
+        if (needsRefresh || !this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {
       if (ownsEditor() && ["uncertain", "committed"].includes(err?.mutationOutcome)) dialog.__eocUncertainMutation = err;

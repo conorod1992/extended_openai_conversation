@@ -870,6 +870,7 @@ async def test_dynamic_group_growth_is_checked_at_real_runtime_boundary(
     from custom_components.extended_openai_conversation_responses import conversation
     from custom_components.extended_openai_conversation_responses.function_groups import (
         FunctionGroupSession,
+        FunctionToolAdmission,
     )
 
     entry, subentry = management_agent
@@ -899,7 +900,9 @@ async def test_dynamic_group_growth_is_checked_at_real_runtime_boundary(
     )
     lifecycle = begin_conversation_lifecycle()
     try:
-        refused = agent._load_function_groups(["later"], 128)
+        refused = agent._load_function_groups(
+            ["later"], FunctionToolAdmission(max_tools=128, extra_tool_count=1)
+        )
         assert refused["status"] == "error" and not session.loaded_group_ids
         # Even unexpected retained growth cannot bypass the final dispatch guard.
         session.loaded_group_ids.add("later")

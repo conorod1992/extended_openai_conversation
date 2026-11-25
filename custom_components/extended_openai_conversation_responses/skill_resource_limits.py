@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from stat import S_ISREG
 
 from homeassistant.exceptions import HomeAssistantError
 
@@ -20,6 +21,8 @@ MAX_SKILL_METADATA_BYTES = FILE_READ_SIZE_LIMIT
 def read_bounded_skill_text(path: Path) -> str:
     """Read one local SKILL.md without permitting an unbounded allocation."""
     try:
+        if not S_ISREG(path.stat().st_mode):
+            raise HomeAssistantError(f"Skill metadata `{path}` is not a regular file")
         with path.open("rb") as handle:
             content = handle.read(MAX_SKILL_METADATA_BYTES + 1)
     except OSError as err:

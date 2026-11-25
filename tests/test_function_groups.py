@@ -25,6 +25,7 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 )
 from custom_components.extended_openai_conversation_responses.function_groups import (
     FunctionGroupRuntime,
+    FunctionToolAdmission,
     assemble_function_tools,
     function_tool_runtime_scope,
     get_function_group_runtime,
@@ -377,14 +378,17 @@ def test_capacity_counts_group_members_even_when_loader_will_be_omitted(
         ["reminders"],
         groups,
         tools,
-        max_tools=2,
-        extra_tool_count=1,
-        loader_available_next_round=loader_available_next_round,
+        admission=FunctionToolAdmission(
+            max_tools=2,
+            extra_tool_count=1,
+            loader_available=loader_available_next_round,
+        ),
     )
     assert accepted["loaded"] == ["reminders"]
     assert accepted["loadable_groups"] == []
     rejected = load_function_groups(
-        session, ["calendar"], groups, tools, max_tools=2, extra_tool_count=1
+        session, ["calendar"], groups, tools,
+        admission=FunctionToolAdmission(max_tools=2, extra_tool_count=1),
     )
     assert rejected["status"] == "error"
     assert session.loaded_group_ids == {"reminders"}

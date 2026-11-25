@@ -14,6 +14,9 @@ export function createDataCollectionBackend(size = 100) {
   const calls = [];
   const clone = value => structuredClone(value);
   const scoped = (items, message) => items.filter(item => (!message.scope_id || item.scope_id === message.scope_id) && (!message.subentry_id || (item.subentry_id || "agent-1") === message.subentry_id));
+  const orderedTemporary = message => scoped(state.temporary, message).sort((left, right) =>
+    Date.parse(left.expires_at) - Date.parse(right.expires_at) || (left.memory_id < right.memory_id ? -1 : Number(left.memory_id > right.memory_id)));
+  const temporaryOrder = message => orderedTemporary(message).map(item => item.memory_id);
   async function call(message) {
     calls.push(clone(message));
     if (Object.hasOwn(message.local_times || {}, "expires_at")) {
@@ -84,20 +87,23 @@ export function createDataCollectionBackend(size = 100) {
       const next = offset + limit < items.length ? offset + limit : null;
       return {memories: clone(items.slice(offset, offset + limit)), total: items.length, has_more: next !== null, next_offset: next};
     }
-    if (action === "temporary_list") return {memories: clone(scoped(state.temporary, message)), stats: {}};
+    if (action === "temporary_list") return {memories: clone(orderedTemporary(message)), stats: {}};
     if (action === "temporary_delete") { const before = state.temporary.length; state.temporary = state.temporary.filter(item => item.memory_id !== message.memory_id); return {deleted: before - state.temporary.length}; }
     if (action === "temporary_clear") { if (!message.confirm) throw new Error("Confirmation required"); const before = state.temporary.length; state.temporary = state.temporary.filter(item => item.scope_id !== message.scope_id || (item.subentry_id || "agent-1") !== message.subentry_id); return {deleted: before - state.temporary.length}; }
     if (action === "temporary_add") {
       const owner = message.target_scope_id || message.scope_id;
-      const memory = {memory_id: `temporary-${nextId++}`, content: message.content, category: message.category,
-        expires_at: message.expires_at, owner_scope_id: owner, scope_id: owner, source: "manual", updated_at: timestamp()};
-      state.temporary.push(memory);
-      return {status: "created", scope_id: owner, memory: clone(memory)};
+      const destination = {...message, scope_id: owner};
+      const existing = scoped(state.temporary, destination).find(item => item.content === message.content);
+      const memory = existing || {memory_id: `temporary-${nextId++}`, content: message.content,
+        owner_scope_id: owner, scope_id: owner, subentry_id: message.subentry_id};
+      Object.assign(memory, {category: message.category, expires_at: message.expires_at, source: "manual", updated_at: timestamp()});
+      if (!existing) state.temporary.push(memory);
+      return {status: existing ? "updated" : "created", scope_id: owner, memory: clone(memory), memory_order: temporaryOrder(destination)};
     }
     if (action === "temporary_update") {
       const item = state.temporary.find(item => item.memory_id === message.memory_id);
       Object.assign(item, {content: message.content, category: message.category, expires_at: message.expires_at, updated_at: timestamp()});
-      return {memory: clone(item)};
+      return {memory: clone(item), memory_order: temporaryOrder(message)};
     }
     if (action === "add") {
       const memory = {memory_id: `memory-${nextId++}`, scope_id: message.target_scope_id || message.scope_id || "user:test-user", content: message.content, category: message.category, scope: message.scope === "household" ? "Shared household" : "Personal", source: "manual", revision: 1, updated_at: timestamp(), ...Object.fromEntries(["subject", "key", "valid_from"].filter(key => message[key] !== undefined).map(key => [key, message[key]]))};

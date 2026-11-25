@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+from stat import S_ISREG
 from typing import BinaryIO
 
 from homeassistant.exceptions import HomeAssistantError
@@ -92,7 +93,8 @@ def _recover_abandoned_download(record: Path) -> None:
 
 def recover_transaction(journal: Path, installed: Path) -> None:
     """Roll back uncommitted renames; retire committed backups without republishing."""
-    if journal.is_symlink() or journal.stat().st_size > 16 * 1024:
+    info = journal.lstat()
+    if not S_ISREG(info.st_mode) or info.st_size > 16 * 1024:
         raise HomeAssistantError("Skill recovery record is unsafe or oversized")
     match = _TRANSACTION.fullmatch(journal.name)
     document = json.loads(journal.read_text())

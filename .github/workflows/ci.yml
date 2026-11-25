@@ -408,6 +408,7 @@ jobs:
             tests_real_ha/test_live_history_regressions.py \
             tests_real_ha/test_ai_task_provider_wire.py::test_structured_task_returns_selector_normalized_data \
             tests_real_ha/test_provider_group_budget.py \
+            tests_real_ha/test_service_target_exclusions.py \
             -n 2 \
             --dist=loadscope \
             -v \
