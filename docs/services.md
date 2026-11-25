@@ -9,7 +9,7 @@ Extended OpenAI exposes Home Assistant actions for explicit automations and inte
 | `change_config` | Validate and update provider connection settings for an integration entry. |
 | `broadcast` | Queue or send a spoken announcement to selected Assist Satellites. |
 | `call_function` | Invoke an enabled configured Function Tool from a Request Rule action sequence. |
-| `download_skill`, `reload_skills` | Install a repository Skill or reload manually changed Skills. |
+| `reload_skills` | Rescan installed Skill files. |
 | `memory_list`, `memory_delete`, `memory_clear` | Inspect and manage persistent memories in the calling user's scope. Deletion and clearing are destructive. |
 | `enable_function_tools`, `disable_function_tools` | Change individual Function Tool availability for an agent. |
 | `enable_function_groups`, `disable_function_groups` | Change Function Group availability without changing member tool state. |
@@ -60,20 +60,16 @@ Use a provider and model that support vision, and replace the example entry ID a
 
 `broadcast` sends a TTS announcement to announcement-capable Assist Satellites. Choose targets by entity, device, area, floor, or label, or set `whole_home`. Busy satellites can queue the message until its configured TTL expires. Broadcast must be enabled in the Extended OpenAI management UI.
 
-## Skills actions
+## Reload skills
 
-Download an example Skill with:
+Run the action after adding, editing, moving, or removing Skill files.
 
 ```yaml
-action: extended_openai_conversation_responses.download_skill
-data:
-  skill_name: crypto
+action: extended_openai_conversation_responses.reload_skills
 ```
-
-Normal releases use the integration-version tag. `source_ref` can select a branch, tag, or commit for development and testing. Downloads refresh the Skill catalogue automatically. After manually editing Skill files, call `reload_skills`.
 
 ## Administrative actions
 
-Provider changes, image queries, Skill downloads/reloads, Function Tool/Group state changes, Guest Mode changes, and Quiet Hours changes require administrator permission for user-originated calls; trusted system automations can also call them. Memory actions instead use the calling user's data scope. These actions are not automatically exposed to the model as Function Tools. `call_function` requires an active Request Rule execution and cannot be used as a standalone arbitrary tool runner.
+Provider changes, image queries, Skill reloads, Function Tool/Group state changes, Guest Mode changes, and Quiet Hours changes require administrator permission for user-originated calls; trusted system automations can also call them. Memory actions instead use the calling user's data scope. These actions are not automatically exposed to the model as Function Tools. `call_function` requires an active Request Rule execution and cannot be used as a standalone arbitrary tool runner.
 
 For available fields and required confirmations, use each action's selector and description in Developer Tools → Actions. Avoid wiring destructive memory actions to an untrusted automation trigger.

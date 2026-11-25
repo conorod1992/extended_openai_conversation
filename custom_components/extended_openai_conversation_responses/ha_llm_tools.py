@@ -26,7 +26,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
+from .exceptions import EffectOutcomeUnknown, EffectReplayBlocked
+from .function_tool_recovery import should_report_uncertain_effects
 from .ha_tool_result_compat import HAToolResultError, execution_tool_result
+from .operational_errors import log_handled_failure
 from .schema_errors import SCHEMA_ERRORS
 from .template_diagnostics import private_template_diagnostics
 
@@ -181,7 +184,18 @@ class LiveTool:
                     tool_name=self.tool.name, tool_args=original_args, id=tool_input.id
                 )
             )
+            # An error envelope can follow partial effects too.
+            result = execution_tool_result(result)
+        except EffectOutcomeUnknown, EffectReplayBlocked:
+            raise
         except Exception as error:
+            if (
+                receipt is not None
+                and receipt.outcome == "uncertain"
+                and should_report_uncertain_effects()
+            ):
+                log_handled_failure(_LOGGER, "HA tool acknowledgement failed", error)
+                raise EffectOutcomeUnknown() from None
             # HA-owned implementations can echo private configuration too.
             # Keep flagged data private until the shared model-result boundary.
             if isinstance(error, HAToolResultError):
@@ -190,14 +204,9 @@ class LiveTool:
 
             public = sanitize_backend_error(error)
             if public is not error:
-                from .operational_errors import log_handled_failure
-
                 log_handled_failure(_LOGGER, "HA tool backend failed", error)
                 raise public from None
             raise
-        # An error envelope may follow partial side effects, just like a raised
-        # exception. Keep that receipt uncertain until the result is checked.
-        result = execution_tool_result(result)
         execution_completed(receipt)
         return result
 

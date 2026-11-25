@@ -14,11 +14,13 @@ The built-in cleanup can remove content that is useful on screen but awkward whe
 
 It works with Responses, Chat Completions and compatible providers. Cleanup follows links across streamed chunks. When a recognized URL exceeds the streaming buffer, cleanup keeps skipping the URL even if its closing delimiter never arrives.
 
-Link labels such as `Sources`, `References`, and `1` remain spoken. Only empty labels and labels that are themselves URLs or addresses are suppressed; cleanup does not guess whether a label is a citation.
+Link labels such as `Sources`, `References`, and `1` remain spoken. With bare-URL removal enabled, URLs inside a readable label are removed and the remaining words are spoken. Empty labels and address-only citations are suppressed.
+
+An unspaced em dash in a bare URL path can belong to either the address or the surrounding sentence. When it is followed by a short word and whitespace, cleanup keeps that word as prose. Internal en dashes and em dashes in query strings and fragments stay with the URL. Use an explicit Markdown destination, angle brackets, or separating whitespace to make the boundary clear.
 
 Numbered list items keep their numbers for TTS: `2) Check the switch` becomes `2. Check the switch`. Bullet markers are removed. Items containing only removed URLs or citations disappear with their markers, while standalone numerical text such as `5.` or `5)` stays intact. This also applies to streamed replies and nested lists.
 
-Inline code preserves literal operators and URLs while its backtick delimiters are removed, including when enclosed in emphasis. Final whitespace cleanup preserves parentheses such as `call()`. Configured replacement rules can deliberately change this content.
+Inline code preserves literal operators, URLs, and spacing while its backtick delimiters are removed, including inside link labels and emphasis. Fenced code preserves indentation and internal spacing. Configured replacement rules can deliberately change code content.
 
 With Markdown cleanup enabled, backslashes escaping ASCII punctuation are removed
 outside recognized code. The punctuation stays literal: `\*word\*` is spoken as
@@ -29,8 +31,9 @@ backslash before deciding how to speak it.
 Completed cleanup attaches ordinary punctuation to preceding prose, such as
 `Hello , world` becoming `Hello, world`. Spaces before escaped punctuation stay:
 `off now. \!photo` becomes `off now. !photo`. Custom replacements still run before
-final whitespace cleanup. Copied text and regex backreferences retain this
-literal spacing; newly written replacement punctuation uses normal attachment.
+final whitespace cleanup. Copied text and regex backreferences retain literal
+spacing. New prose punctuation uses normal attachment, and replacements within
+code retain code spacing.
 
 Short, contiguous `=` Setext underlines after plain top-level heading text are
 removed. Standalone equals runs, spaced `= = =`, operators, escapes, and code stay
@@ -62,7 +65,7 @@ Advanced replacement rules use Python regular expressions and run in order after
   replacement: 'Home Assistant'
 ```
 
-Because a custom regular expression may depend on text that has not arrived yet, configuring any custom replacement disables progressive TTS for that response. Extended OpenAI waits for the completed answer, applies the normal cleanup, and then runs the custom replacements.
+Because a custom regular expression may depend on text that has not arrived yet, configuring any custom replacement delays speech until the completed answer is ready. Extended OpenAI applies the normal cleanup and the custom replacements before Home Assistant synthesizes the reply. Home Assistant's shared live callback withholds assistant text during that turn, so live visual text also waits for the completed reply.
 
 Custom processing has safety limits. If a saved rule is invalid, takes too long, fails, receives too much input, or produces excessive output, Extended OpenAI falls back to the cleaned speech text from before the custom replacements. It will not speak a partially modified result.
 

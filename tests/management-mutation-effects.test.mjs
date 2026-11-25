@@ -8,7 +8,7 @@ const commands = {
   conversations:["delete", "end_active"], guest_mode:["save_policy", "update", "disable"],
   knowledge:["create", "update", "delete", "set_enabled"],
   memories:["add", "update", "delete", "clear", "temporary_add", "temporary_delete", "temporary_update", "temporary_clear", "reassign_legacy"],
-  request_rules:["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move", "rule_pack_import"],
+  request_rules:["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move"],
   settings:["update"], tools:["save", "delete", "set_enabled", "save_group", "delete_group", "ha_add"], usage:["clear_details"],
 };
 
@@ -68,7 +68,7 @@ for (const [section, actions] of Object.entries(commands)) for (const action of 
   });
 }
 
-for (const [section, action] of [["tools", "validate_current"], ["request_rules", "rule_pack_review"], ["guest_mode", "get"], ["configuration", "request_preview"], ["usage", "daily"], ["unknown", "save"], ["tools", "toString"], ["__proto__", "save"]]) {
+for (const [section, action] of [["tools", "validate_current"], ["guest_mode", "get"], ["configuration", "request_preview"], ["usage", "daily"], ["unknown", "save"], ["tools", "toString"], ["__proto__", "save"]]) {
   test(`${section}.${action} has no mutation effects`, () => {
     const host = panel(), before = [...host._sectionCache];
     assert.equal(isAgentMutation(section, action), false);
@@ -110,7 +110,7 @@ for (const family of ["tools", "request_rules"]) for (const explicit of [false, 
       if (calls.length === 1) return new Promise(resolve => { release = resolve; });
       return {revision:"ack-3", functions:[], function_groups:[], rules:[], groups:[]};
     };
-    const action = family === "tools" ? "set_enabled" : "rule_pack_import";
+    const action = family === "tools" ? "set_enabled" : "groups";
     const first = host._call(family, action, {marker:"first"});
     while (!release) await Promise.resolve();
     const second = host._call(family, action, {marker:"second", ...(explicit ? {revision:"caller-guard"} : {})});

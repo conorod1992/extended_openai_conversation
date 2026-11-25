@@ -22,6 +22,7 @@ from custom_components.extended_openai_conversation_responses.functions import c
 from custom_components.extended_openai_conversation_responses.provider_errors import (
     ProviderStreamError,
 )
+from tests.skill_transaction_fixtures import write_legacy_transaction
 
 
 class _FakeStore:
@@ -262,7 +263,7 @@ def _skill_transaction(tmp_path):
     staged.mkdir(parents=True)
     (staged / "SKILL.md").write_text("NEW")
     backup = root / f"owned.backup-{'a' * 32}"
-    journal = skill_transactions.prepare_transaction(root, target, backup, staged)
+    journal = write_legacy_transaction(root, target, backup, staged)
     return installed, root, target, staged, backup, journal
 
 

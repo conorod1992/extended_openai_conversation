@@ -234,6 +234,7 @@ async def test_memory_fallback_records_cause_once_and_recovery(caplog, monkeypat
     caplog.set_level(logging.DEBUG)
     memory = PersistentMemory(FakeStorage())
     await memory.async_initialize()
+    await memory.async_add("scope", "Tea preference", "general", "explicit")
     provider = AsyncMock(
         side_effect=ProviderStreamError(SECRET, code="insufficient_quota")
     )
@@ -356,9 +357,13 @@ async def test_quiet_hours_apply_and_restore_failures_retain_context(
         }
     }
     await manager._async_restore_locked()
+    restore = manager._async_set_volume if kind == "volume" else manager._async_set_switch
+    restore_context = restore.await_args.kwargs["context_id"]
+    assert isinstance(restore_context, str) and restore_context
     assert manager._active["controls"][entity_id] == {
         "kind": kind, "original_value": original, "quiet_value": quiet,
         "restoration_pending": True,
+        "restoration_context_id": restore_context,
     }
     assert "ownership=retained" in caplog.text
     assert "operation=apply" in caplog.text and "operation=restore" in caplog.text
@@ -488,9 +493,8 @@ async def test_config_flow_unexpected_validation_never_logs_candidate(
     assert SECRET not in caplog.text
 
 
-@pytest.mark.parametrize("response", ["{missing}", "{lookup.missing}"])
 async def test_rule_final_response_failure_does_not_rerun_successful_actions(
-    hass, monkeypatch, caplog, response
+    hass, monkeypatch, caplog
 ) -> None:
     rule = {
         "id": "rule",
@@ -498,7 +502,7 @@ async def test_rule_final_response_failure_does_not_rerun_successful_actions(
         "action_type": "local_action",
         "action": {
             "actions": [{"variables": {"ok": True}}],
-            "success_response": response,
+            "success_response": "{missing}",
             "failure_response": "Actions failed",
             "continue_to_ai": False,
         },
@@ -521,11 +525,6 @@ async def test_rule_final_response_failure_does_not_rerun_successful_actions(
         async_unload=AsyncMock(),
     )
 
-    async def run(*_args):
-        request_rules._ACTIVE_RULE_ACTION.get().function_results["lookup"] = {"available": SECRET}
-        return SimpleNamespace(variables={marker: True}, conversation_response=None)
-
-    script.async_run.side_effect = run
     monkeypatch.setattr(request_rules, "Script", Mock(return_value=script))
     result = await request_rules._async_evaluate_matched_rule(
         hass,

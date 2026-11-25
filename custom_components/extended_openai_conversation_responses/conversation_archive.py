@@ -30,10 +30,12 @@ from homeassistant.util import dt as dt_util
 
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS, DOMAIN
+from .function_tool_policy import runtime_function_tool_name
 from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
+from .restore_disk import RESTORE_STAGING_SUFFIX, write_verified_store
 from .retrieval_text import (
     _stem as _shared_stem,
     word_character_projection,
@@ -131,9 +133,34 @@ class ArchiveSession:
     last_activity_at: str | None = None
 
     @property
+    def can_record_content(self) -> bool:
+        """Whether the retention state permits storing transcript turns."""
+        return self.retention_state == "retained"
+
+    @property
     def has_saved_history(self) -> bool:
         """Whether the session contains at least one retained turn."""
-        return self.retention_state == "retained" and self.turn_count > 0
+        return self.can_record_content and self.turn_count > 0
+
+    @property
+    def retains_metadata(self) -> bool:
+        """Whether this session belongs in the durable Archive."""
+        return self.retention_state not in {"unretained", "unretained_private"}
+
+    @property
+    def eligible_for_portable_backup(self) -> bool:
+        """Whether the retention state can travel in a portable backup."""
+        return self.retains_metadata
+
+    @property
+    def eligible_for_local_recovery(self) -> bool:
+        """Allow content-free unretained identity during same-agent recovery."""
+        return self.retention_state != "unretained_private"
+
+    @property
+    def is_private(self) -> bool:
+        """Whether an explicit privacy boundary is active."""
+        return self.retention_state in {"private", "unretained_private"}
 
 
 @dataclass(slots=True, frozen=True, weakref_slot=True)
@@ -150,27 +177,42 @@ class ArchiveTurn:
     sequence: int | None = None
 
 
-def archive_sessions_past_retention(
-    sessions: Iterable[ArchiveSession],
-    turns: Iterable[ArchiveTurn],
-    retention_days: int,
-) -> set[str]:
-    """Use the same expiry rule in retention maintenance and restore preview."""
-    cutoff = dt_util.utcnow() - timedelta(days=max(1, retention_days))
+def _latest_turn_times(turns: Iterable[ArchiveTurn]) -> dict[str, datetime]:
     latest: dict[str, datetime] = {}
     for turn in turns:
         stamp = _parse_time(turn.timestamp)
         previous = latest.get(turn.session_id)
         if previous is None or stamp > previous:
             latest[turn.session_id] = stamp
+    return latest
+
+
+def _archive_retention_timestamp(
+    session: ArchiveSession, latest_turn: datetime | None
+) -> datetime:
+    if session.is_private:
+        return _parse_time(session.last_activity_at or session.last_message_at)
+    return latest_turn or _parse_time(session.last_message_at)
+
+
+def _archive_retention_cutoff(days: int, now: datetime | None = None) -> datetime:
+    return (now or dt_util.utcnow()) - timedelta(days=max(1, days))
+
+
+def archive_sessions_past_retention(
+    sessions: Iterable[ArchiveSession],
+    turns: Iterable[ArchiveTurn],
+    retention_days: int,
+    *,
+    now: datetime | None = None,
+) -> set[str]:
+    """Evaluate expiry for a detached Archive payload, including restore preview."""
+    cutoff = _archive_retention_cutoff(retention_days, now)
+    latest = _latest_turn_times(turns)
     return {
         session.session_id
         for session in sessions
-        if (
-            _parse_time(session.last_activity_at or session.last_message_at)
-            if session.retention_state == "private"
-            else latest.get(session.session_id) or _parse_time(session.last_message_at)
-        )
+        if _archive_retention_timestamp(session, latest.get(session.session_id))
         < cutoff
     }
 
@@ -179,11 +221,8 @@ def archive_session_inactive(
     session: ArchiveSession, now: datetime, inactivity_minutes: int
 ) -> bool:
     """Apply the same inactivity boundary during live turns and restore."""
-    return (
-        _parse_time(session.last_activity_at or session.last_message_at)
-        + timedelta(minutes=max(1, inactivity_minutes))
-        < now
-    )
+    last_activity = _parse_time(session.last_activity_at or session.last_message_at)
+    return now - last_activity > timedelta(minutes=max(1, inactivity_minutes))
 
 
 @callback
@@ -286,7 +325,9 @@ class ArchiveStorage(Protocol):
     ) -> None: ...
 
 
-def _stored_archive_partitions(metadata_path: str, prefix: str) -> set[str]:
+def _stored_archive_partitions(
+    metadata_path: str, prefix: str, *, include_restore_staging: bool = False
+) -> set[str]:
     """Inventory exact owned monthly files when damaged metadata lost its index."""
     stem = prefix + ".turns."
     result: set[str] = set()
@@ -294,6 +335,8 @@ def _stored_archive_partitions(metadata_path: str, prefix: str) -> set[str]:
         if not path.name.startswith(stem):
             continue
         month = path.name[len(stem) :]
+        if include_restore_staging:
+            month = month.removesuffix(RESTORE_STAGING_SUFFIX)
         if re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", month) and stat.S_ISREG(
             path.stat(follow_symlinks=False).st_mode
         ):
@@ -348,6 +391,11 @@ class _ArchiveMetadataStore(PropagatingWriteStore):
         if self.migration_deferred:
             raise OSError("Archive metadata must be upgraded before changing history")
 
+    def require_restore_write(self) -> None:
+        self.require_migrated()
+        if self._read_only or self._load_empty or self.corruption_unavailable:
+            raise OSError("Archive metadata is unavailable for restore writes")
+
 
 class HomeAssistantArchiveStorage:
     """Small metadata store plus independent monthly transcript stores."""
@@ -390,6 +438,52 @@ class HomeAssistantArchiveStorage:
     async def async_save_partition(self, partition: str, data: dict[str, Any]) -> None:
         self._metadata.require_migrated()
         await self._partition_store(partition).async_save(data)
+
+    async def async_write_restore_partitions(
+        self,
+        turns: dict[str, list[ArchiveTurn]],
+        previous: set[str],
+    ) -> set[str]:
+        """Apply a verified outer journal with one native Store file at a time."""
+        gate = get_agent_maintenance_gate(self._hass, *self._agent_identity)
+        if not gate.owns_exclusive():
+            raise RuntimeError("Archive restore requires exclusive maintenance")
+        gate.require_available()
+        self._metadata.require_restore_write()
+
+        def partition_turns() -> dict[str, list[ArchiveTurn]]:
+            result: dict[str, list[ArchiveTurn]] = defaultdict(list)
+            for session_turns in turns.values():
+                for turn in session_turns:
+                    if turn.sequence is not None and turn.sequence >= 2**64:
+                        # HA's native JSON reader would turn this integer into a float.
+                        raise ValueError(
+                            "Archive turn sequence exceeds the storage limit"
+                        )
+                    result[turn.timestamp[:7]].append(turn)
+            return result
+
+        by_partition = await asyncio.to_thread(partition_turns)
+        # A crash may have left a new month on disk before it was indexed.
+        existing = await asyncio.to_thread(
+            _stored_archive_partitions,
+            self._metadata.path,
+            self._prefix,
+            include_restore_staging=True,
+        )
+        for month in sorted(previous | existing | by_partition.keys()):
+            store = self._partition_store(month)
+
+            def write(month: str = month, store: Store[dict[str, Any]] = store) -> None:
+                payload = {
+                    "turns": [
+                        _turn_payload(turn) for turn in by_partition.get(month, [])
+                    ]
+                }
+                write_verified_store(store, payload, max_bytes=321 * 1024 * 1024)
+
+            await self._hass.async_add_executor_job(write)
+        return (previous | existing) - by_partition.keys()
 
     async def async_remove_partition(self, partition: str) -> None:
         """Remove an obsolete monthly transcript store."""
@@ -476,22 +570,63 @@ class HomeAssistantArchiveStorage:
 class ConversationArchive:
     """Concurrency-safe scoped archive with deterministic session privacy."""
 
-    def __init__(self, storage: ArchiveStorage, agent_subentry_id: str) -> None:
+    def __init__(
+        self,
+        storage: ArchiveStorage,
+        agent_subentry_id: str,
+        *,
+        retention_days: Callable[[], int | None] | None = None,
+    ) -> None:
         self._storage = storage
         self._agent_subentry_id = agent_subentry_id
+        self._retention_days = retention_days
         self._sessions: dict[str, ArchiveSession] = {}
         self._turns: dict[str, list[ArchiveTurn]] = defaultdict(list)
+        self._latest_turn_at: dict[str, datetime] = {}
         self._active: dict[str, str] = {}
         self._partitions: set[str] = set()
         self._pending_partitions: set[str] = set()
+        self._expired_pending_prune: set[str] = set()
         self._durable_metadata: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
         self._initialized = False
         self._repair_required = False
 
+    def _retention_cutoff(self, now: datetime | None = None) -> datetime | None:
+        days = self._retention_days() if self._retention_days is not None else None
+        return _archive_retention_cutoff(days, now) if days is not None else None
+
+    def _past_cutoff(self, session: ArchiveSession, cutoff: datetime) -> bool:
+        return (
+            _archive_retention_timestamp(
+                session, self._latest_turn_at.get(session.session_id)
+            )
+            < cutoff
+        )
+
+    def _retention_hidden(
+        self, session: ArchiveSession, cutoff: datetime | None
+    ) -> bool:
+        return session.session_id in self._expired_pending_prune or (
+            cutoff is not None and self._past_cutoff(session, cutoff)
+        )
+
+    @property
+    def read_available(self) -> bool:
+        """Whether a validated archive generation is available for reads."""
+        return self._initialized and not (
+            isinstance(self._storage, HomeAssistantArchiveStorage)
+            and self._storage._metadata.corruption_unavailable
+        )
+
+    @property
+    def needs_storage_repair(self) -> bool:
+        """Whether the archive requires repair before another ordinary write."""
+        return self._repair_required
+
     def private_continuity_bindings(self) -> dict[str, str]:
         """Return content-free identities under the caller's exclusive restore lease."""
-        return self._continuity_bindings("private")
+        return self._continuity_bindings("private", "unretained_private")
 
     def retained_continuity_bindings(self) -> dict[str, str]:
         """Identify unchanged retained conversations under exclusive maintenance."""
@@ -509,13 +644,13 @@ class ConversationArchive:
             and key == f"conversation:{session.home_assistant_conversation_id}"
         }
 
-    def _continuity_bindings(self, retention_state: str) -> dict[str, str]:
+    def _continuity_bindings(self, *retention_states: str) -> dict[str, str]:
         return {
             key.removeprefix("continuity:"): session.home_assistant_conversation_id
             for key, session_id in self._active.items()
             if key.startswith("continuity:")
             and (session := self._sessions.get(session_id)) is not None
-            and session.retention_state == retention_state
+            and session.retention_state in retention_states
             and session.home_assistant_conversation_id is not None
         }
 
@@ -718,8 +853,12 @@ class ConversationArchive:
                         staged_sessions, staged_active, staged_partitions
                     )
                 )
+            latest_turn_at = await asyncio.to_thread(
+                _latest_turn_times, chain.from_iterable(staged_turns.values())
+            )
             self._sessions = staged_sessions
             self._turns = defaultdict(list, staged_turns)
+            self._latest_turn_at = latest_turn_at
             self._active = staged_active
             self._partitions = staged_partitions
             self._pending_partitions.clear()
@@ -867,6 +1006,8 @@ class ConversationArchive:
         archive_enabled: bool,
         shared_archive_enabled: bool,
         inactivity_minutes: int,
+        live_logical_conversation: bool = False,
+        on_durable_write: Callable[[], None] | None = None,
     ) -> ArchiveSession | None:
         """Resolve the stable scope once and return the exact active session."""
         if not archive_enabled:
@@ -878,7 +1019,14 @@ class ConversationArchive:
             may_retain = _scope_retention_allowed(scope, shared_archive_enabled)
             if (
                 current is not None
-                and not archive_session_inactive(current, now, inactivity_minutes)
+                and (
+                    current.is_private
+                    or not self._retention_hidden(current, self._retention_cutoff(now))
+                )
+                and (
+                    not archive_session_inactive(current, now, inactivity_minutes)
+                    or (live_logical_conversation and current.is_private)
+                )
                 and current.scope_id == scope.scope_id
                 and current.home_assistant_conversation_id
                 == home_assistant_conversation_id
@@ -887,15 +1035,12 @@ class ConversationArchive:
                 and not (may_retain and current.retention_state == "unretained")
             ):
                 current = replace(current, last_activity_at=now.isoformat())
-                if current.retention_state == "private":
-                    # Live activity is authoritative even when this optional
-                    # content-free refresh cannot be persisted.
-                    self._sessions[current.session_id] = current
-                    # Persist only content-free metadata; private activity never
-                    # rewrites transcript partitions or retains message text.
-                    await self._async_publish_session_locked(session_key, current)
-                else:
-                    self._sessions[current.session_id] = current
+                # Live activity is authoritative even when a durable refresh fails.
+                self._sessions[current.session_id] = current
+                if current.is_private and current.retains_metadata:
+                    await self._async_publish_session_locked(
+                        session_key, current, on_durable_write=on_durable_write
+                    )
                 return current
 
             timestamp = now.isoformat()
@@ -914,7 +1059,9 @@ class ConversationArchive:
                 turn_count=0,
                 retention_state="retained" if may_retain else "unretained",
             )
-            await self._async_publish_session_locked(session_key, session)
+            await self._async_publish_session_locked(
+                session_key, session, on_durable_write=on_durable_write
+            )
             return session
 
     async def async_record_turn(
@@ -934,15 +1081,19 @@ class ConversationArchive:
             if session is None:
                 return None
             timestamp = dt_util.utcnow().isoformat()
-            if session.retention_state == "private":
+            if session.is_private:
                 # A slow turn is active until completion too. Persist activity
                 # without retaining content or changing the active binding.
                 if timestamp != session.last_activity_at or self._pending_partitions:
                     session = replace(session, last_activity_at=timestamp)
                     self._sessions[session.session_id] = session
-                    await self._async_publish_session_locked(None, session)
+                    if session.retains_metadata:
+                        await self._async_publish_session_locked(None, session)
                 return None
-            if session.retention_state != "retained":
+            if (
+                not session.can_record_content
+                or session_id in self._expired_pending_prune
+            ):
                 return None
             previous_turns = self._turns.get(session_id, [])
             upgraded_legacy = bool(previous_turns) and all(
@@ -1006,30 +1157,50 @@ class ConversationArchive:
         """Delete retained turns and journal the privacy boundary before publishing."""
         async with self._lock:
             session = self._require_session(session_id)
+            if not session.retains_metadata:
+                self._sessions[session_id] = replace(
+                    session, retention_state="unretained_private"
+                )
+                return {
+                    "private_mode_enabled": True,
+                    "session_id": session_id,
+                    "deleted_turns": 0,
+                    "future_turns_retained": False,
+                }
             turns = dict(self._turns)
             removed = list(turns.pop(session_id, ()))
             sessions = dict(self._sessions)
-            sessions[session_id] = ArchiveSession(
-                **{
-                    **asdict(session),
-                    "title": "",
-                    "turn_count": 0,
-                    "retention_state": "private",
-                    "last_activity_at": dt_util.utcnow().isoformat(),
-                }
+            private = sessions[session_id] = replace(
+                session,
+                title="",
+                turn_count=0,
+                retention_state="private",
+                last_activity_at=dt_util.utcnow().isoformat(),
             )
-            await self._async_commit_state_locked(
-                sessions=sessions,
-                turns=turns,
-                active=dict(self._active),
-                changed_partitions=self._changed_partitions(removed),
-            )
-            return {
+            result = {
                 "private_mode_enabled": True,
                 "session_id": session_id,
                 "deleted_turns": len(removed),
                 "future_turns_retained": False,
             }
+            try:
+                await self._async_commit_state_locked(
+                    sessions=sessions,
+                    turns=turns,
+                    active=dict(self._active),
+                    changed_partitions=self._changed_partitions(removed),
+                )
+            except Exception:
+                # The exact object is published only after a confirmed journal
+                # write or successful authoritative readback of that generation.
+                if self._sessions.get(session_id) is not private:
+                    raise
+                if self._pending_partitions:
+                    _LOGGER.warning(
+                        "Private Archive session has pending transcript cleanup"
+                    )
+                    result["cleanup_pending"] = True
+            return result
 
     async def async_resume_saving(
         self,
@@ -1080,11 +1251,13 @@ class ConversationArchive:
         """
         async with self._lock:
             self._ensure_initialized()
+            cutoff = self._retention_cutoff()
             sessions = {
                 key: session
                 for key, session in self._sessions.items()
                 if session.scope_id == scope_id
                 and session.retention_state == "retained"
+                and not self._retention_hidden(session, cutoff)
             }
             if include_turns:
                 turns = {key: tuple(self._turns.get(key, ())) for key in sessions}
@@ -1095,6 +1268,7 @@ class ConversationArchive:
         # Deletion/privacy changes may occur while ranking. Never publish their old text.
         async with self._lock:
             self._ensure_initialized()
+            cutoff = self._retention_cutoff()
             for record in result.get("results", result.get("sessions", ())):
                 session_id = record["session_id"]
                 current = self._sessions.get(session_id)
@@ -1102,6 +1276,7 @@ class ConversationArchive:
                     current is None
                     or current.scope_id != scope_id
                     or current.retention_state != "retained"
+                    or self._retention_hidden(current, cutoff)
                 ):
                     raise HomeAssistantError(
                         "Archive changed during search; retry the query"
@@ -1162,7 +1337,7 @@ class ConversationArchive:
         text_offset: int = 0,
     ) -> dict[str, Any]:
         """Return bounded turns only after exact ownership validation."""
-        session = self._require_owned_session(scope_id, session_id)
+        session = self._require_readable_session(scope_id, session_id)
         start_turn = max(0, start_turn)
         limit = max(1, min(limit, MAX_GET_LIMIT))
         turns = self._turns.get(session_id, [])
@@ -1243,7 +1418,7 @@ class ConversationArchive:
         backwards and return fragments in chronological order with an exact
         starting cursor for the next backwards request.
         """
-        session = self._require_owned_session(scope_id, session_id)
+        session = self._require_readable_session(scope_id, session_id)
         turns = self._turns.get(session_id, [])
         before_turn = max(0, int(before_turn))
         before_text_offset = max(0, int(before_text_offset))
@@ -1332,10 +1507,13 @@ class ConversationArchive:
     ) -> dict[str, Any]:
         """List bounded content-free metadata for one scope."""
         limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+        cutoff = self._retention_cutoff()
         sessions = [
             session
             for session in self._sessions.values()
-            if session.scope_id == scope_id and session.has_saved_history
+            if session.scope_id == scope_id
+            and session.has_saved_history
+            and not self._retention_hidden(session, cutoff)
         ]
         sessions.sort(key=lambda item: _parse_time(item.last_message_at), reverse=True)
         page = sessions[max(0, offset) : max(0, offset) + limit]
@@ -1377,7 +1555,7 @@ class ConversationArchive:
             targets = {
                 session.session_id
                 for session in self._sessions.values()
-                if session.scope_id == scope_id and session.retention_state != "private"
+                if session.scope_id == scope_id and not session.is_private
             }
             if not targets:
                 return {"deleted_sessions": 0, "deleted_turns": 0}
@@ -1462,8 +1640,17 @@ class ConversationArchive:
         start, end = _local_date_bounds(start_date, end_date, dt_util.DEFAULT_TIME_ZONE)
         async with self._lock:
             self._ensure_initialized()
+            cutoff = self._retention_cutoff()
             sessions = _sessions_in_delete_range(
-                self._sessions.values(), scope_id, start, end
+                (
+                    session
+                    for session in self._sessions.values()
+                    if allow_outside_range
+                    or not self._retention_hidden(session, cutoff)
+                ),
+                scope_id,
+                start,
+                end,
             )
             if not sessions:
                 return {"deleted_sessions": 0, "deleted_turns": 0}
@@ -1488,13 +1675,21 @@ class ConversationArchive:
     async def async_prune(self, retention_days: int) -> dict[str, int]:
         """Delete expired transcript sessions using the restart-safe journal."""
         async with self._lock:
-            targets = await asyncio.to_thread(
-                archive_sessions_past_retention,
-                tuple(self._sessions.values()),
-                chain.from_iterable(tuple(self._turns.values())),
-                retention_days,
-            )
-            if not targets:
+            cutoff = _archive_retention_cutoff(retention_days)
+
+            def expired_sessions() -> set[str]:
+                return {
+                    session.session_id
+                    for session in self._sessions.values()
+                    if self._past_cutoff(session, cutoff)
+                }
+
+            targets = await asyncio.to_thread(expired_sessions)
+            # Expiry takes effect for reads even if the journal cannot be written.
+            self._expired_pending_prune = targets
+            # A previous prune can have committed its deletion intent before
+            # a partition write failed. Retry that work even with no new targets.
+            if not targets and not self._pending_partitions:
                 return {"deleted_sessions": 0, "deleted_turns": 0}
             sessions = {
                 session_id: session
@@ -1516,6 +1711,7 @@ class ConversationArchive:
                 active=active,
                 changed_partitions=self._changed_partitions(removed),
             )
+            self._expired_pending_prune = set()
             return {
                 "deleted_sessions": len(targets),
                 "deleted_turns": len(removed),
@@ -1537,8 +1733,9 @@ class ConversationArchive:
     def scope_counts(self) -> dict[str, int]:
         """Return retained session totals grouped by data scope."""
         counts: dict[str, int] = {}
+        cutoff = self._retention_cutoff()
         for session in self._sessions.values():
-            if not session.has_saved_history:
+            if not session.has_saved_history or self._retention_hidden(session, cutoff):
                 continue
             counts[session.scope_id] = counts.get(session.scope_id, 0) + 1
         return counts
@@ -1547,10 +1744,12 @@ class ConversationArchive:
         """Return retained archive content without active-session runtime state."""
         async with self._lock:
             self._require_writable()
+            cutoff = self._retention_cutoff()
             sessions = [
                 session
                 for session in self._sessions.values()
-                if session.retention_state != "unretained"
+                if session.eligible_for_portable_backup
+                and not self._retention_hidden(session, cutoff)
             ]
             retained_ids = {session.session_id for session in sessions}
             turns = [
@@ -1566,10 +1765,19 @@ class ConversationArchive:
         async with self._lock:
             self._require_writable()
             # Records are immutable; the lock protects selection and serialization.
-            sessions = list(self._sessions.values())
+            sessions = [
+                session
+                for session in self._sessions.values()
+                if session.eligible_for_local_recovery
+            ]
+            session_ids = {session.session_id for session in sessions}
             turns = [turn for items in self._turns.values() for turn in items]
             payload = await asyncio.to_thread(_archive_payload, sessions, turns)
-            payload["active"] = dict(self._active)
+            payload["active"] = {
+                key: session_id
+                for key, session_id in self._active.items()
+                if session_id in session_ids
+            }
             return payload
 
     @staticmethod
@@ -1659,6 +1867,7 @@ class ConversationArchive:
         turns: list[ArchiveTurn],
         *,
         active: dict[str, str] | None = None,
+        disk_backed: bool = False,
     ) -> None:
         """Replace durable archive data through the same restart-safe journal."""
         sessions, turns = await asyncio.to_thread(
@@ -1674,14 +1883,31 @@ class ConversationArchive:
             else {}
         )
         async with self._lock:
-            self._ensure_initialized()
+            if not disk_backed:
+                self._ensure_initialized()
             session_map = {
                 session.session_id: replace(session, title="")
                 if session.retention_state == "private"
                 else session
                 for session in sessions
             }
+            # Portable and journal data omit these process-local markers.
+            # Keep the destination's choice while its live conversation exists.
+            for key, session_id in self._active.items():
+                prior = self._sessions[session_id]
+                if prior.retention_state != "unretained_private":
+                    continue
+                if session_id in session_map:
+                    session_id = uuid4().hex
+                    prior = replace(prior, session_id=session_id)
+                session_map[session_id] = prior
+                bindings[key] = session_id
             turn_map = _replacement_turn_map(turns)
+            if disk_backed and isinstance(self._storage, HomeAssistantArchiveStorage):
+                await self._async_replace_from_outer_journal(
+                    session_map, dict(turn_map), bindings
+                )
+                return
             new_partitions = {turn.timestamp[:7] for turn in turns}
             await self._async_commit_state_locked(
                 sessions=session_map,
@@ -1691,9 +1917,63 @@ class ConversationArchive:
                 replacing=True,
             )
 
+    async def _async_replace_from_outer_journal(
+        self,
+        sessions: dict[str, ArchiveSession],
+        turns: dict[str, list[ArchiveTurn]],
+        active: dict[str, str],
+    ) -> None:
+        """Keep partition data out of the Archive's nested metadata journal."""
+        storage = self._storage
+        assert isinstance(storage, HomeAssistantArchiveStorage)
+        if not self._initialized:
+            try:
+                self._durable_metadata = await storage.async_load_metadata()
+            except StorageRepairRequired:
+                # The outer journal has validated both Archive generations.
+                # A fresh writer can replace rejected metadata during recovery.
+                storage = HomeAssistantArchiveStorage(
+                    storage._hass, *storage._agent_identity
+                )
+                self._storage = storage
+        partitions, _, metadata, latest = await asyncio.to_thread(
+            self._prepare_commit_payloads, sessions, active, turns, set(), set()
+        )
+        obsolete = await storage.async_write_restore_partitions(
+            turns, self._partitions | self._pending_partitions
+        )
+
+        def publish() -> None:
+            self._sessions = sessions
+            self._turns = defaultdict(list, turns)
+            self._latest_turn_at = latest
+            self._active = active
+            self._partitions = partitions
+            self._pending_partitions.clear()
+            self._expired_pending_prune.clear()
+            self._repair_required = False
+            self._initialized = True
+
+        await self._async_commit_metadata(metadata, publish, record_execution=True)
+        for month in sorted(obsolete):
+            try:
+                await storage.async_remove_partition(month)
+            except OSError:
+                _LOGGER.warning(
+                    "Unable to remove obsolete conversation archive partition %s", month
+                )
+
     def _require_session(self, session_id: str) -> ArchiveSession:
         session = self._sessions.get(session_id)
         if session is None:
+            raise ValueError("conversation session not found")
+        return session
+
+    def _require_readable_session(
+        self, scope_id: str, session_id: str
+    ) -> ArchiveSession:
+        session = self._require_owned_session(scope_id, session_id)
+        if self._retention_hidden(session, self._retention_cutoff()):
             raise ValueError("conversation session not found")
         return session
 
@@ -1704,11 +1984,15 @@ class ConversationArchive:
         return session
 
     async def _async_publish_session_locked(
-        self, session_key: str | None, session: ArchiveSession
+        self,
+        session_key: str | None,
+        session: ArchiveSession,
+        *,
+        on_durable_write: Callable[[], None] | None = None,
     ) -> None:
         """Publish session metadata and an optional active binding."""
         self._require_writable()
-        if session.retention_state == "unretained" and not self._pending_partitions:
+        if not session.retains_metadata and not self._pending_partitions:
             self._sessions[session.session_id] = session
             if session_key is not None:
                 self._active[session_key] = session.session_id
@@ -1734,6 +2018,8 @@ class ConversationArchive:
                 self._active[session_key] = session.session_id
 
         await self._async_commit_metadata(metadata, publish)
+        if on_durable_write is not None:
+            on_durable_write()
 
     async def _async_write_metadata(self, metadata: dict[str, Any]) -> None:
         """Record the exact durable generation, independently of live activity."""
@@ -1777,7 +2063,7 @@ class ConversationArchive:
         persisted_sessions = {
             session.session_id: session
             for session in sessions.values()
-            if session.retention_state != "unretained"
+            if session.retains_metadata
         }
         payload: dict[str, Any] = {
             "sessions": [
@@ -1853,14 +2139,29 @@ class ConversationArchive:
         turns: dict[str, list[ArchiveTurn]],
         previous_partitions: set[str],
         pending_names: set[str],
-    ) -> tuple[set[str], dict[str, dict[str, Any]], dict[str, Any]]:
+    ) -> tuple[
+        set[str], dict[str, dict[str, Any]], dict[str, Any], dict[str, datetime]
+    ]:
         """Build only changed partition payloads in one pass over the candidate."""
         partitions: set[str] = set()
         pending: dict[str, dict[str, Any]] = {
             name: {"turns": []} for name in pending_names
         }
-        for session_turns in turns.values():
+        latest_turn_at: dict[str, datetime] = {}
+        for session_id, session_turns in turns.items():
+            previous = (
+                self._latest_turn_at.get(session_id)
+                if self._turns.get(session_id) is session_turns
+                else None
+            )
+            if previous is not None:
+                latest_turn_at[session_id] = previous
             for turn in session_turns:
+                if previous is None:
+                    stamp = _parse_time(turn.timestamp)
+                    latest = latest_turn_at.get(session_id)
+                    if latest is None or stamp > latest:
+                        latest_turn_at[session_id] = stamp
                 month = turn.timestamp[:7]
                 partitions.add(month)
                 if month in pending:
@@ -1871,6 +2172,7 @@ class ConversationArchive:
             partitions,
             {name: pending[name] for name in sorted(pending)},
             self._metadata_payload_for_state(sessions, active, partitions),
+            latest_turn_at,
         )
 
     async def _async_remove_partition_locked(self, partition: str) -> None:
@@ -1922,6 +2224,10 @@ class ConversationArchive:
         def publish_intent() -> None:
             self._sessions = sessions
             self._turns = defaultdict(list, turns)
+            stamp = _parse_time(turn.timestamp)
+            self._latest_turn_at[turn.session_id] = max(
+                stamp, self._latest_turn_at.get(turn.session_id, stamp)
+            )
             self._partitions = partitions
             self._pending_partitions = {month}
 
@@ -1952,7 +2258,7 @@ class ConversationArchive:
         previous_pending = set(self._pending_partitions)
         # Candidate dictionaries belong to this locked mutation. Published turn
         # lists are replaced wholesale and their records are immutable.
-        partitions, pending, metadata = await asyncio.to_thread(
+        partitions, pending, metadata, latest_turn_at = await asyncio.to_thread(
             self._prepare_commit_payloads,
             sessions,
             active,
@@ -1966,9 +2272,12 @@ class ConversationArchive:
         def publish_intent() -> None:
             self._sessions = sessions
             self._turns = defaultdict(list, turns)
+            self._latest_turn_at = latest_turn_at
             self._active = active
             self._partitions = partitions
             self._pending_partitions = set(pending_names)
+            if replacing:
+                self._expired_pending_prune.clear()
 
         await self._async_commit_metadata(intent, publish_intent, record_execution=True)
 
@@ -1998,9 +2307,11 @@ class ConversationArchive:
         """Prevent stale state from overwriting an unvalidated durable journal."""
         self._sessions.clear()
         self._turns.clear()
+        self._latest_turn_at.clear()
         self._active.clear()
         self._partitions.clear()
         self._pending_partitions.clear()
+        self._expired_pending_prune.clear()
         self._durable_metadata = None
         self._initialized = False
 
@@ -2023,23 +2334,47 @@ async def async_get_archive(
     async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared(
         maintenance=True
     ):
-        managers: dict[tuple[str, str], ConversationArchive] = hass.data.setdefault(
-            _ARCHIVE_MANAGERS, {}
-        )
-        key = (entry_id, subentry_id)
-        if key not in managers:
-            managers[key] = ConversationArchive(
-                HomeAssistantArchiveStorage(hass, entry_id, subentry_id), subentry_id
+        manager = archive_manager(hass, entry_id, subentry_id)
+        await manager.async_initialize()
+        return manager
+
+
+def archive_manager(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> ConversationArchive:
+    """Get the manager without loading possibly half-restored partitions."""
+    get_agent_maintenance_gate(hass, entry_id, subentry_id).require_available()
+    managers: dict[tuple[str, str], ConversationArchive] = hass.data.setdefault(
+        _ARCHIVE_MANAGERS, {}
+    )
+    key = (entry_id, subentry_id)
+    if key not in managers:
+
+        def retention_days() -> int | None:
+            from .agent_config import normalized_agent_integer
+
+            entry = hass.config_entries.async_get_entry(entry_id)
+            subentry = entry.subentries.get(subentry_id) if entry else None
+            if subentry is None or not isinstance(subentry.data, Mapping):
+                return None
+            return normalized_agent_integer(
+                subentry.data,
+                CONF_ARCHIVE_RETENTION_DAYS,
+                DEFAULT_ARCHIVE_RETENTION_DAYS,
             )
-        await managers[key].async_initialize()
-        return managers[key]
+
+        managers[key] = ConversationArchive(
+            HomeAssistantArchiveStorage(hass, entry_id, subentry_id),
+            subentry_id,
+            retention_days=retention_days,
+        )
+    return managers[key]
 
 
 def archive_tools() -> list[dict[str, Any]]:
     """Return bounded model-facing archive and deterministic privacy tools."""
     return [
         _tool(
-            "conversation_search",
             "Search prior retained conversations.",
             {
                 "query": {"type": "string", "minLength": 1},
@@ -2056,7 +2391,6 @@ def archive_tools() -> list[dict[str, Any]]:
             "search",
         ),
         _tool(
-            "conversation_get",
             "Read a page from one retained conversation.",
             {
                 "session_id": {"type": "string"},
@@ -2068,28 +2402,24 @@ def archive_tools() -> list[dict[str, Any]]:
             "get",
         ),
         _tool(
-            "conversation_private",
             "Stop retaining this conversation and delete its retained turns.",
             {},
             [],
             "private",
         ),
         _tool(
-            "conversation_resume_saving",
             "Start a new retained session after private mode.",
             {},
             [],
             "resume",
         ),
         _tool(
-            "conversation_delete_current",
             "Delete the current retained conversation.",
             {},
             [],
             "delete_current",
         ),
         _tool(
-            "conversation_delete_selected",
             "Delete confirmed selected retained sessions.",
             {
                 "session_ids": {
@@ -2104,7 +2434,6 @@ def archive_tools() -> list[dict[str, Any]]:
             "delete_selected",
         ),
         _tool(
-            "conversation_delete_date_range",
             "Preview or delete sessions by the date of their last retained turn. "
             "First call with confirm=false and show the affected sessions and counts. "
             "If any turns fall outside the requested dates, direct the user to "
@@ -2123,7 +2452,6 @@ def archive_tools() -> list[dict[str, Any]]:
 
 
 def _tool(
-    name: str,
     description: str,
     properties: dict[str, Any],
     required: list[str],
@@ -2131,7 +2459,7 @@ def _tool(
 ) -> dict[str, Any]:
     return {
         "spec": {
-            "name": name,
+            "name": runtime_function_tool_name("archive", operation),
             "description": description,
             "parameters": {
                 "type": "object",
@@ -2255,6 +2583,15 @@ def _search_archive_query(
     return _search_archive_snapshot(snapshot, *args)
 
 
+def _search_result_date(timestamp: datetime, time_zone: tzinfo) -> str:
+    try:
+        local = timestamp.astimezone(time_zone)
+    except OverflowError:
+        # A valid UTC instant at either calendar limit can exceed the local calendar.
+        local = timestamp.astimezone(dt_util.UTC)
+    return local.date().isoformat()
+
+
 def _search_archive_snapshot(
     snapshot: tuple[tuple[ArchiveSession, tuple[ArchiveTurn, ...]], ...],
     query: str,
@@ -2309,7 +2646,7 @@ def _search_archive_snapshot(
                 "session_id": session.session_id,
                 "turn_id": turn.turn_id,
                 "turn_index": turn_index,
-                "date": timestamp.astimezone(time_zone).date().isoformat(),
+                "date": _search_result_date(timestamp, time_zone),
                 "timestamp": turn.timestamp,
                 "title": session.title,
                 "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
@@ -2372,13 +2709,11 @@ def _validated_session(raw: Any, *, allow_unretained: bool = False) -> ArchiveSe
         or isinstance(session.turn_count, bool)
         or session.turn_count < 0
         or len(session.title) > MAX_TITLE_LENGTH
-        or _parse_time(session.started_at) == datetime.min.replace(tzinfo=dt_util.UTC)
-        or _parse_time(session.last_message_at)
-        == datetime.min.replace(tzinfo=dt_util.UTC)
+        or not _valid_archive_timestamp(session.started_at)
+        or not _valid_archive_timestamp(session.last_message_at)
         or (
             session.last_activity_at is not None
-            and _parse_time(session.last_activity_at)
-            == datetime.min.replace(tzinfo=dt_util.UTC)
+            and not _valid_archive_timestamp(session.last_activity_at)
         )
     ):
         raise ValueError("archive session metadata is invalid")
@@ -2428,7 +2763,7 @@ def _validated_turn(raw: Any) -> ArchiveTurn:
         or len(turn.turn_id) > 128
         or len(turn.user_text) > MAX_TEXT_LENGTH
         or len(turn.assistant_text) > MAX_TEXT_LENGTH
-        or _parse_time(turn.timestamp) == datetime.min.replace(tzinfo=dt_util.UTC)
+        or not _valid_archive_timestamp(turn.timestamp)
     ):
         raise ValueError("archive turn metadata is invalid")
     return turn
@@ -2619,6 +2954,15 @@ def _parse_time(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=dt_util.UTC)
     return parsed
+
+
+def _valid_archive_timestamp(value: str) -> bool:
+    try:
+        return _parse_time(value).astimezone(dt_util.UTC) != datetime.min.replace(
+            tzinfo=dt_util.UTC
+        )
+    except OverflowError:
+        return False
 
 
 def _session_payload(session: ArchiveSession) -> dict[str, Any]:

@@ -127,8 +127,8 @@ async def test_identical_replacement_repairs_damaged_store_and_preserves_scope(h
     await manager.async_replace_backup(records)
     assert not manager._repair_required
     assert PersistentMemory.validate_backup_data(durable.data) == records
-    assert await manager.async_prepare_hybrid(["other-user"], "private query")
-    assert calls == [["private query"]]
+    assert await manager.async_prepare_hybrid(["other-user"], "private query") is None
+    assert calls == []
     assert (
         await manager.async_search(
             ["other-user"], "Aurora", hybrid=True, query_embedding=[1.0, 0.0]

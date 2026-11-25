@@ -106,31 +106,6 @@ async def test_full_backup_collection_succeeds_with_quarantined_function(
     assert exported[CONF_FUNCTION_GROUPS] == config[CONF_FUNCTION_GROUPS]
 
 
-async def test_setup_export_collection_succeeds_with_quarantined_function(
-    hass,
-    monkeypatch,
-) -> None:
-    config = _broken_config()
-    entry = SimpleNamespace(entry_id="entry-1")
-    subentry = SimpleNamespace(subentry_id="agent-1", title="Jarvis", data=config)
-    rules = SimpleNamespace(
-        async_backup_data=AsyncMock(
-            return_value={"storage_version": 1, "defaults": {}, "rules": []}
-        )
-    )
-    monkeypatch.setattr(
-        transfer, "async_get_request_rules", AsyncMock(return_value=rules)
-    )
-
-    document = await transfer.async_collect_transfer_snapshot(
-        hass, entry, subentry, mode="setup"
-    )
-
-    exported = document["sections"][transfer.SECTION_CONFIGURATION]
-    assert exported[CONF_FUNCTION_TOOLS] == yaml.safe_load(config[CONF_FUNCTION_TOOLS])
-    assert exported[CONF_FUNCTION_GROUPS] == config[CONF_FUNCTION_GROUPS]
-
-
 def test_setup_import_accepts_quarantined_function_for_repair() -> None:
     config = _broken_config()
     prepared = transfer.inspect_transfer(

@@ -3,7 +3,7 @@
 /** @typedef {{revision?: string | number, rule?: {id?: string}, groups?: unknown[], rules?: unknown[], defaults?: Record<string, unknown>, wording_groups?: unknown[]}} RuleAcknowledgement */
 import {captureConfigurationOwner, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 
-// Uncertain commits belong to an assistant and authentication session, not a view.
+// Writes missing a usable acknowledgement belong to an assistant and session.
 /** @type {WeakMap<object, Map<string, unknown>>} */
 const uncertainRuleMutations = new WeakMap();
 /** @param {RuleOwner} owner */
@@ -18,7 +18,7 @@ export function requestRuleMutationNeedsRecovery(panel, owner = captureConfigura
 }
 /** @param {object} panel @param {RuleOwner} owner @param {{mutationOutcome?: unknown} | null | undefined} error */
 export function markUncertainRuleMutation(panel, owner, error) {
-  if (error?.mutationOutcome !== "uncertain") return;
+  if (error?.mutationOutcome !== "uncertain" && error?.mutationOutcome !== "committed") return;
   let pending = uncertainRuleMutations.get(panel);
   if (!pending) uncertainRuleMutations.set(panel, pending = new Map());
   pending.set(ruleOwnerKey(owner), error);
@@ -30,7 +30,7 @@ export function requireRequestRuleAcknowledgement(action, result, ruleId) {
   requireMutationAcknowledgement(result?.revision != null
     && (!["create", "duplicate", "update"].includes(action)
       || (typeof identity === "string" && identity.length > 0 && (action !== "update" || identity === ruleId) && (action !== "duplicate" || identity !== ruleId)))
-    && (!["groups", "rule_pack_import"].includes(action) || (Array.isArray(result.groups) && Array.isArray(result.rules)))
+    && (action !== "groups" || (Array.isArray(result.groups) && Array.isArray(result.rules)))
     && (!["settings", "defaults"].includes(action) || hasDefaults)
     && (!["settings", "wording_groups"].includes(action) || Array.isArray(result.wording_groups)), "saving Request Rules");
 }

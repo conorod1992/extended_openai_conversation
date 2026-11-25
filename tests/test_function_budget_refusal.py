@@ -1,8 +1,6 @@
 """Expected budget refusal preserves protocol, execution accounting and replay safety."""
 
-import asyncio
 import json
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -41,12 +39,12 @@ from tests.test_function_tool_error_recovery import (
 
 
 @pytest.mark.parametrize("limit", [0, 1, 3, 4, -1])
-@pytest.mark.parametrize("parallel", [False, True])
+@pytest.mark.parametrize("read_only", [False, True])
 @pytest.mark.parametrize("recovery", [False, True])
-async def test_budget_prefix_pairing_and_public_wire(hass, limit, parallel, recovery):
+async def test_budget_prefix_pairing_and_public_wire(hass, limit, read_only, recovery):
     tools = [
         _tool(f"tool_{n}", function={"type": "memory", "operation": "search"})
-        if parallel
+        if read_only
         else _tool(f"tool_{n}")
         for n in range(3)
     ]
@@ -85,9 +83,9 @@ async def test_budget_prefix_pairing_and_public_wire(hass, limit, parallel, reco
     assert not await async_was_unacknowledged_equivalent(entity, log, calls[-1])
 
 
-@pytest.mark.parametrize("parallel", [False, True])
+@pytest.mark.parametrize("read_only", [False, True])
 @pytest.mark.parametrize("recovery", [False, True])
-async def test_validation_failure_never_reserves_execution(hass, parallel, recovery):
+async def test_validation_failure_never_reserves_execution(hass, read_only, recovery):
     params = {
         "type": "object",
         "properties": {"value": {"type": "string"}},
@@ -96,7 +94,7 @@ async def test_validation_failure_never_reserves_execution(hass, parallel, recov
     tool = _tool(
         "tool",
         parameters=params,
-        function={"type": "memory", "operation": "search"} if parallel else None,
+        function={"type": "memory", "operation": "search"} if read_only else None,
     )
     calls = [
         _call("invalid", "tool"),
@@ -156,25 +154,3 @@ async def test_refusal_cannot_clear_existing_unacknowledged_effect(hass, recover
     assert not await async_was_unacknowledged_equivalent(
         entity, log, _call("retry", "new_tool")
     )
-
-
-def test_atomic_prefix_reservation():
-    budget = FunctionCallBudget(3, used=1)
-    assert budget.claim_prefix(["a", "b", "c"]) == 2
-    assert budget.used == 3
-    assert budget.claim_prefix(["d"]) == 0
-
-
-async def test_parallel_cancellation_preserves_decided_overflow_result(hass, monkeypatch):
-    from custom_components.extended_openai_conversation_responses import tool_exchange
-
-    calls = [_call("accepted", "tool"), _call("overflow", "tool")]
-    tool = _tool("tool", function={"type": "memory", "operation": "search"})
-    log, entity = _chat_log(hass), _entity(hass)
-    _retain_calls(log, calls)
-    monkeypatch.setattr(tool_exchange, "async_execute_parallel_safe_batch_outcomes", AsyncMock(side_effect=asyncio.CancelledError))
-    with pytest.raises(asyncio.CancelledError):
-        await async_execute_tool_exchange(entity, log, calls, [tool], FunctionCallBudget(1), None, [])
-    results = {result.tool_call_id: result for result in _results(log)}
-    assert len(_results(log)) == 2
-    assert tool_result_data(results["overflow"])["result"]["reason"] == FUNCTION_TOOL_LIMIT_REASON

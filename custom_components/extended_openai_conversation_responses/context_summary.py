@@ -18,6 +18,7 @@ from .context import (
     history_as_summary_text,
     keep_recent_messages,
     partition_history,
+    replace_chat_log_content,
     select_summary_history,
 )
 from .operational_errors import log_handled_failure
@@ -178,7 +179,11 @@ class DeferredContextSummaryManager:
         )
 
     async def async_apply(
-        self, conversation_id: str, content: list[conversation.Content]
+        self,
+        conversation_id: str,
+        content: list[conversation.Content],
+        *,
+        chat_log: conversation.ChatLog | None = None,
     ) -> bool:
         """Apply a pending result to its exact prior prefix, preserving new content."""
         pending = self._pending.get(conversation_id)
@@ -244,7 +249,10 @@ class DeferredContextSummaryManager:
             ):
                 compacted_tail = compacted_tail[1:]
             suffix = content[pending.snapshot_length :]
-            content[:] = [*current_system, *compacted_tail, *suffix]
+            replacement = [*current_system, *compacted_tail, *suffix]
+            if chat_log is not None:
+                return replace_chat_log_content(chat_log, replacement)
+            content[:] = replacement
             return True
         finally:
             if remove_pending:

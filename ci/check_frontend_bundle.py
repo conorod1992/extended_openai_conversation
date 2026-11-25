@@ -36,8 +36,8 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # headroom and the separate entry/CSS ceilings.
 # Expired finite Guest activation now requires an explicit future end or
 # indefinite choice. The local validation adds 243 reviewed JS bytes.
-# Azure route binding controls, provider-aware lookups and bounded Rule Pack
-# download preparation add about 1.1 KiB. Keep the entry and CSS limits intact.
+# The reviewed Azure route binding and provider-aware lookup allowance keeps
+# the separate entry and CSS limits intact.
 # Native-selector admission and lossless context/reset handling add 225 JS bytes.
 # Budget 250 bytes for these correctness fixes; entry and CSS limits stay fixed.
 # Scoped compact-choice styling and Quiet Hours unavailable messaging add 650
@@ -60,7 +60,11 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # minified JS bytes (892,243 -> 892,586). Keep a 14-byte margin.
 # Restore retention notices, reasoning guards and Usage drill-down add 2,148
 # bytes (892,586 -> 894,734). Allow 16 bytes of headroom for the combined change.
-CEILINGS = {"javascript": 894_750, "css": 65_000, "management_entry": 120_000}
+# Satellite-aware tool discovery and Unicode-aware Knowledge validation add
+# 913 bytes (894,648 -> 895,561). Keep 39 bytes of headroom for the total.
+# Conversation search drafts and Quiet Hours replacement controls bring the
+# minified JS bundle to 898,856 bytes. Allow 44 bytes of total JS headroom.
+CEILINGS = {"javascript": 898_900, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

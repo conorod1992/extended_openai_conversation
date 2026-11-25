@@ -30,6 +30,7 @@ const CONTROL_SELECTOR = [
 ].join(",");
 
 const ROUTE_EXTRAS = {
+  "capabilities/quiet-hours": "&quiet_replacement=1",
   "data-memory/conversations": "&seed_conversations=1",
   "usage-maintenance/usage": "&usage_boundary=1",
 };
@@ -52,6 +53,12 @@ const SURFACES = {
     },
   ],
   "capabilities/functions": [
+    {
+      name: "Home Assistant tool picker",
+      open: ["#function-add", "#add-ha-tools"],
+      ready: "#ha-llm-tools-dialog [data-device]",
+      close: "#ha-llm-tools-dialog [data-cancel]",
+    },
     {
       name: "Function Tool editor",
       open: ["#function-add", "#add-tool"],
@@ -146,6 +153,22 @@ for (const viewport of reachabilityInventory.viewports) {
     await page.evaluate(() => { window.recoveryReachability.usageFailed = false; });
     await panel.locator("[data-usage-retry]").first().click();
     await expect(panel.locator("[data-usage-retry]")).toHaveCount(0);
+
+    await page.goto(fixtureUrl("capabilities/request-rules"));
+    const rule = panel.locator(".request-rule-card").first();
+    await expect(rule).toBeVisible();
+    await panel.evaluate(host => {
+      const saved = host._result.rules[0];
+      saved.continue_matching = true;
+      saved.action.continue_to_ai = false;
+    });
+    await rule.locator(".rule-edit").click();
+    const repair = panel.locator("#rule-matching-repair");
+    await expect(repair).toBeVisible();
+    await auditControls(page, panel, viewport.name + "/Request Rule repair", repair);
+    const confirm = repair.locator("#rule-matching-repair-confirm");
+    await confirm.check();
+    await expect(confirm).toBeChecked();
   });
 }
 
@@ -341,6 +364,11 @@ test.describe("all rendered controls remain reachable across shipped routes and 
             () => panel.evaluate((host) => host._viewKey?.()),
             {message: `${viewport.name}/${route}: route did not settle`},
           ).toBe(route);
+
+          if (route === "capabilities/quiet-hours") {
+            await expect(panel.getByRole("button", {name:"Use replacement satellite"})).toBeVisible();
+            await expect(panel.getByRole("button", {name:"Clear saved override"})).toBeVisible();
+          }
 
           const record = {
             viewport: viewport.name, width: viewport.width, height: viewport.height,

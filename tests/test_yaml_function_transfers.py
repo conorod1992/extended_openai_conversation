@@ -93,11 +93,10 @@ async def test_serialized_export_preserves_numeric_schema_and_runtime_variables(
         }
     tool["function"]["variables"] = {"factor": 0.000001, "literal": "1e-06"}
     subentry.data = {**subentry.data, "functions": yaml.safe_dump(tools)}
-    exported = await management_ui.async_management_command(
-        hass, "admin", True,
-        management_message("configuration", "export", reviewed_custom=True),
-    )
-    text = exported["json"] if format == "json" else yaml.safe_dump(exported["document"])
+    from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+    exported = historical_reviewed_configuration({**subentry.data, "functions": tools})
+    text = json.dumps(exported) if format == "json" else yaml.safe_dump(exported)
     if format == "json" and schema_bound:
         assert '"minimum": 1e-06' in text
     parsed = management_ui._parse_import_document(text)
@@ -173,8 +172,8 @@ def test_delayed_fingerprint_is_stable_across_restart_hash_seeds():
     assert len(fingerprints) == 1  # The replay identity must now remain stable.
 
 
-def test_typed_fingerprint_without_sets_keeps_existing_identity():
-    """Previously queued date-only definitions must retain their fingerprints."""
+def test_typed_fingerprint_without_sets_uses_new_identity():
+    """Legacy YAML digests have the same order ambiguity as legacy JSON digests."""
     import hashlib
 
     tool = {
@@ -188,7 +187,7 @@ def test_typed_fingerprint_without_sets_keeps_existing_identity():
     )
     assert (
         tool_definition_fingerprint(tool)
-        == hashlib.sha256(historical.encode()).hexdigest()
+        != hashlib.sha256(historical.encode()).hexdigest()
     )
 
 
@@ -204,15 +203,9 @@ async def test_exports_accept_yaml_date(hass, saved_date_tool, tmp_path, mode):
         document["agent"]["config"] = config
         backup_transfer._build_archive_file(document, str(tmp_path))
     else:
-        document = transfer._new_transfer_document(
-            entry, subentry, "setup" if mode == "setup" else "custom"
-        )
+        document = transfer._new_transfer_document(entry, subentry)
         document["sections"]["configuration"] = config
-        if mode == "setup":
-            document["sections"]["request_rules"] = {"defaults": {}, "rules": []}
-            transfer.finalize_setup_export(document)
-        else:
-            backup_transfer._build_archive_file(document, str(tmp_path))
+        backup_transfer._build_archive_file(document, str(tmp_path))
 
 
 async def test_unselected_configuration_preserves_yaml_date_in_restore_rollback(
@@ -245,7 +238,7 @@ async def test_unselected_configuration_preserves_yaml_date_in_restore_rollback(
     )
     rollback = await backup._snapshot_for_restore(managers, subentry)
     # A valid memory-only custom transfer preserves the destination configuration.
-    incoming = transfer._new_transfer_document(entry, subentry, "custom")
+    incoming = transfer._new_transfer_document(entry, subentry)
     incoming["sections"]["persistent_memory"] = {"memories": []}
     selected = frozenset({"persistent_memory"})
     imported = transfer.inspect_transfer(
@@ -304,18 +297,15 @@ async def test_exact_json_export_import_into_new_agent_preserves_numbers(
     tools = yaml.safe_load(source.data["functions"])
     tools[-1]["function"]["variables"] = {"number": number, "literal": "1e-06"}
     source.data = {**source.data, "functions": yaml.safe_dump(tools)}
-    exported = await management_ui.async_management_command(
-        hass,
-        "admin",
-        True,
-        management_message("configuration", "export", reviewed_custom=True),
-    )
+    from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+    exported = historical_reviewed_configuration({**source.data, "functions": tools})
     created = await management_ui.async_management_command(
         hass,
         "admin",
         True,
         management_message(
-            "configuration", "import", document=exported["json"], mode="new"
+            "configuration", "import", document=json.dumps(exported), mode="new"
         ),
     )
     assert created["status"] == "created"

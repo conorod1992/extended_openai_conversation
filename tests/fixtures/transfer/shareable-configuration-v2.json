@@ -1,0 +1,20 @@
+{
+  "schema": "extended_openai_conversation.agent",
+  "version": 2,
+  "title": "Shared conversation agent",
+  "config": {
+    "functions": [],
+    "function_groups": [],
+    "skills": [],
+    "chat_model": "gpt-5.2",
+    "max_tokens": 550,
+    "web_search": false
+  },
+  "security": {
+    "policy_version": 1,
+    "mode": "restricted",
+    "review_required": false,
+    "contract": "New shareable exports include supported public settings and omit provider credentials, private data and custom content.",
+    "omitted": []
+  }
+}

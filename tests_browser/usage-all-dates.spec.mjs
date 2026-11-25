@@ -23,7 +23,11 @@ for (const bundled of [false, true]) {
           const day = "2026-09-13";
           const included = start_date <= day && day <= end_date;
           return {
-            days:included ? [{date:day, run_count:1, successful_run_count:1}] : [],
+            days:included ? [{
+              date:day, run_count:1, successful_run_count:1,
+              model_breakdown:{"model-a":60},
+              breakdown_meta:{model_breakdown:{omitted_total:40}},
+            }] : [],
             has_more:false,
             local_run_summary:{count:Number(included), start_date, end_date, retention_days:30},
           };
@@ -45,12 +49,16 @@ for (const bundled of [false, true]) {
     await expect(requests).toContainText("1 conversation runs");
     await expect(retained.locator("strong")).toHaveText("1");
     await expect(panel.locator(".chart-column")).toHaveCount(1);
+    await expect(panel.locator(".usage-breakdown-row").filter({hasText:"model-a"}).locator("small")).toHaveText("60.0%");
+    const omitted = panel.locator(".usage-breakdown-row").filter({hasText:"Other (omitted from daily breakdowns)"});
+    await expect(omitted.locator("small")).toHaveText("40.0%");
     await expect(panel.locator(".usage-history-note")).not.toContainText("No daily usage history yet");
 
     await selector.selectOption("year");
     await expect(range).toHaveText("Year to date · 2026-01-01 to 2026-09-12");
     await expect(requests).toContainText("0 conversation runs");
     await expect(retained.locator("strong")).toHaveText("0");
+    await expect(omitted).toHaveCount(0);
 
     await panel.evaluate(host => { host._hass.config.time_zone = "UTC"; });
     await selector.selectOption("all");

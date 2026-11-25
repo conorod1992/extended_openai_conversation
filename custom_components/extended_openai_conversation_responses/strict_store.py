@@ -102,34 +102,10 @@ class RecoveryGuardedStore(Store[dict[str, Any]]):
             await _async_settle_store_io(super().async_remove())
 
 
-class PropagatingWriteStore(RecoveryGuardedStore):
-    """Preserve HA's writer, but propagate sanitized failures before acknowledgement."""
-
-    _corruption_unavailable = False
-
-    @property
-    def corruption_unavailable(self) -> bool:
-        """Report a native read rejection without permitting its barrier to be reset."""
-        return self._corruption_unavailable
-
-    async def _async_load_data(self) -> Any:
-        """Retain HA's raw payload contract; managers validate record shapes."""
-        result = await super()._async_load_data()
-        if self._load_empty:
-            return result  # Preserve HA's explicit read-only emergency mode.
-        if result is not None:
-            self._corruption_unavailable = False
-        elif await self.hass.async_add_executor_job(
-            _missing_store_has_corruption_evidence, self.path
-        ):
-            self._corruption_unavailable = True
-        if self._corruption_unavailable:
-            raise StorageRepairRequired("EOAI")
-        return result
+class AcknowledgedWriteStore(RecoveryGuardedStore):
+    """Use HA storage with explicit acknowledgement of immediate writes."""
 
     async def _async_save_owned(self, data: dict[str, Any]) -> None:
-        if self._corruption_unavailable:
-            raise StorageRepairRequired("EOAI")
         await super()._async_save_owned(data)
         # Store.async_save otherwise only queues this generation while stopping.
         # A critical acknowledgement requires the writer to finish, including its
@@ -157,6 +133,37 @@ class PropagatingWriteStore(RecoveryGuardedStore):
                 f"Private storage write failed: {storage_failure_reason(number)}; "
                 "the EOAI state change could not be persisted",
             ) from None
+
+
+class PropagatingWriteStore(AcknowledgedWriteStore):
+    """Require successful writes and guard authoritative data against corruption."""
+
+    _corruption_unavailable = False
+
+    @property
+    def corruption_unavailable(self) -> bool:
+        """Report a native read rejection without permitting its barrier to be reset."""
+        return self._corruption_unavailable
+
+    async def _async_load_data(self) -> Any:
+        """Retain HA's raw payload contract; managers validate record shapes."""
+        result = await super()._async_load_data()
+        if self._load_empty:
+            return result  # Preserve HA's explicit read-only emergency mode.
+        if result is not None:
+            self._corruption_unavailable = False
+        elif await self.hass.async_add_executor_job(
+            _missing_store_has_corruption_evidence, self.path
+        ):
+            self._corruption_unavailable = True
+        if self._corruption_unavailable:
+            raise StorageRepairRequired("EOAI")
+        return result
+
+    async def _async_save_owned(self, data: dict[str, Any]) -> None:
+        if self._corruption_unavailable:
+            raise StorageRepairRequired("EOAI")
+        await super()._async_save_owned(data)
 
 
 async def async_remove_agent_stores(gate: AgentMaintenanceGate) -> None:

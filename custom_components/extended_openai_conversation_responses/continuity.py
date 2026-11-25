@@ -13,8 +13,8 @@ from uuid import uuid4
 
 from homeassistant.components import conversation
 from homeassistant.components.conversation.chat_log import current_chat_log
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.chat_session import ChatSession, current_session
+from homeassistant.helpers.typing import UNDEFINED, UndefinedType
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -32,6 +32,7 @@ from .conversation_ids import (
     GUEST_CONVERSATION_ID_PREFIX,
     create_conversation_id,
 )
+from .exceptions import NestedConversationRejected
 from .scope import ResolvedDataScope
 
 
@@ -321,6 +322,19 @@ class ConversationContinuity:
             (key, active.conversation_id) for key, active in retained.items()
         ) | frozenset((None, conversation_id) for conversation_id in retained_defaults)
 
+    def has_live_managed_conversation(
+        self, key: str, conversation_id: str, timeout_minutes: int
+    ) -> bool:
+        """Check an existing managed session under the exclusive restore lease."""
+        active = self._sessions.get(key)
+        return (
+            active is not None
+            and active.conversation_id == conversation_id
+            and key not in self._pending_ends
+            and active.last_active
+            >= dt_util.utcnow() - timedelta(minutes=timeout_minutes)
+        )
+
     @staticmethod
     def identity_key(
         mode: str,
@@ -357,6 +371,7 @@ class ConversationContinuity:
         timeout_minutes: int,
         *,
         namespace: str | None = None,
+        native_user_id: str | UndefinedType | None = UNDEFINED,
     ) -> ContinuityResolution:
         """Resolve the owned session and record opt-in latency diagnostics."""
         import time
@@ -371,6 +386,7 @@ class ConversationContinuity:
             incoming_conversation_id,
             timeout_minutes,
             namespace=namespace,
+            native_user_id=native_user_id,
         )
         record_continuity_resolution(
             result,
@@ -393,6 +409,7 @@ class ConversationContinuity:
         timeout_minutes: int,
         *,
         namespace: str | None = None,
+        native_user_id: str | UndefinedType | None = UNDEFINED,
     ) -> ContinuityResolution:
         """Resolve one request using a small lock and no network I/O."""
         if incoming_conversation_id is not None:
@@ -446,6 +463,11 @@ class ConversationContinuity:
             return ContinuityResolution(
                 conversation_id, None, [], False, claim_token=claim_token
             )
+        if native_user_id is None and scope.scope_type == "user":
+            # Voice mappings authorize EOAI's retained-data owner. They never
+            # authenticate the caller to Core or share a native session with a
+            # signed-in request for the same owner.
+            key += ":native-unauthenticated"
         now = dt_util.utcnow()
         cutoff = now - timedelta(minutes=timeout_minutes)
         async with self._lock:
@@ -531,7 +553,7 @@ class ConversationContinuity:
             in (owner.conversation_id, owner.claimed_conversation_id)
             for owner in _PROCESSING_CONVERSATIONS.get()
         ):
-            raise HomeAssistantError(
+            raise NestedConversationRejected(
                 "Nested processing cannot reuse an active parent conversation; "
                 "supply a different conversation_id or omit it."
             )
@@ -754,8 +776,15 @@ class ConversationContinuity:
     def _prune_memory_bundles_locked(self, now: Any) -> None:
         for key, bundle in list(self._memory_bundles.items()):
             cutoff = now - timedelta(minutes=bundle.timeout_minutes)
-            if bundle.last_active < cutoff:
-                del self._memory_bundles[key]
+            if bundle.last_active >= cutoff:
+                continue
+            # Managed session expiry and reset already remove the exact bundle.
+            if (
+                key.startswith("continuity:")
+                and key.removeprefix("continuity:") in self._sessions
+            ):
+                continue
+            del self._memory_bundles[key]
 
 
 _MANAGERS = "extended_openai_conversation_responses.continuity_managers"

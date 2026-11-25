@@ -1,6 +1,36 @@
 import {expect, test} from "@playwright/test";
 import {exerciseConfigurationDraftTransition, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+test("Knowledge accepts a full-size Unicode paste without dropping text", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("data-memory/knowledge"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#add-source").click();
+  const title = "a".repeat(120) + "\u0085";
+  const description = "b".repeat(500) + "\u001f";
+  await panel.locator("#knowledge-title").fill(title);
+  await panel.locator("#knowledge-description").fill(description);
+  const content = panel.locator("#knowledge-content");
+  await content.focus();
+  const pasted = "a" + " ".repeat(39999) + "a".repeat(59997) + "😀Z!";
+  await page.keyboard.insertText(pasted);
+  expect(await content.inputValue()).toBe(pasted);
+
+  await page.keyboard.insertText("b");
+  await panel.locator("#knowledge-save").click();
+  await expect(panel.locator("#knowledge-error")).toContainText("Content must be at most");
+  await content.press("End");
+  await content.press("Backspace");
+  await page.keyboard.insertText("\u0085");
+  await panel.locator("#knowledge-save").click();
+  await expect(panel.locator("#knowledge-dialog")).not.toBeVisible();
+  const saved = await page.evaluate(() => browserHarness.calls.find(
+    call => call.section === "knowledge" && call.action === "create"
+  ));
+  expect(saved).toMatchObject({title, description, content:pasted + "\u0085"});
+  await expectHarnessClean(page, errors);
+});
+
 test("Knowledge immediate save preserves prompt and name drafts through navigation, full save and reload", async ({page}) => {
   const errors=trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/prompt-context"));

@@ -307,6 +307,9 @@ async def test_captured_input_is_used_for_generation_prompt_and_hybrid_recall(ha
     )
     rule.update(ai_input_mode="capture", ai_input_capture="question")
     await agent._request_rules.async_create(rule)
+    await agent._memory.async_add(
+        "lifecycle-owner", "The sky is blue on a clear day", "general", "explicit"
+    )
     embedding = AsyncMock(return_value=SimpleNamespace(data=[SimpleNamespace(index=0, embedding=[0.1])]))
     monkeypatch.setattr(agent._client.embeddings, "create", embedding)
     sent = _provider(monkeypatch, agent, ["Blue."])

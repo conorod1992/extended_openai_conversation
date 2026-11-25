@@ -18,6 +18,10 @@ class _ArchiveSession:
     session_id: str
     retention_state: str = "retained"
 
+    @property
+    def retains_metadata(self):
+        return True
+
 
 @dataclass(frozen=True)
 class _ArchiveTurn:

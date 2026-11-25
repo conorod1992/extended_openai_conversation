@@ -8,14 +8,21 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
+from .record_timestamps import parse_datetime
 
-def local_wall_time(hass: HomeAssistant, value: Any) -> str:
+
+def local_wall_time(hass: HomeAssistant, value: Any) -> str | None:
     """Project an existing instant using the server's configured timezone."""
-    parsed = dt_util.parse_datetime(value) if isinstance(value, str) else None
+    parsed = parse_datetime(value) if isinstance(value, str) else None
     zone = dt_util.get_time_zone(hass.config.time_zone)
     if parsed is None or parsed.tzinfo is None or zone is None:
         return ""
-    return parsed.astimezone(zone).isoformat(timespec="seconds")[:19]
+    try:
+        return parsed.astimezone(zone).isoformat(timespec="seconds")[:19]
+    except OverflowError:
+        # The instant remains valid in UTC even if its local year is outside
+        # datetime's range. Keep the canonical value in the response.
+        return None
 
 
 def resolve_local_time(
@@ -85,16 +92,16 @@ def project_management_dates(
     """Return editor wall times from the same rules that resolve their saves."""
     if section == "guest_mode" and isinstance(result.get("status"), dict):
         status = result["status"]
+        local_times = {}
+        for field in ("active_from", "active_until"):
+            if field in status:
+                wall_time = local_wall_time(hass, status[field])
+                local_times[field + "_local"] = (
+                    wall_time[:16] if wall_time is not None else None
+                )
         result = {
             **result,
-            "status": {
-                **status,
-                **{
-                    field + "_local": local_wall_time(hass, status.get(field))[:16]
-                    for field in ("active_from", "active_until")
-                    if field in status
-                },
-            },
+            "status": {**status, **local_times},
         }
     if section == "memories":
 

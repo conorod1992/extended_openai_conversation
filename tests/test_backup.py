@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import timedelta
+from threading import get_ident
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -326,6 +328,24 @@ def test_backup_rejects_malformed_and_newer_versions() -> None:
         inspect_backup(newer, "agent-new")
 
 
+@pytest.mark.parametrize("field", ["active_from", "active_until", "updated_at"])
+@pytest.mark.parametrize(
+    "timestamp", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"]
+)
+def test_backup_inspection_rejects_guest_utc_overflow(field, timestamp) -> None:
+    document = _document()
+    schedule = {
+        "active_from": "2026-08-22T12:00:00+00:00",
+        "active_until": None,
+        "source": "home_assistant",
+        "updated_at": None,
+    }
+    schedule[field] = timestamp
+    document["guest_mode"] = {"schedule": schedule}
+    with pytest.raises(BackupError, match=f"Guest Mode {field}.*UTC timestamp range"):
+        inspect_backup(document, "agent-new")
+
+
 def test_version_two_backup_migrates_with_empty_request_rules() -> None:
     legacy = _document()
     legacy["version"] = 2
@@ -413,6 +433,16 @@ def test_backup_secret_redaction_preserves_schema_property_names() -> None:
 async def test_create_full_backup_contains_only_durable_safe_state(
     monkeypatch, hass
 ) -> None:
+    loop_thread = get_ident()
+    read_version = backup._integration_version
+
+    def read_version_off_loop():
+        assert get_ident() != loop_thread
+        return read_version()
+
+    # The unit HA fixture otherwise runs executor jobs inline.
+    monkeypatch.setattr(hass, "async_add_executor_job", asyncio.to_thread)
+    monkeypatch.setattr(backup, "_integration_version", read_version_off_loop)
     source = _document()
     config = source["agent"]["config"]
     config["prompt"] = "Never reveal sk-1234567890abcdef"
@@ -559,6 +589,41 @@ async def test_unsupported_restore_does_not_access_agent_stores(
             ),
             document,
         )
+    managers.assert_not_awaited()
+
+
+async def test_restore_rejects_guest_utc_overflow_before_persistence(
+    monkeypatch, hass
+) -> None:
+    document = _document()
+    document["guest_mode"] = {
+        "schedule": {
+            "active_from": "9999-12-31T23:59:59-01:00",
+            "active_until": None,
+            "source": "home_assistant",
+            "updated_at": None,
+        }
+    }
+    journal = SimpleNamespace(
+        async_load=AsyncMock(return_value=None),
+        async_save=AsyncMock(),
+        async_remove=AsyncMock(),
+    )
+    managers = AsyncMock()
+    monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_: journal)
+    monkeypatch.setattr(restore_recovery, "_durable_managers", managers)
+
+    with pytest.raises(BackupError, match="Guest Mode active_from.*UTC timestamp range"):
+        await async_restore_backup(
+            hass,
+            SimpleNamespace(entry_id="entry-1"),
+            SimpleNamespace(
+                subentry_id="agent-1", title="Current", data=agent_config_defaults()
+            ),
+            document,
+        )
+    journal.async_save.assert_not_awaited()
+    journal.async_remove.assert_not_awaited()
     managers.assert_not_awaited()
 
 

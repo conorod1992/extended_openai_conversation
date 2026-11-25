@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass, field
-from json import JSONDecodeError
 import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 from openai import OpenAIError
@@ -18,7 +18,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.util.json import json_loads
+from homeassistant.helpers.json import json_bytes
 
 from .assistant_response import final_assistant_text
 from .debug import record_current_provider_failure
@@ -36,6 +36,7 @@ from .provider_errors import (
 )
 from .schema_errors import SCHEMA_ERRORS
 from .schema_normalization import normalize_exclusive_bounds
+from .strict_json import strict_json_loads
 from .tool_replay_guard import clear_unacknowledged_calls, remember_unacknowledged_calls
 
 _LOGGER = logging.getLogger(__name__)
@@ -305,13 +306,38 @@ def parse_ai_task_structured_response(
 ) -> Any:
     """Parse and validate the caller's contract without exposing task contents."""
     try:
-        data = json_loads(text)
-    except JSONDecodeError as err:
-        _LOGGER.error("Failed to parse structured AI Task JSON response: %s", err)
-        raise HomeAssistantError("Error with structured response") from err
+        data = strict_json_loads(text)
+    except ValueError, RecursionError:
+        _LOGGER.error("Failed to parse structured AI Task JSON response")
+        raise HomeAssistantError("Error with structured response") from None
     if original_schema is not None:
         data = _omit_optional_nulls(data, original_schema)
     return _validate_with_caller_cleanup(data, structure)
+
+
+def _require_serializable_response(data: Any) -> None:
+    """Check the final result with Home Assistant's JSON encoder."""
+
+    def require_finite(value: Any) -> None:
+        # Caller selectors can coerce strings into numbers after JSON parsing.
+        # The HA encoder silently maps nonfinite floats to null.
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("Non-finite number in validated AI Task result")
+        if isinstance(value, dict):
+            for key, item in value.items():
+                require_finite(key)
+                require_finite(item)
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                require_finite(item)
+
+    try:
+        json_bytes(data)
+        require_finite(data)
+    except TypeError, ValueError, RecursionError:
+        raise HomeAssistantError(
+            "AI Task result cannot be returned as Home Assistant JSON"
+        ) from None
 
 
 def _validate_with_caller_cleanup(data: Any, structure: SchemaValidator | None) -> Any:
@@ -470,6 +496,7 @@ class ExtendedOpenAITaskEntity(
             original_schema=original_schema,
         )
         data = _validate_with_caller_cleanup(data, task.structure)
+        await asyncio.to_thread(_require_serializable_response, data)
 
         return ai_task.GenDataTaskResult(
             conversation_id=chat_log.conversation_id,

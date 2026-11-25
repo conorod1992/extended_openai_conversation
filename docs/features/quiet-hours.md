@@ -38,6 +38,10 @@ New volume and wake-sound changes require a durable Home Assistant entity regist
 
 If discovery becomes ambiguous during a quiet period, EOAI retains verified existing ownership until that period ends, including after a restart. It does not transfer that ownership to a different automatic candidate or save the old association as a manual override. Your independent changes still release ownership, and explicit selection changes use the normal restoration and retargeting rules. The next quiet period uses the new discovery rules. An unavailable control's restoration obligation remains stored until restoration can be safely completed.
 
+Saved overrides remain editable if a satellite goes offline or loses its registry binding. A replacement that reuses a saved entity ID requires the **Use replacement** action on the satellite card. Use **Clear saved override** and save to remove an orphaned satellite override.
+
+If a renamed entity lands on an ID reserved by another saved selection, Quiet Hours keeps both bindings and shows the conflict. Clear the obsolete override or choose different entity IDs to resolve it.
+
 ## Use the schedule in automations
 
 Quiet Hours exposes a read-only Home Assistant entity for the active period. It remains on for the whole scheduled window even when no speaker needs to be changed, so normal Home Assistant automations can use the same schedule for LEDs or other device-specific behaviour.
@@ -60,6 +64,8 @@ These actions simply turn the saved daily schedule on or off; they do not create
 
 If a controlled speaker or wake-sound switch is unavailable when Quiet Hours ends, its original value remains stored. EOAI retries restoration on discovery ticks, including while the schedule is disabled, and keeps the baseline across Home Assistant restarts. A confirmed independent device change releases ownership without overwriting that change. Released choices remain respected if the Quiet Hours manager is replaced during the same policy period. Controls that EOAI still owns are restored on shutdown and can be reapplied by the replacement manager; a new policy period can apply the policy again.
 
+If a controlled entity is removed from the registry, its pending restoration stays tied to its original registry identity. Restoration resumes when that identity returns, even under a different entity ID. Quiet Hours saves these records in storage version 3. Downgrading to a release that supports only version 2 pauses Quiet Hours until you return to a compatible release.
+
 Saving a changed policy succeeds before EOAI restores or changes devices. A failed settings save leaves the existing policy and device values in place.
 
 Saving the same policy or changing only its schedule does not reclaim a manually adjusted control. Changing the speaker volume target also leaves manual wake-sound choices alone, and changing the wake-sound target leaves manual volume choices alone.
@@ -78,7 +84,7 @@ The complete store remains unchanged, including original values, manual override
 
 Recovery requires administrator review:
 
-1. Stop Home Assistant and back up the complete `.storage/extended_openai_conversation_responses.quiet_hours` file. Preserve that original backup unchanged. Inspect its JSON `data.active` section for `controls`, `pending_controls`, and legacy `targets`; retain the `data.config` and `data.selection_identities` sections.
+1. Stop Home Assistant and back up the complete `.storage/extended_openai_conversation_responses.quiet_hours` file. Preserve that original backup unchanged. Inspect its JSON `data.active` section for `controls`, `pending_controls`, `detached_controls`, and legacy `targets`. Retain the `data.config` and `data.selection_identities` sections.
 2. Start Home Assistant with the original file still in place. Quiet Hours remains paused. Identify the actual physical controls using reliable historical records or direct device checks. Resolve each reviewed restoration obligation manually through Home Assistant. Preserve newer user or automation choices; do not blindly restore a saved value. If the original device cannot be identified or is unavailable, leave its record unresolved and keep Quiet Hours paused.
 3. Stop Home Assistant again before editing storage. Remove only the control, pending-application, or target records whose obligations have been reviewed and resolved. Do not insert today's registry identity into an old record. Keep unresolved records and all unrelated settings intact. Set `data.active` to `null` only if **every** remaining obligation, including verified controls, has been resolved.
 4. Restart Home Assistant and check the Quiet Hours page. It resumes only when no unverified obligations remain and the saved storage format is supported. Do not change the Store envelope's version fields to bypass a storage-version error; use a compatible backup or seek maintainer assistance. Normal verified restoration records keep their usual recovery behavior. If the saved schedule is currently active, normal conservative discovery and starting-volume adjustments can run immediately.

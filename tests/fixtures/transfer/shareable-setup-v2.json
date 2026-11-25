@@ -1,0 +1,33 @@
+{
+  "format": "extended_openai_conversation_transfer",
+  "version": 2,
+  "mode": "setup",
+  "created_at": "2026-11-24T00:00:00+00:00",
+  "integration_version": "7.0.0",
+  "agent": {
+    "title": "Shared conversation agent",
+    "source_entry_id": "shared-entry",
+    "source_subentry_id": "shared-agent"
+  },
+  "sections": {
+    "configuration": {
+      "functions": [],
+      "function_groups": [],
+      "skills": [],
+      "chat_model": "gpt-5.2",
+      "max_tokens": 550,
+      "web_search": false
+    },
+    "request_rules": {
+      "rules": [],
+      "groups": []
+    }
+  },
+  "security": {
+    "policy_version": 1,
+    "mode": "restricted",
+    "review_required": false,
+    "contract": "New shareable exports include supported public settings and omit provider credentials, private data and custom content.",
+    "omitted": []
+  }
+}

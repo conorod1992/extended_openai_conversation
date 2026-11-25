@@ -20,7 +20,7 @@ export const nightlyInteractionSpecs = [
 
   "broadcast-retry.spec.mjs",
   "configuration-import-uncertain.spec.mjs",
-  "request-rule-sharing-retained.spec.mjs",
+  "request-rules-binding.spec.mjs",
   "overview-broadcast-lazy.spec.mjs",
   "management-crud.spec.mjs",
   "native-yaml-editor-crud.spec.mjs",

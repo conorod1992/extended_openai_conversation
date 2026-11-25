@@ -10,7 +10,7 @@ import {enhancementChanged} from "./management-enhancement-state.js";
 export function refreshConfigurationSaveBar(panel) {
   const root = panel.shadowRoot;
   if (enhancementChanged(panel, "configuration-save-state", [Boolean(panel._configDirty)])) {
-    for (const id of ["duplicate-agent", "export-agent"]) {
+    for (const id of ["duplicate-agent"]) {
       const button = root.querySelector(`#${id}`);
       if (!button) continue;
       button.disabled = Boolean(panel._configDirty);

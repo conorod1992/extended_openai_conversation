@@ -432,9 +432,8 @@ async def async_test_agent(
             )
             if not probe_budget_exhausted:
                 ensure_successful_responses_result(response)
-                if not responses_answer_text(
-                    getattr(response, "output", None) or ()
-                ).strip():
+                content = responses_answer_text(getattr(response, "output", None) or ())
+                if not any(character.isalnum() for character in content):
                     raise HomeAssistantError(
                         "Responses probe did not receive a completed text reply"
                     )
@@ -489,7 +488,7 @@ async def async_test_agent(
                 if (
                     finish_reason != "stop"
                     or getattr(message, "refusal", None)
-                    or not content.strip()
+                    or not any(character.isalnum() for character in content)
                 ):
                     raise HomeAssistantError(
                         "Chat Completions probe did not receive a completed text reply"

@@ -19,6 +19,7 @@ from .agent_config import (
     normalized_function_call_budget,
     project_agent_config_fields,
     project_agent_config_updates,
+    require_persistable_function_yaml,
     validate_function_groups,
     validate_function_tools,
 )
@@ -34,6 +35,7 @@ from .function_configuration_repair import (
     editable_function_tools,
     function_configuration_repair_state,
 )
+from .function_yaml import authored_function_configuration_equal
 from .skill_availability import preserves_skill_loader_availability, skill_loader_status
 from .yaml_serialization import dump_yaml
 
@@ -69,9 +71,8 @@ def prepare_valid_function_configuration(
     if extra_updates:
         updates.update(extra_updates)
     snapshot = validated_snapshot
-    reuse_tools = (
-        snapshot is not None
-        and updates[CONF_FUNCTION_TOOLS] == snapshot[CONF_FUNCTION_TOOLS]
+    reuse_tools = snapshot is not None and authored_function_configuration_equal(
+        updates[CONF_FUNCTION_TOOLS], snapshot[CONF_FUNCTION_TOOLS]
     )
     validated_functions = None
     if reuse_tools:
@@ -99,8 +100,8 @@ def prepare_valid_function_configuration(
         else:
             candidate.pop(CONF_FUNCTION_TOOLS, None)
     else:
-        candidate[CONF_FUNCTION_TOOLS] = dump_yaml(
-            candidate[CONF_FUNCTION_TOOLS], sort_keys=False
+        candidate[CONF_FUNCTION_TOOLS] = require_persistable_function_yaml(
+            dump_yaml(candidate[CONF_FUNCTION_TOOLS], sort_keys=False)
         )
     # Function edits must not turn implicit model-dependent defaults into saved
     # settings. For example, an absent effort follows each routed model's profile;
@@ -295,11 +296,12 @@ def prepare_quarantined_function_configuration(
         ]
         persisted_groups.extend(restored_groups)
     persisted = dict(raw)
-    persisted[CONF_FUNCTION_TOOLS] = dump_yaml(
-        [*deepcopy(tools), *quarantined_raw],
-        sort_keys=False,
-    )
-    if deepcopy(tools) == state.valid:
+    authored_tools = deepcopy(tools)
+    if not authored_function_configuration_equal(authored_tools, state.valid):
+        persisted[CONF_FUNCTION_TOOLS] = require_persistable_function_yaml(
+            dump_yaml([*authored_tools, *quarantined_raw], sort_keys=False)
+        )
+    else:
         # Group-only edits must not reserialize untouched Tools.
         if CONF_FUNCTION_TOOLS in raw:
             persisted[CONF_FUNCTION_TOOLS] = raw[CONF_FUNCTION_TOOLS]
@@ -344,7 +346,7 @@ def prepare_quarantined_function_configuration(
     ):
         raise HomeAssistantError(after.reason or "selected Skills are not loadable")
     return PreparedFunctionConfiguration(
-        persisted, deepcopy(tools), deepcopy(response_groups), next_state
+        persisted, authored_tools, deepcopy(response_groups), next_state
     )
 
 

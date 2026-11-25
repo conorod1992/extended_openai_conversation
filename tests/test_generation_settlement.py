@@ -20,17 +20,30 @@ from tests.test_quiet_hours_runtime import _config
 from tests.test_review_quiet_recovery import _manager, timers  # noqa: F401
 
 
-async def test_cancelled_readback_retains_lock_until_authoritative_installation():
-    entered, finish = asyncio.Event(), asyncio.Event()
+@pytest.mark.parametrize("cancel_during", ["write", "readback"])
+@pytest.mark.parametrize("readback_fails", [False, True])
+async def test_cancelled_transaction_settles_write_and_readback_without_background_error(
+    cancel_during, readback_fails,
+):
+    write_started, finish_write = asyncio.Event(), asyncio.Event()
+    readback_started, finish_readback = asyncio.Event(), asyncio.Event()
     lock = asyncio.Lock()
     state = {"generation": "candidate", "available": True}
+    write_error = OSError("commit acknowledgement lost")
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    reported = []
 
     async def save():
-        raise OSError("commit acknowledgement lost")
+        write_started.set()
+        await finish_write.wait()
+        raise write_error
 
     async def readback():
-        entered.set()
-        await finish.wait()
+        readback_started.set()
+        await finish_readback.wait()
+        if readback_fails:
+            raise OSError("recovery could not read the store")
         state["generation"] = "durable"
 
     def invalidate():
@@ -47,21 +60,39 @@ async def test_cancelled_readback_retains_lock_until_authoritative_installation(
                 record_execution=False,
             )
 
+    loop.set_exception_handler(lambda _loop, context: reported.append(context))
     task = asyncio.create_task(update())
-    await entered.wait()
-    task.cancel()
-    await asyncio.sleep(0)
-    task.cancel()
-    await asyncio.sleep(0)
-    assert not task.done()
-    assert lock.locked()
-    assert state["generation"] == "candidate"
-    finish.set()
-    with pytest.raises(asyncio.CancelledError) as raised:
-        await task
-    assert isinstance(raised.value.__cause__, OSError)
-    assert state == {"generation": "durable", "available": True}
-    assert not lock.locked()
+    try:
+        await asyncio.wait_for(write_started.wait(), 5)
+        if cancel_during == "write":
+            task.cancel("write")
+            await asyncio.sleep(0)
+            assert lock.locked() and not task.done()
+        finish_write.set()
+        await asyncio.wait_for(readback_started.wait(), 5)
+        for message in ("readback", "repeated cancellation"):
+            task.cancel(message)
+            await asyncio.sleep(0)
+            assert lock.locked() and not task.done()
+        assert state == {"generation": "candidate", "available": True}
+
+        finish_readback.set()
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await asyncio.wait_for(task, 5)
+        assert raised.value.args == (cancel_during,)
+        assert raised.value.__cause__ is write_error
+        if readback_fails:
+            assert state == {"generation": "candidate", "available": False}
+        else:
+            assert state == {"generation": "durable", "available": True}
+        assert not lock.locked()
+        await asyncio.sleep(0)
+        assert reported == []
+    finally:
+        finish_write.set()
+        finish_readback.set()
+        await asyncio.gather(task, return_exceptions=True)
+        loop.set_exception_handler(previous_handler)
 
 
 async def test_internal_save_neither_starts_nor_settles_enclosing_effect():

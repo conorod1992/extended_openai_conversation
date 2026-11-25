@@ -6,25 +6,15 @@ import json
 import pytest
 
 from custom_components.extended_openai_conversation_responses import backup, transfer
-from custom_components.extended_openai_conversation_responses.agent_config import (
-    agent_config_snapshot,
-)
 from custom_components.extended_openai_conversation_responses.private_backup import (
     decode_document,
 )
-from custom_components.extended_openai_conversation_responses.request_rule_packs import (
-    export_rule_pack,
-    validate_rule_pack,
-)
 from custom_components.extended_openai_conversation_responses.secret_redaction import (
-    is_redacted_secret,
     redact_http_url,
     redact_secrets,
 )
 from tests.test_literal_url_sharing import script_config
 from tests.test_private_backup_fidelity import private_document
-from tests.test_request_rules import MemoryStore, RequestRules, local_rule
-from tests.test_sharing_schema_context import configuration_artifact
 
 SECRET = "FABRICATED-standard-oauth-bearer-42"
 NAMES = ["access_token", "id_token", "%61ccess_token"]
@@ -37,49 +27,6 @@ def fragment_url(name):
         + "="
         + SECRET
         + "&token_type=Bearer&expires_in=3600"
-    )
-
-
-@pytest.mark.parametrize("format", ["setup", "configuration"])
-@pytest.mark.parametrize("name", NAMES)
-@pytest.mark.parametrize("persisted", [False, True])
-def test_oauth_fragment_credentials_are_omitted_from_config_artifacts(
-    hass, format, name, persisted
-):
-    uri = fragment_url(name)
-    config = script_config(uri, persisted=persisted)
-    before = deepcopy(config)
-    agent_config_snapshot(config)
-    assert is_redacted_secret(redact_secrets({"access_token": SECRET})["access_token"])
-    assert redact_http_url(uri) is not None
-    artifact, public, serialized = configuration_artifact(config, format)
-    assert SECRET not in serialized
-    assert public["functions"] == []
-    assert artifact["security"]["omitted"]
-    assert config == before
-
-
-@pytest.mark.parametrize("selection", ["all", "selected", "group"])
-@pytest.mark.parametrize("name", NAMES)
-async def test_oauth_fragment_credentials_are_omitted_from_rule_packs(
-    hass, selection, name
-):
-    rule = local_rule()
-    rule["action"]["actions"] = [
-        {"action": "rest_command.report", "data": {"callback": fragment_url(name)}}
-    ]
-    manager = RequestRules(MemoryStore({"rules": [rule]}))
-    await manager.async_initialize()
-    before = deepcopy(manager.snapshot())
-    pack = export_rule_pack(manager, selection, rule_ids=[rule["id"]], reviewed=True)
-    assert SECRET not in json.dumps(pack)
-    assert pack["rules"] == []
-    assert pack["security"]["omitted"]
-
-    assert validate_rule_pack(pack)["rules"] == []
-    assert manager.snapshot() == before
-    assert SECRET not in json.dumps(
-        export_rule_pack(manager, selection, rule_ids=[rule["id"]])
     )
 
 

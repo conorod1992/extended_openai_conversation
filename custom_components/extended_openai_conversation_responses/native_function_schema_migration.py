@@ -8,7 +8,7 @@ from typing import Any, cast
 import yaml
 
 from .resource_limits import MAX_NATIVE_SERVICE_ACTIONS
-from .yaml_serialization import dump_yaml, load_yaml_or_json
+from .yaml_serialization import dump_yaml, load_authored_config, validate_yaml_structure
 
 SERVICE_DATA_DESCRIPTION = (
     "Any valid Home Assistant service data accepted by the selected service. Include "
@@ -296,7 +296,7 @@ def migrate_legacy_stock_native_function_tools_yaml(value: Any) -> tuple[Any, bo
     if not isinstance(value, (str, list)) or not value:
         return value, False
     try:
-        parsed = load_yaml_or_json(value) if isinstance(value, str) else value
+        parsed = load_authored_config(value) if isinstance(value, str) else value
     except yaml.YAMLError:
         return value, False
     if not isinstance(parsed, list):
@@ -305,6 +305,11 @@ def migrate_legacy_stock_native_function_tools_yaml(value: Any) -> tuple[Any, bo
     migrated, changed = migrate_legacy_stock_native_function_tools(parsed)
     if not changed:
         return value, False
-    return (
-        dump_yaml(migrated, sort_keys=False) if isinstance(value, str) else migrated
-    ), True
+    if not isinstance(value, str):
+        return migrated, True
+    serialized = dump_yaml(migrated, sort_keys=False)
+    try:
+        validate_yaml_structure(serialized)
+    except yaml.YAMLError:
+        return value, False
+    return serialized, True

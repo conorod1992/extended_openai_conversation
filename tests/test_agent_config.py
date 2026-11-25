@@ -6,7 +6,10 @@ from typing import Any
 import pytest
 import yaml
 
-from custom_components.extended_openai_conversation_responses import agent_config
+from custom_components.extended_openai_conversation_responses import (
+    agent_config,
+    function_yaml,
+)
 from custom_components.extended_openai_conversation_responses.agent_config import (
     MAX_AGENT_TITLE_LENGTH,
     AgentConfigError,
@@ -121,8 +124,8 @@ def test_function_tool_cache_key_avoids_yaml_for_persisted_lists(
 ) -> None:
     config = {"functions": [_native_tool()]}
     monkeypatch.setattr(
-        agent_config.yaml,
-        "safe_dump",
+        function_yaml,
+        "dump_yaml",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("persisted list cache keys must not use PyYAML")
         ),
@@ -130,7 +133,7 @@ def test_function_tool_cache_key_avoids_yaml_for_persisted_lists(
 
     key = agent_config._configured_tools_yaml(config)
 
-    assert key == agent_config._configured_tools_yaml(
+    assert key != agent_config._configured_tools_yaml(
         {"functions": [dict(reversed(list(_native_tool().items())))]}
     )
     assert key.startswith("[{")

@@ -223,14 +223,15 @@ async def test_process_service_translates_unexpected_agent_failure(
 
 
 @pytest.mark.asyncio
-async def test_call_function_service_uses_default_arguments_and_unwraps_tool_result(
+async def test_call_function_service_uses_default_arguments_and_wraps_native_result(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Call Function must preserve schema defaults and the public result envelope."""
     entry = _entry()
     await _setup_entry(hass, entry)
-    call_active = AsyncMock(return_value=SimpleNamespace(tool_result={"answer": 42}))
+    native_result = {"answer": 42, "result": False}
+    call_active = AsyncMock(return_value=native_result)
     monkeypatch.setattr(services, "async_call_active_function", call_active)
 
     response = await _response_service_call(
@@ -239,7 +240,7 @@ async def test_call_function_service_uses_default_arguments_and_unwraps_tool_res
         {"function": "lookup_answer"},
     )
 
-    assert response == {"result": {"answer": 42}}
+    assert response == {"result": native_result}
     call_active.assert_awaited_once_with("lookup_answer", {})
 
 
@@ -321,7 +322,7 @@ async def test_function_state_services_dispatch_exact_requested_state(
     field: str,
     enabled: bool,
 ) -> None:
-    """Function state services must dispatch exact target, names and state."""
+    """Function state services must dispatch exact target, names, state and user."""
     # tests/test_function_tool_services.py covers both states for both families.
     # Keep real dispatch for each distinct HA schema and registration for all names.
     entry = _entry()
@@ -355,6 +356,7 @@ async def test_function_state_services_dispatch_exact_requested_state(
         subentry.subentry_id,
         ["first", "second"],
         enabled,
+        user_id=hass_admin_user.id,
     )
 
 

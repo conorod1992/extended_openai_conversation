@@ -113,8 +113,8 @@ test("pattern and substitution reference stays reachable without hiding response
   const response = panel.locator("#rule-response-reference");
   await expect(response).toHaveJSProperty("open", false);
   await response.locator("summary").click();
-  await expect(response.locator("p")).toContainText("{battery.level}");
-  await expect(response.locator("p")).toContainText("native script variables are only available inside actions");
+  await expect(response.locator("p")).toContainText("{{ battery.result.level }}");
+  await expect(response.locator("p")).toContainText("Set conversation response");
   await expectHarnessClean(page, errors);
 });
 

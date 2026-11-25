@@ -13,7 +13,7 @@ from tests.test_backup import _document
 from tests.test_request_rules import local_rule, RequestRules, MemoryStore
 
 
-@pytest.mark.parametrize("kind", ["setup", "custom", "legacy"])
+@pytest.mark.parametrize("kind", ["custom", "legacy"])
 async def test_no_credential_survives_any_redacted_rule_export(hass, kind):
     secret = "synthetic-audit-token-do-not-use"
     store = MemoryStore()
@@ -45,11 +45,7 @@ async def test_no_credential_survives_any_redacted_rule_export(hass, kind):
             },
             "sections": {"configuration": {}, "request_rules": saved},
         }
-        exported = (
-            transfer.finalize_setup_export(document)
-            if kind == "setup"
-            else {"json": json.dumps(transfer.redact_transfer_document(document))}
-        )
+        exported = {"json": json.dumps(transfer.redact_transfer_document(document))}
     assert secret not in exported["json"]
     assert await manager.async_backup_data() == before
     # Derived signatures are rebuilt from restored actions, never trusted from export.

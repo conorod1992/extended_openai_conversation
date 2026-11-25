@@ -5,6 +5,7 @@ import {enhancementChanged} from "./management-enhancement-state.js";
 import {completePolicyResponse, retainPageSaveAcknowledgement, hasPendingPageSaveRead, PAGE_SAVE_READ_EVENT, PAGE_SAVE_READ_MESSAGE} from "./page-save-acknowledgement.js";
 import {UnsavedState, clone, same, mergeAcknowledgedDraft, draftScope, saveBarMarkup} from "./unsaved-state.js";
 import {NAVIGATION} from "./frontend-navigation.js";
+import {getRouteFeature} from "./management-route.js";
 
 const GUEST = "capabilities/guest-mode";
 const QUIET = "capabilities/quiet-hours";
@@ -323,55 +324,15 @@ function syncRequestRulesSavedDom(panel) {
   return true;
 }
 
-function syncQuietHoursSavedDom(panel) {
-  const root = panel.shadowRoot;
-  const result = panel._result || {};
-  const config = panel._quietHoursDraft || result.config || {};
-  if (!root) return;
-  const enabled = root.querySelector("#qh-enabled");
-  const start = root.querySelector("#qh-start");
-  const end = root.querySelector("#qh-end");
-  const volume = root.querySelector("#qh-volume");
-  const volumeValue = root.querySelector("#qh-volume-value");
-  const wake = root.querySelector("#qh-wake");
-  const maxPercent = Math.round(Number(config.max_volume ?? 0.2) * 100);
-  if (enabled) enabled.checked = Boolean(config.enabled);
-  if (start) start.value = config.start || "22:00";
-  if (end) end.value = config.end || "07:00";
-  if (volume) volume.value = String(maxPercent);
-  if (volumeValue) volumeValue.textContent = `${maxPercent}%`;
-  if (wake) wake.value = config.wake_sound || "off";
-
-  const status = root.querySelector(".qh-status");
-  if (status) {
-    const title = result.active
-      ? "Quiet Hours active now"
-      : config.enabled ? "Outside Quiet Hours" : "Quiet Hours schedule disabled";
-    const detail = config.enabled
-      ? `${config.start || "22:00"}–${config.end || "07:00"} every day`
-      : "The saved schedule is currently turned off.";
-    const copy = status.querySelector("div");
-    const strong = copy?.querySelector("strong");
-    const small = copy?.querySelector("small");
-    const badge = status.querySelector(":scope > span");
-    if (strong) strong.textContent = title;
-    if (small) small.textContent = detail;
-    if (badge) {
-      badge.textContent = result.active ? "Active" : "Inactive";
-      badge.className = result.active ? "availability-badge" : "disabled-badge";
-    }
-  }
-}
-
 function syncGuestSavedDom(panel) {
   const root = panel.shadowRoot;
   root?.querySelector(".legacy-migration")?.remove();
 }
 
-function syncSavedPageDom(panel) {
+function syncSavedPageDom(panel, previous) {
   const view = panel._viewKey?.();
   if (view === RULES) return syncRequestRulesSavedDom(panel);
-  if (view === QUIET) syncQuietHoursSavedDom(panel);
+  if (view === QUIET) return getRouteFeature(view)?.reconcileSavedPolicy(panel, previous);
   if (view === GUEST) syncGuestSavedDom(panel);
   return true;
 }
@@ -392,6 +353,7 @@ export async function savePageChanges(panel) {
     return false;
   }
   const submission = {...captureConfigurationOwner(panel), view:panel._viewKey?.()};
+  const previous = panel._result;
   const operation = scope.save();
   refreshPageSaveBar(panel);
   try {
@@ -399,7 +361,7 @@ export async function savePageChanges(panel) {
     return await presentAcknowledgedMutation(panel, submission, "Changes saved", () => {
       if (panel._viewKey?.() !== submission.view) return;
       // Keep the live editor when normalization preserves its structure.
-      if (!syncSavedPageDom(panel)) panel._render();
+      if (!syncSavedPageDom(panel, previous)) panel._render();
       const refresh = scope.refreshSavedPolicy;
       scope.refreshSavedPolicy = null;
       refresh?.();

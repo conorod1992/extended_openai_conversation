@@ -190,7 +190,7 @@ def test_history_as_summary_text_renders_native_model_dump_without_content() -> 
     class NativeItem:
         def model_dump(self, *, exclude_none: bool):
             assert exclude_none is True
-            return {"type": "reasoning", "value": "native"}
+            return {"type": "custom", "value": "native"}
 
     assistant = conversation.AssistantContent(
         agent_id="agent",
@@ -201,7 +201,7 @@ def test_history_as_summary_text_renders_native_model_dump_without_content() -> 
     rendered = context.history_as_summary_text([assistant])
 
     assert rendered == (
-        'assistant native item: {"type": "reasoning", "value": "native"}'
+        'assistant native item: {"type": "custom", "value": "native"}'
     )
 
 

@@ -61,7 +61,9 @@ Guest Mode and other current restrictions can therefore make a previously schedu
 
 ## What if the tool or configuration changes?
 
-If the Function Tool has been removed, disabled, or its schema or implementation has changed, the pending action is cancelled. A saved fingerprint binds the call to the definition used when it was scheduled; keeping the same tool name does not authorize a different implementation. Pending calls created before fingerprint support are also cancelled because their original definition cannot be verified. Schedule those actions again after upgrading.
+If the Function Tool has been removed, disabled, or its schema or implementation has changed, the pending action is cancelled. A saved fingerprint binds the call to the definition used when it was scheduled. Keeping the same tool name does not authorize a different implementation.
+
+The current fingerprint preserves authored value and key types and mapping order. Pending calls saved with the earlier fingerprint, or without a fingerprint, remain in the queue until their normal expiry or due-time validation. They are discarded before execution because their original definitions cannot be verified. Schedule any still-needed actions again after upgrading. A downgrade likewise rejects calls saved with the newer fingerprint.
 
 Delayed execution is also coordinated with maintenance operations such as full Backup & Restore, so a due action is not deliberately run while the agent's configuration or policy is only partly restored.
 

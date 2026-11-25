@@ -1,8 +1,6 @@
 """Native action shorthand and typed Function result regression contracts."""
 
-from dataclasses import replace
 
-from types import SimpleNamespace
 
 import pytest
 
@@ -74,7 +72,7 @@ async def test_successful_stop_in_shorthand_container_is_success(hass, container
     assert outcome.successful
 
 
-async def test_authored_response_variable_and_alias_both_available(hass):
+async def test_authored_response_variable_feeds_conversation_response(hass):
     hass.config.legacy_templates = False
 
     async def execute(*_args):
@@ -85,36 +83,13 @@ async def test_authored_response_variable_and_alias_both_available(hass):
         [
             function_step(response_variable="reply"),
             {
-                "set_conversation_response": "{{ reply.result.level }} / {{ lookup.level }}"
+                "set_conversation_response": "{{ reply.result.level }}"
             },
         ],
         execute,
     )
     assert outcome.successful
-    assert outcome.response == "62 / 62"
-
-
-@pytest.mark.parametrize(
-    "value", ["123456", "false", "null", '{"level":62}', False, 0, None, {"level": 62}]
-)
-async def test_result_alias_preserves_native_return_type(value):
-    async def execute(*_args):
-        return SimpleNamespace(tool_result={"result": value})
-
-    results = {}
-    executor = rules._ACTIVE_RULE_ACTION.set(
-        replace(rules._ACTIVE_RULE_ACTION.get(), function_executor=execute)
-    )
-    context = rules._ACTIVE_RULE_ACTION.set(
-        replace(rules._ACTIVE_RULE_ACTION.get(), function_results=results)
-    )
-    try:
-        captured = await rules.async_call_active_function("lookup", {}, "reading")
-        assert captured == value
-        assert type(captured) is type(value)
-    finally:
-        rules._ACTIVE_RULE_ACTION.reset(context)
-        rules._ACTIVE_RULE_ACTION.reset(executor)
+    assert outcome.response == "62"
 
 
 @pytest.mark.parametrize(
@@ -177,7 +152,7 @@ def test_parallel_normalization_preserves_templates_and_service_payload():
 
 @pytest.mark.parametrize("legacy", [True, False])
 @pytest.mark.parametrize("value", ["123456", "True", "None", "[1,2]", '{"level":62}', "  spaced  ", False, 0, None, {"level": 62}, [1, 2]])
-async def test_alias_assignment_preserves_type_in_real_script(hass, legacy, value):
+async def test_response_variable_preserves_type_in_real_script(hass, legacy, value):
     hass.config.legacy_templates = legacy
 
     async def execute(*_args):
@@ -185,30 +160,11 @@ async def test_alias_assignment_preserves_type_in_real_script(hass, legacy, valu
 
     outcome = await evaluate_functions(hass, [
         function_step(response_variable="reply"),
-        {"set_conversation_response": "{{ lookup == reply.result }} / {{ lookup is string }} / {{ reply.result is string }}"},
+        {"set_conversation_response": "{{ reply.result is string }}"},
     ], execute)
     expected = "True" if isinstance(value, str) else "False"
     assert outcome.successful
-    assert outcome.response == f"True / {expected} / {expected}"
-
-
-@pytest.mark.parametrize("legacy", [True, False])
-@pytest.mark.parametrize("privacy_guard", [True, False])
-@pytest.mark.parametrize("value", ["123456", "False", "None", '{"level":62}', "  spaced  ", False, 0, None, {"level": 62}, [1, 2]])
-def test_exact_result_reference_preserves_native_type_at_render_boundary(hass, legacy, privacy_guard, value):
-    from homeassistant.helpers.template import Template
-
-    hass.config.legacy_templates = legacy
-    helper = "__eoai_result_value_" + "a" * 32
-    source = Template("{{ " + helper + "('answer') }}", hass)
-    if privacy_guard:
-        source = rules._guard_template_reads(source, GuestCapabilityPolicy.unrestricted)
-    wrapped = rules._guard_result_references(
-        source, lambda error: pytest.fail(str(error)), {"answer": value}
-    )
-    rendered = wrapped.async_render({"answer": "unrelated native variable"})
-    assert rendered == value
-    assert type(rendered) is type(value)
+    assert outcome.response == expected
 
 
 @pytest.mark.parametrize("legacy", [True, False])
@@ -224,18 +180,19 @@ async def test_exact_reference_preserves_type_in_script_with_live_privacy_guard(
     async def dispatch(domain, service, service_data, **_kwargs):
         data = service_data
         if service == "call_function":
-            return {"result": await rules.async_call_active_function(data["function"], data.get("arguments", {}), data.get("result_alias"))}
+            return {"result": await rules.async_call_active_function(data["function"], data.get("arguments", {}))}
         if domain == "rule_probe":
             captured.append(data["message"])
         return None
 
     hass.services.async_call.side_effect = dispatch
     rule = local_rule(phrases=["run"])
-    rule["action"]["actions"] = [function_step(), {"action": "rule_probe.record", "data": {"message": "{lookup}"}}]
-    outcome = await rules.async_evaluate_rule(hass, await manager(rule), rules.RequestRuleRuntime(), "run", "session", function_executor=execute, live_guest_policy=GuestCapabilityPolicy.unrestricted)
+    rule["action"]["actions"] = [function_step(response_variable="reply"), {"action": "rule_probe.record", "data": {"message": "{{ reply.result is string }}"}}]
+    configured = await manager()
+    await configured.async_create(rule)
+    outcome = await rules.async_evaluate_rule(hass, configured, rules.RequestRuleRuntime(), "run", "session", function_executor=execute, live_guest_policy=GuestCapabilityPolicy.unrestricted)
     assert outcome.successful
-    assert captured == [value]
-    assert type(captured[0]) is type(value)
+    assert captured == [str(isinstance(value, str)) if legacy else isinstance(value, str)]
 
 
 async def test_guest_parallel_forbidden_event_rejected_before_any_effect(hass):
@@ -279,3 +236,47 @@ async def test_parallel_guest_preflight_prevents_partial_effects(hass):
     assert not outcome.successful
     assert not effects
     hass.services.async_call.assert_not_called()
+
+
+
+@pytest.mark.parametrize("level", [0, 62])
+async def test_function_response_feeds_native_branch_and_speech(tmp_path, level):
+    from custom_components.extended_openai_conversation_responses import services
+    from homeassistant.core import HomeAssistant
+
+    hass = HomeAssistant(str(tmp_path))
+    hass.config.legacy_templates = False
+    effects = []
+
+    async def execute(*_args):
+        return {"level": level}
+
+    async def record(call):
+        effects.append(call.service)
+
+    await services.async_setup_services(hass, {})
+    hass.services.async_register("rule_probe", "record", record)
+    rule = local_rule(phrases=["run"])
+    producer = function_step(response_variable="reading")
+    rule["action"].update(
+        actions=[
+            producer,
+            {
+                "if": [{"condition": "template", "value_template": "{{ reading.result.level < 20 }}"}],
+                "then": [{"action": "rule_probe.record"}],
+            },
+            {"set_conversation_response": "Battery {{ reading.result.level }}"},
+        ],
+    )
+    try:
+        configured = await manager()
+        await configured.async_create(rule)
+        outcome = await rules.async_evaluate_rule(
+            hass, configured, rules.RequestRuleRuntime(), "run", "session",
+            function_executor=execute,
+        )
+        assert outcome.successful
+        assert outcome.response == f"Battery {level}"
+        assert effects == (["record"] if level < 20 else [])
+    finally:
+        await hass.async_stop(force=True)

@@ -1,4 +1,4 @@
-"""Concurrency coverage for installed Skill discovery and publication."""
+"""Concurrency coverage for installed Skill discovery and reads."""
 
 from __future__ import annotations
 
@@ -111,85 +111,32 @@ async def test_staging_is_outside_discovery_and_incomplete_paths_stay_hidden(
     assert manager.get_all_skills() == []
 
 
-async def test_scan_publish_and_replace_share_one_serialized_boundary(
+async def test_reload_waits_for_active_skill_reader(
     hass, tmp_path, monkeypatch
 ) -> None:
-    """Concurrent operations never expose staging or partial replacement state."""
+    """Keep the current catalogue visible while reload waits for a reader."""
     manager = await _manager(hass, tmp_path)
     _write_skill(manager.user_skills_dir / "alpha", "Alpha")
     await manager.async_load_skills()
     assert [skill.name for skill in manager.get_all_skills()] == ["alpha"]
 
-    staged_beta = manager.staging_dir / "beta.download-test"
-    _write_skill(staged_beta, "Beta")
-    staged_alpha = manager.staging_dir / "alpha.download-test"
-    _write_skill(staged_alpha, "Updated alpha")
+    _write_skill(manager.user_skills_dir / "beta", "Beta")
+    _write_skill(manager.user_skills_dir / "alpha", "Updated alpha")
 
     probe = LockProbe(manager._filesystem_lock)
     monkeypatch.setattr(manager, "_filesystem_lock", probe)
 
     async with manager.async_skill_read():
         await probe.next_attempt()
-        publish = asyncio.create_task(
-            manager.async_publish_staged_skill("beta", staged_beta)
-        )
-        scan = asyncio.create_task(manager.async_load_skills())
-        replace = asyncio.create_task(manager.async_publish_staged_skill("alpha", staged_alpha))
-        attempts = [await probe.next_attempt() for _ in range(3)]
-        assert set(attempts) == {publish, scan, replace}
-        assert not publish.done()
-        assert not scan.done()
-        assert not replace.done()
+        reload = asyncio.create_task(manager.async_load_skills())
+        assert await probe.next_attempt() is reload
+        assert not reload.done()
+        assert manager.get_skill("alpha").description == "Alpha"
+        assert manager.get_skill("beta") is None
 
-    await asyncio.gather(publish, scan, replace)
+    await reload
     assert manager.get_skill("alpha").description == "Updated alpha"
-    assert (manager.user_skills_dir / "beta" / "SKILL.md").is_file()
     assert {skill.name for skill in manager.get_all_skills()} == {"alpha", "beta"}
-
-
-async def test_publish_rescans_without_reentering_non_reentrant_lock(
-    hass, tmp_path
-) -> None:
-    """Publication may discover under the owned lock without calling the public loader."""
-    manager = await _manager(hass, tmp_path)
-    staged = manager.staging_dir / "demo.download-test"
-    _write_skill(staged, "Demo")
-
-    await asyncio.wait_for(
-        manager.async_publish_staged_skill("demo", staged), timeout=2
-    )
-    assert manager.get_skill("demo") is not None
-
-
-async def test_cancelled_publication_finishes_to_stable_state_before_unlock(
-    hass, tmp_path, monkeypatch
-) -> None:
-    """Cancellation cannot leave a half-published Skill or a permanently held lock."""
-    manager = await _manager(hass, tmp_path)
-    staged = manager.staging_dir / "demo.download-test"
-    _write_skill(staged, "Demo")
-
-    original_discover = manager._async_discover_skills_locked
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def blocked_discover():
-        started.set()
-        await release.wait()
-        return await original_discover()
-
-    monkeypatch.setattr(manager, "_async_discover_skills_locked", blocked_discover)
-    task = asyncio.create_task(manager.async_publish_staged_skill("demo", staged))
-    await started.wait()
-    task.cancel()
-    release.set()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    async with manager.async_skill_read():
-        assert manager.get_skill("demo") is not None
-    assert (manager.user_skills_dir / "demo" / "SKILL.md").is_file()
 
 
 async def test_repeated_cancellation_keeps_lock_until_reload_settles(

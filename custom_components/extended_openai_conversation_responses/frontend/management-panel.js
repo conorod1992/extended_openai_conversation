@@ -19,12 +19,12 @@ import {
 } from "./management-page-drafts.js";
 import {cacheTimestampIsFresh, readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
-import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
+import {ASSISTANT_INTRO_MARKUP, renderManagement, renderManagementRoute, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors} from "./management-actions.js";
 import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
-import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
+import {captureCatalogLoad, catalogFailureIsCurrent, catalogMayPublish} from "./management-catalog-ownership.js";
 import {capturePageRead, acceptPageRead, hasPendingPageSaveRead, retryPageSaveReadsOnTransport} from "./page-save-acknowledgement.js";
-import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
+import {loadAgentsWithOverviewPrefetch, loadRoute, syncConversationSearchOwner, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetting} from "./frontend-navigation.js";
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
@@ -46,6 +46,35 @@ const REQUEST_RULE_CACHE_KEY = "capabilities/request-rules";
 
 const KNOWLEDGE_TITLE_LIMIT = 120;
 const KNOWLEDGE_DESCRIPTION_LIMIT = 500;
+// Python includes the four information separators in its Unicode whitespace.
+const KNOWLEDGE_SPACE = /[\p{White_Space}\x1c-\x1f]+/u;
+const KNOWLEDGE_SPACE_RUNS = new RegExp(KNOWLEDGE_SPACE, "gu");
+
+function knowledgeCharacterCount(value) {
+  let length = value.length;
+  for (let index = 0; index < value.length; index++) {
+    if (value.codePointAt(index) > 0xFFFF) {
+      length--;
+      index++;
+    }
+  }
+  return length;
+}
+
+function normalizedKnowledgeContent(value) {
+  const normalized = value.replace(/\r\n?/g, "\n").replace(/[ \t]+/g, (spaces, offset, text) => {
+    const next = text[offset + spaces.length];
+    return next === "\n" || next === undefined ? "" : spaces;
+  });
+  let first = 0, last = normalized.length;
+  while (first < last && KNOWLEDGE_SPACE.test(normalized[first])) first++;
+  while (last > first && KNOWLEDGE_SPACE.test(normalized[last - 1])) last--;
+  return normalized.slice(first, last);
+}
+
+function normalizedKnowledgeLine(value) {
+  return value.replace(KNOWLEDGE_SPACE_RUNS, " ").replace(/^ | $/g, "");
+}
 const KNOWLEDGE_LIMIT = 100000;
 const NAVIGATION_MARK_PREFIX = "extended-openai:navigation";
 const LOAD_MARK_PREFIX = "extended-openai:load-section";
@@ -319,6 +348,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // These are operation lifetimes; keep authored drafts and their recovery
       // baselines intact across a temporary authentication transition.
       ++this._loadToken;
+      syncConversationSearchOwner(this);
       this._eocCatalogReadSequence = (this._eocCatalogReadSequence || 0) + 1;
       this._eocModelChangeToken = (this._eocModelChangeToken || 0) + 1;
       this._eocViewAssetToken = (this._eocViewAssetToken || 0) + 1;
@@ -552,8 +582,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._draftTitle = null;
     this._draftAgentId = null;
     this._configSearchQuery = "";
+    this._clearSearchData();
+  }
+
+  _clearSearchData() {
     this._settingsSearchConfig = null;
     this._settingsSearchConfigAgentId = null;
+    this._settingsSearchConfigLoadedAt = null;
     this._settingsSearchConfigError = null;
     this._settingsSearchConfigErrorAgentId = null;
   }
@@ -638,11 +673,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _invalidateCleanConfiguration(agentId) {
     if (!agentId) return;
     if (agentId === this._draftAgentId) this._configDataStale = true;
+    if (agentId === this._settingsSearchConfigAgentId || agentId === this._settingsSearchConfigErrorAgentId) {
+      this._clearSearchData();
+    }
+    if (agentId === this._settingsSearchConfigRequest?.agentId) {
+      this._settingsSearchConfigRequest = null;
+    }
     for (const projection of ["full", "retention"]) {
       const key = this._configurationSnapshotKey(agentId, projection);
       if (key) this._cleanConfigSnapshots.delete(key);
     }
     if (agentId === this._agentId) {
+      void navigationSearchModule?.ensureSearchConfiguration(this);
       this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
       this._eocLiveMetadataCache?.clear();
       this._eocLiveMetadataPending?.clear();
@@ -1064,7 +1106,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         mutationTrace.wsResponseAt = requestTrace.responseAt;
         mutationTrace.wsDurationMs = requestTrace.durationMs;
       }
-      if (err?.mutationOutcome === "uncertain") requestTrace.status = "uncertain";
+      if (["uncertain", "committed"].includes(err?.mutationOutcome)) requestTrace.status = err.mutationOutcome;
       throw err;
     } finally {
       this._eocRequestDiagnostics ||= [];
@@ -1174,6 +1216,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const current = this._data.scopes.find((scope) => scope.is_current_user);
     if (!this._data.scopes.some((scope) => scope.scope_id === this._scopeId)) {
       this._scopeId = current?.scope_id || this._data.scopes[0]?.scope_id;
+      if (this._viewKey?.() === "data-memory/conversations") syncConversationSearchOwner(this);
     }
   }
 
@@ -1192,6 +1235,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _loadAgents(selectedId = null, owner = null, selectionIntent = null, {preserveAuthoringOnFailure = false} = {}) {
     const context=captureCatalogLoad(this,owner,selectionIntent);
+    this._agentCatalogRetry = null;
     this._markColdLifecycle("agents-start");
     try {
       await loadAgentsWithOverviewPrefetch(this, selectedId, owner, context);
@@ -1204,6 +1248,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // preview remains blocked. Let that caller present the failed read.
       if (preserveAuthoringOnFailure) throw err;
       if (!catalogFailureIsCurrent(this,context)) return;
+      if (!context.acceptedRead) this._agentCatalogRetry = {context, selectedId};
       // Failed catalogue reads cannot validate the owner of a mounted editor.
       // Close it so the failure can render and stale drafts cannot be submitted.
       this.shadowRoot?.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
@@ -1258,6 +1303,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _loadSectionData(silent = false) {
     if (!this._selectedAgent()) {
+      ++this._loadToken;
+      this._result = null;
+      this._error = null;
       this._busy = false;
       return this._render();
     }
@@ -1958,7 +2006,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const navigation = NAVIGATION.filter((item) => this._canAccessView(item.id));
     const local = this._visibleSubsections();
     const currentSection = local.find((item) => item.id === this._subsection);
-    this._eocMainMarkup = this._error ? this._routeError(this._error) : !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loadingContent(agent) : this._content(agent);
+    this._eocMainMarkup = renderManagementRoute(this, agent);
     const configurationActions = agent && !this._busy && !this._error ? this._configurationActions() : "";
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
@@ -2200,44 +2248,30 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._render();
   }
 
+  async _recoverSavedGuestSchedule(agentId, submission, intervalSubmission = null) {
+    try {
+      const result = await this._call("guest_mode", "get");
+      if (!result?.status || !configurationSubmissionIsCurrent(this, submission)) return;
+      if (intervalSubmission) getRouteFeature("capabilities/guest-mode")?.acknowledgeGuestInterval(this, intervalSubmission, result.status);
+      await this._refreshGuestModeMutation(agentId, result);
+    } catch {
+      // The existing saved notice remains accurate if a read is unavailable.
+    }
+  }
+
   _updateGuestMode(now = false) {
     return this._runGuestOperation(async () => {
-      const root = this.shadowRoot;
       const agentId = this._agentId;
       const submission = captureConfigurationOwner(this);
-      const intervalSubmission = getRouteFeature("capabilities/guest-mode")?.captureGuestInterval(this);
+      const guest = getRouteFeature("capabilities/guest-mode");
+      const intervalSubmission = guest?.captureGuestInterval(this);
       if (!intervalSubmission) {
         this._toast("Reload Guest Mode before changing its interval.", true);
         return;
       }
-      const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
-      // Omission asks the backend to start now, independently of browser time.
-      const startInput = root.querySelector("#guest-start");
-      const start = now ? undefined : startInput?.value;
-      const endInput = root.querySelector("#guest-end");
-      const end = endInput?.value;
-      const status = this._result?.status || {};
-      const localTimes = {};
-      const originalInstant = (field, value, original) => {
-        if (original && value === this._dateTimeLocal(original)) return original;
-        localTimes[field] = value;
-        return value;
-      };
       try {
-        if (!now && startInput?.validity?.badInput) {
-          startInput.focus();
-          throw new Error("Complete the start time or leave it empty to start now.");
-        }
-        if (!indefinite && (!end || !endInput.checkValidity())) {
-          throw new Error("Choose an end time or select Remain active indefinitely.");
-        }
-        intervalSubmission.implicitStart = now || !start;
-        const result = await this._call("guest_mode", "update", {
-          ...(start ? {active_from: originalInstant("active_from", start, status.active_from)} : {}),
-          ...(!indefinite && end ? {active_until: originalInstant("active_until", end, status.active_until)} : {}),
-          indefinite,
-          local_times: localTimes,
-        });
+        const payload = guest.guestIntervalUpdatePayload(this, intervalSubmission, now);
+        const result = await this._call("guest_mode", "update", payload);
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
         await presentAcknowledgedMutation(this, submission, "Guest Mode updated", () => {
           getRouteFeature("capabilities/guest-mode")?.acknowledgeGuestInterval(this, intervalSubmission, result.status);
@@ -2245,7 +2279,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         }, result);
       } catch (err) {
         getRouteFeature("capabilities/guest-mode")?.retainUncertainGuestInterval(this, intervalSubmission, err);
-        if (configurationSubmissionIsCurrent(this, submission)) this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
+        if (!configurationSubmissionIsCurrent(this, submission)) return;
+        if (err?.mutationOutcome === "committed") {
+          this._toast(err.message, true);
+          await this._recoverSavedGuestSchedule(agentId, submission, intervalSubmission);
+        } else this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
       }
     });
   }
@@ -2262,7 +2300,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
         await presentAcknowledgedMutation(this, submission, "Guest Mode ended", () => this._refreshGuestModeMutation(agentId, result), result);
       } catch (err) {
-        if (configurationSubmissionIsCurrent(this, submission)) this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);
+        if (!configurationSubmissionIsCurrent(this, submission)) return;
+        if (err?.mutationOutcome === "committed") {
+          this._toast(err.message, true);
+          await this._recoverSavedGuestSchedule(agentId, submission);
+        } else this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);
       }
     });
   }
@@ -2283,7 +2325,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _dialogs() {
     const owned = this._dialogOwnership();
     const view = this._viewKey();
-    const content = `${view === "data-memory/knowledge" && owned.has("knowledge-dialog") ? `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" maxlength="${KNOWLEDGE_TITLE_LIMIT}" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}" spellcheck="true"></textarea></label>${knowledgeSourceAvailabilityControl()}<label>Content<textarea id="knowledge-content" class="knowledge-editor" maxlength="${KNOWLEDGE_LIMIT}" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>` : ""}
+    const content = `${view === "data-memory/knowledge" && owned.has("knowledge-dialog") ? `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" spellcheck="true"></textarea></label>${knowledgeSourceAvailabilityControl()}<label>Content<textarea id="knowledge-content" class="knowledge-editor" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>` : ""}
       ${view === "data-memory/memories" && owned.has("memory-dialog") ? `<dialog id="memory-dialog" class="editor-dialog" aria-labelledby="memory-dialog-title"><form id="memory-form"><div class="dialog-header"><h2 id="memory-dialog-title">Add memory</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Memory<textarea id="memory-content" required spellcheck="true" placeholder="What should the agent remember?"></textarea></label><div id="memory-metadata"></div><p id="memory-meta" class="meta"></p><div id="memory-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="memory-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="memory-save">Save</button></div></form></dialog>` : ""}
       ${view === "data-memory/conversations" && owned.has("session-dialog") ? `<dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>` : ""}
       ${view === "data-memory/memories" && this._memoryKind !== "temporary" && owned.has("reassign-dialog") ? `<dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope"></select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>` : ""}
@@ -2344,8 +2386,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     const view = this._viewKey();
     q("#retry-route")?.addEventListener("click", () => {
+      const retry = this._agentCatalogRetry;
       if (this._data === null) this._loadInitialAgents(true);
-      else void this._loadSection();
+      else if (retry && catalogMayPublish(this, retry.context)) {
+        void this._loadAgents(retry.selectedId, retry.context.owner, retry.context.intent);
+      } else void this._loadSection();
     });
     if (view === "data-memory/knowledge") getRouteFeature(view)?.bindKnowledge(this);
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
@@ -2447,6 +2492,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const root = this.shadowRoot;
     const dialog = root.querySelector("#knowledge-dialog");
     delete dialog.__eocUncertainMutation;
+    delete dialog.__eocKnowledgeCreate;
     const loadToken = (this._knowledgeLoadToken || 0) + 1;
     this._knowledgeLoadToken = loadToken;
     this._editingSource = null;
@@ -2610,13 +2656,36 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _saveKnowledge() {
     const button = this.shadowRoot.querySelector("#knowledge-save");
-    if (button.disabled || this.shadowRoot.querySelector("#knowledge-dialog").__eocUncertainMutation
+    const dialog = this.shadowRoot.querySelector("#knowledge-dialog");
+    if (button.disabled || dialog.__eocUncertainMutation
         || !["create", "edit"].includes(this._knowledgeMode)) return;
-    const values = this._knowledgeValues();
     const editing = this._knowledgeMode === "edit";
+    const previousCreate = editing ? null : dialog.__eocKnowledgeCreate;
+    const retrying = previousCreate?.pending === true;
+    const values = retrying ? previousCreate.values : this._knowledgeValues();
+    for (const [label, value, limit] of [
+      ["Title", normalizedKnowledgeLine(values.title), KNOWLEDGE_TITLE_LIMIT],
+      ["Description", normalizedKnowledgeLine(values.description), KNOWLEDGE_DESCRIPTION_LIMIT],
+      ["Content", normalizedKnowledgeContent(values.content), KNOWLEDGE_LIMIT],
+    ]) {
+      if (knowledgeCharacterCount(value) > limit) {
+        this._setDialogError("knowledge", `${label} must be at most ${formatUsageNumber(limit)} characters.`);
+        return;
+      }
+    }
+    // Keep an unacknowledged create bound to the exact original submission.
+    // Edits made while it was pending stay available for a later update.
+    let create = editing ? null : previousCreate;
+    if (!editing && (!create || !same(create.values, values))) {
+      const random = globalThis.crypto.getRandomValues(new Uint8Array(16));
+      create = {values, token:Array.from(random, byte => byte.toString(16).padStart(2, "0")).join("")};
+    }
+    if (create) {
+      create.pending = true;
+      dialog.__eocKnowledgeCreate = create;
+    }
     const owner = this._retainedMutationOwner();
     const submission = captureConfigurationOwner(this);
-    const dialog = this.shadowRoot.querySelector("#knowledge-dialog");
     const ownsOperation = beginOperation(this, "knowledge-editor");
     const ownsEditor = () => ownsOperation() && dialog.open
       && this.shadowRoot.querySelector("#knowledge-dialog") === dialog;
@@ -2624,26 +2693,36 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // A reconnect read can refresh the same editor's list without changing
       // its operation, dialog or owner. Its save still needs acknowledgement.
       && this._ownsRetainedMutation(owner, {allowRefresh:true});
-    let uncertain = false;
     this._setDialogError("knowledge", "");
     this._setSaving(button, true);
     try {
-      const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id, expected_revision: this._editingSource.updated_at } : {}), ...values });
+      const response = await this._call("knowledge", editing ? "update" : "create", {
+        ...(editing ? {source_id:this._editingSource.source_id, expected_revision:this._editingSource.updated_at} : {
+          create_token:create.token, ...(create.confirmDuplicate ? {confirm_duplicate:true} : {}),
+        }), ...values,
+      });
       if (!current()) {
         // Retired authentication cannot adopt this reply, but the original
         // draft must not become a fresh create when it is recovered later.
         if (ownsEditor()) requireMutationAcknowledgement(false, "reconciling the Knowledge save after its owner changed");
         return;
       }
+      if (create && response?.status === "duplicate") {
+        create.pending = false;
+        create.confirmDuplicate = true;
+        this._setDialogError("knowledge", "An identical Knowledge source already exists. Select Save again to create another copy.");
+        return;
+      }
       const ownsList = this._ownsRetainedMutation(owner);
       this._requireKnowledgeSource(response?.source, editing ? this._editingSource.source_id : null);
+      delete dialog.__eocKnowledgeCreate;
       // Retain the committed identity before touching the collection or DOM. A
       // failed patch/close must never turn the next save into another create.
       this._editingSource = response.source;
       this._knowledgeMode = "edit";
       setDialogBaseline(this, "knowledge-dialog", values);
       return await presentAcknowledgedMutation(this, submission, editing ? "Knowledge source updated" : "Knowledge source saved", async () => {
-        if (ownsList && !getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response)) throw new Error("The saved source could not be displayed.");
+        if (ownsList && !retrying && !getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response)) throw new Error("The saved source could not be displayed.");
         this._setSaving(button, false);
         const returnFocus = Boolean(dialog.contains?.(this.shadowRoot.activeElement));
         if (same(this._knowledgeValues(), values)) dialog.close();
@@ -2658,25 +2737,26 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         }
         // The editor owns its acknowledgement across a refresh, but only the
         // original visit owns collection data. A newer read must remain intact.
-        if (ownsList) writeSectionCache(this, this._sectionCacheKey(), this._result);
+        if (ownsList && !retrying) writeSectionCache(this, this._sectionCacheKey(), this._result);
         this._render();
         if (returnFocus && !dialog.open) getRouteFeature("data-memory/knowledge")?.restoreCollectionFocus(this.shadowRoot, `.source-edit-button[data-id="${CSS.escape(response.source.source_id)}"]`, "#add-source");
-        if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
+        if (retrying || !this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {
-      uncertain = err?.mutationOutcome === "uncertain";
-      // Retain safety evidence on its original editor even if authentication
-      // retired publication. It must accompany that same draft on recovery.
-      if (ownsEditor() && uncertain) dialog.__eocUncertainMutation = err;
+      const uncertain = err?.mutationOutcome === "uncertain";
+      const committed = err?.mutationOutcome === "committed";
+      if (create) create.pending = uncertain || committed;
+      else if (ownsEditor() && (uncertain || committed)) dialog.__eocUncertainMutation = err;
       if (current()) {
-        this._setDialogError("knowledge", `Unable to save source: ${err.message || String(err)}`);
+        const message = err.message || String(err);
+        this._setDialogError("knowledge", create?.pending
+          ? `${uncertain ? "The save outcome is unknown." : message} Select Save again to recover the original submission.`
+          : committed ? message : `Unable to save source: ${message}`);
       }
     } finally {
       if (ownsEditor()) {
         this._setSaving(button, false);
-        // This editor cannot identify a possibly committed create or certify an
-        // update's revision. Reopen against authoritative state before retrying.
-        if (uncertain) button.disabled = true;
+        if (dialog.__eocUncertainMutation) button.disabled = true;
       }
     }
   }
@@ -2769,8 +2849,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {
-      if (ownsEditor() && err?.mutationOutcome === "uncertain") dialog.__eocUncertainMutation = err;
-      if (current()) this._setDialogError("memory", `Unable to save memory: ${err.message || String(err)}`);
+      if (ownsEditor() && ["uncertain", "committed"].includes(err?.mutationOutcome)) dialog.__eocUncertainMutation = err;
+      if (current()) this._setDialogError("memory", err.mutationOutcome === "committed" ? err.message : `Unable to save memory: ${err.message || String(err)}`);
     } finally { if (ownsEditor()) { unlock(); this._setSaving(button, false); if (dialog.__eocUncertainMutation) button.disabled = true; const type = this.shadowRoot.querySelector("#memory-type"); if (this._editingMemory && type) type.disabled = true; } }
   }
 
@@ -2980,7 +3060,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _updateKnowledgeCounter() {
-    const length = this.shadowRoot.querySelector("#knowledge-content")?.value.length || 0;
+    const value = this.shadowRoot.querySelector("#knowledge-content")?.value || "";
+    const length = knowledgeCharacterCount(normalizedKnowledgeContent(value));
     this.shadowRoot.querySelector("#knowledge-counter").textContent = `${formatUsageNumber(length)} / ${formatUsageNumber(KNOWLEDGE_LIMIT)} characters`;
   }
 

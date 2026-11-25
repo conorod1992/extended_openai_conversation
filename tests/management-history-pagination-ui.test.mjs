@@ -8,6 +8,7 @@ const frontend = (name) => new URL(
 
 const pagination = await import(frontend("management-history-pagination.js"));
 const {loadConversationPage} = pagination;
+const {syncConversationSearchOwner} = await import(frontend("management-route.js"));
 // Search hits identify an exact turn, not a fixed-size page boundary. Serialized
 // page budgets can return fewer than TURN_PAGE_LIMIT turns (or part of one turn).
 for (const turnIndex of [19, 39, undefined]) {
@@ -119,6 +120,72 @@ function historyPanel() {
 }
 
 {
+  class Element {
+    listeners = {};
+    children = [];
+    dataset = {};
+    style = {};
+    value = "";
+    setAttribute() {}
+    addEventListener(name, callback) { this.listeners[name] = callback; }
+    append(...children) { this.children.push(...children); }
+    contains() { return false; }
+    remove() {}
+    closest() { return card; }
+    querySelector() { return null; }
+  }
+  const card = new Element();
+  let input = new Element();
+  const originalDocument = globalThis.document;
+  globalThis.document = {createElement: () => new Element()};
+  try {
+    const panel = historyPanel();
+    panel.shadowRoot = {querySelector: selector => selector === "#archive-query" ? input : null,
+      querySelectorAll: () => [], activeElement: input};
+    panel._render = () => pagination.decorateConversationPager(panel);
+    syncConversationSearchOwner(panel);
+    pagination.bindConversationActions(panel);
+    input.value = "solar";
+    const submitted = pagination.searchArchive(panel);
+    input.value = "  unsent text  ";
+    input.listeners.input();
+    panel._render();
+    assert.equal(input.value, "  unsent text  ", "focused draft");
+    panel.shadowRoot.activeElement = null;
+    panel.calls[0].request.resolve({results: [], has_more: true, next_offset: 20});
+    await submitted;
+    assert.equal(input.value, "  unsent text  ", "asynchronous page completion preserves blurred draft");
+    input = new Element();
+    panel._render();
+    assert.equal(input.value, "  unsent text  ", "replacement node restores draft");
+    const next = card.children.at(-1).children.find(item => item.textContent === "Next");
+    next.listeners.click();
+    assert.equal(panel.calls[1].extra.query, "solar");
+    panel.calls[1].request.resolve({results: [], has_more: false});
+    await new Promise(resolve => setImmediate(resolve));
+    const clear = card.children.at(-1).children.find(item => item.textContent === "Clear search");
+    clear.listeners.click();
+    assert.equal(input.value, "");
+    assert.equal(panel.calls[2].action, "list");
+    panel.calls[2].request.resolve({sessions: []});
+    await new Promise(resolve => setImmediate(resolve));
+    for (const change of [
+      () => { panel._scopeId = "user:new"; },
+      () => { panel._agentId = "agent-2"; },
+      () => { panel._eocAuthenticationGeneration = 1; },
+      () => { panel._viewKey = () => "overview"; },
+    ]) {
+      panel._eocHistoryDraft = "private text";
+      change();
+      syncConversationSearchOwner(panel);
+      assert.equal(panel._eocHistoryDraft, "");
+    }
+  } finally {
+    globalThis.document = originalDocument;
+  }
+}
+
+{
   const panel = historyPanel();
   const first = loadConversationPage(panel, 0);
   panel._eocHistoryQuery = "boiler";
@@ -162,21 +229,39 @@ function historyPanel() {
     "a late response from the previous scope must not overwrite the new scope");
 }
 
-// Exercise real dialog navigation: a page can continue within the same turn.
-{
-  class Element {
-    constructor() { this.children = []; this.style = {}; this.listeners = {}; this._html = ""; }
-    append(element) { this.children.push(element); }
-    addEventListener(name, callback) { this.listeners[name] = callback; }
-    set innerHTML(value) { this._html = value; this.children = []; }
-    get innerHTML() { return this._html; }
-    click() { if (!this.disabled) this.listeners.click?.(); }
+class TurnElement {
+  children = [];
+  style = {};
+  listeners = {};
+  attributes = {};
+  html = "";
+  append(item) { this.children.push(item); item.parent = this; }
+  remove() {
+    if (!this.parent) return;
+    this.parent.children = this.parent.children.filter(item => item !== this);
+    this.parent = null;
   }
-  globalThis.document = {createElement: () => new Element()};
-  const body = new Element();
-  const title = new Element();
+  setAttribute(name, value) { this.attributes[name] = value; }
+  addEventListener(name, callback) { this.listeners[name] = callback; }
+  set innerHTML(value) {
+    this.html = value;
+    this.children.forEach(item => { item.parent = null; });
+    this.children = [];
+  }
+  get innerHTML() { return this.html; }
+  click() { if (!this.disabled) this.listeners.click?.(); }
+}
+globalThis.document = {createElement: () => new TurnElement()};
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const sessionControls = body => label => body.children.flatMap(item => item.children).find(item => item.textContent === label);
+
+// A failed load can retry its cursor, including one within a partial turn.
+{
+  const body = new TurnElement();
+  const title = new TurnElement();
   const dialog = {open: false, showModal() { this.open = true; }};
   const requests = [];
+  let failNext = true;
   const panel = {
     _agentId: "agent", _scopeId: "scope",
     shadowRoot: {querySelector: selector => ({"#session-dialog": dialog, "#session-body": body, "#session-title": title})[selector]},
@@ -184,6 +269,10 @@ function historyPanel() {
     _formatDate: value => value, _empty: value => value,
     async _call(section, action, cursor) {
       requests.push(cursor);
+      if (failNext) {
+        failNext = false;
+        throw new Error("Retryable outage");
+      }
       const startTurn = action === "get_before" ? cursor.before_turn - 1 : cursor.start_turn;
       const textOffset = action === "get_before" ? 0 : cursor.text_offset;
       return {
@@ -194,28 +283,49 @@ function historyPanel() {
       };
     },
   };
-  const button = label => body.children[0].children.find(item => item.textContent === label);
+  const button = sessionControls(body);
   await pagination.openSession(panel, "session");
+  assert.equal(title.textContent, "Unable to load conversation");
+  assert.equal(body.children[0].children[0].attributes.role, "alert");
+  assert.match(body.children[0].children[0].textContent, /Retryable outage/);
+  button("Retry loading turns").click();
+  await tick();
+  assert.deepEqual(requests.at(-1), requests[0], "Initial retry asks for the original cursor");
   assert.equal(button("Previous turns").disabled, true);
   assert.equal(button("Start of conversation"), undefined);
-  button("Next turns").click();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(requests[1].start_turn, 0, "Next must stay within the long turn");
-  assert.equal(requests[1].text_offset, 30000);
+  assert.equal(button("Retry loading turns"), undefined);
+  const originalPage = body.innerHTML;
+  const originalNext = button("Next turns");
+  failNext = true;
+  originalNext.click();
+  assert.equal(body.innerHTML, originalPage, "A pending page keeps the last transcript");
+  originalNext.click();
+  await tick();
+  assert.equal(requests.length, 3, "Repeated clicks do not enqueue the same page");
+  assert.equal(body.innerHTML, originalPage, "A failed page keeps the last transcript");
+  assert.equal(title.textContent, "Long conversation");
+  assert.equal(button("Next turns"), originalNext);
+  assert.equal(requests.at(-1).start_turn, 0, "Next must stay within the long turn");
+  assert.equal(requests.at(-1).text_offset, 30000);
+  button("Retry loading turns").click();
+  await tick();
+  assert.deepEqual(requests.at(-1), requests.at(-2));
+  assert.match(body.innerHTML, /fragment 30000/);
+  assert.equal(button("Retry loading turns"), undefined);
   assert.ok(button("Start of conversation"), "Long-turn fragments can return to the beginning");
   assert.equal(button("Previous turns").disabled, false, "Previous uses actual cursor history even at turn zero");
   button("Previous turns").click();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(requests[2].start_turn, 0);
-  assert.equal(requests[2].text_offset, 0);
+  await tick();
+  assert.equal(requests.at(-1).start_turn, 0);
+  assert.equal(requests.at(-1).text_offset, 0);
   await pagination.openSession(panel, "another-session", 40);
   assert.equal(button("Previous turns").disabled, false, "Search hits allow backward paging without prior visits");
   button("Previous turns").click();
-  await new Promise(resolve => setImmediate(resolve));
+  await tick();
   assert.equal(requests.at(-1).before_turn, 40);
   assert.equal(requests.at(-1).before_text_offset, 0);
   button("Start of conversation").click();
-  await new Promise(resolve => setImmediate(resolve));
+  await tick();
   assert.equal(requests.at(-1).session_id, "another-session");
   assert.equal(requests.at(-1).start_turn, 0);
   assert.equal(requests.at(-1).text_offset, 0);
@@ -250,17 +360,10 @@ function historyPanel() {
 // Search hit -> earlier page -> yet earlier -> forward twice -> previous.
 // Refetch must preserve the original exact backward page's end cursor.
 {
-  class Element {
-    constructor() { this.children = []; this.style = {}; this.listeners = {}; }
-    append(item) { this.children.push(item); }
-    addEventListener(name, callback) { this.listeners[name] = callback; }
-    set innerHTML(value) { this.html = value; this.children = []; }
-    click() { if (!this.disabled) this.listeners.click?.(); }
-  }
-  globalThis.document = {createElement: () => new Element()};
-  const body = new Element(), title = new Element();
+  const body = new TurnElement(), title = new TurnElement();
   const dialog = {open: false, showModal() { this.open = true; }};
   const calls = [];
+  let failBefore = true;
   const panel = {
     _agentId: "agent", _scopeId: "user:alice",
     shadowRoot: {querySelector: selector => ({
@@ -271,6 +374,10 @@ function historyPanel() {
     async _call(section, action, cursor) {
       calls.push({section, action, ...cursor});
       if (action === "get_before") {
+        if (failBefore) {
+          failBefore = false;
+          throw new Error("Retry backward page");
+        }
         const end = cursor.before_turn;
         return {
           session: {title: "Archive"}, start_turn: end - 1, text_offset: 0,
@@ -288,16 +395,19 @@ function historyPanel() {
       };
     },
   };
-  const button = label => body.children[0].children.find(item => item.textContent === label);
+  const button = sessionControls(body);
   const click = async label => {
     button(label).click();
-    await new Promise(resolve => setImmediate(resolve));
+    await tick();
   };
   await pagination.openSession(panel, "match", 85);
   assert.equal(button("Previous turns").disabled, false);
   await click("Previous turns");
   assert.equal(calls.at(-1).action, "get_before");
   assert.equal(calls.at(-1).before_turn, 85);
+  assert.match(body.html, /turn 85/);
+  await click("Retry loading turns");
+  assert.deepEqual(calls.at(-1), calls.at(-2), "Backward retry retains its direction and exact end cursor");
   assert.match(body.html, /turn 84/);
   await click("Previous turns");
   assert.equal(calls.at(-1).before_turn, 84);
@@ -316,4 +426,39 @@ function historyPanel() {
   assert.equal(calls.at(-1).action, "get");
   assert.equal(calls.at(-1).start_turn, 0);
   assert.equal(button("Previous turns").disabled, true);
+}
+
+// Retry controls and pending failures stay with the exact dialog owner.
+for (const retire of [
+  ({dialog}) => { dialog.open = false; },
+  ({panel}) => { panel._scopeId = "user:bob"; },
+  ({panel}) => { panel._agentId = "other-agent"; },
+  ({panel}) => { panel._eocAuthenticationGeneration = 1; },
+  ({panel}) => { panel.shadowRoot.querySelector = () => null; },
+]) {
+  const body = new TurnElement(), title = new TurnElement();
+  const dialog = {open: false, showModal() { this.open = true; }};
+  const calls = [];
+  const panel = {
+    _agentId: "agent", _scopeId: "user:alice",
+    shadowRoot: {querySelector: selector => ({"#session-dialog": dialog, "#session-body": body, "#session-title": title})[selector]},
+    _ensureOwnedDialog() {}, _loading: () => "loading",
+    _call() {
+      const request = deferred();
+      calls.push(request);
+      return request.promise;
+    },
+  };
+  const first = pagination.openSession(panel, "session");
+  calls[0].reject(new Error("Initial error"));
+  await first;
+  const retry = sessionControls(body)("Retry loading turns");
+  retry.click();
+  assert.equal(calls.length, 2);
+  retire({panel, dialog});
+  calls[1].reject(new Error("Late failure"));
+  await tick();
+  assert.equal(sessionControls(body)("Retry loading turns"), undefined);
+  retry.click();
+  assert.equal(calls.length, 2, "A retired retry cannot read for a different owner");
 }

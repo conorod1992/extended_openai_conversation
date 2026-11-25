@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 
 import {
+  deleteTemporaryMemory,
   ensureTemporaryScope,
   ownerLabel,
   renderTemporaryMemories,
+  temporaryMemoryExpiryForSave,
   temporaryScopeOptions,
   validOwnerScope,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-temporary-memory.js";
@@ -69,3 +71,47 @@ for (const [mode, label, description] of [
 }
 assert.doesNotMatch(markup, /Assist device/);
 assert.doesNotMatch(markup, /data-scope=/);
+
+const farExpiry = "9999-12-31T23:59:59.123456+00:00";
+const previousExpiry = panel._result.memories[0].expires_at;
+Object.assign(panel._result.memories[0], {expires_at:farExpiry, expires_at_local:null});
+assert.match(renderTemporaryMemories(panel), /Expires 9999-12-31T23:59:59\.123456\+00:00/);
+const utcDraft = {expires_at:"9999-12-31T23:59:59", original_expiry:farExpiry, utc_expiry:true};
+assert.equal(temporaryMemoryExpiryForSave(panel, utcDraft.expires_at, utcDraft), farExpiry);
+assert.equal(temporaryMemoryExpiryForSave(panel, "2027-01-01T12:00", utcDraft), "2027-01-01T12:00Z");
+Object.assign(panel._result.memories[0], {expires_at:previousExpiry, expires_at_local:undefined});
+
+for (const editor of [false, true]) {
+  for (const response of [{deleted:0}, {deleted:1}, {deleted:"1"}]) {
+    const record = {memory_id:"memory-1"};
+    const toasts = [], changes = [];
+    let closed = false;
+    const owner = {scope:"user:alice"};
+    const runtime = {
+      _agentId:"agent",
+      _retainedMutationOwner: () => owner,
+      _ownsRetainedMutation: other => other === owner,
+      _confirm: async () => true,
+      _call: async (section, action, payload) => {
+        assert.deepEqual([section, action, payload], ["memories", "temporary_delete", {scope_id:"user:alice", memory_id:"memory-1"}]);
+        return response;
+      },
+      _toast: (...args) => toasts.push(args),
+      _patchScopeCount: (...args) => changes.push(args),
+      _render() {},
+      _setSaving() {},
+      _result:{memories:[record]},
+      _temporaryMemoryDraft:editor ? {...record} : null,
+      shadowRoot:{querySelector: () => ({close: () => { closed = true; }})},
+    };
+    const succeeded = response.deleted === 1;
+    assert.equal(await deleteTemporaryMemory(runtime, record.memory_id), succeeded);
+    assert.equal(runtime._result.memories.length, succeeded ? 0 : 1);
+    assert.equal(changes.length, succeeded ? 1 : 0);
+    assert.equal(closed, editor && succeeded);
+    assert.equal(toasts.length, 1);
+    assert.equal(toasts[0][1], !succeeded);
+    if (response.deleted === 0) assert.match(toasts[0][0], /Refresh the list/);
+    if (succeeded) assert.equal(toasts[0][0], "Temporary memory deleted");
+  }
+}

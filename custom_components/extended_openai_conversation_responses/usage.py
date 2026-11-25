@@ -10,15 +10,18 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date as calendar_date, datetime, timedelta
 from functools import partial, wraps
+from hashlib import sha256
+import json
 import logging
 import time
 from typing import Any, Protocol
 from uuid import uuid4
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, UnsupportedStorageVersionError
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.storage import get_internal_store_manager
 from homeassistant.util import dt as dt_util
 
 from .agent_maintenance import (
@@ -33,10 +36,13 @@ from .const import (
     DOMAIN,
 )
 from .debug import record_current_run_failure
-from .mutation_outcomes import mark_mutation_failure
+from .mutation_outcomes import MutationFailure, mark_mutation_failure
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
-from .persistence_hardening import StorageRepairRequired
+from .persistence_hardening import (
+    StorageRepairRequired,
+    _async_settle_transactional_save,
+)
 from .storage_namespaces import USAGE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import (
     PropagatingWriteStore,
@@ -82,6 +88,24 @@ def _settle_accounting[**P](
 class _UsageStore(PropagatingWriteStore):
     """Surface explicit save failures while keeping delayed telemetry best effort."""
 
+    _checkpoint_deadline: float | None = None
+
+    @callback
+    def async_delay_save(
+        self, data_func: Callable[[], dict[str, Any]], delay: float = 0
+    ) -> None:
+        """Replace pending data while holding its original checkpoint deadline."""
+        now = self.hass.loop.time()
+        if self._checkpoint_deadline is None:
+            self._checkpoint_deadline = now + delay
+        super().async_delay_save(data_func, max(0, self._checkpoint_deadline - now))
+
+    async def _async_write_data(self, data: dict[str, Any]) -> None:
+        # Store has consumed the pending data. A load may evaluate the data
+        # callback too, so evaluating a snapshot cannot retire this deadline.
+        self._checkpoint_deadline = None
+        await super()._async_write_data(data)
+
     async def async_save(self, data: dict[str, Any]) -> None:
         token = _EXPLICIT_USAGE_SAVE.set(True)
         try:
@@ -102,6 +126,18 @@ class _UsageStore(PropagatingWriteStore):
             _LOGGER.exception(
                 "Unable to persist delayed usage telemetry; in-memory accounting remains current"
             )
+
+    async def async_read_persisted_details(self) -> dict[str, Any] | None:
+        """Discard pending checkpoints and read the settled disk generation."""
+        async with self._write_lock:
+            self._async_cleanup_delay_listener()
+            self._async_cleanup_final_write_listener()
+            self._checkpoint_deadline = None
+            self._data = None
+            if self._load_empty:
+                raise StorageRepairRequired("Usage")
+            get_internal_store_manager(self.hass).async_invalidate(self.key)
+        return await self.async_load()
 
 
 class UsageStorage(Protocol):
@@ -363,6 +399,7 @@ class UsageManager:
         self._totals_need_repair = False
         self._daily_needs_repair = False
         self._details_need_repair = False
+        self._detail_records_repairable = False
         self._detail_retention_dirty = False
         self._current_run: ContextVar[UsageRun | None] = ContextVar(
             f"usage_run_{id(self)}", default=None
@@ -436,14 +473,9 @@ class UsageManager:
 
             staged_daily, invalid_days = _load_stored_usage_days(daily_data)
             daily_needs_repair |= invalid_days
-            details_need_repair = False
-            staged_requests: list[UsageRequest] = []
-            staged_runs: list[UsageRun] = []
-            request_ids: set[str] = set()
-            run_ids: set[str] = set()
-            inline_run_dates = False
+            load_failed = False
+            loaded_details = None
             if self._detail_storage is not None:
-                loaded_details = None
                 try:
                     loaded_details = await self._detail_storage.async_load()
                 except (
@@ -453,80 +485,39 @@ class UsageManager:
                     TypeError,
                     UnsupportedStorageVersionError,
                 ):
-                    details_need_repair = True
+                    load_failed = True
                 except HomeAssistantError as error:
                     # HA's JSON loader wraps file I/O failures. Maintenance
                     # and other Home Assistant errors still abort the load.
                     if not isinstance(error.__cause__, OSError):
                         raise
-                    details_need_repair = True
-                detail_data = loaded_details if loaded_details is not None else {}
-                if not isinstance(detail_data, dict):
-                    details_need_repair = True
-                    detail_data = {}
-                requests = detail_data.get("requests")
-                details_need_repair |= "requests" in detail_data and not isinstance(
-                    requests, list
-                )
-                for raw in requests if isinstance(requests, list) else []:
-                    try:
-                        record = _usage_request_from_record(raw)
-                        if record.request_id not in request_ids:
-                            staged_requests.append(record)
-                            request_ids.add(record.request_id)
-                        else:
-                            details_need_repair = True
-                    except TypeError, ValueError:
-                        details_need_repair = True
-                        continue
-                runs = detail_data.get("runs")
-                details_need_repair |= "runs" in detail_data and not isinstance(
-                    runs, list
-                )
-                for raw in runs if isinstance(runs, list) else []:
-                    try:
-                        record_run = _usage_run_from_record(raw)
-                        if record_run.run_id not in run_ids:
-                            staged_runs.append(record_run)
-                            run_ids.add(record_run.run_id)
-                            inline_run_dates |= "accounting_date" in raw
-                        else:
-                            details_need_repair = True
-                    except TypeError, ValueError:
-                        details_need_repair = True
-                        continue
-                details_need_repair |= not _restore_stored_run_dates(
-                    staged_runs, run_ids, detail_data.get(_RUN_ACCOUNTING_DATES, {})
-                )
+                    load_failed = True
+            (
+                staged_requests,
+                staged_runs,
+                details_need_repair,
+                detail_records_repairable,
+                inline_run_dates,
+            ) = _decode_usage_detail_store(loaded_details)
+            details_need_repair |= load_failed
 
-            now = dt_util.utcnow()
-            loaded_detail_count = len(staged_requests) + len(staged_runs)
-            request_cutoff = now - timedelta(days=max(0, self.request_retention_days))
-            run_cutoff = now - timedelta(days=max(0, self.run_retention_days))
-            staged_requests = [
-                request
-                for request in staged_requests
-                if self.request_retention_days > 0
-                and _parse_time(request.timestamp) >= request_cutoff
-            ]
-            staged_runs = [
-                run
-                for run in staged_runs
-                if self.run_retention_days > 0
-                and _parse_time(run.started_at) >= run_cutoff
-            ]
+            staged_requests, staged_runs, expired = retained_usage_details(
+                staged_requests,
+                staged_runs,
+                request_days=self.request_retention_days,
+                run_days=self.run_retention_days,
+            )
 
             self.totals = staged_totals
             self.daily = staged_daily
             self.requests = staged_requests
             self.runs = staged_runs
             # The next normal detail write also normalizes older inline dates.
-            self._detail_retention_dirty = inline_run_dates or loaded_detail_count != (
-                len(staged_requests) + len(staged_runs)
-            )
+            self._detail_retention_dirty = inline_run_dates or any(expired.values())
             self._totals_need_repair = totals_need_repair
             self._daily_needs_repair = daily_needs_repair
             self._details_need_repair = details_need_repair
+            self._detail_records_repairable = detail_records_repairable
             if self._aggregates_need_repair:
                 _LOGGER.warning(
                     "Usage storage needs repair; original stores preserved and persistence disabled"
@@ -805,11 +796,105 @@ class UsageManager:
         self, requests: list[UsageRequest], runs: list[UsageRun]
     ) -> None:
         """Persist one candidate detail state before publishing it in memory."""
-        self._require_writable()
-        if self._detail_storage is None:
+        storage = self._detail_storage
+        if storage is None:
             return
         details = await asyncio.to_thread(_serialize_usage_detail_store, requests, runs)
-        await self._detail_storage.async_save(details)
+        readback_outcome: MutationFailure | None = None
+
+        def publish() -> None:
+            self.requests = requests
+            self.runs = runs
+            self._details_need_repair = False
+            self._detail_retention_dirty = False
+
+        def invalidate() -> None:
+            nonlocal readback_outcome
+            self.requests = []
+            self.runs = []
+            self._details_need_repair = True
+            self._detail_records_repairable = False
+            self._detail_retention_dirty = False
+            readback_outcome = MutationFailure("uncertain", recovery_pending=True)
+
+        async def reconcile() -> None:
+            nonlocal readback_outcome
+            raw = (
+                await storage.async_read_persisted_details()
+                if isinstance(storage, _UsageStore)
+                else await storage.async_load()
+            )
+            restored, restored_runs, damaged, repairable, inline_dates = (
+                _decode_usage_detail_store(raw)
+            )
+            if damaged and not repairable:
+                raise StorageRepairRequired("Usage")
+            if raw == details:
+                publish()
+                readback_outcome = MutationFailure("committed")
+                return
+
+            live_requests = {record.request_id: record for record in self.requests}
+            live_runs = {record.run_id: record for record in self.runs}
+            candidate_requests = {record.request_id for record in requests}
+            candidate_runs = {record.run_id for record in runs}
+            # A missing file, or a previous generation containing a record this
+            # operation removes, proves the atomic replacement did not apply.
+            # Keep recent records still waiting for a checkpoint when the disk
+            # generation is otherwise a subset of the current live state.
+            if not (damaged or self._details_need_repair) and (
+                raw is None
+                or (
+                    all(live_requests.get(item.request_id) == item for item in restored)
+                    and all(
+                        live_runs.get(item.run_id) == item for item in restored_runs
+                    )
+                    and (
+                        any(
+                            item.request_id not in candidate_requests
+                            for item in restored
+                        )
+                        or any(
+                            item.run_id not in candidate_runs for item in restored_runs
+                        )
+                    )
+                )
+            ):
+                if isinstance(storage, _UsageStore) and not self._stopping:
+                    self._schedule_store_snapshot(
+                        storage, lambda: self._usage_snapshot("details")
+                    )
+                readback_outcome = MutationFailure("rejected")
+                return
+            self.requests, self.runs, expired = retained_usage_details(
+                restored,
+                restored_runs,
+                request_days=self.request_retention_days,
+                run_days=self.run_retention_days,
+            )
+            self._details_need_repair = damaged
+            self._detail_records_repairable = repairable
+            self._detail_retention_dirty = inline_dates or any(expired.values())
+
+        # Install the committed candidate inside settlement, including when a
+        # caller is cancelled after the Store has acknowledged the write.
+        try:
+            await _async_settle_transactional_save(
+                storage.async_save(details),
+                lambda: None,
+                publish,
+                reconcile,
+                invalidate,
+                record_execution=False,
+            )
+        except Exception as err:
+            if readback_outcome is not None:
+                mark_mutation_failure(
+                    err,
+                    readback_outcome.outcome,
+                    recovery_pending=readback_outcome.recovery_pending,
+                )
+            raise
 
     async def async_prune_details(self, *, save: bool = True) -> dict[str, int]:
         """Apply retention transactionally, persisting survivors before publication."""
@@ -835,7 +920,14 @@ class UsageManager:
         if not confirm:
             raise ValueError("Explicit confirmation is required")
         async with async_storage_lock(self._storage, self._lock):
-            self._require_writable()
+            self._require_aggregates_writable()
+            if self._details_need_repair and (
+                not self._detail_records_repairable
+                or self._detail_storage is None
+                or getattr(self._detail_storage, "corruption_unavailable", False)
+                is True
+            ):
+                raise StorageRepairRequired("Usage")
             result = {
                 "deleted_requests": len(self.requests),
                 "deleted_runs": len(self.runs),
@@ -843,6 +935,8 @@ class UsageManager:
             await self._async_persist_detail_state([], [])
             self.requests = []
             self.runs = []
+            self._details_need_repair = False
+            self._detail_retention_dirty = False
         self._notify()
         return result
 
@@ -1004,12 +1098,12 @@ class UsageManager:
     @property
     def lifetime_available(self) -> bool:
         """Whether lifetime counters can be published as numeric sensor states."""
-        return not self.is_volatile and not self._totals_need_repair
+        return not self.is_volatile and not self._aggregates_need_repair
 
     @property
     def daily_available(self) -> bool:
         """Whether the daily aggregates are reliable enough to display."""
-        return not self.is_volatile and not self._daily_needs_repair
+        return not self.is_volatile and not self._aggregates_need_repair
 
     @property
     def _aggregates_need_repair(self) -> bool:
@@ -1049,6 +1143,16 @@ class UsageManager:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return accounting and unexpired details without in-flight run state."""
+        data, _ = await self._async_backup_snapshot(capture_revision=False)
+        return data
+
+    async def async_restore_preview_data(self) -> tuple[dict[str, Any], str | None]:
+        """Capture export data and a stable revision of the destination in one read."""
+        return await self._async_backup_snapshot(capture_revision=True)
+
+    async def _async_backup_snapshot(
+        self, *, capture_revision: bool
+    ) -> tuple[dict[str, Any], str | None]:
         if self.is_volatile:
             raise RuntimeError(
                 "Usage storage is unavailable; volatile accounting cannot provide a complete backup"
@@ -1060,8 +1164,26 @@ class UsageManager:
             # Export must enforce the same cutoff between scheduled prunes.
             requests, runs, _ = await asyncio.to_thread(self._pruned_detail_state)
             totals, daily = self.as_dict(), deepcopy(self.daily)
-            details = await asyncio.to_thread(_serialize_usage_details, requests, runs)
-            return {"totals": totals, "daily": daily, **details}
+
+            def snapshot() -> tuple[dict[str, Any], str | None]:
+                aggregates = {"totals": totals, "daily": daily}
+                revision = None
+                if capture_revision:
+                    authoritative = {
+                        **aggregates,
+                        **_serialize_usage_details(self.requests, self.runs),
+                    }
+                    revision = sha256(
+                        json.dumps(
+                            authoritative, sort_keys=True, separators=(",", ":")
+                        ).encode()
+                    ).hexdigest()
+                return {
+                    **aggregates,
+                    **_serialize_usage_details(requests, runs),
+                }, revision
+
+            return await asyncio.to_thread(snapshot)
 
     @staticmethod
     def validate_backup_data(
@@ -1400,6 +1522,77 @@ def _usage_request_from_backup(raw: Any, target_agent_id: str) -> UsageRequest:
     )
 
 
+def _decode_usage_detail_store(
+    loaded_details: Any,
+) -> tuple[list[UsageRequest], list[UsageRun], bool, bool, bool]:
+    """Validate disk details identically during initialization and recovery."""
+    details_need_repair = False
+    staged_requests: list[UsageRequest] = []
+    staged_runs: list[UsageRun] = []
+    request_ids: set[str] = set()
+    run_ids: set[str] = set()
+    discarded_run_ids: set[str] = set()
+    inline_run_dates = False
+    detail_data = loaded_details if loaded_details is not None else {}
+    if not isinstance(detail_data, dict):
+        details_need_repair = True
+        detail_data = {}
+    requests = detail_data.get("requests")
+    details_need_repair |= "requests" in detail_data and not isinstance(requests, list)
+    for raw in requests if isinstance(requests, list) else []:
+        try:
+            record = _usage_request_from_record(raw)
+            if record.request_id not in request_ids:
+                staged_requests.append(record)
+                request_ids.add(record.request_id)
+            else:
+                details_need_repair = True
+        except TypeError, ValueError:
+            details_need_repair = True
+            continue
+    runs = detail_data.get("runs")
+    details_need_repair |= "runs" in detail_data and not isinstance(runs, list)
+    for raw in runs if isinstance(runs, list) else []:
+        try:
+            record_run = _usage_run_from_record(raw)
+            if record_run.run_id not in run_ids:
+                staged_runs.append(record_run)
+                run_ids.add(record_run.run_id)
+                inline_run_dates |= "accounting_date" in raw
+            else:
+                details_need_repair = True
+        except TypeError, ValueError:
+            details_need_repair = True
+            if (
+                isinstance(raw, dict)
+                and isinstance(raw_id := raw.get("run_id"), str)
+                and raw_id
+            ):
+                discarded_run_ids.add(raw_id)
+    valid_run_dates = _restore_stored_run_dates(
+        staged_runs,
+        run_ids,
+        detail_data.get(_RUN_ACCOUNTING_DATES, {}),
+        discarded_run_ids=discarded_run_ids,
+    )
+    details_need_repair |= not valid_run_dates
+    detail_records_repairable = (
+        isinstance(loaded_details, dict)
+        and detail_data.keys() <= {"requests", "runs", _RUN_ACCOUNTING_DATES}
+        and ("requests" not in detail_data or isinstance(requests, list))
+        and ("runs" not in detail_data or isinstance(runs, list))
+        and valid_run_dates
+    )
+
+    return (
+        staged_requests,
+        staged_runs,
+        details_need_repair,
+        detail_records_repairable,
+        inline_run_dates,
+    )
+
+
 def _usage_request_from_record(raw: Any) -> UsageRequest:
     if not isinstance(raw, dict):
         raise ValueError("usage request must be an object")
@@ -1523,14 +1716,29 @@ def _validate_run_accounting_date(day: str, completed_at: str | None) -> None:
 
 
 def _restore_stored_run_dates(
-    runs: list[UsageRun], run_ids: set[str], stored_dates: Any
+    runs: list[UsageRun],
+    run_ids: set[str],
+    stored_dates: Any,
+    *,
+    discarded_run_ids: set[str],
 ) -> bool:
     """Apply valid metadata while keeping readable runs when metadata needs repair."""
     if not isinstance(stored_dates, dict):
         return False
     if not stored_dates:
         return True
-    valid = stored_dates.keys() <= run_ids
+    valid = True
+    for run_id in stored_dates.keys() - run_ids:
+        # An identifiable damaged row owns its date entry. It cannot be
+        # restored, but a well-formed date can be cleared with the row.
+        day = stored_dates[run_id]
+        if run_id not in discarded_run_ids:
+            valid = False
+            continue
+        try:
+            valid &= calendar_date.fromisoformat(day).isoformat() == day
+        except TypeError, ValueError:
+            valid = False
     for run in runs:
         if run.run_id not in stored_dates:
             continue

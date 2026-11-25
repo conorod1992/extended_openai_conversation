@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 from copy import deepcopy
 import hashlib
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,6 +14,7 @@ from pytest_homeassistant_custom_component.common import (
     CLIENT_ID,
     MockConfigEntry,
     MockUser,
+    async_test_home_assistant,
 )
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -30,19 +33,22 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.memory import (
     async_get_memory,
 )
-from custom_components.extended_openai_conversation_responses.transfer import (
-    SECTION_PERSISTENT_MEMORY,
-    async_create_setup_export,
-    inspect_transfer,
+from custom_components.extended_openai_conversation_responses.request_rules import (
+    DEFAULT_MATCHING,
+    async_get_request_rules,
 )
+from custom_components.extended_openai_conversation_responses.transfer import (
+    SECTION_CONFIGURATION,
+    SECTION_PERSISTENT_MEMORY,
+    SECTION_REQUEST_RULES,
+)
+from homeassistant import loader
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
-from tests.test_reviewed_quarantine_export import (
-    effective_tool_names,
-    quarantine_source,
-)
+from homeassistant.helpers import recorder as recorder_helper
+from homeassistant.setup import async_setup_component
 
 
 def _entry() -> MockConfigEntry:
@@ -80,47 +86,6 @@ def _conversation_subentry(entry: MockConfigEntry):
         for subentry in entry.subentries.values()
         if subentry.subentry_type == "conversation"
     )
-
-
-@pytest.mark.parametrize("reviewed", [False, True])
-@pytest.mark.parametrize(
-    "damage", ["healthy", "missing_spec", "missing_name", "invalid_group"]
-)
-async def test_setup_export_keeps_known_function_quarantine(
-    hass: HomeAssistant, reviewed: bool, damage: str
-) -> None:
-    config = quarantine_source(damage, encoded=True)
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Quarantined Setup Export",
-        data={},
-        version=CONFIG_ENTRY_VERSION,
-        subentries_data=[
-            {
-                "data": config,
-                "subentry_type": "conversation",
-                "title": "Repairable assistant",
-                "unique_id": None,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-    subentry = _conversation_subentry(entry)
-    original = deepcopy(dict(subentry.data))
-    result = await async_create_setup_export(hass, entry, subentry, reviewed=reviewed)
-    restored = inspect_transfer(result["json"], "target")
-    assert restored.config is not None
-    assert effective_tool_names(restored.config) == (
-        effective_tool_names(original) if reviewed else set()
-    )
-    if reviewed:
-        from custom_components.extended_openai_conversation_responses import backup
-
-        snapshot = backup.export_configuration_snapshot(original)
-        projected = result["document"]["sections"]["configuration"]
-        assert projected["functions"] == snapshot["functions"]
-        assert projected["function_groups"] == snapshot["function_groups"]
-    assert dict(subentry.data) == original
 
 
 async def _user_token(hass: HomeAssistant, user: MockUser) -> str:
@@ -239,6 +204,172 @@ async def _upload_archive(
         assert uploaded["complete"] is (offset + chunk_size >= len(archive))
 
     return session_id
+
+
+@pytest.mark.parametrize(
+    ("kind", "source_kind"),
+    [("setup", "portable_transfer"), ("configuration", "legacy_setup")],
+)
+async def test_retired_public_files_restore_through_registered_websocket(
+    hass, hass_ws_client, kind, source_kind,
+):
+    from tests.helpers import historical_shareable_export
+
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    user = MockUser(id="legacy-import-admin", name="Legacy import admin", is_owner=True)
+    client = await hass_ws_client(hass, await _user_token(hass, user))
+
+    retired = await _transfer_call(client, entry=entry, action="setup_export")
+    assert not retired["success"]
+    assert "Unsupported export/import transfer action" in retired["error"]["message"]
+
+    source = historical_shareable_export(kind)
+    session_id = await _upload_archive(
+        client,
+        entry=entry,
+        archive=json.dumps(source).encode(),
+        filename=f"shareable-{kind}.json",
+    )
+    selected = [SECTION_CONFIGURATION]
+    inspected = await _transfer_call(
+        client, entry=entry, action="import_inspect",
+        data={"session_id": session_id, "sections": selected},
+    )
+    assert inspected["success"], inspected
+    result = inspected["result"]
+    assert result["valid"]
+    assert result["source_kind"] == source_kind
+    assert result["summary"]["security"]["mode"] == "restricted"
+    assert result["preview"]["selected_sections"] == selected
+    assert result["preview_token"]
+
+    restored = await _transfer_call(
+        client, entry=entry, action="import_restore",
+        data={
+            "session_id": session_id, "sections": selected,
+            "preview_token": result["preview_token"],
+        },
+    )
+    assert restored["success"], restored
+    assert restored["result"]["status"] == "restored"
+    current = hass.config_entries.async_get_entry(entry.entry_id)
+    assert current.subentries[subentry.subentry_id].data["max_tokens"] == 550
+
+
+async def test_private_backup_moves_request_rules_between_installations(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+    real_store_io,
+    tmp_path: Path,
+) -> None:
+    """A rules-only ZIP crosses independent HA instances and persists on the target."""
+    source = _entry()
+    await _setup_entry(hass, source)
+    source_agent = _conversation_subentry(source)
+    source_rules = await async_get_request_rules(
+        hass, source.entry_id, source_agent.subentry_id
+    )
+    first = {
+        "id": "source-first",
+        "name": "Source first",
+        "enabled": True,
+        "phrases": ["answer {question}"],
+        "match_type": "sentence_pattern",
+        "action_type": "model_routing",
+        "action": {
+            "model": "gpt-5-mini",
+            "scope": "request",
+            "continue_to_ai": True,
+        },
+        "ai_input_mode": "capture",
+        "ai_input_capture": "question",
+        "group_id": "source-group",
+        "order": 0,
+    }
+    second = {
+        **first,
+        "id": "source-second",
+        "name": "Source second",
+        "enabled": False,
+        "phrases": ["summarize {question}"],
+        "order": 1,
+    }
+    await source_rules.async_replace_backup(
+        {
+            "rules": [first, second],
+            "groups": [{"id": "source-group", "name": "Source group"}],
+            "defaults": {**DEFAULT_MATCHING, "word_forms": False},
+            "wording_groups": [{"canonical": "answer", "alternatives": ["respond"]}],
+        }
+    )
+    expected = await source_rules.async_backup_data()
+    source_admin = MockUser(id="source-admin", name="Source admin", is_owner=True)
+    source_client = await hass_ws_client(hass, await _user_token(hass, source_admin))
+
+    archive, metadata = await _download_archive(
+        source_client, entry=source, mode="custom", sections=[SECTION_REQUEST_RULES]
+    )
+    await source_client.close()
+    destination_dir = tmp_path / "separate-installation"
+    destination_dir.mkdir()
+    async with async_test_home_assistant(
+        config_dir=str(destination_dir)
+    ) as target_hass:
+        client = None
+        try:
+            target_hass.data[loader.DATA_CUSTOM_COMPONENTS] = dict(
+                hass.data[loader.DATA_CUSTOM_COMPONENTS]
+            )
+            assert await async_setup_component(target_hass, "homeassistant", {})
+            recorder_helper.async_initialize_recorder(target_hass)
+            target = _entry()
+            await _setup_entry(target_hass, target)
+            target_agent = _conversation_subentry(target)
+            target_rules = await async_get_request_rules(
+                target_hass, target.entry_id, target_agent.subentry_id
+            )
+            await target_rules.async_create(
+                {**first, "name": "Destination only", "group_id": None}
+            )
+            admin = MockUser(id="target-admin", name="Target admin", is_owner=True)
+            client = await hass_ws_client(
+                target_hass, await _user_token(target_hass, admin)
+            )
+            session = await _upload_archive(
+                client, entry=target, archive=archive, filename=metadata["filename"]
+            )
+            inspected = await _transfer_call(
+                client,
+                entry=target,
+                action="import_inspect",
+                data={"session_id": session},
+            )
+            assert inspected["success"], inspected
+            preview = inspected["result"]
+            assert preview["available_sections"] == [SECTION_REQUEST_RULES]
+            assert preview["preview"]["selected_sections"] == [SECTION_REQUEST_RULES]
+            restored = await _transfer_call(
+                client,
+                entry=target,
+                action="import_restore",
+                data={"session_id": session, "preview_token": preview["preview_token"]},
+            )
+            assert restored["success"], restored
+            assert restored["result"]["status"] == "restored"
+            assert await target_rules.async_backup_data() == expected
+            assert await target_hass.config_entries.async_reload(target.entry_id)
+            reloaded = await async_get_request_rules(
+                target_hass, target.entry_id, target_agent.subentry_id
+            )
+            assert reloaded is not target_rules
+            assert await reloaded.async_backup_data() == expected
+        finally:
+            if client is not None:
+                await client.close()
+            await target_hass.async_stop()
+    assert await source_rules.async_backup_data() == expected
 
 
 @pytest.mark.asyncio

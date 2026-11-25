@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import request_rules as rr
+from custom_components.extended_openai_conversation_responses import (
+    request_rules as rr,
+)
+from homeassistant.exceptions import HomeAssistantError
 
 
 class MemoryStore:
@@ -65,7 +69,9 @@ def routing_rule(*, rule_id: str = "route"):
     }
 
 
-async def test_initialize_projects_defaults_without_overwriting_malformed_container() -> None:
+async def test_initialize_projects_defaults_without_overwriting_malformed_container() -> (
+    None
+):
     store = MemoryStore(["not", "an", "object"])
     rules = rr.RequestRules(store)
 
@@ -694,71 +700,51 @@ async def test_duplicate_names_are_bounded_and_unique() -> None:
     assert [rule["order"] for rule in rules.snapshot()["rules"]] == [0, 1, 2]
 
 
-async def test_captured_routing_values_are_resolved_and_validated() -> None:
-    runtime = RequestRuleRuntime()
-    model_rule = determinism_routing_rule(
-        rule_id="model",
-        phrase="use {model_name}",
-        match_type="sentence_pattern",
-        model="{model_name}",
-    )
-    model_rule["action"]["success_response"] = "Using {model_name}"
-    result = await async_evaluate_rule(
-        SimpleNamespace(),
-        await determinism_manager(model_rule),
-        runtime,
-        "use gpt-5",
-        "session",
-    )
-    assert result is not None
-    assert result.response == "Using gpt-5"
-    assert runtime.get("session")[CONF_CHAT_MODEL] == "gpt-5"
-
-    effort_rule = determinism_routing_rule(
-        rule_id="effort",
-        phrase="reason {effort}",
-        match_type="sentence_pattern",
-        model="gpt-5",
-        effort="{effort}",
-    )
-    await async_evaluate_rule(
-        SimpleNamespace(),
-        await determinism_manager(effort_rule),
-        runtime,
-        "reason high",
-        "session",
-    )
-    assert runtime.get("session")[CONF_REASONING_EFFORT] == "high"
-
-    with pytest.raises(
-        HomeAssistantError, match="Unsupported captured reasoning effort"
-    ):
-        await async_evaluate_rule(
-            SimpleNamespace(),
-            await determinism_manager(effort_rule),
-            runtime,
-            "reason extreme",
-            "session",
-        )
-
-
-def test_routing_captures_reject_jinja_and_partial_effort_templates() -> None:
+@pytest.mark.parametrize(("field", "value"), [
+    ("model", "{model_name}"),
+    ("model", "{{ model_name }}"),
+    ("azure_model", "deployment-{model_name}"),
+    ("reasoning_effort", "{model_name}"),
+    ("reasoning_effort", "level-{model_name}"),
+])
+def test_new_routing_rules_reject_captures_in_choices(field, value) -> None:
     rule = determinism_routing_rule(
         phrase="use {model_name}",
         match_type="sentence_pattern",
-        model="{{ model_name }}",
+        model="gpt-5",
     )
-    with pytest.raises(ValueError, match="simple .* references"):
+    rule["action"][field] = value
+    with pytest.raises(ValueError, match="Captured routing choices were removed"):
         validate_rule(rule)
 
+
+@pytest.mark.parametrize("field", ["model", "azure_model", "reasoning_effort"])
+async def test_legacy_dynamic_route_round_trips_and_can_be_disabled(field) -> None:
     rule = determinism_routing_rule(
-        phrase="reason {effort}",
-        match_type="sentence_pattern",
+        rule_id="legacy", phrase="use {choice}", match_type="sentence_pattern",
         model="gpt-5",
-        effort="level-{effort}",
     )
-    with pytest.raises(ValueError, match="single .* reference"):
-        validate_rule(rule)
+    rule["action"][field] = "{choice}"
+    rules = await determinism_manager(rule)
+    assert "Captured routing choices were removed" in rules.snapshot()["diagnostics"]["legacy"]
+    exported = await rules.async_backup_data()
+    assert exported["rules"][0]["action"][field] == "{choice}"
+
+    await rules.async_replace_backup(exported)
+    copied = await rules.async_duplicate("legacy")
+    assert copied["action"][field] == "{choice}"
+    await rules.async_update("legacy", {"enabled": False})
+    disabled = rules.rule_snapshot("legacy")
+    assert disabled["action"][field] == "{choice}" and not disabled["enabled"]
+    with pytest.raises(ValueError, match="Captured routing choices were removed"):
+        await rules.async_update("legacy", {"enabled": True})
+
+    fixed = {**disabled, "enabled": True, "action": {**disabled["action"]}}
+    fixed["action"][field] = {
+        "model": "gpt-5", "azure_model": "gpt-5", "reasoning_effort": "high",
+    }[field]
+    await rules.async_update("legacy", fixed)
+    assert "legacy" not in rules.snapshot()["diagnostics"]
 
 
 async def test_management_create_assigns_id_and_validates_canonical_function_reference(
@@ -873,17 +859,26 @@ async def test_management_create_assigns_id_and_validates_canonical_function_ref
     assert updated["diagnostics"] == {}
 
 
+@pytest.mark.parametrize("alias_repair", [False, True])
 async def test_deleting_rule_returns_diagnostics_for_reactivated_patterns(
-    hass, monkeypatch
+    hass, monkeypatch, alias_repair
 ) -> None:
     from tests.test_request_rule_match_bounds import _rule
 
     monkeypatch.setattr(rr, "MAX_AGENT_PATTERN_STATES", 8)
     rules = RequestRules(MemoryStore())
-    await rules.async_replace_backup(
-        {"rules": [_rule(0, "first long command"), _rule(1, "second long command")]}
-    )
+    second = _rule(1, "second long command")
+    if alias_repair:
+        second["action"]["actions"] = [
+            {
+                "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                "data": {"function": "read_sensor", "result_alias": "lookup"},
+            },
+            {"set_conversation_response": "{lookup.value}"},
+        ]
+    await rules.async_replace_backup({"rules": [_rule(0, "first long command"), second]})
     assert set(rules.snapshot()["diagnostics"]) == {"rule-1"}
+    assert rules.snapshot()["matching_diagnostic_ids"] == []
     subentry = SimpleNamespace(
         subentry_id="agent", subentry_type="conversation", data={}
     )
@@ -912,7 +907,9 @@ async def test_deleting_rule_returns_diagnostics_for_reactivated_patterns(
         },
     )
     assert rules.match("second long command").rule["id"] == "rule-1"
-    assert result["diagnostics"] == rules.snapshot()["diagnostics"] == {}
+    assert result["diagnostics"] == rules.snapshot()["diagnostics"]
+    assert result["matching_diagnostic_ids"] == (["rule-1"] if alias_repair else [])
+    assert set(result["diagnostics"]) == ({"rule-1"} if alias_repair else set())
 
 
 # Mutation-order and stale-writer regressions formerly split by roadmap provenance.

@@ -6,26 +6,23 @@ Choose an export type according to what you need:
 
 | Export type | Use it for | Important limits |
 | --- | --- | --- |
-| **Shareable Setup** | Sharing supported public behaviour settings | Excludes provider credentials and private histories. Custom prompts, Function Tools and Rules are omitted by default; including reviewed custom content is an explicit choice. |
 | **Full Backup (private)** | Recovering or moving the selected agent's configuration and retained data | Preserves credentials and private content; the file is not encrypted. |
 | **Custom (private)** | Backing up only selected sections | Preserves the selected private sections, including provider credentials when configuration is selected; the file is not encrypted. |
-
-The configuration editor's **Export configuration** is also for sharing configuration, not retained data. See [sharing security](credential-security.md) before sharing any setup.
 
 ## Create an export
 
 1. Select the conversation agent you want to back up.
 2. Open **Usage & Maintenance → Backup & Restore** and choose **Export type**.
-3. For **Custom (private)**, select the sections to include. For **Shareable Setup**, include custom content only after reviewing it.
+3. For **Custom (private)**, select the sections to include.
 4. Choose **Create export** and save the downloaded file securely.
 
 Exports use saved configuration. Save any draft settings first if you want them included.
 
-Private ZIP backups are limited to 160 MiB compressed and 320 MiB uncompressed. Legacy plain JSON imports are limited to 128 MiB. If a Full Backup exceeds a limit, export smaller groups of sections with Custom.
+Private ZIP backups are limited to 160 MiB compressed and 320 MiB uncompressed. Legacy plain JSON imports are limited to 128 MiB of file data and 128 MiB of decoded source text. Imports also limit decoded document size, nesting, and individual values. If a Full Backup exceeds a limit, export smaller groups of sections with Custom.
 
-Shareable Setup with reviewed custom content retains quarantined Function Tool and Group definitions for repair after import, subject to the usual sharing omissions. Export does not silently repair malformed records or missing references. If omitting private content would make an ambiguous Function collection executable, its retained Functions are disabled and that change is listed in the omission summary. Usable disabled and load-when-needed groups retain their availability restrictions.
+Backup inspection and Configuration import reject malformed Unicode in JSON and YAML fields. Valid Unicode, including a matched high and low surrogate written as escapes, is accepted.
 
-If sharing omissions remove or disable the built-in Skill loader, the export also omits the now-unavailable Skill selections and lists that omission. This lets ordinary configuration import complete without enabling an omitted or disabled Function. Reconfigure the loader and select the desired Skills after import. The source assistant and private backups retain their original selections.
+To move a custom setup privately, choose **Custom (private)** and select **Agent configuration and Function Tools** and **Request Rules**. The configuration section includes provider credentials. Existing Shareable Setup and configuration export JSON files still work with **Import / Restore**, including older reviewed custom files. Configuration export files also work with **Assistant actions → Import configuration**.
 
 ## What a full backup includes
 
@@ -60,17 +57,23 @@ Provider restoration requires an explicit shared-connection choice because other
 
 Validation checks the combined destination configuration, including Request Rule references to Function Tools. An incompatible combination of selected and unselected sections must be resolved before restore. Temporary memories that have already expired are discarded. If configuration is selected, restoring it replaces any unsaved configuration draft for the destination agent.
 
-Every selected section replaces the agent's corresponding saved data rather than merging the backup with what is already there. Request Rules are therefore restored as the saved rule set, including their exact global order and groups. This is different from **Rule Sharing**, which appends shared rules after existing rules in their shared relative order and does not import agent-wide wording alternatives. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
+Every selected section replaces the agent's corresponding saved data rather than merging the backup with what is already there. Private Request Rules are restored with their saved global order and groups. Some legacy Shareable Setup files contain an empty Request Rules section. Deselect it to keep the destination's rules. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
+
+Home Assistant processes one backup preview or restore at a time across all assistants. If another import is busy, wait for it to finish and retry. Large Conversation Archive restores stream the private recovery journal to disk, then write and verify transcript history one monthly file at a time. The journal contains both the previous and incoming Archive data. Its atomic commit can briefly require space for two copies of the journal, in addition to the transcript files. Validating the upload and keeping the active Archive available still require RAM.
 
 Restore is designed to avoid leaving only half of the backup applied. If saving the restored data fails part-way through, Extended OpenAI attempts to return the agent to the state it had before the restore began.
 
 Delayed Function Tools are paused behind the same restore operation, so a due action is not deliberately run while the agent's configuration or restrictions are only partly restored.
+
+Before restoring a shared provider connection, Extended OpenAI checks every assistant that uses it and their enabled AI routing rules. When the replacement connection introduces a function-tool limit, the check reserves space for eligible saved Home Assistant tool references even if the current user cannot resolve them. If any assistant is incompatible, restore stops before applying changes.
 
 The shared provider connection is updated separately after the agent restore. Extended OpenAI verifies the connection on disk before reporting it as restored. If verification fails, check the shared connection before retrying. The completed agent restore stays committed.
 
 ## Interrupted restore or uncertain result
 
 The integration keeps a private local recovery record for configuration and the data stores the restore can change. If Home Assistant stops during the operation, startup uses the saved decision to recover the previous state or finish the committed restore. If recovery cannot finish, the affected assistant remains blocked rather than processing requests with partly restored state.
+
+An unreadable recovery journal can hide whether the restore changed shared provider credentials. The affected provider stays unavailable until recovery can establish the journal's scope or verify its absence. Assistants on other providers can continue to load.
 
 If the panel reports **Restore recovery is pending** or that completion is pending, restart Home Assistant as directed and resolve any reported storage problem before trying another restore. Keep the recovery files intact. If the browser loses the result and reports **Restore outcome is unknown**, refresh the agent's saved state before deciding whether another restore is needed; losing the response does not prove that nothing changed.
 
@@ -108,7 +111,7 @@ Files created by older versions in the system temporary directory have no reliab
 
 ## Security
 
-Full and custom private backup files preserve credentials, prompts, memories, Knowledge sources, conversation history and usage information. They are not encrypted. Keep them private. Use Shareable Setup for conservative public sharing and review any custom content you explicitly include. See the [sharing security contract](credential-security.md).
+Full and custom private backup files preserve credentials, prompts, memories, Knowledge sources, conversation history and usage information. They are not encrypted. Keep them private. See [credential handling and recovery](credential-security.md).
 
 
 Selective restores preserve active Archive privacy bindings when Archive is not
@@ -118,21 +121,9 @@ explicitly replacing Archive with imported data still starts without imported
 active conversation bindings. A failed restore does not resume saving a private
 conversation when its prior state is recovered.
 
+When a committed restore resets live conversation history, that reset also applies
+to Home Assistant's live context for the affected assistant. Active private
+conversations keep their privacy bindings. A Knowledge-only or Usage-only restore
+can keep verified, retained live conversations.
+
 Local recovery snapshots also preserve content-free active unretained sessions. These sessions are excluded from portable backups and durable Archive metadata, and recovery validation rejects any turns attached to them.
-
-Reviewed public sharing also recognizes these credential field families, with
-case/separator variants: `Ocp-Apim-Subscription-Key`, `X-Auth-Key`,
-`x-functions-key`, `access_key`, `private_key`, `app_key`, and `license_key`.
-The check covers HTTP parameters (including encoded URL names), nested/JSON
-payloads and schema instance literals. The whole credential-bearing Function or
-Rule is omitted, rather than exporting partially rewritten executable code.
-Type-only schema declarations and credential metadata such as `access_key_name`
-remain portable. This export policy does not change live configuration, private
-backup contents or historical destination-bound credential recovery.
-
-`appid` is classified as a credential for query/REST parameters and nested/JSON request payloads directed to the
-recognized OpenWeather API hosts (`api.openweathermap.org`, `pro.openweathermap.org`, and `history.openweathermap.org`).
-Generic application IDs, unknown providers and opaque/template payload aliases
-remain ambiguous reviewed content. Arbitrary `key` names outside the existing
-HTTP credential context are not globally classified as secrets. Review still
-requires checking authored content; these checks are not a secret-free guarantee.

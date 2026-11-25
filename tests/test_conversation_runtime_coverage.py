@@ -191,7 +191,7 @@ async def test_memory_search_preserves_lexical_and_hybrid_semantics(
         "fact",
     )
 
-    assert result == ["result"]
+    assert result == (["result"], "hybrid" if expected_hybrid else "lexical")
     if mode == MEMORY_RETRIEVAL_HYBRID:
         prepare.assert_awaited_once_with(scopes, "boiler pressure", category="fact", automatic_recall=False)
     else:

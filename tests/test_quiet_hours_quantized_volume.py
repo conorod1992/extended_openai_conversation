@@ -206,3 +206,76 @@ async def test_retarget_within_same_volume_step_preserves_restoration_baseline(
     await manager.async_reconcile(now=END)
     assert state.attributes["volume_level"] == pytest.approx(0.8)
     assert calls == [0.21, 0.22, 0.8]
+
+
+@pytest.mark.parametrize("legacy_context", [False, True])
+async def test_lost_restoration_ack_allows_reentry_with_reported_baseline(
+    hass, monkeypatch, legacy_context
+):
+    manager, state, calls, _, _ = _speaker(hass, monkeypatch)
+    original = 0.8 if legacy_context else 0.83
+    state.attributes["volume_level"] = original
+    await manager.async_reconcile(now=START)
+    application_context = state.context
+    capabilities = manager._discover_capabilities
+    manager._discover_capabilities = lambda: []
+    service = hass.services.async_call.side_effect
+
+    async def restore_with_lost_ack(*args, **kwargs):
+        await service(*args, **kwargs)
+        raise HomeAssistantError("Restored volume, but acknowledgement was lost")
+
+    hass.services.async_call.side_effect = restore_with_lost_ack
+    await manager.async_reconcile(now=START)
+    restored = state.attributes["volume_level"]
+    assert restored == pytest.approx(0.8 if legacy_context else 0.85)
+    assert state.context.id != application_context.id
+
+    saved = deepcopy(manager.active)
+    if legacy_context:
+        saved["controls"]["media_player.test"].pop("restoration_context_id")
+        state.context = application_context
+    manager._active = manager._normalize_active(saved)
+    hass.services.async_call.side_effect = service
+    manager._discover_capabilities = capabilities
+
+    await manager.async_reconcile(now=START)
+    await manager.async_reconcile(now=END)
+    assert calls == [0.23, original, 0.23, restored]
+    assert manager.active is None
+
+
+async def test_new_value_during_restoration_receipt_save_is_left_untouched(
+    hass, monkeypatch
+):
+    manager, state, calls, _, report = _speaker(hass, monkeypatch)
+    await manager.async_reconcile(now=START)
+    manager._async_save_locked.side_effect = lambda: report(0.6, Context())
+
+    await manager.async_reconcile(now=END)
+    await manager.async_reconcile(now=END)
+
+    assert calls == [0.23]
+    assert state.attributes["volume_level"] == pytest.approx(0.6)
+    assert manager.active is None
+
+
+async def test_explicit_user_report_at_retargeted_volume_releases_ownership(
+    hass, monkeypatch
+):
+    manager, state, calls, _, report = _speaker(hass, monkeypatch)
+    await manager.async_reconcile(now=START)
+
+    async def acknowledge_without_report(_domain, _name, data, **_kwargs):
+        calls.append(data["volume_level"])
+
+    hass.services.async_call.side_effect = acknowledge_without_report
+    manager._config = replace(manager.config, max_volume=0.3)
+    await manager.async_reconcile(now=START)
+    report(0.3, Context(user_id="a" * 32))
+
+    await manager.async_reconcile(now=START)
+    await manager.async_reconcile(now=END)
+
+    assert calls == [0.23, 0.3]
+    assert state.attributes["volume_level"] == pytest.approx(0.3)

@@ -1,7 +1,5 @@
 """Captured native selectors and retained routing remain valid after edits."""
 
-from copy import deepcopy
-
 import pytest
 
 from custom_components.extended_openai_conversation_responses import request_rules as rr
@@ -54,23 +52,7 @@ async def test_scene_capture_uses_real_native_schema(hass, selector):
     assert actions[0]["scene"] == "scene.movie"
 
 
-@pytest.mark.parametrize("request_reset", [True, False])
-async def test_chained_route_validates_retained_combination_before_commit(
-    hass, request_reset
-):
-    first = _rule(
-        "first",
-        "route",
-        action={
-            "reset": request_reset,
-            "model": None if request_reset else "gpt-5.2",
-            "reasoning_effort": None if request_reset else "low",
-            "scope": "request",
-            "continue_to_ai": False,
-            "success_response": "Updated",
-        },
-    )
-    first["continue_matching"] = True
+async def test_route_validates_retained_combination_before_commit(hass):
     second = _rule(
         "second",
         "route",
@@ -83,7 +65,7 @@ async def test_chained_route_validates_retained_combination_before_commit(
             "success_response": "Updated",
         },
     )
-    manager = rr.RequestRules(MemoryStore({"rules": [first, second]}))
+    manager = rr.RequestRules(MemoryStore({"rules": [second]}))
     await manager.async_initialize()
     runtime = rr.RequestRuleRuntime()
     previous = {"chat_model": "gpt-5.2", "reasoning_effort": "xhigh"}
@@ -107,9 +89,9 @@ async def test_chained_route_validates_retained_combination_before_commit(
             entry_data={},
         )
     assert runtime.get("session") == previous
-    # Supplying a compatible retained effort permits the same chain.
+    # Supplying a compatible effort permits the route.
     second["action"]["reasoning_effort"] = "high"
-    valid = rr.RequestRules(MemoryStore({"rules": [deepcopy(first), second]}))
+    valid = rr.RequestRules(MemoryStore({"rules": [second]}))
     await valid.async_initialize()
     await rr.async_evaluate_rule(
         hass,

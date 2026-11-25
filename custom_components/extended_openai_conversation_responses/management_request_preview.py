@@ -5,48 +5,50 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, UnsupportedStorageVersionError
 
 from .agent_config import (
     configured_function_tools_from_data,
-    function_tool_enabled,
     normalized_agent_integer,
     validate_function_groups,
 )
+from .agent_configuration import optional_manager_ready
 from .const import (
+    CONF_ARCHIVE_ENABLED,
     CONF_CONTINUE_CONVERSATION,
     CONF_FUNCTION_GROUPS,
     CONF_KNOWLEDGE_ENABLED,
-    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
-    CONF_SKILLS,
     CONF_TEMPORARY_MEMORY,
     CONTINUE_CONVERSATION_CONDITIONAL,
+    DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_FUNCTION_GROUPS,
-    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
     FUNCTION_GROUP_LOADER_TOOL_NAME,
+    SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_OFF,
 )
-from .function_groups import assemble_function_tools
+from .function_groups import admit_function_group_loader, assemble_function_tools
 from .guest_function_tools import filter_guest_tools_and_groups
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
-from .ha_llm_tools import ToolSnapshot, async_discover, is_ha_tool
+from .ha_llm_tools import ToolSnapshot, async_discover
 from .helpers import get_exposed_entities
 from .knowledge import get_loaded_knowledge
-from .memory import memory_enabled
+from .memory import get_loaded_memory, memory_enabled
+from .model_payload import count_model_function_tools
 from .prompt import render_effective_prompt
 from .request import (
-    CONTINUE_CONVERSATION_TOOL,
-    START_FRESH_CONVERSATION_TOOL,
     assemble_integration_function_tools,
     build_provider_request_snapshot,
     canonical_json,
     format_function_tools,
+    function_call_budget_available,
     ha_tool_discovery_references,
+    request_function_tools,
+    validate_provider_tool_count,
 )
 from .skill_runtime_availability import effective_tool_runtime_scope
 from .skills import SkillManager
@@ -85,55 +87,91 @@ async def async_preview_effective_request(
         "User input and conversation history are excluded.",
         "Query-derived persistent memories are excluded because there is no user query.",
     ]
+    subsystem_status = hass.data.get(SUBSYSTEM_STATUS_KEY, {}).get(
+        (entry.entry_id, subentry.subentry_id), {}
+    )
+    memory = get_loaded_memory(hass, entry.entry_id, subentry.subentry_id)
+    memory_available = subsystem_status.get("persistent_memory", {}).get(
+        "status"
+    ) != "failed" and (memory is None or optional_manager_ready(memory))
+    archive_status = subsystem_status.get("archive", {})
+    archive_session_available = (
+        archive_status.get("status") != "failed"
+        or archive_status.get("write_available") is True
+    )
+    archive_available = (
+        archive_session_available or archive_status.get("read_available") is True
+    )
+    if not memory_available and memory_enabled(options):
+        notes.append(
+            "Persistent Memory is unavailable in the running assistant; its tools and instructions are excluded."
+        )
+    if (
+        not archive_session_available
+        and options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+        and guest_policy.archive_access
+    ):
+        notes.append(
+            "Conversation Archive cannot currently write sessions; the preview includes any enabled Archive read tools."
+            if archive_available
+            else "Conversation Archive is unavailable in the running assistant; its tools and instructions are excluded."
+        )
     temporary = get_loaded_temporary_memory(hass, entry.entry_id, subentry.subentry_id)
     temporary_mode = options.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
     # Temporary Memory is authorized by its retained owner, independently of
     # Assist continuity. A preview has no conversation/device ID, but does know
     # the authenticated Personal owner whose context a fresh request can use.
     temporary_scope = f"user:{user_id}"
-    if temporary_mode != TEMPORARY_MEMORY_OFF and guest_policy.temporary_memory:
-        temporary_memories = (
-            await temporary.async_active_snapshot(
-                temporary_scope, owner_scope_id=f"user:{user_id}"
-            )
-            if temporary is not None
-            else await async_read_temporary_memory_snapshot(
-                hass,
-                entry.entry_id,
-                subentry.subentry_id,
-                temporary_scope,
-                owner_scope_id=f"user:{user_id}",
-            )
-        )
-    elif temporary_mode != TEMPORARY_MEMORY_OFF:
+    temporary_available = temporary_mode != TEMPORARY_MEMORY_OFF
+    if temporary_available and not guest_policy.temporary_memory:
+        temporary_available = False
         notes.append(
             "Active temporary memories are excluded by the current Guest Mode policy."
         )
+    elif temporary_available:
+        temporary_available = subsystem_status.get("temporary_memory", {}).get(
+            "status"
+        ) != "failed" and (temporary is None or optional_manager_ready(temporary))
+        if temporary_available:
+            try:
+                temporary_memories = (
+                    await temporary.async_active_snapshot(
+                        temporary_scope, owner_scope_id=temporary_scope
+                    )
+                    if temporary is not None
+                    else await async_read_temporary_memory_snapshot(
+                        hass,
+                        entry.entry_id,
+                        subentry.subentry_id,
+                        temporary_scope,
+                        owner_scope_id=temporary_scope,
+                    )
+                )
+            except (
+                UnsupportedStorageVersionError,
+                HomeAssistantError,
+                OSError,
+                ValueError,
+            ):
+                temporary_available = False
+        if not temporary_available:
+            notes.append(
+                "Temporary Memory is unavailable; its context, tools and instructions are excluded."
+            )
 
     skill_manager = SkillManager.get_loaded_instance()
-    enabled_names = set(options.get(CONF_SKILLS, []) or [])
-    skills = (
-        [
-            skill
-            for skill in skill_manager.get_all_skills()
-            if skill.name in enabled_names
-        ]
-        if skill_manager is not None and guest_policy.skills
-        else []
-    )
     knowledge = get_loaded_knowledge(hass, entry.entry_id, subentry.subentry_id)
     knowledge_available = bool(
         guest_policy.knowledge_access
         and options.get(CONF_KNOWLEDGE_ENABLED)
-        and knowledge is not None
-        and knowledge.initialized
+        and optional_manager_ready(knowledge)
         and knowledge.source_count > 0
     )
     if (
         guest_policy.knowledge_access
         and options.get(CONF_KNOWLEDGE_ENABLED)
         and knowledge is not None
-        and not knowledge.initialized
+        and not optional_manager_ready(knowledge)
     ):
         notes.append(
             "Knowledge Library is unavailable; its tools and instructions are excluded until storage recovery."
@@ -167,18 +205,6 @@ async def async_preview_effective_request(
                 for entity in exposed_entities
                 if guest_policy.allows_entity_read(str(entity.get("entity_id", "")))
             ]
-        preview = render_effective_prompt(
-            hass,
-            options,
-            exposed_entities=exposed_entities,
-            current_device_id=None,
-            user_input=None,
-            skills=skills,
-            memories=None,
-            temporary_memories=temporary_memories,
-            knowledge_available=knowledge_available,
-            guest_policy=guest_policy,
-        )
         availability_groups = groups
         availability_tools = configured_tools
         configured_tools, groups = filter_guest_tools_and_groups(
@@ -186,18 +212,33 @@ async def async_preview_effective_request(
         )
         with effective_tool_runtime_scope(
             options, availability_tools, skill_manager, availability_groups
-        ):
+        ) as skills:
             grouped = assemble_function_tools(configured_tools, groups, set())
-        custom_tools = [
-            tool
-            for tool in grouped.tools
-            if tool.get("spec", {}).get("name") != FUNCTION_GROUP_LOADER_TOOL_NAME
-        ]
-        loader_tools = [
-            tool
-            for tool in grouped.tools
-            if tool.get("spec", {}).get("name") == FUNCTION_GROUP_LOADER_TOOL_NAME
-        ]
+            # Change only when on-demand schemas are sent. Keep all availability
+            # checks, including disabled groups, identical in both assemblies.
+            all_available_tools = (
+                assemble_function_tools(
+                    configured_tools, groups, {group["id"] for group in groups}
+                ).tools
+                if grouped.available_on_demand_groups
+                else grouped.tools
+            )
+        preview = render_effective_prompt(
+            hass,
+            options,
+            exposed_entities=exposed_entities,
+            current_device_id=None,
+            user_input=None,
+            skills=skills if guest_policy.skills else [],
+            memories=None,
+            temporary_memories=temporary_memories,
+            knowledge_available=knowledge_available,
+            guest_policy=guest_policy,
+            memory_scope_available=memory_available,
+            temporary_scope_available=temporary_available,
+            archive_available=archive_available,
+            archive_session_available=archive_session_available,
+        )
         configured_names = {
             tool.get("spec", {}).get("name")
             for tool in configured_tools
@@ -206,42 +247,68 @@ async def async_preview_effective_request(
         integration_tools = assemble_integration_function_tools(
             options,
             configured_names,
-            memory_scope_available=memory_enabled(options),
-            temporary_scope_available=(temporary_mode != TEMPORARY_MEMORY_OFF),
+            memory_scope_available=memory_available,
+            temporary_scope_available=temporary_available,
             knowledge_available=knowledge_available,
+            archive_available=archive_available,
+            archive_session_available=archive_session_available,
             guest_policy=guest_policy,
+            lifecycle_active=True,
         )
         conditional_continue = (
             options.get(CONF_CONTINUE_CONVERSATION, DEFAULT_CONTINUE_CONVERSATION)
             == CONTINUE_CONVERSATION_CONDITIONAL
         )
-        max_function_calls = int(
-            options.get(
-                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            )
-        )
-        if max_function_calls == 0:
-            custom_tools = []
+        if not function_call_budget_available(options):
             integration_tools = []
-        else:
-            integration_tools.append(START_FRESH_CONVERSATION_TOOL)
-        if conditional_continue:
-            integration_tools.append(CONTINUE_CONVERSATION_TOOL)
 
         provider = build_provider_request_snapshot(
             options,
             getattr(entry, "data", {}),
-            tools_required=bool(custom_tools or loader_tools or integration_tools),
+            tools_required=bool(
+                grouped.tools or integration_tools or conditional_continue
+            ),
             client=getattr(entry, "runtime_data", None),
+        )
+        formatted_provider = (
+            list(provider.provider_tools) if guest_policy.web_search else []
+        )
+        admitted_grouped_tools = admit_function_group_loader(
+            grouped.tools,
+            provider.tool_limit,
+            extra_tool_count=count_model_function_tools(integration_tools)
+            + int(conditional_continue)
+            + len(formatted_provider),
+        )
+        if len(admitted_grouped_tools) < len(grouped.tools):
+            notes.append(
+                "The provider tool limit leaves no slot for the Function Group loader."
+            )
+        custom_tools = [
+            tool
+            for tool in admitted_grouped_tools
+            if tool.get("spec", {}).get("name") != FUNCTION_GROUP_LOADER_TOOL_NAME
+        ]
+        loader_tools = [
+            tool
+            for tool in admitted_grouped_tools
+            if tool.get("spec", {}).get("name") == FUNCTION_GROUP_LOADER_TOOL_NAME
+        ]
+        request_tools = request_function_tools(
+            [*admitted_grouped_tools, *integration_tools],
+            conditional_continue=conditional_continue,
         )
         formatted_custom = format_function_tools(custom_tools, provider.api_mode)
         formatted_loader = format_function_tools(loader_tools, provider.api_mode)
         formatted_integration = format_function_tools(
-            integration_tools, provider.api_mode
+            request_tools[len(admitted_grouped_tools) :], provider.api_mode
         )
-        formatted_provider = (
-            list(provider.provider_tools) if guest_policy.web_search else []
+        validate_provider_tool_count(
+            len(formatted_custom)
+            + len(formatted_loader)
+            + len(formatted_integration)
+            + len(formatted_provider),
+            provider.tool_limit,
         )
         request_settings = {"api_mode": provider.api_mode, **provider.api_kwargs}
         if (
@@ -260,7 +327,10 @@ async def async_preview_effective_request(
                 "System / context",
                 "\n".join(
                     part
-                    for part in (preview.text, ha_snapshot.prompt_for(grouped.tools))
+                    for part in (
+                        preview.text,
+                        ha_snapshot.prompt_for(admitted_grouped_tools),
+                    )
                     if part
                 ),
                 "text",
@@ -307,17 +377,11 @@ async def async_preview_effective_request(
             for key, label, content, output_format in section_values
         ]
 
-        enabled_tools = [
-            tool
-            for tool in configured_tools
-            if function_tool_enabled(tool)
-            and (not is_ha_tool(tool) or tool.get("ha_available") is True)
-        ]
         grouped_payload = canonical_json(
-            format_function_tools(grouped.tools, provider.api_mode)
+            format_function_tools(admitted_grouped_tools, provider.api_mode)
         )
         ungrouped_payload = canonical_json(
-            format_function_tools(enabled_tools, provider.api_mode)
+            format_function_tools(all_available_tools, provider.api_mode)
         )
         raw_savings = len(ungrouped_payload) - len(grouped_payload)
         savings = max(0, raw_savings)
@@ -346,7 +410,7 @@ async def async_preview_effective_request(
     return {
         "prompt": "\n".join(
             part
-            for part in (preview.text, ha_snapshot.prompt_for(grouped.tools))
+            for part in (preview.text, ha_snapshot.prompt_for(admitted_grouped_tools))
             if part
         ),
         "prompt_sections": [

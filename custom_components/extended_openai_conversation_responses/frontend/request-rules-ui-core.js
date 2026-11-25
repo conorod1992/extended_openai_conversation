@@ -7,19 +7,6 @@ import {captureConfigurationOwner, configurationSubmissionIsCurrent, presentAckn
 import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
 
-const sharingGroupOptions = new WeakMap();
-export function refreshRuleSharingGroups(panel) {
-  const select = panel.shadowRoot?.querySelector("#rule-pack-group");
-  if (!select) return;
-  const groups = [{id:"",name:"Ungrouped"},...(panel._result?.groups || [])];
-  const signature = JSON.stringify(groups.map(group => [group.id,group.name]));
-  if (sharingGroupOptions.get(select) === signature) return;
-  const selected = select.value;
-  select.innerHTML = groups.map(group => `<option value="${panel._e(group.id)}">${panel._e(group.name)}</option>`).join("");
-  select.value = groups.some(group => group.id === selected) ? selected : "";
-  sharingGroupOptions.set(select,signature);
-}
-
 const matchLabel = (value) => ({equals:"Equals",starts_with:"Starts with",ends_with:"Ends with",contains:"Contains",sentence_pattern:"Sentence pattern"}[value] || value);
 const titleCase = (value) => String(value || "").replaceAll("_"," ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 
@@ -143,10 +130,13 @@ const groupManager = (panel, result) => `<dialog id="rule-groups-dialog" class="
 
 function requestRuleCard(panel, rule, index) {
   const result = panel._result || {}, rules = result.rules || [], summary = requestRuleSummary(rule, result.defaults || {}), canReorder = !panel._query && (!panel._ruleGroupFilter || panel._ruleGroupFilter === "all");
-  return `<article data-rule-key="${panel._e(rule.id)}" draggable="${canReorder}" class="request-rule-card ${rule.enabled ? "" : "disabled"}"><div class="rule-card-heading"><div><span class="type-badge ${rule.action_type === "local_action" ? "local" : "routing"}">${rule.action_type === "local_action" ? "Local command" : "AI routing"}</span><h3>${panel._e(rule.name)}</h3><span class="meta">#${index + 1} <span class="rule-group-chip">${panel._e((result.groups || []).find((group) => group.id === rule.group_id)?.name || "Ungrouped")}</span></span></div><label class="tool-enabled-control"><span>Enabled</span><span class="switch-control"><input class="rule-enabled" data-id="${panel._e(rule.id)}" type="checkbox" role="switch" aria-label="Enable ${panel._e(rule.name)}" ${rule.enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></span></label></div><div class="phrase-chips">${rule.phrases.slice(0,4).map((phrase) => `<span>${panel._e(phrase)}</span>`).join("")}${summary.hiddenPhrases ? `<span class="eoc-more-phrases">+${summary.hiddenPhrases} more</span>` : ""}</div><p>${panel._e(summary.action)}</p><p class="meta">${panel._e(summary.matching)}</p>${rule.sensitive_matching_warning && rule.match_type !== "sentence_pattern" ? '<p class="sensitive-warning">Review tolerant matching carefully: this rule controls a potentially sensitive Home Assistant domain.</p>' : ""}<div class="actions">${result.diagnostics?.[rule.id] ? `<p class="sensitive-warning"><strong>Rule inactive:</strong> ${panel._e(result.diagnostics[rule.id])} Edit and save this rule to resolve the issue.</p>` : ""}<details class="rule-move-menu"><summary aria-label="Move ${panel._e(rule.name)}">Move</summary><div class="rule-move-options"><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="up" ${!canReorder || index === 0 ? "disabled" : ""}>Move up</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="down" ${!canReorder || index === rules.length - 1 ? "disabled" : ""}>Move down</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="top" ${!canReorder || index === 0 ? "disabled" : ""}>Move to top</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="bottom" ${!canReorder || index === rules.length - 1 ? "disabled" : ""}>Move to bottom</button></div></details><button type="button" class="secondary rule-edit" data-id="${panel._e(rule.id)}">Edit</button><button type="button" class="secondary rule-duplicate" data-id="${panel._e(rule.id)}">Duplicate</button><button type="button" class="danger secondary-danger rule-delete" data-id="${panel._e(rule.id)}">Delete</button></div></article>`;
+  const diagnostic = result.diagnostics?.[rule.id];
+  const stopsForRepair = rule.enabled && result.matching_diagnostic_ids?.includes(rule.id);
+  const diagnosticMarkup = diagnostic ? `<p class="sensitive-warning"><strong>${stopsForRepair ? "Needs repair" : "Rule inactive"}:</strong> ${panel._e(diagnostic)} ${stopsForRepair ? "Requests stop here when this rule’s trigger matches and its conditions pass. Disable the rule to let matching continue. " : ""}Edit and save this rule to resolve the issue.</p>` : "";
+  return `<article data-rule-key="${panel._e(rule.id)}" draggable="${canReorder}" class="request-rule-card ${rule.enabled ? "" : "disabled"}"><div class="rule-card-heading"><div><span class="type-badge ${rule.action_type === "local_action" ? "local" : "routing"}">${rule.action_type === "local_action" ? "Local command" : "AI routing"}</span><h3>${panel._e(rule.name)}</h3><span class="meta">#${index + 1} <span class="rule-group-chip">${panel._e((result.groups || []).find((group) => group.id === rule.group_id)?.name || "Ungrouped")}</span></span></div><label class="tool-enabled-control"><span>Enabled</span><span class="switch-control"><input class="rule-enabled" data-id="${panel._e(rule.id)}" type="checkbox" role="switch" aria-label="Enable ${panel._e(rule.name)}" ${rule.enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></span></label></div><div class="phrase-chips">${rule.phrases.slice(0,4).map((phrase) => `<span>${panel._e(phrase)}</span>`).join("")}${summary.hiddenPhrases ? `<span class="eoc-more-phrases">+${summary.hiddenPhrases} more</span>` : ""}</div><p>${panel._e(summary.action)}</p><p class="meta">${panel._e(summary.matching)}</p>${rule.sensitive_matching_warning && rule.match_type !== "sentence_pattern" ? '<p class="sensitive-warning">Review tolerant matching carefully: this rule controls a potentially sensitive Home Assistant domain.</p>' : ""}<div class="actions">${diagnosticMarkup}<details class="rule-move-menu"><summary aria-label="Move ${panel._e(rule.name)}">Move</summary><div class="rule-move-options"><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="up" ${!canReorder || index === 0 ? "disabled" : ""}>Move up</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="down" ${!canReorder || index === rules.length - 1 ? "disabled" : ""}>Move down</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="top" ${!canReorder || index === 0 ? "disabled" : ""}>Move to top</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="bottom" ${!canReorder || index === rules.length - 1 ? "disabled" : ""}>Move to bottom</button></div></details><button type="button" class="secondary rule-edit" data-id="${panel._e(rule.id)}">Edit</button><button type="button" class="secondary rule-duplicate" data-id="${panel._e(rule.id)}">Duplicate</button><button type="button" class="danger secondary-danger rule-delete" data-id="${panel._e(rule.id)}">Delete</button></div></article>`;
 }
 const EMPTY_RULES_MARKUP = '<section class="content-card empty-state"><h2>Create your first Request Rule</h2><p>Add a fast local command such as “good night”.</p><button type="button" id="rule-empty-add">Create rule</button></section>';
-const SAFE_TESTER = '<div id="rule-match-tester" class="rule-preview-panel"><h3>Preview match <span class="rule-safe-label">Safe preview</span></h3><p class="help">See which enabled rules would match and where checking stops. No Home Assistant action executes, conversation routing changes, or AI provider call occurs.</p><div class="search-row"><input id="rule-match-test-text" type="text" maxlength="2048" placeholder="Turn off the kitchen light" aria-label="Request text to test against Request Rules"><button type="button" id="rule-match-test">Preview match</button></div><p class="help">Preview and live Request Rule matching inspect at most 2048 characters (and 256 words).</p><div id="rule-match-test-result" aria-live="polite"></div></div>';
+const SAFE_TESTER = '<div id="rule-match-tester" class="rule-preview-panel"><h3>Preview match <span class="rule-safe-label">Safe preview</span></h3><p class="help">See the first eligible rule and its possible outcome. No Home Assistant action executes, conversation routing changes, or AI provider call occurs.</p><div class="search-row"><input id="rule-match-test-text" type="text" maxlength="2048" placeholder="Turn off the kitchen light" aria-label="Request text to test against Request Rules"><button type="button" id="rule-match-test">Preview match</button></div><p class="help">Preview and live Request Rule matching inspect at most 2048 characters (and 256 words).</p><div id="rule-match-test-result" aria-live="polite"></div></div>';
 const LIVE_TESTER = '<details id="eoc-rule-live-test" class="eoc-live-request-test"><summary><span>Run live request</span><span class="eoc-live-label">Live · real effects possible</span></summary><div class="eoc-live-request-body"><p>Runs text through the same full processing path as a real request to this assistant.</p><div class="notice warning"><strong>This can have real effects</strong><p>Unlike the safe preview above, this may execute Home Assistant actions, change conversation routing, or call the AI provider. A confirmation is shown before it runs.</p></div><div class="search-row"><input id="eoc-rule-live-text" type="text" placeholder="Turn off the kitchen light" aria-label="Live request text"><button type="button" id="eoc-rule-live-run">Run live request</button></div><pre id="eoc-rule-live-result" class="eoc-live-request-result" aria-live="polite"></pre></div></details>';
 
 function globalRuleMarkup(panel, filtered) {
@@ -179,7 +169,6 @@ function renderRulesPage(panel, {query = panel._query || "", inPlaceSearch = fal
     <section class="content-card rule-settings" aria-labelledby="rule-matching-title"><div class="section-heading"><div><h2 id="rule-matching-title">Matching defaults</h2><p>Used by rules that have not chosen custom matching.</p></div></div><details class="eoc-details-base"><summary>Show default settings</summary><p class="help">Matching uses normalized text and explicitly authored alternatives.</p>${matchingControls("rules-default",defaults)}</details></section>
     <section class="content-card rule-wording" aria-labelledby="rule-wording-title"><div class="section-heading"><div><h2 id="rule-wording-title">Wording alternatives</h2><p>Manage different ways of saying the same thing.</p></div></div>${wordingEditor(panel,(panel._rulesSettingsDraft || result).wording_groups || [])}</section>
     <section class="content-card rule-test-tools" aria-labelledby="rule-test-title"><div class="section-heading"><div><h2 id="rule-test-title">Test rules</h2><p>Preview a match safely before choosing to run a live request.</p></div></div>${SAFE_TESTER}${LIVE_TESTER}</section>
-    <details id="rule-sharing" class="content-card eoc-details-base rule-sharing"><summary>Sharing</summary><p class="help">Import or export Request Rules for reuse or sharing.</p><div id="rule-sharing-content"></div></details>
     ${groupManager(panel,result)}`;
 }
 export function renderRequestRules(panel, presentation = {query:panel._query || "",inPlaceSearch:Boolean(panel._eocInPlaceRequestRuleSearch)}) { return renderRulesPage(panel,presentation); }
@@ -195,15 +184,15 @@ function prepareRequestRulesCollection(panel) {
   reconcileRequestRules(panel);
 }
 export function reconcileRequestRules(panel) {
-  refreshRuleSharingGroups(panel);
   const list=panel.shadowRoot.querySelector(".rule-list"), state=ruleCollections.get(list);
   if (!state || state.settings !== ruleSettingsSignature(panel)) return false;
   const result=panel._result || {}, rules=result.rules || [], filter=panel._ruleGroupFilter || "all", query=String(panel._query || "").trim().toLowerCase();
   const groupNames=new Map((result.groups || []).map((group)=>[group.id,group.name]));
   const canReorder=filter === "all" && !query;
+  const matchingDiagnostics=new Set(result.matching_diagnostic_ids || []);
   const nodes=rules.map((rule,index)=>{
     const {order:_order,...cardRule}=rule;
-    const record=keyedElement(state.cards,rule.id,JSON.stringify([cardRule,result.defaults,result.diagnostics?.[rule.id]]),()=>requestRuleCard(panel,rule,index));
+    const record=keyedElement(state.cards,rule.id,JSON.stringify([cardRule,result.defaults,result.diagnostics?.[rule.id],matchingDiagnostics.has(rule.id)]),()=>requestRuleCard(panel,rule,index));
     const priority=record.node.querySelector(".rule-card-heading .meta");
     const groupName=groupNames.get(rule.group_id) || "Ungrouped";
     if(priority && priority.textContent !== `#${index + 1} ${groupName}`)priority.innerHTML=`#${index + 1} <span class="rule-group-chip">${panel._e(groupName)}</span>`;
@@ -232,23 +221,8 @@ function syncScopeRevision(panel, result) {
     scope.result=panel._result;
   }
 }
-export function applyRulePackImportMutation(panel, result) {
-  panel._result={...panel._result,
-    rules:[...(panel._result?.rules||[]),...result.rules],
-    groups:result.groups,
-    revision:result.revision};
-  syncScopeRevision(panel,panel._result);
-  const root=panel.shadowRoot;
-  const filter=root?.querySelector("#rule-group-filter");
-  if(filter){filter.innerHTML=groupFilterOptions(panel,result.groups);filter.value=panel._ruleGroupFilter||"all";}
-  const rows=root?.querySelector(".rule-group-manager-rows");
-  if(rows)rows.innerHTML=groupManagerRows(panel,result.groups,panel._result.rules);
-  const collection=ruleCollections.get(root?.querySelector(".rule-list"));
-  if(collection)collection.settings=ruleSettingsSignature(panel);
-  reconcileRequestRules(panel);
-}
 function finishMutation(panel,result,rules){
-  panel._result={...(panel._result||{}),rules,revision:result.revision,...(result.diagnostics ? {diagnostics:result.diagnostics} : {})};
+  panel._result={...(panel._result||{}),rules,revision:result.revision,...(result.diagnostics ? {diagnostics:result.diagnostics,matching_diagnostic_ids:result.matching_diagnostic_ids || []} : {})};
   const cacheKey=panel._sectionCacheKey?.(); if(cacheKey) panel._sectionCache?.delete(cacheKey);
   syncScopeRevision(panel,result);
   const reconciled = panel.shadowRoot ? reconcileRequestRules(panel) : false;
@@ -305,38 +279,8 @@ function bindWordingEditor(panel){
   bindOwnedEvent(add,"click","wording-add",()=>{const wrapper=document.createElement("div");wrapper.className="wording-group";wrapper.innerHTML='<label>Main phrase<textarea class="wording-canonical" rows="2" maxlength="100"></textarea></label><label>Other ways to say it<textarea class="wording-alternatives" rows="2" placeholder="Comma-separated alternatives"></textarea></label><button type="button" class="icon wording-remove" aria-label="Remove wording alternative">×</button>';root.querySelector("#wording-groups")?.append(wrapper);bindRemove();});
 }
 
-const sharingInitializations = new WeakMap();
-async function initializeRuleSharing(panel, sharing) {
-  let state = sharingInitializations.get(sharing);
-  if (!state) sharingInitializations.set(sharing, state = {ready:false, pending:null});
-  if (state.ready || state.pending) return state.pending;
-  const content = sharing.querySelector("#rule-sharing-content");
-  state.pending = import("./request-rule-sharing-ui.js").then(({bindRuleSharing}) => {
-    // A detached disclosure has no presentation owner. A later visit gets its
-    // own initialization and must not receive the old controls or authored data.
-    if (!sharing.isConnected) return;
-    bindRuleSharing(panel, sharing);
-    state.ready = true;
-  }).catch(error => {
-    if (!sharing.isConnected || !content) return;
-    content.replaceChildren();
-    const status = content.ownerDocument.createElement("p");
-    status.setAttribute("role", "alert");
-    status.textContent = `Unable to load Rule Sharing: ${error.message || String(error)}`;
-    const retry = content.ownerDocument.createElement("button");
-    retry.type = "button"; retry.className = "secondary";
-    retry.dataset.retryRuleSharing = "";
-    retry.textContent = "Retry Rule Sharing";
-    bindOwnedEvent(retry, "click", "rule-sharing-retry", () => { void initializeRuleSharing(panel, sharing); });
-    content.append(status, retry);
-  }).finally(() => { state.pending = null; });
-  return state.pending;
-}
 export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activateLiveTester}={}) {
   const root=panel.shadowRoot,list=root.querySelector(".rule-list"); prepareRequestRulesCollection(panel);
-  const sharing=root.querySelector("#rule-sharing");
-  bindOwnedEvent(sharing,"toggle","rule-sharing",()=>{if(sharing.open)void initializeRuleSharing(panel,sharing);});
-  if(sharing?.open)void initializeRuleSharing(panel,sharing);
   bindWordingEditor(panel);
   const filter=root.querySelector("#rule-group-filter");
   bindOwnedEvent(filter,"change","rule-group-filter",()=>{panel._ruleGroupFilter=filter.value;reconcileRequestRules(panel);root.querySelector("#rule-search")?.dispatchEvent(new Event("input",{bubbles:true}));});
@@ -382,7 +326,7 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
       button.disabled=true;groupManager.dataset.eocMutationPending="true";
       try{
         await runRuleCollectionMutation(panel,operation,"groups",{groups,revision:operation.revision},result=>{
-        panel._result={...(panel._result||{}),groups:result.groups,rules:result.rules,revision:result.revision,...(result.diagnostics ? {diagnostics:result.diagnostics} : {})};
+        panel._result={...(panel._result||{}),groups:result.groups,rules:result.rules,revision:result.revision,...(result.diagnostics ? {diagnostics:result.diagnostics,matching_diagnostic_ids:result.matching_diagnostic_ids || []} : {})};
         const cacheKey=panel._sectionCacheKey?.();if(cacheKey)panel._sectionCache?.delete(cacheKey);
         syncScopeRevision(panel,result);
         acknowledgeRuleGroupControls(panel,groupManager,submitted);

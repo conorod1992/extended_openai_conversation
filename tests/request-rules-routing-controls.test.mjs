@@ -53,15 +53,17 @@ assert.equal(requestOption.disabled, false);
 
 
 const {syncRequestRuleRoutingControls: actualEditorControls} = await import("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js");
-const continueMatching = {checked: false};
-elements.set("#rule-continue-matching", continueMatching);
 for (const controls of [actualEditorControls, syncRequestRuleRoutingControls]) {
   for (const match of ["equals", "starts_with", "ends_with", "contains", "sentence_pattern"]) {
-    for (const ai of [false, true]) for (const matching of [false, true]) {
-      matchType.value = match; continueToAi.checked = ai; continueMatching.checked = matching; scope.value = "request";
+    for (const ai of [false, true]) {
+      continueToAi.checked = true;
       controls(root);
-      assert.equal(requestOption.disabled, !ai && !matching, `${match}: ai=${ai}, matching=${matching}`);
-      assert.equal(scope.value, !ai && !matching ? "conversation" : "request");
+      matchType.value = match;
+      scope.value = "request";
+      continueToAi.checked = ai;
+      controls(root);
+      assert.equal(requestOption.disabled, !ai, match);
+      assert.equal(scope.value, ai ? "request" : "conversation");
     }
   }
   const reasoning = {value: "high", ownerDocument:{createElement:()=>({})}, replaceChildren(...options){this.options=options;}};
@@ -70,22 +72,14 @@ for (const controls of [actualEditorControls, syncRequestRuleRoutingControls]) {
   assert.equal(reasoning.value, "");
   assert.deepEqual(reasoning.options.map(option => option.value), [""]);
   reasoning.value = "{effort}";
+  controls(root, ["low", "high", "{style}"]);
+  assert.equal(reasoning.value, "{effort}");
+  assert.deepEqual(reasoning.options.map(option => option.value), ["", "low", "high", "{effort}"]);
+  assert.equal(reasoning.options.at(-1).disabled, true);
+  assert.match(reasoning.options.at(-1).textContent, /Previous capture.*replace/);
+  reasoning.value = "high";
   controls(root, ["low", "high"]);
-  assert.equal(reasoning.value, "{effort}");
-  reasoning.value = "";
-  controls(root, [], null, ["effort", "style"]);
-  assert.deepEqual(reasoning.options.map(option => option.value), ["", "{effort}", "{style}"]);
-  reasoning.value = "{effort}";
-  controls(root, ["high", "{style}"], null, ["effort"]);
-  assert.deepEqual(reasoning.options.map(option => option.value), ["", "high", "{effort}"]);
-  reasoning.value = "";
-  controls(root, [], null, ["effort"], false);
-  assert.deepEqual(reasoning.options.map(option => option.value), [""]);
-  controls(root, [], "{effort}", ["effort"], false);
-  assert.equal(reasoning.options[1].disabled, true);
-  assert.match(reasoning.options[1].textContent, /unsupported by model/);
-  controls(root, ["low", "high"], null, ["effort"], true);
-  assert.equal(reasoning.options.find(option => option.value === "{effort}").disabled, false);
-  assert.equal(reasoning.value, "{effort}");
+  assert.deepEqual(reasoning.options.map(option => option.value), ["", "low", "high"]);
+  assert.equal(reasoning.value, "high");
   elements.set("#rule-reasoning", null);
 }

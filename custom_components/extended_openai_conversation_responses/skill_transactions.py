@@ -1,18 +1,14 @@
-"""Durable intent for same-filesystem Skill publication and removal."""
+"""Recover files owned by historical Skill downloads and removal actions."""
 
 from __future__ import annotations
 
-from contextlib import suppress
-from dataclasses import dataclass
 import json
 import logging
 import os
 from pathlib import Path
 import re
 import shutil
-import tempfile
 from typing import BinaryIO
-from uuid import uuid4
 
 from homeassistant.exceptions import HomeAssistantError
 
@@ -66,72 +62,6 @@ def _recover_download(record: Path, handle: BinaryIO) -> None:
     record.unlink(missing_ok=True)
 
 
-@dataclass(slots=True)
-class SkillDownload:
-    """Hold download ownership until cleanup or journaled publication."""
-
-    directory: Path
-    record: Path
-    handle: BinaryIO
-    handed_off: bool = False
-
-    def hand_off(self) -> None:
-        """Retire this record after publication has durably assumed ownership."""
-        self.handed_off = True
-        self.record.unlink(missing_ok=True)
-
-    def close(self) -> None:
-        with self.handle:
-            if not self.handed_off:
-                try:
-                    self.handle.seek(0)
-                    _recover_download(self.record, self.handle)
-                except (OSError, ValueError, RecursionError, HomeAssistantError) as err:
-                    log_handled_failure(
-                        _LOGGER, "Could not clean up Skill download", err
-                    )
-
-
-def prepare_download(root: Path, name: str) -> SkillDownload:
-    """Create and lock ownership before the first download payload write."""
-    import fcntl
-
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
-        raise HomeAssistantError("Invalid Skill download name")
-    root.mkdir(parents=True, exist_ok=True)
-    if root.is_symlink():
-        raise HomeAssistantError("Skill staging root must not be a symbolic link")
-    token = uuid4().hex
-    record = root / f"download-{token}.json"
-    directory = root / f"{name}.download-{token}"
-    fd = os.open(record, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
-    handle = None
-    directory_created = False
-    try:
-        handle = os.fdopen(fd, "w+b")
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        directory.mkdir(mode=0o700)
-        directory_created = True
-        handle.write(
-            json.dumps({"name": name, "identity": _identity(directory)}).encode()
-        )
-        handle.flush()
-        os.fsync(handle.fileno())
-    except BaseException:
-        if directory_created:
-            with suppress(OSError):
-                directory.rmdir()
-        with suppress(OSError):
-            record.unlink(missing_ok=True)
-        with suppress(OSError):
-            if handle is None:
-                os.close(fd)
-            else:
-                handle.close()
-        raise
-    return SkillDownload(directory, record, handle)
-
-
 def _recover_abandoned_download(record: Path) -> None:
     import fcntl
 
@@ -158,46 +88,6 @@ def _recover_abandoned_download(record: Path) -> None:
         return
     except (OSError, ValueError, RecursionError, HomeAssistantError) as err:
         log_handled_failure(_LOGGER, "Could not recover Skill download", err)
-
-
-def _write(path: Path, document: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".transaction-", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(document, handle)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
-
-
-def prepare_transaction(
-    root: Path, target: Path, backup: Path, staged: Path | None
-) -> Path:
-    """Record exact owned paths and identities before the first destructive rename."""
-    token = backup.name.rsplit("-", 1)[1]
-    journal = root / f"transaction-{token}.json"
-    document = {
-        "version": 1,
-        "phase": "prepared",
-        "name": target.name,
-        "kind": "publish" if staged is not None else "remove",
-        "backup": backup.name,
-        "previous_identity": _identity(target),
-        "staged": str(staged.relative_to(root.resolve()))
-        if staged is not None
-        else None,
-        "candidate_identity": _identity(staged) if staged is not None else None,
-    }
-    _write(journal, document)
-    return journal
-
-
-def commit_transaction(journal: Path) -> None:
-    document = json.loads(journal.read_text())
-    _write(journal, {**document, "phase": "committed"})
 
 
 def recover_transaction(journal: Path, installed: Path) -> None:

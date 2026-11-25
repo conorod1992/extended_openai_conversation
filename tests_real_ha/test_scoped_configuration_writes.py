@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import agent_config, management_ui
+from custom_components.extended_openai_conversation_responses import agent_config
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     resolve_guest_policy,
@@ -364,7 +364,7 @@ async def test_configuration_projection_round_trip_through_restore_and_rollback(
             or []
         ] == names
         assert memory_enabled(recovered.config)
-        document = transfer._new_transfer_document(entry, subentry, "custom")
+        document = transfer._new_transfer_document(entry, subentry)
         document["sections"][transfer.SECTION_KNOWLEDGE] = {"sources": []}
         if rollback:
             knowledge = conversation.async_get_agent(hass, entry.entry_id)._knowledge

@@ -23,6 +23,8 @@ The two systems use independent storage and settings.
 
 The setting defaults to Off. Stored sources are retained while it is Off, which lets you prepare or temporarily disable a library without losing it.
 
+Enabling Knowledge checks that the assistant's default model and enabled AI routing rules can use the additional tools with the current provider. You can still turn off Knowledge while repairing an incompatible configuration.
+
 ## Manage Knowledge sources
 
 Open **Extended OpenAI** from the Home Assistant sidebar, then **Data & Memory → Knowledge Library** (`/extended-openai/data-memory/knowledge`). The integration's **Configure → Manage knowledge** form also displays this path. Conversation-agent reconfiguration points to the sidebar panel rather than offering a separate settings editor. Knowledge management requires an administrator.
@@ -35,6 +37,10 @@ Select a conversation agent, then use the panel to:
 - edit large source text in the resizable editor;
 - review availability, character count and last-updated time;
 - delete a source after confirmation.
+
+If a create reply is lost, saving again in the same editor retries the original
+submission. Any newer edits remain in the editor. A separate submission with the
+same title, description, content, and availability prompts before creating a copy.
 
 New and existing sources are available by default. Disabling one source does **not** delete it. The source remains stored, visible, editable, included in backups, and can be re-enabled later. While disabled, it is excluded from the model-facing source catalogue, local search index and retrieval. `knowledge_get` cannot bypass the disabled state even if an exact source ID is supplied.
 
@@ -72,12 +78,12 @@ When the feature is On and the selected agent has at least one **available** sou
 
 The tools work in both Responses and Chat Completions modes and use the existing maximum-function-call protection. No source catalogue or full source content is added to normal prompts. If the last available source is disabled or deleted, the tools and Knowledge Library prompt instructions disappear on the next request.
 
-For `knowledge_search`, omitting the optional `source_ids` filter or supplying an
-empty list searches all sources permitted for that request. Nonempty filters use
-exact returned IDs; unknown, blank, disabled, or forbidden IDs never broaden the
-search. Guest Mode source restrictions still apply, including a policy permitting
-no sources. The underlying library API separately treats `source_ids=[]` as no
-sources.
+For the model-facing `knowledge_search` tool, omitting `source_ids` or passing
+`[]` searches all sources permitted for that request. An explicit `null` is
+rejected by the tool's array schema. A nonempty list searches only its valid,
+permitted IDs. Guest Mode source restrictions apply in every case, including a
+policy permitting no sources. The underlying library API treats
+`source_ids=[]` as matching no sources.
 
 ## Local storage and limits
 
@@ -105,7 +111,10 @@ If expected information is not found:
 - verify that **Knowledge Library** is On for the same agent selected in the panel;
 - refresh the management panel and confirm the source is marked **Available**.
 
-The assistant is instructed to start with short keyword searches, broaden an empty search once, and then use `knowledge_list` without a filter to inspect source metadata before concluding that the library lacks an answer. It must use only exact source IDs returned by Knowledge Library tools. An omitted source filter searches all permitted sources. An explicitly empty filter, or one containing only blank, unknown, or disabled IDs, returns no matches; it never widens to all sources. Mixed filters search only the valid permitted IDs. If discovery still finds nothing relevant, the assistant should say so rather than inventing a household-specific detail.
+The assistant is instructed to start with short keyword searches, broaden an empty search once, and then use `knowledge_list` without a filter to inspect source metadata before concluding that the library lacks an answer. It must use only exact source IDs returned by Knowledge Library tools. A nonempty source filter containing only empty, unknown, disabled, or forbidden IDs returns no matches. Mixed filters search only the valid, permitted IDs. If discovery still finds nothing relevant, the assistant should report that outcome.
+
+Source IDs are compared exactly across search, direct reads, and Guest Mode
+allow-lists. Existing stored or imported IDs keep their original whitespace.
 
 ## Guest Mode
 

@@ -34,6 +34,8 @@ _MAX_QUERY_TIMEOUT_SECONDS = 30.0
 _DEFAULT_MAX_RESULT_BYTES = 1024 * 1024
 _MAX_MAX_RESULT_BYTES = 4 * 1024 * 1024
 _PROGRESS_HANDLER_STEPS = 1000
+_SQLITE_MIN_INTEGER = -(2**63)
+_SQLITE_MAX_INTEGER = 2**63 - 1
 
 # mode=ro protects the primary database file, but SQLite statements such as ATTACH
 # and VACUUM INTO can still have filesystem side effects. Reject every authorizer
@@ -436,6 +438,12 @@ class SqliteFunction(Function):
                 isinstance(rendered, float) and not math.isfinite(rendered)
             ):
                 raise HomeAssistantError("SQLite parameters must be scalar values")
+            if isinstance(rendered, int) and not (
+                _SQLITE_MIN_INTEGER <= rendered <= _SQLITE_MAX_INTEGER
+            ):
+                raise HomeAssistantError(
+                    "SQLite integer parameters must fit in the signed 64-bit range"
+                )
             parameters[name] = rendered
         _LOGGER.debug("SQLite query rendered characters=%d", len(q))
 

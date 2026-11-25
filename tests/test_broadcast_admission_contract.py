@@ -51,6 +51,15 @@ def assert_no_admission(manager):
     assert manager._expiry_by_message == {}
 
 
+@pytest.mark.parametrize("message", ["...", "!!!", "…"])
+async def test_punctuation_is_rejected_before_authorization_and_queue(admission, message):
+    manager, _, _, check = admission
+    with pytest.raises(HomeAssistantError, match="letter or number"):
+        await manager.async_send(message, whole_home=True, context=Context(user_id="restricted"))
+    assert_no_admission(manager)
+    check.assert_not_called()
+
+
 async def test_direct_send_cannot_bypass_control_permission(hass, admission):
     manager, _, _, check = admission
     check.return_value = False

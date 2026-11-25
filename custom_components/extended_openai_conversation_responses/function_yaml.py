@@ -1,13 +1,19 @@
 """Lossless JSON transport for Function collections containing YAML scalar types."""
 
 from copy import deepcopy
+import json
 import math
 from typing import Any
 
 import yaml
 
 from .const import CONF_FUNCTION_TOOLS
-from .yaml_serialization import dump_yaml, load_yaml_or_json
+from .yaml_serialization import (
+    dump_yaml,
+    is_yaml_pair_sequence,
+    load_authored_config,
+    load_unicode_yaml,
+)
 
 # Reserved only on the Management wire. A literal mapping with this key is itself
 # YAML-encoded, so decoding never confuses user-authored data with a scalar tag.
@@ -15,19 +21,32 @@ _MANAGEMENT_YAML = "__eoai_management_yaml_v1__"
 _MAX_JSON_INTEGER = 2**53 - 1  # JavaScript's lossless integer range.
 
 
-def _management_yaml_value(value: Any) -> Any:
+def _javascript_array_index(key: str) -> bool:
+    return (
+        len(key) <= 10
+        and key.isascii()
+        and key.isdecimal()
+        and key == str(index := int(key))
+        and index < 2**32 - 1
+    )
+
+
+def _management_yaml_value(value: Any, *, tool_root: bool = False) -> Any:
     """Represent typed Function values reversibly while keeping tools as objects."""
     if value is None or type(value) in (str, bool):
         return value
     if type(value) is int and abs(value) <= _MAX_JSON_INTEGER:
         return value
-    if type(value) is float and math.isfinite(value):
+    if type(value) is float and math.isfinite(value) and not value.is_integer():
         return value
-    if isinstance(value, list):
+    if isinstance(value, list) and not is_yaml_pair_sequence(value):
         return [_management_yaml_value(item) for item in value]
     if (
         isinstance(value, dict)
-        and all(isinstance(key, str) for key in value)
+        and all(
+            isinstance(key, str) and (tool_root or not _javascript_array_index(key))
+            for key in value
+        )
         and set(value) != {_MANAGEMENT_YAML}
     ):
         return {key: _management_yaml_value(item) for key, item in value.items()}
@@ -49,7 +68,7 @@ def management_function_response(value: Any, *, section: str | None = None) -> A
         return value
     if isinstance(value, dict):
         if "spec" in value and "function" in value:
-            return _management_yaml_value(value)
+            return _management_yaml_value(value, tool_root=True)
         if section == "function_repair" and value.get("tools") is not None:
             tools = value["tools"]
             value = {
@@ -94,7 +113,7 @@ def _decode_management_yaml_value(value: Any) -> Any:
         if set(value) == {_MANAGEMENT_YAML} and isinstance(
             value[_MANAGEMENT_YAML], str
         ):
-            return yaml.safe_load(value[_MANAGEMENT_YAML])
+            return load_unicode_yaml(value[_MANAGEMENT_YAML])
         return {key: _decode_management_yaml_value(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_decode_management_yaml_value(item) for item in value]
@@ -167,7 +186,7 @@ def contains_yaml_types(value: Any) -> bool:
             if any(not isinstance(key, str) for key in child):
                 return True
             children = iter(child.values())
-        elif isinstance(child, (list, tuple)):
+        elif isinstance(child, list):
             children = iter(child)
         elif (
             not isinstance(child, scalar_types)
@@ -181,6 +200,32 @@ def contains_yaml_types(value: Any) -> bool:
             seen.add(id(child))
             pending.append(children)
     return False
+
+
+def dump_authored_function_configuration(value: Any) -> str:
+    """Encode decoded Function definitions for identity and reversible cache input."""
+    if not contains_yaml_types(value):
+        try:
+            return json.dumps(
+                value, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+            )
+        except TypeError, ValueError:
+            # A YAML alias can represent a recursive collection.
+            pass
+    return dump_yaml(value, deterministic_sets=True)
+
+
+def authored_function_configuration_equal(left: Any, right: Any) -> bool:
+    """Compare authored structures without Python's cross-type or mapping equality."""
+    if left is right:
+        return True
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, str):
+        return bool(left == right)
+    return dump_authored_function_configuration(
+        left
+    ) == dump_authored_function_configuration(right)
 
 
 def json_safe_function_fields(config: dict[str, Any]) -> dict[str, Any]:
@@ -205,7 +250,7 @@ def decoded_function_fields(config: Any) -> Any:
     if not isinstance(tools, str):
         return config
     try:
-        decoded = load_yaml_or_json(tools)
+        decoded = load_authored_config(tools)
     except yaml.YAMLError:
         return config  # Malformed text is retained only for private recovery.
     if not isinstance(decoded, list):

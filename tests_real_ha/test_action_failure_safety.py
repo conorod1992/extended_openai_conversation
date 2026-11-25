@@ -10,6 +10,7 @@ import sys
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
+import voluptuous as vol
 
 from custom_components.extended_openai_conversation_responses import (
     conversation as conversation_owner,
@@ -17,10 +18,18 @@ from custom_components.extended_openai_conversation_responses import (
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
     CONF_FUNCTION_TOOLS,
+    DOMAIN,
     EVENT_CONVERSATION_FINISHED,
+    SERVICE_CALL_FUNCTION,
+)
+from custom_components.extended_openai_conversation_responses.delayed_tools import (
+    DATA_DELAYED_TOOL_MANAGER,
 )
 from custom_components.extended_openai_conversation_responses.functions import (
     BashFunction,
+)
+from custom_components.extended_openai_conversation_responses.ha_schema import (
+    schema_for_ha,
 )
 from custom_components.extended_openai_conversation_responses.local_intents import (
     CONF_LOCAL_INTENTS_ENABLED,
@@ -40,7 +49,13 @@ from tests_real_ha.test_cross_feature_acceptance import (
 )
 from tests_real_ha.test_entry_point_contract_matrix import _contract_agent, _management
 from tests_real_ha.test_provider_input_history import _transport
-from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _chat_sse_tool_call
+from tests_real_ha.test_provider_wire_e2e import (
+    _chat_sse_text,
+    _chat_sse_tool_call,
+    _responses_sse_text,
+    _responses_sse_tool_call,
+)
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
 def _python_command(code):
@@ -304,6 +319,189 @@ async def _authenticated_say(hass, agent, text, *, is_admin=False):
     )
 
 
+@pytest.mark.usefixtures("real_store_io")
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("effect", ["service", "memory", "schedule"])
+async def test_assist_reports_lost_effect_acknowledgements(
+    hass, monkeypatch, api_mode, effect
+):
+    """Use the public Assist result and independent service/Store observations."""
+    effects = []
+
+    async def apply_action(call):
+        effects.append(call.data["entity_id"])
+        raise HomeAssistantError("Private service acknowledgement failed")
+
+    hass.services.async_register("light", "toggle", apply_action)
+    hass.states.async_set("light.ack_probe", "off")
+    async_expose_entity(hass, "conversation", "light.ack_probe", True)
+    function = {
+        "spec": {
+            "name": "ack_probe",
+            "description": "Toggle the test light",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string"},
+                    "service": {"type": "string"},
+                    "entity_id": {"type": "string"},
+                    "delay": {
+                        "type": "object",
+                        "properties": {"seconds": {"type": "number"}},
+                    },
+                },
+            },
+        },
+        "function": {"type": "native", "name": "execute_service_single"},
+    }
+    agent = await _contract_agent(
+        hass, api_mode=api_mode, functions=[function], memory_mode="automatic"
+    )
+    owner = await hass.auth.async_create_user(
+        "Acknowledgement owner", group_ids=[GROUP_ID_ADMIN]
+    )
+    scheduler = hass.data[DOMAIN][DATA_DELAYED_TOOL_MANAGER]
+    tool_name = "ack_probe"
+    arguments = {"domain": "light", "service": "toggle", "entity_id": "light.ack_probe"}
+    if effect == "memory":
+        tool_name = "memory_add"
+        arguments = {
+            "content": "My bicycle is blue",
+            "category": "personal",
+            "source": "explicit",
+            "intent": "user_request",
+        }
+    elif effect == "schedule":
+        arguments["delay"] = {"seconds": 900}
+
+    if effect in {"memory", "schedule"}:
+        store = agent._memory._storage if effect == "memory" else scheduler._store
+        save = store.async_save
+
+        async def commit_then_lose_ack(data):
+            await save(data)
+            raise OSError("Private Store acknowledgement failed")
+
+        monkeypatch.setattr(store, "async_save", commit_then_lose_ack)
+
+    responses = api_mode == "responses"
+    tool_frame = _responses_sse_tool_call if responses else _chat_sse_tool_call
+    text_frame = _responses_sse_text if responses else _chat_sse_text
+    replies = [tool_frame("effect-ack", tool_name, arguments)]
+    if effect == "schedule":
+        replies.append(text_frame("Scheduled the action"))
+    async with _transport(agent.entry, replies) as wire:
+        result = await conversation.async_converse(
+            hass=hass,
+            text="Please perform this action",
+            agent_id=agent.entry.entry_id,
+            conversation_id=None,
+            context=Context(user_id=owner.id),
+            language="en",
+        )
+        wire.assert_complete(len(replies))
+        if effect == "schedule":
+            assert _speech(result) == "Scheduled the action"
+            body = wire.requests[1]["body"]
+            if responses:
+                result_payload = next(
+                    item["output"]
+                    for item in body["input"]
+                    if item["type"] == "function_call_output"
+                    and item["call_id"] == "effect-ack"
+                )
+            else:
+                result_payload = next(
+                    item["content"]
+                    for item in body["messages"]
+                    if item.get("tool_call_id") == "effect-ack"
+                )
+            assert json.loads(result_payload) == {"result": "Scheduled"}
+            stored = await scheduler._store.async_load()
+            assert len(stored["calls"]) == 1
+            assert [
+                record.as_dict() for record in scheduler._records.values()
+            ] == stored["calls"]
+        else:
+            assert "may have taken effect" in _speech(result, successful=False)
+
+    assert len(effects) == int(effect == "service")
+    if effect == "memory":
+        persisted = await agent._memory._storage.async_load()
+        assert [item["content"] for item in persisted["memories"]] == [
+            arguments["content"]
+        ]
+        assert [
+            item.content for item in await agent._memory.async_list(owner.id)
+        ] == [arguments["content"]]
+
+
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("after_dispatch", [False, True])
+async def test_script_continue_on_error_preserves_uncertain_outcome(
+    hass, api_mode, after_dispatch
+):
+    effects = []
+
+    async def apply_action(call):
+        effects.append("first")
+        raise HomeAssistantError("Private acknowledgement failure")
+
+    async def finish_action(call):
+        effects.append("second")
+
+    hass.services.async_register(
+        "acceptance",
+        "first",
+        apply_action,
+        schema=None
+        if after_dispatch
+        else schema_for_ha(vol.Schema({vol.Required("required"): str})),
+    )
+    hass.services.async_register("acceptance", "second", finish_action)
+    function = {
+        "spec": {
+            "name": "script_ack_probe",
+            "description": "Run the test sequence",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {
+            "type": "script",
+            "sequence": [
+                {"action": "acceptance.first", "continue_on_error": True},
+                {"action": "acceptance.second"},
+            ],
+        },
+    }
+    agent = await _contract_agent(hass, api_mode=api_mode, functions=[function])
+    owner = await hass.auth.async_create_user(
+        "Script acknowledgement owner", group_ids=[GROUP_ID_ADMIN]
+    )
+    tool_frame = (
+        _responses_sse_tool_call if api_mode == "responses" else _chat_sse_tool_call
+    )
+    text_frame = _responses_sse_text if api_mode == "responses" else _chat_sse_text
+    replies = [tool_frame("script-ack", "script_ack_probe", {})]
+    if not after_dispatch:
+        replies.append(text_frame("The script finished."))
+    async with _transport(agent.entry, replies) as wire:
+        result = await conversation.async_converse(
+            hass=hass,
+            text="Run the test sequence",
+            agent_id=agent.entry.entry_id,
+            conversation_id=None,
+            context=Context(user_id=owner.id),
+            language="en",
+        )
+        wire.assert_complete(len(replies))
+        if after_dispatch:
+            assert "may have taken effect" in _speech(result, successful=False)
+        else:
+            assert _speech(result) == "The script finished."
+            assert "Success" in json.dumps(wire.requests[1]["body"])
+    assert effects == (["first", "second"] if after_dispatch else ["second"])
+
+
 @pytest.mark.parametrize("kind", ["raise", "error", "success", "unmatched"])
 async def test_local_dispatch_has_one_accurate_run_and_completion(
     hass, monkeypatch, kind
@@ -422,9 +620,12 @@ async def test_real_rule_stops_after_backend_failure(
         if backend == "native"
         else {}
     )
-    action = {"type": "function", "function": "audit_function", "arguments": arguments}
+    action = {
+        "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+        "data": {"function": "audit_function", "arguments": arguments},
+    }
     if capture:
-        action["result_alias"] = "captured"
+        action["response_variable"] = "captured"
     await agent._request_rules.async_create(
         _rule(
             "local_action",

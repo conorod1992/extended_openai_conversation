@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
+import {applyRequestRuleMutation} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-core.js";
 import {renderRequestRules} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
-import {createRequestRuleActionSelector, createRequestRuleConditionSelector, loadRequestRuleActions, readRequestRuleActions, renameResultReferences, suggestResultAlias, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
+import {createRequestRuleActionSelector, createRequestRuleConditionSelector, loadRequestRuleActions, readRequestRuleActions, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const panel = {
@@ -24,9 +25,6 @@ const panel = {
 };
 
 const html = renderRequestRules(panel);
-assert.match(html, /<details id="rule-sharing"/);
-assert.ok(html.indexOf('id="rule-sharing"') > html.indexOf('class="content-card rule-test-tools"'));
-assert.doesNotMatch(html.slice(0,html.indexOf('id="rule-sharing"')), /rule-pack-export/);
 assert.match(html, /local commands that skip the AI call/);
 assert.doesNotMatch(html, /class="notice on"/);
 assert.match(html, /class="guide-topic-link guide-link" data-guide-topic="request-rules">Learn how routing works/);
@@ -97,7 +95,7 @@ assert.match(requestRulesDialog(panel), /id="rule-group"/);
 assert.doesNotMatch(requestRulesDialog(panel), /rule-enabled-edit|<span>Enabled<\/span>/);
 assert.match(requestRulesDialog(panel), /Set conversation response overrides it/);
 assert.match(requestRulesDialog(panel), /unless an action sets a conversation response or stops the script/);
-assert.match(requestRulesDialog(panel), /id="rule-continue-matching"/);
+assert.doesNotMatch(requestRulesDialog(panel), /id="rule-continue-matching"/);
 assert.doesNotMatch(requestRulesDialog(panel), /<ha-selector/);
 assert.match(requestRulesDialog(panel), /Conditions, delays, choose, repeat, parallel/);
 assert.match(requestRulesDialog(panel), /extended_openai_conversation_responses\.call_function/);
@@ -117,10 +115,6 @@ assert.match(bindingSource, /enabled:previous\?\.enabled\?\?true/);
 assert.match(bindingSource, /selector = \{action:\{\}\}/);
 assert.match(bindingSource, /selector = \{condition:\{\}\}/);
 assert.doesNotMatch(requestRulesDialog(panel), /<textarea[^>]*id="rule-condition/);
-assert.equal(renameResultReferences("{battery.level} {battery} {battery_other.level} {{ battery.level }}", "battery", "power"), "{power.level} {power} {battery_other.level} {{ battery.level }}");
-assert.equal(renameResultReferences("{battery.items.0.name}", "battery", "power"), "{power.items.0.name}");
-assert.equal(suggestResultAlias("get_battery", ["get_battery"]), "get_battery_2");
-assert.equal(suggestResultAlias("request"), "request_2");
 
 {
   const selector={addEventListener(){},};
@@ -198,3 +192,29 @@ assert.match(requestRulesDialog(panel), /Treats simple variations such as “lig
 const diagnosticHtml = renderRequestRules({...panel,_result:{...panel._result,diagnostics:{one:"Sentence pattern is inactive: permutations are not supported"}}});
 assert.match(diagnosticHtml, /Rule inactive/);
 assert.match(diagnosticHtml, /permutations are not supported/);
+
+
+const repairPanel = {
+  ...panel,
+  _render() {},
+  _result: {
+    ...panel._result,
+    diagnostics: {one: "Use a native response variable."},
+    matching_diagnostic_ids: ["one"],
+  },
+};
+const repairHtml = renderRequestRules(repairPanel);
+assert.match(repairHtml, /Needs repair/);
+assert.match(repairHtml, /Requests stop here when this rule’s trigger matches and its conditions pass/);
+assert.match(repairHtml, /Disable the rule to let matching continue/);
+assert.doesNotMatch(repairHtml, /Rule inactive/);
+
+assert.equal(applyRequestRuleMutation(repairPanel, "update", {
+  rule: {...panel._result.rules[0], enabled: false},
+  revision: "disabled",
+  diagnostics: repairPanel._result.diagnostics,
+  matching_diagnostic_ids: [],
+}, {ruleId: "one"}), true);
+assert.deepEqual(repairPanel._result.matching_diagnostic_ids, []);
+assert.match(renderRequestRules(repairPanel), /Rule inactive/);
+assert.doesNotMatch(renderRequestRules(repairPanel), /Requests stop here/);

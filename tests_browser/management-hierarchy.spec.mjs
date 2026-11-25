@@ -1,6 +1,21 @@
 import {expect, test} from "@playwright/test";
 import {fixtureUrl, trackPageErrors, expectHarnessClean} from "./browser-helpers.mjs";
 
+test("global settings remain available with no conversation agents", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/quiet-hours", "&agents=0"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#qh-enabled")).toBeVisible();
+  expect(await page.evaluate(() => browserHarness.calls.some(call => call.section === "quiet_hours" && call.action === "get"))).toBe(true);
+
+  await panel.locator('.top-nav button[data-page="overview"]').click();
+  await expect(panel.locator("#broadcast-card").getByRole("heading", {name:"Broadcast", exact:true})).toBeVisible();
+  const calls = await page.evaluate(() => browserHarness.calls);
+  expect(calls.some(call => call.type.endsWith("/broadcast") && call.action === "snapshot")).toBe(true);
+  expect(calls.some(call => call.section === "overview")).toBe(false);
+  await expectHarnessClean(page, errors);
+});
+
 test("Assistant parent introduction stays between subsection navigation and the active card", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));
@@ -145,10 +160,10 @@ test("Request Rules keeps both create paths and a task-ordered layout", async ({
   await expect(panel.locator("#rule-search")).toBeVisible();
   await expect(panel.locator(".rule-toolbar .count")).toBeHidden();
   await expect(panel.locator("#rule-add")).toBeVisible();
-  const order = await panel.locator(".rule-collection,.rule-settings,.rule-wording,.rule-test-tools,.rule-sharing").evaluateAll(
-    (nodes) => nodes.map((node) => [...node.classList].find((name) => ["rule-collection", "rule-settings", "rule-wording", "rule-test-tools", "rule-sharing"].includes(name))),
+  const order = await panel.locator(".rule-collection,.rule-settings,.rule-wording,.rule-test-tools").evaluateAll(
+    (nodes) => nodes.map((node) => [...node.classList].find((name) => ["rule-collection", "rule-settings", "rule-wording", "rule-test-tools"].includes(name))),
   );
-  expect(order).toEqual(["rule-collection", "rule-settings", "rule-wording", "rule-test-tools", "rule-sharing"]);
+  expect(order).toEqual(["rule-collection", "rule-settings", "rule-wording", "rule-test-tools"]);
   await expect(panel.locator(".page-intro .guide-topic-link[data-guide-topic='request-rules']")).toBeVisible();
   await expect(panel.locator(".page-intro .rule-routing-help")).toHaveCount(0);
   await expect(panel.locator(".rule-settings").getByRole("heading", {name:"Matching defaults"})).toBeVisible();

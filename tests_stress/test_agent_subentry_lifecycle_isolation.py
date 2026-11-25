@@ -99,15 +99,16 @@ async def test_duplicate_and_imported_agents_start_config_only_then_diverge_dura
     )
     assert duplicate_memories["memories"] == []
 
-    exported = await _management_call(
-        client, entry=source, section="configuration", action="export", reviewed_custom=True
-    )
+    from tests.helpers import historical_shareable_export
+
+    document = historical_shareable_export("configuration")
+    document["config"]["max_tokens"] = 913
     imported = await _management_call(
         client,
         entry=destination,
         section="configuration",
         action="import",
-        document=exported["document"],
+        document=document,
         mode="new",
     )
     imported_id = imported["subentry_id"]
@@ -119,7 +120,7 @@ async def test_duplicate_and_imported_agents_start_config_only_then_diverge_dura
         action="get",
     )
     assert imported_cfg["config"]["max_tokens"] == 913
-    assert imported_cfg["config"]["prompt"] == "Portable source configuration"
+    assert imported_cfg["config"]["prompt"] != "Portable source configuration"
     imported_memories = await _management_call(
         client,
         entry=destination,

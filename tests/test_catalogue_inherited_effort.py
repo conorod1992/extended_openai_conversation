@@ -40,8 +40,8 @@ def isolate_catalog():
     [
         "inherited",
         "prior_rule",
-        "continued_prior",
-        "continued_later",
+        "legacy_prior",
+        "legacy_later",
         "request_prior",
         "disabled_prior",
         "disabled",
@@ -63,8 +63,8 @@ async def test_reset_retains_reasoning_activated_by_a_model_only_rule(
     if mode in {
         "no_saved_effort",
         "prior_rule",
-        "continued_prior",
-        "continued_later",
+        "legacy_prior",
+        "legacy_later",
         "request_prior",
         "disabled_prior",
     }:
@@ -87,8 +87,8 @@ async def test_reset_retains_reasoning_activated_by_a_model_only_rule(
     configured_rules = [rule]
     if mode in {
         "prior_rule",
-        "continued_prior",
-        "continued_later",
+        "legacy_prior",
+        "legacy_later",
         "request_prior",
         "disabled_prior",
     }:
@@ -109,11 +109,11 @@ async def test_reset_retains_reasoning_activated_by_a_model_only_rule(
             "request" if mode == "request_prior" else "conversation"
         )
         configured_rules[-1]["enabled"] = mode != "disabled_prior"
-    if mode in {"continued_prior", "continued_later"}:
+    if mode in {"legacy_prior", "legacy_later"}:
         configured_rules[-1].update(phrases=["route"], continue_matching=True, order=0)
         configured_rules[-1]["action"].update(scope="request", continue_to_ai=False)
         configured_rules[0]["order"] = 1
-        if mode == "continued_later":
+        if mode == "legacy_later":
             configured_rules[0]["order"] = 0
             configured_rules[-1]["order"] = 1
     rules = RequestRules(MemoryStore({"rules": configured_rules}))
@@ -162,7 +162,8 @@ async def test_reset_retains_reasoning_activated_by_a_model_only_rule(
         before = await fresh()
         if mode not in {
             "no_saved_effort",
-            "continued_later",
+            "legacy_later",
+            "legacy_prior",
             "request_prior",
             "disabled_prior",
         }:
@@ -170,7 +171,7 @@ async def test_reset_retains_reasoning_activated_by_a_model_only_rule(
     saved = deepcopy(manager.store.saved)
     generation = data.catalog_generation()
     result = await manager.async_reset()
-    if mode in {"inherited", "prior_rule", "continued_prior"}:
+    if mode in {"inherited", "prior_rule"}:
         assert await fresh() == "high"
         assert result["source"] == "downloaded"
         assert "blocked" in result["last_error"]

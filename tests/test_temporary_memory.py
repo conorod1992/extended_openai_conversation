@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -142,6 +142,24 @@ async def test_active_records_are_owned_persisted_and_bounded() -> None:
         )
         == 0
     )
+
+
+async def test_noop_automatic_update_keeps_prompt_order_and_storage():
+    records = [stored_record(index) for index in range(31)]
+    storage = Storage({"records": records})
+    memory = TemporaryMemory(storage)
+    await memory.async_initialize()
+    owner = {"owner_scope_id": "user:alice"}
+    before = await memory.async_active("device:kitchen", **owner)
+    assert len(before) == 30
+    oldest = records[0]
+    assert all(record.memory_id != oldest["memory_id"] for record in before)
+    await memory.async_update(
+        "device:kitchen", oldest["memory_id"], None, None, None,
+        source="automatic", **owner,
+    )
+    assert await memory.async_active("device:kitchen", **owner) == before
+    assert storage.data == {"records": records}
 
 
 async def test_same_continuity_scope_is_isolated_by_resolved_owner() -> None:
@@ -298,6 +316,52 @@ async def test_management_list_is_not_limited_by_model_injection_selection() -> 
     assert sum(len(item.content) for item in managed) > 6000
 
 
+async def test_restored_mixed_timestamps_follow_instants_at_injection_budget(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(dt_util, "utcnow", lambda: datetime(2026, 1, 1, tzinfo=UTC))
+    monkeypatch.setattr(temporary_memory, "MAX_INJECT_CHARACTERS", 82)
+    stamps = [
+        ("2026-10-25T02:10:00+02:00", "2027-01-01T03:00:00+03:00"),
+        ("2026-10-25T00:20:00Z", "2027-01-01T01:00:00Z"),
+        ("2026-10-25T01:15:00+01:00", "2027-01-01T01:00:00+01:00"),
+        ("2026-10-25T00:15:00", "2027-01-01T00:00:00-02:00"),
+        ("2026-10-24T19:15:00-05:00", "2027-01-01T03:00:00+01:00"),
+        ("9999-12-31T23:59:59-14:00", "9999-12-31T23:59:59Z"),
+    ]
+    records = [
+        {
+            **stored_record(i, content_length=100 if i == 5 else 32),
+            "updated_at": updated,
+            "expires_at": expires,
+        }
+        for i, (updated, expires) in enumerate(stamps)
+    ]
+    memory = TemporaryMemory(Storage())
+    await memory.async_initialize()
+    backup = {"records": records}
+    await memory.async_replace_backup(TemporaryMemory.validate_backup_data(backup))
+
+    injected = await memory.async_active("conversation:one", owner_scope_id="user:alice")
+    assert [item.memory_id for item in injected] == ["memory-001", "memory-003"]
+    managed = await memory.async_list_owned("user:alice")
+    assert [item.memory_id for item in managed] == [
+        "memory-000",
+        "memory-002",
+        "memory-001",
+        "memory-003",
+        "memory-004",
+        "memory-005",
+    ]
+    assert await memory.async_backup_data() == backup
+
+
+def test_backup_reports_unrepresentable_temporary_expiry_as_validation_error() -> None:
+    record = {**stored_record(0), "expires_at": "9999-12-31T23:59:59-14:00"}
+    with pytest.raises(ValueError, match="expires_at must be within"):
+        TemporaryMemory.validate_backup_data({"records": [record]})
+
+
 async def test_startup_enforces_existing_record_ceiling_with_diagnostics() -> None:
     records = [stored_record(index) for index in range(MAX_ACTIVE_RECORDS + 5)]
     storage = Storage({"records": records})
@@ -310,6 +374,28 @@ async def test_startup_enforces_existing_record_ceiling_with_diagnostics() -> No
     assert len(storage.data["records"]) == MAX_ACTIVE_RECORDS
     assert "memory-104" in {record.memory_id for record in managed}
     assert "memory-000" not in {record.memory_id for record in managed}
+
+
+async def test_startup_ceiling_uses_chronological_recency_across_offsets(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(temporary_memory, "MAX_ACTIVE_RECORDS", 2)
+    stamps = [
+        "2026-10-25T02:10:00+02:00",
+        "2026-10-25T00:20:00Z",
+        "9999-12-31T23:59:59-14:00",
+        "2026-10-25T00:19:00",
+    ]
+    records = [
+        {**stored_record(i), "updated_at": stamp} for i, stamp in enumerate(stamps)
+    ]
+    storage = Storage({"records": records})
+    memory = TemporaryMemory(storage)
+    await memory.async_initialize()
+
+    managed = await memory.async_list_owned("user:alice")
+    assert {record.memory_id for record in managed} == {"memory-001", "memory-002"}
+    assert memory.stats()["startup_overflow_records_pruned"] == 2
 
 
 async def test_backup_restore_keeps_device_memory_separate_from_inferred_owner() -> None:
@@ -327,7 +413,7 @@ async def test_backup_restore_keeps_device_memory_separate_from_inferred_owner()
     assert memory.stats()["unassigned_legacy_temporary_memory_count"] == 1
 
 
-def test_balanced_prompt_infers_weekend_expiry_without_clarification() -> None:
+async def test_balanced_prompt_infers_weekend_expiry_without_clarification() -> None:
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.hass = MagicMock()
     entity.hass.config.time_zone = "Europe/Dublin"
@@ -338,11 +424,19 @@ def test_balanced_prompt_infers_weekend_expiry_without_clarification() -> None:
             CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED,
         }
     )
-    prompt = entity._build_system_prompt(
-        [],
-        SimpleNamespace(device_id=None),
-        SimpleNamespace(extra_system_prompt=None),
+    entity._temporary_memory = TemporaryMemory(Storage())
+    await entity._temporary_memory.async_initialize()
+    token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), temporary_scope="user:alice")
     )
+    try:
+        prompt = entity._build_system_prompt(
+            [],
+            SimpleNamespace(device_id=None),
+            SimpleNamespace(extra_system_prompt=None),
+        )
+    finally:
+        _ACTIVE_TURN.reset(token)
     assert "instead of asking unnecessary clarification" in prompt
     assert 'for "this weekend" use the end of Sunday' in prompt
     assert "Europe/Dublin" in prompt
@@ -531,6 +625,20 @@ async def test_manual_update_promotes_temporary_memory_provenance() -> None:
     assert record.expires_at == manual_expiry
 
 
+async def test_manage_imported_expiry_beyond_the_creation_horizon() -> None:
+    """Preserve an imported finite instant on other edits and allow replacement."""
+    expiry = "9999-12-31T23:59:59.123456+00:00"
+    storage = ValidationStorage({"records": [_record(expires_at=expiry)]})
+    manager = TemporaryMemory(storage)
+    await manager.async_initialize()
+
+    edited = await manager.async_update_owned("user:alice", "memory-1", "Edited", expiry, None)
+    assert edited.expires_at == expiry
+    replacement = _future(hours=2)
+    edited = await manager.async_update_owned("user:alice", "memory-1", None, replacement, None)
+    assert edited.expires_at == replacement
+
+
 def test_injection_budget_skips_large_later_record_but_keeps_smaller_one() -> None:
     records = [
         _model_record("first", "a" * (MAX_INJECT_CHARACTERS - 5), updated_offset=3),
@@ -715,7 +823,7 @@ def test_store_factory_uses_private_atomic_non_loop_serialization(monkeypatch) -
     }
 
 
-async def test_cold_snapshot_skips_corruption_without_creating_manager(
+async def test_cold_snapshot_reports_corruption_without_creating_manager(
     monkeypatch,
 ) -> None:
     store = ValidationStorage(
@@ -735,15 +843,14 @@ async def test_cold_snapshot_skips_corruption_without_creating_manager(
     )
     hass = SimpleNamespace(data={})
 
-    result = await temporary_memory.async_read_temporary_memory_snapshot(
-        hass,
-        "entry",
-        "agent",
-        "conversation:kitchen",
-        owner_scope_id="user:alice",
-    )
-
-    assert [record.memory_id for record in result] == ["visible"]
+    with pytest.raises(ValueError, match="needs repair"):
+        await temporary_memory.async_read_temporary_memory_snapshot(
+            hass,
+            "entry",
+            "agent",
+            "conversation:kitchen",
+            owner_scope_id="user:alice",
+        )
     assert temporary_memory.get_loaded_temporary_memory(hass, "entry", "agent") is None
     assert store.save_count == 0
 
@@ -824,7 +931,7 @@ async def test_unretained_request_has_no_active_temporary_memory_scope(monkeypat
     active.assert_not_awaited()
 
 
-async def test_model_sensitive_update_uses_automatic_provenance(monkeypatch):
+async def test_model_update_preserves_manual_provenance_and_duplicate_protection(monkeypatch):
     from custom_components.extended_openai_conversation_responses.conversation import (
     _ACTIVE_TURN,
 )
@@ -864,11 +971,15 @@ async def test_model_sensitive_update_uses_automatic_provenance(monkeypatch):
         )
         records = await memory.async_active("user:alice", owner_scope_id="user:alice")
         assert records[0].content == "My medical diagnosis is diabetes"
-        assert records[0].source == "automatic"
+        assert records[0].source == "manual"
         updated = await agent._async_execute_temporary_memory_tool("update", {
             "memory_id": created["memory"]["memory_id"], "content": "Visitors arrive Friday",
         })
-        assert updated["memory"]["source"] == "automatic"
+        assert updated["memory"]["source"] == "manual"
+        duplicate = await agent._async_execute_temporary_memory_tool("add", {
+            "content": "Visitors arrive Friday", "expires_at": future(48), "category": "changed",
+        })
+        assert duplicate["memory"] == updated["memory"]
         explicit = await memory.async_update("user:alice", created["memory"]["memory_id"],
             "My medical diagnosis is diabetes", None, None, owner_scope_id="user:alice", source="manual")
         assert explicit.source == "manual"

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 import json
@@ -24,10 +25,16 @@ from .agent_config import (
     normalize_persisted_agent_config,
     project_agent_config_transfer,
     validate_agent_title,
+    validate_serialized_configuration_unicode,
 )
 from .agent_maintenance import (
     _async_run_exclusive_operation,
     get_agent_maintenance_gate,
+)
+from .backup_input import (
+    BackupInputLimit,
+    check_decoded_structure,
+    check_json_structure,
 )
 from .bounded_json import (
     JSONBudgetExceeded,
@@ -53,8 +60,10 @@ from .private_backup import (
     decode_document,
     encode_document,
 )
+from .record_timestamps import parse_datetime
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import redact_secrets, restore_redacted_secrets
+from .strict_json import check_document_unicode
 from .temporary_memory import (
     TemporaryMemory,
     TemporaryMemoryRecord,
@@ -62,7 +71,11 @@ from .temporary_memory import (
     temporary_memory_record_counts,
 )
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
-from .yaml_serialization import load_yaml_or_json
+from .yaml_serialization import (
+    InvalidSerializedUnicode,
+    SerializedDocumentLimit,
+    load_authored_config,
+)
 
 type ValidatedUsage = tuple[
     UsageTotals, dict[str, dict[str, Any]], list[UsageRequest], list[UsageRun]
@@ -79,11 +92,48 @@ MAX_BACKUP_BYTES = 320 * 1024 * 1024
 # never grow into a WebSocket frame large enough to destabilize Home Assistant.
 MAX_LEGACY_EXPORT_BYTES = 16 * 1024 * 1024
 _BACKUP_LOCKS = f"{DOMAIN}.backup_locks"
+_IMPORT_ADMISSION = f"{DOMAIN}.backup_import_admission"
+_MAX_ACTIVE_IMPORTS = 1
 _LOGGER = logging.getLogger(__name__)
 
 
 class BackupError(HomeAssistantError):
     """A safe, user-facing backup validation or restore error."""
+
+
+class BackupImportPermit:
+    """Keep a permit until both the caller and its detached worker settle."""
+
+    def __init__(self, semaphore: asyncio.BoundedSemaphore) -> None:
+        self._semaphore = semaphore
+        self._owners = 1
+
+    def retain_until(self, task: asyncio.Future[Any]) -> None:
+        self._owners += 1
+        task.add_done_callback(self.release)
+
+    def release(self, _task: asyncio.Future[Any] | None = None) -> None:
+        self._owners -= 1
+        if not self._owners:
+            self._semaphore.release()
+
+
+@asynccontextmanager
+async def async_backup_import_admission(
+    hass: HomeAssistant,
+) -> AsyncIterator[BackupImportPermit]:
+    """Bound overlapping import decoding and materialization for this HA."""
+    semaphore = hass.data.setdefault(
+        _IMPORT_ADMISSION, asyncio.BoundedSemaphore(_MAX_ACTIVE_IMPORTS)
+    )
+    if semaphore.locked():
+        raise BackupError("Other backup imports are in progress; retry shortly")
+    await semaphore.acquire()
+    permit = BackupImportPermit(semaphore)
+    try:
+        yield permit
+    finally:
+        permit.release()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -126,7 +176,7 @@ class PreparedRestore:
     archive_active: dict[str, str] | None = None
     # Internal provenance, never accepted as an import-document switch.
     authoritative_config: bool = False
-    # Live Knowledge-only commits may retain untouched conversation state.
+    # Live Knowledge and Usage restores may retain untouched conversation state.
     # Deliberately absent from journal/portable documents: recovery resets safely.
     preserve_retained_continuity: bool = False
     # A retention-only rewrite of durable Usage does not replace live accounting.
@@ -135,6 +185,11 @@ class PreparedRestore:
     journaled_sections: frozenset[str] | None = None
     # Selective planning may omit Usage until configuration changes require it.
     usage_snapshotted: bool = True
+    # Destination preview only, captured before export retention filtering.
+    usage_revision: str | None = None
+    # The verified outer journal is authoritative for partition writes during
+    # this restore. Never accepted from a portable document.
+    archive_disk_backed: bool = False
 
     def restores(self, section: str) -> bool:
         return self.journaled_sections is None or section in self.journaled_sections
@@ -220,7 +275,7 @@ def _configuration_snapshot_preserving_quarantine(
                 if frontend_shape and isinstance(snapshot[key], str):
                     # Redaction must see mappings, including quarantined siblings.
                     try:
-                        snapshot[key] = load_yaml_or_json(snapshot[key])
+                        snapshot[key] = load_authored_config(snapshot[key])
                     except yaml.YAMLError as err:
                         raise BackupError(
                             "Repair malformed Function YAML before exporting configuration"
@@ -293,7 +348,7 @@ async def async_collect_backup_snapshot(
             "format": BACKUP_FORMAT,
             "version": PRIVATE_BACKUP_VERSION,
             "created_at": dt_util.utcnow().isoformat(),
-            "integration_version": _integration_version(),
+            "integration_version": await asyncio.to_thread(_integration_version),
             "provider_connection": deepcopy(dict(getattr(entry, "data", {}))),
             "agent": {
                 "title": subentry.title,
@@ -321,20 +376,29 @@ def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             "This backup is too large for the legacy one-message JSON export; "
             "use the full backup transfer interface"
         ) from err
-    document = (
-        encode_document(snapshot)
-        if snapshot.get("version") == PRIVATE_BACKUP_VERSION
-        else {
-            **snapshot,
-            "agent": {
-                **snapshot["agent"],
-                "config": _safe_configuration(snapshot["agent"]["config"]),
-            },
-            "request_rules": _safe_configuration(snapshot["request_rules"]),
-        }
-    )
     try:
+        document = (
+            encode_document(snapshot)
+            if snapshot.get("version") == PRIVATE_BACKUP_VERSION
+            else {
+                **snapshot,
+                "agent": {
+                    **snapshot["agent"],
+                    "config": _safe_configuration(snapshot["agent"]["config"]),
+                },
+                "request_rules": _safe_configuration(snapshot["request_rules"]),
+            }
+        )
+    except SerializedDocumentLimit:
+        raise BackupError(
+            "The backup configuration or Request Rules exceed the YAML safety limit"
+        ) from None
+    try:
+        _validate_import_structure(document)
         serialized = bounded_json_dumps(document, MAX_LEGACY_EXPORT_BYTES)
+        check_json_structure(serialized)
+    except BackupInputLimit as err:
+        raise BackupError(str(err)) from None
     except JSONBudgetExceeded as err:
         raise BackupError(
             "This backup is too large for the legacy one-message JSON export; "
@@ -375,7 +439,7 @@ def inspect_backup(
     if isinstance(value, PreparedRestore):
         return value
     return _inspect_decoded_backup(
-        _decode_backup_document(value, max_bytes),
+        _decode_backup_document(value, max_bytes, private_journal=private_journal),
         target_agent_id,
         private_journal=private_journal,
         header_only=header_only,
@@ -398,9 +462,12 @@ async def async_inspect_backup(
         _decode_backup_document,
         value,
         MAX_LEGACY_EXPORT_BYTES if max_bytes is None else max_bytes,
+        private_journal=private_journal,
     )
     # Check the envelope before accessing its potentially large Usage section.
-    _inspect_decoded_backup(document, target_agent_id, header_only=True)
+    _inspect_decoded_backup(
+        document, target_agent_id, private_journal=private_journal, header_only=True
+    )
     try:
         categories = await asyncio.to_thread(
             _validate_data_categories,
@@ -455,9 +522,15 @@ def _validate_data_categories(
     return result
 
 
-def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
+def _decode_backup_document(
+    value: Any, max_bytes: int, *, private_journal: bool = False
+) -> dict[str, Any]:
     """Perform only context-free JSON processing and transport size checks."""
     if isinstance(value, DecodedPrivateDocument):
+        _validate_import_unicode(value)
+        if not private_journal:
+            _validate_import_structure(value)
+            _validate_backup_configuration_unicode(value)
         return value
     if (
         isinstance(max_bytes, bool)
@@ -474,30 +547,67 @@ def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
             raise BackupError(
                 f"The backup exceeds the {limit_mb} MB safety limit"
             ) from err
+        except UnicodeError as err:
+            raise BackupError("The backup contains malformed Unicode") from err
         try:
+            check_json_structure(value)
             value = json.loads(value)
-        except json.JSONDecodeError as err:
-            raise BackupError("The backup is incomplete or corrupted") from err
+        except BackupInputLimit as err:
+            raise BackupError(str(err)) from None
+        except ValueError, RecursionError:
+            raise BackupError("The backup is incomplete or corrupted") from None
+        _validate_import_unicode(value)
     else:
         try:
+            _validate_import_structure(value)
             for _chunk in iter_bounded_json(value, max_bytes):
                 pass
         except JSONBudgetExceeded as err:
             raise BackupError(
                 f"The backup exceeds the {limit_mb} MB safety limit"
             ) from err
+        except UnicodeError as err:
+            raise BackupError("The backup contains malformed Unicode") from err
         except (TypeError, ValueError) as err:
             raise BackupError("The backup is incomplete or corrupted") from err
     if not isinstance(value, dict):
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     try:
-        return (
+        document = (
             decode_document(value)
             if value.get("version") == PRIVATE_BACKUP_VERSION
             else value
         )
     except (ValueError, TypeError, KeyError, yaml.YAMLError) as err:
         raise BackupError("The private backup encoding is invalid") from err
+    if document is not value:
+        _validate_import_structure(document)
+    if not private_journal:
+        _validate_backup_configuration_unicode(document)
+    return document
+
+
+def _validate_import_unicode(value: Any) -> None:
+    try:
+        check_document_unicode(value)
+    except ValueError as err:
+        raise BackupError(str(err)) from None
+
+
+def _validate_import_structure(value: Any) -> None:
+    try:
+        check_decoded_structure(value)
+    except BackupInputLimit as err:
+        raise BackupError(str(err)) from None
+
+
+def _validate_backup_configuration_unicode(document: Mapping[str, Any]) -> None:
+    agent = document.get("agent")
+    if isinstance(agent, Mapping):
+        try:
+            validate_serialized_configuration_unicode(agent.get("config"))
+        except InvalidSerializedUnicode as err:
+            raise BackupError(str(err)) from None
 
 
 def _inspect_decoded_backup(
@@ -546,7 +656,7 @@ def _inspect_decoded_backup(
     integration_version = value["integration_version"]
     if (
         not isinstance(created_at, str)
-        or dt_util.parse_datetime(created_at) is None
+        or parse_datetime(created_at) is None
         or not isinstance(integration_version, str)
         or not integration_version
     ):
@@ -702,22 +812,28 @@ async def _snapshot_for_restore(
     *,
     provider: str | None = None,
     include_usage: bool = True,
+    capture_usage_revision: bool = False,
 ) -> PreparedRestore:
     usage = participants.usage
     if include_usage and usage is None:
         raise RuntimeError("Usage rollback requires a durable manager")
+    archive = await participants.archive.async_recovery_data()
+    usage_revision = None
+    if include_usage and usage is not None:
+        if capture_usage_revision:
+            usage_data, usage_revision = await usage.async_restore_preview_data()
+        else:
+            usage_data = await usage.async_backup_data()
+    else:
+        usage_data = {
+            "totals": asdict(UsageTotals()),
+            "daily": {},
+            "requests": [],
+            "runs": [],
+        }
     raw_categories = {
-        "archive": await participants.archive.async_recovery_data(),
-        "usage": (
-            await usage.async_backup_data()
-            if include_usage and usage is not None
-            else {
-                "totals": asdict(UsageTotals()),
-                "daily": {},
-                "requests": [],
-                "runs": [],
-            }
-        ),
+        "archive": archive,
+        "usage": usage_data,
         "memories": await participants.memory.async_backup_data(),
         "temporary_memories": await participants.temporary.async_backup_data(),
         "knowledge": await participants.knowledge.async_backup_data(),
@@ -754,8 +870,9 @@ async def _snapshot_for_restore(
         guest_mode_schedule,
         request_rule_backup,
         dt_util.utcnow().isoformat(),
-        _integration_version(),
+        await asyncio.to_thread(_integration_version),
         archive_active=archive_active,
         authoritative_config=True,
         usage_snapshotted=include_usage,
+        usage_revision=usage_revision,
     )

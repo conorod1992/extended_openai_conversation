@@ -31,6 +31,9 @@ from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
     _format_structured_output,
 )
+from custom_components.extended_openai_conversation_responses.exceptions import (
+    EffectOutcomeUnknown,
+)
 from custom_components.extended_openai_conversation_responses.function_call_budget import (
     FunctionCallBudget,
 )
@@ -55,8 +58,8 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
     tool_result_data,
     unwrap_tool_result,
 )
-from custom_components.extended_openai_conversation_responses.parallel_tool_execution import (
-    is_parallel_safe_integration_tool,
+from custom_components.extended_openai_conversation_responses.function_tool_policy import (
+    is_integration_owned_read_only_tool,
 )
 from custom_components.extended_openai_conversation_responses.request import (
     format_function_tools,
@@ -339,7 +342,7 @@ async def test_caller_api_uses_existing_exchange_budget_and_single_execution(has
     api = TestAPI(hass)
     ctx = context()
     snapshot, tools = caller_api_tools(await api.async_get_api_instance(ctx))
-    assert not is_parallel_safe_integration_tool(tools[0])
+    assert not is_integration_owned_read_only_tool(tools[0])
     entity = object.__new__(ExtendedOpenAIBaseLLMEntity)
     entity.hass = hass
     entity.entity_id = "conversation.test"
@@ -486,7 +489,7 @@ async def test_mixed_group_prompt_tracks_actual_provider_rounds(hass):
     def factory():
         return assemble_function_tools(projected, [group(saved)], loaded).tools
 
-    def load(groups):
+    def load(groups, _max_tools, _loader_available):
         loaded.update(groups)
         return {"loaded": groups}
 
@@ -1157,6 +1160,64 @@ async def test_strict_failure_retains_metadata_in_chat_log(hass, result_type):
     assert tool_result_data(result)["result"]["data"] == payload
     if hasattr(result, "result"):
         assert result.result.error is True
+
+
+@pytest.mark.parametrize("outcome", ["raise", "flagged", "success"])
+async def test_provider_ha_tool_reports_uncertain_acknowledgement(
+    hass, result_type, outcome
+):
+    class ActionTool(Echo):
+        async def async_call(self, hass, tool_input, llm_context):
+            self.calls.append(tool_input)
+            if outcome == "raise":
+                raise HomeAssistantError("private acknowledgement failure")
+            return result_type(data={"ok": True}, error=outcome == "flagged")
+
+    tool = ActionTool()
+    ctx = context()
+    snapshot, tools = caller_api_tools(
+        await TestAPI(hass, tools=[tool]).async_get_api_instance(ctx)
+    )
+    entity = object.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.hass = hass
+    entity.entity_id = "conversation.ack"
+    hass.auth.async_get_user.return_value = SimpleNamespace(is_active=True)
+    call = llm.ToolInput(
+        id="ack",
+        tool_name=tools[0]["spec"]["name"],
+        tool_args={"value": "hello"},
+        external=True,
+    )
+    chat_log = conversation.ChatLog(hass, "ack")
+    chat_log.async_add_assistant_content_without_tools(
+        conversation.AssistantContent(agent_id="agent", tool_calls=[call])
+    )
+
+    async def execute():
+        with tool_snapshot_scope(snapshot):
+            await async_execute_tool_exchange(
+                entity,
+                chat_log,
+                [call],
+                tools,
+                FunctionCallBudget(2),
+                ctx,
+                [],
+                recovery_state=ToolRecoveryState(
+                    enabled=False, report_uncertain_effects=True
+                ),
+            )
+
+    if outcome == "success":
+        await execute()
+        assert tool_result_data(chat_log.content[-1]) == {"result": {"ok": True}}
+    else:
+        with pytest.raises(EffectOutcomeUnknown):
+            await execute()
+        result = tool_result_data(chat_log.content[-1])["result"]
+        assert result["effect_outcome"] == "uncertain"
+        assert "private acknowledgement failure" not in str(result)
+    assert len(tool.calls) == 1
 
 
 def test_historical_data_accessors_do_not_raise_for_flagged_values(result_type):

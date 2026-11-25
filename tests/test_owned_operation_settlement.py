@@ -148,6 +148,38 @@ async def test_cancelled_waiter_never_dispatches(owned_runner):
         )
 
 
+async def test_cancelled_owner_reports_native_failure_without_background_error(owned_runner):
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    reported = []
+    entered, fail = asyncio.Event(), asyncio.Event()
+    failure = OSError("owned write failed")
+
+    async def operation():
+        entered.set()
+        await fail.wait()
+        raise failure
+
+    loop.set_exception_handler(lambda _loop, context: reported.append(context))
+    owner = asyncio.create_task(owned_runner(operation))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        # Retire the caller's wait while the write is still pending.
+        owner.cancel()
+        await asyncio.sleep(0)
+        assert not owner.done()
+        fail.set()
+        with pytest.raises(OSError) as caught:
+            await asyncio.wait_for(owner, 5)
+        assert caught.value is failure
+        await asyncio.sleep(0)
+        assert reported == []
+    finally:
+        fail.set()
+        await asyncio.gather(owner, return_exceptions=True)
+        loop.set_exception_handler(previous_handler)
+
+
 @pytest.mark.parametrize("outcome", ["success", "failure", "cancelled"])
 @pytest.mark.parametrize("settle", [_async_settle_store_io, _async_settle_native_edit])
 async def test_already_settled_future_has_no_extra_task_or_loop_turn(settle, outcome):

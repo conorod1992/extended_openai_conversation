@@ -15,7 +15,9 @@ from custom_components.extended_openai_conversation_responses.quiet_hours import
 from homeassistant.exceptions import HomeAssistantError
 from tests.quiet_hours_transition_histories import (
     HISTORIES,
+    VOLUME_RETARGET_HISTORIES,
     exercise_history,
+    restore_while_suspended,
     retire_without_restoration,
 )
 from tests_real_ha.test_quiet_hours_scheduling import (
@@ -168,7 +170,7 @@ class NativeTransitionDriver:
     def __init__(self, hass, monkeypatch, kind, deferred):
         self.hass, self.kind, self.deferred = hass, kind, deferred
         self.values = (
-            {"quiet": 0.2, "baseline": 0.8, "alternate": 0.6}
+            {"quiet": 0.2, "baseline": 0.8, "alternate": 0.6, "retargeted": 0.3}
             if kind == "volume"
             else {"quiet": False, "baseline": True, "alternate": True}
         )
@@ -177,7 +179,9 @@ class NativeTransitionDriver:
         )
         self.entity = media if kind == "volume" else wake
         self.commands, self.pending = [], []
-        self.lose_ack = False
+        self.command_contexts = []
+        self.lose_ack = self.reject = False
+        self.contextless = self.hold_feedback = False
         self.now = datetime(2026, 11, 1, 22, 30, tzinfo=UTC)
         monkeypatch.setattr(runtime.dt_util, "now", lambda: self.now)
         self.manager = QuietHoursManager(hass)
@@ -196,16 +200,22 @@ class NativeTransitionDriver:
             self.commands.append(
                 (call.domain, call.service, call.data["entity_id"], value)
             )
+            self.command_contexts.append(call.context)
             assert call.data["entity_id"] == self.entity
             assert call.domain == ("media_player" if kind == "volume" else "switch")
+            if self.reject:
+                self.reject = False
+                raise HomeAssistantError("Service rejected without a report")
+            context = None if self.contextless else call.context
+            self.contextless = False
             if self.lose_ack:
                 self.lose_ack = False
-                self.report(value, call.context)
-                raise HomeAssistantError("Acknowledgement lost after attributed effect")
-            if deferred:
-                self.pending.append((value, call.context))
+                self.report(value, context)
+                raise HomeAssistantError("Acknowledgement lost after device report")
+            if deferred or self.hold_feedback:
+                self.pending.append((value, context))
             else:
-                self.report(value, call.context)
+                self.report(value, context)
 
         hass.services.async_register("media_player", "volume_set", service)
         hass.services.async_register("switch", "turn_on", service)
@@ -214,11 +224,13 @@ class NativeTransitionDriver:
     def report(self, value, context=None):
         if self.kind == "volume":
             self.hass.states.async_set(
-                self.entity, "idle", {"volume_level": value}, context=context
+                self.entity, "idle", {"volume_level": value}, context=context,
+                force_update=True,
             )
         else:
             self.hass.states.async_set(
-                self.entity, "on" if value else "off", context=context
+                self.entity, "on" if value else "off", context=context,
+                force_update=True,
             )
 
     def offline(self):
@@ -235,6 +247,8 @@ class NativeTransitionDriver:
         )
 
     def feedback(self):
+        if self.hold_feedback:
+            return
         for value, context in self.pending:
             self.report(value, context)
         self.pending.clear()
@@ -247,11 +261,22 @@ class NativeTransitionDriver:
         self.departed = True
         self.manager._discover_capabilities = lambda: []
 
-    async def crash(self):
+    def return_to_policy(self):
+        self.departed = False
+        del self.manager._discover_capabilities
+
+    def replace_manager(self):
         retire_without_restoration(self.manager)
         self.manager = QuietHoursManager(self.hass)
         if self.departed:
             self.manager._discover_capabilities = lambda: []
+
+    async def startup_restore(self):
+        self.replace_manager()
+        await restore_while_suspended(self.manager)
+
+    async def crash(self):
+        self.replace_manager()
         await self.manager.async_setup()
 
     async def reconcile(self, hour):
@@ -269,5 +294,18 @@ async def test_native_transition_specification(
     driver = NativeTransitionDriver(hass, monkeypatch, kind, deferred)
     try:
         await exercise_history(driver, HISTORIES[history])
+    finally:
+        await driver.manager.async_shutdown()
+
+
+@pytest.mark.parametrize("history", VOLUME_RETARGET_HISTORIES)
+@pytest.mark.parametrize("deferred", [False, True])
+async def test_native_contextless_retarget_history(
+    hass, monkeypatch, real_store_io, history, deferred
+):
+    await hass.config.async_set_time_zone("UTC")
+    driver = NativeTransitionDriver(hass, monkeypatch, "volume", deferred)
+    try:
+        await exercise_history(driver, VOLUME_RETARGET_HISTORIES[history])
     finally:
         await driver.manager.async_shutdown()

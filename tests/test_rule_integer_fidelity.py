@@ -32,7 +32,7 @@ REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "tests" / "fixtures" / "frontend" / "rule-enabled-wire.mjs"
 
 
-@pytest.mark.parametrize("frontend", ["request-rules-ui-core.js", "shipped"])
+@pytest.mark.parametrize("frontend", ["request-rules-ui.js", "shipped"])
 @pytest.mark.parametrize(
     "credential",
     [
@@ -100,7 +100,7 @@ async def test_restored_rule_numeric_credential_toggle(
         frontend = "dist/" + next(
             item["file"]
             for item in manifest.values()
-            if item["file"].startswith("assets/request-rules-ui-core-")
+            if item.get("src", "").endswith("/request-rules-ui.js")
         )
     result = subprocess.run(
         [
@@ -274,7 +274,7 @@ async def test_single_rule_hydration_is_detached_and_does_not_read_the_collectio
         raise AssertionError("A field patch must not snapshot every Rule")
 
     monkeypatch.setattr(manager, "snapshot", no_collection_snapshot)
-    candidate = ui._prepare_request_rule({"enabled": False}, rule_id, manager)
+    candidate = manager.prepare_update(rule_id, {"enabled": False})
     candidate["action"]["actions"][0]["data"]["password"] = "changed local copy"
     assert manager.rule_snapshot(rule_id)["enabled"] is True
     assert (
@@ -286,4 +286,4 @@ async def test_single_rule_hydration_is_detached_and_does_not_read_the_collectio
 async def test_field_only_toggle_rejects_unknown_rule(numeric_rules):
     manager, _store = numeric_rules
     with pytest.raises(ValueError, match="Request Rule not found"):
-        ui._prepare_request_rule({"enabled": False}, "missing-rule", manager)
+        manager.prepare_update("missing-rule", {"enabled": False})

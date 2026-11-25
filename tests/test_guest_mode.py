@@ -56,6 +56,9 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
     GuestModeManager,
     resolve_guest_policy,
 )
+from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+    StorageRepairRequired,
+)
 from custom_components.extended_openai_conversation_responses.prompt import (
     render_effective_prompt,
 )
@@ -698,6 +701,58 @@ def test_guest_schedule_backup_validation() -> None:
     assert schedule.active_until is None
     with pytest.raises(ValueError, match="Guest Mode"):
         GuestModeManager.validate_backup_data({"schedule": {"active_from": "bad"}})
+
+
+@pytest.mark.parametrize(
+    "timestamp", ["0001-01-01T00:00:00-01:00", "9999-12-31T23:59:59+01:00"]
+)
+def test_guest_backup_retains_representable_offset_timestamp(timestamp) -> None:
+    schedule = GuestModeManager.validate_backup_data(
+        {
+            "schedule": {
+                "active_from": timestamp,
+                "active_until": None,
+                "source": "home_assistant",
+                "updated_at": None,
+            }
+        }
+    )
+    assert schedule is not None
+    assert schedule.active_from == timestamp
+
+
+@pytest.mark.parametrize(
+    "timestamp", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"]
+)
+@pytest.mark.parametrize("update", ["async_update_trusted", "async_restrict"])
+async def test_guest_update_rejects_utc_overflow_before_persistence(
+    hass, timestamp, update
+) -> None:
+    manager = _manager(hass)
+    now = _time("2026-08-21T12:00:00")
+    await manager.async_update_trusted(indefinite=True, now=now)
+    before = await manager.async_backup_data()
+    manager._store.async_save.reset_mock()
+    with pytest.raises(ValueError, match="active_until.*UTC timestamp range"):
+        await getattr(manager, update)(active_until=timestamp, now=now)
+    manager._store.async_save.assert_not_awaited()
+    assert await manager.async_backup_data() == before
+
+
+async def test_guest_stored_utc_overflow_requires_storage_repair(hass) -> None:
+    manager = _manager(hass)
+    manager._initialized = False
+    manager._store.async_load.return_value = {
+        "schedule": {
+            "active_from": "9999-12-31T23:59:59-01:00",
+            "active_until": None,
+            "source": "home_assistant",
+            "updated_at": None,
+        }
+    }
+    with pytest.raises(StorageRepairRequired, match="Guest Mode"):
+        await manager.async_initialize()
+    manager._store.async_save.assert_not_awaited()
 
 
 async def test_trusted_services_update_and_disable_target_agent(

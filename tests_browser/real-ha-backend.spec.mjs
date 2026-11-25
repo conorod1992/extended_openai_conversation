@@ -1,7 +1,7 @@
 // Register dependent cross-feature journeys in the established real-HA browser CI lane.
 import {registerDependentJourneys} from "./real-ha-dependent-journeys.mjs";
 import {expect, test} from "@playwright/test";
-import {acceptConfirmation, acceptSharingReview, browserToolYaml, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, browserToolYaml, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 import {expectContractCalls} from "./real-ha-contract.mjs";
 
 const backendUrl = process.env.REAL_HA_BACKEND_URL;
@@ -308,50 +308,6 @@ test("real browser creates, groups, edits, reloads, and deletes a Request Rule t
   await expect(panel.locator(".rule-group-row")).toHaveCount(0);
   await panel.locator("#rule-groups-done").click();
   await expectContractCalls(page, "request_rules");
-  await expectHarnessClean(page, pageErrors);
-});
-
-test("real browser exports, reviews, and imports a Request Rule Pack through HA", async ({page}) => {
-  const pageErrors = trackPageErrors(page);
-  await page.goto(realFixtureUrl("capabilities/request-rules"));
-  let panel = page.locator("extended-openai-management-panel");
-  await expect(panel.getByRole("heading", {name: "Request Rules", exact: true})).toBeVisible();
-  await panel.getByRole("button", {name: "Create rule", exact: true}).first().click();
-  await panel.locator("#rule-name").fill("Wire contract pack rule");
-  await panel.locator("#rule-phrases").fill("wire contract pack phrase");
-  await panel.locator("#rule-match").selectOption("contains");
-  await panel.locator("#rule-action-type").selectOption("model_routing");
-  await panel.locator("#rule-model").fill("gpt-5-mini");
-  await panel.locator("#rule-reasoning").selectOption("medium");
-  await panel.locator("#rule-scope").selectOption("request");
-  await panel.locator("#rule-save").click();
-  await expect(panel.locator(".request-rule-card")).toHaveCount(1);
-
-  await panel.locator("#rule-sharing summary").click();
-  const downloadPromise = page.waitForEvent("download");
-  await panel.locator("#rule-pack-reviewed-custom").check();
-  await panel.locator("#rule-pack-export").click();
-  await acceptSharingReview(panel);
-  const download = await downloadPromise;
-  const packPath = await download.path();
-  expect(packPath).toBeTruthy();
-  await expect(panel.locator("#rule-pack-message")).toContainText("1 rules exported");
-  await panel.locator("#rule-pack-file").setInputFiles(packPath);
-  await panel.locator("#rule-pack-review-button").click();
-  await expect(panel.locator(".rule-pack-review")).toContainText("1 rules found");
-  await panel.locator("#rule-pack-confirm").click();
-  await expect(panel.locator("#rule-pack-message")).toContainText("disabled rules imported");
-  await expect(panel.locator(".request-rule-card")).toHaveCount(2);
-
-  await page.goto(realFixtureUrl("capabilities/request-rules"));
-  panel = page.locator("extended-openai-management-panel");
-  await expect(panel.locator(".request-rule-card")).toHaveCount(2);
-  for (let remaining = 2; remaining > 0; remaining--) {
-    await panel.locator(".request-rule-card").last().locator(".rule-delete").click();
-    await acceptConfirmation(panel);
-    await expect(panel.locator(".request-rule-card")).toHaveCount(remaining - 1);
-  }
-  await expectContractCalls(page, "rule_pack");
   await expectHarnessClean(page, pageErrors);
 });
 

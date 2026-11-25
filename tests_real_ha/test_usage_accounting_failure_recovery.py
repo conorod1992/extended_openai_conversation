@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from typing import Any
 
@@ -15,6 +16,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_CONVERSATION_CONTINUITY,
     CONVERSATION_CONTINUITY_DEVICE,
 )
+from custom_components.extended_openai_conversation_responses.mutation_outcomes import (
+    mutation_failure,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.intent import IntentResponseErrorCode
 
@@ -26,6 +30,79 @@ from tests_real_ha.test_cross_feature_acceptance import (
 )
 
 _DEVICE_ID = "usage-accounting-failure-device"
+
+
+@pytest.fixture
+def real_store_io():
+    """Select native Store files instead of the acceptance suite's storage double."""
+    return True
+
+
+@pytest.mark.parametrize("failure", ["before", "after", "cancelled"])
+async def test_native_detail_checkpoint_settles_before_later_accounting(
+    hass,
+    real_store_io,
+    monkeypatch,
+    failure,
+):
+    agent = await _agent(hass)
+    manager = agent._usage
+    store = manager._detail_storage
+    assert isinstance(store, usage._UsageStore)
+
+    async def record(tokens):
+        await manager.async_record_request(
+            successful=True,
+            usage=usage.RequestUsage(total_tokens=tokens),
+        )
+        return manager.requests[-1].request_id
+
+    persisted = await record(3)
+    await manager._async_save_details()
+    pending = await record(5)
+    assert store._checkpoint_deadline is not None
+    native_write = store._async_write_data
+    committed = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def fail_clear(data):
+        if failure == "before":
+            raise OSError("before durable replacement")
+        await native_write(data)
+        if failure == "after":
+            raise OSError("after durable replacement")
+        committed.set()
+        await finish.wait()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_async_write_data", fail_clear)
+        operation = manager.async_clear_details(confirm=True)
+        if failure == "cancelled":
+            task = asyncio.create_task(operation)
+            await committed.wait()
+            task.cancel()
+            finish.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(OSError) as raised:
+                await operation
+            assert mutation_failure(raised.value).outcome == (
+                "rejected" if failure == "before" else "committed"
+            )
+
+    survivor = await record(7)
+    await manager._async_save_details()
+    assert manager.totals.total_tokens == 15
+    _, _, fresh_store = usage._durable_usage_stores(
+        hass,
+        agent.entry.entry_id,
+        agent.subentry.subentry_id,
+    )
+    disk = await fresh_store.async_read_persisted_details()
+    assert {item["request_id"] for item in disk["requests"]} == (
+        {persisted, pending, survivor} if failure == "before" else {survivor}
+    )
 
 
 def _assert_recovered_totals(

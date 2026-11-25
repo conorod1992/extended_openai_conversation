@@ -29,6 +29,7 @@ from .agent_config import (
     normalized_function_call_budget,
     parse_configured_function_tools,
     project_agent_config_updates,
+    require_persistable_function_yaml,
     validate_function_groups,
     validate_function_tools,
 )
@@ -41,14 +42,18 @@ from .const import (
 )
 from .function_configuration_repair import (
     FunctionConfigurationRepairState,
-    _cached_function_tool_state,
     _function_tools_cache_key,
     editable_function_tools,
     effective_function_configuration,
     function_configuration_repair_state,
     function_tools_issue,
     has_unavailable_native_tool,
+    resolved_function_tool_state,
     safe_function_configuration,
+)
+from .function_yaml import (
+    authored_function_configuration_equal,
+    dump_authored_function_configuration,
 )
 from .live_subentry_updates import update_configuration_subentry, update_live_subentry
 from .model_catalog import catalog_generation
@@ -56,7 +61,11 @@ from .mutation_outcomes import mark_mutation_failure
 from .request import canonical_json
 from .skill_availability import preserves_skill_loader_availability, skill_loader_status
 from .usage import async_finish_usage_retention_write
-from .yaml_serialization import dump_yaml, load_yaml_or_json
+from .yaml_serialization import (
+    cacheable_authored_config,
+    dump_yaml,
+    load_authored_config,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -129,6 +138,8 @@ def _remember_revision_lineage(
 def peek_function_tool_health(options: dict[str, Any]) -> dict[str, Any] | None:
     """Read an existing health projection without parsing or validating tools."""
     key = _function_tools_cache_key(options)
+    if not cacheable_authored_config(key[1]):
+        return None
     health = _health_cache.get(key)
     if health is not None:
         _health_cache.move_to_end(key)
@@ -138,6 +149,8 @@ def peek_function_tool_health(options: dict[str, Any]) -> dict[str, Any] | None:
 def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
     """Resolve health once per persisted Function Tool value."""
     key = _function_tools_cache_key(options)
+    if not cacheable_authored_config(key[1]):
+        return _uncached_function_tool_health(options)
     cached = _health_cache.get(key)
     if cached is not None:
         _health_cache.move_to_end(key)
@@ -154,9 +167,7 @@ def _uncached_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
     try:
         metadata = configured_function_tool_metadata_from_data(options)
     except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
-        valid, invalid, issue, total_count = _cached_function_tool_state(
-            *_function_tools_cache_key(options)
-        )
+        valid, invalid, issue, total_count = resolved_function_tool_state(options)
         return {
             "usable_count": len(valid),
             "enabled_count": sum(function_tool_enabled(tool) for tool in valid),
@@ -193,6 +204,14 @@ def repair_state_for_projection(
 
 def agent_config_revision_from_snapshot(config: dict[str, Any], title: str) -> str:
     """Hash authoritative persisted configuration and title for all writers."""
+    tools = config.get(CONF_FUNCTION_TOOLS)
+    if tools is not None and not isinstance(tools, str):
+        config = {
+            **config,
+            CONF_FUNCTION_TOOLS: {
+                "authored": dump_authored_function_configuration(tools)
+            },
+        }
     document = canonical_json({"title": title, "config": config})
     return sha256(document.encode("utf-8")).hexdigest()
 
@@ -200,6 +219,15 @@ def agent_config_revision_from_snapshot(config: dict[str, Any], title: str) -> s
 def agent_config_revision(data: Any, title: str) -> str:
     """Hash persisted state without validating or normalizing unrelated fields."""
     return agent_config_revision_from_snapshot(dict(data), title)
+
+
+def _same_persisted_function_fields(left: Any, right: Any) -> bool:
+    return authored_function_configuration_equal(
+        left.get(CONF_FUNCTION_TOOLS, _MISSING),
+        right.get(CONF_FUNCTION_TOOLS, _MISSING),
+    ) and left.get(CONF_FUNCTION_GROUPS, _MISSING) == right.get(
+        CONF_FUNCTION_GROUPS, _MISSING
+    )
 
 
 def persisted_config_projection(
@@ -261,10 +289,7 @@ def persisted_config_projection(
         cached is not None
         and cached.subentry is subentry
         and cached.repair_state is not None
-        and all(
-            cached.data.get(field, _MISSING) == subentry.data.get(field, _MISSING)
-            for field in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS)
-        )
+        and _same_persisted_function_fields(cached.data, data)
     ):
         projection.repair_state = cached.repair_state
     _persisted_projections[key] = projection
@@ -277,7 +302,11 @@ def persisted_config_projection(
 
 def saved_agent_config_revision(subentry: Any, data: Any, title: str) -> str:
     """Return the authoritative post-save revision after HA replaces its data."""
-    if subentry.title == title and dict(subentry.data) == dict(data):
+    if (
+        subentry.title == title
+        and dict(subentry.data) == dict(data)
+        and _same_persisted_function_fields(subentry.data, data)
+    ):
         return persisted_config_projection(subentry).revision
     # Lightweight test doubles may record a save without applying it.
     return agent_config_revision(data, title)
@@ -412,10 +441,7 @@ def seed_persisted_config_projection(
         previous is not None
         and previous.subentry is current
         and previous.repair_state is not None
-        and all(
-            previous.data.get(field, _MISSING) == current.data.get(field, _MISSING)
-            for field in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS)
-        )
+        and _same_persisted_function_fields(previous.data, current.data)
     ):
         repair_state = previous.repair_state
     projection = _PersistedProjection(
@@ -704,10 +730,18 @@ def _function_fields_unchanged(
     updates: dict[str, Any], safe_config: dict[str, Any]
 ) -> bool:
     """Return whether a normal config save left repair-owned fields untouched."""
-    for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
-        if key in updates and updates[key] != safe_config.get(key):
-            return False
-    return True
+    tools = updates.get(CONF_FUNCTION_TOOLS, _MISSING)
+    if isinstance(tools, str):
+        tools = editable_function_tools(updates)
+    return (
+        tools is _MISSING
+        or authored_function_configuration_equal(
+            tools, safe_config.get(CONF_FUNCTION_TOOLS)
+        )
+    ) and (
+        CONF_FUNCTION_GROUPS not in updates
+        or updates[CONF_FUNCTION_GROUPS] == safe_config.get(CONF_FUNCTION_GROUPS)
+    )
 
 
 def group_collection_is_addressable(raw: Any) -> bool:
@@ -771,7 +805,7 @@ async def _async_save_group_collection(
     candidate = message.get("groups")
     if isinstance(candidate, str):
         try:
-            candidate = load_yaml_or_json(candidate)
+            candidate = load_authored_config(candidate)
         except yaml.YAMLError as err:
             raise HomeAssistantError("Function Groups must be valid YAML/JSON") from err
     if not isinstance(candidate, list):
@@ -874,7 +908,9 @@ def _prepare_raw_tools(
 ) -> dict[str, Any]:
     """Validate raw replacement data without normalizing untouched siblings."""
     persisted = dict(subentry.data)
-    persisted[CONF_FUNCTION_TOOLS] = dump_yaml(tools, sort_keys=False)
+    persisted[CONF_FUNCTION_TOOLS] = require_persistable_function_yaml(
+        dump_yaml(tools, sort_keys=False)
+    )
     persisted[CONF_FUNCTION_GROUPS] = deepcopy(groups)
     if extra_updates:
         persisted.update(deepcopy(extra_updates))
@@ -1246,7 +1282,9 @@ async def async_function_repair(
     validate_function_groups(state.groups, validated_tools)
 
     persisted = dict(subentry.data)
-    persisted[CONF_FUNCTION_TOOLS] = dump_yaml(validated_tools, sort_keys=False)
+    persisted[CONF_FUNCTION_TOOLS] = require_persistable_function_yaml(
+        dump_yaml(validated_tools, sort_keys=False)
+    )
     after = function_configuration_repair_state(persisted)
     after_groups = (
         after.groups

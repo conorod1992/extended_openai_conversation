@@ -4,6 +4,7 @@ import asyncio
 from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta
+from functools import partial
 from threading import get_ident
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -27,8 +28,12 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
     _stem,
     _title,
     _tokens,
+    archive_session_inactive,
     archive_tools,
     async_get_archive,
+)
+from custom_components.extended_openai_conversation_responses.management_history_queries import (
+    archive_search_page,
 )
 from custom_components.extended_openai_conversation_responses.scope import (
     shared_scope,
@@ -36,6 +41,12 @@ from custom_components.extended_openai_conversation_responses.scope import (
     user_scope,
 )
 from homeassistant.util import dt as dt_util
+
+
+UTC_OVERFLOW_TIMESTAMPS = (
+    "0001-01-01T00:00:00+01:00",
+    "9999-12-31T23:59:59-01:00",
+)
 
 
 class FakeArchiveStorage:
@@ -70,6 +81,66 @@ async def _archive():
     archive = ConversationArchive(FakeArchiveStorage(), "agent-1")
     await archive.async_initialize()
     return archive
+
+
+async def test_expiry_hides_transcripts_before_prune_and_uses_latest_turn_after_restart(
+    monkeypatch,
+):
+    now = datetime(2026, 7, 1, tzinfo=dt_util.UTC)
+    newest = now
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    storage = FakeArchiveStorage()
+    days = 365
+    archive = ConversationArchive(storage, "agent-1", retention_days=lambda: days)
+    await archive.async_initialize()
+    scope = user_scope("alice", source="authenticated_user")
+
+    async def begin(manager):
+        return await manager.async_begin_session(
+            "logical-chat", scope, "ha-chat", archive_enabled=True,
+            shared_archive_enabled=False, inactivity_minutes=60 * 24 * 365,
+        )
+
+    saved = await begin(archive)
+    for now in (newest, newest - timedelta(hours=2)):
+        await archive.async_record_turn(
+            saved.session_id, run_id=None, user_text="retained transcript",
+            assistant_text="stored response", successful=True,
+        )
+
+    archive = ConversationArchive(storage, "agent-1", retention_days=lambda: days)
+    await archive.async_initialize()
+    days = 30
+    now = newest + timedelta(days=30)
+    assert (await archive.async_prune(days))["deleted_sessions"] == 0
+    assert len((await archive.async_get(scope.scope_id, saved.session_id))["turns"]) == 2
+    with pytest.raises(ValueError, match="text_offset exceeds"):
+        await archive.async_get(scope.scope_id, saved.session_id, text_offset=1000)
+    with pytest.raises(ValueError, match="Invalid archive backward cursor"):
+        await archive.async_get_before(scope.scope_id, saved.session_id, before_turn=3)
+    with pytest.raises(ValueError, match="Invalid archive backward text offset"):
+        await archive.async_get_before(
+            scope.scope_id, saved.session_id, before_turn=1, before_text_offset=1000
+        )
+    with monkeypatch.context() as limited:
+        limited.setattr(archive_module, "MAX_MODEL_TOOL_RESULT_CHARACTERS", 1025)
+        with pytest.raises(ValueError, match="archive page metadata exceeds result limit"):
+            await archive.async_get(scope.scope_id, saved.session_id)
+        with pytest.raises(ValueError, match="archive page metadata exceeds result limit"):
+            await archive.async_get_before(scope.scope_id, saved.session_id, before_turn=2)
+
+    now += timedelta(seconds=1)
+    with pytest.raises(ValueError, match="conversation session not found"):
+        await archive.async_get(scope.scope_id, saved.session_id)
+    with pytest.raises(ValueError, match="conversation session not found"):
+        await archive.async_get_before(scope.scope_id, saved.session_id, before_turn=2)
+    assert (await archive.async_list_sessions(scope.scope_id))["sessions"] == []
+    assert (await archive.async_search(scope.scope_id, "retained transcript"))["results"] == []
+    assert archive.scope_counts() == {}
+    assert (await archive.async_backup_data())["turns"] == []
+    assert len((await archive.async_recovery_data())["turns"]) == 2
+    assert (await begin(archive)).session_id != saved.session_id
+    assert await archive.async_prune(days) == {"deleted_sessions": 1, "deleted_turns": 2}
 
 
 async def test_date_delete_previews_earlier_turns_in_home_assistants_timezone(
@@ -224,6 +295,39 @@ async def test_scope_is_stable_and_different_sessions_are_not_joined() -> None:
     assert same.session_id == first.session_id
     assert changed.session_id != first.session_id
     assert changed.scope_id == "user:bob"
+
+
+@pytest.mark.parametrize("shared", [False, True])
+async def test_making_an_unretained_session_private_does_not_persist_metadata(shared):
+    scope = (
+        shared_scope(source="device_mapping", device_id="satellite")
+        if shared
+        else unretained_scope(device_id="satellite")
+    )
+    storage = FakeArchiveStorage()
+    archive = ConversationArchive(storage, "agent-1")
+    await archive.async_initialize()
+    session = await archive.async_begin_session(
+        "conversation:one",
+        scope,
+        "one",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    assert session.retention_state == "unretained"
+    assert await archive.async_make_private(session.session_id) == {
+        "private_mode_enabled": True,
+        "session_id": session.session_id,
+        "deleted_turns": 0,
+        "future_turns_retained": False,
+    }
+    assert storage.metadata_save_count == 0
+    assert (await archive.async_backup_data())["sessions"] == []
+    assert (await archive.async_recovery_data())["sessions"] == []
+    fresh = ConversationArchive(storage, "agent-1")
+    await fresh.async_initialize()
+    assert fresh.active_session("conversation:one") is None
 
 
 async def test_archive_scope_counts_include_only_retained_sessions() -> None:
@@ -417,8 +521,9 @@ async def test_interrupted_private_commit_cannot_resurrect_content() -> None:
         successful=True,
     )
     storage.fail_metadata_on = storage.metadata_save_count + 2
-    with pytest.raises(OSError, match="metadata write failed"):
-        await archive.async_make_private(session.session_id)
+    result = await archive.async_make_private(session.session_id)
+    assert result["private_mode_enabled"] is True
+    assert result["cleanup_pending"] is True
 
     storage.fail_metadata_on = None
     restarted = ConversationArchive(storage, "agent-1")
@@ -449,8 +554,15 @@ async def test_partition_write_failure_recovers_private_state_on_restart() -> No
     )
     storage.fail_partition_on = storage.partition_save_count + 1
 
-    with pytest.raises(OSError, match="partition write failed"):
-        await archive.async_make_private(session.session_id)
+    assert await archive.async_make_private(session.session_id) == {
+        "private_mode_enabled": True,
+        "session_id": session.session_id,
+        "deleted_turns": 1,
+        "future_turns_retained": False,
+        "cleanup_pending": True,
+    }
+    with pytest.raises(ValueError, match="not found"):
+        await archive.async_get("user:alice", session.session_id)
 
     assert "pending_partitions" in storage.metadata
     restarted = ConversationArchive(storage, "agent-1")
@@ -511,6 +623,74 @@ async def test_interrupted_deletion_commits_recover_deterministically(
     await restarted.async_initialize()
     assert restarted.stats()["session_count"] == 0
     assert restarted.stats()["turn_count"] == 0
+
+
+@pytest.mark.parametrize("explicit_delete", [False, True])
+async def test_failed_prune_masks_both_paging_directions(monkeypatch, explicit_delete):
+    from custom_components.extended_openai_conversation_responses.management_history_queries import (
+        archive_get_before_page,
+    )
+
+    storage = FakeArchiveStorage()
+    archive = ConversationArchive(storage, "agent-1")
+    await archive.async_initialize()
+    scope = user_scope("alice", source="test")
+    recent_time = dt_util.utcnow()
+    sessions = []
+    for age, key in [(2, "expired"), (0, "recent")]:
+        now = recent_time - timedelta(days=age)
+        monkeypatch.setattr(dt_util, "utcnow", lambda now=now: now)
+        session = await archive.async_begin_session(
+            key,
+            scope,
+            key,
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
+        await archive.async_record_turn(
+            session.session_id,
+            run_id=None,
+            user_text=f"{key} transcript",
+            assistant_text="answer",
+            successful=True,
+        )
+        sessions.append(session.session_id)
+    expired, recent = sessions
+    storage.fail_metadata_on = storage.metadata_save_count + 1
+    with pytest.raises(OSError, match="metadata write failed"):
+        await archive.async_prune(1)
+    read_before = partial(archive_get_before_page, archive, before_turn=1)
+    for read in (archive.async_get, read_before):
+        with pytest.raises(ValueError, match="conversation session not found"):
+            await read(scope.scope_id, expired)
+        current = await read(scope.scope_id, recent)
+        assert current["turns"][0]["user_text"] == "recent transcript"
+    assert archive.scope_counts() == {scope.scope_id: 1}
+    assert (await archive.async_search(scope.scope_id, "expired"))["results"] == []
+    assert (await archive.async_list_sessions(scope.scope_id))["sessions"][0][
+        "session_id"
+    ] == recent
+    expired_date = dt_util.as_local(recent_time - timedelta(days=2)).date().isoformat()
+    assert (
+        await archive.async_preview_delete_date_range(
+            scope.scope_id, expired_date, expired_date
+        )
+    )["session_count"] == 0
+    assert await archive.async_delete_date_range(
+        scope.scope_id,
+        expired_date,
+        expired_date,
+        confirm=True,
+        allow_outside_range=False,
+    ) == {"deleted_sessions": 0, "deleted_turns": 0}
+    if explicit_delete:
+        removed = await archive.async_delete_session(scope.scope_id, expired)
+    else:
+        removed = await archive.async_prune(1)
+    assert removed == {"deleted_sessions": 1, "deleted_turns": 1}
+    with pytest.raises(ValueError, match="conversation session not found"):
+        await read_before(scope.scope_id, expired)
 
 
 async def test_interrupted_backup_replacement_recovers_exact_target() -> None:
@@ -619,6 +799,23 @@ async def test_loaded_archive_converges_after_partition_failure_without_restart(
         "second turn",
     ]
     assert result["session"]["turn_count"] == 2
+
+
+async def test_prune_retries_committed_deletion_without_new_expirations(monkeypatch):
+    archive, storage, _session = await _archive_with_failed_turn()
+    assert await archive.async_prune(30) == {"deleted_sessions": 0, "deleted_turns": 0}
+    assert "first turn" in str(storage.partitions)
+    future = dt_util.utcnow() + timedelta(days=31)
+    monkeypatch.setattr(dt_util, "utcnow", lambda: future)
+    storage.fail_next_partition = True
+    with pytest.raises(OSError, match="partition write failed"):
+        await archive.async_prune(30)
+    assert "pending_partitions" in storage.metadata
+    assert "first turn" in str(storage.partitions)
+
+    assert await archive.async_prune(30) == {"deleted_sessions": 0, "deleted_turns": 0}
+    assert "pending_partitions" not in storage.metadata
+    assert "first turn" not in str(storage.partitions)
 
 
 async def test_later_session_publish_preserves_pending_transaction_for_restart() -> None:
@@ -1105,6 +1302,20 @@ def test_validate_backup_rejects_invalid_session_metadata(mutator) -> None:
         ConversationArchive.validate_backup_data(data, "target-agent")
 
 
+@pytest.mark.parametrize(
+    "timestamp", UTC_OVERFLOW_TIMESTAMPS, ids=["before-utc-min", "after-utc-max"]
+)
+@pytest.mark.parametrize("field", ["started_at", "last_message_at", "last_activity_at"])
+def test_validate_backup_rejects_session_timestamp_outside_utc(field, timestamp):
+    data = {
+        "sessions": [asdict(_session(turn_count=0)) | {field: timestamp}],
+        "turns": [],
+    }
+
+    with pytest.raises(ValueError, match="session metadata is invalid"):
+        ConversationArchive.validate_backup_data(data, "target-agent")
+
+
 def test_validate_backup_rebinds_agent_and_rejects_duplicate_sessions() -> None:
     session = _session(turn_count=0)
     sessions, turns = ConversationArchive.validate_backup_data(
@@ -1133,6 +1344,12 @@ def test_validate_backup_rebinds_agent_and_rejects_duplicate_sessions() -> None:
         {**asdict(_turn()), "timestamp": "bad"},
         {**asdict(_turn()), "user_text": "x" * (MAX_TEXT_LENGTH + 1)},
         {**asdict(_turn()), "assistant_text": "x" * (MAX_TEXT_LENGTH + 1)},
+        pytest.param(
+            asdict(_turn(timestamp=UTC_OVERFLOW_TIMESTAMPS[0])), id="before-utc-min"
+        ),
+        pytest.param(
+            asdict(_turn(timestamp=UTC_OVERFLOW_TIMESTAMPS[1])), id="after-utc-max"
+        ),
     ],
 )
 def test_validate_backup_rejects_invalid_turn_metadata(turn_data) -> None:
@@ -1193,6 +1410,73 @@ async def test_replace_backup_rebuilds_partitions_and_clears_active() -> None:
     assert [turn["turn_id"] for turn in result["turns"]] == ["jan", "feb"]
 
 
+async def test_replace_backup_rejects_utc_overflow_before_writing() -> None:
+    storage = CoverageArchiveStorage()
+    archive = await _coverage_archive(storage)
+
+    with pytest.raises(ValueError, match="turn metadata is invalid"):
+        await archive.async_replace_backup(
+            [_session()], [_turn(timestamp=UTC_OVERFLOW_TIMESTAMPS[1])]
+        )
+
+    assert not storage.metadata_writes
+    assert not storage.partition_writes
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "local_zone", "expected_date"),
+    [
+        ("0001-01-01T00:01:00+00:00", "Etc/GMT+1", "0001-01-01"),
+        ("9999-12-31T23:59:59+00:00", "Etc/GMT-1", "9999-12-31"),
+    ],
+    ids=["local-underflow", "local-overflow"],
+)
+async def test_search_after_restore_and_timezone_change_keeps_boundary_turn(
+    monkeypatch, timestamp, local_zone, expected_date
+) -> None:
+    archive = await _archive()
+    session = _session(turn_count=3)
+    foreign_session = _session("foreign", scope_id="user:bob")
+    mixed_offset = "2026-09-02T00:30:00+02:00"
+    await archive.async_replace_backup(
+        [session, foreign_session],
+        [
+            _turn(turn_id="boundary", timestamp=timestamp),
+            _turn(turn_id="mixed", timestamp=mixed_offset),
+            _turn(turn_id="legacy", timestamp="2026-09-03T10:00:00"),
+            _turn("foreign", turn_id="foreign", timestamp=timestamp),
+        ],
+    )
+    with monkeypatch.context() as local:
+        local.setattr(dt_util, "DEFAULT_TIME_ZONE", ZoneInfo(local_zone))
+        pages = (
+            await archive.async_search(session.scope_id, "running shoes"),
+            await archive_search_page(archive, session.scope_id, "running shoes"),
+        )
+
+    for page in pages:
+        results = {item["turn_id"]: item for item in page["results"]}
+        assert set(results) == {"boundary", "mixed", "legacy"}
+        assert results["boundary"]["date"] == expected_date
+        assert results["boundary"]["timestamp"] == timestamp
+        assert results["mixed"]["date"] == "2026-09-01"
+        assert results["mixed"]["timestamp"] == mixed_offset
+        assert results["legacy"]["timestamp"] == "2026-09-03T10:00:00+00:00"
+
+
+def test_archive_inactivity_uses_elapsed_time_at_both_expiry_and_calendar_limits():
+    session = replace(_session(), last_activity_at="2026-09-01T12:00:00+02:00")
+    deadline = datetime(2026, 9, 1, 10, 30, tzinfo=dt_util.UTC)
+
+    assert not archive_session_inactive(session, deadline, 30)
+    assert archive_session_inactive(session, deadline + timedelta(microseconds=1), 30)
+
+    future = replace(
+        session, last_activity_at=None, last_message_at="9999-12-31T23:59:59+00:00"
+    )
+    assert not archive_session_inactive(future, deadline, 30)
+
+
 async def test_uninitialized_operations_fail_fast() -> None:
     archive = ConversationArchive(CoverageArchiveStorage(), "agent-1")
 
@@ -1220,7 +1504,9 @@ async def test_async_get_archive_reuses_one_manager_per_agent(monkeypatch) -> No
         return storage
 
     monkeypatch.setattr(archive_module, "HomeAssistantArchiveStorage", fake_storage)
-    hass = SimpleNamespace(data={})
+    hass = SimpleNamespace(
+        data={}, config_entries=SimpleNamespace(async_get_entry=lambda _: None)
+    )
 
     first = await async_get_archive(hass, "entry-1", "agent-1")
     second = await async_get_archive(hass, "entry-1", "agent-1")
@@ -1228,6 +1514,7 @@ async def test_async_get_archive_reuses_one_manager_per_agent(monkeypatch) -> No
 
     assert first is second
     assert other is not first
+    assert first.scope_counts() == {}
     assert [(entry_id, subentry_id) for entry_id, subentry_id, _ in storages] == [
         ("entry-1", "agent-1"),
         ("entry-1", "agent-2"),
@@ -1733,7 +2020,20 @@ async def test_enabling_household_retention_starts_future_boundary(private):
     second = await archive.async_begin_session("key", scope, "chat", **options)
     if private:
         assert second.session_id == first.session_id
-        assert second.retention_state == "private"
+        assert second.retention_state == "unretained_private"
+        assert storage.metadata is None
+        assert await archive.async_record_turn(
+            second.session_id,
+            run_id=None,
+            user_text="another private turn",
+            assistant_text="another reply",
+            successful=True,
+        ) is None
+        resumed = await archive.async_resume_saving(
+            "key", second.session_id, scope, shared_archive_enabled=True
+        )
+        assert resumed.retention_state == "retained"
+        assert resumed.session_id != second.session_id
     else:
         assert second.session_id != first.session_id
         assert second.retention_state == "retained"

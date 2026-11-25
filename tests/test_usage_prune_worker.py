@@ -37,6 +37,9 @@ async def test_prune_survivors_worker_and_transaction(monkeypatch, scenario):
     saved = []
 
     class Store:
+        async def async_load(self):
+            return None
+
         async def async_save(self, data):
             assert manager.requests is original_requests
             assert manager.runs is runs

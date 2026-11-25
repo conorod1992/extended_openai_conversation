@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections import deque
-from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -286,10 +284,11 @@ async def test_intercom_shutdown_unsubscribes_expires_and_cancels(hass, monkeypa
         ("Kitchen / Voice #1", "kitchen-voice-1"),
     ],
 )
-def test_transfer_safe_title(title: str, expected: str) -> None:
-    from custom_components.extended_openai_conversation_responses import transfer
+def test_private_backup_filename_normalizes_assistant_title(title: str, expected: str) -> None:
+    from custom_components.extended_openai_conversation_responses import backup_transfer
 
-    assert transfer._safe_title(title) == expected
+    document = {"agent": {"title": title}, "created_at": "2026-11-24T00:00:00+00:00"}
+    assert backup_transfer._safe_export_filename(document) == f"{expected}-full-backup-2026-11-24.zip"
 
 
 def test_transfer_configuration_mapping_without_device_mapping_keeps_other_fields() -> None:
@@ -616,56 +615,29 @@ def test_speech_markdown_link_end_matrix() -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_rule_preview_continuation_chain_stops_at_terminal_rule(hass) -> None:
+async def test_request_rule_preview_reports_selected_rule_and_skips(hass) -> None:
     from custom_components.extended_openai_conversation_responses import request_rule_match_preview
     from custom_components.extended_openai_conversation_responses.request_rules import RuleMatch
 
-    continued_rule = {
+    rule = {
         "id": "one",
         "name": "One",
         "match_type": "equals",
         "action_type": "local_action",
-        "continue_matching": True,
-        "action": {
-            "actions": [],
-            "continue_to_ai": False,
-            "success_response": "done",
-            "failure_response": "failed",
-        },
-    }
-    stopped_rule = {
-        "id": "two",
-        "name": "Two",
-        "match_type": "equals",
-        "action_type": "local_action",
-        "continue_matching": False,
-        "action": {
-            "actions": [],
-            "continue_to_ai": False,
-            "success_response": "done",
-            "failure_response": "failed",
-        },
+        "action": {"actions": [{"delay": 0}], "continue_to_ai": True},
     }
 
-    async def eligible(_hass, _text, skipped):
-        skipped.append({"id": "skipped", "name": "Skipped", "reason": "conditions_false"})
-        yield RuleMatch(continued_rule, "hello", False, 100.0)
-        yield RuleMatch(stopped_rule, "hello", False, 100.0)
-
-    rules = SimpleNamespace(
-        _has_continuation=True,
-        async_eligible_matches=eligible,
-    )
+    async def match_with_skipped(_hass, _text):
+        return RuleMatch(rule, "hello", False, 100.0), [
+            {"id": "skipped", "name": "Skipped", "reason": "conditions_false"}
+        ]
 
     result = await request_rule_match_preview.async_request_rule_match_preview(
-        hass, rules, "hello"
+        hass, SimpleNamespace(async_match_with_skipped=match_with_skipped), "hello"
     )
 
-    assert [item["status"] for item in result["matched_rules"]] == [
-        "continued",
-        "stopped",
-    ]
-    assert result["rule"]["id"] == "two"
+    assert [item["status"] for item in result["matched_rules"]] == ["conditional"]
+    assert result["rule"]["id"] == "one"
     assert result["skipped_conditions"][0]["id"] == "skipped"
 
 
@@ -1273,7 +1245,6 @@ def test_request_rules_invalidate_after_unreadable_store_fails_closed(monkeypatc
     manager._rules = [{"id": "r"}]
     conditions = Mock()
     manager._condition_checkers["r"] = conditions
-    manager._has_continuation = True
 
     manager._invalidate_after_unreadable_store()
 
@@ -1284,7 +1255,6 @@ def test_request_rules_invalidate_after_unreadable_store_fails_closed(monkeypatc
     assert manager._rules == []
     assert manager._condition_checkers == {}
     conditions.async_unload.assert_called_once()
-    assert manager._has_continuation is False
 
 
 @pytest.mark.parametrize(
@@ -1304,59 +1274,6 @@ def test_request_rule_local_action_validation_rejects_invalid_shapes(value) -> N
 
     with pytest.raises(ValueError):
         request_rules._validate_action("local_action", value)
-
-
-def test_request_rule_result_dependencies_require_prior_result() -> None:
-    from custom_components.extended_openai_conversation_responses import request_rules
-
-    action = {
-        "actions": [
-            {
-                "action": "light.turn_on",
-                "data": {"message": "{later.value}"},
-            },
-            {
-                "action": f"{request_rules.DOMAIN}.{request_rules.SERVICE_CALL_FUNCTION}",
-                "data": {
-                    "function": "demo",
-                    "result_alias": "later",
-                    "step_id": "step-2",
-                },
-            },
-        ]
-    }
-
-    with pytest.raises(ValueError, match="earlier step"):
-        request_rules._validate_result_dependencies(action, set())
-
-
-def test_request_rule_result_dependencies_reject_nested_capture() -> None:
-    from custom_components.extended_openai_conversation_responses import request_rules
-
-    action = {
-        "actions": [
-            {
-                "choose": [
-                    {
-                        "conditions": [],
-                        "sequence": [
-                            {
-                                "action": f"{request_rules.DOMAIN}.{request_rules.SERVICE_CALL_FUNCTION}",
-                                "data": {
-                                    "function": "demo",
-                                    "result_alias": "nested",
-                                    "step_id": "nested-step",
-                                },
-                            }
-                        ],
-                    }
-                ]
-            }
-        ]
-    }
-
-    with pytest.raises(ValueError, match="top-level"):
-        request_rules._validate_result_dependencies(action, set())
 
 
 def test_request_rule_outcome_probes_wrap_enabled_stop_steps() -> None:

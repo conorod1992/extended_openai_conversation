@@ -280,13 +280,10 @@ async def test_safe_preview_matches_native_termination_without_executing_actions
         calls.append(call.data["message"])
 
     hass.services.async_register("rule_probe", "record", record)
-    await agent._request_rules.async_create(
-        {
-            **_local(actions, success="First complete"),
-            "name": "First",
-            "continue_matching": True,
-        }
-    )
+    first = _local(actions, success="First complete")
+    first["name"] = "First"
+    first["action"]["continue_to_ai"] = True
+    await agent._request_rules.async_create(first)
     await agent._request_rules.async_create(
         {
             **_rule(
@@ -304,36 +301,33 @@ async def test_safe_preview_matches_native_termination_without_executing_actions
     assert agent._request_rules.snapshot() == snapshot
     assert agent._request_rules.revision() == revision
     assert sent == [] and calls == []
-    chain = preview["matched_rules"]
+    assert preview["rule"]["name"] == "First"
+    assert len(preview["matched_rules"]) == 1
+    selected = preview["matched_rules"][0]
     if certainty == "terminal":
-        assert preview["rule"]["name"] == "First"
-        assert len(chain) == 1 and chain[0]["status"] == "stopped"
-        assert chain[0]["ai_input"] is None
+        assert selected["status"] == "stopped" and selected["ai_input"] is None
         assert preview["would_do"]["consumed"] is True
         assert preview["would_do"]["provider_input"] == "none"
         assert preview["would_do"]["terminal"] is True
     else:
-        assert preview["rule"]["name"] == "Second"
-        assert [item["rule"]["name"] for item in chain] == ["First", "Second"]
+        assert selected["ai_input"]["provider_input"] == "run rule"
         if certainty == "conditional":
             assert preview["conditional"] is True
-            assert [item["status"] for item in chain] == ["conditional", "conditional"]
+            assert selected["status"] == "conditional"
             assert preview["would_do"]["consumed"] is None
             assert preview["would_do"]["provider_input"] == "conditional"
-            assert chain[1]["ai_input"]["conditional"] is True
+            assert selected["ai_input"]["conditional"] is True
         else:
-            assert [item["status"] for item in chain] == [
-                "continued",
-                "would_send_to_ai",
-            ]
+            assert selected["status"] == "would_send_to_ai"
             assert "conditional" not in preview
-        assert chain[1]["ai_input"]["provider_input"] == "run rule"
 
     # Real Assist execution uses HA Script, not a preview helper or fake executor.
     result = await _say(hass, agent, "run rule")
     assert _speech(result, successful=reply != "Failed safely") == reply
     assert calls == markers
     assert len(sent) == (1 if reply == "Provider answer" else 0)
+    if sent:
+        assert sent[0]["model"] == agent.subentry.data["chat_model"]
 
 
 @pytest.mark.parametrize(
@@ -378,9 +372,9 @@ async def test_single_rule_preview_and_native_script_suppress_terminal_ai_input(
 
 
 @pytest.mark.parametrize("stop_enabled", [False, True])
-@pytest.mark.parametrize("continue_matching", [False, True])
+@pytest.mark.parametrize("legacy_continue_matching", [False, True])
 async def test_conditional_local_handoff_keeps_capture_and_excludes_later_rules(
-    hass, monkeypatch, stop_enabled, continue_matching
+    hass, monkeypatch, stop_enabled, legacy_continue_matching
 ):
     agent = await _agent(hass)
     sent = _provider(monkeypatch, agent, ["Provider answer"])
@@ -389,11 +383,14 @@ async def test_conditional_local_handoff_keeps_capture_and_excludes_later_rules(
         phrase="run {question}", match_type="sentence_pattern", success="First complete",
     )
     rule.update(
-        name="First", continue_matching=continue_matching,
+        name="First",
         ai_input_mode="capture", ai_input_capture="question",
     )
     rule["action"]["continue_to_ai"] = True
-    await agent._request_rules.async_create(rule)
+    if legacy_continue_matching:
+        rule["continue_matching"] = True
+    saved = await agent._request_rules.async_create(rule)
+    assert "continue_matching" not in saved
     await agent._request_rules.async_create({
         **_local([_record_action("unreachable")]), "name": "Second", "order": 1,
     })
@@ -413,6 +410,7 @@ async def test_conditional_local_handoff_keeps_capture_and_excludes_later_rules(
     assert len(sent) == (0 if stop_enabled else 1)
     if sent:
         assert sent[0]["messages"][-1]["content"] == "rule"
+        assert sent[0]["model"] == agent.subentry.data["chat_model"]
 
 
 @pytest.mark.parametrize("match_type", ["equals", "starts_with", "ends_with", "contains"])
@@ -470,12 +468,16 @@ async def test_configured_text_result_stays_text_through_rule_action_and_speech(
 
     hass.services.async_register("rule_probe", "record", record)
     await agent._request_rules.async_create(_local([
-        {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": {"function": "text_result", "arguments": {}, "result_alias": "answer"}},
-        _record_action("{answer}"),
-    ], success="Value {answer}"))
+        {
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "data": {"function": "text_result", "arguments": {}},
+            "response_variable": "reply",
+        },
+        _record_action("{{ reply.result is string }}"),
+        {"set_conversation_response": "Value {{ reply.result }}"},
+    ]))
     assert _speech(await _say(hass, agent, "run rule")) == f"Value {text}"
-    assert captured == [text]
-    assert type(captured[0]) is str
+    assert captured == ["True" if legacy else True]
 
 
 async def test_variables_delay_and_action_keep_one_ha_script_context(hass, monkeypatch):
@@ -646,18 +648,28 @@ async def test_function_capture_preserves_ha_variables_and_survives_reload(
                     "data": {
                         "function": "rule_battery",
                         "arguments": {},
-                        "result_alias": "battery",
                     },
+                    "response_variable": "battery_data",
                 },
-                _record_action("{{ marker }}:{battery.level}"),
+                {
+                    "if": [
+                        {
+                            "condition": "template",
+                            "value_template": "{{ battery_data.result.level < 70 }}",
+                        }
+                    ],
+                    "then": [
+                        _record_action("{{ marker }}:{{ battery_data.result.level }}"),
+                        {"set_conversation_response": "Battery {{ battery_data.result.level }}"},
+                    ],
+                },
             ],
-            success="Battery {battery.level}",
         )
     )
     assert _speech(await _say(hass, agent, "run rule")) == "Battery 62"
     assert calls == ["kitchen:62"]
     assert function_calls.await_count == 1
-    assert _ACTIVE_RULE_ACTION.get().function_results is None
+    assert _ACTIVE_RULE_ACTION.get().function_executor is None
 
     entry_id = agent.entry.entry_id
     assert await hass.config_entries.async_reload(entry_id)
@@ -666,7 +678,7 @@ async def test_function_capture_preserves_ha_variables_and_survives_reload(
     assert _speech(await _say(hass, agent, "run rule")) == "Battery 62"
     assert calls == ["kitchen:62", "kitchen:62"]
     assert function_calls.await_count == 2
-    assert _ACTIVE_RULE_ACTION.get().function_results is None
+    assert _ACTIVE_RULE_ACTION.get().function_executor is None
     await agent._request_rules.async_create(
         _local(
             [
@@ -675,21 +687,21 @@ async def test_function_capture_preserves_ha_variables_and_survives_reload(
                     "data": {
                         "function": "rule_battery",
                         "arguments": {},
-                        "result_alias": "battery",
                     },
+                    "response_variable": "battery_data",
                 },
-                _record_action("{battery.missing}"),
+                {"set_conversation_response": "{{ battery_data.result.missing + 1 }}"},
+                _record_action("must not run"),
             ],
             phrase="missing battery field",
         )
     )
-    assert (
-        _speech(await _say(hass, agent, "missing battery field"), successful=False)
-        == "Failed safely"
-    )
+    assert _speech(
+        await _say(hass, agent, "missing battery field"), successful=False
+    ) == "Failed safely"
     assert calls == ["kitchen:62", "kitchen:62"]
     assert function_calls.await_count == 3
-    assert _ACTIVE_RULE_ACTION.get().function_results is None
+    assert _ACTIVE_RULE_ACTION.get().function_executor is None
 
 
 async def test_wait_timeout_stops_actions_and_next_request_works(hass, monkeypatch):
@@ -790,20 +802,20 @@ async def test_failing_ha_action_stops_without_replaying_previous_steps(
 
 
 @pytest.mark.parametrize(
-    "reference,expected",
+    "expression,expected",
     [
-        ("{battery.level}", 9),
-        ("{battery.current.level}", 62),
-        ("{battery.items.0.level}", 73),
-        ("{battery.map.0.level}", 84),
-        ("{{ battery['current']['level'] }}", 62),
-        ("whole-data-template", 62),
+        pytest.param("battery_data.result.level", 9, id="direct"),
+        pytest.param("battery_data.result.current.level", 62, id="nested"),
+        pytest.param("battery_data.result['items'][0].level", 73, id="array"),
+        pytest.param("battery_data.result.map['0'].level", 84, id="numeric-key"),
+        pytest.param("battery_data.result['result'].level", 37, id="business-result-key"),
+        pytest.param(None, 62, id="whole-data-template"),
     ],
 )
 async def test_nested_function_results_agree_in_native_action_and_speech(
     hass,
     monkeypatch,
-    reference,
+    expression,
     expected,
 ):
     tool = {
@@ -815,7 +827,10 @@ async def test_nested_function_results_agree_in_native_action_and_speech(
         "function": {
             "type": "template",
             "parse_result": True,
-            "value_template": '{"level":9,"current":{"level":62},"items":[{"level":73}],"map":{"0":{"level":84}}}',
+            "value_template": (
+                '{"level":9,"current":{"level":62},"items":[{"level":73}],'
+                '"map":{"0":{"level":84}},"result":{"level":37}}'
+            ),
         },
     }
     hass.config.legacy_templates = False
@@ -829,38 +844,73 @@ async def test_nested_function_results_agree_in_native_action_and_speech(
     hass.services.async_register("rule_probe", "record", record)
     capture = {
         "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-        "data": {
-            "function": "rule_battery",
-            "arguments": {},
-            "result_alias": "battery",
-        },
+        "data": {"function": "rule_battery", "arguments": {}},
+        "response_variable": "battery_data",
     }
-    action = _record_action(reference)
-    if reference == "whole-data-template":
-        action["data"] = "{{ {'message': battery['current']['level']} }}"
-    response = (
-        reference if reference.startswith("{battery.") else "{battery.current.level}"
-    )
-    await agent._request_rules.async_create(
-        _local([capture, action], success="Battery " + response)
-    )
+    if expression is None:
+        expression = "battery_data.result['current']['level']"
+        action = {
+            "action": "rule_probe.record",
+            "data": "{{ {'message': battery_data.result['current']['level']} }}",
+        }
+    else:
+        action = _record_action("{{ " + expression + " }}")
+    response = {"set_conversation_response": "Battery {{ " + expression + " }}"}
+    await agent._request_rules.async_create(_local([capture, action, response]))
+
     assert _speech(await _say(hass, agent, "run rule")) == f"Battery {expected}"
-    assert calls == [expected]
-    await agent._request_rules.async_create(
-        _local(
-            [capture, _record_action("{battery.current.missing}")],
-            phrase="missing rule",
-        )
-    )
-    assert (
-        _speech(await _say(hass, agent, "missing rule"), successful=False)
-        == "Failed safely"
-    )
     assert calls == [expected]
 
 
 @pytest.mark.parametrize(
-    "stop_kind", ["removed", "disabled", "template-disabled", "enabled", "error"]
+    "value_template,parse_result,condition",
+    [
+        pytest.param("{{ false }}", True, "reply.result is sameas false", id="false"),
+        pytest.param("{{ 0 }}", True, "reply.result is integer and reply.result == 0", id="zero"),
+        pytest.param("", False, "reply.result is string and reply.result == ''", id="empty-text"),
+        pytest.param("{{ none }}", True, "reply.result is none", id="null"),
+    ],
+)
+async def test_native_function_response_preserves_falsy_values(
+    hass, monkeypatch, value_template, parse_result, condition
+):
+    hass.config.legacy_templates = False
+    tool = {
+        "spec": {
+            "name": "test_falsy",
+            "description": "Return a valid falsy value.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {
+            "type": "template",
+            "value_template": value_template,
+            "parse_result": parse_result,
+        },
+    }
+    agent = await _agent(hass, **{CONF_FUNCTION_TOOLS: [tool]})
+    _provider(monkeypatch, agent, [])
+    await agent._request_rules.async_create(
+        _local(
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"function": "test_falsy"},
+                    "response_variable": "reply",
+                },
+                {
+                    "if": [{"condition": "template", "value_template": "{{ " + condition + " }}"}],
+                    "then": [{"set_conversation_response": "Native value matched"}],
+                },
+            ],
+            success="Native value changed",
+        )
+    )
+
+    assert _speech(await _say(hass, agent, "run rule")) == "Native value matched"
+
+
+@pytest.mark.parametrize(
+    "stop_kind", ["removed", "disabled", "template-disabled", "enabled", "error", "text-false", "text-true", "nested-zero"]
 )
 @pytest.mark.parametrize("abort_kind", ["condition", "fatal-wait", "nonfatal-wait"])
 async def test_native_stop_enabled_decision_does_not_mask_later_abort(
@@ -886,9 +936,11 @@ async def test_native_stop_enabled_decision_does_not_mask_later_abort(
             stop["enabled"] = "{{ false }}"
         elif stop_kind == "enabled":
             stop["enabled"] = "{{ true }}"
+        elif stop_kind in {"text-false", "text-true", "nested-zero"}:
+            stop["error"] = {"text-false": "false", "text-true": "on", "nested-zero": 0}[stop_kind]
         else:
             stop.update(enabled=True, error=True)
-        actions.append(stop)
+        actions.append({"sequence": [stop]} if stop_kind == "nested-zero" else stop)
     if abort_kind == "condition":
         actions.append({"condition": "template", "value_template": "{{ false }}"})
     else:
@@ -904,8 +956,8 @@ async def test_native_stop_enabled_decision_does_not_mask_later_abort(
     await agent._request_rules.async_create(
         _local([_record_action("healthy")], phrase="healthy rule")
     )
-    successful = stop_kind == "enabled" or (
-        stop_kind != "error" and abort_kind == "nonfatal-wait"
+    successful = stop_kind in {"enabled", "text-false", "nested-zero"} or (
+        stop_kind not in {"error", "text-true"} and abort_kind == "nonfatal-wait"
     )
     assert _speech(await _say(hass, agent, "run rule"), successful=successful) == (
         "Done" if successful else "Failed safely"
@@ -1182,7 +1234,6 @@ async def test_condition_shorthand_captures_survive_create_reload_and_execute(
     hass, monkeypatch, form
 ):
     from copy import deepcopy
-    from homeassistant.helpers import config_validation as cv
     from custom_components.extended_openai_conversation_responses.request_rules import (
         _validate_script_sequence,
     )

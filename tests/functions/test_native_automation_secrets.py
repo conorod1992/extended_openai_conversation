@@ -9,12 +9,16 @@ import pytest
 import voluptuous as vol
 import yaml
 
-from custom_components.extended_openai_conversation_responses import execution_outcomes
+from custom_components.extended_openai_conversation_responses import (
+    execution_outcomes,
+    yaml_serialization,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     EVENT_AUTOMATION_REGISTERED,
 )
 from custom_components.extended_openai_conversation_responses.functions import native
 from custom_components.extended_openai_conversation_responses.yaml_serialization import (
+    YamlLimits,
     dump_yaml,
 )
 from homeassistant.core import Context
@@ -38,6 +42,15 @@ def automation_admin(hass):
         return_value=SimpleNamespace(is_active=True, is_admin=True)
     )
     return SimpleNamespace(context=Context(user_id="admin-user"))
+
+
+def test_automation_applies_yaml_budget_before_construction(monkeypatch):
+    monkeypatch.setattr(yaml_serialization, "_AUTHORED_LIMITS", YamlLimits(max_nodes=2))
+    loader = Mock(side_effect=AssertionError("automation YAML should never be constructed"))
+    monkeypatch.setattr(native, "_AutomationLoader", loader)
+    with pytest.raises(HomeAssistantError, match="node limit"):
+        native._parse_automation_config(_SOURCE)
+    loader.assert_not_called()
 
 
 @pytest.mark.parametrize(

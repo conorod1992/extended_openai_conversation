@@ -18,6 +18,7 @@ from .agent_maintenance import (
     get_agent_maintenance_gate,
 )
 from .const import DOMAIN
+from .operational_errors import log_handled_failure
 from .storage_namespaces import AGENT_STORAGE_PREFIXES
 from .strict_store import PropagatingWriteStore, async_remove_agent_stores
 
@@ -94,12 +95,17 @@ class _ProviderCleanupDeferred(Exception):
     """Shared provider recovery must finish before the owner's journal is erased."""
 
 
-async def _async_reconcile_with_retry(hass: Any) -> None:
-    hass.data.pop(_RETRY, lambda: None)()
+async def async_reconcile_with_retry(hass: Any, entry: Any = None) -> None:
+    """Try storage maintenance now and schedule another sweep if it fails."""
+    if entry is None:
+        hass.data.pop(_RETRY, lambda: None)()
     try:
-        await async_reconcile_agent_storage(hass)
-    except Exception:
-        _LOGGER.exception("Private agent data cleanup failed; retrying")
+        if entry is None:
+            await async_reconcile_agent_storage(hass)
+        else:
+            await async_delete_removed_subentries(hass, entry)
+    except Exception as err:
+        log_handled_failure(_LOGGER, "Private agent data cleanup failed; retrying", err)
         _schedule_cleanup_retry(hass)
 
 
@@ -108,7 +114,7 @@ def _schedule_cleanup_retry(hass: Any) -> None:
         return
 
     async def retry(_: Any) -> None:
-        await _async_reconcile_with_retry(hass)
+        await async_reconcile_with_retry(hass)
 
     hass.data[_RETRY] = async_call_later(hass, 60, retry)
 
@@ -123,7 +129,7 @@ def async_setup_agent_deletion(hass: Any) -> None:
             ConfigEntryChange.UPDATED,
             ConfigEntryChange.REMOVED,
         }:
-            await _async_reconcile_with_retry(hass)
+            await async_reconcile_with_retry(hass)
 
     unsubscribe = async_dispatcher_connect(hass, SIGNAL_CONFIG_ENTRY_CHANGED, changed)
     hass.data[_LISTENER] = unsubscribe

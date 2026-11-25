@@ -1,6 +1,7 @@
 """Full-agent journal authority can replace corrupted Archive transaction intent."""
 
 from dataclasses import asdict
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from custom_components.extended_openai_conversation_responses.agent_maintenance 
 from tests.restore_participants import participants
 from tests.test_conversation_archive import _session, _turn
 from tests.test_restore_initialization_recovery import _prepare
+from homeassistant.util import dt as dt_util
 
 
 async def _archive_recovery(hass, monkeypatch, phase):
@@ -90,6 +92,8 @@ async def _archive_recovery(hass, monkeypatch, phase):
 async def test_full_journal_recovers_corrupt_archive_intent_and_clears_old_indexed_content(
     hass, monkeypatch, phase
 ):
+    now = datetime.fromisoformat(_turn().timestamp)
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
     entry, subentry, storage, journal = await _archive_recovery(
         hass, monkeypatch, phase
     )
@@ -105,6 +109,11 @@ async def test_full_journal_recovers_corrupt_archive_intent_and_clears_old_index
     assert await storage.async_load_partition("2026-08") == {"turns": []}
     assert "pending_partitions" not in await storage.async_load_metadata()
     assert await journal.async_load() is None
+    now += timedelta(days=366)
+    assert (await manager.async_backup_data())["turns"] == []
+    assert (await manager.async_recovery_data())["turns"][0][
+        "user_text"
+    ] == f"{selected} archive evidence"
 
 
 @pytest.mark.parametrize("phase", ["applying", "committed"])

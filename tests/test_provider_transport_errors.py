@@ -100,12 +100,12 @@ async def test_authentication_probe_timeout_normalizes_before_config_callers() -
 
 
 async def test_setup_treats_normalized_timeout_as_retryable(hass, monkeypatch) -> None:
+    """Startup transport failures should ask HA to retry instead of failing config."""
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.agent_deletion.async_delete_removed_subentries",
         AsyncMock(),
     )
-    """Startup transport failures should ask HA to retry instead of failing config."""
-    entry = SimpleNamespace(data={CONF_API_KEY: "sk-test"})
+    entry = SimpleNamespace(entry_id="transport-test", data={CONF_API_KEY: "sk-test"})
     error = ProviderTransportError("Provider request timed out")
 
     with (

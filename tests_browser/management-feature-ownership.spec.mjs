@@ -100,10 +100,14 @@ test("lazy history helpers retain search pages and guard session dialogs", async
     const {hass} = window.browserHarness;
     const original = hass.callWS.bind(hass);
     window.featureCalls = [];
+    const failOnce = new Set([0, 30000]);
     hass.callWS = async (message) => {
       if (message.section === "conversations") {
         window.featureCalls.push(message);
         if (message.action === "search") return {results:[{session_id:"s-1",title:`Match ${message.offset}`,timestamp:"2026-09-01"}],offset:message.offset,limit:20,returned:1,total:2,has_more:message.offset === 0,next_offset:20};
+        if (message.action === "get" && failOnce.delete(message.text_offset)) {
+          throw new Error("Archive temporarily unavailable");
+        }
         if (message.action === "get") return {
           session:{title:"Retained session"},
           turns:[{user_text:`Question ${message.start_turn} fragment ${message.text_offset}`,assistant_text:"Answer"}],
@@ -130,11 +134,21 @@ test("lazy history helpers retain search pages and guard session dialogs", async
   await panel.evaluate(host => { host._bindActions(); host._bindActions(); });
   await panel.locator(".open-session").focus();
   await panel.locator(".open-session").press("Enter");
+  const transcript = panel.locator("#session-body");
+  const retry = transcript.getByRole("button", {name:"Retry loading turns",exact:true});
+  await expect(transcript.getByRole("alert")).toContainText("Archive temporarily unavailable");
+  await retry.click();
   await expect(panel.locator("#session-body")).toContainText("Question 0");
   await panel.getByRole("button", {name:"Next turns",exact:true}).click();
-  await expect(panel.locator("#session-body")).toContainText("Question 0 fragment 30000");
+  await expect(transcript.getByRole("alert")).toContainText("Archive temporarily unavailable");
+  await expect(transcript).toContainText("Question 0 fragment 0");
+  await expect(panel.locator("#session-title")).toHaveText("Retained session");
   await expect(panel.locator(".eoc-turn-pager")).toHaveCount(1);
-  expect(await page.evaluate(() => window.featureCalls.filter((c) => c.action === "get").map((c) => [c.start_turn,c.text_offset,c.limit]))).toEqual([[0,0,20],[0,30000,20]]);
+  await retry.click();
+  await expect(panel.locator("#session-body")).toContainText("Question 0 fragment 30000");
+  await expect(retry).toHaveCount(0);
+  await expect(panel.locator(".eoc-turn-pager")).toHaveCount(1);
+  expect(await page.evaluate(() => window.featureCalls.filter((c) => c.action === "get").map((c) => [c.start_turn,c.text_offset,c.limit]))).toEqual([[0,0,20],[0,0,20],[0,30000,20],[0,30000,20]]);
   await panel.getByRole("button", {name:"Previous turns",exact:true}).click();
   await expect(panel.locator("#session-body")).toContainText("Question 0 fragment 0");
   await panel.getByRole("button", {name:"Next turns",exact:true}).click();
@@ -145,6 +159,6 @@ test("lazy history helpers retain search pages and guard session dialogs", async
   await expect(panel.locator("#session-dialog")).toHaveJSProperty("open", false);
   await panel.locator(".view-session").click();
   await expect(panel.locator("#session-body")).toContainText("Question 0");
-  expect(await page.evaluate(() => window.featureCalls.filter(c => c.action === "get").length)).toBe(6);
+  expect(await page.evaluate(() => window.featureCalls.filter(c => c.action === "get").length)).toBe(8);
   await expectHarnessClean(page, errors);
 });

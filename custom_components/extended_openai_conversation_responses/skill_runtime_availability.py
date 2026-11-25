@@ -17,7 +17,7 @@ from .const import (
 )
 from .function_groups import function_tool_runtime_scope
 from .skill_availability import effective_skill_loader_status, is_canonical_skill_loader
-from .skills import SkillManager
+from .skills import Skill, SkillManager
 
 _ACTIVE_SELECTED_SKILLS: ContextVar[frozenset[str] | None] = ContextVar(
     "eoai_selected_skills", default=None
@@ -41,19 +41,13 @@ def selected_skill_scope(options: Mapping[str, Any]) -> Iterator[None]:
         _ACTIVE_SELECTED_SKILLS.reset(token)
 
 
-def _installed_skill_names(manager: SkillManager | None) -> tuple[str, ...]:
-    if manager is None:
-        return ()
-    return tuple(skill.name for skill in manager.get_all_skills())
-
-
 @contextmanager
 def effective_tool_runtime_scope(
     options: Mapping[str, Any],
     configured_tools: list[dict[str, Any]],
     manager: SkillManager | None,
     groups: list[dict[str, Any]] | None = None,
-) -> Iterator[None]:
+) -> Iterator[list[Skill]]:
     """Resolve one coherent configured-tool availability snapshot."""
     if groups is None:
         groups = validate_function_groups(
@@ -62,6 +56,9 @@ def effective_tool_runtime_scope(
         )
     selected = options.get(CONF_SKILLS, []) or []
     selected_names = [name for name in selected if isinstance(name, str)]
+    installed = (
+        manager.get_all_skills() if manager is not None and selected_names else []
+    )
     max_function_calls = int(
         options.get(
             CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -74,7 +71,7 @@ def effective_tool_runtime_scope(
     group_loader_supported = function_tools_supported
     skill_status = effective_skill_loader_status(
         selected_names,
-        _installed_skill_names(manager),
+        (skill.name for skill in installed),
         configured_tools,
         groups,
         max_function_calls=max_function_calls,
@@ -92,6 +89,14 @@ def effective_tool_runtime_scope(
     ):
         token = _ACTIVE_SELECTED_SKILLS.set(frozenset(selected_names))
         try:
-            yield
+            yield (
+                [
+                    skill
+                    for skill in installed
+                    if skill.name in skill_status.loadable_skills
+                ]
+                if skill_status.available
+                else []
+            )
         finally:
             _ACTIVE_SELECTED_SKILLS.reset(token)

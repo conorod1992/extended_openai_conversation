@@ -16,6 +16,7 @@ from custom_components.extended_openai_conversation_responses import (
 from homeassistant.components import sensor as ha_sensor
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er, trigger as trigger_helper
+from homeassistant.util import dt as dt_util
 from tests_real_ha.test_acceptance_lifecycle import _make_entry
 from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _say, _speech
 from tests_real_ha.test_management_backend_acceptance import _setup_entry
@@ -141,7 +142,18 @@ async def test_failed_restore_isolates_sensors_and_recovery_readmits_owner(
         hass, entry.entry_id, quarantined.subentry_id
     )
     if blocked:
-        await journal.async_save({"invalid_restore_journal": True})
+        # Corrupt the decision while leaving the assistant-only scope readable.
+        await journal.async_save(
+            {
+                "transaction_id": "sensor-isolation",
+                "entry_id": entry.entry_id,
+                "subentry_id": quarantined.subentry_id,
+                "phase": "invalid",
+                "created_at": dt_util.utcnow().isoformat(),
+                "target": {},
+                "rollback": {},
+            }
+        )
     await restore_recovery.async_recover_pending_restores(hass)
     assert gate.recovery_required is blocked
     await _setup_entry(hass, entry)
@@ -235,13 +247,18 @@ async def test_real_ha_guest_sensor_marks_uncertain_storage_unavailable_then_rec
         assert not entity.available
         with pytest.raises(HomeAssistantError, match="persistence is unavailable"):
             manager.status()
-        before_errors = len(caplog.records)
+        before_reads = len(caplog.records)
+        guest_loggers = {guest_mode.__name__, type(entity).__module__}
         for _ in range(25):
-            entity.available
+            assert not entity.available
             assert entity.native_value is None
             assert entity.extra_state_attributes == {}
         await hass.async_block_till_done(wait_background_tasks=True)
-        assert len(caplog.records) == before_errors
+        assert not [
+            record.getMessage()
+            for record in caplog.records[before_reads:]
+            if record.name in guest_loggers
+        ]
     finally:
         manager._store = original
 

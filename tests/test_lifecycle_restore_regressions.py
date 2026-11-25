@@ -255,7 +255,7 @@ async def test_broadcast_shutdown_cancels_drains_and_timers(hass):
 
 
 async def test_last_entry_cleanup_continues_after_quiet_hours_restore_failure(
-    hass, monkeypatch
+    hass, monkeypatch, caplog
 ):
     entry = SimpleNamespace(entry_id="entry", subentries={})
     monkeypatch.setattr(agent_deletion, "async_delete_entry_data", AsyncMock())
@@ -266,8 +266,8 @@ async def test_last_entry_cleanup_continues_after_quiet_hours_restore_failure(
     broadcast = SimpleNamespace(async_shutdown=AsyncMock())
     hass.data[DOMAIN] = {"quiet_hours_manager": qh}
     hass.data[intercom.DATA_KEY] = broadcast
-    with pytest.raises(HomeAssistantError, match="save failed"):
-        await integration.async_remove_entry(hass, entry)
+    await integration.async_remove_entry(hass, entry)
+    assert "Quiet Hours shutdown deferred" in caplog.text
     broadcast.async_shutdown.assert_awaited_once()
     assert hass.services.async_remove.call_count == 3
     assert intercom.DATA_KEY not in hass.data

@@ -260,7 +260,7 @@ async def test_scoped_save_seed_reconstructs_the_same_effective_projection(
 
 
 @pytest.mark.parametrize("saved", [None, "", [], "[]", "null", "~", "# empty YAML\n"])
-async def test_function_semantics_survive_duplicate_export_and_recovery(
+async def test_function_semantics_survive_duplicate_and_private_recovery(
     hass, management_agent, management_message, saved
 ):
     from custom_components.extended_openai_conversation_responses import (
@@ -281,9 +281,7 @@ async def test_function_semantics_survive_duplicate_export_and_recovery(
         hass, "admin", True, management_message("configuration", "duplicate")
     )
     duplicate = hass.config_entries.async_add_subentry.call_args.args[1]
-    exported = ui._export_agent(subentry, reviewed=True)
-    imported = ui._parse_import_document(exported)["config"]
-    snapshots = [duplicate.data, imported]
+    snapshots = [duplicate.data]
     for snapshot in (
         backup.export_configuration_snapshot(original),
         backup.private_configuration_snapshot(original),

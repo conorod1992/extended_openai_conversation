@@ -14,7 +14,8 @@ introduce a second operation queue, ownership registry or server protocol.
   adopts its identity or baseline. Missing fields and transport loss remain
   uncertain. The client tells the user to refresh before retrying and never
   automatically repeats the command. This is not an exactly-once guarantee for
-  requests whose responses were lost.
+  requests whose responses were lost. Knowledge creation can explicitly replay
+  the same submission with its original token while that source exists.
 - `callMutation` classifies rejection at the transport boundary. Coded server
   errors retain their failure path; HA's nested connection-loss result and bare
   numeric transport failures remain uncertain, including direct feature requests.

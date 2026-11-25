@@ -6,15 +6,15 @@ const unchanged = " Nothing was changed.";
 function localActionSummary(response) {
   const action = response?.would_do || {};
   const count = Number(action.action_count || 0);
-  const functions=(action.functions || []).map((item)=>`${item.name}${item.result_alias ? ` → ${item.result_alias}` : ""}`).join(", ");
-  const outcome = action.conditional ? "Conditional: actions may stop or fail." : action.continue_matching ? "After success, keep checking later rules." : action.consumed ? "The command would be consumed locally." : "After success, the selected AI input would continue to the AI.";
+  const functions=(action.functions || []).map((item)=>item.name).join(", ");
+  const outcome = action.conditional ? "Actions may stop or fail. If they complete, AI would handle the selected input."
+    : action.consumed ? "The command would be consumed locally."
+    : "After success, AI would handle the selected input.";
   return `Configured: ${count} local action${count === 1 ? "" : "s"}${functions ? `, including ${functions}` : ""}. ${outcome} No action ran; no Function result was invented.`;
 }
 
 function routingSummary(response) {
   const action = response?.would_do || {};
-  if(action.conditional)return `Earlier actions may stop; any AI handoff is conditional.${unchanged}`;
-  if(action.continue_matching)return `Would apply routing, then keep checking later rules.${unchanged}`;
   const consumed = Boolean(action.consumed);
   const conversation = action.scope === "conversation";
   if (action.reset) {
@@ -41,9 +41,12 @@ export function formatRequestRuleMatchResult(panel, response) {
   const captured = Object.entries(response.captured_values || {});
   const matchKind = "Normal match";
   const actionType = rule.action_type === "local_action" ? "Local command" : "AI routing";
-  const wouldDo = rule.action_type === "local_action" ? localActionSummary(response) : routingSummary(response);
-  const chain=(response.matched_rules || []).map((item)=>`<li>${panel._e(item.rule.name)} — ${item.status === "would_send_to_ai" ? "would send to AI, stopped" : panel._e(item.status)}${item.ai_input ? ` · ${item.ai_input.conditional ? "Possible AI input: " : ""}${item.ai_input.mode === "capture" ? `Captured value: ${panel._e(item.ai_input.capture)}` : "Original request"} → ${panel._e(item.ai_input.provider_input)}` : ""}</li>`).join("");
-  return `<div class="notice on rule-match-preview"><strong>${response.conditional ? "Conditional match" : "Matched"}: ${panel._e(rule.name || "Unnamed rule")}</strong>${chain ? `<ol class="rule-match-chain">${chain}</ol>` : ""}<p>${panel._e(actionType)} · ${panel._e(matchLabel(rule.match_type))} · ${panel._e(matchKind)}</p><dl class="match-preview-details"><div><dt>Matched phrase</dt><dd>${panel._e(response.matched_phrase || "—")}</dd></div>${captured.length ? `<div><dt>Captured values</dt><dd>${captured.map(([name,value]) => `${panel._e(name)} → ${panel._e(value)}`).join("<br>")}</dd></div>` : ""}${skipped ? `<div><dt>Skipped</dt><dd>${panel._e(skipped)}: Only when conditions were false</dd></div>` : ""}<div><dt>Would happen</dt><dd>${panel._e(wouldDo)}</dd></div></dl></div>`;
+  const wouldDo = response.would_do?.needs_repair
+    ? "The matched rule needs repair. The request would stop here."
+    : rule.action_type === "local_action" ? localActionSummary(response) : routingSummary(response);
+  const aiInput = response.matched_rules?.[0]?.ai_input;
+  const inputDetail = aiInput ? `<div><dt>${aiInput.conditional ? "Possible AI input" : "AI input"}</dt><dd>${aiInput.mode === "capture" ? panel._e(aiInput.capture) : "Original request"} → ${panel._e(aiInput.provider_input)}</dd></div>` : "";
+  return `<div class="notice on rule-match-preview"><strong>${response.conditional ? "Conditional match" : "Matched"}: ${panel._e(rule.name || "Unnamed rule")}</strong><p>${panel._e(actionType)} · ${panel._e(matchLabel(rule.match_type))} · ${panel._e(matchKind)}</p><dl class="match-preview-details"><div><dt>Matched phrase</dt><dd>${panel._e(response.matched_phrase || "—")}</dd></div>${captured.length ? `<div><dt>Captured values</dt><dd>${captured.map(([name,value]) => `${panel._e(name)} → ${panel._e(value)}`).join("<br>")}</dd></div>` : ""}${skipped ? `<div><dt>Skipped</dt><dd>${panel._e(skipped)}: Only when conditions were false</dd></div>` : ""}${inputDetail}<div><dt>Would happen</dt><dd>${panel._e(wouldDo)}</dd></div></dl></div>`;
 }
 
 export function renderRequestRuleMatchTester() {

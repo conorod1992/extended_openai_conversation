@@ -279,6 +279,40 @@ async def test_archive_wrapper_preserves_expected_runtime_errors() -> None:
         )
 
 
+async def test_archive_get_hides_local_identifiers_from_the_model() -> None:
+    agent = _runtime_agent()
+    local_session = {
+        "session_id": "archive-id",
+        "title": "Kitchen",
+        "scope_id": "user:alice",
+        "source_device_id": "device-id",
+        "home_assistant_conversation_id": "ha-id",
+        "agent_subentry_id": "assistant-id",
+    }
+    page = {
+        "session": local_session,
+        "turns": [{"user_text": "Turn on the lights"}],
+        "has_more": True,
+        "next_start_turn": 4,
+    }
+    agent._archive.async_get = AsyncMock(return_value=page)
+    token = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_id="user:alice"))
+    )
+    try:
+        result = await agent._async_execute_archive_tool(
+            "get", {"session_id": "archive-id", "start_turn": 3}
+        )
+    finally:
+        owner._ACTIVE_TURN.reset(token)
+
+    assert result == {**page, "session": {"session_id": "archive-id", "title": "Kitchen"}}
+    assert local_session["scope_id"] == "user:alice"
+    agent._archive.async_get.assert_awaited_once_with(
+        "user:alice", "archive-id", 3, 6, text_offset=0
+    )
+
+
 @pytest.mark.parametrize("arguments", [{}, {"query": None}, {"query": 123}])
 def test_require_nonblank_query_rejects_missing_or_non_string_query(arguments) -> None:
     with pytest.raises(ValueError, match="query is required"):

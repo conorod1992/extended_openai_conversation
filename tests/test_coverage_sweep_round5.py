@@ -274,18 +274,6 @@ def test_model_catalog_validation_rejects_snapshot_cycle() -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_skill_source_ref_rejects_whitespace_version_fallback(hass, monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses import services
-
-    monkeypatch.setattr(
-        services,
-        "async_get_integration",
-        AsyncMock(return_value=SimpleNamespace(version=None)),
-    )
-    assert await services.async_skill_source_ref(hass) == services.GITHUB_SKILLS_BRANCH
-
-
-@pytest.mark.asyncio
 async def test_service_admin_rejects_missing_user(hass) -> None:
     from custom_components.extended_openai_conversation_responses import services
 

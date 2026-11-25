@@ -10,7 +10,7 @@ ROOT = Path(__file__).parents[1] / "custom_components" / "extended_openai_conver
 
 def test_action_field_names_are_published_in_metadata_and_english_translations() -> None:
     actions = (
-        "call_function", "download_skill", "memory_list", "memory_delete",
+        "call_function", "memory_list", "memory_delete",
         "memory_clear", "enable_function_tools", "disable_function_tools",
         "enable_function_groups", "disable_function_groups",
         "guest_mode_update", "guest_mode_disable",
@@ -20,6 +20,9 @@ def test_action_field_names_are_published_in_metadata_and_english_translations()
         json.loads((ROOT / "strings.json").read_text(encoding="utf-8")),
         json.loads((ROOT / "translations/en.json").read_text(encoding="utf-8")),
     ]
+    assert "download_skill" not in services and "reload_skills" in services
+    for path in [ROOT / "strings.json", *sorted((ROOT / "translations").glob("*.json"))]:
+        assert "download_skill" not in json.loads(path.read_text(encoding="utf-8"))["services"]
     for action in actions:
         for field, details in services[action]["fields"].items():
             assert details.get("name"), (action, field)

@@ -44,7 +44,7 @@ The selector is built from entities currently exposed to Assist and the attribut
 
 Saved preferences for entities that are not currently exposed are shown separately. You can keep them for a future re-exposure or remove them explicitly.
 
-The preferences are part of the normal agent configuration, so normal Save, duplicate, configuration import/export, full backup, and restore flows carry them with the rest of the agent settings.
+The preferences are part of the normal agent configuration, so saving, duplicating, and private backup and restore carry them with the rest of the agent settings.
 
 ## Prompt representation
 

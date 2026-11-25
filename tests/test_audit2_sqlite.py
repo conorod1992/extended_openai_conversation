@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import re
 import sqlite3
+from unittest.mock import AsyncMock
 
 import pytest
 import yaml
@@ -335,3 +336,29 @@ async def test_bound_containers_rejected(hass, history, value):
             {"query": "SELECT :value", "parameters": {"value": "{{ value }}"}},
             {"value": value},
         )
+
+
+@pytest.mark.parametrize("value", [-(2**63), 2**63 - 1])
+async def test_bound_integers_accept_sqlite_range_limits(hass, history, value):
+    assert await run(
+        hass,
+        history,
+        {"query": "SELECT :value AS bound", "parameters": {"value": "{{ value }}"}},
+        {"value": value},
+    ) == [{"bound": value}]
+
+
+@pytest.mark.parametrize("value", [-(2**63) - 1, 2**63])
+async def test_bound_integer_overflow_is_a_handled_error_before_executor(
+    hass, history, monkeypatch, value
+):
+    executor = AsyncMock()
+    monkeypatch.setattr(hass, "async_add_executor_job", executor)
+    with pytest.raises(HomeAssistantError, match="signed 64-bit range"):
+        await run(
+            hass,
+            history,
+            {"query": "SELECT :value", "parameters": {"value": "{{ value }}"}},
+            {"value": value},
+        )
+    executor.assert_not_awaited()

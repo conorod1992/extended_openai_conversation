@@ -16,6 +16,9 @@ from custom_components.extended_openai_conversation_responses.const import DOMAI
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
+from custom_components.extended_openai_conversation_responses.exceptions import (
+    EffectOutcomeUnknown,
+)
 from custom_components.extended_openai_conversation_responses.execution_arguments import (
     execution_identity,
 )
@@ -25,18 +28,20 @@ from custom_components.extended_openai_conversation_responses.execution_outcomes
 from custom_components.extended_openai_conversation_responses.function_call_budget import (
     FunctionCallBudget,
 )
+from custom_components.extended_openai_conversation_responses.functions import native
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.tool_exchange import (
     async_execute_tool_exchange,
 )
-from custom_components.extended_openai_conversation_responses.functions import native
 from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
-    remember_unacknowledged_calls,
     async_was_unacknowledged_equivalent,
+    remember_unacknowledged_calls,
 )
 from homeassistant.core import SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_function_tool_error_recovery import _call, _chat_log, _retain_calls
-
 
 RAW = {"domain": "light", "service": "toggle", "entity_id": "light.kitchen"}
 ALIAS = {
@@ -185,7 +190,7 @@ async def test_native_batch_keeps_unknown_adapter_failures_uncertain(
 
 
 @pytest.mark.parametrize(
-    "mode", ["success", "committed_error", "rejected_write", "unreadable"]
+    "mode", ["success", "committed_error", "rejected_write", "unreadable", "malformed"]
 )
 async def test_scheduler_receipts_follow_authoritative_queue_generation(hass, mode):
     manager = delayed_tools.DelayedToolManager(hass)
@@ -201,6 +206,8 @@ async def test_scheduler_receipts_follow_authoritative_queue_generation(hass, mo
     async def load():
         if mode == "unreadable":
             raise OSError("read failed")
+        if mode == "malformed":
+            return {"unknown_payload": True}
         return deepcopy(persisted)
 
     manager._store = SimpleNamespace(async_save=save, async_load=load)
@@ -208,16 +215,20 @@ async def test_scheduler_receipts_follow_authoritative_queue_generation(hass, mo
     entity, log, tool = _entity(hass), _chat_log(hass), _tool()
     call = _call("first", "effect", {**RAW, "delay": {"seconds": 30}})
     _retain_calls(log, [call])
-    if mode == "success":
-        await _execute(entity, tool, call)
-    else:
+    if mode in {"success", "committed_error"}:
+        result = await _execute(entity, tool, call)
+        assert tool_result_data(result) == {"result": "Scheduled"}
+    elif mode == "rejected_write":
         with pytest.raises(OSError, match="write acknowledgement"):
+            await _execute(entity, tool, call)
+    else:
+        with pytest.raises(EffectOutcomeUnknown, match="may have taken effect"):
             await _execute(entity, tool, call)
     expected = (
         "rejected"
         if mode == "rejected_write"
         else "uncertain"
-        if mode == "unreadable"
+        if mode in {"unreadable", "malformed"}
         else "completed"
     )
     assert entity._execution_tool_outcomes[id(call)] == expected
@@ -231,7 +242,7 @@ async def test_scheduler_receipts_follow_authoritative_queue_generation(hass, mo
         mode != "rejected_write"
     )
     assert await async_was_unacknowledged_equivalent(entity, log, different) is (
-        mode == "unreadable"
+        mode in {"unreadable", "malformed"}
     )
     if mode in {"success", "committed_error"}:
         # The provider recovery guard stops the duplicate before it can queue.

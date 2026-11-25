@@ -7,14 +7,14 @@ from typing import Any
 import pytest
 import voluptuous as vol
 
-from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers import llm
-
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
     async_discover,
     reference_key,
 )
+from homeassistant.core import Context, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import llm
 from tests_real_ha.test_management_backend_acceptance import (
     ADMIN_ID,
     _admin_client,
@@ -226,3 +226,57 @@ async def test_public_assist_invalid_native_arguments_settle_and_recover(hass, m
     assert len(tool.calls) == 1
     assert tool.calls[0][0].tool_args["value"] == "recovered"
     assert len([item for item in sent[3]["messages"] if item["role"] == "tool" and item["tool_call_id"] == "invalid-native"]) == 1
+
+
+async def test_public_assist_stops_after_ha_tool_loses_acknowledgement(
+    hass, monkeypatch
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        new_reference_tool,
+    )
+    from tests_real_ha.test_cross_feature_acceptance import (
+        _agent,
+        _provider,
+        _say,
+        _speech,
+    )
+
+    class ActionTool(AcceptanceEchoTool):
+        integration = DOMAIN
+
+        async def async_call(self, hass, tool_input, llm_context):
+            self.calls.append((tool_input, llm_context))
+            raise HomeAssistantError("Private acknowledgement failure")
+
+    tool = ActionTool()
+    api = AcceptanceAPI(hass, tool)
+    llm.async_register_api(hass, api)
+    saved = new_reference_tool(
+        {
+            "type": "ha_llm",
+            "source_type": "api",
+            "api_id": api.id,
+            "source_id": f"{type(tool).__module__}.{type(tool).__qualname__}",
+            "tool_name": tool.name,
+        },
+        set(),
+    )
+    agent = await _agent(hass, functions=[saved], function_tool_error_recovery=False)
+    sent = _provider(
+        monkeypatch,
+        agent,
+        [
+            {
+                "index": 0,
+                "id": "lost-ack",
+                "type": "function",
+                "function": {
+                    "name": saved["spec"]["name"],
+                    "arguments": '{"value":"run"}',
+                },
+            },
+        ],
+    )
+    result = await _say(hass, agent, "Call the test action")
+    assert "may have taken effect" in _speech(result, successful=False)
+    assert len(sent) == len(tool.calls) == 1

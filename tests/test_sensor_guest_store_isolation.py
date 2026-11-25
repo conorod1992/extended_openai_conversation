@@ -13,7 +13,39 @@ from custom_components.extended_openai_conversation_responses.persistence_harden
     StorageRepairRequired,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from tests.test_sensor_coverage import FakeUsage, _subentry
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+async def test_guest_io_failure_keeps_sibling_and_usage_sensors(tmp_path, monkeypatch, wrapped):
+    hass = HomeAssistant(str(tmp_path))
+    bad, good = _subentry(), _subentry()
+    bad.subentry_id, good.subentry_id = "unavailable", "healthy"
+    entry = SimpleNamespace(entry_id="provider", subentries={"bad": bad, "good": good})
+    native_load = guest_mode.PropagatingWriteStore.async_load
+    failed = False
+
+    async def load(store):
+        nonlocal failed
+        if store.key.endswith(".unavailable") and not failed:
+            failed = True
+            io_error = OSError("temporary read I/O failure")
+            if wrapped:
+                raise HomeAssistantError("native storage read failed") from io_error
+            raise io_error
+        return await native_load(store)
+
+    monkeypatch.setattr(guest_mode.PropagatingWriteStore, "async_load", load)
+    monkeypatch.setattr(sensor, "async_get_usage", AsyncMock(return_value=FakeUsage()))
+    additions = {}
+    await sensor.async_setup_entry(hass, entry, lambda entities, **kw: additions.update({kw["config_subentry_id"]: entities}))
+    assert len(additions["unavailable"]) == len(additions["healthy"]) == 5
+    assert not additions["unavailable"][-1].available
+    assert additions["healthy"][-1].available
+    await guest_mode.async_get_guest_mode(hass, entry.entry_id, bad.subentry_id)
+    assert additions["unavailable"][-1].available
+    await hass.async_stop(force=True)
 
 
 @pytest.mark.parametrize("damage", ["schedule", "json"])

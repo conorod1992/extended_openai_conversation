@@ -150,21 +150,6 @@ def test_usage_pagination_controls_have_reviewed_browser_coverage() -> None:
         assert selector in spec
 
 
-def test_sharing_initialization_retry_has_reviewed_browser_coverage() -> None:
-    controls = next(
-        item
-        for item in _payload()["conditional_controls"]
-        if item["source"] == "request-rules-ui-core.js"
-    )
-    assert controls["selectors"] == ["[data-retry-rule-sharing]"]
-    spec = (ROOT / controls["browser_spec"]).read_text(encoding="utf-8")
-    assert "reachabilityInventory.viewports" in spec
-    assert "page.setViewportSize" in spec
-    assert "scrollIntoViewIfNeeded" in spec
-    assert "click({trial:true})" in spec
-    assert controls["selectors"][0] in spec
-
-
 def test_complete_group_repair_controls_have_reviewed_browser_coverage() -> None:
     controls = next(
         item for item in _payload()["conditional_controls"]

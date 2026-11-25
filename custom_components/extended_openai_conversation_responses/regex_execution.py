@@ -28,7 +28,12 @@ from .const import (
     MAX_SPEECH_REGEX_REPLACEMENT_LENGTH,
     MAX_SPEECH_REGEX_RULES,
 )
-from .speech import _built_in_cleanup, _final_whitespace_cleanup, _SpeechText
+from .speech import (
+    _built_in_cleanup,
+    _final_whitespace_cleanup,
+    _LiteralSpan,
+    _SpeechText,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _CONFIGURED_REGEX_TIMEOUT_SECONDS = 1.0
@@ -46,7 +51,7 @@ MIN_SPEECH_REPLACEMENT_OUTPUT_ALLOWANCE = 4_096
 # receives data over stdin. A catastrophic Python ``re`` match can therefore hold
 # only the child's GIL, and the parent can terminate the child at the deadline.
 _REGEX_WORKER = r"""
-from bisect import bisect_left
+from bisect import bisect_right
 import json
 import re
 import sys
@@ -55,7 +60,7 @@ class OutputLimitError(Exception):
     pass
 
 
-def bounded_sub(pattern, replacement, text, max_chars, literal_punctuation):
+def bounded_sub(pattern, replacement, text, max_chars, spans):
     compiled = re.compile(pattern)
     # Validate backreferences even when the pattern finds no matches.
     compiled.sub(replacement, "", count=-1)
@@ -69,15 +74,26 @@ def bounded_sub(pattern, replacement, text, max_chars, literal_punctuation):
     pieces = []
     size = 0
     end = 0
-    copied_punctuation = []
+    copied_spans = []
+    span_ends = [span[1] for span in spans]
 
-    def copy_punctuation(start, end, output_start):
-        copied_punctuation.extend(
-            position + output_start - start
-            for position in literal_punctuation[
-                bisect_left(literal_punctuation, start):bisect_left(literal_punctuation, end)
-            ]
-        )
+    def append_span(start, end, kind):
+        if start < end:
+            if copied_spans and copied_spans[-1][1:] == [start, kind]:
+                copied_spans[-1][1] = end
+            else:
+                copied_spans.append([start, end, kind])
+
+    def copy_spans(start, end, output_start):
+        for index in range(bisect_right(span_ends, start), len(spans)):
+            left, right, kind = spans[index]
+            if left >= end:
+                break
+            append_span(
+                output_start + max(left, start) - start,
+                output_start + min(right, end) - start,
+                kind,
+            )
 
     for match in compiled.finditer(text):
         gap = match.start() - end
@@ -86,7 +102,14 @@ def bounded_sub(pattern, replacement, text, max_chars, literal_punctuation):
             raise OutputLimitError
         if gap:
             pieces.append(text[end:match.start()])
-            copy_punctuation(end, match.start(), size - gap)
+            copy_spans(end, match.start(), size - gap)
+        replacement_start = size
+        containing = bisect_right(span_ends, match.start())
+        in_code = (
+            containing < len(spans) and spans[containing][2] in {"code", "block_code"}
+            and spans[containing][0] <= match.start()
+            and match.end() <= spans[containing][1]
+        )
         for part in template:
             expanded = (match.group(part) or "") if isinstance(part, int) else part
             size += len(expanded)
@@ -94,15 +117,17 @@ def bounded_sub(pattern, replacement, text, max_chars, literal_punctuation):
                 raise OutputLimitError
             if expanded:
                 pieces.append(expanded)
-                if isinstance(part, int):
-                    copy_punctuation(match.start(part), match.end(part), size - len(expanded))
+                if isinstance(part, int) and not in_code:
+                    copy_spans(match.start(part), match.end(part), size - len(expanded))
+        if in_code:
+            append_span(replacement_start, size, spans[containing][2])
         end = match.end()
-    copy_punctuation(end, len(text), size)
+    copy_spans(end, len(text), size)
     size += len(text) - end
     if max_chars > 0 and size > max_chars:
         raise OutputLimitError
     pieces.append(text[end:])
-    return "".join(pieces), copied_punctuation
+    return "".join(pieces), copied_spans
 
 
 payload = json.load(sys.stdin)
@@ -131,15 +156,15 @@ elif op == "match_keys":
 elif op == "sub_many":
     original = payload.get("text", "")
     text = original
-    original_punctuation = payload.get("literal_punctuation", [])
-    literal_punctuation = original_punctuation
+    original_spans = payload.get("literal_spans", [])
+    spans = original_spans
     invalid = []
     overflow = False
     max_output_chars = int(payload.get("max_output_chars", 0))
     for item in payload.get("items", []):
         try:
-            candidate, candidate_punctuation = bounded_sub(
-                item["pattern"], item["replacement"], text, max_output_chars, literal_punctuation
+            candidate, candidate_spans = bounded_sub(
+                item["pattern"], item["replacement"], text, max_output_chars, spans
             )
         except OutputLimitError:
             overflow = True
@@ -153,16 +178,16 @@ elif op == "sub_many":
             overflow = True
             break
         text = candidate
-        literal_punctuation = candidate_punctuation
+        spans = candidate_spans
     output = {
         "text": original if overflow or (invalid and not payload.get("continue_invalid")) else text,
         "invalid": invalid,
         "overflow": overflow,
     }
-    if "literal_punctuation" in payload:
-        output["literal_punctuation"] = (
-            original_punctuation if overflow or (invalid and not payload.get("continue_invalid"))
-            else literal_punctuation
+    if "literal_spans" in payload:
+        output["literal_spans"] = (
+            original_spans if overflow or (invalid and not payload.get("continue_invalid"))
+            else spans
         )
 else:
     raise SystemExit("unsupported regex worker operation")
@@ -372,7 +397,7 @@ async def _async_apply_speech_replacements(text: str, rules: object) -> str:
             {
                 "op": "sub_many",
                 "text": text,
-                "literal_punctuation": getattr(text, "literal_punctuation", ()),
+                "literal_spans": _speech_span_payload(text),
                 "items": items,
                 "max_output_chars": _speech_output_limit(len(text)),
             }
@@ -423,26 +448,41 @@ async def _async_apply_speech_replacements(text: str, rules: object) -> str:
     return _speech_replacement_text(text, value, result)
 
 
-def _speech_replacement_text(original: str, value: str, result: dict[str, Any]) -> str:
-    """Retain escape provenance only for copied text, including backreferences."""
-    if not isinstance(original, _SpeechText) or not original.literal_punctuation:
-        return value
-    positions = result.get("literal_punctuation")
-    if (
-        isinstance(positions, list)
-        and len(positions) <= len(value)
-        and all(
-            type(position) is int
-            and 0 <= position < len(value)
-            and value[position] in ",.;:!?"
-            for position in positions
-        )
-        and all(left < right for left, right in pairwise(positions))
-    ):
-        return _SpeechText(value, tuple(positions))
-    _LOGGER.warning(
-        "Speech regex worker lost literal punctuation; preserving spoken text"
+def _speech_span_payload(text: str) -> list[tuple[int, int, str]]:
+    return (
+        [(span.start, span.end, span.kind) for span in text.spans]
+        if isinstance(text, _SpeechText)
+        else []
     )
+
+
+def _speech_replacement_text(original: str, value: str, result: dict[str, Any]) -> str:
+    """Validate the worker's mapping of literal speech ranges to the new text."""
+    if not isinstance(original, _SpeechText):
+        return value
+    spans = result.get("literal_spans")
+    if (
+        isinstance(spans, list)
+        and len(spans) <= len(value)
+        and all(
+            isinstance(span, list)
+            and len(span) == 3
+            and type(span[0]) is int
+            and type(span[1]) is int
+            and 0 <= span[0] < span[1] <= len(value)
+            and (
+                span[2] in ("code", "block_code")
+                or (
+                    span[2] == "escaped"
+                    and all(c in ",.;:!?" for c in value[span[0] : span[1]])
+                )
+            )
+            for span in spans
+        )
+        and all(left[1] <= right[0] for left, right in pairwise(spans))
+    ):
+        return _SpeechText(value, tuple(_LiteralSpan(*span) for span in spans))
+    _LOGGER.warning("Speech regex worker lost literal spans; preserving spoken text")
     return original
 
 
@@ -497,7 +537,7 @@ def apply_speech_replacements(text: str, rules: object) -> str:
             {
                 "op": "sub_many",
                 "text": text,
-                "literal_punctuation": getattr(text, "literal_punctuation", ()),
+                "literal_spans": _speech_span_payload(text),
                 "items": items,
                 "max_output_chars": _speech_output_limit(len(text)),
                 "continue_invalid": True,

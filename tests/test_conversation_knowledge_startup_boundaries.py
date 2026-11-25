@@ -143,7 +143,7 @@ async def test_optional_managers_begin_loading_concurrently(
         await release.wait()
         return result
 
-    archive = SimpleNamespace(async_prune=AsyncMock())
+    archive = SimpleNamespace(async_prune=AsyncMock(), needs_storage_repair=False)
     memory = SimpleNamespace(set_embedding_provider=Mock())
     monkeypatch.setattr(
         conversation_module,
@@ -259,7 +259,7 @@ async def test_optional_storage_startup_failure_is_isolated(
     )
     monkeypatch.setattr(conversation_module, "memory_enabled", lambda _data: True)
 
-    archive = SimpleNamespace(async_prune=AsyncMock())
+    archive = SimpleNamespace(async_prune=AsyncMock(), needs_storage_repair=False)
     memory = SimpleNamespace(set_embedding_provider=Mock())
     initializers = {
         "temporary_memory": AsyncMock(return_value=object()),

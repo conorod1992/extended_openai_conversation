@@ -13,10 +13,37 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     intercom,
     intercom_panel,
+    intercom_services,
 )
 from homeassistant.components.websocket_api.messages import message_to_json_bytes
 from homeassistant.core import Context
-from tests.test_broadcast_admission_contract import admission  # noqa: F401
+from homeassistant.exceptions import HomeAssistantError
+from tests.test_broadcast_admission_contract import admission, assert_no_admission  # noqa: F401
+
+
+async def test_punctuation_rejected_at_service_and_websocket_entries(hass, admission, monkeypatch):
+    manager, _, _, check = admission
+    getter = AsyncMock(return_value=manager)
+    monkeypatch.setattr(intercom_panel, "async_get_intercom", getter)
+    monkeypatch.setattr(intercom_services, "async_get_intercom", getter)
+    context = Context(user_id="owner")
+    connection = SimpleNamespace(context=lambda _: context, send_result=Mock(), send_error=Mock())
+    for operation in [{}, {"operation_id": f"{manager.retry_token()}:{'a' * 32}"}]:
+        await intercom_panel.websocket_broadcast.__wrapped__(
+            hass, connection, {"id":1, "action":"send", "message":"…", "whole_home":True, **operation}
+        )
+        assert connection.send_error.call_args.args == (
+            1, "invalid_request", "Broadcast message must contain a letter or number",
+        )
+    connection.send_result.assert_not_called()
+    assert manager._retry_admissions == {}
+    hass.services.has_service.return_value = False
+    await intercom_services.async_setup_intercom_services(hass)
+    handler = hass.services.async_register.call_args.args[2]
+    with pytest.raises(HomeAssistantError, match="letter or number"):
+        await handler(SimpleNamespace(data={"message":"!!!", "whole_home":True, "ttl_seconds":30}, context=context))
+    check.assert_not_called()
+    assert_no_admission(manager)
 
 
 @pytest.mark.parametrize("contract", ["current", "legacy"])

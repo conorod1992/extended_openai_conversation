@@ -300,10 +300,10 @@ async def test_disabled_temporary_memory_cancels_and_drains_prefetch(runtime_age
     assert _ACTIVE_INVOCATION.get().temporary_memory_prefetch is None
 
 
-@pytest.mark.parametrize("parallel", [False, True])
+@pytest.mark.parametrize("read_only", [False, True])
 @pytest.mark.parametrize("recovery", [False, True])
 async def test_validation_once_and_results_in_provider_order(
-    hass, monkeypatch, parallel, recovery
+    hass, monkeypatch, read_only, recovery
 ):
     agent = object.__new__(base.ExtendedOpenAIBaseLLMEntity)
     agent.hass = hass
@@ -320,7 +320,7 @@ async def test_validation_once_and_results_in_provider_order(
             },
             "function": {
                 "type": "native",
-                "name": "get_history" if parallel else "execute_service_single",
+                "name": "get_history" if read_only else "execute_service_single",
             },
         }
         for index in range(2)
@@ -370,7 +370,7 @@ async def test_validation_once_and_results_in_provider_order(
         {"value": 0},
         {"value": 1},
     ]
-    assert executed == ([1, 0] if parallel else [0, 1])
+    assert executed == [0, 1]
     assert function_execution._VALIDATED_CALL.get() is None
 
 
@@ -396,10 +396,10 @@ async def test_prepared_validation_is_specific_to_call_schema_and_arguments(
     assert function_execution._VALIDATED_CALL.get() is None
 
 
-@pytest.mark.parametrize("parallel", [False, True])
+@pytest.mark.parametrize("read_only", [False, True])
 @pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
 async def test_owned_executor_failure_closes_every_retained_call(
-    hass, monkeypatch, parallel, failure
+    hass, monkeypatch, read_only, failure
 ):
     agent = object.__new__(base.ExtendedOpenAIBaseLLMEntity)
     agent.hass = hass
@@ -409,10 +409,10 @@ async def test_owned_executor_failure_closes_every_retained_call(
             "spec": {"name": str(index), "parameters": {"type": "object"}},
             "function": {
                 "type": "native",
-                "name": "get_history" if parallel else "execute_service_single",
+                "name": "get_history" if read_only else "execute_service_single",
             },
         }
-        for index in range(2)
+        for index in range(3)
     ]
     calls = [
         llm.ToolInput(
@@ -421,15 +421,15 @@ async def test_owned_executor_failure_closes_every_retained_call(
             tool_args={"value": index},
             external=True,
         )
-        for index in range(2)
+        for index in range(3)
     ]
     completed = []
 
     async def execute(_hass, _config, arguments, *_args):
         try:
-            if arguments["value"] == 0:
+            if arguments["value"] == 1:
                 raise failure("failed execution")
-            return "second result"
+            return "first result"
         finally:
             completed.append(arguments["value"])
 
@@ -440,20 +440,25 @@ async def test_owned_executor_failure_closes_every_retained_call(
     log.async_add_assistant_content_without_tools(
         conversation.AssistantContent(agent_id=agent.entity_id, tool_calls=calls)
     )
+    budget = FunctionCallBudget(3)
     with pytest.raises(failure):
         await tool_exchange.async_execute_tool_exchange(
             agent,
             log,
             calls,
             tools,
-            FunctionCallBudget(2),
+            budget,
             None,
             [],
             recovery_state=ToolRecoveryState(enabled=True),
         )
     results = [item for item in log.content if is_tool_result_content(item)]
-    assert [item.tool_call_id for item in results] == ["0", "1"]
-    assert len(completed) == (2 if parallel else 1)
+    assert [item.tool_call_id for item in results] == ["0", "1", "2"]
+    assert tool_result_data(results[0])["result"] == "first result"
+    assert tool_result_data(results[1])["result"]["status"] == "error"
+    assert tool_result_data(results[2])["result"]["status"] == "skipped"
+    assert completed == [0, 1]
+    assert budget.used == 2
     assert function_execution._VALIDATED_CALL.get() is None
 
 
@@ -523,6 +528,7 @@ async def test_request_cancellation_survives_disabled_prefetch_cleanup(runtime_a
 
 
 async def test_prefetch_is_drained_when_live_policy_check_fails(runtime_agent):
+    runtime_agent._temporary_memory = SimpleNamespace(initialized=True)
     task = asyncio.create_task(asyncio.sleep(60))
     _ACTIVE_INVOCATION.set(replace(_ACTIVE_INVOCATION.get(), temporary_memory_prefetch=task))
     runtime_agent._effective_guest_policy = Mock(
@@ -537,6 +543,8 @@ async def test_prefetch_is_drained_when_live_policy_check_fails(runtime_agent):
 async def test_failed_completed_prefetch_is_drained_on_policy_failure(
     runtime_agent, caplog
 ):
+    runtime_agent._temporary_memory = SimpleNamespace(initialized=True)
+
     async def fail():
         raise RuntimeError("prefetch policy failed")
 

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
+
+import pytest
 
 from homeassistant.components import conversation
 
@@ -63,12 +64,12 @@ def _completed_event(input_tokens: int, output_tokens: int) -> SimpleNamespace:
     )
 
 
-def _invalid_tool_stream() -> FakeStream:
+def _invalid_tool_stream(arguments: str) -> FakeStream:
     item = SimpleNamespace(
         type="function_call",
         call_id="invalid-1",
         name="set_mode",
-        arguments=json.dumps({}),
+        arguments=arguments,
     )
     return FakeStream(
         [
@@ -115,11 +116,12 @@ def _chat_log(hass: Any) -> conversation.ChatLog:
     return chat_log
 
 
-async def test_recovery_provider_round_is_accounted_once(hass) -> None:
+@pytest.mark.parametrize("arguments", ["{}", '{"mode":NaN}'])
+async def test_recovery_provider_round_is_accounted_once(hass, arguments: str) -> None:
     """A correction round records two provider requests without inventing a tool run."""
     client = SimpleNamespace(
         responses=SimpleNamespace(
-            create=AsyncMock(side_effect=[_invalid_tool_stream(), _final_stream()])
+            create=AsyncMock(side_effect=[_invalid_tool_stream(arguments), _final_stream()])
         )
     )
     usage = UsageProbe()

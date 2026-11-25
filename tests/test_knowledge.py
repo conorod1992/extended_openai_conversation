@@ -37,7 +37,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 
 def test_management_panel_knowledge_limits_match_backend() -> None:
-    """Keep browser maxlength constraints aligned with backend validation."""
+    """Use backend limits without the browser's UTF-16 truncation."""
     panel = (
         Path(__file__).parents[1]
         / "custom_components"
@@ -49,9 +49,9 @@ def test_management_panel_knowledge_limits_match_backend() -> None:
     assert f"const KNOWLEDGE_TITLE_LIMIT = {MAX_TITLE_LENGTH};" in panel
     assert f"const KNOWLEDGE_DESCRIPTION_LIMIT = {MAX_DESCRIPTION_LENGTH};" in panel
     assert f"const KNOWLEDGE_LIMIT = {MAX_CONTENT_LENGTH};" in panel
-    assert 'maxlength="${KNOWLEDGE_TITLE_LIMIT}"' in panel
-    assert 'maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}"' in panel
-    assert 'maxlength="${KNOWLEDGE_LIMIT}"' in panel
+    assert 'maxlength="${KNOWLEDGE_TITLE_LIMIT}"' not in panel
+    assert 'maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}"' not in panel
+    assert 'maxlength="${KNOWLEDGE_LIMIT}"' not in panel
 
 
 class FakeStorage:
@@ -76,6 +76,80 @@ async def _library(storage=None) -> KnowledgeLibrary:
     return library
 
 
+async def test_management_knowledge_create_replay_and_duplicate_confirmation(
+    hass, management_agent, management_message, monkeypatch
+):
+    entry, subentry = management_agent
+    token = "1" * 32
+    message = management_message(
+        "knowledge", "create", title="Reference", description="Notes",
+        content="The source text", enabled=True, create_token=token,
+    )
+    saved, concurrent = await asyncio.gather(*(
+        async_management_command(hass, "admin", True, message) for _ in range(2)
+    ))
+    source = saved["source"]
+    assert concurrent["source"] == source
+    assert "creation_fingerprint" not in source
+
+    storage = knowledge.HomeAssistantKnowledgeStorage(hass, entry.entry_id, subentry.subentry_id)
+    assert Path(storage._store.path).is_file()
+    fresh = await _library(storage)
+    monkeypatch.setattr("custom_components.extended_openai_conversation_responses.management_ui.async_get_knowledge", AsyncMock(return_value=fresh))
+    assert fresh.total_source_count == 1
+    assert (await async_management_command(hass, "admin", True, message))["source"] == source
+    with pytest.raises(ValueError, match="different submission"):
+        await async_management_command(hass, "admin", True, {**message, "content": "Other text"})
+
+    duplicate = {**message, "create_token": "2" * 32}
+    assert await async_management_command(hass, "admin", True, duplicate) == {"status": "duplicate"}
+    assert fresh.total_source_count == 1
+    copy = await async_management_command(hass, "admin", True, {**duplicate, "confirm_duplicate": True})
+    assert copy["source"]["source_id"] != source["source_id"]
+    other = await async_management_command(hass, "admin", True, {**message, "create_token": "3" * 32, "content": "Other text"})
+    assert other["source"]["title"] == source["title"]
+    assert fresh.total_source_count == 3
+
+    await fresh.async_update(source["source_id"], title="Edited meanwhile")
+    fresh = await _library(storage)
+    replay = await fresh.async_create("Reference", "Notes", "The source text", create_token=token)
+    assert replay.source_id == source["source_id"]
+    assert replay.updated_at == source["updated_at"]
+    with pytest.raises(ValueError, match="changed in another tab"):
+        await fresh.async_update(replay.source_id, title="Stale edit", expected_revision=replay.updated_at)
+    assert fresh.total_source_count == 3
+
+
+async def test_knowledge_create_retries_after_disk_write_loses_acknowledgement(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses.mutation_outcomes import (
+        mutation_failure,
+    )
+    from tests.ha_store_test_helpers import disk_write_boundary
+
+    storage = knowledge.HomeAssistantKnowledgeStorage(hass, "entry", "agent")
+    library = await _library(storage)
+    writer, write_name = disk_write_boundary(storage._store)
+    write = getattr(writer, write_name)
+
+    def lose_acknowledgement(*args):
+        write(*args)
+        raise OSError("lost write acknowledgement")
+
+    token = "4" * 32
+    with monkeypatch.context() as fault:
+        fault.setattr(writer, write_name, lose_acknowledgement)
+        with pytest.raises(OSError) as failure:
+            await library.async_create("Reference", "", "The source text", create_token=token)
+        assert mutation_failure(failure.value).outcome == "uncertain"
+
+    fresh = await _library(knowledge.HomeAssistantKnowledgeStorage(hass, "entry", "agent"))
+    sources = await fresh.async_list()
+    assert len(sources) == 1
+    replay = await fresh.async_create("Reference", "", "The source text", create_token=token)
+    assert replay.source_id == sources[0]["source_id"]
+    assert fresh.total_source_count == 1
+
+
 async def test_phrase_ranking_preserves_programming_identifiers() -> None:
     library = await _library()
     await library.async_create("C# setup", "", "Follow the device instructions.")
@@ -86,6 +160,64 @@ async def test_phrase_ranking_preserves_programming_identifiers() -> None:
     results = await library.async_search("C++ setup")
 
     assert results[0].source_id == matching.source_id
+
+
+async def test_restored_mixed_timestamps_rank_and_page_by_instant() -> None:
+    stamps = {
+        "older": "2026-10-25T02:10:00+02:00",
+        "newer": "2026-10-25T00:20:00Z",
+        "first-tie": "2026-10-25T01:15:00+01:00",
+        "legacy-tie": "2026-10-25T00:15:00",
+        "newest": "2026-10-25T00:20:00.000001+00:00",
+        "maximum": "9999-12-31T23:59:59-14:00",
+        "minimum": "0001-01-01T00:00:00+14:00",
+    }
+    payload = {
+        "sources": [
+            {
+                "source_id": source_id,
+                "title": "Kitchen instructions",
+                "description": "Reference",
+                "content": "Kitchen instructions.",
+                "created_at": stamp,
+                "updated_at": stamp,
+                "enabled": True,
+            }
+            for source_id, stamp in stamps.items()
+        ],
+    }
+    library = await _library()
+    await library.async_replace_backup(KnowledgeLibrary.validate_backup_data(payload))
+
+    managed = await library.async_list()
+    assert [source["source_id"] for source in managed] == [
+        "maximum",
+        "newest",
+        "newer",
+        "first-tie",
+        "legacy-tie",
+        "older",
+        "minimum",
+    ]
+    assert library.management_source_order() == [source["source_id"] for source in managed]
+    assert {source["source_id"]: source["updated_at"] for source in managed} == stamps
+    catalogue = []
+    search = []
+    for offset in range(0, len(stamps), 2):
+        page = await library.async_catalog(limit=2, offset=offset)
+        catalogue.extend(source["source_id"] for source in page["sources"])
+        matches = await library.async_search("kitchen", limit=2, offset=offset)
+        search.extend(result.source_id for result in matches)
+    assert catalogue == search == [
+        "maximum",
+        "newest",
+        "newer",
+        "legacy-tie",
+        "first-tie",
+        "older",
+        "minimum",
+    ]
+    assert await library.async_backup_data() == payload
 
 
 async def test_empty_initialization_and_crud_persistence() -> None:
@@ -264,6 +396,17 @@ async def test_agent_isolation() -> None:
     second = await _library(FakeStorage())
     await first.async_create("Private layout", "", "Cupboard above fridge")
     assert await second.async_search("cupboard fridge") == []
+
+
+def test_knowledge_normalizes_unicode_boundaries_and_preserves_long_indentation() -> None:
+    title = "a" * MAX_TITLE_LENGTH
+    description = "b" * MAX_DESCRIPTION_LENGTH
+    content = "A" + " " * 39_999 + "B"
+    assert knowledge._validated_fields(
+        title + "\u0085",
+        description + "\u001f",
+        "\u0085" + content + " \t\r\n \tC\u0085",
+    ) == (title, description, content + "\n \tC")
 
 
 async def test_search_ranking_and_description_and_phrase_boost() -> None:
@@ -488,6 +631,23 @@ async def test_get_pagination_and_hard_limit() -> None:
     assert second["next_start_character"] == 26_000
     with pytest.raises(ValueError, match="not found"):
         await library.async_get_section("missing")
+
+
+@pytest.mark.parametrize(("query", "metadata"), [
+    ("wifi", "Wi-Fi"), ("Wi-Fi", "wifi"), ("manuals", "manual"), ("boilers", "boiler"),
+    ("manu", "Manual"), ("水", "水"),
+])
+@pytest.mark.parametrize("field", ["title", "description"])
+async def test_catalog_expands_queries_only_against_metadata(query, metadata, field):
+    library = await _library()
+    candidate = await library.async_create(
+        metadata if field == "title" else "Matching title",
+        metadata if field == "description" else "Matching description",
+        "Ordinary content",
+    )
+    await library.async_create("Unrelated title", "Unrelated description", metadata)
+    result = await library.async_catalog(query)
+    assert [row["source_id"] for row in result["sources"]] == [candidate.source_id]
 
 
 async def test_storage_migration_hook() -> None:
@@ -756,6 +916,7 @@ async def test_management_api_crud_and_list_omits_content() -> None:
             },
         )
         source_id = created["source"]["source_id"]
+        assert created["source_order"] == [source_id]
         listed = await async_management_command(
             hass, "admin", True, {**base, "action": "list"}
         )
@@ -765,7 +926,7 @@ async def test_management_api_crud_and_list_omits_content() -> None:
             hass, "admin", True, {**base, "action": "get", "source_id": source_id}
         )
         assert fetched["source"]["content"] == "Tea towels beside oven"
-        await async_management_command(
+        updated = await async_management_command(
             hass,
             "admin",
             True,
@@ -776,6 +937,7 @@ async def test_management_api_crud_and_list_omits_content() -> None:
                 "content": "Tea towels in drawer",
             },
         )
+        assert updated["source_order"] == [source_id]
         with pytest.raises(HomeAssistantError, match="confirmation"):
             await async_management_command(
                 hass,
@@ -854,6 +1016,53 @@ async def _initialized(data=None) -> tuple[knowledge.KnowledgeLibrary, StorageDo
     library = knowledge.KnowledgeLibrary(storage)
     await library.async_initialize()
     return library, storage
+
+
+async def test_restored_knowledge_ids_are_exact_across_guest_list_search_and_get(hass):
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        normalize_agent_config,
+    )
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        resolve_guest_policy,
+    )
+
+    wanted, other = " manual ", "manual"
+    backup = {"sources": [_stored_source(wanted), _stored_source(other)]}
+    library, storage = await _initialized()
+    await library.async_replace_backup(KnowledgeLibrary.validate_backup_data(backup))
+    library = await _library(storage)
+
+    options = normalize_agent_config(
+        {
+            "guest_policy_version": 2,
+            "guest_knowledge_policy": "custom",
+            "guest_knowledge_source_ids": [wanted, wanted],
+        }
+    )
+    assert options["guest_knowledge_source_ids"] == [wanted]
+    policy = resolve_guest_policy(
+        hass, options, SimpleNamespace(is_active=lambda: True), exposed_entities=[]
+    )
+    assert policy.knowledge_source_ids == frozenset({wanted})
+
+    entity = _entity(True, 2)
+    entity._knowledge = library
+    entity._effective_guest_policy = lambda: policy
+    listing = await entity._async_execute_knowledge_tool("list", {})
+    assert [source["source_id"] for source in listing["sources"]] == [wanted]
+    wanted_result = await entity._async_execute_knowledge_tool(
+        "search", {"query": "searchable", "source_ids": [wanted]}
+    )
+    assert [result["source_id"] for result in wanted_result["results"]] == [wanted]
+    other_result = await entity._async_execute_knowledge_tool(
+        "search", {"query": "searchable", "source_ids": [other]}
+    )
+    assert other_result["results"] == []
+    assert (await entity._async_execute_knowledge_tool("get", {"source_id": wanted}))[
+        "source_id"
+    ] == wanted
+    with pytest.raises(RuntimeError):
+        await entity._async_execute_knowledge_tool("get", {"source_id": other})
 
 
 @pytest.mark.asyncio

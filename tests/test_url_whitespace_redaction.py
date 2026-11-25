@@ -17,7 +17,6 @@ from custom_components.extended_openai_conversation_responses.secret_redaction i
 )
 from tests.test_backup import _document
 from tests.test_secret_restore_context import _rest_tool
-from tests.test_transfer import _portable_document
 
 SECRET = "EOAI_URL_WHITESPACE_CREDENTIAL"
 SPELLINGS = ["{}", " {}", "\n{}", "https:\n//{}", "\thttps:\r\n\t//{}"]
@@ -55,22 +54,16 @@ def config_for(spelling, persisted, kind):
 @pytest.mark.parametrize("spelling", SPELLINGS)
 @pytest.mark.parametrize("persisted", [False, True])
 @pytest.mark.parametrize("kind", ["query", "userinfo"])
-@pytest.mark.parametrize("exporter", ["setup", "backup"])
-def test_complete_exports_redact_client_normalized_urls(
-    hass, spelling, persisted, kind, exporter
+def test_legacy_export_redacts_client_normalized_urls(
+    hass, spelling, persisted, kind
 ):
     config = config_for(spelling, persisted, kind)
     if config is None:
         return  # The production validator rejected this spelling safely.
     original = deepcopy(config)
-    if exporter == "setup":
-        document = _portable_document(mode="setup")
-        document["sections"]["configuration"] = config
-        result = transfer.finalize_setup_export(document)
-    else:
-        document = _document()
-        document["agent"]["config"] = config
-        result = backup.finalize_backup_snapshot(document)
+    document = _document()
+    document["agent"]["config"] = config
+    result = backup.finalize_backup_snapshot(document)
     assert SECRET not in result["json"]
     inspected = transfer.inspect_transfer(result["document"], "target")
     assert any("resource" in path for path in inspected.redacted_sensitive_fields)

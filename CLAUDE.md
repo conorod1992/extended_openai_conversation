@@ -74,7 +74,7 @@ Abstract `Function` base class (`functions/base.py`) with implementations in sep
 `ConfigFlow` handles initial provider setup (API key, base URL and provider). Conversation assistants use the Extended OpenAI sidebar panel for detailed model, prompt, Functions, Skills and other settings; their native Home Assistant reconfiguration flow points to that panel. AI Task retains its native subentry configuration flow.
 
 ### Services (`services.py`)
-`query_image` (vision API), `change_config` (runtime config updates), `reload_skills`, `download_skill` (from GitHub).
+`query_image` (vision API), `change_config` (runtime config updates), `reload_skills` (rescan local Skill files).
 
 ### Security
 - Workspace restriction for file operations (default: `extended_openai_conversation_responses/`)

@@ -177,11 +177,10 @@ async def test_mixed_case_function_dependency_lifecycle(
     raw = _local([{selector: service, "data": {"function": "echo", "arguments": {}}}])
     with pytest.raises(HomeAssistantError, match="Missing required"):
         await _manage_rule_boundary(hass, agent, "request_rules", "create", rule=raw)
-    call = {selector: service}
+    call = {selector: service, "response_variable": "answer"}
     data = {
         "function": "echo",
         "arguments": {"message": "Keep This Case"},
-        "result_alias": "answer",
     }
     if payload == "mixed":
         call.update(data={"function": "unused", "arguments": {}}, data_template=data)
@@ -192,7 +191,7 @@ async def test_mixed_case_function_dependency_lifecycle(
         agent,
         "request_rules",
         "create",
-        rule=_local([call], success="Value {answer.value}"),
+        rule=_local([call, {"set_conversation_response": "Value {{ answer.result.value }}"}]),
     )
     rules = agent._request_rules
     snapshot = rules.snapshot()
@@ -202,7 +201,7 @@ async def test_mixed_case_function_dependency_lifecycle(
     ]
     match = rules.match("run rule")
     assert request_rule_match_preview(match)["would_do"]["functions"] == [
-        {"name": "echo", "result_alias": "answer"}
+        {"name": "echo"}
     ]
     assert _speech(await _say(hass, agent, "run rule")) == "Value Keep This Case"
     with pytest.raises(HomeAssistantError, match="Request Rules"):
@@ -279,13 +278,13 @@ async def test_inferred_object_rule_arguments_save_reload_and_execute(
                 "data": {
                     "function": "counts",
                     "arguments": {"values": values},
-                    "result_alias": "answer",
                 },
-            }
+                "response_variable": "answer",
+            },
+            {"set_conversation_response": "Count {{ answer.result[0].dynamic }}" if array else "Count {{ answer.result.dynamic }}"},
         ],
         phrase="count {amount=1..9}",
         match_type="sentence_pattern",
-        success="Count {answer.0.dynamic}" if array else "Count {answer.dynamic}",
     )
     invalid = deepcopy(rule)
     invalid_value = invalid["action"]["actions"][0]["data"]["arguments"]["values"]
@@ -375,7 +374,6 @@ async def test_mixed_case_function_actions_preserve_guest_permissions(hass, allo
                             "service": "turn_on",
                             "service_data": {"entity_id": entity_id},
                         },
-                        "result_alias": "answer",
                     },
                 }
             ],
@@ -388,3 +386,149 @@ async def test_mixed_case_function_actions_preserve_guest_permissions(hass, allo
     assert hass.states.get(entity_id).state == ("on" if allowed else "off")
     if allowed:
         assert _speech(result) == "Permitted action"
+
+
+async def test_legacy_function_response_repair_through_registered_management(
+    hass, hass_ws_client, monkeypatch
+):
+    from copy import deepcopy
+
+    from homeassistant.components import conversation
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _say, _speech
+    from tests_real_ha.test_management_backend_acceptance import (
+        _admin_client,
+        _management_response,
+    )
+    from tests_real_ha.test_request_rules_script_semantics import _local, _record_action
+
+    hass.config.legacy_templates = False
+    agent = await _agent(
+        hass,
+        functions=[{
+            "spec": {
+                "name": "battery",
+                "description": "Read a battery",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {
+                "type": "template",
+                "parse_result": True,
+                "value_template": "{{ {'level': 62} }}",
+            },
+        }],
+    )
+    entry = agent.entry
+    authored = [
+        _record_action("before"),
+        {
+            "action": "extended_openai_conversation_responses.call_function",
+            "data": {"function": "battery", "arguments": {}},
+            "response_variable": "reading",
+        },
+        {"set_conversation_response": "Battery {{ reading.result.result.level }}"},
+    ]
+    old = _local(authored, success="Done")
+    old.update(id="legacy")
+    await agent._request_rules.async_replace_backup({"rules": [old]})
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    wire = _provider(monkeypatch, agent, [])
+    effects = []
+
+    async def record(call):
+        effects.append(call.data["message"])
+
+    hass.services.async_register("rule_probe", "record", record)
+    old_result = await _say(hass, agent, "run rule")
+    assert "Function response format changed." in _speech(old_result, successful=False)
+    assert effects == []
+    assert wire == []
+
+    manager = agent._request_rules
+    saved = manager.rule_snapshot("legacy")
+    assert saved["action"]["actions"] == authored
+    repaired = deepcopy(saved)
+    repaired["action"]["actions"][2]["set_conversation_response"] = "Battery {{ reading.result.level }}"
+    client = await _admin_client(hass, hass_ws_client)
+    request = {
+        "entry": entry, "section": "request_rules", "action": "update",
+        "rule_id": "legacy", "rule": repaired, "revision": manager.revision(),
+    }
+    denied = await _management_response(client, **request)
+    assert not denied["success"], denied
+    assert "Function response format changed." in denied["error"]["message"]
+    accepted = await _management_response(client, **request, confirm=True)
+    assert accepted["success"], accepted
+    assert accepted["result"]["diagnostics"] == {}
+    assert _speech(await _say(hass, agent, "run rule")) == "Battery 62"
+    assert effects == ["before"]
+    assert wire == []
+
+
+async def test_legacy_dynamic_route_repair_through_registered_management(
+    hass, hass_ws_client, monkeypatch
+):
+    from homeassistant.components import conversation
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _rule, _say, _speech
+    from tests_real_ha.test_management_backend_acceptance import (
+        _admin_client,
+        _management_response,
+    )
+
+    agent = await _agent(hass)
+    entry = agent.entry
+    legacy = _rule(
+        "model_routing",
+        {"model": "{model}", "reasoning_effort": "high", "scope": "request", "continue_to_ai": True},
+        match_type="sentence_pattern",
+        phrase="deep think {question} with {model}",
+    )
+    legacy.update(id="old-route", ai_input_mode="capture", ai_input_capture="question")
+    trigger = "deep think why the dishwasher smells with gpt-5.1"
+    fallback = _rule(
+        "model_routing",
+        {"model": "gpt-5.6", "scope": "request", "continue_to_ai": True},
+        phrase=trigger,
+    )
+    fallback.update(id="fallback", order=1)
+    await agent._request_rules.async_replace_backup({"rules": [legacy, fallback]})
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+
+    wire = _provider(monkeypatch, agent, ["A fixed route worked"])
+    client = await _admin_client(hass, hass_ws_client)
+    preview = await _management_response(
+        client, entry=entry, section="request_rules", action="test_match", text=trigger
+    )
+    assert preview["success"], preview
+    assert preview["result"]["would_do"]["needs_repair"]
+    assert preview["result"]["would_do"]["provider_input"] == "none"
+    assert "Captured routing choices were removed" in _speech(
+        await _say(hass, agent, trigger), successful=False
+    )
+    assert wire == []
+
+    manager = agent._request_rules
+    saved = manager.rule_snapshot("old-route")
+    assert saved["action"]["model"] == "{model}"
+    repaired = {
+        **saved,
+        "phrases": ["deep think about {question}"],
+        "action": {**saved["action"], "model": "gpt-5.1"},
+    }
+    response = await _management_response(
+        client, entry=entry, section="request_rules", action="update",
+        rule_id="old-route", rule=repaired, revision=manager.revision(),
+    )
+    assert response["success"], response
+    assert response["result"]["diagnostics"] == {}
+    result = await _say(hass, agent, "deep think about why the dishwasher smells")
+    assert _speech(result) == "A fixed route worked"
+    assert len(wire) == 1
+    assert wire[0]["model"] == "gpt-5.1"
+    assert wire[0]["reasoning_effort"] == "high"
+    assert [msg["content"] for msg in wire[0]["messages"] if msg["role"] == "user"] == [
+        "why the dishwasher smells"
+    ]

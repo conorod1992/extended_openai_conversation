@@ -6,7 +6,7 @@ import asyncio
 from contextvars import Context as TaskContext
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 import hashlib
 import json
 import logging
@@ -15,7 +15,6 @@ from typing import Any, cast
 from uuid import uuid4
 
 import voluptuous as vol
-import yaml
 
 from homeassistant.components import conversation
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP
@@ -25,12 +24,14 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .agent_config import function_tool_enabled
-from .agent_maintenance import get_agent_maintenance_gate
+from .agent_maintenance import AgentRestoreRecoveryRequired, get_agent_maintenance_gate
 from .const import DOMAIN
+from .exceptions import EffectOutcomeUnknown
 from .function_tool_quarantine import (
     _runtime_configured_function_tools as configured_function_tools_from_data,
 )
 from .function_tool_resolution import latest_function_tool_for_execution
+from .function_yaml import dump_authored_function_configuration
 from .ha_permissions import bind_active_ha_context
 from .ha_tool_result_compat import ExecutionFailure, tool_result_data
 from .helpers import get_exposed_entities
@@ -38,9 +39,9 @@ from .persistence_hardening import (
     _async_repair_private_store_mode,
     _async_settle_transactional_save,
 )
+from .record_timestamps import parse_datetime
 from .request_origin import bind_request_satellite, get_request_satellite
 from .strict_store import PropagatingWriteStore, _async_settle_store_io
-from .yaml_serialization import dump_yaml
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,6 +63,15 @@ _DELAYED_EXECUTION_MARKER = "_extended_openai_delayed_execution"
 
 class _DelayedQueueLimitError(HomeAssistantError):
     """A saved queue cannot safely be admitted to the scheduler."""
+
+
+def _parse_scheduled_utc(value: str) -> datetime | None:
+    """Validate an instant with the same time zone rules used for execution."""
+    try:
+        parsed = parse_datetime(value)
+        return dt_util.as_utc(parsed) if parsed is not None else None
+    except ValueError, OverflowError:
+        return None
 
 
 def _validate_argument_budget(arguments: dict[str, Any]) -> None:
@@ -100,42 +110,14 @@ def _validate_call_capacity(
         raise _DelayedQueueLimitError("Delayed Function Tool queue capacity reached")
 
 
-class _StableFingerprintDumper(yaml.SafeDumper):
-    """Preserve YAML types while serializing unordered sets deterministically."""
-
-
-def _represent_fingerprint_set(
-    dumper: yaml.SafeDumper, value: set[Any]
-) -> yaml.nodes.MappingNode:
-    # PyYAML falls back to iteration order when mapping keys have mixed types.
-    # A set then hashes differently across process restarts/PYTHONHASHSEEDs.
-    ordered = sorted(
-        value,
-        key=lambda item: dump_yaml(item, sort_keys=True),
-    )
-    return dumper.represent_mapping(
-        "tag:yaml.org,2002:set", ((item, None) for item in ordered)
-    )
-
-
-_StableFingerprintDumper.add_representer(set, _represent_fingerprint_set)
-
-
 def tool_definition_fingerprint(tool: dict[str, Any]) -> str:
     """Hash the persisted schema and implementation, excluding presentation/state."""
     source = deepcopy(tool)
     payload = {key: source[key] for key in ("spec", "function") if key in source}
-    try:
-        encoded = json.dumps(
-            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        )
-    except TypeError:
-        # Preserve existing JSON fingerprints for pending calls. Typed YAML must
-        # retain its tags so a date and its quoted string never share an identity.
-        encoded = "yaml:" + yaml.dump(
-            payload, Dumper=_StableFingerprintDumper, sort_keys=True, allow_unicode=True
-        )
-    return hashlib.sha256(encoded.encode()).hexdigest()
+    encoded = dump_authored_function_configuration(payload)
+    # V1 omitted information about authored key types and order. Treat it as
+    # unverifiable while keeping the queue's stored hash format readable.
+    return hashlib.sha256(b"eoai-authored-tool-v2\0" + encoded.encode()).hexdigest()
 
 
 @dataclass(slots=True, frozen=True)
@@ -197,12 +179,11 @@ class DelayedToolCall:
         retry_count = raw.get("retry_count", 0)
         if not isinstance(retry_count, int) or retry_count < 0:
             raise ValueError("stored delayed call has invalid retry_count")
-        for timestamp_key in ("due_at", "created_at"):
-            parsed = dt_util.parse_datetime(raw[timestamp_key])
-            if parsed is None:
-                raise ValueError(
-                    f"stored delayed call has invalid {timestamp_key} timestamp"
-                )
+        due = _parse_scheduled_utc(raw["due_at"])
+        if due is None:
+            raise ValueError("stored delayed call has invalid due_at timestamp")
+        if _parse_scheduled_utc(raw["created_at"]) is None:
+            raise ValueError("stored delayed call has invalid created_at timestamp")
         user_id = raw.get("user_id")
         device_id = raw.get("device_id")
         satellite_id = raw.get("satellite_id")
@@ -210,13 +191,8 @@ class DelayedToolCall:
         if expires_at is not None:
             if not isinstance(expires_at, str):
                 raise ValueError("stored delayed call has invalid expires_at")
-            expiry = dt_util.parse_datetime(expires_at)
-            due = dt_util.parse_datetime(raw["due_at"])
-            if (
-                expiry is None
-                or due is None
-                or dt_util.as_utc(expiry) < dt_util.as_utc(due)
-            ):
+            expiry = _parse_scheduled_utc(expires_at)
+            if expiry is None or expiry < due:
                 raise ValueError("stored delayed call has invalid expires_at timestamp")
         fingerprint = raw.get("definition_fingerprint")
         if fingerprint is not None and (
@@ -254,6 +230,10 @@ def _delay_as_timedelta(value: Any) -> timedelta:
     """Normalize the same time-period shapes accepted by Home Assistant scripts."""
     try:
         delay = cast(timedelta, cv.time_period(value))
+    except OverflowError as err:
+        raise HomeAssistantError(
+            "Invalid Function Tool delay: duration is too large"
+        ) from err
     except (TypeError, ValueError, vol.Invalid) as err:
         raise HomeAssistantError(f"Invalid Function Tool delay: {err}") from err
     if delay.total_seconds() < 0:
@@ -478,75 +458,87 @@ class DelayedToolManager:
         if not isinstance(catch_up, bool):
             raise HomeAssistantError("Function Tool delay_catch_up must be a boolean")
         context = getattr(llm_context, "context", None)
-        record = None
-        from .execution_outcomes import execution_operation
+        from .execution_outcomes import (
+            execution_completed,
+            execution_operation,
+            execution_rejected,
+        )
 
-        operation = None
-        try:
-            async with self._lock:
-                if not self._setup_complete or self._quarantined:
-                    raise HomeAssistantError(
-                        "Delayed Function Tool scheduler is unavailable"
-                    )
-                _validate_call_capacity(
-                    self._records, entity.entry.entry_id, entity.subentry.subentry_id
+        async with self._lock:
+            if not self._setup_complete or self._quarantined:
+                raise HomeAssistantError(
+                    "Delayed Function Tool scheduler is unavailable"
                 )
-                _validate_argument_budget(arguments)
-                record = DelayedToolCall(
-                    call_id=uuid4().hex,
-                    entry_id=entity.entry.entry_id,
-                    subentry_id=entity.subentry.subentry_id,
-                    tool_name=tool_name,
-                    arguments=deepcopy(arguments),
-                    due_at=(now + delay).isoformat(),
-                    expires_at=None
+            _validate_call_capacity(
+                self._records, entity.entry.entry_id, entity.subentry.subentry_id
+            )
+            _validate_argument_budget(arguments)
+            try:
+                due_at = now + delay
+                expires_at = (
+                    None
                     if catch_up
-                    else (
-                        now + delay + timedelta(seconds=_DEFAULT_GRACE_SECONDS)
-                    ).isoformat(),
-                    created_at=now.isoformat(),
-                    user_id=getattr(context, "user_id", None),
-                    device_id=getattr(llm_context, "device_id", None),
-                    satellite_id=get_request_satellite(),
-                    definition_fingerprint=tool_definition_fingerprint(function_tool)
-                    if function_tool is not None
-                    else None,
+                    else due_at + timedelta(seconds=_DEFAULT_GRACE_SECONDS)
                 )
-                updated = dict(self._records)
-                updated[record.call_id] = record
-                with execution_operation(
-                    "delayed_job",
-                    {
-                        "operation": "schedule",
-                        "entry_id": record.entry_id,
-                        "subentry_id": record.subentry_id,
-                        "tool_name": tool_name,
-                        "arguments": arguments,
-                        "delay_seconds": delay.total_seconds(),
-                        "definition": record.definition_fingerprint,
-                        "user_id": record.user_id,
-                        "device_id": record.device_id,
-                        "satellite_id": record.satellite_id,
-                    },
-                ) as operation:
+            except OverflowError as err:
+                raise HomeAssistantError(
+                    "Function Tool delay exceeds the supported scheduling range"
+                ) from err
+            record = DelayedToolCall(
+                call_id=uuid4().hex,
+                entry_id=entity.entry.entry_id,
+                subentry_id=entity.subentry.subentry_id,
+                tool_name=tool_name,
+                arguments=deepcopy(arguments),
+                due_at=due_at.isoformat(),
+                expires_at=expires_at.isoformat() if expires_at is not None else None,
+                created_at=now.isoformat(),
+                user_id=getattr(context, "user_id", None),
+                device_id=getattr(llm_context, "device_id", None),
+                satellite_id=get_request_satellite(),
+                definition_fingerprint=tool_definition_fingerprint(function_tool)
+                if function_tool is not None
+                else None,
+            )
+            updated = {**self._records, record.call_id: record}
+            with execution_operation(
+                "delayed_job",
+                {
+                    "operation": "schedule",
+                    "entry_id": record.entry_id,
+                    "subentry_id": record.subentry_id,
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                    "delay_seconds": delay.total_seconds(),
+                    "definition": record.definition_fingerprint,
+                    "user_id": record.user_id,
+                    "device_id": record.device_id,
+                    "satellite_id": record.satellite_id,
+                },
+            ) as operation:
+                try:
                     await self._async_save_records_transactionally(updated)
-        except BaseException:
-            # Transactional readback can settle this particular queue write.
-            # An unreadable generation invalidates the manager and stays unknown.
-            if record is not None and self._setup_complete and not self._quarantined:
-                from .execution_outcomes import execution_completed, execution_rejected
-
-                receipt = operation.receipt if operation is not None else None
-                if receipt is not None:
-                    if record.call_id in self._records:
-                        execution_completed(receipt)
-                    else:
-                        execution_rejected(receipt)
-            raise
-        finally:
-            # A committed call survives a lost acknowledgement, but rejected work never arms.
-            if record is not None and self._started and record.call_id in self._records:
-                self._arm(record.call_id)
+                except BaseException as err:
+                    if not self._setup_complete or self._quarantined:
+                        if isinstance(err, Exception) and operation.receipt is not None:
+                            raise EffectOutcomeUnknown() from None
+                        raise
+                    retained = self._records.get(record.call_id)
+                    if retained is None:
+                        execution_rejected(operation.receipt)
+                        raise
+                    if retained != record:
+                        if isinstance(err, Exception):
+                            raise EffectOutcomeUnknown() from None
+                        raise
+                    execution_completed(operation.receipt)
+                    if not isinstance(err, Exception):
+                        raise
+                    # The validated readback confirmed this exact submission.
+                    record = retained
+                finally:
+                    if self._started and self._records.get(record.call_id) == record:
+                        self._arm(record.call_id)
         return record
 
     async def async_remove_agent(self, entry_id: str, subentry_id: str) -> None:
@@ -582,26 +574,34 @@ class DelayedToolManager:
             if task is not None:
                 task.cancel()
 
-    async def _async_reconcile_failed_save(self) -> None:
+    async def _async_reconcile_failed_save(
+        self, claim: DelayedToolCall | None = None
+    ) -> None:
         """Reload validated calls after a failed write acknowledgement."""
-        raw_data = await self._store.async_load() or {}
-        raw_calls = raw_data.get("calls", []) if isinstance(raw_data, dict) else []
-        if not isinstance(raw_calls, list):
+        raw_data = await _async_load_delayed_queue_store(self._store)
+        if raw_data is None or raw_data == {}:
+            raw_calls = []
+        elif not isinstance(raw_data, dict) or not isinstance(
+            raw_data.get("calls"), list
+        ):
             raise ValueError("persisted delayed Function Tools are malformed")
+        else:
+            raw_calls = raw_data["calls"]
         records: dict[str, DelayedToolCall] = {}
         for raw in raw_calls:
             record = DelayedToolCall.from_dict(raw)
             previous = self._records.get(record.call_id)
             task = self._tasks.get(record.call_id)
             # An already executing live worker still consumes admission capacity.
-            # Interrupted calls and unacknowledged transitions are never replayed.
+            # The claim caller has not dispatched yet. It can adopt the exact
+            # durable claim when the save committed but its acknowledgement failed.
             live_execution = (
                 previous is not None
                 and previous.status == _EXECUTING
                 and task is not None
                 and not task.done()
             )
-            if record.status != _EXECUTING or live_execution:
+            if record.status != _EXECUTING or live_execution or record == claim:
                 records[record.call_id] = record
                 _validate_call_capacity(records)
         _validate_call_capacity(records)
@@ -618,14 +618,21 @@ class DelayedToolManager:
         self._tasks.clear()
 
     async def _async_save_records_transactionally(
-        self, records: dict[str, DelayedToolCall]
+        self,
+        records: dict[str, DelayedToolCall],
+        *,
+        claim: DelayedToolCall | None = None,
     ) -> None:
         """Save a complete generation and reconcile any failed acknowledgement."""
+
+        async def reconcile() -> None:
+            await self._async_reconcile_failed_save(claim)
+
         await _async_settle_transactional_save(
             self._store.async_save(self._storage_payload(records)),
             lambda: None,
             lambda: setattr(self, "_records", records),
-            self._async_reconcile_failed_save,
+            reconcile,
             self._invalidate_after_unreadable_store,
         )
 
@@ -670,13 +677,13 @@ class DelayedToolManager:
                 record = self._records.get(call_id)
                 if record is None or record.status != _PENDING:
                     return
-                due_at = dt_util.parse_datetime(record.due_at)
+                due_at = _parse_scheduled_utc(record.due_at)
                 if due_at is None:
                     if await self._async_discard(call_id, "invalid due timestamp"):
                         return
                     await asyncio.sleep(_AGENT_RETRY_SECONDS)
                     continue
-                remaining = (dt_util.as_utc(due_at) - dt_util.utcnow()).total_seconds()
+                remaining = (due_at - dt_util.utcnow()).total_seconds()
                 if remaining > 0:
                     # asyncio sleeps against a monotonic clock. Bound the wait
                     # and resample wall time for both forward and backward jumps.
@@ -714,8 +721,25 @@ class DelayedToolManager:
         # Establish the lease inside the new context so nested tool execution can
         # reenter it safely even when a restore is waiting for exclusive access.
         with detached_execution():
-            async with gate.shared():
-                return await self._async_execute_due_detached(call_id)
+            try:
+                async with gate.shared():
+                    return await self._async_execute_due_detached(call_id)
+            except AgentRestoreRecoveryRequired:
+                current = self._records.get(call_id)
+                if current is None or current.status != _PENDING:
+                    return False
+                if self._execution_grace_expired(current, dt_util.utcnow()):
+                    return not await self._async_discard(
+                        call_id, "execution grace period expired"
+                    )
+                return True
+
+    @staticmethod
+    def _execution_grace_expired(record: DelayedToolCall, now: datetime) -> bool:
+        if record.expires_at is None:
+            return False
+        expiry = _parse_scheduled_utc(record.expires_at)
+        return expiry is None or now >= expiry
 
     async def _async_execute_due_detached(self, call_id: str) -> bool:
         """Re-authorize a due call against live configuration and execute it once."""
@@ -723,18 +747,16 @@ class DelayedToolManager:
         if record is None or record.status != _PENDING:
             return False
 
-        due_at = dt_util.parse_datetime(record.due_at)
+        due_at = _parse_scheduled_utc(record.due_at)
         if due_at is None:
             return not await self._async_discard(call_id, "invalid due timestamp")
         now = dt_util.utcnow()
-        if dt_util.as_utc(due_at) > now:
+        if due_at > now:
             return True
-        if record.expires_at is not None:
-            expiry = dt_util.parse_datetime(record.expires_at)
-            if expiry is None or now >= dt_util.as_utc(expiry):
-                return not await self._async_discard(
-                    call_id, "execution grace period expired"
-                )
+        if self._execution_grace_expired(record, now):
+            return not await self._async_discard(
+                call_id, "execution grace period expired"
+            )
 
         with bind_active_ha_context(Context(user_id=record.user_id)):
             entry = self.hass.config_entries.async_get_entry(record.entry_id)
@@ -826,9 +848,8 @@ class DelayedToolManager:
                     bind_request_satellite(record.satellite_id),
                 ):
                     exposed_entities = get_exposed_entities(self.hass)
-                    due_at = dt_util.parse_datetime(record.due_at)
-                    if due_at is not None:
-                        scheduled_utc = dt_util.as_utc(due_at)
+                    scheduled_utc = _parse_scheduled_utc(record.due_at)
+                    if scheduled_utc is not None:
                         lateness = (dt_util.utcnow() - scheduled_utc).total_seconds()
                         if lateness > 300:
                             # Persisted IDs need not be UUIDs. Hash rather than
@@ -890,15 +911,15 @@ class DelayedToolManager:
             if record is None or record.status != _PENDING:
                 return False, False
             now = dt_util.utcnow()
-            due = dt_util.parse_datetime(record.due_at)
+            due = _parse_scheduled_utc(record.due_at)
             if due is None:
                 raise ValueError("invalid due timestamp")
-            if dt_util.as_utc(due) > now:
+            if due > now:
                 return False, True
             updated = dict(self._records)
             if record.expires_at is not None:
-                expiry = dt_util.parse_datetime(record.expires_at)
-                if expiry is None or now >= dt_util.as_utc(expiry):
+                expiry = _parse_scheduled_utc(record.expires_at)
+                if expiry is None or now >= expiry:
                     updated.pop(call_id)
                     await self._async_save_records_transactionally(updated)
                     _LOGGER.info(
@@ -906,8 +927,13 @@ class DelayedToolManager:
                         record.tool_name,
                     )
                     return False, False
-            updated[call_id] = replace(record, status=_EXECUTING)
-            await self._async_save_records_transactionally(updated)
+            claim = updated[call_id] = replace(record, status=_EXECUTING)
+            try:
+                await self._async_save_records_transactionally(updated, claim=claim)
+            except Exception:
+                if self._records.get(call_id) != claim:
+                    raise
+                _LOGGER.warning("Recovered a committed delayed Function Tool claim")
             return True, False
 
     async def _async_retry_agent(self, record: DelayedToolCall) -> bool:

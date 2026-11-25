@@ -884,9 +884,11 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             _ai_task_clean_sampling(
                 self.options, candidate, entry_data, creation=self._is_new
             )
+            from .model_catalog_manager import require_catalogue_publication_complete
             from .request import build_provider_request_snapshot
 
             try:
+                require_catalogue_publication_complete(self.hass)
                 build_provider_request_snapshot(
                     candidate, self._get_entry().data, tools_required=False
                 )
@@ -1048,9 +1050,11 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     self.options, owned, final_data
                 )
 
+            from .model_catalog_manager import require_catalogue_publication_complete
             from .request import build_provider_request_snapshot
 
             try:
+                require_catalogue_publication_complete(self.hass)
                 build_provider_request_snapshot(
                     final_data, self._get_entry().data, tools_required=False
                 )

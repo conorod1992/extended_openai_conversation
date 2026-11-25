@@ -1,7 +1,6 @@
 """Effects, aliases and concrete captures through genuine HA/provider entry points."""
 
 import asyncio
-from copy import deepcopy
 from xml.etree.ElementTree import ParseError
 
 import pytest
@@ -15,12 +14,11 @@ from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
     SERVICE_CALL_FUNCTION,
 )
-from custom_components.extended_openai_conversation_responses.request_rules import (
-    _ACTIVE_RULE_ACTION,
-)
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+from homeassistant.const import EVENT_CALL_SERVICE
 from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.common import async_capture_events
 from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _say, _speech
 from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
@@ -97,6 +95,33 @@ def _arguments(*, equivalent=False, service="increment"):
             "entity_id": ["counter.receipt"] if equivalent else "counter.receipt"
         },
     }
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize(
+    "target",
+    ["missing-domain", "counter.receipt, counter."],
+    ids=["missing-domain", "mixed-missing-object"],
+)
+async def test_malformed_entity_target_returns_assist_error_without_dispatch(
+    hass, monkeypatch, mode, target
+):
+    agent, call, text = await _counter(hass, monkeypatch, mode)
+    events = async_capture_events(hass, EVENT_CALL_SERVICE)
+    arguments = _arguments()
+    arguments["data"]["entity_id"] = target
+    wire = _install_wire(monkeypatch, agent, [call("invalid", "effect", arguments)])
+
+    result = await _say(hass, agent, "Increment the counter")
+    assert result.response.error_code is not None
+    assert len(wire.requests) == 1
+    assert hass.states.get("counter.receipt").state == "0"
+    assert not any(event.data["domain"] == "counter" for event in events)
+
+    _install_wire(monkeypatch, agent, [call("valid", "effect", _arguments()), text("Done")])
+    assert _speech(await _say(hass, agent, "Increment the counter")) == "Done"
+    assert hass.states.get("counter.receipt").state == "1"
+    assert sum(event.data["domain"] == "counter" for event in events) == 1
 
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])
@@ -208,9 +233,9 @@ async def test_partial_composite_does_not_authorize_changed_argument_retry(
 
 @pytest.mark.parametrize("second", ["disabled", "failed"])
 @pytest.mark.parametrize(
-    "consumer", ["unconsumed", "action", "conversation_response", "success_response"]
+    "consumer", ["static", "native"]
 )
-async def test_shared_response_variable_cannot_publish_another_invocations_alias(
+async def test_skipped_or_failed_native_action_preserves_previous_response_variable(
     hass, monkeypatch, second, consumer
 ):
     tools = [
@@ -239,21 +264,19 @@ async def test_shared_response_variable_cannot_publish_another_invocations_alias
     observed = []
 
     async def record(call):
-        observed.append(
-            (deepcopy(_ACTIVE_RULE_ACTION.get().function_results), call.data["message"])
-        )
+        observed.append(call.data["message"])
 
     hass.services.async_register("rule_probe", "record", record)
     actions = [
         {
             "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
             "response_variable": "shared",
-            "data": {"function": "first", "arguments": {}, "result_alias": "a"},
+            "data": {"function": "first", "arguments": {}},
         },
         {
             "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
             "response_variable": "shared",
-            "data": {"function": "second", "arguments": {}, "result_alias": "b"},
+            "data": {"function": "second", "arguments": {}},
             **(
                 {"enabled": False}
                 if second == "disabled"
@@ -262,25 +285,12 @@ async def test_shared_response_variable_cannot_publish_another_invocations_alias
         },
         _record_action("{{ shared.result }}"),
     ]
-    if consumer == "action":
-        actions.append(_record_action("{b}"))
-    if consumer == "conversation_response":
-        actions.append({"set_conversation_response": "{b}"})
-    await agent._request_rules.async_create(
-        _local(
-            actions, success="{b}" if consumer == "success_response" else "Recovered"
-        )
-    )
+    if consumer == "native":
+        actions.append({"set_conversation_response": "Recovered {{ shared.result }}"})
+    await agent._request_rules.async_create(_local(actions, success="Recovered"))
     result = await _say(hass, agent, "run rule")
-    assert observed == [({"a": "First result"}, "First result")]
-    if consumer == "success_response":
-        assert "response construction failed (missing variable b)" in _speech(
-            result, successful=False
-        )
-        return
-    assert _speech(result, successful=consumer == "unconsumed") == (
-        "Recovered" if consumer == "unconsumed" else "Failed safely"
-    )
+    assert observed == ["First result"]
+    assert _speech(result) == ("Recovered First result" if consumer == "native" else "Recovered")
 
 
 @pytest.mark.parametrize("value", ["001", "false", "null"])
@@ -578,6 +588,7 @@ async def test_canonical_durable_records_reload_and_reexport_actual_store(hass):
     from custom_components.extended_openai_conversation_responses.knowledge import (
         HomeAssistantKnowledgeStorage,
         KnowledgeLibrary,
+        knowledge_source_as_dict,
     )
     from custom_components.extended_openai_conversation_responses.temporary_memory import (
         TemporaryMemory,
@@ -599,7 +610,9 @@ async def test_canonical_durable_records_reload_and_reexport_actual_store(hass):
     await store.async_save({"sources": [raw]})
     library = KnowledgeLibrary(store)
     await library.async_initialize()
-    expected = asdict(KnowledgeLibrary.validate_backup_data({"sources": [raw]})[0])
+    expected = knowledge_source_as_dict(
+        KnowledgeLibrary.validate_backup_data({"sources": [raw]})[0]
+    )
     assert (await store.async_load())["sources"] == [expected]
     fresh = KnowledgeLibrary(
         HomeAssistantKnowledgeStorage(hass, "contract-entry", "contract-agent")
@@ -739,6 +752,7 @@ async def test_typed_and_exact_text_results_survive_local_and_provider_consumers
     # Control the actual backend return, independently of HA's Template parsing
     # and trailing-newline rules. EOAI dispatch, HA services/scripts and provider
     # serialization all remain the production paths under test.
+    hass.config.legacy_templates = False
     execute = AsyncMock(return_value=value)
     monkeypatch.setattr(get_function("template"), "execute", execute)
     tool = {
@@ -766,7 +780,7 @@ async def test_typed_and_exact_text_results_survive_local_and_provider_consumers
     seen = []
 
     async def record(call):
-        seen.append((call.data["value"], deepcopy(_ACTIVE_RULE_ACTION.get().function_results)))
+        seen.append((call.data["value"], call.data["is_text"]))
 
     hass.services.async_register("rule_probe", "typed", record)
     await agent._request_rules.async_create(
@@ -778,16 +792,18 @@ async def test_typed_and_exact_text_results_survive_local_and_provider_consumers
                     "data": {
                         "function": "produce",
                         "arguments": {},
-                        "result_alias": "result_one",
                     },
                 },
-                {"action": "rule_probe.typed", "data": {"value": "{result_one}"}},
+                {
+                    "action": "rule_probe.typed",
+                    "data": "{{ {'value': authored.result, 'is_text': authored.result is string} }}",
+                },
             ]
         )
     )
     assert _speech(await _say(hass, agent, "run rule")) == "Done"
     assert len(seen) == 1
-    actual, results = seen[0]
+    actual, is_text = seen[0]
+    assert is_text is isinstance(value, str)
     assert type(actual) is type(value) and actual == value
-    assert type(results["result_one"]) is type(value) and results["result_one"] == value
     assert execute.await_count == 2

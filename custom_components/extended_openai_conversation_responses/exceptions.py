@@ -27,6 +27,8 @@ class EntityNotExposed(HomeAssistantError):
 
     def __str__(self) -> str:
         """Return string representation."""
+        if self.reason == "invalid_target":
+            return "An entity target is invalid. Use a fully qualified entity ID."
         if self.reason == "permission":
             return (
                 "The Home Assistant user does not have permission to access this "
@@ -150,6 +152,19 @@ class TokenLengthExceededError(HomeAssistantError):
 
 class EffectReplayBlocked(HomeAssistantError):
     """A recovery guard stopped execution before a prior effect could repeat."""
+
+
+class NestedConversationRejected(HomeAssistantError):
+    """A nested request was refused before it could enter its parent conversation."""
+
+
+class EffectOutcomeUnknown(HomeAssistantError):
+    """An attempted effect could not be confirmed."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The action may have taken effect. Check the result before retrying."
+        )
 
 
 class InvalidFunction(HomeAssistantError):

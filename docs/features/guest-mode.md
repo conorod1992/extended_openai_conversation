@@ -29,8 +29,13 @@ and **Read & write** modes and defaults to Off. Personal memory is unavailable.
 
 **Allow the assistant to activate Guest Mode** exposes the one-way
 `guest_mode_restrict` model tool and defaults on for new agents. It controls only
-the availability of that restriction tool. Turning it off never cancels,
-shortens, deactivates, or weakens an active or scheduled Guest restriction.
+the availability of that restriction tool. Existing agents with no saved value
+omit the tool. Turning it off never cancels, shortens, deactivates, or weakens an
+active or scheduled Guest restriction.
+
+Enabling the tool checks provider compatibility for the default model and enabled
+AI routing rules. You can still turn off the tool or tighten Guest restrictions
+while repairing an incompatible configuration.
 
 ### Existing configurations
 
@@ -98,13 +103,13 @@ Each conversation agent has a `Guest Mode` sensor with `inactive`, `scheduled`,
 `active`, and `active_indefinitely` states. Attributes include `active_from`,
 `active_until`, `indefinite`, `currently_active`, and `scheduled`.
 
-The sensor does not poll. Schedule changes and storage recovery publish updates,
-and one manager-owned Home Assistant timer follows the next scheduled start or
-expiry while listeners are subscribed. Starts are inclusive and ends exclusive;
-offsets are converted to UTC for the timer. Replacing or disabling a schedule,
-losing authoritative storage state, or removing the last listener cancels its
-obsolete timer. After recovery, the next future boundary is recalculated from
-the authoritative schedule. Uncertain persistence makes the sensor unavailable.
+Schedule changes and storage recovery publish sensor updates. A Home Assistant
+timer follows the next scheduled start or expiry while listeners are subscribed.
+Starts are inclusive and ends exclusive. A five-minute check notices clock
+corrections that cross a schedule boundary, including after the final expiry.
+Replacing or disabling a schedule, losing authoritative storage state, or
+removing the last listener cancels its timers. After recovery, timers follow the
+authoritative schedule again. Uncertain persistence makes the sensor unavailable.
 Guest Mode enforcement continues to evaluate the schedule live on every request;
 it does not depend on the sensor or its timer.
 

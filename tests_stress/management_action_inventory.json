@@ -36,7 +36,6 @@
     "configuration": {
       "actions": [
         "duplicate",
-        "export",
         "get",
         "import",
         "import_preview",
@@ -55,7 +54,6 @@
       ],
       "semantic_classes": {
         "duplicate": "durable_mutation",
-        "export": "read_only",
         "get": "read_only",
         "import": "durable_mutation",
         "import_preview": "validation_or_preview",
@@ -70,7 +68,6 @@
       },
       "authorization_classes": {
         "duplicate": "admin_only",
-        "export": "admin_only",
         "get": "admin_only",
         "import": "admin_only",
         "import_preview": "admin_only",
@@ -85,7 +82,6 @@
       },
       "behavioral_evidence": {
         "duplicate": "tests/test_management_agent_config.py::test_duplicate_copies_configuration_not_runtime_history",
-        "export": "tests/test_management_ui.py::test_configuration_transfer_and_validation_routes",
         "get": "tests_real_ha/test_management_backend_acceptance.py::test_stale_configuration_revision_cannot_overwrite_newer_save",
         "import": "tests/test_management_loading_performance.py::test_import_replaces_cached_configuration_projection",
         "import_preview": "tests/test_management_ui.py::test_configuration_transfer_and_validation_routes",
@@ -537,6 +533,7 @@
       "actions": [
         "discover",
         "get",
+        "rebind",
         "update"
       ],
       "evidence": [
@@ -545,19 +542,27 @@
       "semantic_classes": {
         "discover": "read_only",
         "get": "read_only",
+        "rebind": "durable_mutation",
         "update": "durable_mutation"
       },
       "authorization_classes": {
         "discover": "admin_only",
         "get": "admin_only",
+        "rebind": "admin_only",
         "update": "admin_only"
       },
       "behavioral_evidence": {
         "discover": "tests/test_management_permissions.py::test_quiet_hours_read_actions_return_manager_snapshot",
         "get": "tests/test_management_permissions.py::test_quiet_hours_global_command_needs_no_agent_selection",
+        "rebind": "tests/test_quiet_hours_selection_identity.py::test_replacement_binding_requires_an_explicit_reviewed_transaction",
         "update": "tests/test_management_permissions.py::test_quiet_hours_update_validates_config_and_translates_value_error"
       },
       "durability_evidence": {
+        "rebind": {
+          "boundary": "fresh_manager",
+          "evidence": "tests/test_quiet_hours_selection_identity.py::test_replacement_binding_requires_an_explicit_reviewed_transaction",
+          "outcome": "Replacement registry identity survives a fresh manager load."
+        },
         "update": {
           "boundary": "fresh_page",
           "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser saves Guest and Quiet Hours policy payloads through HA",
@@ -574,9 +579,6 @@
         "groups",
         "list",
         "move",
-        "rule_pack_export",
-        "rule_pack_import",
-        "rule_pack_review",
         "settings",
         "test",
         "test_match",
@@ -595,9 +597,6 @@
         "groups": "durable_mutation",
         "list": "read_only",
         "move": "durable_mutation",
-        "rule_pack_export": "read_only",
-        "rule_pack_import": "durable_mutation",
-        "rule_pack_review": "validation_or_preview",
         "settings": "durable_mutation",
         "test": "validation_or_preview",
         "test_match": "validation_or_preview",
@@ -612,9 +611,6 @@
         "groups": "admin_only",
         "list": "admin_only",
         "move": "admin_only",
-        "rule_pack_export": "admin_only",
-        "rule_pack_import": "admin_only",
-        "rule_pack_review": "admin_only",
         "settings": "admin_only",
         "test": "admin_only",
         "test_match": "admin_only",
@@ -629,9 +625,6 @@
         "groups": "tests_browser/real-ha-backend.spec.mjs::real browser creates, groups, edits, reloads, and deletes a Request Rule through HA",
         "list": "tests_real_ha/test_management_backend_acceptance.py::test_request_rules_round_trip_through_management_websocket",
         "move": "tests_real_ha/test_acceptance_seams.py::test_request_rule_edit_reorder_delete_survive_real_reload",
-        "rule_pack_export": "tests_browser/real-ha-backend.spec.mjs::real browser exports, reviews, and imports a Request Rule Pack through HA",
-        "rule_pack_import": "tests_browser/real-ha-backend.spec.mjs::real browser exports, reviews, and imports a Request Rule Pack through HA",
-        "rule_pack_review": "tests_browser/real-ha-backend.spec.mjs::real browser exports, reviews, and imports a Request Rule Pack through HA",
         "settings": "tests_browser/real-ha-backend.spec.mjs::real browser creates, groups, edits, reloads, and deletes a Request Rule through HA",
         "test": "tests/test_request_rule_match_preview.py::test_management_test_actions_never_delegate_to_real_processing",
         "test_match": "tests/test_request_rule_match_preview.py::test_match_preview_requires_admin_and_text",
@@ -663,11 +656,6 @@
           "boundary": "config_entry_reload",
           "evidence": "tests_real_ha/test_acceptance_seams.py::test_request_rule_edit_reorder_delete_survive_real_reload",
           "outcome": "Reordered rule IDs keep their precedence after manager reconstruction."
-        },
-        "rule_pack_import": {
-          "boundary": "fresh_page",
-          "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser exports, reviews, and imports a Request Rule Pack through HA",
-          "outcome": "Reviewed imported rules remain disabled and retain content on a fresh page."
         },
         "settings": {
           "boundary": "fresh_page",

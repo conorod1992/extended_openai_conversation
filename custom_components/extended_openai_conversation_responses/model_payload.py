@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from copy import deepcopy
 from typing import Any
 
@@ -45,11 +46,17 @@ relevant is found, say so rather than inventing an answer.
 
 ARCHIVE_GUIDANCE = """
 ## Retained conversation archive
-The archive is separate from persistent memory. Search it only when the user clearly
-refers to a previous discussion. Results may be stale or situational, so mention
-relevant dates. Do not turn archive text into persistent memory unless separately
-asked. Use the privacy/deletion tools when asked to stop or resume saving, or to
-delete retained conversations.
+The archive is separate from persistent memory."""
+
+ARCHIVE_PRIVACY_GUIDANCE = """ Use the privacy/deletion tools
+when asked to stop or resume saving, or to delete retained conversations.
+If privacy is enabled and cleanup_pending is true, say future turns will not
+be saved and stored transcript cleanup has not been confirmed.
+"""
+
+ARCHIVE_SEARCH_GUIDANCE = """Search it only when the user clearly refers to a
+previous discussion. Results may be stale or situational, so mention relevant
+dates. Do not turn archive text into persistent memory unless separately asked.
 """
 
 CONTINUATION_GUIDANCE = """
@@ -110,6 +117,23 @@ def _compact_loader_description(description: str) -> str:
     )
 
 
+def model_function_tool_advertised(tool: dict[str, Any]) -> bool:
+    """Count only definitions that are sent to the model."""
+    function = tool.get("function", {})
+    spec = tool.get("spec")
+    return not (
+        isinstance(spec, dict)
+        and spec.get("name") == "memory_add"
+        and function.get("type") == "memory"
+        and function.get("operation") == "add"
+    )
+
+
+def count_model_function_tools(tools: Iterable[dict[str, Any]]) -> int:
+    """Count function definitions using the same filter as serialization."""
+    return sum(map(model_function_tool_advertised, tools))
+
+
 def prepare_model_function_tools(
     function_tools: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -126,11 +150,7 @@ def prepare_model_function_tools(
         function = tool.get("function", {})
         source_spec = tool.get("spec")
         name = source_spec.get("name") if isinstance(source_spec, dict) else None
-        if (
-            name == "memory_add"
-            and function.get("type") == "memory"
-            and function.get("operation") == "add"
-        ):
+        if not model_function_tool_advertised(tool):
             continue
 
         if not isinstance(source_spec, dict) or not isinstance(name, str):

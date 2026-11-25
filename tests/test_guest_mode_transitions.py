@@ -112,6 +112,29 @@ async def test_finite_schedule_notifies_at_inclusive_start_and_exclusive_end(env
     remove()
 
 
+async def test_backwards_clock_republishes_expired_schedule(env):
+    manager = env.manager
+    await manager.async_initialize()
+    observed = []
+    remove = manager.async_add_listener(lambda: observed.append(manager.status()["state"]))
+    await manager.async_replace_backup(env.schedule(-10, -5))
+    assert observed == ["inactive"]
+    assert not env.timers.pending
+    assert manager._clock_check is not None
+
+    env.clock[0] -= timedelta(minutes=7)
+    clock_callback = manager.hass.loop.call_later.call_args.args[1]
+    clock_callback()
+    assert observed == ["inactive", "active"]
+    env.next_at(2)
+    check = manager._clock_check
+    remove()
+    check.cancel.assert_called()
+    assert manager._clock_check is None
+    clock_callback()
+    assert not env.timers.pending
+
+
 @pytest.mark.parametrize(
     "start,end,state,next_minutes",
     [

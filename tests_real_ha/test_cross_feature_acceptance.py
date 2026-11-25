@@ -1,23 +1,30 @@
 """Cross-feature journeys through HA conversation and the real provider/tool loop."""
 
 from copy import deepcopy
+from datetime import timedelta
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from openai.types.chat import ChatCompletionChunk
 
+from custom_components.extended_openai_conversation_responses import continuity
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_API_MODE,
     CONF_CHAT_MODEL,
     CONF_CONVERSATION_CONTINUITY,
+    CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_GUEST_EXCLUDED_ENTITIES,
     CONF_GUEST_POLICY_VERSION,
+    CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
+    CONF_MEMORY_MODE,
     CONF_REASONING_EFFORT,
     CONVERSATION_CONTINUITY_DEVICE,
+    CONVERSATION_CONTINUITY_USER,
     GUEST_POLICY_VERSION,
 )
 from custom_components.extended_openai_conversation_responses.guest_mode import (
@@ -29,6 +36,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context
+from homeassistant.util import dt as dt_util
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 
 
@@ -180,6 +188,79 @@ async def test_consumed_rule_commits_local_exchange_and_continues_to_provider(
         ("assistant", "The bedroom is ready for sleep."),
         ("user", "What did you just do?"),
     ]
+
+
+async def test_local_rule_extends_managed_memory_selection_until_conversation_expires(
+    hass, monkeypatch
+):
+    owner = await hass.auth.async_create_user(
+        "Persistent memory owner", group_ids=["system-admin"]
+    )
+    context = Context(user_id=owner.id)
+    agent = await _agent(
+        hass,
+        **{
+            CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_USER,
+            CONF_CONVERSATION_TIMEOUT_MINUTES: 5,
+            CONF_MEMORY_MODE: "manual",
+            CONF_MEMORY_AUTO_RETRIEVE_LIMIT: 1,
+        },
+    )
+    for fact in ("Orchid code is LILACWITNESS.", "Bonsai code is AMBERWITNESS."):
+        await agent._memory.async_add_record(owner.id, fact, "general", "explicit")
+
+    async def turn_off(_call):
+        pass
+
+    hass.services.async_register("light", "turn_off", turn_off)
+    hass.states.async_set("light.bedroom", "on")
+    await agent._request_rules.async_create(
+        _rule(
+            "local_action",
+            {
+                "actions": [_action("light.bedroom")],
+                "success_response": "Bedroom ready.",
+            },
+        )
+    )
+    sent = _provider(monkeypatch, agent, ["First.", "Resumed.", "Fresh."])
+    now = dt_util.utcnow()
+    monkeypatch.setattr(continuity, "dt_util", SimpleNamespace(utcnow=lambda: now))
+
+    async def say(text):
+        return await conversation.async_converse(
+            hass=hass,
+            text=text,
+            conversation_id=None,
+            context=context,
+            language="en",
+            agent_id=agent.entity_id,
+        )
+
+    first = await say("What is my orchid code?")
+    assert _speech(first) == "First."
+    assert "LILACWITNESS" in str(sent[0]["messages"])
+    assert "AMBERWITNESS" not in str(sent[0]["messages"])
+
+    now += timedelta(minutes=3)
+    local = await say("good night")
+    assert local.conversation_id == first.conversation_id
+    assert _speech(local) == "Bedroom ready."
+    assert len(sent) == 1
+
+    now += timedelta(minutes=3)
+    resumed = await say("What is my bonsai code?")
+    assert resumed.conversation_id == first.conversation_id
+    assert _speech(resumed) == "Resumed."
+    assert "LILACWITNESS" in str(sent[1]["messages"])
+    assert "AMBERWITNESS" not in str(sent[1]["messages"])
+
+    now += timedelta(minutes=6)
+    fresh = await say("What is my bonsai code?")
+    assert fresh.conversation_id != first.conversation_id
+    assert _speech(fresh) == "Fresh."
+    assert "LILACWITNESS" not in str(sent[2]["messages"])
+    assert "AMBERWITNESS" in str(sent[2]["messages"])
 
 
 async def test_request_only_route_reaches_transport_without_leaking(hass, monkeypatch):

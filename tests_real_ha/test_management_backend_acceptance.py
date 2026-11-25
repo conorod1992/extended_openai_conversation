@@ -844,10 +844,11 @@ async def test_configuration_transfer_survives_reload(hass, hass_ws_client, acti
         target_id = result["subentry_id"]
         expected_tokens = 777
     else:
-        exported = await _management_call(client, entry=entry, section="configuration", action="export", reviewed_custom=True)
-        document = json.loads(exported["json"])
-        document["title"] = "Durable transferred assistant"
-        document["config"]["max_tokens"] = 888
+        from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+        document = historical_reviewed_configuration(
+            {"max_tokens": 888, "functions": [tool]}, title="Durable transferred assistant"
+        )
         await _management_call(client, entry=entry, section="configuration", action=action, document=json.dumps(document), mode="current", confirm=True, revision=saved["revision"])
         target_id = source_id
         expected_tokens = 888

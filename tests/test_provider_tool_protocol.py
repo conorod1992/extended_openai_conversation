@@ -362,3 +362,22 @@ async def test_api_change_during_attachment_preparation_fails_before_dispatch(ha
         await entity._async_handle_chat_log(log, [], [], function_tools_factory=factory)
     assert factory.call_count == 2
     entity.entry.runtime_data.chat.completions.create.assert_not_awaited()
+
+
+async def test_saved_provider_change_waits_for_matching_runtime_client(hass):
+    from custom_components.extended_openai_conversation_responses.provider_errors import (
+        provider_authentication_snapshot,
+    )
+
+    entity = _entity(hass, [_final_stream()])
+    client = entity.entry.runtime_data
+    client._eoai_authentication_snapshot = provider_authentication_snapshot(entity.entry)
+    entity.entry.data = {"base_url": "https://replacement.invalid/v1"}
+
+    with pytest.raises(HomeAssistantError, match="Provider connection is changing"):
+        await entity._async_handle_chat_log(_chat_log(hass), [], [])
+    client.chat.completions.create.assert_not_awaited()
+
+    client._eoai_authentication_snapshot = provider_authentication_snapshot(entity.entry)
+    await entity._async_handle_chat_log(_chat_log(hass), [], [])
+    client.chat.completions.create.assert_awaited_once()

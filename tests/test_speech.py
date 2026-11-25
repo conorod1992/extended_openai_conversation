@@ -475,6 +475,79 @@ async def test_chat_log_retains_original_while_listener_gets_safe_deltas() -> No
     assert heard == [{"role": "assistant"}, {"content": "Answer."}]
 
 
+async def test_speech_listener_preserves_negation_after_url_path() -> None:
+    raw = "Router instructions: http://router.local:8080/manual—never press Reset."
+    heard = []
+    chat_log = conversation.ChatLog(SimpleNamespace(data={}), "conversation-id")
+    chat_log.delta_listener = lambda _chat_log, delta: heard.append(delta)
+
+    async def stream():
+        yield {"role": "assistant"}
+        for character in raw:
+            yield {"content": character}
+
+    with async_streaming_speech_cleanup(chat_log, _config()):
+        contents = [
+            content
+            async for content in chat_log.async_add_delta_content_stream(
+                "conversation.test", stream()
+            )
+        ]
+
+    assert contents[-1].content == raw
+    assert "".join(delta.get("content", "") for delta in heard) == (
+        "Router instructions: —never press Reset."
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Run `cd ..` next.", "Run cd .. next."),
+        ("Run `find . -type f` next.", "Run find . -type f next."),
+        ("Run `grep . file` next.", "Run grep . file next."),
+        ('Keep `print("a  b")`.', 'Keep print("a  b").'),
+        ("[https://example.com — do not reset the router](https://example.com)", "— do not reset the router"),
+        ("[Visit https://example.com for help](https://example.com/docs)", "Visit for help"),
+        ("[**https://example.com**](https://example.com)", ""),
+        ("[`[title](page)`](https://example.com/docs)", "[title](page)"),
+        ("[a [nested] label](https://example.com/docs)", "a [nested] label"),
+        ("*[Run `cd ..`](https://example.com/docs) next*", "Run cd .. next"),
+        ("[# Heading](https://example.com/docs)", "# Heading"),
+        ("[1) literal](https://example.com/docs)", "1) literal"),
+        ("Before http://router.local/manual—no reset is required.", "Before —no reset is required."),
+    ],
+)
+async def test_public_speech_preserves_literal_meaning_at_every_split(raw, expected):
+    config = _config()
+    assert process_speech_text(raw, config) == expected
+    # Trigger the completed label index as well as the short-input scanner.
+    prefix = "Previous sentence. " * 230
+    completed = process_speech_text(prefix + raw, config)
+    assert completed == (prefix + expected).rstrip()
+
+    async def present(parts):
+        heard = []
+        chat_log = conversation.ChatLog(SimpleNamespace(data={}), "typed-speech")
+        chat_log.delta_listener = lambda _log, delta: heard.append(delta.get("content", ""))
+
+        async def stream():
+            yield {"role": "assistant"}
+            for part in parts:
+                if part:
+                    yield {"content": part}
+
+        with async_streaming_speech_cleanup(chat_log, config):
+            async for _ in chat_log.async_add_delta_content_stream("conversation.test", stream()):
+                pass
+        assert chat_log.content[-1].content == raw
+        return "".join(heard)
+
+    assert await present(raw) == expected
+    for split in range(len(raw) + 1):
+        assert await present((raw[:split], raw[split:])) == expected, split
+
+
 def test_custom_regex_requires_completed_response_processing() -> None:
     assert has_custom_speech_replacements(
         _config(
@@ -1081,6 +1154,73 @@ def test_url_only_speech_cleanup_keeps_boundary_after_long_whitespace() -> None:
         assert speech._final_whitespace_cleanup(
             _stream([source[:split], source[split:]], markdown=False)
         ) == expected, split
+
+
+@pytest.mark.parametrize(
+    "link,label",
+    [
+        ("[Guide]( /manual )", "Guide"),
+        ("[Guide](\n  https://example.org\n)", "Guide"),
+        (
+            '[Guide](https://example.org "a title\n  with an unmatched ( in it")',
+            "Guide",
+        ),
+        ('[Guide](\r\n</user guide>\r\n"Keep me\r\n private"\r\n )', "Guide"),
+        ("[Guide](/manual\n 'a title with ]( in it' \n )", "Guide"),
+        (r"[Guide]( /manual (a title with \( and \) in it) )", "Guide"),
+        ("[Guide](  <>  )", "Guide"),
+        ("[example.org]( \n https://example.org )", ""),
+        ('![Map](\n /map.png "hidden\n details")', ""),
+    ],
+)
+def test_markdown_link_whitespace_preserves_labels_across_speech_chunks(link, label):
+    source = f"See {link} now."
+    expected = f"See {label} now." if label else "See now."
+    assert process_speech_text(source, _config()) == expected
+    prefix = "Intro. " * 1_000
+    assert process_speech_text(prefix + source, _config()) == prefix + expected
+    for parts in ([source], list(source)):
+        assert speech._final_whitespace_cleanup(_stream(parts)) == expected
+    for split in range(len(source) + 1):
+        assert (
+            speech._final_whitespace_cleanup(_stream([source[:split], source[split:]]))
+            == expected
+        ), split
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "\n \n/manual)",
+        "/manual\n \n)",
+        '/manual "first\n \nsecond")',
+        "<first\nsecond>)",
+    ],
+)
+def test_markdown_link_does_not_consume_blank_lines_or_malformed_titles(destination):
+    assert (
+        StreamingSpeechSanitizer._scan_markdown_destination(destination, 0, final=True)[
+            0
+        ]
+        == "no"
+    )
+
+
+def test_long_link_consumes_whitespace_and_multiline_title_with_bounded_buffer():
+    source = (
+        "See [Guide](\r\n https://example.org/"
+        + "a" * 1_000
+        + '\r\n "private\r\n title"\r\n ) now.'
+    )
+    assert process_speech_text(source, _config()) == "See Guide now."
+    for width in (1, 7, 61):
+        sanitizer = StreamingSpeechSanitizer(max_buffer_chars=64)
+        parts = []
+        for offset in range(0, len(source), width):
+            parts.append(sanitizer.feed(source[offset : offset + width]))
+            assert sanitizer.buffered_chars <= sanitizer.max_buffer_chars
+        parts.append(sanitizer.finish())
+        assert speech._final_whitespace_cleanup("".join(parts)) == "See Guide now."
 
 
 def test_long_unmatched_speech_delimiter_has_bounded_fallback() -> None:

@@ -132,7 +132,7 @@ for (const bundled of [false, true]) {
     await panel.locator("#rule-match").selectOption("contains");
     await expect(panel.locator("#rule-pattern-matching-help")).toBeHidden();
     await expect(panel.locator("#rule-routing-scope-help")).toContainText("sends the original request");
-    for (const id of ["rule-continue-to-ai","rule-reset","rule-continue-matching"]) {
+    for (const id of ["rule-continue-to-ai","rule-reset"]) {
       await expect(panel.locator(`#${id}`)).toHaveAttribute("role", "switch");
       await expect(panel.locator(`#${id}`)).toHaveAccessibleName(/\S+/);
     }

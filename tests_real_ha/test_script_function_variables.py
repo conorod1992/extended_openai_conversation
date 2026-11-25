@@ -4,10 +4,15 @@ import asyncio
 import json
 
 import pytest
+import yaml
 
+from custom_components.extended_openai_conversation_responses.function_configuration_repair import (
+    function_tools_issue,
+    isolated_function_tools,
+)
 from homeassistant.components import conversation
 from homeassistant.core import SupportsResponse
-from tests_real_ha.test_cross_feature_acceptance import _say, _speech
+from tests_real_ha.test_cross_feature_acceptance import _agent, _say, _speech
 from tests_real_ha.test_entry_point_contract_matrix import _contract_agent, _management
 from tests_real_ha.test_provider_input_history import _transport
 from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _chat_sse_tool_call
@@ -111,6 +116,52 @@ async def test_saved_script_definitions_reach_real_runner(hass, kind):
                 if item.get("role") == "tool"
             )
             assert json.loads(result["content"])["result"] == expected
+
+
+@pytest.mark.parametrize("representation", ["structured", "json", "yaml"])
+async def test_configured_script_cache_preserves_dependent_variable_order(
+    hass, representation
+):
+    variables = {
+        "z_seed": "Ready",
+        "a_dependent": "{{ z_seed ~ ' in order' }}",
+    }
+    tool = _tool(
+        {
+            "type": "script",
+            "variables": variables,
+            "sequence": [{"variables": {"_function_result": "{{ a_dependent }}"}}],
+        }
+    )
+    configured = [tool]
+    if representation == "json":
+        configured = json.dumps(configured)
+    elif representation == "yaml":
+        configured = yaml.safe_dump(configured, sort_keys=False)
+    options = {"functions": configured}
+    agent = await _agent(hass, **options)
+    usable, issue = function_tools_issue(options)
+    isolated, invalid, isolated_issue = isolated_function_tools(options)
+    assert issue is isolated_issue is None
+    assert not invalid
+    for definitions in (usable, isolated):
+        assert list(definitions[0]["function"]["variables"]) == list(variables)
+
+    async with _transport(
+        agent.entry,
+        [
+            _chat_sse_tool_call("dependent-order", "configured_greeting", {}),
+            _chat_sse_text("Done"),
+        ],
+    ) as wire:
+        assert _speech(await _say(hass, agent, "Run the saved greeting")) == "Done"
+        wire.assert_complete(2)
+        result = next(
+            item
+            for item in wire.requests[1]["body"]["messages"]
+            if item.get("role") == "tool"
+        )
+        assert json.loads(result["content"])["result"] == "Ready in order"
 
 
 async def test_concurrent_script_calls_keep_argument_derived_definitions_private(hass):

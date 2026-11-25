@@ -15,17 +15,21 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_point_in_utc_time
+from homeassistant.helpers.json import json_bytes
 from homeassistant.util import dt as dt_util
 
 from . import ExtendedOpenAIConfigEntry
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL, DOMAIN
-from .guest_mode import GuestModeManager, async_get_guest_mode
+from .guest_mode import GuestModeManager, async_get_guest_mode, get_loaded_guest_mode
 from .local_time import resolve_wall_time
 from .persistence_hardening import StorageRepairRequired
 from .usage import UsageManager, async_get_usage, usage_retention_policy
 
 _LOGGER = logging.getLogger(__name__)
+
+# Leave room below Recorder's 16 KiB limit for HA's entity attributes.
+_USAGE_STATE_ATTRIBUTES_BUDGET = 15 * 1024
 
 
 async def async_setup_entry(
@@ -37,13 +41,29 @@ async def async_setup_entry(
     for subentry in config_entry.subentries.values():
         if subentry.subentry_type != "conversation":
             continue
+        guest_mode: GuestModeManager | None
         try:
             usage = await async_get_usage(
                 hass, config_entry.entry_id, subentry.subentry_id
             )
-            guest_mode = await async_get_guest_mode(
-                hass, config_entry.entry_id, subentry.subentry_id
-            )
+            try:
+                guest_mode = await async_get_guest_mode(
+                    hass, config_entry.entry_id, subentry.subentry_id
+                )
+            except (OSError, HomeAssistantError) as err:
+                if not isinstance(err, OSError) and not isinstance(
+                    err.__cause__, OSError
+                ):
+                    raise
+                _LOGGER.error(
+                    "Assistant %s Guest Mode storage is unavailable",
+                    subentry.subentry_id,
+                )
+                # The getter retains the unavailable manager so recovery can
+                # later notify the same entity. Usage and sibling sensors work.
+                guest_mode = get_loaded_guest_mode(
+                    hass, config_entry.entry_id, subentry.subentry_id
+                )
         except StorageRepairRequired as err:
             _LOGGER.error(
                 "Assistant %s sensors remain unavailable because retained storage requires repair: %s",
@@ -71,7 +91,11 @@ async def async_setup_entry(
                 UsageTodaySensor(subentry, usage),
                 UsageMonthSensor(subentry, usage),
                 LastResponseUsageSensor(subentry, usage),
-                GuestModeSensor(subentry, guest_mode),
+                *(
+                    [GuestModeSensor(subentry, guest_mode)]
+                    if guest_mode is not None
+                    else []
+                ),
             ],
             config_subentry_id=subentry.subentry_id,
         )
@@ -338,7 +362,7 @@ class LastResponseUsageSensor(UsageSensor):
         run = self._usage.latest_run
         if run is None:
             return {}
-        return {
+        attributes = {
             "completed_at": run.completed_at,
             "duration_ms": run.duration_ms,
             "models": run.models,
@@ -352,6 +376,18 @@ class LastResponseUsageSensor(UsageSensor):
             "success": run.successful,
             "error_type": run.error_type,
         }
+        if len(json_bytes(attributes)) > _USAGE_STATE_ATTRIBUTES_BUDGET:
+            # Recorder drops the entire object when it is oversized. Preserve
+            # accounting fields and shed the largest optional metadata first.
+            for key in sorted(
+                ("models", "providers", "error_type"),
+                key=lambda key: len(json_bytes(attributes[key])),
+                reverse=True,
+            ):
+                attributes[key] = None if key == "error_type" else []
+                if len(json_bytes(attributes)) <= _USAGE_STATE_ATTRIBUTES_BUDGET:
+                    break
+        return attributes
 
 
 def rebind_usage_sensors(

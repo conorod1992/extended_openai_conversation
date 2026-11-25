@@ -5,6 +5,15 @@ import {retireAssistantDraft} from "./management-catalog-ownership.js";
 
 export const ASSISTANT_INTRO_MARKUP = '<section class="page-intro assistant-parent-intro"><h1>Assistant settings</h1><p>Configure how this assistant responds, handles conversations, uses context, and works with voice.</p></section>';
 
+export function renderManagementRoute(panel, agent) {
+  if (panel._error) return panel._routeError(panel._error);
+  if (!agent && !["overview", "guide", "capabilities/quiet-hours"].includes(panel._viewKey())) {
+    return panel._empty("No conversation agents configured.");
+  }
+  if (panel._busy) return panel._loadingContent?.(agent) || panel._loading();
+  return panel._content(agent);
+}
+
 function navigationFor(panel) {
   return NAVIGATION.filter((item) => panel._canAccessView(item.id));
 }
@@ -270,10 +279,7 @@ function renderDynamicRegions(panel) {
     }
     return;
   }
-  const markup = panel._error ? panel._routeError(panel._error) : !agent
-    ? panel._empty("No conversation agents configured.")
-    : panel._busy ? (panel._loadingContent?.(agent) || panel._loading())
-      : panel._content(agent);
+  const markup = renderManagementRoute(panel, agent);
   const changed = route !== panel._eocRenderedRoute || markup !== panel._eocMainMarkup;
   const dialogsChanged = dialogs !== panel._eocDialogMarkup;
   if ((changed || dialogsChanged) && route === panel._eocRenderedRoute && root.querySelector("dialog[open]")) {

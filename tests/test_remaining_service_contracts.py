@@ -1,6 +1,5 @@
 """Service validation must preserve concurrent agent and rule changes."""
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -17,7 +16,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from homeassistant.const import CONF_API_KEY
 from homeassistant.exceptions import HomeAssistantError
-from tests.test_service_handlers import _call, _download_handler, _handlers, _Response
+from tests.test_service_handlers import _call, _handlers
 
 
 @pytest.mark.parametrize(
@@ -51,8 +50,9 @@ async def test_provider_change_rejects_concurrent_child_edits(
     )
     monkeypatch.setattr(rr, "async_get_request_rules", AsyncMock(return_value=rules))
 
-    def validate(*_args, check_captured_effort_support):
-        assert not check_captured_effort_support
+    def validate(*_args, ha_snapshot, reserve_ha_tools):
+        assert ha_snapshot is None
+        assert reserve_ha_tools is False
         if change == "data":
             child.data = {"prompt": "changed elsewhere"}
         elif change == "removed":
@@ -112,8 +112,11 @@ async def test_provider_change_validates_only_enabled_rules_and_llm_subentries(
         _call({"config_entry": "entry", CONF_API_KEY: "new"})
     )
     validate.assert_called_once_with(
-        enabled, children["conversation"].data, {CONF_API_KEY: "new"},
-        check_captured_effort_support=False,
+        enabled,
+        children["conversation"].data,
+        {CONF_API_KEY: "new"},
+        ha_snapshot=None,
+        reserve_ha_tools=False,
     )
     routed.assert_called_once()
     snapshot.assert_called_once_with(
@@ -139,112 +142,14 @@ async def test_query_image_requires_token_limit_before_reading_files(hass, monke
     hass.config_entries.async_get_entry.assert_not_called()
 
 
-async def test_function_service_forwards_result_alias_and_unwraps_response(
-    hass, monkeypatch
-):
-    execute = AsyncMock(return_value={"status": "ok", "value": 7})
+@pytest.mark.parametrize("value", [False, 0, "", None, {"result": {"level": 62}}])
+async def test_function_service_wraps_the_complete_native_value(hass, monkeypatch, value):
+    execute = AsyncMock(return_value=value)
     monkeypatch.setattr(services, "async_call_active_function", execute)
     handler = (await _handlers(hass))["call_function"]
-    result = await handler(
-        _call(
-            {
-                "function": "read",
-                "arguments": {"room": "kitchen"},
-                "result_alias": "reading",
-            }
-        )
-    )
-    execute.assert_awaited_once_with("read", {"room": "kitchen"}, "reading")
-    assert result == {"result": {"status": "ok", "value": 7}}
 
+    result = await handler(_call({"function": "read", "arguments": {"room": "kitchen"}}))
 
-@pytest.mark.parametrize("failure", ["cancel", "write-error", "executor-cancelled"])
-async def test_download_cancellation_settles_writer_before_staging_cleanup(
-    hass, tmp_path, monkeypatch, failure
-):
-    url = "https://api.github.com/repos/conorod1992/extended_openai_conversation/contents/examples/skills/demo?ref=v1.2.3"
-    responses = {
-        url: _Response(
-            200,
-            payload=[
-                {
-                    "name": "SKILL.md",
-                    "path": "SKILL.md",
-                    "type": "file",
-                    "download_url": "download:skill",
-                    "size": 7,
-                }
-            ],
-        ),
-        "download:skill": _Response(200, body=b"# Demo\n"),
-    }
-    handler, manager = await _download_handler(hass, monkeypatch, tmp_path, responses)
-    entered, release, settled = asyncio.Event(), asyncio.Event(), asyncio.Event()
-
-    async def execute(function, *args):
-        if function.__name__ == "_write_file_sync":
-            entered.set()
-            if failure != "executor-cancelled":
-                await release.wait()
-            settled.set()
-            if failure == "write-error":
-                raise OSError("write failed")
-            if failure == "executor-cancelled":
-                raise asyncio.CancelledError()
-        if function.__name__ == "close":
-            assert settled.is_set(), "cleanup must not race an unfinished native writer"
-        return function(*args)
-
-    hass.async_add_executor_job = execute
-    task = asyncio.create_task(handler(_call({"skill_name": "demo"})))
-    await asyncio.wait_for(entered.wait(), 2)
-    if failure != "executor-cancelled":
-        task.cancel()
-        await asyncio.sleep(0)
-        task.cancel()
-        await asyncio.sleep(0)
-        assert not task.done()
-        release.set()
-    expected = (
-        HomeAssistantError if failure == "write-error" else asyncio.CancelledError
-    )
-    with pytest.raises(expected):
-        await task
-    assert not list(manager.staging_dir.iterdir())
-    manager.async_publish_staged_skill.assert_not_awaited()
-
-
-async def test_skill_download_skips_non_file_directory_entries(
-    hass, tmp_path, monkeypatch
-):
-    url = "https://api.github.com/repos/conorod1992/extended_openai_conversation/contents/examples/skills/demo?ref=v1.2.3"
-    handler, manager = await _download_handler(
-        hass,
-        monkeypatch,
-        tmp_path,
-        {
-            url: _Response(
-                200,
-                payload=[
-                    {"name": "link", "type": "symlink"},
-                    {
-                        "name": "SKILL.md",
-                        "type": "file",
-                        "path": "SKILL.md",
-                        "download_url": "file",
-                        "size": 7,
-                    },
-                ],
-            ),
-            "file": _Response(200, body=b"# Demo\n"),
-        },
-    )
-    async def publish(_name, staged, *, download):
-        assert not (staged / "link").exists()
-        assert download.record.exists()
-
-    manager.async_publish_staged_skill.side_effect = publish
-    result = await handler(_call({"skill_name": "demo"}))
-    assert result["downloaded_files"] == ["SKILL.md"]
-    assert not list(manager.staging_dir.iterdir())
-    manager.async_publish_staged_skill.assert_awaited_once()
+    execute.assert_awaited_once_with("read", {"room": "kitchen"})
+    assert result == {"result": value}
+    assert result["result"] is value

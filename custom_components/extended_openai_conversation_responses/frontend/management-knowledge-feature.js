@@ -47,9 +47,17 @@ export function applyKnowledgeMutation(panel, response, deletedId = null) {
   if (deletedId && response?.deleted !== 1) return false;
   const summary = response?.summary;
   if (!deletedId && !summary?.source_id) return false;
-  const sources = panel._result.sources.filter(source => source.source_id !== (deletedId || summary.source_id));
-  if (summary) sources.push(summary);
-  sources.sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)));
+  const previous = panel._result.sources;
+  const sources = previous.filter(source => source.source_id !== (deletedId || summary.source_id));
+  if (summary) {
+    const unchanged = previous.findIndex(source => source.source_id === summary.source_id && source.updated_at === summary.updated_at);
+    sources.splice(Math.max(0, unchanged), 0, summary);
+    if (Array.isArray(response.source_order)) {
+      const positions = new Map(response.source_order.map((id, index) => [id, index]));
+      const fallback = positions.size;
+      sources.sort((left, right) => (positions.get(left.source_id) ?? fallback) - (positions.get(right.source_id) ?? fallback));
+    }
+  }
   panel._result = {
     ...panel._result, sources,
     ...(response.stats ? {stats: response.stats} : {}),

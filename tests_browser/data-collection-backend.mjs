@@ -3,6 +3,7 @@
 export function createDataCollectionBackend(size = 100) {
   let revision = 1;
   let knowledgeEnabled = true;
+  const knowledgeCreates = new Map();
   let nextId = size;
   const timestamp = () => `2026-09-01T12:${String(revision++).padStart(2, "0")}:00Z`;
   const state = {
@@ -45,11 +46,22 @@ export function createDataCollectionBackend(size = 100) {
       }
       let source;
       if (action === "create") {
-        source = {source_id: `source-${nextId++}`, title: message.title, description: message.description, content: message.content, character_count: message.content.length, enabled: message.enabled, updated_at: timestamp()};
-        state.sources.push(source);
+        const fields = {title:message.title, description:message.description, content:message.content, enabled:message.enabled};
+        const token = message.create_token && `${message.subentry_id}/${message.create_token}`;
+        const receipt = knowledgeCreates.get(token);
+        if (receipt && state.sources.some(item => item.source_id === receipt.source.source_id)) {
+          if (JSON.stringify(fields) !== receipt.fields) throw {code:"invalid_request", message:"Knowledge create token belongs to a different submission"};
+          source = receipt.source;
+        } else {
+          if (!message.confirm_duplicate && state.sources.some(item => Object.keys(fields).every(key => item[key] === fields[key]))) return {status:"duplicate"};
+          source = {source_id:`source-${nextId++}`, ...fields, character_count:message.content.length, updated_at:timestamp()};
+          state.sources.push(source);
+          if (token) knowledgeCreates.set(token, {fields:JSON.stringify(fields), source:clone(source)});
+        }
       } else if (action === "update") {
         source = state.sources.find(item => item.source_id === message.source_id);
         if (!source) throw new Error("Source not found");
+        if (message.expected_revision != null && message.expected_revision !== source.updated_at) throw {code:"invalid_request", message:"Knowledge source changed in another tab"};
         Object.assign(source, {title: message.title, description: message.description, content: message.content, character_count: message.content.length, enabled: message.enabled, updated_at: timestamp()});
       } else if (action === "delete") {
         const before = state.sources.length;

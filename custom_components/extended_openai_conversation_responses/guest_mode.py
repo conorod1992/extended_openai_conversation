@@ -52,12 +52,16 @@ from .const import (
     CONF_GUEST_SHARED_MEMORY_POLICY,
     CONF_GUEST_SHARED_MEMORY_READ,
     CONF_GUEST_SHARED_MEMORY_WRITE,
+    DEFAULT_PERSISTED_GUEST_MODE_ENABLED,
     DOMAIN,
     GUEST_POLICY_VERSION,
 )
+from .function_tool_policy import runtime_function_tool_name
 from .functions.security import FunctionSecurity, classify_tool
 from .helpers import get_exposed_entities
+from .mutation_outcomes import after_confirmed_mutation
 from .persistence_hardening import _async_settle_transactional_save
+from .record_timestamps import parse_datetime
 from .storage_namespaces import GUEST_MODE_PREFIX as GUEST_MODE_STORAGE_PREFIX
 from .strict_store import PropagatingWriteStore
 
@@ -76,6 +80,7 @@ Mode. Do not reveal what the owner normally has access to.
 """
 
 _MANAGERS = f"{DOMAIN}.guest_mode_managers"
+_CLOCK_RECONCILE_SECONDS = 300
 
 
 class GuestModeDenied(HomeAssistantError):
@@ -229,6 +234,7 @@ class GuestModeManager:
         self._schedule: GuestModeSchedule | None = None
         self._listeners: set[Callable[[], None]] = set()
         self._cancel_transition: Callable[[], None] | None = None
+        self._clock_check: asyncio.TimerHandle | None = None
         self._transition_token: object | None = None
         self._mutation_lock = asyncio.Lock()
         self._initialized = False
@@ -287,7 +293,7 @@ class GuestModeManager:
 
         def decode_time(value: str, field: str) -> tuple[str, Any]:
             utc = _parse_timestamp(self.hass, value, field)
-            original = dt_util.parse_datetime(value)
+            original = parse_datetime(value)
             if original is None:
                 raise ValueError(f"{field} must be an ISO 8601 timestamp")
             return (
@@ -428,7 +434,10 @@ class GuestModeManager:
                     end = max(existing_end, requested_end)
             schedule = self._schedule_value(start, end, "llm")
             await self._async_commit_schedule(schedule)
-            return self.status(current)
+            with after_confirmed_mutation(
+                "Guest Mode was saved. Refresh to read the schedule."
+            ):
+                return self.status(current)
 
     async def async_update_trusted(
         self,
@@ -457,13 +466,19 @@ class GuestModeManager:
         schedule = self._schedule_value(start, end, "home_assistant")
         async with self._mutation_lock:
             await self._async_commit_schedule(schedule)
-            return self.status(current)
+            with after_confirmed_mutation(
+                "Guest Mode was saved. Refresh to read the schedule."
+            ):
+                return self.status(current)
 
     async def async_disable_trusted(self) -> dict[str, Any]:
         """End or cancel Guest Mode from a trusted HA control surface."""
         async with self._mutation_lock:
             await self._async_commit_schedule(None)
-            return self.status()
+            with after_confirmed_mutation(
+                "Guest Mode was saved. Refresh to read the schedule."
+            ):
+                return self.status()
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return JSON-compatible Guest Mode state for a private agent backup."""
@@ -489,27 +504,17 @@ class GuestModeManager:
         }:
             raise ValueError("Guest Mode schedule backup is invalid")
         schedule = GuestModeSchedule(**dict(raw))
-        for field, timestamp in (
-            ("active_from", schedule.active_from),
-            ("active_until", schedule.active_until),
-            ("updated_at", schedule.updated_at),
-        ):
-            if timestamp is None and field != "active_from":
-                continue
-            if not isinstance(timestamp, str):
-                raise ValueError(f"Guest Mode {field} is invalid")
-            parsed = dt_util.parse_datetime(timestamp)
-            if parsed is None or parsed.tzinfo is None:
-                raise ValueError(f"Guest Mode {field} is invalid")
-        if not isinstance(schedule.source, str) or not schedule.source:
-            raise ValueError("Guest Mode source is invalid")
-        start = dt_util.parse_datetime(schedule.active_from)
+        start = _parse_timestamp(None, schedule.active_from, "Guest Mode active_from")
         end = (
-            dt_util.parse_datetime(schedule.active_until)
+            _parse_timestamp(None, schedule.active_until, "Guest Mode active_until")
             if schedule.active_until is not None
             else None
         )
-        if start is not None and end is not None and end <= start:
+        if schedule.updated_at is not None:
+            _parse_timestamp(None, schedule.updated_at, "Guest Mode updated_at")
+        if not isinstance(schedule.source, str) or not schedule.source:
+            raise ValueError("Guest Mode source is invalid")
+        if end is not None and end <= start:
             raise ValueError("Guest Mode interval is invalid")
         return schedule
 
@@ -539,10 +544,13 @@ class GuestModeManager:
         cancel, self._cancel_transition = self._cancel_transition, None
         if cancel is not None:
             cancel()
+        if self._clock_check is not None:
+            self._clock_check.cancel()
+            self._clock_check = None
 
     @callback
     def _reschedule_transition(self) -> None:
-        """Track only the next future boundary of the authoritative schedule."""
+        """Track the next UTC boundary and reconcile wall-clock corrections."""
         self._cancel_transition_timer()
         if not self._listeners or not self.authoritative_available:
             return
@@ -556,10 +564,29 @@ class GuestModeManager:
                 _parse_timestamp(self.hass, schedule.active_until, "active_until")
             )
         future = [boundary for boundary in boundaries if now < boundary]
+        token = self._transition_token = object()
+
+        @callback
+        def check_clock() -> None:
+            if self._transition_token is not token:
+                return
+            current = dt_util.utcnow()
+            remaining = sum(current < boundary for boundary in boundaries)
+            if remaining != len(future):
+                self._notify()
+            else:
+                self._clock_check = self.hass.loop.call_later(
+                    _CLOCK_RECONCILE_SECONDS, check_clock
+                )
+
+        # A monotonic watchdog survives backwards wall-clock jumps, including
+        # after the final boundary. It exists only for observed schedules.
+        self._clock_check = self.hass.loop.call_later(
+            _CLOCK_RECONCILE_SECONDS, check_clock
+        )
         if not future:
             return
         next_boundary = min(future)
-        token = self._transition_token = object()
 
         @callback
         def transition(_now: datetime) -> None:
@@ -614,6 +641,7 @@ class GuestModeManager:
 
         previous = self._schedule
         was_available = self.authoritative_available
+        settled = False
         try:
             await _async_settle_transactional_save(
                 self._store.async_save(payload),
@@ -622,6 +650,7 @@ class GuestModeManager:
                 reconcile,
                 invalidate,
             )
+            settled = True
         finally:
             # A failed write followed by a failed authoritative readback can
             # leave the old in-memory schedule unchanged but untrustworthy.
@@ -631,7 +660,21 @@ class GuestModeManager:
                 or self._schedule != previous
                 or self.authoritative_available != was_available
             ):
-                self._notify()
+                if settled:
+                    with after_confirmed_mutation(
+                        "Guest Mode was saved, but transition notifications could not "
+                        "be scheduled. Reload the integration to restore notifications."
+                    ):
+                        self._notify()
+                else:
+                    # An observer failure must not replace failed-write evidence
+                    # or consume the original cancellation.
+                    try:
+                        self._notify()
+                    except Exception:
+                        _LOGGER.warning(
+                            "Could not notify Guest Mode listeners during save recovery"
+                        )
 
     def _live_or_future_schedule(self, now: Any) -> GuestModeSchedule | None:
         if self._persistence_unavailable:
@@ -645,12 +688,16 @@ class GuestModeManager:
         return schedule if now < end else None
 
     def _notify(self) -> None:
-        self._reschedule_transition()
-        for listener in tuple(self._listeners):
-            try:
-                listener()
-            except Exception as err:
-                _LOGGER.warning("Guest Mode listener failed (%s)", type(err).__name__)
+        try:
+            self._reschedule_transition()
+        finally:
+            for listener in tuple(self._listeners):
+                try:
+                    listener()
+                except Exception as err:
+                    _LOGGER.warning(
+                        "Guest Mode listener failed (%s)", type(err).__name__
+                    )
 
 
 async def async_stage_guest_mode_journal_recovery(
@@ -865,11 +912,14 @@ def _resolve_exclusion_policy(
     )
 
 
+GUEST_MODE_RESTRICT_TOOL_NAME = runtime_function_tool_name("guest_mode", "restrict")
+
+
 def guest_mode_restrict_tool() -> dict[str, Any]:
     """Return the structurally one-way model tool."""
     return {
         "spec": {
-            "name": "guest_mode_restrict",
+            "name": GUEST_MODE_RESTRICT_TOOL_NAME,
             "description": (
                 "Enable, start sooner, or extend Guest Mode; never weaken it. "
                 "For immediate activation use start_now=true, including over a future schedule. "
@@ -908,6 +958,9 @@ def guest_policy_editor_snapshot(
     exposed_entities: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a v2 editor draft, conservatively translating legacy settings."""
+    activation_enabled = options.get(
+        CONF_GUEST_MODE_ENABLED, DEFAULT_PERSISTED_GUEST_MODE_ENABLED
+    )
     keys = (
         CONF_GUEST_EXCLUDED_ENTITIES,
         CONF_GUEST_EXCLUDED_DOMAINS,
@@ -924,7 +977,7 @@ def guest_policy_editor_snapshot(
     if options.get(CONF_GUEST_POLICY_VERSION) == GUEST_POLICY_VERSION:
         return {
             CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
-            CONF_GUEST_MODE_ENABLED: options.get(CONF_GUEST_MODE_ENABLED, True),
+            CONF_GUEST_MODE_ENABLED: activation_enabled,
             CONF_GUEST_WEB_SEARCH: bool(
                 options.get(CONF_GUEST_WEB_SEARCH, DEFAULT_GUEST_WEB_SEARCH)
             ),
@@ -956,7 +1009,7 @@ def guest_policy_editor_snapshot(
     shared_write = bool(options.get(CONF_GUEST_SHARED_MEMORY_WRITE, False))
     return {
         CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
-        CONF_GUEST_MODE_ENABLED: options.get(CONF_GUEST_MODE_ENABLED, True),
+        CONF_GUEST_MODE_ENABLED: activation_enabled,
         CONF_GUEST_WEB_SEARCH: False,
         CONF_GUEST_EXCLUDED_ENTITIES: sorted(baseline - readable),
         CONF_GUEST_EXCLUDED_DOMAINS: [],
@@ -1291,19 +1344,28 @@ def _string_set(value: Any) -> set[str]:
     return {item for item in value if isinstance(item, str) and item}
 
 
-def _parse_timestamp(hass: HomeAssistant, value: str, field: str) -> Any:
-    parsed = dt_util.parse_datetime(value)
+def _parse_timestamp(hass: HomeAssistant | None, value: str, field: str) -> datetime:
+    parsed = parse_datetime(value) if isinstance(value, str) else None
     if parsed is None:
+        if hass is None:
+            raise ValueError(f"{field} is invalid")
         raise ValueError(f"{field} must be an ISO 8601 timestamp")
     if parsed.tzinfo is None:
+        if hass is None:
+            raise ValueError(f"{field} is invalid")
         zone = dt_util.get_time_zone(hass.config.time_zone)
         if zone is None:
             raise ValueError("Home Assistant timezone is unavailable")
         parsed = parsed.replace(tzinfo=zone)
-    return dt_util.as_utc(parsed)
+    return _as_utc(parsed, field=field)
 
 
-def _as_utc(value: Any) -> Any:
+def _as_utc(value: datetime, *, field: str = "timestamp") -> datetime:
     if value.tzinfo is None:
-        raise ValueError("timestamp must include timezone information")
-    return dt_util.as_utc(value)
+        raise ValueError(f"{field} must include timezone information")
+    try:
+        return dt_util.as_utc(value)
+    except OverflowError as err:
+        raise ValueError(
+            f"{field} is outside the supported UTC timestamp range"
+        ) from err

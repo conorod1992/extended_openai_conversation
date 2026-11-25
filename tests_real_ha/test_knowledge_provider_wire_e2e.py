@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_CHAT_MODEL,
+    CONF_GUEST_KNOWLEDGE_POLICY,
+    CONF_GUEST_KNOWLEDGE_SOURCE_IDS,
+    CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
+    GUEST_POLICY_VERSION,
+    MEMORY_MODE_MANUAL,
+)
+from custom_components.extended_openai_conversation_responses.live_subentry_updates import (
+    update_live_subentry,
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
@@ -28,8 +39,15 @@ _RELEVANT_MARKER = "orion-cobalt"
 _IRRELEVANT_MARKER = "cedar-amber"
 
 
-def _chat_sse_tool_call(call_id: str, name: str, arguments: dict[str, Any]) -> bytes:
+def _chat_sse_tool_call(
+    call_id: str, name: str, arguments: Any = None, *, raw_arguments: str | None = None
+) -> bytes:
     """Return one real Chat Completions function-call stream."""
+    encoded = (
+        json.dumps(arguments, separators=(",", ":"))
+        if raw_arguments is None
+        else raw_arguments
+    )
     chunk = {
         "id": f"chatcmpl-{call_id}",
         "object": "chat.completion.chunk",
@@ -47,9 +65,7 @@ def _chat_sse_tool_call(call_id: str, name: str, arguments: dict[str, Any]) -> b
                             "type": "function",
                             "function": {
                                 "name": name,
-                                "arguments": json.dumps(
-                                    arguments, separators=(",", ":")
-                                ),
+                                "arguments": encoded,
                             },
                         }
                     ],
@@ -80,10 +96,14 @@ def _chat_sse_text(text: str) -> bytes:
 
 
 def _responses_sse_tool_call(
-    call_id: str, name: str, arguments: dict[str, Any]
+    call_id: str, name: str, arguments: Any = None, *, raw_arguments: str | None = None
 ) -> bytes:
     """Return one real Responses API function-call stream."""
-    encoded = json.dumps(arguments, separators=(",", ":"))
+    encoded = (
+        json.dumps(arguments, separators=(",", ":"))
+        if raw_arguments is None
+        else raw_arguments
+    )
     item = {
         "id": f"fc-{call_id}",
         "type": "function_call",
@@ -114,7 +134,7 @@ def _responses_sse_tool_call(
     return "".join(f"data: {json.dumps(event)}\n\n" for event in events).encode()
 
 
-async def _knowledge_agent(hass: HomeAssistant, api_mode: str):
+async def _knowledge_agent(hass: HomeAssistant, api_mode: str, **options: Any):
     """Load a genuine conversation agent with Knowledge enabled."""
     entry = _make_entry(
         "Knowledge Provider Wire",
@@ -123,6 +143,7 @@ async def _knowledge_agent(hass: HomeAssistant, api_mode: str):
             CONF_API_MODE: api_mode,
             CONF_CHAT_MODEL: "gpt-5.6",
             CONF_KNOWLEDGE_ENABLED: True,
+            **options,
         },
     )
     await _setup_entry(hass, entry)
@@ -150,13 +171,15 @@ async def _seed_knowledge(agent: Any):
     return relevant
 
 
-async def _say(hass: HomeAssistant, agent: Any, text: str):
+async def _say(
+    hass: HomeAssistant, agent: Any, text: str, *, user_id: str | None = None
+):
     """Enter through Home Assistant's public conversation API."""
     return await conversation.async_converse(
         hass=hass,
         text=text,
         conversation_id=None,
-        context=Context(),
+        context=Context(user_id=user_id),
         language="en",
         agent_id=agent.entry.entry_id,
     )
@@ -184,8 +207,8 @@ def _chat_tool_result(body: dict[str, Any], call_id: str) -> dict[str, Any]:
         for item in body["messages"]
         if item.get("role") == "tool" and item.get("tool_call_id") == call_id
     )
-    outer = json.loads(tool_message["content"])
-    return json.loads(outer["result"])
+    result = json.loads(tool_message["content"])["result"]
+    return json.loads(result) if isinstance(result, str) else result
 
 
 def _responses_tool_result(body: dict[str, Any], call_id: str) -> dict[str, Any]:
@@ -195,8 +218,8 @@ def _responses_tool_result(body: dict[str, Any], call_id: str) -> dict[str, Any]
         for item in body["input"]
         if item.get("type") == "function_call_output" and item.get("call_id") == call_id
     )
-    outer = json.loads(tool_item["output"])
-    return json.loads(outer["result"])
+    result = json.loads(tool_item["output"])["result"]
+    return json.loads(result) if isinstance(result, str) else result
 
 
 def _chat_tool_arguments(
@@ -317,3 +340,234 @@ async def test_responses_knowledge_search_executes_through_real_sdk_wire(
     assert search_result["results"][0]["start_character"] == 0
     assert _RELEVANT_MARKER in search_result["results"][0]["excerpt"]
     assert _IRRELEVANT_MARKER not in json.dumps(search_result, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+async def test_knowledge_search_requires_array_source_filter_at_provider_boundary(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, api_mode: str
+) -> None:
+    agent = await _knowledge_agent(hass, api_mode, function_tool_error_recovery=True)
+    allowed = await _seed_knowledge(agent)
+    blocked = await agent._knowledge.async_create(
+        "Private observatory handbook",
+        "Reference for the observatory calibration token",
+        "Observatory calibration token is private-orion.",
+    )
+    update_live_subentry(
+        hass,
+        agent.entry,
+        agent.subentry,
+        data={
+            **agent.subentry.data,
+            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
+            CONF_GUEST_KNOWLEDGE_POLICY: "custom",
+            CONF_GUEST_KNOWLEDGE_SOURCE_IDS: [allowed.source_id],
+        },
+    )
+    await agent._guest_mode.async_update_trusted(indefinite=True)
+
+    chat = api_mode == API_MODE_CHAT_COMPLETIONS
+    call = _chat_sse_tool_call if chat else _responses_sse_tool_call
+    text = _chat_sse_text if chat else _responses_sse_text
+    decode = _chat_tool_result if chat else _responses_tool_result
+    for source_ids in ("", " \t", "0", None, [], ["0"], [blocked.source_id]):
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            [
+                call(
+                    _SEARCH_CALL_ID,
+                    "knowledge_search",
+                    {"query": "observatory calibration token", "source_ids": source_ids},
+                ),
+                text("Search complete"),
+            ],
+        )
+        assert _speech(await _say(hass, agent, "Check the calibration token")) == (
+            "Search complete"
+        )
+        result = decode(wire.requests[1]["body"], _SEARCH_CALL_ID)
+        if source_ids is None or isinstance(source_ids, str):
+            assert result.get("code") == "invalid_arguments", (source_ids, result)
+            assert "source_ids" in result["error"]
+        else:
+            assert [item["source_id"] for item in result["results"]] == (
+                [] if source_ids else [allowed.source_id]
+            )
+        assert "private-orion" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+@pytest.mark.parametrize("recovery", [False, True])
+@pytest.mark.parametrize("arguments", [None, [], "calibration token"], ids=["null", "array", "string"])
+async def test_nonobject_knowledge_arguments_follow_error_recovery(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, api_mode: str,
+    recovery: bool, arguments: Any,
+) -> None:
+    agent = await _knowledge_agent(hass, api_mode, function_tool_error_recovery=recovery)
+    await _seed_knowledge(agent)
+    search = AsyncMock()
+    monkeypatch.setattr(agent, "_async_execute_knowledge_tool", search)
+    chat = api_mode == API_MODE_CHAT_COMPLETIONS
+    call = _chat_sse_tool_call if chat else _responses_sse_tool_call
+    text = _chat_sse_text if chat else _responses_sse_text
+    decode = _chat_tool_result if chat else _responses_tool_result
+    replies = [call(_SEARCH_CALL_ID, "knowledge_search", arguments)]
+    if recovery:
+        replies.append(text("Recovered"))
+    wire = _install_wire(monkeypatch, agent, replies)
+
+    result = await _say(hass, agent, "Check the calibration token")
+    search.assert_not_awaited()
+    if recovery:
+        assert _speech(result) == "Recovered"
+        assert len(wire.requests) == 2
+        feedback = decode(wire.requests[1]["body"], _SEARCH_CALL_ID)
+        assert feedback["code"] == "invalid_arguments"
+        assert feedback["stage"] == "pre_dispatch_validation"
+        assert feedback["error"] == "Function input must be an object"
+    else:
+        assert len(wire.requests) == 1
+        assert result.response.error_code is not None
+        assert "Function input must be an object" in result.response.as_dict()["speech"]["plain"]["speech"]
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+@pytest.mark.parametrize("recovery_enabled", [False, True])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        '{"value":' + "9" * 5000 + "}",
+        '{"query":"calibration","nested":[{"value":NaN}]}',
+        '{"query":"calibration","nested":[{"value":Infinity}]}',
+        '{"query":"calibration","nested":[{"value":-Infinity}]}',
+        '{"query":"calibration","nested":[{"value":1e400}]}',
+        r'{"query":"calibration","nested":[{"value":"\ud800"}]}',
+        r'{"query":"calibration","nested":[{"\udfff":"value"}]}',
+    ],
+    ids=[
+        "oversized-int", "nan", "infinity", "negative-infinity", "float-overflow",
+        "surrogate-value", "surrogate-key",
+    ],
+)
+async def test_invalid_provider_json_arguments_follow_error_recovery(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    api_mode: str,
+    recovery_enabled: bool,
+    arguments: str,
+) -> None:
+    agent = await _knowledge_agent(
+        hass, api_mode, function_tool_error_recovery=recovery_enabled
+    )
+    await _seed_knowledge(agent)
+    search = AsyncMock()
+    monkeypatch.setattr(agent, "_async_execute_knowledge_tool", search)
+    chat = api_mode == API_MODE_CHAT_COMPLETIONS
+    call = _chat_sse_tool_call if chat else _responses_sse_tool_call
+    text = _chat_sse_text if chat else _responses_sse_text
+    replies = [call(_SEARCH_CALL_ID, "knowledge_search", raw_arguments=arguments)]
+    if recovery_enabled:
+        replies.append(text("Recovered"))
+    wire = _install_wire(monkeypatch, agent, replies)
+
+    result = await _say(hass, agent, "Check the calibration token")
+
+    search.assert_not_awaited()
+    if not recovery_enabled:
+        assert len(wire.requests) == 1
+        assert result.response.error_code is not None
+        speech = result.response.as_dict()["speech"]["plain"]["speech"]
+        assert "unparseable tool-call arguments" in speech
+        return
+
+    assert _speech(result) == "Recovered"
+    assert len(wire.requests) == 2
+    continuation = wire.requests[1]["body"]
+    if chat:
+        feedback = _chat_tool_result(continuation, _SEARCH_CALL_ID)
+        replayed = next(
+            call["function"]["arguments"]
+            for message in continuation["messages"]
+            for call in message.get("tool_calls") or []
+            if call["id"] == _SEARCH_CALL_ID
+        )
+    else:
+        feedback = _responses_tool_result(continuation, _SEARCH_CALL_ID)
+        replayed = next(
+            item["arguments"]
+            for item in continuation["input"]
+            if item.get("type") == "function_call" and item["call_id"] == _SEARCH_CALL_ID
+        )
+    assert feedback["code"] == "invalid_json"
+    assert feedback["stage"] == "provider_argument_decoding"
+    assert replayed == arguments
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+@pytest.mark.parametrize("recovery_enabled", [False, True])
+@pytest.mark.parametrize(
+    ("tool_name", "handler"),
+    [
+        ("knowledge_search", "_async_execute_knowledge_tool"),
+        ("memory_search", "_async_execute_memory_tool"),
+        ("conversation_search", "_async_execute_archive_tool"),
+    ],
+)
+async def test_whitespace_search_query_is_rejected_before_spending_execution_slot(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    api_mode: str,
+    recovery_enabled: bool,
+    tool_name: str,
+    handler: str,
+) -> None:
+    agent = await _knowledge_agent(
+        hass,
+        api_mode,
+        function_tool_error_recovery=recovery_enabled,
+        max_function_calls_per_conversation=1,
+        memory_mode=MEMORY_MODE_MANUAL,
+        archive_enabled=True,
+        archive_model_search_enabled=True,
+    )
+    await _seed_knowledge(agent)
+    user = await hass.auth.async_create_user("Search owner", group_ids=["system-admin"])
+    search = AsyncMock(return_value={"results": []})
+    monkeypatch.setattr(agent, handler, search)
+    chat = api_mode == API_MODE_CHAT_COMPLETIONS
+    call = _chat_sse_tool_call if chat else _responses_sse_tool_call
+    text = _chat_sse_text if chat else _responses_sse_text
+    call_id = "call-blank-query"
+    corrected_query = " calibration token "
+    replies = [call(call_id, tool_name, {"query": " \t\n\u2003"})]
+    if recovery_enabled:
+        replies.extend(
+            [
+                call("call-corrected-query", tool_name, {"query": corrected_query}),
+                text("Recovered"),
+            ]
+        )
+    wire = _install_wire(monkeypatch, agent, replies)
+
+    result = await _say(hass, agent, "Check past notes", user_id=user.id)
+
+    assert tool_name in _tool_names(wire.requests[0]["body"], api_mode)
+    if not recovery_enabled:
+        search.assert_not_awaited()
+        assert len(wire.requests) == 1
+        assert result.response.error_code is not None
+        speech = result.response.as_dict()["speech"]["plain"]["speech"]
+        assert "query must not be blank" in speech
+        return
+
+    assert _speech(result) == "Recovered"
+    assert len(wire.requests) == 3
+    decode = _chat_tool_result if chat else _responses_tool_result
+    feedback = decode(wire.requests[1]["body"], call_id)
+    assert feedback["code"] == "invalid_arguments"
+    assert feedback["stage"] == "pre_dispatch_validation"
+    assert feedback["error"] == "query must not be blank"
+    search.assert_awaited_once()
+    assert search.await_args.args[0] == "search"
+    assert search.await_args.args[1]["query"] == corrected_query

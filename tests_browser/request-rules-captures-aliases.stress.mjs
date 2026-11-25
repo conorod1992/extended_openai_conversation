@@ -13,13 +13,13 @@ async function setActions(panel, value) {
   }, value);
 }
 
-test("nightly capture and result-alias transitions remain stable across repeated edits", async ({page}, testInfo) => {
+test("nightly capture and native response transitions remain stable across repeated edits", async ({page}, testInfo) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
   let panel = page.locator("extended-openai-management-panel");
 
   await panel.getByRole("button", {name:"Create rule", exact:true}).first().click();
-  await panel.locator("#rule-name").fill("Nightly capture alias");
+  await panel.locator("#rule-name").fill("Nightly capture input");
   await panel.locator("#rule-phrases").fill("ask {question}\nanswer {question}");
   await panel.locator("#rule-match").selectOption("sentence_pattern");
   await panel.locator("#rule-action-type").selectOption("model_routing");
@@ -30,7 +30,7 @@ test("nightly capture and result-alias transitions remain stable across repeated
   await panel.locator("#rule-save").click();
 
   for (let index = 0; index < 3; index += 1) {
-    const card = panel.locator(".request-rule-card").filter({hasText:"Nightly capture alias"});
+    const card = panel.locator(".request-rule-card").filter({hasText:"Nightly capture input"});
     await card.locator(".rule-edit").click();
     await panel.locator("#rule-phrases").fill(`ask {question}\nanswer {${index % 2 ? "question" : "topic"}}`);
     if (index % 2 === 0) {
@@ -45,40 +45,40 @@ test("nightly capture and result-alias transitions remain stable across repeated
   }
 
   await panel.getByRole("button", {name:"Create rule", exact:true}).first().click();
-  await panel.locator("#rule-name").fill("Nightly result alias");
-  await panel.locator("#rule-phrases").fill("nightly alias result");
-  await setActions(panel, [{
+  await panel.locator("#rule-name").fill("Nightly Function response");
+  await panel.locator("#rule-phrases").fill("nightly Function response");
+  const sequence = index => [{
     action:"extended_openai_conversation_responses.call_function",
-    data:{function:"baseline_tool", arguments:{}, result_alias:"result_0", step_id:"stable-step"},
-  }]);
-  await panel.locator("#rule-success").fill("Value {result_0.value}");
+    data:{function:"baseline_tool", arguments:{}},
+    response_variable:`reading_${index}`,
+  }, {
+    set_conversation_response:`Result {{ reading_${index}.result.value }}`,
+  }];
+  await setActions(panel, sequence(0));
+  await panel.locator("#rule-success").fill("Function complete");
   await panel.locator("#rule-save").click();
 
   for (let index = 1; index <= 3; index += 1) {
-    const card = panel.locator(".request-rule-card").filter({hasText:"Nightly result alias"});
+    const card = panel.locator(".request-rule-card").filter({hasText:"Nightly Function response"});
     await card.locator(".rule-edit").click();
-    const alias = `result_${index}`;
-    await panel.locator(".rule-result-alias").fill(alias);
-    await panel.locator(".rule-result-alias").press("Tab");
+    await setActions(panel, sequence(index));
     await panel.locator("#rule-save").click();
     await card.locator(".rule-edit").click();
-    await expect(panel.locator(".rule-result-alias")).toHaveValue(alias);
-    await expect(panel.locator("#rule-success")).toHaveValue(`Value {${alias}.value}`);
-    const actions = await panel.locator("#rule-action-sequence-host ha-selector").evaluate((selector) => selector.value);
-    expect(actions[0].data.step_id).toBe("stable-step");
+    const actions = await panel.locator("#rule-action-sequence-host ha-selector").evaluate(selector => selector.value);
+    expect(actions).toEqual(sequence(index));
+    await expect(panel.locator("#rule-success")).toHaveValue("Function complete");
     await panel.locator(".rule-close").first().click();
   }
 
   await page.goto(fixtureUrl("capabilities/request-rules"));
   panel = page.locator("extended-openai-management-panel");
-  await panel.locator(".request-rule-card").filter({hasText:"Nightly result alias"}).locator(".rule-edit").click();
-  await expect(panel.locator(".rule-result-alias")).toHaveValue("result_3");
-  await expect(panel.locator("#rule-success")).toHaveValue("Value {result_3.value}");
+  await panel.locator(".request-rule-card").filter({hasText:"Nightly Function response"}).locator(".rule-edit").click();
+  expect(await panel.locator("#rule-action-sequence-host ha-selector").evaluate(selector => selector.value)).toEqual(sequence(3));
 
-  await testInfo.attach("request-rule-capture-alias-stress", {
-    body:JSON.stringify({captureTransitions:3, aliasRenames:3, freshLoadVerified:true}, null, 2),
+  await testInfo.attach("request-rule-native-response-stress", {
+    body:JSON.stringify({captureTransitions:3, responseUpdates:3, freshLoadVerified:true}, null, 2),
     contentType:"application/json",
   });
-  console.log("ENHANCED REQUEST_RULE_CAPTURE_ALIAS capture_transitions=3 alias_renames=3");
+  console.log("ENHANCED REQUEST_RULE_NATIVE_RESPONSE capture_transitions=3 response_updates=3");
   await expectHarnessClean(page, errors);
 });

@@ -144,14 +144,14 @@ async def test_failed_worker_preserves_literal_spacing(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("positions", [None, [-1], [999], [True], [0], [9, 9], [10, 9]])
+@pytest.mark.parametrize("positions", [None, [[-1, 2, "code"]], [[0, 999, "code"]], [[True, 2, "code"]], [[0, 1, "escaped"]], [[9, 12, "code"], [10, 11, "code"]], [[8, 9, []]]])
 async def test_invalid_worker_provenance_preserves_original_speech(
     monkeypatch, positions
 ):
     result = {
         "text": "off now. !image",
         "invalid": [],
-        "literal_punctuation": positions,
+        "literal_spans": positions,
     }
 
     async def worker(_payload):
@@ -226,7 +226,7 @@ async def test_nested_formatting_copies_literal_provenance(source, expected):
     )
     # A copied punctuation group retains its origin after nested formatting.
     replaced = (
-        r"hello \image! !literal"
+        r"hello \image ! !literal"
         if "`" in source
         else expected.replace("!world", "image !")
     )
@@ -242,3 +242,15 @@ def test_nested_provenance_offsets_on_indexed_long_input():
     source = prefix + r"*hello \!world* then \?tail"
     assert process_speech_text(source, _config()) == prefix + "hello !world then ?tail"
     assert process_speech_text("*hello !world*", _config()) == "hello!world"
+
+
+async def test_regex_preserves_code_ranges_across_copies_and_insertions():
+    raw = 'HA says: `grep . "two  words"`.'
+    config = _config(speech_regex_replacements=[
+        {"pattern": "HA", "replacement": "Home Assistant"},
+        {"pattern": r'(grep \. "two  words")', "replacement": r"\1 + \1"},
+        {"pattern": "two", "replacement": "three"},
+    ])
+    expected = 'Home Assistant says: grep . "three  words" + grep . "three  words".'
+    assert process_speech_text(raw, config) == expected
+    assert await regex_execution.async_process_speech_text(_ExecutorHass(), raw, config) == expected

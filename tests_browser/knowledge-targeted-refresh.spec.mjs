@@ -110,3 +110,18 @@ test("late Knowledge availability response does not patch a different agent", as
   expect(result.firstAgentEnabled).toBe(true);
   await expectHarnessClean(page, errors);
 });
+
+test("open Settings Search refreshes after a Knowledge toggle", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("data-memory/knowledge"));
+  const panel = page.locator("extended-openai-management-panel");
+  const toggle = panel.locator("#knowledge-enabled-toggle");
+  await expect(toggle).toBeVisible();
+  await panel.evaluate(host => host._call("knowledge", "set_enabled", {enabled:true}));
+  await panel.locator("#settings-search").fill("knowledge library access");
+  const results = panel.locator(".search-results");
+  await expect(results).toContainText("Current: On");
+  await toggle.uncheck();
+  await expect(results).toContainText("Current: Off");
+  await expectHarnessClean(page, errors);
+});

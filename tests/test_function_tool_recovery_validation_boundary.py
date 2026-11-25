@@ -50,7 +50,7 @@ def _tool() -> dict[str, Any]:
     }
 
 
-def _parallel_tool(name: str) -> dict[str, Any]:
+def _read_only_tool(name: str) -> dict[str, Any]:
     tool = _tool()
     tool["spec"]["name"] = name
     tool["function"] = {"type": "knowledge", "operation": "search"}
@@ -144,10 +144,10 @@ async def test_regex_validation_infrastructure_failure_is_not_recoverable(
 
 
 @pytest.mark.parametrize("failure_index", [0, 1, 2])
-async def test_parallel_validation_infrastructure_failure_closes_all_calls(
+async def test_batch_validation_infrastructure_failure_closes_remaining_calls(
     hass, monkeypatch, failure_index: int
 ) -> None:
-    """A pre-dispatch infrastructure failure closes every retained parallel call."""
+    """A validation failure preserves the executed prefix and closes later calls."""
     validation_index = 0
 
     async def fail_selected(_hass: Any, _checks: Any) -> list[bool]:
@@ -163,13 +163,21 @@ async def test_parallel_validation_infrastructure_failure_closes_all_calls(
     )
 
     names = ["first_read", "second_read", "third_read"]
-    tools = [_parallel_tool(name) for name in names]
+    tools = [_read_only_tool(name) for name in names]
     calls = [
         _call("on", call_id=f"call-{index + 1}", tool_name=name)
         for index, name in enumerate(names)
     ]
     chat_log = _chat_log_for_calls(hass, calls)
     entity = _entity(hass)
+    entity._execute_function_tool.side_effect = (
+        lambda _tool, call, *_: conversation.ToolResultContent(
+            agent_id=entity.entity_id,
+            tool_call_id=call.id,
+            tool_name=call.tool_name,
+            tool_result={"result": {"status": "ok"}},
+        )
+    )
     state = ToolRecoveryState(enabled=True)
     budget = FunctionCallBudget(3)
 
@@ -188,9 +196,13 @@ async def test_parallel_validation_infrastructure_failure_closes_all_calls(
             recovery_state=state,
         )
 
-    entity._execute_function_tool.assert_not_awaited()
+    assert [
+        invocation.args[1].id
+        for invocation in entity._execute_function_tool.await_args_list
+    ] == [call.id for call in calls[:failure_index]]
     assert state.used == 0
-    assert budget.used == 0
+    assert budget.used == failure_index
+    assert validation_index == failure_index + 1
     results = _results(chat_log)
     assert [result.tool_call_id for result in results] == [
         "call-1",
@@ -199,7 +211,9 @@ async def test_parallel_validation_infrastructure_failure_closes_all_calls(
     ]
     assert len({result.tool_call_id for result in results}) == 3
     assert [tool_result_data(result)["result"]["status"] for result in results] == [
-        "error" if index == failure_index else "skipped" for index in range(3)
+        *(["ok"] * failure_index),
+        "error",
+        *(["skipped"] * (2 - failure_index)),
     ]
 
 

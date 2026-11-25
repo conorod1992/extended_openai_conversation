@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 from pathlib import Path
 from typing import Any, cast
@@ -16,10 +16,16 @@ from uuid import uuid4
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .function_tool_policy import (
+    runtime_function_tool_name,
+    runtime_function_tool_names,
+)
+from .memory_tool_arguments import nullable_memory_tool_arguments
 from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
+from .record_timestamps import parse_datetime, stored_timestamp_instant
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .storage_namespaces import TEMPORARY_MEMORY_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
@@ -39,11 +45,7 @@ MAX_DELETE_RECORDS = 50
 MAX_INJECT_RECORDS = 30
 MAX_INJECT_CHARACTERS = 6_000
 
-TEMPORARY_MEMORY_TOOL_NAMES = {
-    "temporary_memory_add",
-    "temporary_memory_update",
-    "temporary_memory_delete",
-}
+TEMPORARY_MEMORY_TOOL_NAMES = runtime_function_tool_names("temporary_memory")
 
 
 @dataclass(slots=True, frozen=True)
@@ -167,33 +169,18 @@ class TemporaryMemory:
             return
         try:
             data = await self._store.async_load()
-            if data is not None and not isinstance(data, Mapping):
-                raise ValueError("Temporary Memory store has invalid structure")
-            if isinstance(data, Mapping) and not isinstance(
-                data.get("records", []), list
-            ):
-                raise ValueError("Temporary Memory records have invalid structure")
-            raw_records = data.get("records", []) if isinstance(data, Mapping) else []
-            seen_ids: set[str] = set()
-            damaged = False
-            for raw in raw_records:
-                try:
-                    record = _record_from_storage(raw)
-                    if record.memory_id in seen_ids:
-                        raise _InvalidStoredMetadata("duplicate temporary memory ID")
-                    seen_ids.add(record.memory_id)
-                    if asdict(record) != raw:
-                        self._normalization_pending = True
-                    if _parse_expiry(record.expires_at) > dt_util.utcnow():
-                        self._records[record.memory_id] = record
-                    else:
-                        self.expired_pruned += 1
-                except TypeError, ValueError:
-                    damaged = True
-            if damaged:
-                raise StorageRepairRequired("Temporary Memory")
+            now = dt_util.utcnow()
+            had_records = False
+            for raw, record, expiry in _decode_stored_records(data):
+                had_records = True
+                if asdict(record) != raw:
+                    self._normalization_pending = True
+                if expiry > now:
+                    self._records[record.memory_id] = record
+                else:
+                    self.expired_pruned += 1
             if (
-                raw_records
+                had_records
                 and isinstance(self._store, TemporaryMemoryStore)
                 and self._store.needs_format_upgrade
             ):
@@ -272,7 +259,13 @@ class TemporaryMemory:
             if _matches_owner(record, scope_id, owner_scope_id)
             and _parse_expiry(record.expires_at) > now
         ]
-        records.sort(key=lambda item: (item.updated_at, item.expires_at), reverse=True)
+        records.sort(
+            key=lambda item: (
+                stored_timestamp_instant(item.updated_at),
+                stored_timestamp_instant(item.expires_at),
+            ),
+            reverse=True,
+        )
         selected: list[TemporaryMemoryRecord] = []
         characters = 0
         for record in records:
@@ -377,31 +370,12 @@ class TemporaryMemory:
             await self._async_initialize_locked()
             await self._async_prune_locked()
             current = self._owned(scope_id, memory_id, owner_scope_id)
-            if (
-                source == "automatic"
-                and current.source == "manual"
-                and (
-                    content is None
-                    or _clean(content, MAX_CONTENT_LENGTH, "content") == current.content
-                )
-                and (
-                    category is None
-                    or _clean(category, MAX_CATEGORY_LENGTH, "category")
-                    == current.category
-                )
-                and (
-                    expires_at is None
-                    or _parse_future_expiry(expires_at).isoformat()
-                    == current.expires_at
-                )
-            ):
-                return current
             new_content = (
                 _clean(content, MAX_CONTENT_LENGTH, "content")
                 if content is not None
                 else current.content
             )
-            effective_source = source or current.source
+            effective_source = "manual" if source == "manual" else current.source
             new_category = (
                 _clean(category, MAX_CATEGORY_LENGTH, "category")
                 if category is not None
@@ -409,9 +383,16 @@ class TemporaryMemory:
             )
             new_expiry = (
                 _parse_future_expiry(expires_at).isoformat()
-                if expires_at is not None
+                if expires_at is not None and expires_at != current.expires_at
                 else current.expires_at
             )
+            if (
+                new_content == current.content
+                and new_category == current.category
+                and new_expiry == current.expires_at
+                and effective_source == current.source
+            ):
+                return current
             updated = TemporaryMemoryRecord(
                 current.memory_id,
                 current.scope_id,
@@ -582,25 +563,11 @@ class TemporaryMemory:
     async def _async_reconcile_failed_save(self) -> None:
         """Rebuild validated records without starting a second cleanup write."""
         data = await self._store.async_load()
-        if data is not None and not isinstance(data, Mapping):
-            raise ValueError("Temporary Memory store has invalid structure")
-        raw_records = data.get("records", []) if isinstance(data, Mapping) else []
-        if not isinstance(raw_records, list):
-            raise ValueError("Temporary Memory records have invalid structure")
         records: list[TemporaryMemoryRecord] = []
         invalid_owners = 0
         normalized_owners = 0
-        seen_ids: set[str] = set()
-        for raw in raw_records:
-            try:
-                record = _record_from_storage(raw)
-                if record.memory_id in seen_ids:
-                    raise _InvalidStoredMetadata("duplicate temporary memory ID")
-                seen_ids.add(record.memory_id)
-                _parse_expiry(record.expires_at)
-                normalized = _normalize_record_owner(record)
-            except (TypeError, ValueError) as err:
-                raise StorageRepairRequired("Temporary Memory") from err
+        for raw, record, _expiry in _decode_stored_records(data):
+            normalized = _normalize_record_owner(record)
             if normalized is None:
                 invalid_owners += 1
                 continue
@@ -734,7 +701,7 @@ class TemporaryMemory:
         counts: Counter[str] = Counter()
         for record in self._records.values():
             owner = _valid_owner_scope_id(record.owner_scope_id)
-            expiry = dt_util.parse_datetime(record.expires_at)
+            expiry = parse_datetime(record.expires_at)
             if owner is not None and expiry is not None and expiry > now:
                 counts[owner] += 1
         return dict(counts)
@@ -747,9 +714,14 @@ class TemporaryMemory:
             record
             for record in self._records.values()
             if record.owner_scope_id == owner
-            and (dt_util.parse_datetime(record.expires_at) or now) > now
+            and (parse_datetime(record.expires_at) or now) > now
         ]
-        records.sort(key=lambda record: (record.expires_at, record.memory_id))
+        records.sort(
+            key=lambda record: (
+                stored_timestamp_instant(record.expires_at),
+                record.memory_id,
+            )
+        )
         return records
 
     def _prune_expired_locked(self) -> bool:
@@ -803,6 +775,30 @@ class TemporaryMemory:
             self.expired_pruned = expired_pruned
 
 
+def _decode_stored_records(
+    data: Any,
+) -> Iterator[tuple[Mapping[str, Any], TemporaryMemoryRecord, datetime]]:
+    """Validate a saved generation before offering live or preview context."""
+    if data is not None and not isinstance(data, Mapping):
+        raise ValueError("Temporary Memory store has invalid structure")
+    raw_records = data.get("records", []) if data is not None else []
+    if not isinstance(raw_records, list):
+        raise ValueError("Temporary Memory records have invalid structure")
+    seen_ids: set[str] = set()
+    for raw in raw_records:
+        if not isinstance(raw, Mapping):
+            raise StorageRepairRequired("Temporary Memory")
+        try:
+            record = _record_from_storage(raw)
+            if record.memory_id in seen_ids:
+                raise _InvalidStoredMetadata("duplicate temporary memory ID")
+            expiry = _parse_expiry(record.expires_at)
+        except (TypeError, ValueError) as err:
+            raise StorageRepairRequired("Temporary Memory") from err
+        seen_ids.add(record.memory_id)
+        yield raw, record, expiry
+
+
 def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
     """Load a record while preserving safe compatibility with pre-owner storage."""
     values = dict(raw)
@@ -838,8 +834,8 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
         raise _InvalidStoredMetadata("temporary memory metadata is invalid")
     _parse_expiry(record.expires_at)
     if (
-        dt_util.parse_datetime(record.created_at) is None
-        or dt_util.parse_datetime(record.updated_at) is None
+        parse_datetime(record.created_at) is None
+        or parse_datetime(record.updated_at) is None
     ):
         raise _InvalidStoredMetadata("temporary memory timestamp is invalid")
     return replace(
@@ -870,13 +866,16 @@ def _matches_owner(
     return owner is not None and record.owner_scope_id == owner
 
 
-def _parse_expiry(value: str):
-    parsed = dt_util.parse_datetime(value)
+def _parse_expiry(value: str) -> datetime:
+    parsed = parse_datetime(value)
     if parsed is None:
         raise ValueError("expires_at must be an ISO date-time with a timezone")
     if parsed.tzinfo is None:
         raise ValueError("expires_at must include a timezone")
-    return dt_util.as_utc(parsed)
+    try:
+        return dt_util.as_utc(parsed)
+    except OverflowError as err:
+        raise ValueError("expires_at must be within the supported date range") from err
 
 
 def _parse_future_expiry(value: str):
@@ -914,13 +913,19 @@ def temporary_memory_as_dict(
     return result
 
 
+TEMPORARY_MEMORY_OPTIONAL_ARGUMENTS = {
+    "add": frozenset({"category"}),
+    "update": frozenset({"content", "expires_at", "category"}),
+}
+
+
 def temporary_memory_tools() -> list[dict[str, Any]]:
     """Return the small model-facing maintenance surface."""
     common = {"type": "temporary_memory"}
-    return [
+    tools = [
         {
             "spec": {
-                "name": "temporary_memory_add",
+                "name": runtime_function_tool_name("temporary_memory", "add"),
                 "description": "Silently store a short-lived fact.",
                 "parameters": {
                     "type": "object",
@@ -940,7 +945,7 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "temporary_memory_update",
+                "name": runtime_function_tool_name("temporary_memory", "update"),
                 "description": "Silently update an active temporary memory.",
                 "parameters": {
                     "type": "object",
@@ -958,7 +963,7 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "temporary_memory_delete",
+                "name": runtime_function_tool_name("temporary_memory", "delete"),
                 "description": "Silently delete active temporary memories.",
                 "parameters": {
                     "type": "object",
@@ -977,6 +982,7 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
             "function": {**common, "operation": "delete"},
         },
     ]
+    return nullable_memory_tool_arguments(tools, TEMPORARY_MEMORY_OPTIONAL_ARGUMENTS)
 
 
 _MANAGERS = f"{DOMAIN}.temporary_memory_managers"
@@ -1018,16 +1024,17 @@ async def async_read_temporary_memory_snapshot(
     if owner_scope_id is None:
         return []
     data = await _temporary_memory_store(hass, entry_id, subentry_id).async_load()
-    raw_records = data.get("records", []) if isinstance(data, Mapping) else []
-    records: list[TemporaryMemoryRecord] = []
-    for raw in raw_records:
-        try:
-            record = _record_from_storage(raw)
-            _parse_expiry(record.expires_at)
-            records.append(record)
-        except TypeError, ValueError:
-            continue
-    return TemporaryMemory.select_active_snapshot(records, scope_id, owner_scope_id)
+    now = dt_util.utcnow()
+    active = [
+        normalized
+        for _, record, expiry in _decode_stored_records(data)
+        if expiry > now and (normalized := _normalize_record_owner(record)) is not None
+    ]
+    return TemporaryMemory.select_active_snapshot(
+        _bounded_records(active),
+        scope_id,
+        owner_scope_id,
+    )
 
 
 async def async_get_temporary_memory(
@@ -1139,17 +1146,15 @@ def _bounded_records(
     return [record for record in records if record.memory_id not in discarded]
 
 
-def _owner_record_sort_key(record: TemporaryMemoryRecord) -> tuple[Any, ...]:
+def _owner_record_sort_key(
+    record: TemporaryMemoryRecord,
+) -> tuple[datetime, datetime, datetime, str]:
     """Keep the newest bounded records deterministically during startup recovery."""
 
-    def parsed(value: str) -> float:
-        parsed_value = dt_util.parse_datetime(value)
-        return parsed_value.timestamp() if parsed_value is not None else 0.0
-
     return (
-        parsed(record.updated_at),
-        parsed(record.expires_at),
-        parsed(record.created_at),
+        stored_timestamp_instant(record.updated_at),
+        stored_timestamp_instant(record.expires_at),
+        stored_timestamp_instant(record.created_at),
         record.memory_id,
     )
 

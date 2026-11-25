@@ -5,9 +5,8 @@ from collections.abc import Mapping
 import logging
 import mimetypes
 from pathlib import Path
-import re
 from typing import Any, cast
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 from openai._exceptions import OpenAIError
 import voluptuous as vol
@@ -28,9 +27,7 @@ from homeassistant.helpers import (
     entity_registry as er,
     selector,
 )
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.loader import async_get_integration
 
 from . import function_configuration_mutations as function_mutations
 from .agent_maintenance import get_agent_maintenance_gate
@@ -47,13 +44,8 @@ from .const import (
     CONF_SKIP_AUTHENTICATION,
     DEFAULT_API_MODE,
     DOMAIN,
-    GITHUB_REPO_NAME,
-    GITHUB_REPO_OWNER,
-    GITHUB_SKILLS_BRANCH,
-    GITHUB_SKILLS_PATH,
     SERVICE_CALL_FUNCTION,
     SERVICE_DISABLE_FUNCTION_TOOLS,
-    SERVICE_DOWNLOAD_SKILL,
     SERVICE_ENABLE_FUNCTION_TOOLS,
     SERVICE_GUEST_MODE_DISABLE,
     SERVICE_GUEST_MODE_UPDATE,
@@ -67,12 +59,10 @@ from .const import (
 )
 from .guest_mode import async_get_guest_mode
 from .ha_schema import schema_for_ha
-from .ha_tool_result_compat import tool_result_data
 from .helpers import get_api_mode, get_authenticated_client, is_native_openai_connection
 from .live_subentry_updates import update_live_subentry
 from .memory import async_get_memory, memory_as_dict, memory_user_id
 from .model_capabilities import model_capability_snapshot
-from .operation_settlement import async_settle_owned_operation
 from .provider_errors import (
     ensure_successful_responses_result,
     log_provider_failure,
@@ -80,18 +70,13 @@ from .provider_errors import (
     request_reauthentication,
 )
 from .request import (
+    async_capacity_ha_snapshot,
     query_image_request_settings,
     request_model_capabilities,
     validate_runtime_readiness,
 )
 from .request_rules import async_call_active_function
 from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
-from .skill_resource_limits import (
-    SkillDownloadBudget,
-    async_read_bounded_json,
-    async_read_bounded_response,
-)
-from .skill_transactions import SkillDownload, prepare_download
 
 SERVICE_ENABLE_FUNCTION_GROUPS = "enable_function_groups"
 SERVICE_DISABLE_FUNCTION_GROUPS = "disable_function_groups"
@@ -141,15 +126,6 @@ CALL_FUNCTION_SCHEMA = vol.Schema(
     {
         vol.Required("function"): cv.string,
         vol.Optional("arguments", default=dict): dict,
-        vol.Optional("result_alias"): cv.string,
-        vol.Optional("step_id"): cv.string,
-    }
-)
-
-DOWNLOAD_SKILL_SCHEMA = vol.Schema(
-    {
-        vol.Required("skill_name"): cv.string,
-        vol.Optional("source_ref"): vol.All(cv.string, vol.Length(min=1, max=128)),
     }
 )
 
@@ -230,7 +206,6 @@ PROCESS_SCHEMA = vol.Schema(
 )
 
 _LOGGER = logging.getLogger(__package__)
-_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
 def resolve_memory_agent(
@@ -266,6 +241,8 @@ async def async_set_function_tools_enabled(
     agent_reference: str,
     function_names: list[str],
     enabled: bool,
+    *,
+    user_id: str | None = None,
 ) -> None:
     """Persist the authoritative enabled state for selected Function Tools."""
     _, subentry_id = resolve_memory_agent(hass, entry_id, agent_reference)
@@ -279,7 +256,20 @@ async def async_set_function_tools_enabled(
         persisted = function_mutations.prepare_function_tools_enabled(
             subentry.data, function_names, enabled, provider=entry_api_provider(entry)
         )
-        validate_runtime_readiness(persisted, entry.data)
+        from .ha_permissions import get_active_ha_context
+
+        context = get_active_ha_context()
+        snapshot = await async_capacity_ha_snapshot(
+            hass,
+            persisted,
+            user_id if user_id is not None or context is None else context.user_id,
+        )
+        validate_runtime_readiness(
+            persisted,
+            entry.data,
+            ha_snapshot=snapshot,
+            client=getattr(entry, "runtime_data", None),
+        )
         update_live_subentry(hass, entry, subentry, data=persisted)
 
 
@@ -289,6 +279,8 @@ async def async_set_function_groups_enabled(
     agent_reference: str,
     group_ids: list[str],
     enabled: bool,
+    *,
+    user_id: str | None = None,
 ) -> None:
     """Persist Function Group state without changing member Function Tool state."""
     _, subentry_id = resolve_memory_agent(hass, entry_id, agent_reference)
@@ -302,26 +294,21 @@ async def async_set_function_groups_enabled(
         persisted = function_mutations.prepare_function_groups_enabled(
             subentry.data, group_ids, enabled, provider=entry_api_provider(entry)
         )
-        validate_runtime_readiness(persisted, entry.data)
+        from .ha_permissions import get_active_ha_context
+
+        context = get_active_ha_context()
+        snapshot = await async_capacity_ha_snapshot(
+            hass,
+            persisted,
+            user_id if user_id is not None or context is None else context.user_id,
+        )
+        validate_runtime_readiness(
+            persisted,
+            entry.data,
+            ha_snapshot=snapshot,
+            client=getattr(entry, "runtime_data", None),
+        )
         update_live_subentry(hass, entry, subentry, data=persisted)
-
-
-async def async_skill_source_ref(
-    hass: HomeAssistant, requested_ref: str | None = None
-) -> str:
-    """Resolve a reproducible release ref unless a development ref is explicit."""
-    if requested_ref is not None:
-        source_ref = requested_ref.strip()
-        if not source_ref:
-            raise HomeAssistantError("Skill source ref cannot be empty")
-        return source_ref
-    integration = await async_get_integration(hass, DOMAIN)
-    if integration.version is not None:
-        version = str(integration.version).strip()
-        if version:
-            return version
-    # Custom development installs without version metadata retain an explicit fallback.
-    return GITHUB_SKILLS_BRANCH
 
 
 async def _async_require_service_admin(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -477,10 +464,10 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         new_data = dict(original_data)
         new_data.update(updates)
         from .provider_credentials import (
+            async_validate_agent_provider_request,
             incompatible_provider_agent,
             request_provider_reload_after_update,
             require_provider_restore_complete,
-            validate_agent_provider_request,
             validate_provider_connection,
         )
 
@@ -514,23 +501,35 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 f"Provider configuration validation failed: {provider_user_message(err)}"
             ) from err
 
-        from .request_rules import async_get_request_rules, validate_saved_model_routes
+        from .request_rules import async_get_request_rules
 
         children = dict(getattr(entry, "subentries", {}))
         child_data = {key: dict(child.data) for key, child in children.items()}
         rule_revisions = []
+        endpoint_changed = any(
+            original_data.get(key) != new_data.get(key)
+            for key in (CONF_API_PROVIDER, CONF_BASE_URL, CONF_API_VERSION)
+        )
         for child_id, child in children.items():
             if child.subentry_type not in {"conversation", "ai_task_data"}:
                 continue
             options = child_data[child_id]
             try:
-                validate_agent_provider_request(child.subentry_type, options, new_data)
+                saved_rules = []
                 if child.subentry_type == "conversation":
                     rules = await async_get_request_rules(hass, entry_id, child_id)
                     rule_revisions.append((rules, rules.revision()))
-                    validate_saved_model_routes(
-                        rules.snapshot()["rules"], options, new_data
-                    )
+                    saved_rules = rules.snapshot()["rules"]
+                await async_validate_agent_provider_request(
+                    hass,
+                    child.subentry_type,
+                    options,
+                    new_data,
+                    rules=saved_rules,
+                    user_id=call.context.user_id,
+                    discover_ha_tools=endpoint_changed,
+                    previous_provider_data=original_data if endpoint_changed else None,
+                )
             except HomeAssistantError as err:
                 raise incompatible_provider_agent(child.title, err) from err
         if dict(getattr(entry, "subentries", {})) != children or any(
@@ -571,145 +570,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
         return {
             "loaded_skills": len(skill_manager.get_all_skills()),
-        }
-
-    async def download_skill(call: ServiceCall) -> ServiceResponse:
-        """Download a Skill, then atomically publish it into the installed catalogue."""
-        await _async_require_service_admin(hass, call)
-        from .skills import SkillManager
-
-        skill_name = call.data["skill_name"].strip()
-        if _SKILL_NAME_RE.fullmatch(skill_name) is None:
-            raise HomeAssistantError(
-                "Skill name may contain only letters, numbers, underscores, and hyphens"
-            )
-        source_ref = await async_skill_source_ref(hass, call.data.get("source_ref"))
-        session = async_get_clientsession(hass)
-        api_url = (
-            f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}"
-            f"/contents/{GITHUB_SKILLS_PATH}/{skill_name}"
-            f"?ref={quote(source_ref, safe='')}"
-        )
-        downloaded_files: list[str] = []
-        download_budget = SkillDownloadBudget()
-        download: SkillDownload | None = None
-
-        def _safe_child(base: Path, name: str) -> Path:
-            root = base.resolve()
-            child = (root / name).resolve()
-            if child != root and not child.is_relative_to(root):
-                raise HomeAssistantError("Downloaded skill contains an unsafe path")
-            return child
-
-        async def _download_directory(
-            url: str, local_dir: Path, depth: int = 0
-        ) -> None:
-            download_budget.check_directory(depth)
-            async with session.get(url) as resp:
-                if resp.status == 404:
-                    raise HomeAssistantError(
-                        f"Skill `{skill_name}` not found at source ref `{source_ref}`"
-                    )
-                if resp.status != 200:
-                    raise HomeAssistantError(
-                        f"Failed to fetch skill from GitHub (HTTP {resp.status})"
-                    )
-                items = await async_read_bounded_json(
-                    resp, f"GitHub listing for Skill `{skill_name}`"
-                )
-            if not isinstance(items, list):
-                raise HomeAssistantError(
-                    f"Unexpected response from GitHub for skill `{skill_name}`"
-                )
-            for item in items:
-                if not isinstance(item, Mapping):
-                    raise HomeAssistantError("Unexpected item in GitHub skill response")
-                item_name = item.get("name")
-                item_type = item.get("type")
-                if not isinstance(item_name, str):
-                    raise HomeAssistantError("GitHub skill item has no valid name")
-                item_path = _safe_child(local_dir, item_name)
-                repo_path = str(item.get("path", item_name))
-                if item_type == "file":
-                    download_url = item.get("download_url")
-                    if not isinstance(download_url, str):
-                        raise HomeAssistantError(f"No download URL for `{repo_path}`")
-                    max_bytes = download_budget.check_file(repo_path, item.get("size"))
-                    async with session.get(download_url) as file_resp:
-                        if file_resp.status != 200:
-                            raise HomeAssistantError(
-                                f"Failed to download `{repo_path}`"
-                            )
-                        content = await async_read_bounded_response(
-                            file_resp,
-                            max_bytes,
-                            f"Downloaded Skill file `{repo_path}`",
-                        )
-                    download_budget.record_file(repo_path, len(content))
-                    await async_settle_owned_operation(
-                        hass.async_add_executor_job(
-                            _write_file_sync, item_path, content
-                        )
-                    )
-                    downloaded_files.append(repo_path)
-                elif item_type == "dir":
-                    child_url = item.get("url")
-                    if not isinstance(child_url, str):
-                        raise HomeAssistantError(f"No API URL for `{repo_path}`")
-                    await _download_directory(child_url, item_path, depth + 1)
-
-        def _write_file_sync(file_path: Path, content: bytes) -> None:
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_bytes(content)
-
-        def _prepare_staging(root: Path) -> SkillDownload:
-            nonlocal download
-            download = prepare_download(root, skill_name)
-            return download
-
-        skill_manager = await SkillManager.async_get_instance(hass)
-        skills_root = skill_manager.user_skills_dir.resolve()
-        target_dir = (skills_root / skill_name).resolve()
-        if target_dir == skills_root or not target_dir.is_relative_to(skills_root):
-            raise HomeAssistantError("Skill target directory is unsafe")
-
-        staging_root = skill_manager.staging_dir.resolve()
-        try:
-            owner = await async_settle_owned_operation(
-                hass.async_add_executor_job(_prepare_staging, staging_root)
-            )
-            staging_dir = owner.directory
-            _LOGGER.info("Downloading skill `%s` from `%s`", skill_name, source_ref)
-            await _download_directory(api_url, staging_dir)
-            if not (staging_dir / "SKILL.md").is_file():
-                raise HomeAssistantError(
-                    f"Downloaded skill `{skill_name}` does not contain SKILL.md"
-                )
-            await skill_manager.async_publish_staged_skill(
-                skill_name, staging_dir, download=owner
-            )
-        except HomeAssistantError:
-            raise
-        except Exception as err:
-            raise HomeAssistantError(
-                f"Failed to download skill `{skill_name}`: {err}"
-            ) from err
-        finally:
-            if download is not None:
-                await async_settle_owned_operation(
-                    hass.async_add_executor_job(download.close)
-                )
-
-        _LOGGER.info(
-            "Successfully downloaded skill `%s` (%d files)",
-            skill_name,
-            len(downloaded_files),
-        )
-        return {
-            "skill_name": skill_name,
-            "source_ref": source_ref,
-            "downloaded_files": downloaded_files,
-            "target_directory": str(target_dir),
         }
 
     async def memory_list(call: ServiceCall) -> ServiceResponse:
@@ -775,6 +635,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             call.data["agent_id"],
             call.data["functions"],
             True,
+            user_id=call.context.user_id,
         )
 
     async def rebuild_memory_embeddings(call: ServiceCall) -> None:
@@ -796,6 +657,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             call.data["agent_id"],
             call.data["functions"],
             False,
+            user_id=call.context.user_id,
         )
 
     async def enable_function_groups(call: ServiceCall) -> None:
@@ -807,6 +669,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             call.data["agent_id"],
             call.data["function_groups"],
             True,
+            user_id=call.context.user_id,
         )
 
     async def disable_function_groups(call: ServiceCall) -> None:
@@ -818,6 +681,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             call.data["agent_id"],
             call.data["function_groups"],
             False,
+            user_id=call.context.user_id,
         )
 
     async def guest_mode_update(call: ServiceCall) -> ServiceResponse:
@@ -930,14 +794,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
     async def call_function(call: ServiceCall) -> ServiceResponse:
         """Bridge a native HA script action into the active configured function."""
-        arguments = call.data.get("arguments", {})
-        if "result_alias" in call.data:
-            result = await async_call_active_function(
-                call.data["function"], arguments, call.data["result_alias"]
-            )
-        else:
-            result = await async_call_active_function(call.data["function"], arguments)
-        result = tool_result_data(result, default=result)
+        result = await async_call_active_function(
+            call.data["function"], call.data.get("arguments", {})
+        )
         return cast(ServiceResponse, {"result": result})
 
     hass.services.async_register(
@@ -972,13 +831,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         SERVICE_RELOAD_SKILLS,
         reload_skills,
         schema=schema_for_ha(RELOAD_SKILLS_SCHEMA),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_DOWNLOAD_SKILL,
-        download_skill,
-        schema=schema_for_ha(DOWNLOAD_SKILL_SCHEMA),
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(

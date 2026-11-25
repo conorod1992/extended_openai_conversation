@@ -1,6 +1,8 @@
 """Output interpretation failures preserve usage without further output effects."""
 
 import asyncio
+import json
+from json.scanner import py_make_scanner
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -11,6 +13,10 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from custom_components.extended_openai_conversation_responses.exceptions import (
     ParseArgumentsFailed,
+)
+from custom_components.extended_openai_conversation_responses.function_tool_recovery import (
+    ToolRecoveryState,
+    bind_tool_recovery_state,
 )
 from custom_components.extended_openai_conversation_responses.non_streaming import (
     completed_chat_chunks,
@@ -29,6 +35,22 @@ from tests.test_usage_accounting_recovery import FakeStorage
 
 FULL = {"input_tokens": 120, "output_tokens": 30, "total_tokens": 150}
 CORRECTION = {"output_tokens": 40, "total_tokens": 160}
+DECODER_LIMIT_ARGUMENTS = [
+    pytest.param('{"value":' + "9" * 5000 + "}", ValueError, id="integer-limit"),
+    pytest.param("[" * 10000 + "0" + "]" * 10000, RecursionError, id="nesting-limit"),
+]
+
+
+def _use_recursive_json_decoder(monkeypatch):
+    """Exercise the standard library fallback without depending on C stack size."""
+    decoder_type = json.JSONDecoder
+
+    def decoder_factory(*args, **kwargs):
+        decoder = decoder_type(*args, **kwargs)
+        decoder.scan_once = py_make_scanner(decoder)
+        return decoder
+
+    monkeypatch.setattr(json, "JSONDecoder", decoder_factory)
 
 
 class Stream(FakeStream):
@@ -162,8 +184,57 @@ async def test_public_request_records_known_and_recovered_usage_once(
 
 
 @pytest.mark.parametrize("mode", ["chat", "responses"])
-@pytest.mark.parametrize("arguments", ["{", "{}"])
-async def test_completed_adapter_captures_usage_before_output(mode, arguments):
+@pytest.mark.parametrize("recovery_enabled", [False, True])
+@pytest.mark.parametrize(("arguments", "decoder_error"), DECODER_LIMIT_ARGUMENTS)
+async def test_decoder_limits_preserve_trailing_usage(
+    monkeypatch, mode, arguments, decoder_error, recovery_enabled
+):
+    if decoder_error is RecursionError:
+        _use_recursive_json_decoder(monkeypatch)
+    entity = parser_entity()
+    transform = (
+        entity._transform_chat_stream
+        if mode == "chat"
+        else entity._transform_responses_stream_events
+    )
+    terminal_usage = (
+        usage_event(mode, FULL)
+        if mode == "chat"
+        else _event("response.completed", response=SimpleNamespace(usage=FULL))
+    )
+    stream = Stream([malformed(mode, arguments), terminal_usage])
+    log = SimpleNamespace(async_trace=lambda _payload: None)
+    usage = hardening.RequestTokenMeasurements()
+    state = ToolRecoveryState(enabled=recovery_enabled)
+
+    with bind_tool_recovery_state(state):
+        if recovery_enabled:
+            deltas = [delta async for delta in transform(log, stream, usage)]
+            call = next(delta["tool_calls"][0] for delta in deltas if "tool_calls" in delta)
+            feedback = state.pop_malformed(call.id)
+            assert feedback is not None
+            assert feedback.code == "invalid_json"
+            assert feedback.stage == "provider_argument_decoding"
+            assert call.tool_args.raw == arguments
+        else:
+            with pytest.raises(ParseArgumentsFailed) as failure:
+                _ = [delta async for delta in transform(log, stream, usage)]
+            assert type(failure.value.__cause__) is decoder_error
+            assert failure.value.arguments == arguments
+
+    assert usage.reported.total_tokens == FULL["total_tokens"]
+
+
+@pytest.mark.parametrize("mode", ["chat", "responses"])
+@pytest.mark.parametrize(
+    ("arguments", "decoder_error"),
+    [("{", json.JSONDecodeError), ("{}", None), *DECODER_LIMIT_ARGUMENTS],
+)
+async def test_completed_adapter_captures_usage_before_output(
+    monkeypatch, mode, arguments, decoder_error
+):
+    if decoder_error is RecursionError:
+        _use_recursive_json_decoder(monkeypatch)
     bad = malformed(mode, arguments)
     if mode == "responses":
         response = SimpleNamespace(output=[bad.item], status="completed", usage=FULL)
@@ -185,9 +256,11 @@ async def test_completed_adapter_captures_usage_before_output(mode, arguments):
     usage = hardening.RequestTokenMeasurements()
     source = adapter(response, usage)
     log = SimpleNamespace(async_trace=lambda _payload: None)
-    if arguments == "{":
-        with pytest.raises(ParseArgumentsFailed):
+    if decoder_error is not None:
+        with pytest.raises(ParseArgumentsFailed) as failure:
             _ = [delta async for delta in transform(log, source, usage)]
+        assert isinstance(failure.value.__cause__, decoder_error)
+        assert failure.value.arguments == arguments
     else:
         _ = [delta async for delta in transform(log, source, usage)]
     assert (

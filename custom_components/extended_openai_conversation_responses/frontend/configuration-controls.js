@@ -1,5 +1,6 @@
 import {same, clone} from "./unsaved-state.js";
 import {voiceMappingDraftDirty} from "./voice-mapping-draft.js";
+import {configurationDraftBaseline} from "./configuration-acknowledgement.js";
 
 export const CONFIGURATION_CONTROLS = "[data-config],[data-memory-config],#voice-mappings,[data-local-intent-exclusion],.regex-pattern,.regex-replacement";
 export const isTimeoutKey = (key) => /^(archive_session|conversation)_timeout_minutes$/.test(key);
@@ -112,4 +113,10 @@ export function readConfigurationDraft(panel, commit = true) {
     panel._draftTitle = state._draftTitle;
   }
   return state._draft;
+}
+
+export function readConfigurationPreview(panel) {
+  const draft = readConfigurationDraft(panel, false);
+  const baseline = configurationDraftBaseline(panel)?.config || {};
+  return Object.fromEntries(Object.entries(draft).filter(([key, value]) => !same(value, baseline[key])));
 }

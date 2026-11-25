@@ -99,18 +99,24 @@ def wait_for_run(workflow: str, dispatched_at: datetime) -> dict:
 
 
 def dispatch(workflow: str, inputs: dict[str, str]) -> dict:
-    payload = {"ref": REF_NAME, "inputs": inputs}
+    payload = {"ref": REF_NAME, "inputs": dict(inputs), "return_run_details": True}
     if workflow == "enhanced-stress.yml":
         payload["inputs"]["seed"] = STRESS_SEED
     dispatched_at = datetime.now(UTC)
-    api("POST", f"actions/workflows/{workflow}/dispatches", payload)
-    run = wait_for_run(workflow, dispatched_at)
-    print(f"Dispatched {workflow}: {run['html_url']}", flush=True)
+    response = api("POST", f"actions/workflows/{workflow}/dispatches", payload)
+    if response:
+        # A new dispatch starts at attempt 1. The exact-run status read checks
+        # the source, ref, event, and attempt before accepting any result.
+        run_id, run_attempt, url = response["workflow_run_id"], 1, response["html_url"]
+    else:
+        run = wait_for_run(workflow, dispatched_at)
+        run_id, run_attempt, url = run["id"], run["run_attempt"], run["html_url"]
+    print(f"Dispatched {workflow}: {url}", flush=True)
     return {
         "workflow": workflow,
-        "run_id": run["id"],
-        "run_attempt": run["run_attempt"],
-        "url": run["html_url"],
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "url": url,
     }
 
 

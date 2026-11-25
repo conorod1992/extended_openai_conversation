@@ -7,21 +7,25 @@ import threading
 import pytest
 import yaml
 
-from custom_components.extended_openai_conversation_responses import memory, services
+from custom_components.extended_openai_conversation_responses import (
+    memory,
+    services,
+    yaml_serialization,
+)
 from tests.test_management_request_boundaries import _tool
 from tests.test_memory import FakeStorage
 
 
 async def test_catalogue_accepts_recoverable_null_groups(hass):
+    from custom_components.extended_openai_conversation_responses.management_loading_performance import (
+        async_agent_catalog,
+    )
     from tests.test_management_loading_performance import (
         _hass_with_agent,
         _persisted_invalid_function_tools,
     )
-    from custom_components.extended_openai_conversation_responses.management_loading_performance import (
-        async_agent_catalog,
-    )
 
-    fake, entry, subentry = _hass_with_agent()
+    fake, _entry, subentry = _hass_with_agent()
     subentry.data = {
         **subentry.data,
         "functions": _persisted_invalid_function_tools(),
@@ -124,7 +128,7 @@ async def test_memory_cold_preparation_uses_worker(monkeypatch, count):
             "embeddings": {
                 r["memory_id"]: {
                     "model": "default",
-                    "fingerprint": "test",
+                    "fingerprint": memory._embedding_fingerprint(validate(r)),
                     "vector": [0.5] * 128,
                 }
                 for r in raw
@@ -169,14 +173,14 @@ async def test_first_assist_prepares_yaml_before_guest_lookup(hass, monkeypatch)
         agent_config._decoded_function_tools.cache_clear()
     raw = entity.subentry.data["functions"]
     main, calls = threading.get_ident(), []
-    original = yaml.safe_load
+    original = yaml_serialization._load_yaml_or_json
 
-    def load(value):
+    def load(value, **kwargs):
         if value == raw:
             calls.append(threading.get_ident())
-        return original(value)
+        return original(value, **kwargs)
 
-    monkeypatch.setattr(yaml, "safe_load", load)
+    monkeypatch.setattr(yaml_serialization, "_load_yaml_or_json", load)
     await invoke()
     await invoke()
     assert len(calls) == 1
@@ -185,6 +189,7 @@ async def test_first_assist_prepares_yaml_before_guest_lookup(hass, monkeypatch)
 
 async def test_current_startup_migration_decodes_in_worker(hass, monkeypatch):
     from types import SimpleNamespace
+
     from custom_components.extended_openai_conversation_responses import (
         async_migrate_integration,
     )
@@ -205,14 +210,14 @@ async def test_current_startup_migration_decodes_in_worker(hass, monkeypatch):
         async_add_executor_job=asyncio.to_thread,
     )
     main, calls = threading.get_ident(), []
-    original = yaml.safe_load
+    original = yaml_serialization._load_yaml_or_json
 
-    def load(value):
+    def load(value, **kwargs):
         if value == raw:
             calls.append(threading.get_ident())
-        return original(value)
+        return original(value, **kwargs)
 
-    monkeypatch.setattr(yaml, "safe_load", load)
+    monkeypatch.setattr(yaml_serialization, "_load_yaml_or_json", load)
     await async_migrate_integration(fake)
     assert calls and main not in calls
     assert subentry.data["functions"] == raw
@@ -243,6 +248,7 @@ async def test_startup_worker_does_not_overwrite_a_newer_configuration(
 ):
     from types import SimpleNamespace
     from unittest.mock import Mock
+
     import custom_components.extended_openai_conversation_responses as integration
     from custom_components.extended_openai_conversation_responses.const import (
         CONFIG_ENTRY_VERSION,

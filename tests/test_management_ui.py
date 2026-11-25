@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -33,6 +34,9 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeSource,
 )
 from custom_components.extended_openai_conversation_responses.memory import MemoryRecord
+from custom_components.extended_openai_conversation_responses.request import (
+    ProviderRequestSnapshot,
+)
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemoryRecord,
 )
@@ -75,6 +79,7 @@ def _hass(entry=None):
         config_entries=config_entries,
         auth=SimpleNamespace(),
         config=SimpleNamespace(language="en", time_zone="UTC"),
+        states=SimpleNamespace(async_all=lambda *_: []),
         data={},
         services=SimpleNamespace(async_call=AsyncMock()),
     )
@@ -130,17 +135,12 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     monkeypatch.setattr(
         management_request_preview,
         "build_provider_request_snapshot",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            api_mode="responses", api_kwargs={}, provider_tools=[]
+        lambda *_args, **_kwargs: ProviderRequestSnapshot(
+            api_mode="responses", api_kwargs={}, provider_tools=()
         ),
     )
     monkeypatch.setattr(
         management_request_preview, "format_function_tools", lambda tools, _mode: tools
-    )
-    monkeypatch.setattr(
-        management_request_preview,
-        "assemble_integration_function_tools",
-        lambda *_args, **_kwargs: [],
     )
     monkeypatch.setattr(management_request_preview, "memory_enabled", lambda _options: False)
 
@@ -167,11 +167,6 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
         lambda *_: GuestCapabilityPolicy.unrestricted(),
     )
     monkeypatch.setattr(management_request_preview, "validate_function_groups", lambda *_: [])
-    monkeypatch.setattr(
-        management_request_preview,
-        "assemble_function_tools",
-        lambda tools, *_args: SimpleNamespace(tools=tools),
-    )
     monkeypatch.setattr(management_request_preview, "get_exposed_entities", lambda _hass: [])
 
     trusted = await management_request_preview.async_preview_effective_request(
@@ -191,8 +186,18 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
         temporary_memory=False,
     )
     groups = [
-        {"id": "public", "guest_allowed": True, "functions": ["allowed", "blocked"]},
-        {"id": "private", "guest_allowed": False, "functions": ["private"]},
+        {
+            "id": "public",
+            "guest_allowed": True,
+            "loading_mode": "always",
+            "functions": ["allowed", "blocked"],
+        },
+        {
+            "id": "private",
+            "guest_allowed": False,
+            "loading_mode": "always",
+            "functions": ["private"],
+        },
     ]
     guest_tools = [custom, _tool("blocked"), _tool("private"), ha_tool]
     monkeypatch.setattr(
@@ -213,6 +218,12 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     guest = await management_request_preview.async_preview_effective_request(
         hass, entry, subentry, options, "user"
     )
+    guest_tools_content = next(
+        section["content"]
+        for section in guest["sections"]
+        if section["key"] == "function_tools"
+    )
+    assert [tool["spec"]["name"] for tool in json.loads(guest_tools_content)] == ["allowed"]
     assert any("temporary memories are excluded" in note for note in guest["notes"])
     assert temporary_snapshot.await_count == 1, "Guest policy excludes owner memory reads"
     assert discover.await_count == 1
@@ -228,6 +239,10 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
         section for section in empty["sections"] if section["key"] == "request_settings"
     )
     assert '"tool_choice":"auto"' in request_settings["content"]
+    integration = next(
+        section for section in empty["sections"] if section["key"] == "integration_tools"
+    )
+    assert "start_fresh_conversation" in integration["content"]
 
 
 @pytest.mark.asyncio
@@ -240,7 +255,10 @@ async def test_request_rule_test_defaults_duplicate_move_and_errors(
     rules = SimpleNamespace(
         async_set_defaults=AsyncMock(return_value={"case_sensitive": True}),
         async_duplicate=AsyncMock(return_value={"id": "copy"}),
-        snapshot=lambda: {"diagnostics": {}},
+        diagnostic_snapshot=lambda: {
+            "diagnostics": {"rule": "Use a native response variable."},
+            "matching_diagnostic_ids": ["rule"],
+        },
         async_move=AsyncMock(return_value={"id": "rule", "priority": 2}),
         revision=lambda: "revision-2",
     )
@@ -277,6 +295,9 @@ async def test_request_rule_test_defaults_duplicate_move_and_errors(
     )
     assert duplicated["rule"]["id"] == "copy"
     assert moved["rule"]["priority"] == 2
+    for result in (duplicated, moved):
+        assert result["diagnostics"] == {"rule": "Use a native response variable."}
+        assert result["matching_diagnostic_ids"] == ["rule"]
     with pytest.raises(HomeAssistantError, match="direction is required"):
         await management_ui.async_management_command(
             hass, "admin", True, _message("request_rules", "move", rule_id="rule")
@@ -1305,12 +1326,11 @@ async def test_configuration_transfer_and_validation_routes(hass, monkeypatch) -
     )
     assert duplicate["title"] == "A deliberate copy"
 
-    exported = await management_ui.async_management_command(
-        hass, "admin", True, _residual_message("configuration", "export")
-    )
-    assert exported["document"]["schema"] == "extended_openai_conversation.agent"
-    assert '"title": "Shared conversation agent"' in exported["json"]
-    assert exported["document"]["security"]["mode"] == "restricted"
+    with pytest.raises(HomeAssistantError, match="Unknown configuration management action: export"):
+        await management_ui.async_management_command(
+            hass, "admin", True, _residual_message("configuration", "export")
+        )
+
     document = {
         "schema": "extended_openai_conversation.agent",
         "version": AGENT_CONFIG_EXPORT_VERSION,

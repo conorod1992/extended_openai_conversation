@@ -5,13 +5,18 @@ from __future__ import annotations
 import asyncio
 from contextvars import ContextVar
 from dataclasses import replace
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+    get_agent_maintenance_gate,
+)
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.conversation import (
     _ACTIVE_FUNCTION_CONFIG,
@@ -81,6 +86,71 @@ def test_delay_normalization_accepts_ha_time_period_shapes() -> None:
 
     with pytest.raises(HomeAssistantError, match="Invalid Function Tool delay"):
         _delay_as_timedelta("not-a-duration")
+
+
+@pytest.mark.parametrize("catch_up", [False, True])
+@pytest.mark.parametrize(
+    ("delay", "error"),
+    [
+        ({"days": 4_000_000}, "exceeds the supported scheduling range"),
+        ({"seconds": 10**80}, "Invalid Function Tool delay"),
+    ],
+    ids=["due-at-overflow", "duration-overflow"],
+)
+async def test_schedule_rejects_overflow_before_save_or_waiter(
+    hass, monkeypatch, delay, error, catch_up
+) -> None:
+    manager = DelayedToolManager(hass)
+    manager._started = manager._setup_complete = True
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    arm = MagicMock()
+    monkeypatch.setattr(manager, "_arm", arm)
+
+    with pytest.raises(HomeAssistantError, match=error):
+        await manager.async_schedule(
+            _entity(hass), "control_light", {"delay": delay}, None,
+            function_tool={**_valid_tool(), "delay_catch_up": catch_up},
+        )
+
+    manager._store.async_save.assert_not_awaited()
+    arm.assert_not_called()
+    assert manager._records == {}
+
+
+def test_delay_normalization_wraps_core_conversion_overflow(monkeypatch) -> None:
+    from homeassistant.helpers import config_validation as cv
+
+    monkeypatch.setattr(cv, "time_period", MagicMock(side_effect=OverflowError))
+    with pytest.raises(HomeAssistantError, match="Invalid Function Tool delay"):
+        _delay_as_timedelta("9999999999999999:00:00")
+
+
+@pytest.mark.parametrize("catch_up", [False, True])
+async def test_schedule_expiry_overflow_depends_on_catch_up(
+    hass, monkeypatch, catch_up
+) -> None:
+    now = datetime(9999, 12, 31, 23, 45, tzinfo=timezone.utc)
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    manager = DelayedToolManager(hass)
+    manager._started = manager._setup_complete = True
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    arm = MagicMock()
+    monkeypatch.setattr(manager, "_arm", arm)
+    arguments = (_entity(hass), "control_light", {"delay": {"seconds": 5}}, None)
+    function_tool = {**_valid_tool(), "delay_catch_up": catch_up}
+
+    if catch_up:
+        record = await manager.async_schedule(*arguments, function_tool=function_tool)
+        assert record.due_at == "9999-12-31T23:45:05+00:00"
+        assert record.expires_at is None
+        manager._store.async_save.assert_awaited_once()
+        arm.assert_called_once_with(record.call_id)
+    else:
+        with pytest.raises(HomeAssistantError, match="exceeds the supported scheduling range"):
+            await manager.async_schedule(*arguments, function_tool=function_tool)
+        manager._store.async_save.assert_not_awaited()
+        arm.assert_not_called()
+        assert manager._records == {}
 
 
 async def test_schedule_is_persisted_before_becoming_live(hass) -> None:
@@ -191,7 +261,7 @@ async def test_scheduled_waiter_drops_request_context_after_edit_and_revert(
 
 
 async def test_schedule_reconciles_after_lost_store_acknowledgement(hass) -> None:
-    """A committed schedule remains operational after Store reports failure."""
+    """A confirmed schedule is returned after Store loses the acknowledgement."""
     persisted: dict[str, Any] = {}
 
     async def save_then_fail(payload: dict[str, Any]) -> None:
@@ -207,16 +277,14 @@ async def test_schedule_reconciles_after_lost_store_acknowledgement(hass) -> Non
     manager._store = SimpleNamespace(async_save=save_then_fail, async_load=load)
     context = SimpleNamespace(context=Context(user_id="user-1"), device_id="device-1")
 
-    with pytest.raises(OSError, match="directory fsync acknowledgement failed"):
-        await manager.async_schedule(
-            _entity(hass),
-            "control_light",
-            {"delay": {"seconds": 30}, "value": 1},
-            context,
-        )
+    scheduled = await manager.async_schedule(
+        _entity(hass),
+        "control_light",
+        {"delay": {"seconds": 30}, "value": 1},
+        context,
+    )
 
-    assert len(manager._records) == 1
-    scheduled = next(iter(manager._records.values()))
+    assert manager._records == {scheduled.call_id: scheduled}
     assert persisted["calls"] == [scheduled.as_dict()]
 
 
@@ -253,15 +321,25 @@ async def test_delayed_state_transitions_reconcile_after_lost_acknowledgement(
     assert persisted["calls"] == []
 
 
+@pytest.mark.parametrize("lost_claim_ack", [False, True])
 async def test_due_call_uses_current_tool_and_current_exposure(
-    hass, monkeypatch
+    hass, monkeypatch, lost_claim_ack
 ) -> None:
     """Execution re-resolves the tool and exposure instead of stale snapshots."""
     manager = DelayedToolManager(hass)
     manager._setup_complete = True
     record = _record()
     manager._records = {record.call_id: record}
-    manager._store = SimpleNamespace(async_save=AsyncMock())
+    persisted = {"calls": [record.as_dict()]}
+
+    async def save(payload):
+        persisted.update(payload)
+        if lost_claim_ack and payload["calls"] and payload["calls"][0]["status"] == _EXECUTING:
+            raise OSError("claim acknowledgement failed after replace")
+
+    manager._store = SimpleNamespace(
+        async_save=AsyncMock(side_effect=save), async_load=AsyncMock(return_value=persisted)
+    )
 
     latest_subentry = SimpleNamespace(subentry_type="conversation", data={})
     latest_entry = SimpleNamespace(
@@ -291,6 +369,8 @@ async def test_due_call_uses_current_tool_and_current_exposure(
 
     assert retry is False
     assert record.call_id not in manager._records
+    assert persisted["calls"] == []
+    assert await manager._async_execute_due(record.call_id) is False
     agent._execute_function_tool.assert_awaited_once()
     called_tool, tool_input, context, exposed = (
         agent._execute_function_tool.await_args.args
@@ -627,6 +707,68 @@ async def test_changed_or_unknown_scheduled_definition_never_executes(
     assert record.call_id not in manager._records
 
 
+@pytest.mark.parametrize("change", ["key-type", "key-order", "legacy-v1"])
+async def test_delayed_definition_changes_fail_closed_after_storage_roundtrip(
+    hass, monkeypatch, change
+) -> None:
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    tool = _valid_tool(function_type="script")
+    tool["function"] = {
+        "type": "script",
+        "variables": {"z_source": "ready", "a_dependent": "{{ z_source }}"},
+        "sequence": [{"stop": "Done"}],
+    }
+    current = {**tool, "function": {**tool["function"]}}
+    if change == "key-type":
+        tool["function"]["variables"] = {"lookup": {7: "value"}}
+        current["function"]["variables"] = {"lookup": {"7": "value"}}
+    elif change == "key-order":
+        current["function"]["variables"] = dict(
+            reversed(list(tool["function"]["variables"].items()))
+        )
+
+    authored = {key: tool[key] for key in ("spec", "function")}
+    legacy = hashlib.sha256(
+        json.dumps(authored, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert legacy == hashlib.sha256(
+        json.dumps(
+            {key: current[key] for key in ("spec", "function")},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    record = replace(
+        _coverage_record(user_id=None),
+        definition_fingerprint=legacy
+        if change == "legacy-v1"
+        else tool_definition_fingerprint(tool),
+    )
+    stored = record.as_dict()
+    assert DelayedToolCall.from_dict(stored) == record
+
+    manager = DelayedToolManager(hass)
+    manager._store = SimpleNamespace(
+        async_load=AsyncMock(return_value={"calls": [stored]}),
+        async_save=AsyncMock(),
+    )
+    hass.config_entries.async_get_entry.return_value = _live_entry()
+    monkeypatch.setattr(
+        delayed_tools, "configured_function_tools_from_data", lambda _: [current]
+    )
+    agent = SimpleNamespace(_execute_function_tool=AsyncMock())
+    monkeypatch.setattr(manager, "_resolve_agent", lambda *_: agent)
+    await manager.async_setup()
+    assert manager._records[record.call_id] == record
+
+    await manager._async_execute_due(record.call_id)
+
+    agent._execute_function_tool.assert_not_awaited()
+    assert record.call_id not in manager._records
+    manager._store.async_save.assert_awaited_once_with({"calls": []})
+
+
 def _live_entry() -> SimpleNamespace:
     return SimpleNamespace(
         disabled_by=None,
@@ -832,6 +974,47 @@ async def test_waiter_uses_maintenance_gate_and_stops_after_execution(
 
     execute_due.assert_awaited_once_with(record.call_id)
     assert record.call_id not in manager._tasks
+
+
+@pytest.mark.parametrize("expired", [False, True])
+async def test_delayed_call_keeps_waiter_alive_during_restore_recovery(
+    hass, monkeypatch, expired
+):
+    manager = DelayedToolManager(hass)
+    manager._started = True
+    record = replace(
+        _record(),
+        expires_at=(
+            dt_util.utcnow() + timedelta(seconds=-1 if expired else 60)
+        ).isoformat(),
+    )
+    manager._records = {record.call_id: record}
+    manager._tasks = {record.call_id: asyncio.current_task()}
+    gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
+    gate.recovery_required = True
+    execute = AsyncMock(return_value=False)
+    discard = AsyncMock(return_value=True)
+    monkeypatch.setattr(manager, "_async_execute_due_detached", execute)
+    monkeypatch.setattr(manager, "_async_discard", discard)
+
+    async def recover_after_delay(seconds):
+        if seconds == _AGENT_RETRY_SECONDS:
+            gate.recovery_required = False
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.delayed_tools.asyncio.sleep",
+        recover_after_delay,
+    )
+    await manager._async_wait_and_execute(record.call_id)
+    assert record.call_id not in manager._tasks
+    if expired:
+        execute.assert_not_awaited()
+        discard.assert_awaited_once_with(
+            record.call_id, "execution grace period expired"
+        )
+    else:
+        execute.assert_awaited_once_with(record.call_id)
+        discard.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,5 @@
 """Behavioural coverage for Extended OpenAI service handlers."""
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock
 
@@ -18,8 +17,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_BASE_URL,
     DEFAULT_CONF_BASE_URL,
     DOMAIN,
-    GITHUB_SKILLS_BRANCH,
-    SERVICE_DOWNLOAD_SKILL,
     SERVICE_MEMORY_CLEAR,
     SERVICE_MEMORY_DELETE,
     SERVICE_MEMORY_LIST,
@@ -37,7 +34,6 @@ from custom_components.extended_openai_conversation_responses.services import (
     async_set_function_groups_enabled,
     async_set_function_tools_enabled,
     async_setup_services,
-    async_skill_source_ref,
     encode_image,
     prepare_image_params,
     resolve_memory_agent,
@@ -139,23 +135,6 @@ async def test_function_state_actions_report_unknown_names(hass, monkeypatch) ->
             hass, "entry", "agent", ["missing", "missing"], True
         )
     hass.config_entries.async_update_subentry.assert_not_called()
-
-
-async def test_skill_source_ref_validates_and_normalizes_installed_version(
-    hass, monkeypatch
-) -> None:
-    with pytest.raises(HomeAssistantError, match="cannot be empty"):
-        await async_skill_source_ref(hass, "   ")
-
-    integration = AsyncMock(return_value=SimpleNamespace(version="   "))
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.services.async_get_integration",
-        integration,
-    )
-    assert await async_skill_source_ref(hass) == GITHUB_SKILLS_BRANCH
-
-    integration.return_value = SimpleNamespace(version=" 7.2.1 ")
-    assert await async_skill_source_ref(hass) == "7.2.1"
 
 
 @pytest.mark.parametrize("api_mode", [API_MODE_RESPONSES, "chat_completions"])
@@ -458,225 +437,6 @@ async def test_reload_skills_returns_loaded_count(hass, monkeypatch) -> None:
     manager.async_load_skills.assert_awaited_once_with()
 
 
-class _Response:
-    def __init__(self, status: int, *, payload=None, body: bytes = b"") -> None:
-        self.status = status
-        self.payload = payload
-        self.body = body
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args):
-        return None
-
-
-async def _download_handler(hass, monkeypatch, tmp_path: Path, responses: dict):
-    manager = SimpleNamespace(
-        user_skills_dir=tmp_path / "skills",
-        staging_dir=tmp_path / "staging",
-        async_publish_staged_skill=AsyncMock(),
-    )
-    monkeypatch.setattr(
-        SkillManager, "async_get_instance", AsyncMock(return_value=manager)
-    )
-    session = SimpleNamespace(get=MagicMock(side_effect=lambda url: responses[url]))
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.services.async_get_clientsession",
-        lambda _hass: session,
-    )
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.services.async_skill_source_ref",
-        AsyncMock(return_value="v1.2.3"),
-    )
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.skill_transactions.uuid4",
-        lambda: SimpleNamespace(hex="a" * 32),
-    )
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.services.async_read_bounded_json",
-        AsyncMock(side_effect=lambda response, _description: response.payload),
-    )
-    monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.services.async_read_bounded_response",
-        AsyncMock(side_effect=lambda response, *_args: response.body),
-    )
-    return (await _handlers(hass))[SERVICE_DOWNLOAD_SKILL], manager
-
-
-async def test_download_skill_recursively_stages_and_publishes_files(
-    hass, monkeypatch, tmp_path
-) -> None:
-    root_url = "https://api.github.com/repos/conorod1992/extended_openai_conversation/contents/examples/skills/demo?ref=v1.2.3"
-    responses = {
-        root_url: _Response(
-            200,
-            payload=[
-                {
-                    "name": "SKILL.md",
-                    "path": "skills/demo/SKILL.md",
-                    "type": "file",
-                    "download_url": "download:skill",
-                    "size": 7,
-                },
-                {
-                    "name": "assets",
-                    "path": "skills/demo/assets",
-                    "type": "dir",
-                    "url": "api:assets",
-                },
-            ],
-        ),
-        "download:skill": _Response(200, body=b"# Demo\n"),
-        "api:assets": _Response(
-            200,
-            payload=[
-                {
-                    "name": "guide.txt",
-                    "path": "skills/demo/assets/guide.txt",
-                    "type": "file",
-                    "download_url": "download:guide",
-                    "size": 5,
-                }
-            ],
-        ),
-        "download:guide": _Response(200, body=b"guide"),
-    }
-    handler, manager = await _download_handler(hass, monkeypatch, tmp_path, responses)
-
-    async def publish(name, staged, *, download):
-        assert name == "demo"
-        assert (staged / "SKILL.md").read_text() == "# Demo\n"
-        assert (staged / "assets" / "guide.txt").read_text() == "guide"
-        assert download.record.is_file()
-        # Unit fixture stands in for the publication transaction and rename.
-        download.hand_off()
-        manager.user_skills_dir.mkdir()
-        staged.rename(manager.user_skills_dir / name)
-
-    manager.async_publish_staged_skill.side_effect = publish
-    result = await handler(_call({"skill_name": "demo"}))
-
-    assert result["skill_name"] == "demo"
-    assert result["source_ref"] == "v1.2.3"
-    assert result["downloaded_files"] == [
-        "skills/demo/SKILL.md",
-        "skills/demo/assets/guide.txt",
-    ]
-    assert not list(manager.staging_dir.iterdir())
-    manager.async_publish_staged_skill.assert_awaited_once()
-
-
-@pytest.mark.parametrize(
-    ("response", "message"),
-    [
-        (_Response(404), "not found at source ref"),
-        (_Response(503), "Failed to fetch skill from GitHub"),
-        (_Response(200, payload={"message": "not a listing"}), "Unexpected response"),
-        (_Response(200, payload=["not an object"]), "Unexpected item"),
-        (
-            _Response(200, payload=[{"name": "../escape", "type": "dir", "url": "x"}]),
-            "unsafe path",
-        ),
-        (
-            _Response(200, payload=[{"name": 123, "type": "file"}]),
-            "no valid name",
-        ),
-        (
-            _Response(
-                200,
-                payload=[
-                    {
-                        "name": "SKILL.md",
-                        "path": "skills/demo/SKILL.md",
-                        "type": "file",
-                        "download_url": None,
-                        "size": 1,
-                    }
-                ],
-            ),
-            "No download URL",
-        ),
-        (
-            _Response(
-                200,
-                payload=[
-                    {
-                        "name": "assets",
-                        "path": "skills/demo/assets",
-                        "type": "dir",
-                        "url": None,
-                    }
-                ],
-            ),
-            "No API URL",
-        ),
-    ],
-)
-async def test_download_skill_rejects_invalid_remote_content_and_cleans_staging(
-    hass, monkeypatch, tmp_path, response, message
-) -> None:
-    root_url = "https://api.github.com/repos/conorod1992/extended_openai_conversation/contents/examples/skills/demo?ref=v1.2.3"
-    handler, manager = await _download_handler(
-        hass, monkeypatch, tmp_path, {root_url: response}
-    )
-
-    with pytest.raises(HomeAssistantError, match=message):
-        await handler(_call({"skill_name": "demo"}))
-    assert not list(manager.staging_dir.iterdir())
-    manager.async_publish_staged_skill.assert_not_awaited()
-
-
-async def test_download_skill_requires_manifest_and_cleans_staging(
-    hass, monkeypatch, tmp_path
-) -> None:
-    root_url = "https://api.github.com/repos/conorod1992/extended_openai_conversation/contents/examples/skills/demo?ref=v1.2.3"
-    responses = {
-        root_url: _Response(
-            200,
-            payload=[
-                {
-                    "name": "README.md",
-                    "type": "file",
-                    "download_url": "download:readme",
-                }
-            ],
-        ),
-        "download:readme": _Response(200, body=b"readme"),
-    }
-    handler, manager = await _download_handler(hass, monkeypatch, tmp_path, responses)
-
-    with pytest.raises(HomeAssistantError, match=r"does not contain SKILL\.md"):
-        await handler(_call({"skill_name": "demo"}))
-    assert not list(manager.staging_dir.iterdir())
-    manager.async_publish_staged_skill.assert_not_awaited()
-
-
-async def test_download_skill_wraps_unexpected_publish_failure_and_cleans_staging(
-    hass, monkeypatch, tmp_path
-) -> None:
-    root_url = "https://api.github.com/repos/conorod1992/extended_openai_conversation/contents/examples/skills/demo?ref=v1.2.3"
-    responses = {
-        root_url: _Response(
-            200,
-            payload=[
-                {
-                    "name": "SKILL.md",
-                    "type": "file",
-                    "download_url": "download:skill",
-                }
-            ],
-        ),
-        "download:skill": _Response(200, body=b"# Demo"),
-    }
-    handler, manager = await _download_handler(hass, monkeypatch, tmp_path, responses)
-    manager.async_publish_staged_skill.side_effect = RuntimeError("disk offline")
-
-    with pytest.raises(HomeAssistantError, match="disk offline"):
-        await handler(_call({"skill_name": "demo"}))
-    assert not list(manager.staging_dir.iterdir())
-
-
 def _record(memory_id: str) -> MemoryRecord:
     return MemoryRecord(
         memory_id=memory_id,
@@ -928,38 +688,6 @@ async def test_function_state_update_handles_entry_disappearing_after_resolution
         await helper(hass, "entry", "agent", ["target"], True)
 
     hass.config_entries.async_update_subentry.assert_not_called()
-
-
-async def test_download_skill_rejects_failed_file_download_and_cleans_staging(
-    hass, monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    """A listed file that later fails to download must leave no staged install."""
-    root_url = (
-        "https://api.github.com/repos/conorod1992/extended_openai_conversation/"
-        "contents/examples/skills/demo?ref=v1.2.3"
-    )
-    responses = {
-        root_url: _Response(
-            200,
-            payload=[
-                {
-                    "name": "SKILL.md",
-                    "path": "skills/demo/SKILL.md",
-                    "type": "file",
-                    "download_url": "download:skill",
-                    "size": 7,
-                }
-            ],
-        ),
-        "download:skill": _Response(503),
-    }
-    handler, manager = await _download_handler(hass, monkeypatch, tmp_path, responses)
-
-    with pytest.raises(HomeAssistantError, match="Failed to download"):
-        await handler(_call({"skill_name": "demo"}))
-
-    assert not list(manager.staging_dir.iterdir())
-    manager.async_publish_staged_skill.assert_not_awaited()
 
 
 async def test_process_auto_selection_skips_stale_and_unrelated_registry_entries(

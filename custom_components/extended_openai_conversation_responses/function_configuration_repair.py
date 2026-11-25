@@ -10,7 +10,6 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
-import json
 from typing import Any
 
 import yaml
@@ -24,9 +23,12 @@ from .agent_config import (
     validate_function_tools,
 )
 from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DEFAULT_FUNCTION_GROUPS
-from .function_yaml import contains_yaml_types
-from .request import canonical_json
-from .yaml_serialization import dump_yaml, load_yaml_or_json
+from .function_yaml import dump_authored_function_configuration
+from .yaml_serialization import (
+    cacheable_authored_config,
+    dump_yaml,
+    load_authored_config,
+)
 
 
 @dataclass
@@ -50,7 +52,7 @@ def editable_function_tools(options: dict[str, Any]) -> Any:
     if not isinstance(raw, str):
         return deepcopy(raw)
     try:
-        parsed = load_yaml_or_json(raw)
+        parsed = load_authored_config(raw)
     except yaml.YAMLError:
         return raw
     return [] if parsed is None else parsed
@@ -63,12 +65,7 @@ def _function_tools_cache_key(options: dict[str, Any]) -> tuple[str, str]:
         return ("none", "")
     if isinstance(raw, str):
         return ("string", raw)
-    if contains_yaml_types(raw):
-        return ("yaml", dump_yaml(raw, sort_keys=True))
-    try:
-        return ("json", canonical_json(raw))
-    except TypeError, ValueError:
-        return ("yaml", dump_yaml(raw, sort_keys=True))
+    return ("structured", dump_authored_function_configuration(raw))
 
 
 def _options_from_function_tools_cache_key(kind: str, payload: str) -> dict[str, Any]:
@@ -76,9 +73,7 @@ def _options_from_function_tools_cache_key(kind: str, payload: str) -> dict[str,
         return {}
     if kind == "string":
         return {CONF_FUNCTION_TOOLS: payload}
-    if kind == "json":
-        return {CONF_FUNCTION_TOOLS: json.loads(payload)}
-    return {CONF_FUNCTION_TOOLS: yaml.safe_load(payload)}
+    return {CONF_FUNCTION_TOOLS: load_authored_config(payload)}
 
 
 def _isolate_function_tools_uncached(
@@ -154,9 +149,10 @@ def isolated_function_tools(
     options: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
     """Return cached tolerant Function Tool state for one persisted revision."""
-    valid, invalid, issue = _cached_isolated_function_tools(
-        *_function_tools_cache_key(options)
-    )
+    kind, payload = _function_tools_cache_key(options)
+    if not cacheable_authored_config(payload):
+        return _isolate_function_tools_uncached(options)
+    valid, invalid, issue = _cached_isolated_function_tools(kind, payload)
     return deepcopy(valid), deepcopy(invalid), issue
 
 
@@ -165,7 +161,12 @@ def _cached_function_tool_state(
     kind: str, payload: str
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None, int | None]:
     """Resolve one persisted Function Tool revision once for all Management reads."""
-    options = _options_from_function_tools_cache_key(kind, payload)
+    return _function_tool_state(_options_from_function_tools_cache_key(kind, payload))
+
+
+def _function_tool_state(
+    options: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None, int | None]:
     try:
         valid = configured_function_tools_from_data(options)
     except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
@@ -177,13 +178,21 @@ def _cached_function_tool_state(
     return valid, [], None, len(valid)
 
 
+def resolved_function_tool_state(
+    options: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None, int | None]:
+    """Only reuse repair projections whose source belongs in a multi-entry cache."""
+    kind, payload = _function_tools_cache_key(options)
+    if cacheable_authored_config(payload):
+        return _cached_function_tool_state(kind, payload)
+    return _function_tool_state(options)
+
+
 def function_tools_issue(
     options: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Return cached usable tools plus any persisted validation/parsing failure."""
-    valid, _invalid, issue, _total_count = _cached_function_tool_state(
-        *_function_tools_cache_key(options)
-    )
+    valid, _invalid, issue, _total_count = resolved_function_tool_state(options)
     return deepcopy(valid), issue
 
 

@@ -96,7 +96,7 @@ def test_parser_rejects_invalid_frontmatter(
     with caplog.at_level(logging.WARNING):
         assert SkillMdParser.parse(content, skill_file, tmp_path) is None
     assert "Skill 'alpha' was not loaded" in caplog.text
-    assert "Extended OpenAI > Skills" in caplog.text
+    assert "Fix the installed file and reload Skills" in caplog.text
 
 
 def test_parser_path_fallback_validation_and_body_extraction(tmp_path: Path) -> None:
@@ -308,62 +308,6 @@ async def test_skill_read_holds_filesystem_lock(hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_publish_new_skill_and_replace_existing_skill(hass, tmp_path: Path) -> None:
-    """Publishing installs new content and cleans replacement backups."""
-    manager = SkillManager(hass)
-    manager._user_skills_dir = tmp_path / "skills"
-
-    staged = manager.staging_dir / "download-new"
-    _write_skill(staged, description="Alpha", body="new body")
-    await manager.async_publish_staged_skill("alpha", staged)
-    assert manager.get_skill("alpha") is not None
-    assert (manager.user_skills_dir / "alpha" / "SKILL.md").read_text(encoding="utf-8").endswith("new body\n")
-    assert not staged.exists()
-
-    replacement = manager.staging_dir / "download-replacement"
-    _write_skill(replacement, description="Alpha replacement", body="replacement")
-    await manager.async_publish_staged_skill("alpha", replacement)
-    assert manager.get_skill("alpha").description == "Alpha replacement"
-    assert not any(manager.staging_dir.glob("alpha.backup-*"))
-
-
-@pytest.mark.asyncio
-async def test_publish_rejects_unmanaged_staging_path(hass, tmp_path: Path) -> None:
-    """Only directories below the manager-owned staging root can be published."""
-    manager = SkillManager(hass)
-    manager._user_skills_dir = tmp_path / "skills"
-    outside = tmp_path / "outside"
-    outside.mkdir()
-
-    with pytest.raises(HomeAssistantError, match="outside the managed staging area"):
-        await manager.async_publish_staged_skill("alpha", outside)
-    with pytest.raises(HomeAssistantError, match="outside the managed staging area"):
-        await manager.async_publish_staged_skill("alpha", manager.staging_dir)
-
-
-@pytest.mark.asyncio
-async def test_invalid_replacement_rolls_back_existing_skill(hass, tmp_path: Path) -> None:
-    """A staged Skill that fails discovery restores the previous installed version."""
-    manager = SkillManager(hass)
-    manager._user_skills_dir = tmp_path / "skills"
-    target = manager.user_skills_dir / "alpha"
-    _write_skill(target, description="Old", body="old body")
-    await manager.async_load_skills()
-
-    staged = manager.staging_dir / "bad-download"
-    staged.mkdir(parents=True)
-    (staged / "SKILL.md").write_text("not valid skill frontmatter", encoding="utf-8")
-
-    with pytest.raises(HomeAssistantError, match="not a valid installed Skill"):
-        await manager.async_publish_staged_skill("alpha", staged)
-
-    assert target.exists()
-    assert "old body" in (target / "SKILL.md").read_text(encoding="utf-8")
-    assert manager.get_skill("alpha").description == "Old"
-    assert not any(manager.staging_dir.glob("alpha.backup-*"))
-
-
-@pytest.mark.asyncio
 async def test_legacy_removal_recovery_preserves_committed_and_prepared_states(hass, tmp_path: Path, monkeypatch) -> None:
     """Loader recovery still supports both historical removal journal phases."""
     manager = SkillManager(hass)
@@ -389,41 +333,6 @@ async def test_legacy_removal_recovery_preserves_committed_and_prepared_states(h
         await manager.async_load_skills()
     assert target.exists()
     assert not any(manager.staging_dir.glob("alpha.remove-*"))
-
-
-@pytest.mark.parametrize("name", ["", ".", "..", "nested/skill", "/absolute"])
-def test_direct_skill_name_validation(name: str) -> None:
-    """Mutation APIs reject empty, special, nested, and absolute names."""
-    with pytest.raises(HomeAssistantError, match="Invalid Skill name"):
-        SkillManager._validate_direct_skill_name(name)
-
-
-def test_activate_staged_skill_restores_existing_target_on_rename_failure(tmp_path: Path) -> None:
-    """The synchronous activation primitive restores the old target on failure."""
-    target = tmp_path / "skills" / "alpha"
-    _write_skill(target, description="Old")
-    missing_staged = tmp_path / "staging" / "missing"
-    backup = tmp_path / "staging" / "alpha.backup"
-
-    with pytest.raises(FileNotFoundError):
-        SkillManager._activate_staged_skill_sync(missing_staged, target, backup)
-    assert target.exists()
-    assert not backup.exists()
-
-
-def test_sync_remove_helper_covers_file_directory_and_missing(tmp_path: Path) -> None:
-    """Filesystem helpers are idempotent across their supported path shapes."""
-    backup = tmp_path / "backup"
-    _write_skill(backup)
-
-    file_path = tmp_path / "plain-file"
-    file_path.write_text("x", encoding="utf-8")
-    SkillManager._remove_path_sync(file_path)
-    SkillManager._remove_path_sync(file_path)
-    assert not file_path.exists()
-
-    SkillManager._remove_path_sync(backup)
-    assert not backup.exists()
 
 
 def test_discovery_handles_missing_non_directory_and_ignored_entries(hass, tmp_path: Path) -> None:

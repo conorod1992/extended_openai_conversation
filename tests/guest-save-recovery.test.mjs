@@ -14,6 +14,32 @@ const policies = [
 ];
 const draft = (panel, policy) => policy.key === "fuzzy" ? panel[policy.field].defaults : panel[policy.field];
 
+test("Guest UTC expiry survives a timezone refresh while the interval is being edited", async () => {
+  const f = fixture(), panel = f.create();
+  panel._page = "capabilities";
+  panel._subsection = "guest-mode";
+  await routeAssetPromise("capabilities/guest-mode", panel);
+  const start = "2027-01-01T12:00:00+00:00", end = "9999-12-31T23:59:59.123456+00:00";
+  const original = {active_from:start, active_from_local:"2027-01-01T13:00", active_until:end, active_until_local:null, indefinite:false};
+  panel._result = {status:original};
+  const controls = {"#guest-start":{value:"2027-01-01T14:00"}, "#guest-end":{value:"9999-12-31T23:59", checkValidity:() => true}, "#guest-indefinite":{checked:false}};
+  panel.shadowRoot.querySelector = (key) => controls[key] || null;
+  captureGuestInterval(panel, "start");
+  panel._result = {status:{...original, active_from_local:"2027-01-01T12:00", active_until_local:"9999-12-31T23:59"}};
+  let sent;
+  panel._call = async (_section, action, fields) => {
+    if (action === "update") sent = fields;
+    return {status:original};
+  };
+  try {
+    await panel._updateGuestMode();
+    assert.equal(sent.active_until, end);
+    assert.deepEqual(sent.local_times, {active_from:"2027-01-01T14:00"});
+  } finally {
+    retire(panel);
+  }
+});
+
 for (const policy of policies) for (const reply of ["malformed", "lost", "success", "rejected"]) for(const detached of ["pending","settled"]) test(`${policy.view}: newer reversion survives ${reply} save, detached while ${detached}`, async () => {
   const f=fixture(), source=f.create(), target=f.create(), gate=deferred();
   let saved=structuredClone(policy.result), writes=0;

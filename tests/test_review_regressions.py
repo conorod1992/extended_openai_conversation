@@ -129,7 +129,9 @@ async def test_legacy_blank_actual_duplicate_and_transfer(
     duplicated = hass.config_entries.async_add_subentry.call_args.args[1]
     assert duplicated.data["functions"] != "[]\n"
     assert len(agent_config.configured_function_tools_from_data(duplicated.data)) == 4
-    document = management_ui._export_agent(subentry, reviewed=True)
+    from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+    document = historical_reviewed_configuration(backup.export_configuration_snapshot(subentry.data))
     imported = management_ui._parse_import_document(document, destination=subentry)
     assert imported["config"]["functions"] != "[]\n"
     assert (

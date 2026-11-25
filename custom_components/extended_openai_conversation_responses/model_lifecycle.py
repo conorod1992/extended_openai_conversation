@@ -253,7 +253,7 @@ def _override_model_is_still_configured(
     hass: Any, entry: Any, subentry: Any, model: str
 ) -> bool:
     """Keep rule-selected retirement failures only while a route can select them."""
-    from .request_rules import _MANAGERS, SLOT_REFERENCE
+    from .request_rules import _MANAGERS, request_rule_repair
 
     manager = hass.data.get(_MANAGERS, {}).get((entry.entry_id, subentry.subentry_id))
     if manager is None or not manager._initialized:
@@ -262,10 +262,8 @@ def _override_model_is_still_configured(
         rule.get("enabled", True)
         and rule.get("action_type") == "model_routing"
         and not rule["action"].get("reset")
-        and (
-            rule["action"].get("model") == model
-            or bool(SLOT_REFERENCE.search(rule["action"].get("model") or ""))
-        )
+        and not request_rule_repair(rule)
+        and rule["action"].get("model") == model
         for rule in manager.snapshot()["rules"]
     )
 

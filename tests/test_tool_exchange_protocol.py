@@ -422,13 +422,12 @@ async def test_unknown_provider_tool_is_closed_without_dispatch(hass) -> None:
     assert tool_result_data(results[0])["result"]["status"] == "error"
 
 
-async def test_parallel_batch_rejects_edited_definition_before_execution(hass) -> None:
-    first_old = _tool("first", function_type="native", native_name="get_history")
+async def test_later_read_only_call_rejects_definition_edited_during_batch(hass) -> None:
+    first = _tool("first", function_type="native", native_name="get_history")
     second_old = _tool("second", function_type="native", native_name="get_statistics")
-    first_current = _tool(
-        "first", function_type="native", native_name="execute_service"
+    second_changed = _tool(
+        "second", function_type="native", native_name="execute_service"
     )
-    second_current = second_old
     entity = _entity(
         hass,
         [
@@ -436,16 +435,11 @@ async def test_parallel_batch_rejects_edited_definition_before_execution(hass) -
             _final_stream(),
         ],
     )
-    factory_calls = 0
-    concurrent = 0
-    maximum_concurrent = 0
+    current = [first, second_old]
+    chat_log = _chat_log(hass)
 
     def current_tools() -> list[dict[str, Any]]:
-        nonlocal factory_calls
-        factory_calls += 1
-        if factory_calls == 1:
-            return [first_old, second_old]
-        return [first_current, second_current]
+        return list(current)
 
     async def execute(
         _function_tool: dict[str, Any],
@@ -453,27 +447,29 @@ async def test_parallel_batch_rejects_edited_definition_before_execution(hass) -
         _llm_context: Any,
         _exposed_entities: list[dict[str, Any]],
     ) -> Any:
-        nonlocal concurrent, maximum_concurrent
-        concurrent += 1
-        maximum_concurrent = max(maximum_concurrent, concurrent)
-        await asyncio.sleep(0)
-        concurrent -= 1
+        assert tool_input.id == "call-1"
+        current[1] = second_changed
         return _result(entity, tool_input)
 
     entity._execute_function_tool = AsyncMock(side_effect=execute)
     with pytest.raises(FunctionNotFound):
         await entity._async_handle_chat_log(
-            _chat_log(hass),
-            [first_old, second_old],
+            chat_log,
+            [first, second_old],
             [],
             function_tools_factory=current_tools,
         )
 
-    assert maximum_concurrent == 0
-    entity._execute_function_tool.assert_not_awaited()
+    entity._execute_function_tool.assert_awaited_once()
+    assert entity._client.responses.create.await_count == 1
+    first_result, second_result = _retained_results(chat_log)
+    assert first_result.tool_call_id == "call-1"
+    assert tool_result_data(first_result) == {"result": "ok"}
+    assert second_result.tool_call_id == "call-2"
+    assert tool_result_data(second_result)["result"]["status"] == "error"
 
 
-async def test_parallel_failure_preserves_successful_sibling_result(hass) -> None:
+async def test_read_only_failure_skips_later_sibling(hass) -> None:
     first_tool = _tool("first", function_type="knowledge", operation="search")
     second_tool = _tool("second", function_type="knowledge", operation="list")
     first_call = _call("call-1", "first")
@@ -493,12 +489,11 @@ async def test_parallel_failure_preserves_successful_sibling_result(hass) -> Non
         _llm_context: Any,
         _exposed_entities: list[dict[str, Any]],
     ) -> Any:
-        await asyncio.sleep(0)
-        if tool_input.id == "call-1":
-            raise RuntimeError("read failed")
-        return _result(entity, tool_input, "second-ok")
+        assert tool_input.id == "call-1"
+        raise RuntimeError("read failed")
 
-    entity._execute_function_tool = execute
+    entity._execute_function_tool = AsyncMock(side_effect=execute)
+    budget = FunctionCallBudget(2)
 
     with pytest.raises(RuntimeError, match="read failed"):
         await async_execute_tool_exchange(
@@ -506,7 +501,7 @@ async def test_parallel_failure_preserves_successful_sibling_result(hass) -> Non
             chat_log,
             [first_call, second_call],
             [first_tool, second_tool],
-            FunctionCallBudget(2),
+            budget,
             None,
             [],
         )
@@ -514,7 +509,9 @@ async def test_parallel_failure_preserves_successful_sibling_result(hass) -> Non
     results = _retained_results(chat_log)
     assert [result.tool_call_id for result in results] == ["call-1", "call-2"]
     assert tool_result_data(results[0])["result"]["status"] == "error"
-    assert tool_result_data(results[1]) == {"result": "second-ok"}
+    assert tool_result_data(results[1])["result"]["status"] == "skipped"
+    entity._execute_function_tool.assert_awaited_once()
+    assert budget.used == 1
 
 
 async def test_iteration_exhaustion_leaves_each_round_call_closed(

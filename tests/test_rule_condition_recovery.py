@@ -7,9 +7,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import management_ui
-from custom_components.extended_openai_conversation_responses.request_rule_packs import (
-    export_rule_pack,
-)
 from homeassistant.components.device_automation import (
     condition as device_condition,
     helpers as device_helpers,
@@ -136,29 +133,6 @@ async def test_disable_broken_condition_allows_later_rule_but_enable_stays_stric
     )["rule"]["enabled"] is True
 
 
-async def test_missing_condition_is_reported_and_pack_imported_disabled(
-    condition_management,
-):
-    devices, rules, command = condition_management
-    await command("create", rule=device_rule(True), revision=rules.revision())
-    pack = export_rule_pack(rules, "all", reviewed=True)
-    devices.clear()
-    review = await command("rule_pack_review", pack=pack)
-    assert review["needs_attention"] == 1 and review["ready"] == 0
-    assert any(
-        "Unknown device" in item for item in review["rules"][0]["missing_dependencies"]
-    )
-    result = await command(
-        "rule_pack_import",
-        pack=pack,
-        confirm=True,
-        revision=review["revision"],
-        review_token=review["review_token"],
-    )
-    assert result["rules"][-1]["enabled"] is False
-    assert result["rules"][-1]["conditions"] == device_rule(True)["conditions"]
-
-
 @pytest.mark.parametrize("bad", ["missing_device_field", "invalid_type"])
 async def test_disabled_conditions_still_reject_malformed_structure(
     condition_management, bad
@@ -204,15 +178,3 @@ async def test_missing_earlier_condition_does_not_hide_malformed_later_branch(
     with pytest.raises(HomeAssistantError, match="Invalid Only when condition"):
         await command("create", rule=raw, revision=rules.revision())
     assert not rules.snapshot()["rules"]
-
-
-async def test_pack_review_rejects_malformed_platform_fields(condition_management):
-    devices, rules, command = condition_management
-    await command("create", rule=device_rule(), revision=rules.revision())
-    pack = export_rule_pack(rules, "all", reviewed=True)
-    pack["rules"][0]["conditions"][0]["type"] = "invalid_condition"
-    devices.clear()
-    revision = rules.revision()
-    with pytest.raises(HomeAssistantError, match="Invalid Only when condition"):
-        await command("rule_pack_review", pack=pack)
-    assert rules.revision() == revision

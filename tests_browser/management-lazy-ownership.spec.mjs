@@ -213,6 +213,24 @@ for (const [destination, section, asset, control, backend] of [
   });
 }
 
+for (const bundled of [false, true]) {
+  test(`Memory can load without Diagnostics assets (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    const diagnostics = [];
+    const isDiagnosticsAsset = url => /\/management-feature-status(?:-[\w-]+)?\.js$/.test(url.pathname)
+      && !url.pathname.includes("/management-feature-status-core");
+    await page.route(isDiagnosticsAsset, async route => {
+      diagnostics.push(route.request().url());
+      await route.abort();
+    });
+    await page.goto(fixtureUrl("data-memory/memories", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator("#add-memory")).toBeVisible();
+    expect(diagnostics).toEqual([]);
+    await expectHarnessClean(page, errors);
+  });
+}
+
 test("a cold lazy import failure reaches the section error and a fresh load recovers", async ({page}) => {
   await page.route("**/management-guest-feature.js", route => route.abort());
   await page.goto(fixtureUrl("capabilities/guest-mode"));

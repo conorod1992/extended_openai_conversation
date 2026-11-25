@@ -101,37 +101,6 @@ for (const bundled of [false, true]) for (const change of ["mutable user id ABA"
   });
 }
 
-for (const bundle of [false,true]) for(const aba of [false,true]) test(`late sharing export owner publication bundle=${bundle} aba=${aba}`,async({page})=>{
-  await page.goto(`/tests_browser/fixture.html?route=usage-maintenance/backup-restore${bundle?'&bundle=1':''}`);
-  const panel=page.locator('extended-openai-management-panel');
-  await expect(panel.locator('#create-backup-transfer')).toBeVisible();
-  await panel.evaluate(async host=>{
-    host.hass={...host.hass,user:{id:'original-export-owner',is_admin:true}};
-    const saved=await host._call('configuration','get');
-    await host._call('configuration','save',{revision:saved.revision,config:{prompt:'OWNER_PRIVATE_CUSTOM_INSTRUCTION_V2'}});
-    const call=host.hass.callWS.bind(host.hass);
-    window.heldOwnerExport={calls:0,button:host.shadowRoot.querySelector('#create-backup-transfer')};
-    host.hass.callWS=async message=>{
-      const result=await call(message);
-      if(message.action!=='setup_export')return result;
-      heldOwnerExport.calls++;
-      heldOwnerExport.result=result;
-      return new Promise(resolve=>heldOwnerExport.release=()=>resolve(result));
-    };
-  });
-  await panel.locator('#transfer-reviewed-custom').check();
-  await panel.locator('#create-backup-transfer').click();
-  await expect.poll(()=>page.evaluate(()=>heldOwnerExport.calls)).toBe(1);
-  await panel.evaluate(host=>{host.hass={...host.hass,user:{id:'replacement-account',is_admin:false}};});
-  await expect(panel.getByRole('button',{name:'Reload settings',exact:true})).toBeVisible();
-  await expect(panel.locator('[data-artifact]')).toHaveCount(0);
-  if(aba)await panel.evaluate(host=>{host.hass={...host.hass,user:{id:'original-export-owner',is_admin:true}};});
-  await page.evaluate(()=>heldOwnerExport.release());
-  await expect.poll(()=>page.evaluate(()=>heldOwnerExport.button.disabled)).toBe(false);
-  await expect(panel.locator('[data-artifact]')).toHaveCount(0);
-
-});
-
 for (const bundle of [false,true]) for(const aba of [false,true]) for (const mode of ["full", "custom"]) test(`late ${mode} private backup owner download bundle=${bundle} aba=${aba}`,async({page})=>{
   await page.goto(`/tests_browser/fixture.html?route=usage-maintenance/backup-restore${bundle?'&bundle=1':''}`);
   const panel=page.locator('extended-openai-management-panel');
@@ -165,19 +134,6 @@ for (const bundle of [false,true]) for(const aba of [false,true]) for (const mod
   expect(downloads).toHaveLength(0);
   expect(await page.evaluate(()=>heldOwnerExport.cancellations)).toEqual([{cancelled:true}]);
   expect(await page.evaluate(()=>heldOwnerExport.replacementCalls)).toEqual([]);
-});
-
-for(const bundle of [false,true])test(`open sharing dialog retires across account replacement bundle=${bundle}`,async({page})=>{
- await page.goto(fixtureUrl("usage-maintenance/backup-restore",bundle?"&bundle=1":""));
- const panel=page.locator("extended-openai-management-panel");
- await expect(panel.locator("#create-backup-transfer")).toBeVisible();
- await panel.evaluate(host=>{host.hass={...host.hass,user:{id:"original-owner",is_admin:true}};});
- await panel.locator("#create-backup-transfer").click();
- await expect(panel.locator("[data-artifact]")).toBeVisible();
- await panel.evaluate(host=>{host.hass={...host.hass,user:{id:"replacement",is_admin:false}};});
- await expect(panel.locator("[data-artifact]")).toHaveCount(0);
- await panel.evaluate(host=>{host.hass={...host.hass,user:{id:"original-owner",is_admin:true}};});
- await expect(panel.locator("[data-artifact]")).toHaveCount(0);
 });
 
 for (const bundle of [false, true]) for (const aba of [false, true]) test(`debug queue retires account-owned sends bundle=${bundle} aba=${aba}`, async ({page}) => {

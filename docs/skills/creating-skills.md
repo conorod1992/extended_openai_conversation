@@ -43,7 +43,7 @@ Do not rely on historical claims that shell commands are fully sandboxed: review
 
 ## Install and reload
 
-You can install repository examples with the `extended_openai_conversation_responses.download_skill` action. Normal releases use the matching integration release tag; development installs can set `source_ref` deliberately. See [Discover and install Skills](discover-skills.md).
+Install repository examples by copying the complete Skill directory into Home Assistant's Skills directory and running **Reload skills**. See [Discover and install Skills](discover-skills.md).
 
 After manually adding or editing files, use the `extended_openai_conversation_responses.reload_skills` action. Then enter its directory name for the intended agent in **Extended OpenAI → Capabilities → Web search & Skills** and save. Only selected, installed Skills with an available `load_skill` Function Tool are offered to the model.
 

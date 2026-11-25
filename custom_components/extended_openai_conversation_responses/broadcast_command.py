@@ -31,6 +31,8 @@ def broadcast_message(text: Any) -> str | None:
     if match is None:
         return None
     message = match[1].lstrip()
+    if not any(character.isalnum() for character in message):
+        return None
     if re.match(r"(?:to|in|on|at|after|for)\b|a\s+message\b", message, re.IGNORECASE):
         return None
     # Deliberately restrictive syntax, not destination inference. Only this

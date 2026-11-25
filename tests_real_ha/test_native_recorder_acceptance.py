@@ -26,6 +26,7 @@ from homeassistant.components.homeassistant.exposed_entities import async_expose
 from homeassistant.components.recorder import statistics
 from homeassistant.components.recorder.models.statistics import StatisticMeanType
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
@@ -362,3 +363,13 @@ async def test_native_statistics_reads_real_recorder_and_enforces_exposure(
             None,
             _EXPOSED,
         )
+
+    edge = {
+        **args,
+        "start_time": "9999-07-30T00:00:00Z",
+        "end_time": "9999-07-30T01:00:00Z",
+    }
+    assert await NativeFunction().get_statistics(hass, {}, edge, None, _EXPOSED) == {}
+    edge["period"] = "year"
+    with pytest.raises(HomeAssistantError, match="for year statistics"):
+        await NativeFunction().get_statistics(hass, {}, edge, None, _EXPOSED)

@@ -949,91 +949,6 @@ def test_request_rule_groups_reject_duplicate_ids() -> None:
         )
 
 
-def test_request_rule_result_step_ids_are_assigned_only_at_result_boundaries() -> None:
-    from custom_components.extended_openai_conversation_responses import request_rules
-
-    rule = {
-        "action": {
-            "actions": [
-                "ignored",
-                {
-                    "type": "function",
-                    "name": "demo",
-                    "result_alias": "first",
-                },
-                {
-                    "type": "function",
-                    "name": "demo",
-                    "result_alias": "existing",
-                    "step_id": "already-set",
-                },
-                {
-                    "action": (
-                        f"{request_rules.DOMAIN}."
-                        f"{request_rules.SERVICE_CALL_FUNCTION}"
-                    ),
-                    "data": {"result_alias": "second"},
-                },
-                {
-                    "action": "light.turn_on",
-                    "data": {"result_alias": "not-a-function-result"},
-                },
-            ]
-        }
-    }
-
-    result = request_rules._assign_missing_result_step_ids(rule)
-    actions = result["action"]["actions"]
-
-    assert "step_id" in actions[1]
-    assert actions[2]["step_id"] == "already-set"
-    assert "step_id" in actions[3]["data"]
-    assert "step_id" not in actions[4]["data"]
-    assert "step_id" not in rule["action"]["actions"][1]
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        None,
-        "plain text",
-        {"action": "nothing"},
-    ],
-)
-def test_request_rule_result_step_id_assignment_handles_non_action_shapes(value) -> None:
-    from custom_components.extended_openai_conversation_responses import request_rules
-
-    result = request_rules._assign_missing_result_step_ids(value)
-
-    if isinstance(value, dict):
-        assert result == value
-        assert result is not value
-    else:
-        assert result is value
-
-
-def test_request_rule_result_references_recurse_through_identity_named_payloads() -> None:
-    from custom_components.extended_openai_conversation_responses import request_rules
-
-    value = {
-        "message": "Value {first.answer}",
-        "nested": [
-            "Other {second.value}",
-            {"deep": "{third.value}"},
-        ],
-        "result_alias": "{ignored.value}",
-        "step_id": "{also_ignored.value}",
-    }
-
-    assert request_rules._result_references(value) == {
-        "first",
-        "second",
-        "third",
-        "ignored",
-        "also_ignored",
-    }
-
-
 @pytest.mark.parametrize(
     "value",
     [
@@ -1095,37 +1010,6 @@ def test_native_statistics_schema_migration_skips_already_strict_schema() -> Non
     }
 
     assert migration._migrate_statistics_schema(tool) is False
-
-
-@pytest.mark.asyncio
-async def test_parallel_safe_outcomes_cancel_children_when_parent_is_cancelled() -> None:
-    from custom_components.extended_openai_conversation_responses import (
-        parallel_tool_execution,
-    )
-
-    started = asyncio.Event()
-    cancelled = asyncio.Event()
-
-    async def executor(_tool, _input):
-        started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            cancelled.set()
-            raise
-
-    task = asyncio.create_task(
-        parallel_tool_execution.async_execute_parallel_safe_batch_outcomes(
-            [(object(), object())],
-            executor,
-        )
-    )
-    await started.wait()
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert cancelled.is_set()
 
 
 def test_skill_transaction_remove_unlinks_regular_file(tmp_path) -> None:
@@ -1385,14 +1269,23 @@ async def test_restore_journal_load_handles_missing_unreadable_and_corrupt_files
         private=True,
     )
 
-    monkeypatch.setattr(Path, "read_text", Mock(side_effect=FileNotFoundError()))
+    path = Path(store.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     assert await store._async_load_data() is None
 
-    monkeypatch.setattr(Path, "read_text", Mock(side_effect=OSError("disk error")))
-    with pytest.raises(backup.BackupError, match="unreadable"):
-        await store._async_load_data()
+    open_file = Path.open
 
-    monkeypatch.setattr(Path, "read_text", Mock(return_value="{not json"))
+    def fail_open(candidate, *args, **kwargs):
+        if candidate == path:
+            raise OSError("disk error")
+        return open_file(candidate, *args, **kwargs)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(Path, "open", fail_open)
+        with pytest.raises(backup.BackupError, match="unreadable"):
+            await store._async_load_data()
+
+    path.write_text("{not json", encoding="utf-8")
     with pytest.raises(backup.BackupError, match="unreadable"):
         await store._async_load_data()
 
@@ -1413,13 +1306,13 @@ async def test_restore_journal_load_handles_missing_unreadable_and_corrupt_files
         },
     ]
     for envelope in corrupt_envelopes:
-        monkeypatch.setattr(Path, "read_text", Mock(return_value=json.dumps(envelope)))
+        path.write_text(json.dumps(envelope), encoding="utf-8")
         with pytest.raises(backup.BackupError, match="corrupted"):
             await store._async_load_data()
 
 
 @pytest.mark.asyncio
-async def test_restore_journal_load_returns_valid_payload(hass, monkeypatch) -> None:
+async def test_restore_journal_load_returns_valid_payload(hass) -> None:
     import json
     from pathlib import Path
 
@@ -1440,7 +1333,9 @@ async def test_restore_journal_load_returns_valid_payload(hass, monkeypatch) -> 
         "key": store.key,
         "data": payload,
     }
-    monkeypatch.setattr(Path, "read_text", Mock(return_value=json.dumps(envelope)))
+    path = Path(store.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(envelope), encoding="utf-8")
 
     assert await store._async_load_data() == payload
 

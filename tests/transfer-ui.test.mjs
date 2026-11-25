@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   renderRestoreTransferDialog,
   downloadCustomBackup,
-  downloadSetupExport,
   TRANSFER_SECTIONS,
   WS_BACKUP_TRANSFER,
 } from "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js";
@@ -14,36 +13,12 @@ const makePanel = (handler) => ({
 });
 
 {
-  const calls = [];
-  let saved = null;
-  const panel = makePanel(async (message) => {
-    calls.push(message);
-    assert.equal(message.type, WS_BACKUP_TRANSFER);
-    assert.equal(message.action, "setup_export");
-    return {
-      json: '{"format":"extended_openai_conversation_transfer"}',
-      filename: "jarvis-shareable-setup-2026-09-08.json",
-      mode: "setup",
-    };
-  });
-
-  const result = await downloadSetupExport(panel, async (blob, filename) => {
-    saved = {text: await blob.text(), filename, type: blob.type};
-  });
-
-  assert.equal(result.mode, "setup");
-  assert.equal(saved.filename, "jarvis-shareable-setup-2026-09-08.json");
-  assert.equal(saved.type, "application/json");
-  assert.match(saved.text, /extended_openai_conversation_transfer/);
-  assert.equal(calls.length, 1);
-}
-
-{
   const selected = ["configuration", "request_rules", "knowledge"];
   const calls = [];
   let saved = null;
   const panel = makePanel(async (message) => {
     calls.push(message);
+    assert.equal(message.type, WS_BACKUP_TRANSFER);
     if (message.action === "export_start") {
       assert.equal(message.data.mode, "custom");
       assert.deepEqual(message.data.sections, selected);

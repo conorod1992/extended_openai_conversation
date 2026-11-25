@@ -68,6 +68,27 @@ function authenticationRoundTrip(panel) {
   assert.equal(panel._eocAuthenticationGeneration, 2);
 }
 
+test("Knowledge submits the complete Unicode input at its limit and rejects excess", async () => {
+  const {panel, control} = host();
+  const value = "a".repeat(99997) + "😀Z!";
+  const fields = control("#knowledge-content");
+  control("#knowledge-counter");
+  fields.value = value;
+  panel._updateKnowledgeCounter();
+  assert.match(control("#knowledge-counter").textContent, /^100.000 \/ 100.000 characters$/);
+  const calls = [];
+  panel._call = async (...args) => { calls.push(args); throw new Error("Test response"); };
+  panel._knowledgeValues = () => ({title:"Source", description:"", content:fields.value});
+  fields.value += "a";
+  await panel._saveKnowledge();
+  assert.equal(calls.length, 0);
+  assert.match(panel.visibleError, /at most 100.000 characters/);
+  fields.value = value;
+  await panel._saveKnowledge();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][2].content, value);
+});
+
 for (const differing of [false, true]) test(`persistent duplicate preserves Add identity, counts, and metadata draft (different=${differing})`, async () => {
   const {panel, dialog} = host("memory");
   const values = {...panel._memoryValues(), subject:"Alice", valid_from:"2026-01-01T00:00:00Z"};
@@ -200,6 +221,54 @@ for (const failure of ["incomplete", "lost", "lost-nested", "lost-bare", "reject
       failure.startsWith("lost") ? "uncertain" : failure === "rejected" ? "rejected" : "fulfilled");
   });
 }
+
+test("Knowledge retries the submitted token and values before saving newer edits", async () => {
+  const {panel, dialog, control} = host();
+  control("#knowledge-delete");
+  control("#knowledge-dialog-title");
+  let values = panel._knowledgeValues();
+  panel._knowledgeValues = () => values;
+  const requests = [];
+  const source = {source_id:"committed", updated_at:"revision", ...values};
+  panel._hass.callWS = async request => {
+    requests.push(request);
+    if (requests.length === 1) throw {code:"unknown_error", message:"Reply lost"};
+    return {status:"created", source};
+  };
+  await panel._saveKnowledge();
+  assert.match(panel.visibleError, /recover the original submission/);
+  assert.equal(control("#knowledge-save").disabled, false);
+  values = {...values, content:"Newer text"};
+  await panel._saveKnowledge();
+  assert.equal(requests.length, 2);
+  assert.match(requests[0].create_token, /^[0-9a-f]{32}$/);
+  assert.equal(requests[1].create_token, requests[0].create_token);
+  assert.equal(requests[1].content, source.content);
+  assert.equal(panel._editingSource.source_id, source.source_id);
+  assert.equal(panel._knowledgeMode, "edit");
+  assert.equal(dialog.open, true);
+  assert.equal(panel._knowledgeValues().content, "Newer text");
+});
+
+test("Knowledge warns before a separate submission creates an exact copy", async () => {
+  const {panel} = host();
+  const requests = [];
+  panel._hass.callWS = async request => {
+    requests.push(request);
+    return request.confirm_duplicate
+      ? {status:"created", source:{source_id:"copy", updated_at:"revision", ...panel._knowledgeValues()}}
+      : {status:"duplicate"};
+  };
+  await panel._saveKnowledge();
+  assert.match(panel.visibleError, /identical Knowledge source already exists/);
+  assert.equal(panel._knowledgeMode, "create");
+  await panel._saveKnowledge();
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].confirm_duplicate, undefined);
+  assert.equal(requests[1].confirm_duplicate, true);
+  assert.equal(requests[0].create_token, requests[1].create_token);
+  assert.equal(panel._editingSource.source_id, "copy");
+});
 
 async function malformedReplyWitness(PanelType, reply, cacheFailure) {
   const {panel, backend} = host("knowledge", PanelType);
@@ -677,6 +746,52 @@ test("Guest editor prefers HA wall projection over stale client rules", () => {
   Intl.DateTimeFormat = function () { throw Error("stale client timezone rules"); };
   try { assert.equal(panel._dateTimeLocal(panel._result.status.active_from), "2026-11-04T12:00"); }
   finally { Intl.DateTimeFormat = format; }
+});
+
+test("Guest interval preserves a UTC-only stored expiry when editing its start", async () => {
+  const {panel, control} = host();
+  panel._viewKey = () => "capabilities/guest-mode";
+  panel._hass.config = {time_zone:"Pacific/Kiritimati"};
+  const expiry = "9999-12-31T23:59:59+00:00";
+  const saved = {active_from:"2026-11-04T12:00:00Z", active_from_local:"2026-11-05T02:00",
+    active_until:expiry, active_until_local:null, indefinite:false};
+  panel._result = {status:saved};
+  control("#guest-start").value = "2026-11-05T03:00";
+  const end = control("#guest-end");
+  end.value = "9999-12-31T23:59";
+  end.checkValidity = () => true;
+  control("#guest-indefinite").checked = false;
+  panel._refreshGuestModeMutation = async () => {};
+  let sent;
+  panel._call = async (_section, _action, fields) => {
+    sent = fields;
+    return {status:saved};
+  };
+  await panel._updateGuestMode();
+  assert.equal(sent.active_until, expiry);
+  assert.deepEqual(sent.local_times, {active_from:"2026-11-05T03:00"});
+});
+
+test("Guest Mode reports a saved timer failure and reloads without replaying the change", async () => {
+  const {panel, control} = host();
+  panel._viewKey = () => "capabilities/guest-mode";
+  control("#guest-start");
+  control("#guest-end");
+  control("#guest-indefinite").checked = true;
+  const actions = [];
+  const saved = {active_from:"2026-11-04T12:00:00Z", active_until:null, indefinite:true};
+  panel._hass.callWS = async request => {
+    actions.push(request.action);
+    if (request.action === "update") {
+      throw {code:"eoai_mutation_committed", message:"Guest Mode was saved, but transition notifications could not be scheduled."};
+    }
+    return {status:saved};
+  };
+  panel._refreshGuestModeMutation = async (_agent, result) => { panel._result = result; };
+  await panel._updateGuestMode();
+  assert.deepEqual(actions, ["update", "get"]);
+  assert.equal(panel._result.status, saved);
+  assert.match(panel.toasts[0][0], /^Guest Mode was saved/);
 });
 
 

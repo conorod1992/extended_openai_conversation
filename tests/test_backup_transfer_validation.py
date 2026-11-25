@@ -8,10 +8,12 @@ import io
 import json
 import os
 import stat
+import struct
 import tracemalloc
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 import zipfile
+import zlib
 
 import pytest
 
@@ -22,6 +24,29 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from tests.test_backup_transfer import _write_archive
+
+
+@pytest.mark.parametrize("member", [backup_transfer.MANIFEST_NAME, backup_transfer.PAYLOAD_NAME])
+def test_archive_translates_corrupted_deflate_member(tmp_path, member) -> None:
+    path = tmp_path / "corrupted.zip"
+    _write_archive(path, b'{"valid":"JSON"}')
+    with zipfile.ZipFile(path) as archive:
+        info = archive.getinfo(member)
+        assert info.compress_type == zipfile.ZIP_DEFLATED
+
+    payload = bytearray(path.read_bytes())
+    name_length, extra_length = struct.unpack_from("<HH", payload, info.header_offset + 26)
+    data_offset = info.header_offset + 30 + name_length + extra_length
+    # Force the reserved DEFLATE block type while preserving the ZIP directory.
+    payload[data_offset] |= 0b110
+    path.write_bytes(payload)
+    with zipfile.ZipFile(path) as archive, pytest.raises(zlib.error):
+        archive.read(member)
+
+    part = "manifest" if member == backup_transfer.MANIFEST_NAME else "payload"
+    with pytest.raises(backup.BackupError, match=f"archive {part} is corrupted") as err:
+        backup_transfer._load_archive_document(str(path))
+    assert isinstance(err.value.__cause__, zlib.error)
 
 
 def _session_path(tmp_path, name: str = "session.tmp") -> str:

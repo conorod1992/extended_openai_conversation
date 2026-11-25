@@ -16,9 +16,9 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     project_agent_config_updates,
 )
 from custom_components.extended_openai_conversation_responses.management_ui import (
-    _export_agent,
     _parse_import_document,
 )
+from tests.test_agent_config_transfer import historical_reviewed_configuration
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
@@ -58,7 +58,7 @@ async def test_portable_transfer_currently_materializes_sampling_defaults(
     if explicit_sampling:
         raw.update(temperature=defaults["temperature"], top_p=defaults["top_p"])
     before = build_provider_request_snapshot(raw, {}, tools_required=False).api_kwargs
-    exported = _export_agent(SimpleNamespace(data=raw, title="Portable"))
+    exported = historical_reviewed_configuration({**raw, "temperature": defaults["temperature"], "top_p": defaults["top_p"]}, title="Portable")
     restored = _parse_import_document(exported)["config"]
     after = build_provider_request_snapshot(
         restored, {}, tools_required=False
@@ -222,11 +222,9 @@ async def test_duplicate_preserves_reasoning_inheritance(
     assert subentry.data == original
 
 
-async def test_portable_schema_excludes_opaque_export_and_rejects_unknown_import(hass):
+async def test_portable_schema_rejects_unknown_import(hass):
     raw = {"chat_model": "gpt-4.1", "functions": [], "extension_data": {"version": 7}}
-    exported = _export_agent(SimpleNamespace(data=raw, title="Portable"))
-    assert "extension_data" not in exported["config"]
-    exported["config"]["extension_data"] = {"version": 7}
+    exported = historical_reviewed_configuration(raw, title="Portable")
     with pytest.raises(AgentConfigError, match="unknown fields"):
         _parse_import_document(exported)
 
@@ -331,7 +329,7 @@ async def test_import_preview_preserves_reasoning_omission_but_displays_guest_de
 
     entry, subentry = _entry_pair()
     raw = {"chat_model": "gpt-5.2", "functions": []}
-    document = _export_agent(SimpleNamespace(data=raw, title="Preview"))
+    document = historical_reviewed_configuration(raw, title="Preview")
     parsed = _parse_import_document(document)
     assert GUEST_V2_FIELDS.isdisjoint(parsed["config"])
     monkeypatch.setattr(

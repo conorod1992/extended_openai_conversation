@@ -32,10 +32,9 @@ from homeassistant.exceptions import HomeAssistantError, TemplateError
 from homeassistant.helpers import condition as ha_condition, config_validation as cv
 from homeassistant.helpers.script import Script, async_validate_actions_config
 from homeassistant.helpers.script_variables import ScriptVariables
-from homeassistant.helpers.template import Template
+from homeassistant.helpers.template import Template, is_template_string
 from homeassistant.helpers.trace import StopReason, script_execution_cv
 from homeassistant.helpers.typing import UNDEFINED
-from homeassistant.util.async_ import create_eager_task
 
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
@@ -54,6 +53,7 @@ from .guest_mode import (
     GuestModeDenied,
     guest_arguments_allowed_runtime,
 )
+from .ha_llm_tools import ToolSnapshot
 from .helpers import (
     effective_api_provider,
     get_model_config,
@@ -82,11 +82,7 @@ from .request_rule_patterns import (
 )
 from .retrieval_text import word_character_projection
 from .script_lifecycle import async_cleanup_script, async_run_script
-from .script_payload import (
-    effective_service_payload,
-    is_function_service_action,
-    set_effective_service_field,
-)
+from .script_payload import effective_service_payload, is_function_service_action
 from .script_structure import (
     MAX_SCRIPT_DEPTH,
     MAX_SCRIPT_NODES,
@@ -103,6 +99,9 @@ from .template_diagnostics import private_template_diagnostics
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 6
+FUNCTION_RESPONSE_VERSION = 2
+FUNCTION_RESPONSE_VERSION_FIELD = "function_response_version"
+_RETIRED_FUNCTION_RESULT_FIELDS = frozenset({"result_alias", "step_id"})
 REQUEST_RULES_UNAVAILABLE = (
     "Request Rules persistence is unavailable; retry after storage recovery"
 )
@@ -115,20 +114,9 @@ MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains", "sentence_patte
 ACTION_TYPES = ("local_action", "model_routing")
 SLOT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 SLOT_REFERENCE = re.compile(r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]{0,63})\}(?!\})")
-RESULT_REFERENCE = re.compile(
-    r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]*)(\.[A-Za-z_0-9][A-Za-z0-9_]*)+\}(?!\})"
+RETIRED_RESULT_REFERENCE = re.compile(
+    r"(?<!\{)\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_0-9][A-Za-z0-9_]*)+\}(?!\})"
 )
-RESERVED_RESULT_ALIASES = {
-    "request",
-    "conversation",
-    "system",
-    "trigger",
-    "this",
-    "repeat",
-    "wait",
-} | RESERVED_CAPTURE_NAMES
-MAX_RESULT_BYTES = 16384
-MAX_RESULT_DEPTH = 8
 JINJA_SLOT_REFERENCE = re.compile(
     r"\{\{\s*(?:request\.slots\.([A-Za-z_][A-Za-z0-9_]{0,63})"
     r"|request\.slots\['([A-Za-z_][A-Za-z0-9_]{0,63})'\]"
@@ -167,15 +155,10 @@ class _NativeActionDenied(GuestModeDenied, TemplateError):
 
 @dataclass(frozen=True, slots=True)
 class RuleActionExecution:
-    """One native script's callbacks and intentionally shared captured results.
-
-    Child script tasks inherit this immutable binding and the same result map.
-    A nested rule installs its own binding and restores the enclosing execution.
-    """
+    """One native script's callbacks, inherited by its child script tasks."""
 
     function_executor: RequestRuleFunctionExecutor | None = None
     authorize_action: Callable[[Mapping[str, Any]], None] | None = None
-    function_results: dict[str, Any] | None = None
 
 
 _NO_RULE_ACTION = RuleActionExecution()
@@ -331,6 +314,7 @@ def _normalize_legacy_consumed_request_scope(value: Any) -> tuple[Any, bool]:
     if (
         not isinstance(action, Mapping)
         or "continue_to_ai" in action
+        or value.get("continue_matching") is True
         or action.get("scope", "request") != "request"
     ):
         return value, False
@@ -408,7 +392,6 @@ class RequestRules:
         self._groups: list[dict[str, str]] = []
         self._matching_snapshot = _MatchingSnapshot((), ())
         self._committed_matching_snapshot = self._matching_snapshot
-        self._has_continuation = False
         self._condition_checkers: dict[str, _NativeConditions] = {}
         self._unsubscribe_stop: Callable[[], None] | None = None
         self._diagnostics: dict[str, str] = {}
@@ -417,6 +400,7 @@ class RequestRules:
         self._initialized = False
         self._retired = False
         self._repair_required = False
+        self._routing_repair_required = False
         self._committed_state: dict[str, Any] | None = None
         self._generation = 0
         self._revision_generation = 0
@@ -462,15 +446,16 @@ class RequestRules:
                 self._require_current_owner()
                 migrated = False
                 self._repair_required = False
+                self._routing_repair_required = False
                 raw_rules: Sequence[Any] = ()
                 if stored is None:
                     pass
                 elif not isinstance(stored, Mapping):
                     _LOGGER.warning(
-                        "Reading malformed Request Rules as empty; original store preserved"
+                        "Request Rules routing unavailable: malformed storage container; "
+                        "original store preserved"
                     )
-                    migrated = True
-                    self._repair_required = True
+                    self._repair_required = self._routing_repair_required = True
                 else:
                     generation = stored.get("revision_generation", 0)
                     if type(generation) is int and generation >= 0:
@@ -523,10 +508,10 @@ class RequestRules:
                         stored_rules, (str, bytes)
                     ):
                         _LOGGER.warning(
-                            "Reading malformed Request Rules list as empty; original store preserved"
+                            "Request Rules routing unavailable: malformed rules list; "
+                            "original store preserved"
                         )
-                        migrated = True
-                        self._repair_required = True
+                        self._repair_required = self._routing_repair_required = True
                     else:
                         if len(stored_rules) > MAX_RULES:
                             _LOGGER.warning(
@@ -545,7 +530,6 @@ class RequestRules:
                         candidate, scope_migrated = (
                             _normalize_legacy_consumed_request_scope(raw)
                         )
-                        candidate = _assign_missing_result_step_ids(candidate)
                         if scope_migrated:
                             _LOGGER.warning(
                                 "Migrating stored complete Request Rule %s from request "
@@ -559,6 +543,8 @@ class RequestRules:
                             candidate,
                             validate_sentence_pattern=False,
                             validate_script_schema=False,
+                            allow_legacy_matching=True,
+                            allow_legacy_routing=True,
                             allow_empty_normalized_phrases=True,
                         )
                         if validated["id"] in seen_ids:
@@ -595,7 +581,6 @@ class RequestRules:
                 self._opaque_fields = {}
                 self._sort_and_compile()
                 self._committed_matching_snapshot = self._matching_snapshot
-                self._has_continuation = False
                 self._initialized = False
                 self._committed_state = None
                 self._revision_generation = 0
@@ -606,6 +591,11 @@ class RequestRules:
     def initialized(self) -> bool:
         """Whether the retained manager owns an admitted storage generation."""
         return self._initialized
+
+    @property
+    def routing_available(self) -> bool:
+        """Return whether the saved policy is authoritative for requests."""
+        return self._initialized and not self._routing_repair_required
 
     def revision(self) -> str:
         """Return a revision that also detects a committed A -> B -> A cycle."""
@@ -638,6 +628,27 @@ class RequestRules:
                 "Request Rules changed in another tab. Reload the latest rules before saving."
             )
 
+    def _matching_diagnostic_ids(self) -> set[str]:
+        """Find diagnosed rules still admitted to the current matcher."""
+        if not self._diagnostics:
+            return set()
+        return {
+            rule["id"]
+            for rule, _, _ in self._matching_snapshot.deterministic
+            if rule["id"] in self._diagnostics
+        }
+
+    def _inactive_diagnostic_ids(self) -> set[str]:
+        """Give the legacy capacity exemption only to excluded rules."""
+        return self._diagnostics.keys() - self._matching_diagnostic_ids()
+
+    def diagnostic_snapshot(self) -> dict[str, Any]:
+        """Return safe management status for excluded and repair-blocked rules."""
+        return {
+            "diagnostics": dict(self._diagnostics),
+            "matching_diagnostic_ids": sorted(self._matching_diagnostic_ids()),
+        }
+
     def snapshot(self) -> dict[str, Any]:
         """Return a copy suitable for the management API."""
         return {
@@ -647,7 +658,7 @@ class RequestRules:
             "wording_groups": _copy_wording_groups(self._wording_groups),
             "groups": deepcopy(self._groups),
             "rules": [dict(rule) for rule in self._rules],
-            "diagnostics": dict(self._diagnostics),
+            **self.diagnostic_snapshot(),
             **(
                 {"wording_diagnostics": dict(self._wording_diagnostics)}
                 if self._wording_diagnostics
@@ -686,6 +697,7 @@ class RequestRules:
         snapshot = self.snapshot()
         snapshot.pop("revision", None)
         snapshot.pop("diagnostics", None)
+        snapshot.pop("matching_diagnostic_ids", None)
         snapshot.pop("wording_diagnostics", None)
         return snapshot
 
@@ -721,6 +733,8 @@ class RequestRules:
                     candidate,
                     validate_sentence_pattern=False,
                     validate_script_schema=False,
+                    allow_legacy_matching=True,
+                    allow_legacy_routing=True,
                     allow_empty_normalized_phrases=True,
                 )
             )
@@ -749,16 +763,17 @@ class RequestRules:
             self._groups = prepared["groups"]
             self._rules = [
                 validate_rule(
-                    _assign_missing_result_step_ids(rule),
+                    rule,
                     validate_sentence_pattern=False,
                     validate_script_schema=False,
+                    allow_legacy_matching=True,
+                    allow_legacy_routing=True,
                     allow_empty_normalized_phrases=True,
                 )
                 for rule in prepared["rules"]
             ]
             self._discard_condition_checkers()
             self._sort_and_compile()
-            self._initialized = True
             await self._async_save_locked(replacing=True)
 
     async def async_set_defaults(
@@ -827,12 +842,12 @@ class RequestRules:
             raw = dict(value)
             raw.setdefault("id", uuid4().hex)
             raw.setdefault("order", len(self._rules))
-            rule = validate_rule(_assign_missing_result_step_ids(raw))
+            rule = validate_rule(raw)
             self._require_group(rule)
             if any(item["id"] == rule["id"] for item in self._rules):
                 raise ValueError("rule id already exists")
             _validate_total_pattern_states(
-                [*self._rules, rule], inactive_rule_ids=self._diagnostics
+                [*self._rules, rule], inactive_rule_ids=self._inactive_diagnostic_ids()
             )
             self._rules.append(rule)
             self._sort_and_compile()
@@ -859,6 +874,7 @@ class RequestRules:
                 previous["action_type"],
                 value.get("action", previous["action"]),
                 validate_script_schema=False,
+                allow_legacy_routing=True,
             )
         except ValueError:
             return False
@@ -877,6 +893,49 @@ class RequestRules:
             )
         )
 
+    def prepare_update(
+        self,
+        rule_id: str,
+        value: Any,
+        *,
+        confirm_function_response_change: bool = False,
+    ) -> dict[str, Any]:
+        """Prepare an edit using the current stored rule as the provenance owner."""
+        if not isinstance(value, Mapping):
+            raise ValueError("rule must be an object")
+        previous = self._rules[self._index(rule_id)]
+        field_only = set(value) == {"enabled"}
+        # The enabled switch never round-trips or reviews the action sequence.
+        raw = {**previous, **value} if field_only else dict(value)
+        raw["id"] = rule_id
+        raw.setdefault("order", previous["order"])
+        # Ignore caller-supplied provenance. Review at the owning write, using
+        # the same rule that supplies field-only edits.
+        if FUNCTION_RESPONSE_VERSION_FIELD in previous:
+            raw[FUNCTION_RESPONSE_VERSION_FIELD] = previous[
+                FUNCTION_RESPONSE_VERSION_FIELD
+            ]
+        else:
+            raw.pop(FUNCTION_RESPONSE_VERSION_FIELD, None)
+        _require_exact_integer_update(previous, raw)
+        preserve_inactive = self.preserves_inactive_pattern(rule_id, raw)
+        if (
+            not preserve_inactive
+            and _function_response_needs_review(previous)
+            and (field_only or not confirm_function_response_change)
+        ):
+            raise ValueError(FUNCTION_RESPONSE_REPAIR)
+        return validate_rule(
+            raw,
+            validate_sentence_pattern=not preserve_inactive,
+            validate_script_schema=not preserve_inactive,
+            allow_legacy_function_responses=field_only
+            and not request_rule_repair(previous),
+            allow_legacy_matching=preserve_inactive,
+            allow_legacy_routing=preserve_inactive,
+            allow_empty_normalized_phrases=preserve_inactive,
+        )
+
     async def async_update(
         self,
         rule_id: str,
@@ -884,32 +943,26 @@ class RequestRules:
         *,
         expected_revision: str | None = None,
         check_configuration: Callable[[], None] | None = None,
+        confirm_function_response_change: bool = False,
     ) -> dict[str, Any]:
         """Replace a Rule, checking its prepared configuration under the write lock."""
-        if not isinstance(value, Mapping):
-            raise ValueError("rule must be an object")
         async with self._lock:
             self._require_revision_locked(expected_revision)
             if check_configuration is not None:
                 check_configuration()
             index = self._index(rule_id)
-            raw = dict(value)
-            raw["id"] = rule_id
-            raw.setdefault("order", self._rules[index]["order"])
             previous = self._rules[index]
-            _require_exact_integer_update(previous, raw)
-            preserve_inactive = self.preserves_inactive_pattern(rule_id, raw)
-            rule = validate_rule(
-                _assign_missing_result_step_ids(raw),
-                validate_sentence_pattern=not preserve_inactive,
-                validate_script_schema=not preserve_inactive,
-                allow_empty_normalized_phrases=preserve_inactive,
+            rule = self.prepare_update(
+                rule_id,
+                value,
+                confirm_function_response_change=confirm_function_response_change,
             )
             self._require_group(rule)
             prospective = deepcopy(self._rules)
             prospective[index] = rule
             _validate_total_pattern_states(
-                prospective, inactive_rule_ids=set(self._diagnostics) - {rule_id}
+                prospective,
+                inactive_rule_ids=self._inactive_diagnostic_ids() - {rule_id},
             )
             self._rules[index] = rule
             self._discard_condition_checkers(rule_id)
@@ -958,13 +1011,15 @@ class RequestRules:
                 name=_duplicate_rule_name(source["name"], self._rules),
                 order=source_index + 1,
             )
-            rule = validate_rule(source)
+            rule = validate_rule(
+                source, allow_legacy_function_responses=True, allow_legacy_routing=True
+            )
             prospective = deepcopy(self._rules)
             prospective.insert(source_index + 1, rule)
             for order, item in enumerate(prospective):
                 item["order"] = order
             _validate_total_pattern_states(
-                prospective, inactive_rule_ids=self._diagnostics
+                prospective, inactive_rule_ids=self._inactive_diagnostic_ids()
             )
             self._rules = prospective
             self._sort_and_compile()
@@ -1182,15 +1237,15 @@ class RequestRules:
         snapshot = self._matching_snapshot
         published = {rule_id: deepcopy(rule) for rule_id, rule in replacements.items()}
 
+        for rule, _, _ in snapshot.deterministic:
+            if rule.get(MATCH_REPAIR) and rule["id"] in published:
+                published[rule["id"]][MATCH_REPAIR] = rule[MATCH_REPAIR]
+
         def replace(
             items: tuple[tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...],
         ):
             return tuple(
-                (
-                    published.get(rule["id"], rule),
-                    settings,
-                    phrase,
-                )
+                (published.get(rule["id"], rule), settings, phrase)
                 for rule, settings, phrase in items
             )
 
@@ -1351,17 +1406,24 @@ class RequestRules:
                     diagnostics[rule["id"]] = _EMPTY_NORMALIZED_PHRASE
                     continue
 
-            try:
-                _validate_action(
-                    rule["action_type"],
-                    rule["action"],
-                    capture_names=phrase_slots[0]
-                    if rule["match_type"] == "sentence_pattern"
-                    else set(),
-                )
-            except ValueError as err:
-                diagnostics[rule["id"]] = f"Action is inactive: {err}"
-                continue
+            repair_issue = request_rule_repair(rule)
+            if repair_issue is not None:
+                # Keep enabled triggers in order so an eligible match
+                # cannot unexpectedly run a lower rule or go to AI.
+                diagnostics[rule["id"]] = repair_issue
+                rule[MATCH_REPAIR] = repair_issue
+            else:
+                try:
+                    _validate_action(
+                        rule["action_type"],
+                        rule["action"],
+                        capture_names=phrase_slots[0]
+                        if rule["match_type"] == "sentence_pattern"
+                        else set(),
+                    )
+                except ValueError as err:
+                    diagnostics[rule["id"]] = f"Action is inactive: {err}"
+                    continue
             if rule["enabled"]:
                 if rule["match_type"] == "sentence_pattern":
                     total_pattern_states += state_count
@@ -1387,6 +1449,13 @@ class RequestRules:
         # The counter belongs to the persisted transaction, so a manager reload
         # keeps its revision and committed A -> B -> A changes remain detectable.
         self._revision_generation += 1
+
+        def commit() -> None:
+            self._remember_committed_state()
+            if replacing:
+                self._initialized = not self._retired
+                self._repair_required = self._routing_repair_required = False
+
         await _async_settle_transactional_save(
             self._store.async_save(
                 {
@@ -1399,12 +1468,10 @@ class RequestRules:
                 }
             ),
             self._restore_committed_state,
-            self._remember_committed_state,
+            commit,
             self._async_reconcile_failed_save if reconcile_failure else None,
             self._invalidate_after_unreadable_store,
         )
-        if replacing:
-            self._repair_required = False
         if self._on_change is not None:
             try:
                 self._on_change()
@@ -1418,6 +1485,7 @@ class RequestRules:
         disk_state = RequestRules(self._store)
         await disk_state.async_initialize()
         self._repair_required = disk_state._repair_required
+        self._routing_repair_required = disk_state._routing_repair_required
         if not disk_state._initialized:
             raise RuntimeError("persisted Request Rules could not be initialized")
         disk_snapshot = {
@@ -1454,6 +1522,7 @@ class RequestRules:
             # The candidate, or another validated Store generation, is now the
             # manager's committed baseline, including its durable revision.
             self._remember_committed_state()
+        self._initialized = not self._retired
 
     def _invalidate_after_unreadable_store(self) -> None:
         """Fail closed when the authoritative Request Rules file cannot be read."""
@@ -1470,7 +1539,6 @@ class RequestRules:
         self._discard_condition_checkers()
         self._sort_and_compile()
         self._committed_matching_snapshot = self._matching_snapshot
-        self._has_continuation = False
 
     def _remember_committed_state(self) -> None:
         """Capture the exact last committed Request Rule configuration."""
@@ -1487,10 +1555,6 @@ class RequestRules:
         # Assist reads one immutable committed generation without waiting behind
         # management I/O. Candidate compilation never grants execution authority.
         self._committed_matching_snapshot = self._matching_snapshot
-        self._has_continuation = any(
-            rule.get("continue_matching", False)
-            for rule, _, _ in self._committed_matching_snapshot.deterministic
-        )
 
     def _restore_committed_state(self) -> None:
         snapshot = self._committed_state
@@ -1733,6 +1797,9 @@ def validate_rule(
     *,
     validate_sentence_pattern: bool = True,
     validate_script_schema: bool = True,
+    allow_legacy_function_responses: bool = False,
+    allow_legacy_matching: bool = False,
+    allow_legacy_routing: bool = False,
     allow_empty_normalized_phrases: bool = False,
 ) -> dict[str, Any]:
     """Validate and normalize the persisted rule contract."""
@@ -1755,6 +1822,7 @@ def validate_rule(
         "continue_matching",
         "ai_input_mode",
         "ai_input_capture",
+        FUNCTION_RESPONSE_VERSION_FIELD,
     }
     unknown = set(value) - allowed
     if unknown:
@@ -1825,10 +1893,14 @@ def validate_rule(
         raw_action,
         validate_script_schema=validate_script_schema,
         capture_names=set(slot_names),
+        allow_legacy_routing=allow_legacy_routing,
     )
     continue_matching = value.get("continue_matching", False)
     if not isinstance(continue_matching, bool):
         raise ValueError("continue_matching must be true or false")
+    needs_matching_repair = continue_matching and not action["continue_to_ai"]
+    if needs_matching_repair and not allow_legacy_matching:
+        raise ValueError(CONTINUE_MATCHING_REPAIR)
     ai_input_mode = value.get("ai_input_mode", "original")
     if ai_input_mode not in {"original", "capture"}:
         raise ValueError("AI input must be Original request or Captured value")
@@ -1868,23 +1940,34 @@ def validate_rule(
     group_id = value.get("group_id")
     if group_id is not None:
         group_id = _clean(group_id, 64, "group id")
-    referenced_slots = _referenced_slots(action) | _legacy_action_slots(raw_action)
+    if action_type == "model_routing":
+        referenced_slots = _referenced_slots(action["success_response"])
+    else:
+        referenced_slots = _referenced_slots(action) | _legacy_action_slots(raw_action)
+    response_version = value.get(FUNCTION_RESPONSE_VERSION_FIELD)
+    if FUNCTION_RESPONSE_VERSION_FIELD in value and type(response_version) is not int:
+        raise ValueError("Function response version must be an integer")
+    preserve_legacy = not validate_script_schema or allow_legacy_function_responses
+    if not preserve_legacy:
+        response_version = None
     if action_type == "local_action":
-        _validate_result_dependencies(action, set(slot_names))
-        aliases = {
-            data.get("result_alias")
-            for step in action["actions"]
-            if isinstance(step, Mapping)
-            and isinstance(data := effective_service_payload(step), Mapping)
-        }
-        referenced_slots -= aliases
+        response_capture, alias_fields, alias_names = _function_response_usage(action)
+        if alias_fields and preserve_legacy:
+            # Historical static placeholders can refer to a retired alias. Keep
+            # their authored text for repair instead of rejecting on load.
+            referenced_slots -= alias_names
+        elif not preserve_legacy:
+            if alias_fields or _has_retired_result_placeholder(action):
+                raise ValueError(FUNCTION_RESULT_ALIAS_REPAIR)
+            if response_capture:
+                response_version = FUNCTION_RESPONSE_VERSION
     unknown_slots = referenced_slots - set(slot_names)
     if unknown_slots and (validate_sentence_pattern or sentence_valid):
         raise ValueError("unknown captured value: " + ", ".join(sorted(unknown_slots)))
     if (
         action_type == "model_routing"
         and not action["continue_to_ai"]
-        and not continue_matching
+        and not needs_matching_repair
         and action["scope"] == "request"
     ):
         raise ValueError(
@@ -1915,9 +1998,14 @@ def validate_rule(
         "slots": [{"name": item} for item in slot_names],
         "conditions": deepcopy(conditions),
         "group_id": group_id,
-        "continue_matching": continue_matching,
+        **({"continue_matching": True} if needs_matching_repair else {}),
         "ai_input_mode": ai_input_mode,
         "ai_input_capture": ai_input_capture,
+        **(
+            {FUNCTION_RESPONSE_VERSION_FIELD: response_version}
+            if response_version is not None
+            else {}
+        ),
     }
 
 
@@ -1977,6 +2065,7 @@ def _validate_action(
     *,
     validate_script_schema: bool = True,
     capture_names: set[str] | None = None,
+    allow_legacy_routing: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("action must be an object")
@@ -2043,23 +2132,16 @@ def _validate_action(
     model = str(value.get("model") or "").strip()
     underlying_model = str(value.get("azure_model") or "").strip()
     effort = str(value.get("reasoning_effort") or "").strip()
-    if reset:
+    dynamic = _routing_uses_captures(value)
+    if dynamic and not allow_legacy_routing:
+        raise ValueError(DYNAMIC_ROUTING_REPAIR)
+    if reset and not dynamic:
         model = ""
         underlying_model = ""
         effort = ""
     if not reset and not model and not effort:
         raise ValueError("model routing must set a model or reasoning effort")
-    for routing_value in (model, effort, underlying_model):
-        if any(marker in routing_value for marker in ("{{", "{%", "{#")):
-            raise ValueError(
-                "model routing captured values must use simple {name} references"
-            )
-    effort_dynamic = bool(SLOT_REFERENCE.search(effort))
-    if effort_dynamic and SLOT_REFERENCE.fullmatch(effort) is None:
-        raise ValueError("captured reasoning effort must be a single {name} reference")
-    # Model strings can be Azure deployments. Capability checks require provider
-    # context and belong to validate_rule_model_request and runtime routing.
-    if effort and not effort_dynamic and effort not in all_reasoning_efforts():
+    if effort and not dynamic and effort not in all_reasoning_efforts():
         raise ValueError("unsupported reasoning effort")
     return {
         "model": model or None,
@@ -2221,7 +2303,6 @@ def _validate_script_sequence(
     if not validate_schema:
         return migrated
     try:
-        _validate_template_syntax(migrated)
         cv.SCRIPT_SCHEMA(
             _prepare_concrete_captures(
                 migrated,
@@ -2236,139 +2317,129 @@ def _validate_script_sequence(
     return migrated
 
 
-def _validate_template_syntax(value: Any) -> None:
-    """Compile authored Jinja without evaluating runtime variables."""
-    if isinstance(value, str) and any(marker in value for marker in ("{{", "{%", "{#")):
-        cv.template(value)
-    elif isinstance(value, Mapping):
-        for key, item in value.items():
-            _validate_template_syntax(key)
-            _validate_template_syntax(item)
-    elif isinstance(value, list):
-        for item in value:
-            _validate_template_syntax(item)
+MATCH_REPAIR = "_match_repair"
+ROUTING_CHOICE_FIELDS = ("model", "azure_model", "reasoning_effort")
+DYNAMIC_ROUTING_REPAIR = (
+    "Captured routing choices were removed. Replace captures in Model, Underlying "
+    "Azure model, and Reasoning effort with fixed choices, then save the rule."
+)
+CONTINUE_MATCHING_REPAIR = (
+    "Continue matching was removed. Combine the required steps in one Request Rule, "
+    "or enable Continue to AI if it should hand off after those steps."
+)
+FUNCTION_RESPONSE_REPAIR_PREFIX = "Function response format changed."
+FUNCTION_RESPONSE_REPAIR = (
+    f"{FUNCTION_RESPONSE_REPAIR_PREFIX} Review templates that read Function response "
+    "variables, remove the old extra result layer where used, then confirm and save "
+    "the rule."
+)
+FUNCTION_RESULT_ALIAS_REPAIR = (
+    "Function result aliases were removed. Remove the result_alias and step_id fields "
+    "and replace alias references with a Home Assistant response variable and a "
+    "Set conversation response action."
+)
 
 
-def _assign_missing_result_step_ids(value: Any) -> Any:
-    """Give newly saved result-producing steps identities once at a write boundary."""
-    if not isinstance(value, Mapping):
-        return value
-    rule = deepcopy(dict(value))
-    action = rule.get("action")
-    if not isinstance(action, dict) or not isinstance(action.get("actions"), list):
-        return rule
-    for step in action["actions"]:
-        if not isinstance(step, dict):
+def _could_call_function(step: Mapping[str, Any]) -> bool:
+    """Find direct or potentially dynamic EOAI service selectors."""
+    if is_function_service_action(step):
+        return True
+    service = step.get("action", step.get("service", step.get("service_template")))
+    if not isinstance(service, str):
+        return False
+    capture = SLOT_REFERENCE.search(service)
+    if not (capture or is_template_string(service)):
+        return False
+    marker_starts = [
+        index for marker in ("{{", "{%", "{#") if (index := service.find(marker)) >= 0
+    ]
+    if capture:
+        marker_starts.append(capture.start())
+    prefix = service[: min(marker_starts)].strip().lower()
+    return f"{DOMAIN}.{SERVICE_CALL_FUNCTION}".startswith(prefix)
+
+
+def _function_response_usage(action: Mapping[str, Any]) -> tuple[bool, bool, set[str]]:
+    """Detect affected native actions without rendering or rewriting templates."""
+    response_capture = False
+    alias_fields = False
+    alias_names: set[str] = set()
+    for step in _iter_script_actions(action["actions"]):
+        if not _could_call_function(step):
             continue
-        if step.get("type") == "function":
-            if step.get("result_alias") and not step.get("step_id"):
-                step["step_id"] = uuid4().hex
-            continue
-        data = effective_service_payload(step)
-        if (
-            _is_function_action(step)
-            and isinstance(data, dict)
-            and data.get("result_alias")
-            and not data.get("step_id")
-        ):
-            set_effective_service_field(step, "step_id", uuid4().hex)
-    return rule
-
-
-def _result_references(value: Any) -> set[str]:
-    if isinstance(value, str):
-        return {match.group(1) for match in RESULT_REFERENCE.finditer(value)}
-    if isinstance(value, Mapping):
-        result: set[str] = set()
-        # Declaration aliases and step IDs are validated bare identifiers, so
-        # cannot match reference syntax. Ordinary payloads may use either key.
-        for item in value.values():
-            result.update(_result_references(item))
-        return result
-    if isinstance(value, list):
-        result = set()
-        for item in value:
-            result.update(_result_references(item))
-        return result
-    return set()
-
-
-def _is_function_action(step: Mapping[str, Any]) -> bool:
-    """Recognize only a statically identified EOAI Function service action."""
-    return is_function_service_action(step)
-
-
-def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) -> None:
-    produced: set[str] = set()
-    step_ids: set[str] = set()
-    top_level_ids = {id(step) for step in action["actions"]}
-    for nested in _iter_script_actions(action["actions"]):
-        data = effective_service_payload(nested)
-        if (
-            _is_function_action(nested)
-            and isinstance(data, Mapping)
-            and data.get("result_alias")
-            and id(nested) not in top_level_ids
-        ):
-            raise ValueError("Function results can be captured only by top-level steps")
-    all_aliases = {
-        data.get("result_alias")
-        for step in action["actions"]
-        if isinstance(step, Mapping)
-        and _is_function_action(step)
-        and isinstance(data := effective_service_payload(step), Mapping)
-    }
-    for step in action["actions"]:
-        if not isinstance(step, Mapping):
-            continue
-        missing = (
-            _result_references(step) | (_referenced_slots(step) & all_aliases)
-        ) - produced
-        if missing:
-            raise ValueError(
-                "Function result must be produced by an earlier step: "
-                + ", ".join(sorted(missing))
+        response_capture |= "response_variable" in step
+        # Examine only service data at its own level. An arguments object or an
+        # unrelated service may legitimately use either of these field names.
+        for data_field in ("data", "data_template"):
+            payload = step.get(data_field)
+            if not isinstance(payload, Mapping):
+                continue
+            alias_fields = alias_fields or bool(
+                _RETIRED_FUNCTION_RESULT_FIELDS.intersection(payload)
             )
-        data = effective_service_payload(step)
-        if not _is_function_action(step) or not isinstance(data, Mapping):
-            continue
-        alias = data.get("result_alias")
-        if alias is None:
-            continue
+            if isinstance(alias := payload.get("result_alias"), str):
+                alias_names.add(alias)
+    return response_capture, alias_fields, alias_names
+
+
+def _has_retired_result_placeholder(action: Mapping[str, Any]) -> bool:
+    """Keep single-brace dotted aliases blocked without interpreting Jinja."""
+
+    def contains(value: Any) -> bool:
+        if isinstance(value, str):
+            return RETIRED_RESULT_REFERENCE.search(value) is not None
+        if isinstance(value, Mapping):
+            return any(contains(item) for item in value.values())
+        if isinstance(value, list):
+            return any(contains(item) for item in value)
+        return False
+
+    return contains(action["actions"]) or contains(action.get("success_response"))
+
+
+def _function_response_needs_review(rule: Mapping[str, Any]) -> bool:
+    return (
+        rule.get("action_type") == "local_action"
+        and rule.get(FUNCTION_RESPONSE_VERSION_FIELD) != FUNCTION_RESPONSE_VERSION
+        and _function_response_usage(rule["action"])[0]
+    )
+
+
+def _routing_uses_captures(action: Mapping[str, Any]) -> bool:
+    """Identify retired route substitutions without rendering or rewriting them."""
+    return any(
+        SLOT_REFERENCE.search(value) or is_template_string(value)
+        for field in ROUTING_CHOICE_FIELDS
+        if (value := str(action.get(field) or ""))
+    )
+
+
+def request_rule_repair(rule: Mapping[str, Any]) -> str | None:
+    """Describe rules that must block before executing their saved actions."""
+    if rule.get("action_type") == "local_action":
+        action = rule["action"]
+        capture, alias_fields, _ = _function_response_usage(action)
+        retired_alias = alias_fields or _has_retired_result_placeholder(action)
         if (
-            not isinstance(alias, str)
-            or not SLOT_NAME.fullmatch(alias)
-            or alias in RESERVED_RESULT_ALIASES
-            or alias in slots
+            capture
+            and rule.get(FUNCTION_RESPONSE_VERSION_FIELD) != FUNCTION_RESPONSE_VERSION
         ):
-            raise ValueError(
-                "Function result alias must be a distinct simple identifier"
+            return (
+                f"{FUNCTION_RESPONSE_REPAIR} {FUNCTION_RESULT_ALIAS_REPAIR}"
+                if retired_alias
+                else FUNCTION_RESPONSE_REPAIR
             )
-        if alias in produced:
-            raise ValueError("Function result aliases must be unique within a rule")
-        step_id = data.get("step_id")
-        if step_id is not None and (
-            not isinstance(step_id, str)
-            or not re.fullmatch(r"[0-9a-f]{32}", step_id)
-            or step_id in step_ids
-        ):
-            raise ValueError("Function result step IDs must be unique")
-        if step_id is not None:
-            step_ids.add(step_id)
-        produced.add(alias)
-    missing = (
-        _result_references(action["success_response"])
-        | (_referenced_slots(action["success_response"]) & all_aliases)
-    ) - produced
-    if missing:
-        raise ValueError(
-            "Success response references a missing Function result: "
-            + ", ".join(sorted(missing))
-        )
-    if _result_references(action["failure_response"]) or (
-        _referenced_slots(action["failure_response"]) & all_aliases
+        if retired_alias:
+            return FUNCTION_RESULT_ALIAS_REPAIR
+    if rule.get("action_type") == "model_routing" and _routing_uses_captures(
+        rule["action"]
     ):
-        raise ValueError("Failure response cannot reference Function results")
+        return DYNAMIC_ROUTING_REPAIR
+    if rule.get("continue_matching") and not rule.get("action", {}).get(
+        "continue_to_ai"
+    ):
+        return CONTINUE_MATCHING_REPAIR
+    return None
 
 
 def _mask_script_templates(
@@ -2577,9 +2648,7 @@ def rule_has_sensitive_actions(rule: Mapping[str, Any]) -> bool:
     return False
 
 
-async def async_call_active_function(
-    function: str, arguments: Any, result_alias: str | None = None
-) -> Any:
+async def async_call_active_function(function: str, arguments: Any) -> Any:
     """Execute an integration function in the active Request Rule context."""
     executor = _ACTIVE_RULE_ACTION.get().function_executor
     if executor is None:
@@ -2588,58 +2657,7 @@ async def async_call_active_function(
         )
     if not isinstance(arguments, Mapping):
         raise HomeAssistantError("Function arguments must be an object")
-    result = await executor(function, dict(arguments))
-    if result_alias is not None:
-        results = _ACTIVE_RULE_ACTION.get().function_results
-        if results is None:
-            raise HomeAssistantError("Function results require an active Request Rule")
-        from .ha_tool_result_compat import tool_result_data
-
-        payload = tool_result_data(result, default=result)
-        if isinstance(payload, Mapping) and "result" in payload:
-            payload = payload["result"]
-        results[result_alias] = _bounded_function_result(payload)
-        return results[result_alias]
-    return result
-
-
-def _bounded_function_result(
-    value: Any, depth: int = 0, budget: list[int] | None = None
-) -> Any:
-    """Retain only bounded JSON values; false, zero, empty text and null are valid."""
-    if budget is None:
-        budget = [0, 0]
-    budget[0] += 1
-    if budget[0] > MAX_SCRIPT_NODES:
-        raise HomeAssistantError("Function result contains too many values")
-    if depth > MAX_RESULT_DEPTH:
-        raise HomeAssistantError("Function result is too deeply nested")
-    result: Any
-    if isinstance(value, Mapping):
-        result = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise HomeAssistantError("Function result object keys must be text")
-            budget[1] += len(key.encode("utf-8"))
-            if budget[1] > MAX_RESULT_BYTES:
-                raise HomeAssistantError("Function result is too large")
-            result[key] = _bounded_function_result(item, depth + 1, budget)
-    elif isinstance(value, list):
-        result = [_bounded_function_result(item, depth + 1, budget) for item in value]
-    elif value is None or isinstance(value, (str, int, float, bool)):
-        result = value
-        budget[1] += len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
-        if budget[1] > MAX_RESULT_BYTES:
-            raise HomeAssistantError("Function result is too large")
-    else:
-        raise HomeAssistantError("Function result must contain JSON values")
-    if (
-        depth == 0
-        and len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
-        > MAX_RESULT_BYTES
-    ):
-        raise HomeAssistantError("Function result is too large")
-    return result
+    return await executor(function, dict(arguments))
 
 
 def _require_exact_integer_update(previous: Any, updated: Any) -> None:
@@ -2670,110 +2688,19 @@ def _require_exact_integer_update(previous: Any, updated: Any) -> None:
             )
 
 
-class RuleResponseValueError(ValueError):
-    """An unavailable, validated variable/path in a rule's final response."""
-
-
-def _lookup_result_value(token: str, results: Mapping[str, Any]) -> Any:
-    """Traverse only mapping keys and list indices, never attributes or scalars."""
-    alias, *path = token.split(".")
-    if alias not in results:
-        raise RuleResponseValueError(f"Function result {alias} is unavailable")
-    current = results[alias]
-    for part in path:
-        if isinstance(current, Mapping) and part in current:
-            current = current[part]
-        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
-            current = current[int(part)]
-        else:
-            raise RuleResponseValueError(f"Function result path {token} is unavailable")
-    return current
-
-
-def _rule_response_text(value: Any) -> str:
-    """Render spoken structured results as JSON rather than Python repr."""
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False, default=str, allow_nan=False)
-
-
-def resolve_result_values(
-    value: Any,
-    slots: Mapping[str, str],
-    results: Mapping[str, Any],
-    *,
-    stringify: Callable[[Any], str] = str,
-) -> Any:
-    """Resolve result paths while preserving native script argument values."""
-
-    def lookup(token: str) -> Any:
-        return _lookup_result_value(token, results)
-
-    if isinstance(value, str):
-        exact = re.fullmatch(
-            r"\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_0-9][A-Za-z0-9_]*)*)\}", value
-        )
-        if exact and exact.group(1).split(".")[0] in results:
-            return lookup(exact.group(1))
-
-        def replace_reference(match: re.Match[str]) -> str:
-            token = match.group(0)[1:-1]
-            if "." in token:
-                return stringify(lookup(token))
-            return stringify(results[token]) if token in results else slots[token]
-
-        # Scan only authored references: substituted tool data is opaque text.
-        return re.sub(
-            f"(?:{RESULT_REFERENCE.pattern})|(?:{SLOT_REFERENCE.pattern})",
-            replace_reference,
-            value,
-        )
-    if isinstance(value, Mapping):
-        return {
-            key: resolve_result_values(item, slots, results, stringify=stringify)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [
-            resolve_result_values(item, slots, results, stringify=stringify)
-            for item in value
-        ]
-    return value
-
-
-def _native_result_sequence(
-    actions: Sequence[Mapping[str, Any]],
-    slots: Mapping[str, str],
-    alias_bindings: dict[str, tuple[str, str]] | None = None,
+def _native_action_sequence(
+    actions: Sequence[Mapping[str, Any]], slots: Mapping[str, str]
 ) -> list[dict[str, Any]]:
-    """Keep HA variables and waits in one script while exposing captured results."""
-    aliases = {
-        data["result_alias"]
-        for step in actions
-        if _is_function_action(step)
-        and isinstance(data := effective_service_payload(step), Mapping)
-        and data.get("result_alias")
-    }
-    # Each frozen script owns its helper; captured/native names cannot shadow it.
-    lookup_name = f"__eoai_result_value_{uuid4().hex}"
+    """Resolve selectors and pass exact request captures to native templates."""
     slot_lookup_name = f"__eoai_slot_text_{uuid4().hex}"
-
-    def result_template(match: re.Match[str]) -> str:
-        token = match.group(0)[1:-1]
-        return "{{ " + lookup_name + "(" + repr(token) + ") }}"
 
     def native_templates(value: Any) -> Any:
         if isinstance(value, str):
-            value = RESULT_REFERENCE.sub(result_template, value)
             return SLOT_REFERENCE.sub(
                 lambda match: (
-                    result_template(match)
-                    if match.group(1) in aliases
-                    else (
-                        "{{ " + slot_lookup_name + "(" + repr(match.group(1)) + ") }}"
-                        if match.group(1) in slots
-                        else match.group(0)
-                    )
+                    "{{ " + slot_lookup_name + "(" + repr(match.group(1)) + ") }}"
+                    if match.group(1) in slots
+                    else match.group(0)
                 ),
                 value,
             )
@@ -2783,62 +2710,9 @@ def _native_result_sequence(
             return [native_templates(item) for item in value]
         return value
 
-    sequence: list[dict[str, Any]] = []
-    for step in actions:
-        rendered = native_templates(_prepare_concrete_captures(step, slots))
-        data = effective_service_payload(step)
-        alias = (
-            data.get("result_alias")
-            if _is_function_action(step) and isinstance(data, Mapping)
-            else None
-        )
-        if alias:
-            response_name = step.get("response_variable") or f"__eoai_result_{alias}"
-            binding = f"__eoai_alias_{uuid4().hex}"
-            if alias_bindings is not None:
-                alias_bindings[binding] = (alias, response_name)
-            rendered["response_variable"] = response_name
-            sequence.append(rendered)
-            sequence.append(
-                {
-                    **({"alias": binding} if alias_bindings is not None else {}),
-                    "variables": {alias: "{{ " + response_name + ".result }}"},
-                }
-            )
-        else:
-            sequence.append(rendered)
-    return sequence
-
-
-class _ResultAliasVariables(ScriptVariables):
-    """Copy a captured result without HA interpreting strings as native literals."""
-
-    def __init__(self, variables: ScriptVariables, alias: str, response: str) -> None:
-        super().__init__(variables.as_dict())
-        self._alias = alias
-        self._response = response
-
-    def async_simple_render(self, run_variables: Mapping[str, Any]) -> dict[str, Any]:
-        # The producer publishes only after this invocation returns successfully.
-        # Authored HA response variables may contain any earlier service's value.
-        results = _ACTIVE_RULE_ACTION.get().function_results or {}
-        return {self._alias: results[self._alias]} if self._alias in results else {}
-
-
-def _bind_result_aliases(value: Any, bindings: Mapping[str, tuple[str, str]]) -> Any:
-    """Bind only generated assignments after HA validation and template guards."""
-    if isinstance(value, Mapping):
-        result = {
-            key: _bind_result_aliases(item, bindings) for key, item in value.items()
-        }
-        marker = value.get("alias")
-        binding = bindings.get(marker) if isinstance(marker, str) else None
-        if binding is not None and isinstance(result.get("variables"), ScriptVariables):
-            result["variables"] = _ResultAliasVariables(result["variables"], *binding)
-        return result
-    if isinstance(value, list):
-        return [_bind_result_aliases(item, bindings) for item in value]
-    return value
+    return [
+        native_templates(_prepare_concrete_captures(step, slots)) for step in actions
+    ]
 
 
 def _outcome_probes(
@@ -2859,7 +2733,7 @@ def _outcome_probes(
     ) -> list[dict[str, Any]]:
         if kind != "sequence" or "stop" not in action:
             return [descend()]
-        marker = {"variables": {stopped: not action.get("error", False)}}
+        marker = {"variables": {stopped: not cv.boolean(action.get("error", False))}}
         if "enabled" in action:
             # Let HA evaluate enabled once for the probe and its Stop. Do not
             # revisit this generated sequence or instrument its Stop again.
@@ -2962,7 +2836,7 @@ def _guest_script_allowed(
         if action_name is not None:
             if not isinstance(action_name, str):
                 return False
-            if _is_function_action(item):
+            if is_function_service_action(item):
                 data = effective_service_payload(item)
                 if not isinstance(data, Mapping):
                     return False
@@ -3007,7 +2881,7 @@ async def _async_guest_functions_allowed(
 
     tools = None
     for step in _iter_script_actions(sequence):
-        if not _is_function_action(step):
+        if not is_function_service_action(step):
             continue
         if tools is None:
             tools = _runtime_configured_function_tools(request_options or {})
@@ -3042,8 +2916,8 @@ async def _async_guest_functions_allowed(
         if level > FunctionSecurity.CONTROL:
             return False
         arguments = data.get("arguments", {})
-        # Results are unknown before execution. Never guess a restricted target.
-        if RESULT_REFERENCE.search(json.dumps(arguments, ensure_ascii=False)):
+        # Never guess a Guest target from an unresolved legacy result reference.
+        if RETIRED_RESULT_REFERENCE.search(json.dumps(arguments, ensure_ascii=False)):
             return False
         await async_validate_function_arguments(hass, tool["spec"], arguments)
         control = level == FunctionSecurity.CONTROL
@@ -3194,80 +3068,6 @@ def _preserve_slot_text(value: Any) -> Any:
     return value
 
 
-class _ResultReferenceTemplate(Template):
-    """Keep lazy result failures fatal even inside native if/choose conditions."""
-
-    def __init__(
-        self,
-        source: Template,
-        helper: str,
-        on_error: Callable[[RuleResponseValueError], None],
-        results: Mapping[str, Any],
-    ) -> None:
-        super().__init__(source.template, source.hass)
-        self._source = source
-        self._helper = helper
-        self._on_error = on_error
-        self._results = results
-        self._exact_reference = re.fullmatch(
-            r"\{\{\s*" + re.escape(helper) + r"\('([A-Za-z_][A-Za-z0-9_.]*)'\)\s*\}\}",
-            source.template,
-        )
-
-    def async_render_to_info(self, variables=None, **kwargs):
-        scope = dict(variables or {})
-        scope[self._helper] = lambda token: _lookup_result_value(token, self._results)
-        info = self._source.async_render_to_info(scope, **kwargs)
-        error = info.exception
-        seen = set()
-        while error is not None and id(error) not in seen:
-            if isinstance(error, RuleResponseValueError):
-                # Tracked wait templates render in HA event callbacks. Raising
-                # there alone cannot stop the owning script.
-                self._on_error(error)
-                # Outside Jinja this remains a ValueError. HA must not convert a
-                # reached invalid reference into a false condition or continue.
-                raise error
-            seen.add(id(error))
-            error = error.__cause__ or error.__context__
-        return info
-
-    def async_render(self, *args, **kwargs):
-        info = self.async_render_to_info(*args, **kwargs)
-        rendered = info.result()
-        if self._exact_reference is not None:
-            # A full authored result reference denotes its native value. HA's
-            # literal parser must not reinterpret a tool's JSON-looking text.
-            return _lookup_result_value(self._exact_reference.group(1), self._results)
-        return rendered
-
-
-def _guard_result_references(
-    value: Any,
-    on_error: Callable[[RuleResponseValueError], None],
-    results: Mapping[str, Any],
-) -> Any:
-    if isinstance(value, Template):
-        helper = re.search(r"\b__eoai_result_value_[0-9a-f]{32}\b", value.template)
-        return (
-            _ResultReferenceTemplate(value, helper.group(), on_error, results)
-            if helper
-            else value
-        )
-    if isinstance(value, ScriptVariables):
-        return ScriptVariables(
-            _guard_result_references(value.as_dict(), on_error, results)
-        )
-    if isinstance(value, Mapping):
-        return {
-            key: _guard_result_references(item, on_error, results)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_guard_result_references(item, on_error, results) for item in value]
-    return value
-
-
 def _guard_native_actions(actions: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Place live authorization beside effects while preserving HA script scopes."""
 
@@ -3314,12 +3114,18 @@ def _ensure_action_guard_service(hass: HomeAssistant) -> None:
 
 
 def validate_routed_request_options(
-    options: Mapping[str, Any], entry_data: Mapping[str, Any]
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+    *,
+    ha_snapshot: ToolSnapshot | None = None,
+    reserve_ha_tools: bool = False,
 ) -> None:
     """Validate the complete Conversation request selected by a route."""
     from .request import validate_runtime_readiness
 
-    validate_runtime_readiness(options, entry_data)
+    validate_runtime_readiness(
+        options, entry_data, ha_snapshot=ha_snapshot, reserve_ha_tools=reserve_ha_tools
+    )
 
 
 def validate_rule_model_request(
@@ -3327,10 +3133,11 @@ def validate_rule_model_request(
     options: Mapping[str, Any],
     entry_data: Mapping[str, Any],
     *,
-    check_captured_effort_support: bool = True,
+    ha_snapshot: ToolSnapshot | None = None,
+    reserve_ha_tools: bool = False,
 ) -> None:
     """Reject statically invalid routes at every Request Rule write boundary."""
-    if rule.get("action_type") != "model_routing":
+    if rule.get("action_type") != "model_routing" or request_rule_repair(rule):
         return
     action = rule["action"]
     if action.get("reset"):
@@ -3339,19 +3146,6 @@ def validate_rule_model_request(
 
     model = action.get("model")
     underlying_model = action.get("azure_model")
-    if isinstance(underlying_model, str) and SLOT_REFERENCE.search(underlying_model):
-        return  # The complete deployment/binding pair is checked after capture resolution.
-    if isinstance(model, str) and SLOT_REFERENCE.search(model):
-        # Previously saved routes remain repairable and can always be disabled.
-        if not (
-            underlying_model
-            and check_captured_effort_support
-            and rule.get("enabled", True)
-        ):
-            return
-        # A fixed Azure binding already supplies the capabilities. The
-        # captured deployment name can be checked when the rule runs.
-        model = None
     values = routed_model_override(options, model, underlying_model, entry_data)
     effort = action.get("reasoning_effort")
     if effort and not model and not underlying_model:
@@ -3363,38 +3157,6 @@ def validate_rule_model_request(
         **values,
         **({CONF_REASONING_EFFORT: effort} if effort else {}),
     }
-    if isinstance(effort, str) and SLOT_REFERENCE.search(effort):
-        # Dynamic reasoning cannot excuse a statically incompatible model/API.
-        # Effort-dependent features still receive full validation at execution.
-        from .helpers import get_api_mode
-        from .model_capabilities import ModelCapabilityError, model_capability_snapshot
-        from .request import (
-            capability_model_identity,
-            conversation_tools_required,
-            request_model_capabilities,
-        )
-
-        selected_model = str(candidate.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
-        capabilities = request_model_capabilities(candidate, entry_data)
-        if (
-            check_captured_effort_support
-            and rule.get("enabled", True)
-            and (model or underlying_model)
-            and not capabilities["reasoning"]["efforts"]
-        ):
-            raise HomeAssistantError(
-                f"Model {capability_model_identity(candidate, entry_data)} does not support reasoning effort"
-            )
-        with model_capability_snapshot(selected_model, capabilities):
-            try:
-                get_api_mode(
-                    str(candidate.get("api_mode", "auto")),
-                    selected_model,
-                    tools_required=conversation_tools_required(candidate),
-                )
-            except ModelCapabilityError as err:
-                raise HomeAssistantError(str(err)) from err
-        return
     if effort:
         from .request import capability_model_identity
 
@@ -3405,55 +3167,48 @@ def validate_rule_model_request(
                 entry_data.get("api_provider"), entry_data.get("base_url")
             ),
         )
-    validate_routed_request_options(candidate, entry_data)
+    validate_routed_request_options(
+        candidate,
+        entry_data,
+        ha_snapshot=ha_snapshot,
+        reserve_ha_tools=reserve_ha_tools,
+    )
 
 
 def validate_saved_model_routes(
     rules: Sequence[Mapping[str, Any]],
     options: Mapping[str, Any],
     entry_data: Mapping[str, Any],
+    *,
+    ha_snapshot: ToolSnapshot | None = None,
+    reserve_ha_tools: bool = False,
 ) -> None:
     """Validate enabled static routes against the proposed destination settings."""
     for rule in rules:
         if rule.get("enabled", True):
             try:
-                # Legacy rules can have this invalid capture saved already. A
-                # restore or unrelated settings edit must leave them repairable.
                 validate_rule_model_request(
-                    rule, options, entry_data, check_captured_effort_support=False
+                    rule,
+                    options,
+                    entry_data,
+                    ha_snapshot=ha_snapshot,
+                    reserve_ha_tools=reserve_ha_tools,
                 )
             except HomeAssistantError as err:
                 label = rule.get("name", rule.get("id", "unnamed"))
                 raise HomeAssistantError(f"Request Rule `{label}`: {err}") from err
 
 
-def _resolved_routing_value(value: str, slots: Mapping[str, str], field: str) -> str:
-    """Resolve one deterministic captured routing value and reject empty results."""
-    resolved = resolve_slot_values(value, slots)
-    if not isinstance(resolved, str) or not resolved.strip():
-        raise HomeAssistantError(f"Captured routing {field} is empty")
-    return resolved.strip()
-
-
 def _validate_effective_reasoning(
-    model: str, effort: str, *, captured: bool = False, provider: str | None = None
+    model: str, effort: str, *, provider: str | None = None
 ) -> None:
     """Validate a resolved reasoning value against the model that will receive it."""
     if not get_model_config(model, provider=provider).get("supports_reasoning_effort"):
         raise HomeAssistantError(f"Model {model} does not support reasoning effort")
     if effort not in get_reasoning_effort_options(model, provider=provider):
-        if captured:
-            raise HomeAssistantError(f"Unsupported captured reasoning effort: {effort}")
         raise HomeAssistantError(
             f"Reasoning effort {effort} is not supported by model {model}"
         )
-
-
-def rule_stops_matching(rule: Mapping[str, Any]) -> bool:
-    """A provider handoff or an ordinary match is terminal for this utterance."""
-    return not rule.get("continue_matching", False) or bool(
-        rule["action"].get("continue_to_ai", False)
-    )
 
 
 def rule_provider_input(match: RuleMatch, original_text: str) -> str | None:
@@ -3500,8 +3255,8 @@ async def async_evaluate_rule(
     request_options: Mapping[str, Any] | None = None,
     entry_data: Mapping[str, Any] | None = None,
 ) -> RuleEvaluation | None:
-    """Apply each eligible rule once, stopping on handoff or failure."""
-    if isinstance(rules, RequestRules) and not rules.initialized:
+    """Apply the first eligible rule, which owns local handling or AI handoff."""
+    if isinstance(rules, RequestRules) and not rules.routing_available:
         raise HomeAssistantError(REQUEST_RULES_UNAVAILABLE)
     matching_generation = rules._generation if isinstance(rules, RequestRules) else None
     matching_snapshot = (
@@ -3537,123 +3292,35 @@ async def async_evaluate_rule(
                 "Request Rules changed during matching; please retry"
             )
 
-    if not isinstance(rules, RequestRules) or not rules._has_continuation:
-        try:
-            match = await rules.async_match(hass, text)
-        except SentenceMatchLimitError as err:
-            require_matching_revision()
-            _LOGGER.warning(
-                "Skipping Request Rules for bounded matching failure: %s", err
-            )
-            return None
-        require_matching_revision()
-        if match is None:
-            return None
-        evaluation = await _async_evaluate_matched_rule(
-            hass,
-            match,
-            text,
-            runtime,
-            session_id,
-            configured_model,
-            guest_policy,
-            timeout_minutes,
-            function_executor,
-            context,
-            require_matching_revision=require_matching_revision,
-            commit_execution_snapshot=commit_execution_snapshot,
-            live_guest_policy=live_guest_policy,
-            request_options=request_options,
-            entry_data=entry_data,
-            can_retain_conversation_route=can_retain_conversation_route,
-        )
-        require_matching_revision()
-        return evaluation
-
-    last: RuleEvaluation | None = None
-    request_override: dict[str, str] = {}
-    skipped: list[dict[str, str]] = []
     try:
-        async for match in rules.async_eligible_matches(hass, text, skipped):
-            require_matching_revision()
-            evaluation = await _async_evaluate_matched_rule(
-                hass,
-                match,
-                text,
-                runtime,
-                session_id,
-                configured_model,
-                guest_policy,
-                timeout_minutes,
-                function_executor,
-                context,
-                request_override,
-                require_matching_revision=require_matching_revision,
-                commit_execution_snapshot=commit_execution_snapshot,
-                live_guest_policy=live_guest_policy,
-                request_options=request_options,
-                entry_data=entry_data,
-                can_retain_conversation_route=can_retain_conversation_route,
-            )
-            require_matching_revision()
-            action = match.rule["action"]
-            if match.rule["action_type"] == "model_routing":
-                if action["reset"]:
-                    if (
-                        action["scope"] == "conversation"
-                        and can_retain_conversation_route()
-                    ):
-                        request_override.clear()
-                    else:
-                        request_override = dict(evaluation.request_override or {})
-                elif (
-                    action["scope"] == "conversation"
-                    and can_retain_conversation_route()
-                ):
-                    applied = runtime.get(session_id, timeout_minutes)
-                    for key, value in (
-                        (CONF_CHAT_MODEL, action["model"]),
-                        (
-                            "azure_model",
-                            action.get("azure_model")
-                            or (action["model"] if "azure_model" in applied else None),
-                        ),
-                        (CONF_REASONING_EFFORT, action["reasoning_effort"]),
-                    ):
-                        if value:
-                            if _REQUEST_RESET_SENTINEL in request_override:
-                                request_override[key] = applied[key]
-                            else:
-                                request_override.pop(key, None)
-            if evaluation.request_override:
-                request_override.update(evaluation.request_override)
-            last = RuleEvaluation(
-                evaluation.match,
-                evaluation.consume,
-                evaluation.response,
-                dict(request_override) or None,
-                evaluation.successful,
-                evaluation.provider_input,
-                evaluation.terminal,
-            )
-            if (
-                not evaluation.successful
-                or evaluation.terminal
-                or rule_stops_matching(match.rule)
-            ):
-                return last
+        match = await rules.async_match(hass, text)
     except SentenceMatchLimitError as err:
-        if last is None:
-            require_matching_revision()
-            _LOGGER.warning(
-                "Skipping Request Rules for bounded matching failure: %s", err
-            )
-            return None
-        raise HomeAssistantError(
-            "Request Rule matching could not safely continue"
-        ) from err
+        require_matching_revision()
+        _LOGGER.warning("Skipping Request Rules for bounded matching failure: %s", err)
+        return None
     require_matching_revision()
-    return last
+    if match is None:
+        return None
+    evaluation = await _async_evaluate_matched_rule(
+        hass,
+        match,
+        text,
+        runtime,
+        session_id,
+        configured_model,
+        guest_policy,
+        timeout_minutes,
+        function_executor,
+        context,
+        require_matching_revision=require_matching_revision,
+        commit_execution_snapshot=commit_execution_snapshot,
+        live_guest_policy=live_guest_policy,
+        request_options=request_options,
+        entry_data=entry_data,
+        can_retain_conversation_route=can_retain_conversation_route,
+    )
+    require_matching_revision()
+    return evaluation
 
 
 @private_template_diagnostics
@@ -3668,7 +3335,6 @@ async def _async_evaluate_matched_rule(
     timeout_minutes: int,
     function_executor: Callable[[str, dict[str, Any]], Awaitable[Any]] | None,
     context: Context | None,
-    prior_request_override: Mapping[str, str] | None = None,
     require_matching_revision: Callable[[], None] | None = None,
     commit_execution_snapshot: Callable[[], None] | None = None,
     live_guest_policy: Callable[[], GuestCapabilityPolicy] | None = None,
@@ -3681,6 +3347,17 @@ async def _async_evaluate_matched_rule(
     action = rule["action"]
     if require_matching_revision is not None:
         require_matching_revision()
+    repair = rule.get(MATCH_REPAIR)
+    if repair is None and rule["action_type"] == "model_routing":
+        repair = request_rule_repair(rule)
+    if repair:
+        return RuleEvaluation(
+            match,
+            True,
+            f"This Request Rule needs repair. {repair}",
+            successful=False,
+            terminal=True,
+        )
     if rule["action_type"] == "local_action":
         policy = guest_policy or GuestCapabilityPolicy.unrestricted()
         executable_actions = action["actions"]
@@ -3710,17 +3387,7 @@ async def _async_evaluate_matched_rule(
                     match, True, GUEST_MODE_UNAVAILABLE, successful=False
                 )
         try:
-            captures_results = any(
-                isinstance(step, Mapping)
-                and _is_function_action(step)
-                and isinstance(data := effective_service_payload(step), Mapping)
-                and data.get("result_alias")
-                for step in executable_actions
-            )
-            alias_bindings: dict[str, tuple[str, str]] = {}
-            script_actions = _native_result_sequence(
-                executable_actions, match.slots, alias_bindings
-            )
+            script_actions = _native_action_sequence(executable_actions, match.slots)
             if live_guest_policy is not None:
                 _ensure_action_guard_service(hass)
                 script_actions = _guard_native_actions(script_actions)
@@ -3731,16 +3398,6 @@ async def _async_evaluate_matched_rule(
             validated_actions = await async_validate_actions_config(
                 hass, schema_actions
             )
-            result_reference_error: RuleResponseValueError | None = None
-            result_reference_stop: asyncio.Task[None] | None = None
-
-            def stop_on_result_error(error: RuleResponseValueError) -> None:
-                nonlocal result_reference_error, result_reference_stop
-                if result_reference_error is None:
-                    result_reference_error = error
-                    # Start eagerly so HA's stop signal is set in this callback,
-                    # before a ready wait timeout can advance to another action.
-                    result_reference_stop = create_eager_task(script.async_stop())
 
             def current_policy() -> GuestCapabilityPolicy:
                 nonlocal policy
@@ -3753,18 +3410,10 @@ async def _async_evaluate_matched_rule(
                     validated_actions,
                     lambda value: _guard_template_reads(value, current_policy),
                 )
-            result_values: dict[str, Any] = {}
-            if captures_results:
-                # Keep result rendering outermost: the inner privacy wrapper
-                # authorizes reads, then exact references retain their raw type.
-                validated_actions = _guard_result_references(
-                    validated_actions, stop_on_result_error, result_values
-                )
             if require_matching_revision is not None:
                 require_matching_revision()
             if match.slots:
                 validated_actions = _preserve_slot_text(validated_actions)
-            validated_actions = _bind_result_aliases(validated_actions, alias_bindings)
             # Once the validated native script starts, its frozen actions may
             # produce external effects. Later edits apply to future requests;
             # they must never invite a retry of an already executed action.
@@ -3819,9 +3468,7 @@ async def _async_evaluate_matched_rule(
             )
 
             action_token = _ACTIVE_RULE_ACTION.set(
-                RuleActionExecution(
-                    function_executor, authorize_prepared, result_values
-                )
+                RuleActionExecution(function_executor, authorize_prepared)
             )
             execution = StopReason()
             execution_token = script_execution_cv.set(execution)
@@ -3832,8 +3479,6 @@ async def _async_evaluate_matched_rule(
                     {**match.slots, "request": {"slots": dict(match.slots)}},
                     context,
                 )
-                if result_reference_error is not None:
-                    raise result_reference_error
                 variables = run_result.variables if run_result is not None else {}
                 if (
                     execution.script_execution in {"aborted", "error", "cancelled"}
@@ -3868,9 +3513,7 @@ async def _async_evaluate_matched_rule(
                 # Script.async_unload was added after our minimum supported HA.
                 # Older Script releases expose async_stop for the same final
                 # run cleanup; keep using async_unload where it is available.
-                await async_cleanup_script(
-                    script, cancelled=cancelled, pending_stop=result_reference_stop
-                )
+                await async_cleanup_script(script, cancelled=cancelled)
         except GuestModeDenied, _GuestTemplateDenied:
             return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE, successful=False)
         except Exception as err:
@@ -3894,19 +3537,11 @@ async def _async_evaluate_matched_rule(
                 match, False, provider_input=rule_provider_input(match, original_text)
             )
         try:
-            response = resolve_result_values(
-                action["success_response"],
-                match.slots,
-                result_values,
-                stringify=_rule_response_text,
-            )
-            response = _rule_response_text(response)
+            response = resolve_slot_values(action["success_response"], match.slots)
         except (ValueError, KeyError, TypeError) as err:
             # These actions have already occurred. Never rerun the script or
             # misrepresent this as an action failure to the user.
-            if isinstance(err, RuleResponseValueError):
-                issue = str(err)
-            elif (
+            if (
                 isinstance(err, KeyError)
                 and err.args
                 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", str(err.args[0]))
@@ -3962,35 +3597,16 @@ async def _async_evaluate_matched_rule(
             ),
         )
 
-    model = (
-        _resolved_routing_value(action["model"], match.slots, "model")
-        if action["model"]
-        else None
-    )
-    effort = (
-        _resolved_routing_value(
-            action["reasoning_effort"], match.slots, "reasoning effort"
-        ).lower()
-        if action["reasoning_effort"]
-        else None
-    )
-    prior = dict(prior_request_override or {})
-    retained_before = runtime.peek(session_id)
-    conversation_override = (
-        {} if _REQUEST_RESET_SENTINEL in prior else dict(retained_before)
-    )
-    conversation_override.update(prior)
+    model = action.get("model")
+    effort = action.get("reasoning_effort")
+    conversation_override = runtime.peek(session_id)
     selected_model = (
         model or conversation_override.get(CONF_CHAT_MODEL) or configured_model
     )
     from .model_routing import routed_model_override
     from .request import capability_model_identity
 
-    underlying_model = (
-        _resolved_routing_value(action["azure_model"], match.slots, "Azure model")
-        if action.get("azure_model")
-        else None
-    )
+    underlying_model = action.get("azure_model")
     override = routed_model_override(
         request_options or {CONF_CHAT_MODEL: configured_model},
         model,
@@ -4002,17 +3618,9 @@ async def _async_evaluate_matched_rule(
     candidate.setdefault(CONF_CHAT_MODEL, selected_model)
     capability_model = capability_model_identity(candidate, entry_data or {})
     if effort:
-        captured_effort = bool(
-            action["reasoning_effort"]
-            and SLOT_REFERENCE.fullmatch(action["reasoning_effort"])
-        )
-        captured_model = bool(
-            action["model"] and SLOT_REFERENCE.search(action["model"])
-        )
         _validate_effective_reasoning(
             capability_model,
             effort,
-            captured=captured_effort and not captured_model,
             provider=effective_api_provider(
                 (entry_data or {}).get("api_provider"),
                 (entry_data or {}).get("base_url"),
@@ -4040,28 +3648,7 @@ async def _async_evaluate_matched_rule(
     if action["scope"] == "conversation" and (
         can_retain_conversation_route is None or can_retain_conversation_route()
     ):
-        # A request reset/override can mask an incompatible retained sibling.
-        # Validate what the next turn will inherit before mutating runtime state.
-        defaults = request_options or {CONF_CHAT_MODEL: configured_model}
-        retained_override = routed_model_override(
-            defaults, model, underlying_model, entry_data or {}, retained_before
-        )
-        if effort:
-            retained_override[CONF_REASONING_EFFORT] = effort
-        retained = {**retained_before, **retained_override}
-        next_turn = {**defaults, **retained}
-        if retained.get(CONF_REASONING_EFFORT):
-            _validate_effective_reasoning(
-                capability_model_identity(next_turn, entry_data or {}),
-                retained[CONF_REASONING_EFFORT],
-                provider=effective_api_provider(
-                    (entry_data or {}).get("api_provider"),
-                    (entry_data or {}).get("base_url"),
-                ),
-            )
-        if request_options is not None:
-            validate_routed_request_options(next_turn, entry_data or {})
-        runtime.set(session_id, retained_override, timeout_minutes)
+        runtime.set(session_id, override, timeout_minutes)
         request_override = None
     else:
         request_override = override
@@ -4380,6 +3967,8 @@ async def async_read_committed_request_rules(
             _request_rule_store(hass, entry_id, subentry_id, read_only=True)
         )
         await manager.async_initialize(persist_migrations=False)
+    if not manager.routing_available:
+        raise HomeAssistantError(REQUEST_RULES_UNAVAILABLE)
     committed = manager._committed_state
     assert committed is not None
     return cast(list[dict[str, Any]], deepcopy(committed["rules"]))

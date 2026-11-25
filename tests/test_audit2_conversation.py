@@ -57,9 +57,10 @@ def test_summary_excludes_encrypted_reasoning_but_replay_preserves_it(route):
     if route is not None:
         native = RoutedReasoning(route, native)
     item = conversation.AssistantContent(agent_id="agent", native=native)
-    summary = history_as_summary_text([item])
-    assert "opaque-secret" not in summary
-    assert "Keep the important detail" in summary
+    summary = history_as_summary_text(
+        [item, conversation.AssistantContent(agent_id="agent", content="Visible answer")]
+    )
+    assert summary == "assistant: Visible answer"
     assert (
         _convert_content_to_responses_param([item], reasoning_route=route)[0][
             "encrypted_content"

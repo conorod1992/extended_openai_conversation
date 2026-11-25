@@ -38,7 +38,7 @@ MUTATIONS = (
     Mutation(
         "request-validation",
         COMPONENT + "management_ui.py",
-        "validate_routed_request_options(config, entry_data)",
+        "validate_routed_request_options(config, entry_data, ha_snapshot=ha_snapshot)",
         "pass  # sensitivity: skip effective request validation",
         MATRIX
         + "test_invalid_request_cannot_publish_through_any_setup_writer[hosted-search-api-update]",
@@ -56,8 +56,8 @@ MUTATIONS = (
     Mutation(
         "restoration",
         COMPONENT + "quiet_hours_runtime.py",
-        "current = _current_volume(self.hass, entity_id)\n                        if current is None:\n                            continue",
-        "current = _current_volume(self.hass, entity_id)\n                        if current is None:\n                            controls.pop(entity_id)\n                            continue",
+        'control["restore_before_apply"] = True\n            if current is None:\n                continue',
+        'control["restore_before_apply"] = True\n            if current is None:\n                if kind == "volume":\n                    controls.pop(entity_id)\n                continue',
         "tests_real_ha/test_quiet_hours_acceptance.py::test_unavailable_quiet_hours_controls_restore_after_return",
         'assert set(manager.active["controls"]) == {media, wake}',
     ),

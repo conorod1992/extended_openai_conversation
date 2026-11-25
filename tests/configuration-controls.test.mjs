@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
-import {CONFIGURATION_CONTROLS, configurationControlValue, applyConfigurationControl, readConfigurationDraft} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
+import {CONFIGURATION_CONTROLS, configurationControlValue, applyConfigurationControl, readConfigurationDraft, readConfigurationPreview} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
 
 import {saveConfiguration} from "../custom_components/extended_openai_conversation_responses/frontend/management-actions.js";
 
@@ -90,6 +90,19 @@ for (const key of ["prompt", "current_datetime_template", "exposed_entities_temp
   assert.equal(readConfigurationDraft(panel)[key],control.value);
   assert.equal(rebinds,1);
 }
+
+const tier = {dataset:{config:"service_tier"}, value:"default"};
+const tierDraft = {chat_model:"gpt-4o", service_tier:"default", prompt:"New prompt"};
+const tierPanel = {
+  _draft:tierDraft,
+  _configData:{config:{...tierDraft, prompt:"Saved prompt"}},
+  shadowRoot:{querySelector:() => null, querySelectorAll:() => [tier]},
+};
+assert.deepEqual(readConfigurationPreview(tierPanel), {prompt:"New prompt"});
+tier.value = "auto";
+assert.deepEqual(readConfigurationPreview(tierPanel), {prompt:"New prompt", service_tier:"auto"});
+assert.equal(tierPanel._draft, tierDraft);
+assert.equal(tierDraft.service_tier, "default");
 
 
 let validityPrompts = 0;

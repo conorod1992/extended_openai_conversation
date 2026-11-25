@@ -17,7 +17,10 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
 )
-from custom_components.extended_openai_conversation_responses.scope import user_scope
+from custom_components.extended_openai_conversation_responses.scope import (
+    shared_scope,
+    user_scope,
+)
 
 
 class FailingArchiveStorage:
@@ -41,6 +44,44 @@ class FailingArchiveStorage:
 
     async def async_save_partition(self, partition, data):
         self.partitions[partition] = deepcopy(data)
+
+
+async def test_only_verified_live_private_marker_crosses_archive_inactivity(monkeypatch):
+    from datetime import timedelta
+    from homeassistant.util import dt as dt_util
+
+    now = dt_util.utcnow()
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    storage = FailingArchiveStorage()
+    archive = ConversationArchive(storage, "agent")
+    await archive.async_initialize()
+    scope = user_scope("alice", source="test")
+    flags = dict(archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=5)
+    private = await archive.async_begin_session("continuity:user:alice", scope, "original", **flags)
+    await archive.async_make_private(private.session_id)
+    now += timedelta(minutes=10)
+    reused = await archive.async_begin_session("continuity:user:alice", scope, "original",
+        live_logical_conversation=True, **flags)
+    assert reused.session_id == private.session_id and reused.retention_state == "private"
+    retained = await archive.async_resume_saving("continuity:user:alice", reused.session_id, scope,
+        shared_archive_enabled=False)
+    now += timedelta(minutes=10)
+    next_session = await archive.async_begin_session("continuity:user:alice", scope, "original",
+        live_logical_conversation=True, **flags)
+    assert next_session.session_id != retained.session_id and next_session.retention_state == "retained"
+    await archive.async_make_private(next_session.session_id)
+    now += timedelta(minutes=4)
+    restarted = ConversationArchive(storage, "agent")
+    await restarted.async_initialize()
+    fallback = await restarted.async_begin_session("continuity:user:alice", scope, "original", **flags)
+    assert fallback.session_id == next_session.session_id
+    now += timedelta(minutes=6)
+    expired = await restarted.async_begin_session("continuity:user:alice", scope, "original", **flags)
+    assert expired.session_id != fallback.session_id and expired.retention_state == "retained"
+    await restarted.async_make_private(expired.session_id)
+    recreated = await restarted.async_begin_session("continuity:user:alice", scope, "new",
+        live_logical_conversation=True, **flags)
+    assert recreated.session_id != expired.session_id and recreated.retention_state == "retained"
 
 
 @pytest.mark.parametrize("pending", [False, True])
@@ -116,6 +157,90 @@ async def _archive(storage: FailingArchiveStorage) -> ConversationArchive:
     archive = ConversationArchive(storage, "agent-1")
     await archive.async_initialize()
     return archive
+
+
+async def test_archive_retention_states_across_storage_and_restore_boundaries():
+    """Private and unretained markers serve different persistence boundaries."""
+    storage = FailingArchiveStorage()
+    archive = await _archive(storage)
+    sessions = {}
+
+    async def record(session_id, text):
+        return await archive.async_record_turn(
+            session_id,
+            run_id=None,
+            user_text=text,
+            assistant_text="Reply",
+            successful=True,
+        )
+
+    for state in ("retained", "private", "unretained", "unretained_private"):
+        scope = (
+            shared_scope(source="test")
+            if state.startswith("unretained")
+            else user_scope("alice", source="test")
+        )
+        session = await archive.async_begin_session(
+            state,
+            scope,
+            state,
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
+        assert session is not None
+        if state == "private":
+            assert await record(session.session_id, "Deleted earlier private content")
+        if state.endswith("private"):
+            await archive.async_make_private(session.session_id)
+        assert archive.active_session(state).retention_state == state
+        sessions[state] = session.session_id
+        turn = await record(session.session_id, state)
+        assert (turn is not None) == (state == "retained")
+
+    def retention_states(data):
+        return {item["retention_state"] for item in data["sessions"]}
+
+    durable = {"retained", "private"}
+    assert retention_states(storage.metadata) == durable
+    assert storage.metadata["active"] == {state: sessions[state] for state in durable}
+    portable = await archive.async_backup_data()
+    assert retention_states(portable) == durable
+    assert "active" not in portable
+    assert [item["user_text"] for item in portable["turns"]] == ["retained"]
+    assert next(
+        item["title"]
+        for item in portable["sessions"]
+        if item["retention_state"] == "private"
+    ) == ""
+
+    imported = await _archive(FailingArchiveStorage())
+    await imported.async_replace_backup(
+        *imported.validate_backup_data(portable, "agent-1")
+    )
+    assert await imported.async_backup_data() == portable
+    assert imported.active_session("private") is None
+
+    recovery = await archive.async_recovery_data()
+    assert retention_states(recovery) == durable | {"unretained"}
+    assert recovery["turns"] == portable["turns"]
+    active = recovery.pop("active")
+    assert active == {
+        state: sessions[state] for state in durable | {"unretained"}
+    }
+    await archive.async_replace_backup(
+        *archive.validate_backup_data(recovery, "agent-1", local_recovery=True),
+        active=active,
+    )
+    assert {
+        state: archive.active_session(state).session_id for state in sessions
+    } == sessions
+    assert "Deleted earlier private content" not in str(storage.partitions)
+    assert retention_states(storage.metadata) == durable
+    restarted = await _archive(storage)
+    assert restarted.active_session("private").session_id == sessions["private"]
+    assert restarted.active_session("unretained") is None
+    assert restarted.active_session("unretained_private") is None
 
 
 async def test_begin_failure_does_not_publish_unpersisted_session() -> None:

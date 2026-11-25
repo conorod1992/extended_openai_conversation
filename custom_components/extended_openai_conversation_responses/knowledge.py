@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from contextvars import copy_context
 from dataclasses import asdict, dataclass, replace
 from functools import partial
+from hashlib import sha256
 import json
 import logging
 import re
@@ -20,11 +21,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .function_tool_policy import (
+    runtime_function_tool_name,
+    runtime_function_tool_names,
+)
 from .operation_settlement import async_settle_owned_operation
 from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
+from .record_timestamps import parse_datetime, stored_timestamp_instant
 from .retrieval_text import (
     _CJK_RUN,
     _LEXICAL_TOKEN,
@@ -54,10 +60,9 @@ CHUNK_SIZE = 2_000
 CHUNK_OVERLAP = 300
 MAX_EXCERPT_CHARACTERS = 2_000
 
-KNOWLEDGE_TOOL_NAMES = {"knowledge_search", "knowledge_list", "knowledge_get"}
+KNOWLEDGE_TOOL_NAMES = runtime_function_tool_names("knowledge")
 
 _SPACE_PATTERN = re.compile(r"\s+")
-_LINE_END_PATTERN = re.compile(r"[ \t]+$", re.MULTILINE)
 _PHRASE_TOKEN_PATTERN = re.compile(r"[\w'-]+[+#]*")
 
 # English question scaffolding has little retrieval value in a mixed query.
@@ -126,6 +131,11 @@ class KnowledgeSource:
     created_at: str
     updated_at: str
     enabled: bool = True
+    creation_fingerprint: str | None = None
+
+
+class DuplicateKnowledgeSource(ValueError):
+    """An independently submitted source matches an existing source."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -395,13 +405,20 @@ class KnowledgeLibrary:
     async def async_list(self) -> list[dict[str, Any]]:
         """List all source metadata for management, including disabled sources."""
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
-            sources = sorted(
-                self._sources.values(),
-                key=lambda source: source.updated_at,
-                reverse=True,
-            )
-            return [source_summary(source) for source in sources]
+            return [
+                source_summary(source) for source in self._management_ordered_sources()
+            ]
+
+    def management_source_order(self) -> list[str]:
+        """Return source IDs in the committed management list order."""
+        return [source.source_id for source in self._management_ordered_sources()]
+
+    def _management_ordered_sources(self) -> list[KnowledgeSource]:
+        return sorted(
+            self._published_sources().values(),
+            key=lambda source: stored_timestamp_instant(source.updated_at),
+            reverse=True,
+        )
 
     async def async_get(self, source_id: str) -> KnowledgeSource:
         """Get one complete source for the management UI."""
@@ -428,7 +445,7 @@ class KnowledgeLibrary:
             limit = max(1, min(limit, MAX_CATALOG_LIMIT))
             offset = max(0, offset)
             normalized_query = _normalize_catalog(query or "")
-            query_tokens = _tokens(query or "")
+            query_tokens = _search_tokens(query or "")
 
             sources = [
                 source
@@ -455,7 +472,11 @@ class KnowledgeLibrary:
                     )
                 ]
             sources.sort(
-                key=lambda source: (source.updated_at, source.source_id), reverse=True
+                key=lambda source: (
+                    stored_timestamp_instant(source.updated_at),
+                    source.source_id,
+                ),
+                reverse=True,
             )
             total = len(sources)
             selected = sources[offset : offset + limit]
@@ -471,26 +492,72 @@ class KnowledgeLibrary:
             }
 
     async def async_create(
-        self, title: str, description: str, content: str, enabled: bool = True
+        self,
+        title: str,
+        description: str,
+        content: str,
+        enabled: bool = True,
+        *,
+        create_token: str | None = None,
+        confirm_duplicate: bool = False,
     ) -> KnowledgeSource:
-        """Create and persist a source."""
+        """Create a source or acknowledge the same submission again."""
         title, description, content = _validated_fields(title, description, content)
         enabled = _validated_enabled(enabled)
+        if not isinstance(confirm_duplicate, bool):
+            raise ValueError("confirm_duplicate must be a boolean")
+        fields = (title, description, content, enabled)
+        if create_token is not None:
+            if not isinstance(create_token, str) or not re.fullmatch(
+                r"[0-9a-f]{32}", create_token
+            ):
+                raise ValueError("Invalid Knowledge create token")
+            source_id = sha256(f"knowledge/create/{create_token}".encode()).hexdigest()[
+                :32
+            ]
+            fingerprint = sha256(json.dumps(fields).encode()).hexdigest()
+        else:
+            source_id = uuid4().hex
+            fingerprint = None
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
+            if (existing := self._sources.get(source_id)) is not None:
+                if fingerprint is None or existing.creation_fingerprint != fingerprint:
+                    raise ValueError(
+                        "Knowledge create token belongs to a different submission"
+                    )
+                # A receipt acknowledges the original create. Its revision
+                # must not authorize an edit over a later writer's changes.
+                return replace(
+                    existing,
+                    title=title,
+                    description=description,
+                    content=content,
+                    enabled=enabled,
+                    updated_at=existing.created_at,
+                )
+            if not confirm_duplicate and any(
+                (source.title, source.description, source.content, source.enabled)
+                == fields
+                for source in self._sources.values()
+            ):
+                raise DuplicateKnowledgeSource(
+                    "An identical Knowledge source already exists"
+                )
             if len(self._sources) >= MAX_SOURCES_PER_AGENT:
                 raise ValueError(
                     "knowledge source limit reached; delete a source before adding more"
                 )
             timestamp = dt_util.utcnow().isoformat()
             source = KnowledgeSource(
-                source_id=uuid4().hex,
+                source_id=source_id,
                 title=title,
                 description=description,
                 content=content,
                 created_at=timestamp,
                 updated_at=timestamp,
                 enabled=enabled,
+                creation_fingerprint=fingerprint,
             )
             # The worker owns all derived structures. Cancellation before it
             # returns cannot mutate or publish any part of the live index.
@@ -528,15 +595,16 @@ class KnowledgeLibrary:
             new_enabled = (
                 current.enabled if enabled is None else _validated_enabled(enabled)
             )
-            updated = KnowledgeSource(
-                source_id=current.source_id,
+            updated = replace(
+                current,
                 title=new_title,
                 description=new_description,
                 content=new_content,
-                created_at=current.created_at,
-                updated_at=dt_util.utcnow().isoformat(),
                 enabled=new_enabled,
             )
+            if updated == current:
+                return current
+            updated = replace(updated, updated_at=dt_util.utcnow().isoformat())
             index = await asyncio.to_thread(_build_index, (updated,))
             self._unindex(source_id)
             self._sources[source_id] = updated
@@ -670,11 +738,17 @@ class KnowledgeLibrary:
                 best_by_source[chunk.source_id] = (exact_salient, score, chunk)
 
         ranked = [
-            (exact, score, self._sources[source_id].updated_at, source_id, chunk)
+            (
+                exact,
+                score,
+                stored_timestamp_instant(self._sources[source_id].updated_at),
+                source_id,
+                chunk,
+            )
             for source_id, (exact, score, chunk) in best_by_source.items()
             if score > 0
         ]
-        ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        ranked.sort(key=lambda item: item[:4], reverse=True)
         results: list[SearchResult] = []
         for _, score, _, source_id, chunk in ranked[
             offset : offset + limit + int(lookahead)
@@ -703,11 +777,11 @@ class KnowledgeLibrary:
 
         valid: set[str] = set()
         ignored: list[str] = []
+        sources = self._published_sources()
         for requested_id in source_ids:
-            normalized_id = requested_id.strip()
-            source = self._published_sources().get(normalized_id)
-            if normalized_id and source is not None and source.enabled:
-                valid.add(normalized_id)
+            source = sources.get(requested_id)
+            if source is not None and source.enabled:
+                valid.add(requested_id)
             else:
                 ignored.append(requested_id)
         return valid, ignored
@@ -815,7 +889,11 @@ class KnowledgeLibrary:
         """Return canonical Knowledge sources, excluding the derived index."""
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
-            return {"sources": [asdict(source) for source in self._sources.values()]}
+            return {
+                "sources": [
+                    _stored_source_dict(source) for source in self._sources.values()
+                ]
+            }
 
     @staticmethod
     def validate_backup_data(data: Any) -> list[KnowledgeSource]:
@@ -846,6 +924,10 @@ class KnowledgeLibrary:
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             snapshot = tuple(sources)
+            if not self._repair_required and snapshot == tuple(
+                self._published_sources().values()
+            ):
+                return
             index = await asyncio.to_thread(_build_index, snapshot)
             # Cancellation during construction cannot mutate published state.
             self._sources = {source.source_id: source for source in snapshot}
@@ -907,7 +989,11 @@ class KnowledgeLibrary:
         # builder. Never fall back to a synchronous complete-index rebuild.
         await _async_settle_transactional_save(
             self._storage.async_save(
-                {"sources": [asdict(source) for source in self._sources.values()]}
+                {
+                    "sources": [
+                        _stored_source_dict(source) for source in self._sources.values()
+                    ]
+                }
             ),
             self._invalidate_after_unreadable_store,
             self._remember_committed_state,
@@ -995,7 +1081,22 @@ async def async_get_knowledge(
 
 def knowledge_source_as_dict(source: KnowledgeSource) -> dict[str, Any]:
     """Serialize a complete source."""
-    return asdict(source)
+    return {
+        "source_id": source.source_id,
+        "title": source.title,
+        "description": source.description,
+        "content": source.content,
+        "created_at": source.created_at,
+        "updated_at": source.updated_at,
+        "enabled": source.enabled,
+    }
+
+
+def _stored_source_dict(source: KnowledgeSource) -> dict[str, Any]:
+    result = asdict(source)
+    if source.creation_fingerprint is None:
+        del result["creation_fingerprint"]
+    return result
 
 
 def source_summary(source: KnowledgeSource) -> dict[str, Any]:
@@ -1020,7 +1121,7 @@ def knowledge_tools() -> list[dict[str, Any]]:
     return [
         {
             "spec": {
-                "name": "knowledge_search",
+                "name": runtime_function_tool_name("knowledge", "search"),
                 "description": (
                     "Search the local Knowledge Library. Each result includes "
                     "start_character, a zero-based character cursor into the stored "
@@ -1057,7 +1158,7 @@ def knowledge_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "knowledge_list",
+                "name": runtime_function_tool_name("knowledge", "list"),
                 "description": "Browse Knowledge source titles and descriptions.",
                 "parameters": {
                     "type": "object",
@@ -1085,7 +1186,7 @@ def knowledge_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "knowledge_get",
+                "name": runtime_function_tool_name("knowledge", "get"),
                 "description": "Read a Knowledge source page by exact source ID.",
                 "parameters": {
                     "type": "object",
@@ -1150,6 +1251,12 @@ def _source_from_stored(raw: Any) -> KnowledgeSource:
     enabled = raw.get("enabled", True)
     if not isinstance(enabled, bool):
         raise ValueError("enabled must be a boolean")
+    fingerprint = raw.get("creation_fingerprint")
+    if fingerprint is not None and (
+        not isinstance(fingerprint, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)
+    ):
+        raise ValueError("Knowledge creation fingerprint is invalid")
     source = KnowledgeSource(
         source_id=raw["source_id"],
         title=raw["title"],
@@ -1158,6 +1265,7 @@ def _source_from_stored(raw: Any) -> KnowledgeSource:
         created_at=raw["created_at"],
         updated_at=raw["updated_at"],
         enabled=enabled,
+        creation_fingerprint=fingerprint,
     )
     if not all(
         isinstance(value, str)
@@ -1177,8 +1285,8 @@ def _source_from_stored(raw: Any) -> KnowledgeSource:
     if not source.source_id or len(source.source_id) > 128:
         raise ValueError("invalid source ID")
     if (
-        dt_util.parse_datetime(source.created_at) is None
-        or dt_util.parse_datetime(source.updated_at) is None
+        parse_datetime(source.created_at) is None
+        or parse_datetime(source.updated_at) is None
     ):
         raise ValueError("Knowledge source timestamp is invalid")
     return replace(source, title=title, description=description, content=content)
@@ -1215,7 +1323,7 @@ def _clean_content(value: str) -> str:
     if not isinstance(value, str):
         raise ValueError("content must be a string")
     value = value.replace("\r\n", "\n").replace("\r", "\n")
-    value = _LINE_END_PATTERN.sub("", value).strip()
+    value = "\n".join(line.rstrip(" \t") for line in value.split("\n")).strip()
     if not value or len(value) > MAX_CONTENT_LENGTH:
         raise ValueError(f"content must be 1 to {MAX_CONTENT_LENGTH} characters")
     return value

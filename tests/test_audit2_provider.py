@@ -227,6 +227,7 @@ def test_actual_caller_union_overrides_permissive_projection_null_semantics():
 
 def flow_handler(options):
     return SimpleNamespace(
+        hass=SimpleNamespace(data={}),
         options=options,
         _temp_data=None,
         _is_new=True,

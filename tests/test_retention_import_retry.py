@@ -1,5 +1,7 @@
 """Compare explicit same-policy retries through all supported config writes."""
 
+from tests.helpers import historical_shareable_export
+
 import asyncio
 import json
 from types import SimpleNamespace
@@ -8,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    management_loading_performance as loading,
     management_ui as ui,
     usage,
 )
@@ -40,10 +43,7 @@ async def test_configuration_overwrite_preserves_archive_retention(
     baseline = await ui.async_management_command(
         hass, "admin", True, management_message("configuration", "get")
     )
-    exported = await ui.async_management_command(
-        hass, "admin", True, management_message("configuration", "export")
-    )
-    document = exported["document"]
+    document = historical_shareable_export("configuration")
     document["config"].pop(field, None)
     payload = {"document": json.dumps(document), "mode": "current"}
     preview = await ui.async_management_command(
@@ -58,6 +58,116 @@ async def test_configuration_overwrite_preserves_archive_retention(
     )
     assert result["status"] == "updated"
     assert subentry.data[field] == 365
+
+
+@pytest.mark.parametrize(
+    ("action", "module", "method"),
+    [
+        ("import", loading, "_snapshot_normalized_configuration"),
+        ("import", ui, "seed_persisted_config_projection"),
+        ("save", ui, "seed_persisted_config_projection"),
+        ("update", ui, "seed_persisted_config_projection"),
+    ],
+    ids=["import-snapshot", "import-cache", "save-cache", "update-cache"],
+)
+@pytest.mark.parametrize("prune_fails", [False, True])
+async def test_configuration_write_enforces_retention_after_optional_cache_failure(
+    hass,
+    management_agent,
+    management_message,
+    monkeypatch,
+    action,
+    module,
+    method,
+    prune_fails,
+):
+    entry, subentry = management_agent
+    entry.state = ConfigEntryState.NOT_LOADED
+    revision = ui.saved_agent_config_revision(subentry, subentry.data, subentry.title)
+    field = "usage_request_retention_days"
+    if action == "import":
+        monkeypatch.setattr(
+            ui,
+            "async_get_request_rules",
+            AsyncMock(
+                return_value=SimpleNamespace(
+                    revision=lambda: "rules-0",
+                    async_backup_data=AsyncMock(return_value={"rules": []}),
+                )
+            ),
+        )
+        document = historical_shareable_export("configuration")
+        document["config"][field] = 0
+        payload = {
+            "document": json.dumps(document),
+            "mode": "current",
+            "confirm": True,
+            "confirm_retention": True,
+        }
+    else:
+        payload = {"config": {field: 0}}
+
+    cache_observed_policy = []
+
+    def fail_cache(*_args, **_kwargs):
+        cache_observed_policy.append(subentry.data.get(field))
+        raise RuntimeError("optional cache failure")
+
+    async def prune(*_args):
+        assert subentry.data[field] == 0
+        if prune_fails:
+            raise OSError("required retention write failed")
+
+    prune_usage = AsyncMock(side_effect=prune)
+    monkeypatch.setattr(module, method, fail_cache)
+    monkeypatch.setattr(usage, "async_apply_usage_retention", prune_usage)
+    request = management_message(
+        "configuration", action, revision=revision, **payload
+    )
+    if prune_fails:
+        with pytest.raises(HomeAssistantError, match="Configuration saved") as failure:
+            await ui.async_management_command(hass, "admin", True, request)
+        assert mutation_error_code(failure.value) == "eoai_mutation_committed"
+    else:
+        result = await ui.async_management_command(hass, "admin", True, request)
+        if action == "import":
+            assert result["status"] == "updated"
+            assert result["subentry_id"] == subentry.subentry_id
+        else:
+            assert result["valid"] is True
+            assert result["config"][field] == 0
+        assert result["revision"] == ui.saved_agent_config_revision(
+            subentry, subentry.data, subentry.title
+        )
+        assert result["revision"] != revision
+    assert cache_observed_policy == [0]
+    prune_usage.assert_awaited_once_with(hass, entry.entry_id, subentry.subentry_id)
+
+
+@pytest.mark.parametrize("action", ["save", "update"])
+async def test_configuration_write_rechecks_revision_before_pruning(
+    hass, management_agent, management_message, monkeypatch, action
+):
+    entry, subentry = management_agent
+    entry.state = ConfigEntryState.NOT_LOADED
+    revision = ui.saved_agent_config_revision(subentry, subentry.data, subentry.title)
+    field = "usage_request_retention_days"
+    newer_data = {**subentry.data, "prompt": "Saved by a newer edit"}
+
+    async def validate(*_args):
+        subentry.data = newer_data
+
+    monkeypatch.setattr(ui, "_async_validate_configuration_request", validate)
+    prune_usage = AsyncMock()
+    monkeypatch.setattr(usage, "async_apply_usage_retention", prune_usage)
+    request = management_message(
+        "configuration", action, revision=revision, config={field: 0}
+    )
+    with pytest.raises(HomeAssistantError, match="changed"):
+        await ui.async_management_command(hass, "admin", True, request)
+
+    assert subentry.data == newer_data
+    prune_usage.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -108,10 +218,7 @@ async def test_same_policy_retry_reaches_deletion(
         hass, "admin", True, management_message(revision_section, revision_action)
     )
     if action == "import":
-        exported = await ui.async_management_command(
-            hass, "admin", True, management_message("configuration", "export")
-        )
-        document = exported["document"]
+        document = historical_shareable_export("configuration")
         document["config"][field] = 0
         payload = {
             "document": json.dumps(document),
@@ -250,10 +357,7 @@ async def test_import_into_new_assistant_does_not_prune_selected_source(
     )
     durable_usage = AsyncMock(side_effect=AssertionError("source must not be pruned"))
     monkeypatch.setattr(usage, "async_get_durable_usage", durable_usage)
-    exported = await ui.async_management_command(
-        hass, "admin", True, management_message("configuration", "export")
-    )
-    document = exported["document"]
+    document = historical_shareable_export("configuration")
     document["config"]["usage_request_retention_days"] = 0
     original = dict(subentry.data)
     result = await ui.async_management_command(

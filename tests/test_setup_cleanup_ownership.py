@@ -82,15 +82,20 @@ async def test_setup_retries_asset_failure_and_preserves_identities(monkeypatch)
     monkeypatch.setattr(
         management_ui, "frontend_entry_url", lambda *_: "/frontend/management-test.js"
     )
-    monkeypatch.setattr(management_ui.websocket_api, "async_register_command", Mock())
-    monkeypatch.setattr(management_ui.panel_custom, "async_register_panel", AsyncMock())
+    register_command = Mock()
+    register_panel = AsyncMock()
+    monkeypatch.setattr(management_ui.websocket_api, "async_register_command", register_command)
+    monkeypatch.setattr(management_ui.panel_custom, "async_register_panel", register_panel)
     setup = management_ui.async_setup_management_ui
     with pytest.raises(RuntimeError, match="asset failure"):
         await setup(hass)
-    assert not hass.data
+    register_command.assert_called_once_with(hass, management_ui.websocket_management)
+    register_panel.assert_not_awaited()
     await setup(hass)
     await setup(hass)
     assert register.await_count == 2
+    register_command.assert_called_once()
+    register_panel.assert_awaited_once()
     assert management_ui.async_setup_management_ui is setup
     assert integration.async_setup_management_ui is setup
 
@@ -104,7 +109,8 @@ async def test_shared_versioned_assets_retry_and_register_once(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="HTTP unavailable"):
         await frontend_assets.async_register_frontend_assets(hass)
-    assert not hass.data
+    with pytest.raises(RuntimeError, match="assets are not registered"):
+        frontend_assets.frontend_entry_url(hass, "management")
     await frontend_assets.async_register_frontend_assets(hass)
     await frontend_assets.async_register_frontend_assets(hass)
     assert register.await_count == 2

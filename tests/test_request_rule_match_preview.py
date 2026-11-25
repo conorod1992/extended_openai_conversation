@@ -60,7 +60,7 @@ def test_preview_summarizes_match_without_action_payloads() -> None:
     assert "actions" not in result["would_do"]
 
 
-def test_preview_lists_function_alias_without_executing_or_inventing_result() -> None:
+def test_preview_lists_function_without_executing_or_inventing_result() -> None:
     match = _local_match()
     match.rule["action"] = {
         "actions": [
@@ -69,7 +69,6 @@ def test_preview_lists_function_alias_without_executing_or_inventing_result() ->
                 "data": {
                     "function": "get_battery",
                     "arguments": {},
-                    "result_alias": "battery",
                 },
             }
         ],
@@ -82,7 +81,7 @@ def test_preview_lists_function_alias_without_executing_or_inventing_result() ->
         "consumed": None,
         "provider_input": "conditional",
         "conditional": True,
-        "functions": [{"name": "get_battery", "result_alias": "battery"}],
+        "functions": [{"name": "get_battery"}],
     }
     assert preview["conditional"] is True
     assert "result" not in preview["would_do"]
@@ -269,3 +268,27 @@ def test_preview_uses_explicit_routing_flow_not_match_type() -> None:
     result = request_rule_match_preview(match)["would_do"]
     assert result["consumed"] is True
     assert result["provider_input"] == "none"
+
+
+@pytest.mark.parametrize(
+    ("actions", "provider_input"),
+    [
+        ([{"stop": "Stopped", "enabled": False}], "original"),
+        ([{"stop": "Stopped", "enabled": "{{ enabled }}"}], "conditional"),
+        ([{"stop": "{{ literal_stop_message }}"}], "none"),
+        (
+            [{"set_conversation_response": "Done"}, {"set_conversation_response": None}],
+            "original",
+        ),
+        ([{"set_conversation_response": ""}], "none"),
+        ([{"set_conversation_response": "{{ recorded }}"}], "conditional"),
+    ],
+)
+def test_preview_respects_native_termination_before_ai_handoff(
+    actions, provider_input
+):
+    match = _local_match()
+    match.rule["action"].update(actions=actions, continue_to_ai=True)
+    preview = request_rule_match_preview(match)["would_do"]
+    assert preview["provider_input"] == provider_input
+    assert preview.get("terminal", False) == (provider_input == "none")

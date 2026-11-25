@@ -321,7 +321,7 @@
   "services": {
     "call_function": {
       "name": "Call configured function",
-      "description": "Call an enabled Extended OpenAI configured function from a Request Rule action sequence.",
+      "description": "Call an enabled Extended OpenAI configured function from a Request Rule action sequence. A response variable contains the return value under result.",
       "fields": {
         "function": {
           "name": "Function tool"
@@ -592,17 +592,6 @@
         "api_provider": {
           "name": "API Provider",
           "description": "The API provider. (OpenAI or Azure)"
-        }
-      }
-    },
-    "download_skill": {
-      "name": "Download skill",
-      "description": "Download a skill from the GitHub repository to your skills directory.",
-      "fields": {
-        "source_ref": {"name": "Git source reference"},
-        "skill_name": {
-          "name": "Skill name",
-          "description": "The name of the skill to download (e.g., crypto)"
         }
       }
     },

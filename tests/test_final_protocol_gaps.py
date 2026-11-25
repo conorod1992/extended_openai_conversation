@@ -264,11 +264,9 @@ async def test_transfer_ignores_mapping_for_existing_or_unrelated_owner(hass):
     assert plan["resolved"] == {"source-a": "source-a"}
 
 
-async def test_continuation_preview_without_eligible_match_has_no_actions(hass):
+async def test_preview_without_eligible_match_has_no_actions(hass):
     rule = local_rule()
-    rule["continue_matching"] = True
     rules = await manager(rule)
-    assert rules._has_continuation
     result = await preview.async_request_rule_match_preview(
         hass, rules, "unrelated request"
     )

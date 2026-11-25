@@ -1,6 +1,7 @@
 """Cross-entry-point guarantees; only transport/delivery is replaced."""
 
 from copy import deepcopy
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -14,6 +15,11 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
     normalize_agent_config,
+)
+from custom_components.extended_openai_conversation_responses.const import (
+    API_MODE_CHAT_COMPLETIONS,
+    API_MODE_RESPONSES,
+    CONF_GUEST_MODE_ENABLED,
 )
 from custom_components.extended_openai_conversation_responses.function_execution import (
     propagate_function_execution_errors,
@@ -32,9 +38,18 @@ from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
+from tests.test_function_groups import _group, _tool
 from tests_real_ha.device_info_compat import device_info_field
-from tests_real_ha.test_cross_feature_acceptance import _agent, _rule
-from tests_real_ha.test_provider_wire_e2e import _install_wire
+from tests_real_ha.test_cross_feature_acceptance import _agent, _rule, _say, _speech
+from tests_real_ha.test_management_backend_acceptance import (
+    _admin_client,
+    _management_call,
+)
+from tests_real_ha.test_provider_wire_e2e import (
+    _chat_sse_text,
+    _install_wire,
+    _responses_sse_text,
+)
 from tests_real_ha.test_service_registry_acceptance import (
     _broadcast_queue,
     _response_service_call,
@@ -98,7 +113,9 @@ async def _management(hass, agent):
 async def _write(command, route, changes, revision):
     if route in ("save", "update"):
         return await command(route, config=changes, revision=revision)
-    document = (await command("export"))["document"]
+    from tests.helpers import historical_shareable_export
+
+    document = historical_shareable_export("configuration")
     document["config"].update(changes)
     if route == "import_preview":
         return await command(route, document=document)
@@ -109,6 +126,86 @@ async def _write(command, route, changes, revision):
         revision=revision,
         mode="new" if route == "import_new" else "current",
     )
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+@pytest.mark.parametrize(
+    ("saved", "enabled"),
+    [
+        pytest.param({}, False, id="unset"),
+        pytest.param({CONF_GUEST_MODE_ENABLED: True}, True, id="enabled"),
+        pytest.param({CONF_GUEST_MODE_ENABLED: False}, False, id="disabled"),
+    ],
+)
+async def test_guest_mode_tool_matches_saved_request_preview(
+    hass, hass_ws_client, monkeypatch, api_mode, saved, enabled
+):
+    agent = await _agent(
+        hass,
+        api_mode=api_mode,
+        functions=[_tool("eager_tool"), _tool("on_demand_tool")],
+        function_groups=[_group("on-demand", ["on_demand_tool"])],
+        **saved,
+    )
+    before = deepcopy(dict(agent.subentry.data))
+    assert (CONF_GUEST_MODE_ENABLED in before) == bool(saved)
+    client = await _admin_client(hass, hass_ws_client)
+
+    async def preview_sections(**draft):
+        preview = await _management_call(
+            client,
+            entry=agent.entry,
+            section="configuration",
+            action="request_preview",
+            **draft,
+        )
+        return {
+            section["key"]: json.loads(section["content"])
+            for section in preview["sections"]
+            if section["format"] == "json"
+        }
+
+    def guest_tool(tools):
+        return next(
+            (
+                tool
+                for tool in tools
+                if tool.get("function", tool).get("name") == "guest_mode_restrict"
+            ),
+            None,
+        )
+
+    reply = (
+        _chat_sse_text("Provider replied")
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else _responses_sse_text("Provider replied")
+    )
+    wire = _install_wire(monkeypatch, agent, [reply])
+    preview = await preview_sections()
+    assert _speech(await _say(hass, agent, "Give me the provider response")) == (
+        "Provider replied"
+    )
+    [request] = wire.requests
+    assert request["body"]["tools"] == [
+        *preview["provider_tools"],
+        *preview["function_tools"],
+        *preview["function_group_loader"],
+        *preview["integration_tools"],
+    ]
+    assert request["body"]["tool_choice"] == preview["request_settings"]["tool_choice"]
+    assert (guest_tool(preview["integration_tools"]) is not None) is enabled
+
+    snapshot = await _management_call(
+        client, entry=agent.entry, section="configuration", action="get"
+    )
+    assert snapshot["config"][CONF_GUEST_MODE_ENABLED] is enabled
+    policy = await _management_call(
+        client, entry=agent.entry, section="guest_mode", action="get"
+    )
+    assert policy["config"][CONF_GUEST_MODE_ENABLED] is enabled
+    draft = await preview_sections(config={CONF_GUEST_MODE_ENABLED: not enabled})
+    assert (guest_tool(draft["integration_tools"]) is not None) == (not enabled)
+    assert dict(agent.subentry.data) == before
 
 
 @pytest.mark.parametrize("route", WRITERS)

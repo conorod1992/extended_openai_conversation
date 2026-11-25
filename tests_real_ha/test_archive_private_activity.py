@@ -1,7 +1,9 @@
 """Private Archive activity through Home Assistant's conversation entry point."""
 
+import asyncio
 from datetime import timedelta
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
@@ -18,6 +20,10 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context
+from homeassistant.helpers.chat_session import (
+    DATA_CHAT_SESSION,
+    DATA_CHAT_SESSION_CLEANUP,
+)
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_cross_feature_acceptance import (
     _agent,
@@ -26,6 +32,67 @@ from tests_real_ha.test_cross_feature_acceptance import (
     _speech,
 )
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
+
+
+async def test_native_private_archive_follows_core_session_cleanup(hass, monkeypatch):
+    from tests_real_ha.test_conversation_runtime_lifecycle import _tool
+
+    user = MockUser(id="archive-owner", name="Archive Owner")
+    user.add_to_hass(hass)
+    agent = await _agent(
+        hass,
+        **{
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: 1,
+            CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_HA_DEFAULT,
+        },
+    )
+    sent = _provider(
+        monkeypatch,
+        agent,
+        ["Opened", _tool("conversation_private"), "Private", "Follow-up", "New"],
+    )
+    now = dt_util.utcnow()
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+
+    async def say(text, conversation_id=None):
+        return await conversation.async_converse(
+            hass=hass,
+            text=text,
+            conversation_id=conversation_id,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=agent.entry.entry_id,
+        )
+
+    first = await say("Open conversation")
+    conversation_id = first.conversation_id
+    assert _speech(await say("Make this private", conversation_id)) == "Private"
+    native_session = hass.data[DATA_CHAT_SESSION][conversation_id]
+    cleanup = hass.data[DATA_CHAT_SESSION_CLEANUP]
+    now += timedelta(minutes=4)
+    cleanup.unsub()
+    cleanup._cleanup(now)
+    now += timedelta(minutes=2)
+    result = await say("Private follow-up", conversation_id)
+    assert _speech(result) == "Follow-up"
+    assert hass.data[DATA_CHAT_SESSION][conversation_id] is native_session
+    assert any(
+        row["content"] == "Make this private"
+        for row in sent[-1]["messages"]
+        if row["role"] == "user"
+    )
+    archive = agent._archive
+    assert "Private follow-up" not in str(await archive.async_backup_data())
+
+    now += timedelta(minutes=6)
+    cleanup.unsub()
+    cleanup._cleanup(now)
+    assert conversation_id not in hass.data[DATA_CHAT_SESSION]
+    result = await say("New conversation", conversation_id)
+    assert _speech(result) == "New"
+    assert result.conversation_id != conversation_id
+    assert "New conversation" in str(await archive.async_backup_data())
 
 
 async def test_continuing_private_conversation_never_resumes_retention(
@@ -515,7 +582,7 @@ async def test_private_followup_after_knowledge_restore(
     await agent._archive.async_make_private(session.session_id)
     retained_before = await say("Retained history witness", who=retained_user)
     assert retained_before.response.error_code is None
-    document = transfer._new_transfer_document(agent.entry, agent.subentry, "custom")
+    document = transfer._new_transfer_document(agent.entry, agent.subentry)
     document["sections"][transfer.SECTION_KNOWLEDGE] = {"sources": []}
     if rollback:
         original = agent._knowledge.async_replace_backup
@@ -547,10 +614,13 @@ async def test_private_followup_after_knowledge_restore(
         await agent._archive.async_backup_data()
     )
     assert agent._archive._sessions[session.session_id].retention_state == "private"
-    if mode != CONVERSATION_CONTINUITY_HA_DEFAULT:
-        # Reusing a privacy identity must not resurrect provider context in Core's log.
-        assert "Before restore content" not in json.dumps(sent[-1])
-        assert "Before restore reply" not in json.dumps(sent[-1])
+    recent = json.dumps(sent[-1]["messages"])
+    if rollback and mode == CONVERSATION_CONTINUITY_HA_DEFAULT:
+        assert "Before restore content" in recent
+        assert "Before restore reply" in recent
+    else:
+        assert "Before restore content" not in recent
+        assert "Before restore reply" not in recent
 
     retained_after = await say(
         "Retained followup", retained_before.conversation_id, retained_user
@@ -650,7 +720,7 @@ async def test_ha_default_knowledge_restore_keeps_only_verified_runtime(
     elif witness == "retired":
         await agent._continuity.async_retire_chat_session(native)
 
-    document = transfer._new_transfer_document(agent.entry, agent.subentry, "custom")
+    document = transfer._new_transfer_document(agent.entry, agent.subentry)
     document["sections"][transfer.SECTION_KNOWLEDGE] = {"sources": []}
     before = await archive.async_recovery_data()
     if rollback:
@@ -693,3 +763,89 @@ async def test_ha_default_knowledge_restore_keeps_only_verified_runtime(
     if retained:
         assert followup.conversation_id == chat_id
         assert "Switch models and remember this turn" in json.dumps(sent[1]["messages"])
+    elif witness == "private":
+        assert followup.conversation_id == chat_id
+        assert (
+            "Switch models and remember this turn" in json.dumps(sent[1]["messages"])
+        ) is rollback
+
+
+async def test_archive_restore_preserves_live_unretained_privacy(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import transfer
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_ARCHIVE_ENABLED,
+        CONF_CONVERSATION_CONTINUITY,
+        CONF_SHARED_ARCHIVE_ENABLED,
+        CONF_VOICE_SCOPE_POLICY,
+        CONVERSATION_CONTINUITY_HA_DEFAULT,
+        VOICE_POLICY_SHARED,
+    )
+    from homeassistant.components import conversation
+    from homeassistant.helpers.chat_session import DATA_CHAT_SESSION
+    from tests_real_ha.test_conversation_runtime_lifecycle import _tool
+    from tests_real_ha.test_cross_feature_acceptance import (
+        _agent,
+        _provider,
+        _say,
+        _speech,
+    )
+
+    agent = await _agent(
+        hass,
+        **{
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_HA_DEFAULT,
+            CONF_SHARED_ARCHIVE_ENABLED: False,
+            CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_SHARED,
+        },
+    )
+    _provider(monkeypatch, agent, ["Opened", _tool("conversation_private"), "Private"])
+
+    first = await _say(hass, agent, "Open conversation")
+    conversation_id = first.conversation_id
+    assert (
+        _speech(await _say(hass, agent, "Make this private", conversation_id))
+        == "Private"
+    )
+    native = hass.data[DATA_CHAT_SESSION][conversation_id]
+    archive = agent._archive
+    assert (
+        archive.active_session(f"conversation:{conversation_id}").retention_state
+        == "unretained_private"
+    )
+    selected = frozenset(
+        {transfer.SECTION_CONFIGURATION, transfer.SECTION_CONVERSATION_ARCHIVE}
+    )
+    imported = transfer.PreparedTransfer(
+        source_kind="custom_backup",
+        mode="custom",
+        title=agent.subentry.title,
+        available_sections=selected,
+        created_at=None,
+        integration_version=None,
+        config={**agent.subentry.data, CONF_SHARED_ARCHIVE_ENABLED: True},
+        archive_sessions=[],
+        archive_turns=[],
+    )
+    await transfer.async_restore_transfer(
+        hass, agent.entry, agent.subentry, imported, sections=selected
+    )
+
+    agent = conversation.async_get_agent(hass, agent.entry.entry_id)
+    with monkeypatch.context() as interrupted:
+        interrupted.setattr(
+            agent,
+            "_async_begin_archive_session",
+            AsyncMock(side_effect=asyncio.CancelledError),
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await _say(hass, agent, "Aborted first follow-up", conversation_id)
+    after = _provider(monkeypatch, agent, ["Answer"])
+    result = await _say(hass, agent, "Private follow-up", conversation_id)
+    assert _speech(result) == "Answer"
+    assert result.conversation_id == conversation_id
+    assert hass.data[DATA_CHAT_SESSION][conversation_id] is native
+    messages = json.dumps(after[0]["messages"])
+    assert "Open conversation" not in messages
+    assert "Make this private" not in messages
+    assert "Private follow-up" not in str(await agent._archive.async_backup_data())

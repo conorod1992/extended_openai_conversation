@@ -111,7 +111,6 @@ async def test_rule_precedence_matches_ordered_native_effects_and_persisted_orde
         phrase="priority witness",
         success="First",
     )
-    first["continue_matching"] = True
     first["order"] = 0
     second = _local(
         [{"action": "independent_probe.record", "data": {"message": "second"}}],
@@ -123,8 +122,8 @@ async def test_rule_precedence_matches_ordered_native_effects_and_persisted_orde
     second_rule = await agent._request_rules.async_create(second)
 
     result = await _say(hass, agent, "priority witness")
-    assert _speech(result) == "Second"
-    assert effects == ["first", "second"]
+    assert _speech(result) == "First"
+    assert effects == ["first"]
 
     persisted = await agent._request_rules._store.async_load()
     stored_rules = persisted["rules"]

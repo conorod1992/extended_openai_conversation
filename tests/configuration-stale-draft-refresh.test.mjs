@@ -191,9 +191,7 @@ for (const kind of ["function", "group"]) {
     bindConfiguration(host);
     await controls["preview-request"].emit("click");
     const preview = calls.find(call => call.action === "request_preview").config;
-    assert.deepEqual(preview.guest_allowed_function_names, persisted.config.guest_allowed_function_names);
-    assert.deepEqual(preview.guest_allowed_group_ids, persisted.config.guest_allowed_group_ids);
-    assert.equal(preview.prompt, "Newer prompt while read is pending");
+    assert.deepEqual(preview, {prompt:"Newer prompt while read is pending", temperature:0.5});
     await saveConfiguration(host, new Control("save-config"));
     const save = calls.find(call => call.section === "configuration" && call.action === "save");
     assert.equal(save.revision, "r2");

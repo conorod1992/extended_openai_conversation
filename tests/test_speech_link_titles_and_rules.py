@@ -208,6 +208,18 @@ def test_empty_link_destination_preserves_label_with_markdown_only():
             assert _stream(source, split, urls=urls) == result
 
 
+def test_long_link_title_backtick_cannot_hide_the_next_link():
+    source = (
+        'Open [one](https://example.com "a ` title") and [second](/view-docs) then `code`. '
+        + "Other relevant detail. " * 200
+    )
+    cleaned = _final_whitespace_cleanup(
+        StreamingSpeechSanitizer().process_complete(source)
+    )
+    assert cleaned.startswith("Open one and second then code.")
+    assert cleaned == _stream(source, 25)
+
+
 def test_many_malformed_titled_links_do_not_rescan_the_remaining_answer():
     """Repeated malformed candidates cannot make completed cleanup quadratic."""
     text = ('[bad](a "unclosed ) ' * 1600) + "Tail."
@@ -260,3 +272,78 @@ def test_parenthesized_title_with_unmatched_opener_has_same_indexed_fallback(des
         )
         assert completed.endswith("Read Guide next.")
         assert _stream(text, len(text) - len(source)) == completed
+
+
+@pytest.mark.parametrize("title", ['"Version (beta"', "'Version (beta'", "(Version (beta)"])
+def test_indexed_titles_after_long_destinations_match_streaming(title):
+    prefix = "An ordinary sentence. " * 230
+    destination = "https://example.com/" + "a" * 2300
+    link_start = prefix + "Read [Guide](" + destination
+    source = f"{link_start} {title}) next."
+    expected = prefix + "Read Guide next."
+
+    assert (
+        _final_whitespace_cleanup(StreamingSpeechSanitizer().process_complete(source))
+        == expected
+    )
+    title_start = len(link_start) + 1
+    for split in (
+        0,
+        len(prefix),
+        len(link_start),
+        title_start,
+        title_start + 1,
+        len(source) - 7,
+        len(source),
+    ):
+        assert _stream(source, split) == expected, split
+
+
+def test_completed_index_does_not_rescan_tail_without_closing_parentheses():
+    class CountedText(str):
+        looked_at = 0
+
+        def __getitem__(self, key):
+            if isinstance(key, slice):
+                start, stop, step = key.indices(len(self))
+                self.looked_at += len(range(start, stop, step))
+            return super().__getitem__(key)
+
+        def find(self, sub, start=0, end=None):
+            end = len(self) if end is None else end
+            result = super().find(sub, start, end)
+            self.looked_at += (result + len(sub) if result >= 0 else end) - start
+            return result
+
+    # Each opener looks like an angle destination. There is no possible
+    # closing parenthesis anywhere in the remaining message.
+    source = CountedText("[bad](<fragment\n" * 2000)
+    _, _, destinations = StreamingSpeechSanitizer._index_complete_links(source)
+
+    assert destinations == {}
+    assert source.looked_at <= 2 * len(source)
+
+
+@pytest.mark.parametrize(
+    ("prose_chars", "malformed"),
+    [
+        (2303, "[bad](" * 14 + "x" * 2231 + ' "malformed ) and then '),
+        (
+            2122,
+            "[bad](" * 22 + "x" * 1900 + '\u00a0"malformed ) ' + "q" * 150 + " and then ",
+        ),
+    ],
+    ids=["long-destinations", "unsupported-whitespace"],
+)
+def test_malformed_destinations_preserve_later_short_titled_link(prose_chars, malformed):
+    prose = ("Details " * 500)[:prose_chars] + " "
+    prefix = prose + malformed
+    source = prefix + '[Good](https://example.com "More ( info").'
+    expected = prefix + "Good."
+
+    for split in (None, 0, len(prose), len(prefix), len(prefix) + 25, len(source)):
+        assert _stream(source, split) == expected, split
+    assert (
+        _final_whitespace_cleanup(StreamingSpeechSanitizer().process_complete(source))
+        == expected
+    )

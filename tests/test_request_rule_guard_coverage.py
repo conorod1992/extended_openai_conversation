@@ -62,60 +62,6 @@ def test_guard_native_actions_handles_non_list_container_values() -> None:
     assert request_rules._guard_native_actions(actions) == actions
 
 
-def test_result_resolution_recurses_through_authored_response_values() -> None:
-    value = {
-        "summary": "{room}: {reading.value}",
-        "details": [{"value": "{reading.items.0}"}, 3],
-    }
-
-    assert request_rules.resolve_result_values(
-        value,
-        {"room": "Kitchen"},
-        {"reading": {"value": "warm", "items": ["21 C"]}},
-    ) == {
-        "summary": "Kitchen: warm",
-        "details": [{"value": "21 C"}, 3],
-    }
-
-
-def test_native_result_sequence_rewrites_nested_result_and_slot_references() -> None:
-    actions = [
-        {
-            "action": "extended_openai_conversation_responses.call_function",
-            "enabled": False,
-            "data": {
-                "result_alias": "reading",
-                "attributes": {"template": "{reading.values.0} {room} {missing}"},
-            },
-        },
-        {"action": "test.log", "data": {"values": [{"template": "{reading.value}"}]}},
-    ]
-
-    sequence = request_rules._native_result_sequence(actions, {"room": "Kitchen"})
-
-    template = sequence[0]["data"]["attributes"]["template"]
-    helper = template.split("(", 1)[0].removeprefix("{{ ")
-    assert helper.startswith("__eoai_result_value_")
-    slot_helper = template.split(" }} {{ ", 1)[1].split("(", 1)[0]
-    assert slot_helper.startswith("__eoai_slot_text_")
-    assert (
-        template
-        == "{{ "
-        + helper
-        + "('reading.values.0') }} {{ "
-        + slot_helper
-        + "('room') }} {missing}"
-    )
-    assert sequence[0]["response_variable"] == "__eoai_result_reading"
-    assert sequence[1] == {
-        "variables": {"reading": "{{ __eoai_result_reading.result }}"},
-    }
-    assert sequence[2]["data"]["values"][0]["template"] == (
-        "{{ " + helper + "('reading.value') }}"
-    )
-    assert sequence[0]["enabled"] is False
-
-
 @pytest.mark.parametrize(
     "rule",
     [
@@ -124,7 +70,7 @@ def test_native_result_sequence_rewrites_nested_result_and_slot_references() -> 
         {"action_type": "model_routing", "action": {"model": "{captured}"}},
     ],
 )
-def test_rule_model_validation_defers_non_routes_resets_and_capture_values(
+def test_rule_model_validation_skips_non_routes_resets_and_retired_captures(
     monkeypatch, rule
 ) -> None:
     validate = Mock(side_effect=AssertionError("no static route validation expected"))
@@ -245,39 +191,6 @@ def test_guest_script_scene_is_checked_as_scene_turn_on(hass, monkeypatch) -> No
     }
 
 
-def test_bounded_function_result_preserves_all_json_scalar_values() -> None:
-    value = {"false": False, "zero": 0, "empty": "", "null": None}
-
-    assert request_rules._bounded_function_result(value) == value
-
-
-@pytest.mark.parametrize(
-    ("value", "message"),
-    [
-        ({1: "non-text key"}, "object keys must be text"),
-        ({"value": object()}, "must contain JSON values"),
-        ("x" * (request_rules.MAX_RESULT_BYTES + 1), "too large"),
-        ({"x" * (request_rules.MAX_RESULT_BYTES + 1): None}, "too large"),
-        ({"": "x" * (request_rules.MAX_RESULT_BYTES - 2)}, "too large"),
-        ([None] * request_rules.MAX_SCRIPT_NODES, "too many values"),
-    ],
-)
-def test_bounded_function_result_rejects_unbounded_or_non_json_values(
-    value: object, message: str
-) -> None:
-    with pytest.raises(HomeAssistantError, match=message):
-        request_rules._bounded_function_result(value)
-
-
-def test_bounded_function_result_rejects_deeply_nested_values() -> None:
-    value: object = None
-    for _ in range(request_rules.MAX_RESULT_DEPTH + 1):
-        value = [value]
-
-    with pytest.raises(HomeAssistantError, match="too deeply nested"):
-        request_rules._bounded_function_result(value)
-
-
 def test_rule_provider_input_preserves_trailing_sentence_punctuation() -> None:
     match = request_rules.RuleMatch(
         {"ai_input_mode": "capture", "ai_input_capture": "query"},
@@ -322,37 +235,3 @@ def test_rule_group_validation_cleans_values_and_rejects_duplicate_ids() -> None
         )
     with pytest.raises(ValueError, match="each group needs an id and name"):
         request_rules.validate_rule_groups([{"id": "missing-name"}])
-
-
-def test_assign_missing_result_step_ids_only_mutates_result_producers() -> None:
-    rule = {
-        "action": {
-            "actions": [
-                {
-                    "type": "function",
-                    "function": "first",
-                    "result_alias": "first_result",
-                },
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"function": "second", "result_alias": "second_result"},
-                },
-                {"type": "function", "function": "no_result"},
-                {
-                    "type": "function",
-                    "function": "existing",
-                    "result_alias": "kept",
-                    "step_id": "existing-id",
-                },
-            ]
-        }
-    }
-
-    assigned = request_rules._assign_missing_result_step_ids(rule)
-
-    first, second, no_result, existing = assigned["action"]["actions"]
-    assert len(first["step_id"]) == 32
-    assert len(second["data"]["step_id"]) == 32
-    assert "step_id" not in no_result
-    assert existing["step_id"] == "existing-id"
-    assert "step_id" not in rule["action"]["actions"][0]

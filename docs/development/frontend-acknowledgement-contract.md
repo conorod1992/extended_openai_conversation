@@ -87,5 +87,4 @@ caller revisions and failure handling are unchanged by this extraction.
 The focused test inventory independently enumerates commands and checks actual
 panel cache/revision effects rather than deriving expected behavior from the
 production table. Genuine HA Chromium journeys cover configuration save followed
-by Rule creation, Rule Pack review/import with an old read crossing acknowledgement,
-and clearing Usage details after visiting multiple history windows.
+by Rule creation, and clearing Usage details after visiting multiple history windows.

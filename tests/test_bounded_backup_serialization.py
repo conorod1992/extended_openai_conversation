@@ -4,9 +4,7 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
-import threading
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 import zipfile
 
 import pytest
@@ -111,19 +109,15 @@ def test_huge_negative_integer_rejection_does_not_copy_the_integer():
         tracemalloc.stop()
 
 
-@pytest.mark.parametrize("kind", ["legacy", "setup", "archive"])
+@pytest.mark.parametrize("kind", ["legacy", "archive"])
 def test_export_rejects_huge_surviving_key_before_redaction(
     monkeypatch, tmp_path, kind
 ):
     import tracemalloc
 
     huge_key = "aA" * 200000
-    if kind == "setup":
-        document = _portable_document()
-        document["sections"][transfer.SECTION_CONFIGURATION][huge_key] = 0
-    else:
-        document = _document()
-        document["agent"]["config"][huge_key] = 0
+    document = _document()
+    document["agent"]["config"][huge_key] = 0
     monkeypatch.setattr(backup, "MAX_LEGACY_EXPORT_BYTES", 8192)
     monkeypatch.setattr(backup_transfer, "MAX_BACKUP_UNCOMPRESSED_BYTES", 8192)
     tracemalloc.start()
@@ -131,8 +125,6 @@ def test_export_rejects_huge_surviving_key_before_redaction(
         with pytest.raises(backup.BackupError):
             if kind == "legacy":
                 backup.finalize_backup_snapshot(document)
-            elif kind == "setup":
-                transfer.finalize_setup_export(document)
             else:
                 backup_transfer._build_archive_file(document, str(tmp_path))
         assert tracemalloc.get_traced_memory()[1] < 2 * 1024 * 1024
@@ -277,56 +269,6 @@ def test_archive_limit_failure_removes_partial_file(monkeypatch, tmp_path, huge_
     with pytest.raises(backup.BackupError, match="uncompressed safety limit"):
         backup_transfer._build_archive_file(snapshot, str(tmp_path))
     assert list(tmp_path.iterdir()) == []
-
-
-def test_setup_export_preserves_format_redaction_and_boundary(monkeypatch):
-    snapshot = _portable_document(mode="setup")
-    original = deepcopy(snapshot)
-    document = transfer.redact_transfer_document(snapshot)
-    expected = json.dumps(document, ensure_ascii=False, indent=2)
-    monkeypatch.setattr(backup, "MAX_LEGACY_EXPORT_BYTES", len(expected.encode()))
-    result = transfer.finalize_setup_export(snapshot)
-    assert result["json"] == expected
-    assert result["document"] == document
-    assert result["filename"] == "coverage-agent-shareable-setup-2026-09-13.json"
-    assert result["mode"] == "setup"
-    assert snapshot == original
-    monkeypatch.setattr(backup, "MAX_LEGACY_EXPORT_BYTES", len(expected.encode()) - 1)
-    with pytest.raises(backup.BackupError, match="16 MB safety limit"):
-        transfer.finalize_setup_export(snapshot)
-
-
-def test_setup_rejects_huge_scalar_before_encoding(monkeypatch):
-    snapshot = _portable_document(mode="setup")
-    snapshot["padding"] = "x" * 1000000
-    monkeypatch.setattr(backup, "MAX_LEGACY_EXPORT_BYTES", 8192)
-    encode = Mock(side_effect=AssertionError("Unbounded setup serialization"))
-    monkeypatch.setattr(json.JSONEncoder, "iterencode", encode)
-    with pytest.raises(backup.BackupError, match="16 MB safety limit"):
-        transfer.finalize_setup_export(snapshot)
-    encode.assert_not_called()
-
-
-async def test_async_setup_serialization_runs_in_worker(hass, monkeypatch):
-    snapshot = _portable_document(mode="setup")
-    event_loop_thread = threading.get_ident()
-    finalize = transfer.finalize_setup_export
-    worker_threads = []
-
-    def checked_finalize(value, **kwargs):
-        worker_threads.append(threading.get_ident())
-        assert threading.get_ident() != event_loop_thread
-        return finalize(value, **kwargs)
-
-    monkeypatch.setattr(
-        transfer, "async_collect_transfer_snapshot", AsyncMock(return_value=snapshot)
-    )
-    monkeypatch.setattr(transfer, "finalize_setup_export", checked_finalize)
-    result = await transfer.async_create_setup_export(
-        hass, SimpleNamespace(entry_id="entry"), SimpleNamespace(subentry_id="agent")
-    )
-    assert worker_threads
-    assert json.loads(result["json"]) == transfer.redact_transfer_document(snapshot)
 
 
 def test_transfer_text_size_check_never_encodes_whole_input(monkeypatch):

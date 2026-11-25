@@ -1,4 +1,4 @@
-"""Unified portable export, custom backup, and import/restore planning."""
+"""Private custom backups and import/restore planning, including older exports."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
+from datetime import datetime
 import json
 import math
 from pathlib import Path
-import re
 from typing import Any
 
 import yaml
@@ -26,19 +26,17 @@ from .agent_config import (
     preserve_unselected_archive_retention,
     shortened_usage_retention,
     validate_agent_title,
+    validate_serialized_configuration_unicode,
 )
-from .bounded_json import (
-    JSONBudgetExceeded,
-    bounded_json_dumps,
-    check_redaction_budget,
-    check_utf8_budget,
-)
+from .backup_input import BackupInputLimit, check_json_structure
+from .bounded_json import JSONBudgetExceeded, check_utf8_budget
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
     CONF_ARCHIVE_RETENTION_DAYS,
     CONF_VOICE_DEFAULT_USER_ID,
     CONF_VOICE_DEVICE_MAPPINGS,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
+    LEGACY_SHARING_EXPORT_VERSION,
 )
 from .conversation_archive import (
     ArchiveSession,
@@ -58,6 +56,7 @@ from .private_backup import (
     decode_document,
     is_private_document,
 )
+from .record_timestamps import parse_datetime
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import (
     LITERAL_TEXT_KEY,
@@ -69,7 +68,6 @@ from .secret_redaction import (
     redact_secrets,
     restore_redacted_secrets,
 )
-from .sharing import SHARING_VERSION, project_sharing_sections
 from .temporary_memory import (
     TemporaryMemoryRecord,
     async_get_temporary_memory,
@@ -83,6 +81,7 @@ from .usage import (
     retained_usage_details,
     usage_retention_policy,
 )
+from .yaml_serialization import InvalidSerializedUnicode
 
 TRANSFER_FORMAT = "extended_openai_conversation_transfer"
 TRANSFER_VERSION = 1
@@ -263,7 +262,10 @@ def _portable_user_id(value: Any, *, prefixed_only: bool = False) -> str | None:
 
 
 def transfer_user_scope_ids(
-    prepared: PreparedTransfer, selected: Iterable[str]
+    prepared: PreparedTransfer,
+    selected: Iterable[str],
+    *,
+    expired_archive_sessions: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
     """Return source-installation HA users referenced by selected portable sections."""
     selected_set = frozenset(selected)
@@ -283,6 +285,11 @@ def transfer_user_scope_ids(
 
     if SECTION_CONVERSATION_ARCHIVE in selected_set:
         for session in prepared.archive_sessions or ():
+            if (
+                expired_archive_sessions
+                and session.session_id in expired_archive_sessions
+            ):
+                continue
             if user_id := _portable_user_id(session.scope_id, prefixed_only=True):
                 user_ids.add(user_id)
 
@@ -305,9 +312,26 @@ async def async_user_scope_mapping_plan(
     prepared: PreparedTransfer,
     selected: Iterable[str],
     supplied: Any = None,
+    *,
+    archive_config: Mapping[str, Any] | None = None,
+    archive_retention_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Resolve portable source-user ownership against destination HA users."""
-    source_ids = transfer_user_scope_ids(prepared, selected)
+    selected = frozenset(selected)
+    expired: frozenset[str] = frozenset()
+    if archive_config is not None and SECTION_CONVERSATION_ARCHIVE in selected:
+        expired = frozenset(
+            await asyncio.to_thread(
+                archive_sessions_past_retention,
+                prepared.archive_sessions or (),
+                prepared.archive_turns or (),
+                _archive_retention_days(archive_config),
+                now=archive_retention_at,
+            )
+        )
+    source_ids = transfer_user_scope_ids(
+        prepared, selected, expired_archive_sessions=expired
+    )
     users = await hass.auth.async_get_users()
     destinations = {
         str(user.id): str(user.name or user.id)
@@ -483,32 +507,23 @@ def _copy_and_map_transfer_data(
     )
 
 
-def _safe_title(title: str) -> str:
-    return (
-        re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-") or "conversation-agent"
+def _new_transfer_document(entry: Any, subentry: Any) -> DecodedPrivateDocument:
+    return DecodedPrivateDocument(
+        {
+            "format": TRANSFER_FORMAT,
+            "version": PRIVATE_TRANSFER_VERSION,
+            "mode": "custom",
+            "created_at": dt_util.utcnow().isoformat(),
+            "integration_version": _integration_version(),
+            "agent": {
+                "title": subentry.title,
+                "source_entry_id": entry.entry_id,
+                "source_subentry_id": subentry.subentry_id,
+            },
+            "sections": {},
+            "provider_connection": deepcopy(dict(getattr(entry, "data", {}))),
+        }
     )
-
-
-def _new_transfer_document(entry: Any, subentry: Any, mode: str) -> dict[str, Any]:
-    document = {
-        "format": TRANSFER_FORMAT,
-        "version": SHARING_VERSION if mode == "setup" else PRIVATE_TRANSFER_VERSION,
-        "mode": mode,
-        "created_at": dt_util.utcnow().isoformat(),
-        "integration_version": _integration_version(),
-        "agent": {
-            "title": subentry.title,
-            "source_entry_id": entry.entry_id,
-            "source_subentry_id": subentry.subentry_id,
-        },
-        "sections": {},
-        **(
-            {"provider_connection": deepcopy(dict(getattr(entry, "data", {})))}
-            if mode == "custom"
-            else {}
-        ),
-    }
-    return DecodedPrivateDocument(document) if mode == "custom" else document
 
 
 async def async_collect_transfer_snapshot(
@@ -516,39 +531,25 @@ async def async_collect_transfer_snapshot(
     entry: Any,
     subentry: Any,
     *,
-    mode: str,
     sections: Iterable[str] | None = None,
-) -> dict[str, Any]:
-    """Collect only the sections requested for a portable/custom transfer."""
+) -> DecodedPrivateDocument:
+    """Collect only the sections requested for a private custom backup."""
     from .agent_maintenance import get_agent_maintenance_gate
 
     get_agent_maintenance_gate(
         hass, entry.entry_id, subentry.subentry_id
     ).require_available()
 
-    if mode == "setup":
-        selected = SETUP_SECTIONS
-    elif mode == "custom":
-        selected = validate_section_selection(sections)
-    else:
-        raise backup.BackupError("Transfer mode must be setup or custom")
-
+    selected = validate_section_selection(sections)
     document = await hass.async_add_executor_job(
-        _new_transfer_document, entry, subentry, mode
+        _new_transfer_document, entry, subentry
     )
     if SECTION_CONFIGURATION not in selected:
         document.pop("provider_connection", None)
-    from .helpers import entry_api_provider
 
     payload = document["sections"]
     if SECTION_CONFIGURATION in selected:
-        payload[SECTION_CONFIGURATION] = (
-            deepcopy(dict(subentry.data))
-            if mode == "custom"
-            else backup.export_configuration_snapshot(
-                subentry.data, provider=entry_api_provider(entry)
-            )
-        )
+        payload[SECTION_CONFIGURATION] = deepcopy(dict(subentry.data))
     if SECTION_REQUEST_RULES in selected:
         request_rules_manager = await async_get_request_rules(
             hass, entry.entry_id, subentry.subentry_id
@@ -588,7 +589,7 @@ async def async_collect_transfer_snapshot(
             hass, entry.entry_id, subentry.subentry_id
         )
         payload[SECTION_GUEST_MODE] = await guest_mode_manager.async_backup_data()
-    return DecodedPrivateDocument(document) if mode == "custom" else document
+    return document
 
 
 def _is_redacted_placeholder(value: Any) -> bool:
@@ -625,64 +626,6 @@ def redact_transfer_document(document: dict[str, Any]) -> dict[str, Any]:
                 redact_secrets(sections[SECTION_REQUEST_RULES])
             )
     return result
-
-
-def finalize_setup_export(
-    document: dict[str, Any], *, reviewed: bool = False
-) -> dict[str, Any]:
-    """Serialize a lightweight shareable setup document."""
-    try:
-        check_redaction_budget(document, backup.MAX_LEGACY_EXPORT_BYTES)
-        if document.get("version") == SHARING_VERSION:
-            sections, security = project_sharing_sections(
-                document["sections"], reviewed=reviewed
-            )
-            redacted = {
-                "format": TRANSFER_FORMAT,
-                "version": SHARING_VERSION,
-                "mode": "setup",
-                "created_at": document["created_at"],
-                "integration_version": document["integration_version"],
-                "agent": {
-                    "title": "Shared conversation agent",
-                    "source_entry_id": "shared-entry",
-                    "source_subentry_id": "shared-agent",
-                },
-                "sections": sections,
-                "security": security,
-            }
-        else:
-            # Explicit legacy v1 semantics retained for old clients/fixtures.
-            redacted = redact_transfer_document(document)
-        serialized = bounded_json_dumps(redacted, backup.MAX_LEGACY_EXPORT_BYTES)
-    except JSONBudgetExceeded as err:
-        raise backup.BackupError(
-            "This setup export exceeds the 16 MB safety limit; use a custom backup instead"
-        ) from err
-    title = validate_agent_title(redacted["agent"]["title"])
-    date = str(redacted["created_at"])[:10]
-    return {
-        "document": redacted,
-        "json": serialized,
-        "filename": f"{_safe_title(title)}-shareable-setup-{date}.json",
-        "security": redacted.get("security"),
-        "mode": "setup",
-        "sections": list(SECTION_ORDER[:2]),
-    }
-
-
-async def async_create_setup_export(
-    hass: HomeAssistant, entry: Any, subentry: Any, *, reviewed: bool = False
-) -> dict[str, Any]:
-    """Build a lightweight, redacted setup-sharing document."""
-    from .agent_maintenance import get_agent_maintenance_gate
-
-    gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
-    async with gate.exclusive():
-        document = await async_collect_transfer_snapshot(
-            hass, entry, subentry, mode="setup"
-        )
-    return await asyncio.to_thread(finalize_setup_export, document, reviewed=reviewed)
 
 
 def _secret_path(path: tuple[Any, ...]) -> str:
@@ -912,7 +855,7 @@ def _validate_metadata(value: Mapping[str, Any]) -> tuple[str, str, str]:
     integration_version = value.get("integration_version")
     if (
         not isinstance(created_at, str)
-        or dt_util.parse_datetime(created_at) is None
+        or parse_datetime(created_at) is None
         or not isinstance(integration_version, str)
         or not integration_version
     ):
@@ -956,18 +899,22 @@ def _validate_transfer_document(
         and value.get("mode") == "custom"
     )
     if (value.get("version") == PRIVATE_TRANSFER_VERSION and not private) or (
-        value.get("version") == SHARING_VERSION and value.get("mode") != "setup"
+        value.get("version") == LEGACY_SHARING_EXPORT_VERSION
+        and value.get("mode") != "setup"
     ):
         raise backup.BackupError("This transfer uses an unsupported format version")
     if private and "provider_connection" in value:
         expected.add("provider_connection")
-    if value.get("version") == SHARING_VERSION and value.get("mode") == "setup":
+    if (
+        value.get("version") == LEGACY_SHARING_EXPORT_VERSION
+        and value.get("mode") == "setup"
+    ):
         expected.add("security")
     if set(value) != expected:
         raise backup.BackupError("The transfer file is incomplete or corrupted")
     if value.get("version") not in {
         TRANSFER_VERSION,
-        SHARING_VERSION,
+        LEGACY_SHARING_EXPORT_VERSION,
         PRIVATE_TRANSFER_VERSION,
     }:
         version = value.get("version")
@@ -1075,7 +1022,10 @@ def _validate_transfer_document(
 def _inspect_legacy_setup(
     value: Mapping[str, Any], *, inspect_only: bool = False
 ) -> PreparedTransfer:
-    if value.get("version") not in {AGENT_CONFIG_EXPORT_VERSION, SHARING_VERSION}:
+    if value.get("version") not in {
+        AGENT_CONFIG_EXPORT_VERSION,
+        LEGACY_SHARING_EXPORT_VERSION,
+    }:
         raise backup.BackupError("This setup export uses an unsupported version")
     unknown = set(value) - {"schema", "version", "title", "config", "security"}
     if unknown:
@@ -1184,17 +1134,52 @@ def _decode_transfer_input(value: Any) -> Mapping[str, Any]:
             raise backup.BackupError(
                 "The transfer exceeds the uncompressed safety limit"
             ) from err
+        except UnicodeError as err:
+            raise backup.BackupError("The transfer contains malformed Unicode") from err
         try:
+            check_json_structure(value)
             value = json.loads(value)
-        except json.JSONDecodeError as err:
-            raise backup.BackupError("The transfer is not valid JSON") from err
+        except BackupInputLimit as err:
+            raise backup.BackupError(str(err)) from None
+        except ValueError, RecursionError:
+            raise backup.BackupError("The transfer is not valid JSON") from None
     if not isinstance(value, Mapping):
         raise backup.BackupError(
             "This file is not an Extended OpenAI Conversation transfer"
         )
     if value.get("format") == backup.BACKUP_FORMAT:
-        value = backup._decode_backup_document(value, backup.MAX_BACKUP_BYTES)
-    return decode_document(value) if is_private_document(value) else dict(value)
+        return backup._decode_backup_document(value, backup.MAX_BACKUP_BYTES)
+    return _validate_decoded_transfer_input(value)
+
+
+def _validate_decoded_transfer_input(value: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Bound and validate a decoded transfer before HA schema checks."""
+    backup._validate_import_structure(value)
+    backup._validate_import_unicode(value)
+    if is_private_document(value):
+        try:
+            decoded = decode_document(value)
+        except ValueError, TypeError, KeyError, yaml.YAMLError:
+            raise backup.BackupError("The private backup encoding is invalid") from None
+        if decoded is not value:
+            backup._validate_import_structure(decoded)
+        value = decoded
+    elif not isinstance(value, dict):
+        value = dict(value)
+    if value.get("format") == backup.BACKUP_FORMAT:
+        backup._validate_backup_configuration_unicode(value)
+    else:
+        sections = value.get("sections")
+        config = (
+            sections.get(SECTION_CONFIGURATION)
+            if isinstance(sections, Mapping)
+            else value.get("config")
+        )
+        try:
+            validate_serialized_configuration_unicode(config)
+        except InvalidSerializedUnicode as err:
+            raise backup.BackupError(str(err)) from None
+    return value
 
 
 async def async_inspect_transfer(
@@ -1204,8 +1189,8 @@ async def async_inspect_transfer(
     if isinstance(value, PreparedTransfer):
         return value
     document = await asyncio.to_thread(_decode_transfer_input, value)
-    return await async_inspect_decoded_transfer(
-        document, target_agent_id, sections=sections
+    return await _async_inspect_validated_transfer(
+        document, target_agent_id, sections=sections, inspect_only=False
     )
 
 
@@ -1217,8 +1202,19 @@ async def async_inspect_decoded_transfer(
     inspect_only: bool = False,
 ) -> PreparedTransfer:
     """Validate HA schemas on-loop, but bulk data categories in a worker."""
-    if is_private_document(value):
-        value = await asyncio.to_thread(decode_document, value)
+    document = await asyncio.to_thread(_validate_decoded_transfer_input, value)
+    return await _async_inspect_validated_transfer(
+        document, target_agent_id, sections=sections, inspect_only=inspect_only
+    )
+
+
+async def _async_inspect_validated_transfer(
+    value: Mapping[str, Any],
+    target_agent_id: str,
+    *,
+    sections: Iterable[str] | None,
+    inspect_only: bool,
+) -> PreparedTransfer:
     header = _inspect_decoded_transfer(value, target_agent_id, inspect_only=True)
     if inspect_only:
         return header
@@ -1312,6 +1308,8 @@ async def _async_validate_request_rule_function_dependencies(
     config: Mapping[str, Any],
 ) -> None:
     """Apply canonical Request Rule Function validation to one combined target."""
+    from .request_rules import request_rule_repair
+
     quarantined_names: set[str] = set()
     try:
         tools = configured_function_tools_from_data(config)
@@ -1331,7 +1329,7 @@ async def _async_validate_request_rule_function_dependencies(
             if isinstance(item.get("name"), str) and item["name"]
         }
     for rule in request_rules.get("rules", []):
-        if not isinstance(rule, Mapping):
+        if not isinstance(rule, Mapping) or request_rule_repair(rule):
             continue
         try:
             await async_validate_request_rule_functions(
@@ -1366,13 +1364,19 @@ def _copy_transfer_categories(prepared: PreparedTransfer) -> PreparedTransfer:
     return replace(prepared, **dict(zip(fields, copied, strict=True)))
 
 
-def _apply_archive_restore_retention(target: backup.PreparedRestore) -> dict[str, Any]:
-    """Filter only the incoming archive and count the state the restore will write."""
-    days = normalized_agent_integer(
-        target.config, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+def _archive_retention_days(config: Mapping[str, Any]) -> int:
+    return normalized_agent_integer(
+        config, CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
     )
+
+
+def _apply_archive_restore_retention(
+    target: backup.PreparedRestore, *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Filter only the incoming archive and count the state the restore will write."""
+    days = _archive_retention_days(target.config)
     expired = archive_sessions_past_retention(
-        target.archive_sessions, target.archive_turns, days
+        target.archive_sessions, target.archive_turns, days, now=now
     )
     original_turns = len(target.archive_turns)
     if expired:
@@ -1563,7 +1567,12 @@ def _prepared_restore_from_selection(
 
 
 async def _current_snapshot(
-    hass: HomeAssistant, entry: Any, subentry: Any, *, include_usage: bool = True
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    *,
+    include_usage: bool = True,
+    capture_usage_revision: bool = False,
 ) -> backup.PreparedRestore:
     """Read durable current state for selective planning without mutating it."""
     try:
@@ -1584,6 +1593,7 @@ async def _current_snapshot(
         subentry,
         provider=entry_api_provider(entry),
         include_usage=include_usage,
+        capture_usage_revision=capture_usage_revision,
     )
 
 
@@ -1596,6 +1606,7 @@ async def async_materialize_restore(
     sections: Iterable[str] | None = None,
     current_snapshot: backup.PreparedRestore | None = None,
     provider_connection: Mapping[str, Any] | None = None,
+    archive_retention_at: datetime | None = None,
 ) -> tuple[backup.PreparedRestore, dict[str, Any]]:
     """Build and validate a complete restore target from a selective transfer."""
     prepared = await async_inspect_transfer(
@@ -1607,8 +1618,8 @@ async def async_materialize_restore(
         default=prepared.available_sections,
     )
     from .provider_credentials import (
+        async_validate_agent_provider_request,
         incompatible_provider_agent,
-        validate_agent_provider_request,
         validate_provider_connection,
     )
 
@@ -1647,21 +1658,31 @@ async def async_materialize_restore(
         raise backup.BackupError(
             "Cannot safely restore unavailable secrets: " + ", ".join(missing[:50])
         )
-    from .request_rules import (
-        async_read_committed_request_rules,
-        validate_routed_request_options,
-        validate_saved_model_routes,
-    )
+    from .request_rules import async_read_committed_request_rules
 
     provider_data = (
         provider_connection
         if provider_connection is not None
         else getattr(entry, "data", {})
     )
+    from .ha_permissions import get_active_ha_context
+
+    context = get_active_ha_context()
+    user_id = context.user_id if context is not None else None
+    previous_provider_data = (
+        getattr(entry, "data", {}) if provider_connection is not None else None
+    )
     try:
-        validate_routed_request_options(target.config, provider_data)
-        validate_saved_model_routes(
-            target.request_rules.get("rules", []), target.config, provider_data
+        await async_validate_agent_provider_request(
+            hass,
+            "conversation",
+            target.config,
+            provider_data,
+            rules=target.request_rules.get("rules", []),
+            user_id=user_id,
+            discover_ha_tools=bool(selected & SETUP_SECTIONS)
+            or provider_connection is not None,
+            previous_provider_data=previous_provider_data,
         )
     except HomeAssistantError as err:
         raise backup.BackupError(
@@ -1675,14 +1696,22 @@ async def async_materialize_restore(
             }:
                 continue
             try:
-                validate_agent_provider_request(
-                    child.subentry_type, child.data, provider_data
-                )
-                if child.subentry_type == "conversation":
-                    rules = await async_read_committed_request_rules(
+                rules = (
+                    await async_read_committed_request_rules(
                         hass, entry.entry_id, child_id
                     )
-                    validate_saved_model_routes(rules, child.data, provider_data)
+                    if child.subentry_type == "conversation"
+                    else ()
+                )
+                await async_validate_agent_provider_request(
+                    hass,
+                    child.subentry_type,
+                    child.data,
+                    provider_data,
+                    rules=rules,
+                    user_id=user_id,
+                    previous_provider_data=previous_provider_data,
+                )
             except HomeAssistantError as err:
                 raise backup.BackupError(
                     str(incompatible_provider_agent(child.title, err))
@@ -1716,10 +1745,14 @@ async def async_materialize_restore(
     )
     if SECTION_CONVERSATION_ARCHIVE in selected:
         preview.update(
-            await asyncio.to_thread(_apply_archive_restore_retention, target)
+            await asyncio.to_thread(
+                _apply_archive_restore_retention, target, now=archive_retention_at
+            )
         )
     target.preserve_retained_continuity = (
-        selected == {SECTION_KNOWLEDGE} and provider_connection is None
+        bool(selected)
+        and selected <= {SECTION_KNOWLEDGE, SECTION_USAGE}
+        and provider_connection is None
     )
     target.replaces_usage = SECTION_USAGE in selected
     data_sections = {
@@ -1779,6 +1812,7 @@ async def async_restore_transfer(
     provider_connection: dict[str, Any] | None = None,
     expected_provider_data: dict[str, Any] | None = None,
     confirm_retention: bool = False,
+    archive_retention_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Preserve unselected state and commit under one shielded exclusive lease."""
     from homeassistant.config_entries import ConfigEntryState
@@ -1794,10 +1828,13 @@ async def async_restore_transfer(
     from .restore_recovery import (
         async_finish_restore_reload,
         async_restore_backup_recoverably,
+        require_catalogue_ready_for_restore,
     )
 
     async def restore_exclusively_owned() -> dict[str, Any]:
         require_provider_restore_complete(hass, entry.entry_id)
+        # Check admission before the upload precondition can consume its session.
+        require_catalogue_ready_for_restore(hass)
         if precondition is not None:
             await precondition()
         if (
@@ -1818,6 +1855,7 @@ async def async_restore_transfer(
             subentry,
             imported,
             sections=sections,
+            archive_retention_at=archive_retention_at,
             **provider_options,
         )
         if preview.get("shortened_usage_retention") and not confirm_retention:

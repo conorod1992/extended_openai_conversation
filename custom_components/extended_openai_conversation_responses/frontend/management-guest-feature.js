@@ -4,13 +4,30 @@ import {captureConfigurationDraftOwner, configurationSubmissionIsCurrent} from "
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
 import {reviewRecoveredScope, scopeNeedsRecoveryReview} from "./management-state-safety.js";
+import {guestIntervalWallTime} from "./schedule-time.js";
 
 const GUEST_VIEW = "capabilities/guest-mode";
-const intervalValues = (panel, status, retainedEnd = "") => ({start:status.active_from_local || panel._dateTimeLocal(status.active_from), end:status.indefinite ? retainedEnd : (status.active_until_local || panel._dateTimeLocal(status.active_until)), indefinite:Boolean(status.indefinite)});
+const intervalLabel = (label, local) => local === null ? `${label} (UTC)` : label;
+const intervalValues = (panel, status, retainedEnd = "") => ({
+  start:guestIntervalWallTime(status, "active_from", value => panel._dateTimeLocal(value)),
+  end:status.indefinite ? retainedEnd : guestIntervalWallTime(status, "active_until", value => panel._dateTimeLocal(value)),
+  indefinite:Boolean(status.indefinite),
+});
 const intervalDirty = state => !same(state.values, state.baseline)
   || Boolean(state.uncertainSubmission && !same(state.values, state.uncertainSubmission));
 const completeInterval = status => ["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(status || {}, key));
 const clearSubmission = state => {state.uncertainSubmission = null;state.adoptUnchangedRead = false;state.submissionImplicitStart = false;};
+
+function adoptIntervalTimestamps(state, status, saved) {
+  const displayed = {...state.timestampStatus};
+  for (const [key, field] of [["start", "active_from"], ["end", "active_until"]]) {
+    if (state.values[key] === saved[key] && (key !== "end" || !status.indefinite)) {
+      displayed[field] = status[field];
+      displayed[`${field}_local`] = status[`${field}_local`];
+    }
+  }
+  state.timestampStatus = displayed;
+}
 
 function reconcileIntervalRead(panel, state, status) {
   if (panel._guestIntervalDraft !== state || !configurationSubmissionIsCurrent(panel, state.owner)
@@ -29,11 +46,16 @@ function reconcileIntervalRead(panel, state, status) {
     clearSubmission(state);
   }
   state.baseline = saved;
+  adoptIntervalTimestamps(state, status, saved);
   // Timed reads avoid rebuilding the editor. Update only inputs which still
   // show the values used by this reconciliation, preserving newer DOM input.
   for (const [id, key, property] of [["guest-start", "start", "value"], ["guest-end", "end", "value"], ["guest-indefinite", "indefinite", "checked"]]) {
     const control = panel.shadowRoot?.querySelector?.(`#${id}`);
     if (control?.[property] === current[key]) control[property] = state.values[key];
+  }
+  for (const [key, label, field] of [["start", "Starts", "active_from_local"], ["end", "Ends", "active_until_local"]]) {
+    const control = panel.shadowRoot?.querySelector?.(`[data-guest-${key}-label]`);
+    if (control && state.values[key] === saved[key]) control.textContent = intervalLabel(label, status[field]);
   }
   const end = panel.shadowRoot?.querySelector?.("#guest-end");
   if (end && panel.shadowRoot?.querySelector?.("#guest-indefinite")?.checked === state.values.indefinite) end.disabled = state.values.indefinite;
@@ -49,7 +71,7 @@ function intervalState(panel, status = panel._result?.status || {}) {
   if (state && !configurationSubmissionIsCurrent(panel, state.owner)) return null;
   if (!state) {
     const baseline = intervalValues(panel, status);
-    state = {owner, baseline, values:clone(baseline)};
+    state = {owner, baseline, values:clone(baseline), timestampStatus:status};
     panel._guestIntervalDraft = state;
     const current = () => panel._guestIntervalDraft === state && configurationSubmissionIsCurrent(panel, state.owner);
     pageCoordinator(panel).register("guest-interval", {
@@ -68,6 +90,7 @@ function intervalState(panel, status = panel._result?.status || {}) {
         if (!intervalDirty(state)) {
           if (!["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(saved || {}, key))) return;
           state.baseline = intervalValues(panel, saved, state.baseline.end);
+          adoptIntervalTimestamps(state, saved, state.baseline);
         }
         state.recoveryIntent = false;
       },
@@ -79,6 +102,7 @@ function intervalState(panel, status = panel._result?.status || {}) {
         const saved = panel._result?.status;
         if (completeInterval(saved)) state.baseline = intervalValues(panel, saved, state.baseline.end);
         state.values = clone(state.baseline);
+        if (completeInterval(saved)) adoptIntervalTimestamps(state, saved, state.baseline);
         // Discard authoring, not the read needed to learn what the write did.
         if (state.uncertainSubmission) {
           state.uncertainSubmission = clone(state.baseline);
@@ -98,6 +122,7 @@ function intervalState(panel, status = panel._result?.status || {}) {
         }
         destination.baseline = clone(state.baseline);
         destination.values = clone(state.values);
+        destination.timestampStatus = clone(state.timestampStatus);
         destination.uncertainSubmission = clone(state.uncertainSubmission);
         destination.adoptUnchangedRead = state.adoptUnchangedRead;
         destination.submissionImplicitStart = state.submissionImplicitStart;
@@ -108,9 +133,10 @@ function intervalState(panel, status = panel._result?.status || {}) {
         target._render();
       },
     });
-  } else if (!intervalDirty(state) && !state.recoveryIntent && !state.uncertainSubmission) {
+  } else if (!intervalDirty(state) && !state.recoveryIntent && !state.uncertainSubmission && completeInterval(status)) {
     state.baseline = intervalValues(panel, status, state.values.end);
     state.values = clone(state.baseline);
+    adoptIntervalTimestamps(state, status, state.baseline);
   }
   return state;
 }
@@ -125,6 +151,39 @@ export function captureGuestInterval(panel, field = null) {
   const retained = pageCoordinator(panel).scopes.get("retained-drafts");
   if (field && (retained?.dirty() || retained?.pending)) state.recoveryIntent = true;
   return {state, values:clone(state.values)};
+}
+
+export function guestIntervalUpdatePayload(panel, submission, now) {
+  const root = panel.shadowRoot;
+  const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
+  const startInput = root.querySelector("#guest-start");
+  const endInput = root.querySelector("#guest-end");
+  // Omission asks the backend to start now, independently of browser time.
+  const start = now ? undefined : startInput?.value;
+  const end = endInput?.value;
+  if (!now && startInput?.validity?.badInput) {
+    startInput.focus();
+    throw new Error("Complete the start time or leave it empty to start now.");
+  }
+  if (!indefinite && (!end || !endInput.checkValidity())) {
+    throw new Error("Choose an end time or select Remain active indefinitely.");
+  }
+  const displayed = submission.state.timestampStatus || panel._result?.status || {};
+  const localTimes = {};
+  const instant = (field, value) => {
+    const original = displayed[field];
+    if (original && value === guestIntervalWallTime(displayed, field, value => panel._dateTimeLocal(value))) return original;
+    if (displayed[`${field}_local`] === null) return `${value}Z`;
+    localTimes[field] = value;
+    return value;
+  };
+  submission.implicitStart = now || !start;
+  return {
+    ...(start ? {active_from: instant("active_from", start)} : {}),
+    ...(!indefinite && end ? {active_until: instant("active_until", end)} : {}),
+    indefinite,
+    local_times: localTimes,
+  };
 }
 
 export function acknowledgeGuestInterval(panel, submission, status) {
@@ -143,6 +202,7 @@ export function acknowledgeGuestInterval(panel, submission, status) {
   const saved = intervalValues(panel, status, submission.values.end);
   state.values = mergeAcknowledgedDraft(state.values, submission.values, saved);
   state.baseline = saved;
+  adoptIntervalTimestamps(state, status, saved);
   clearSubmission(state);
 }
 
@@ -165,7 +225,9 @@ export function bindGuestInterval(panel) {
 }
 
 function intervalSummary(panel, status, state) {
-  const date = key => status[key + "_local"]?.replace("T", " ") || panel._formatDate(status[key]);
+  const date = key => status[`${key}_local`] === null
+    ? `${status[key].slice(0, 19).replace("T", " ")} UTC`
+    : status[`${key}_local`]?.replace("T", " ") || panel._formatDate(status[key]);
   const interval = status.active_from ? "Starts " + date("active_from")
     + (status.active_until ? " · Ends " + date("active_until") : " · No expiry") : "No interval configured";
   return panel._titleCase(state) + " · " + interval;
@@ -205,13 +267,17 @@ export function guestMode(panel) {
 
 export function guestPolicyView(panel, status, policy, state) {
   const config = panel._guestDraft || panel._result?.config || {};
-  const interval = intervalState(panel, status)?.values || intervalValues(panel, status);
+  const draft = intervalState(panel, status);
+  const interval = draft?.values || intervalValues(panel, status);
+  const displayed = draft?.timestampStatus || status;
+  const startLabel = intervalLabel("Starts", displayed.active_from_local);
+  const endLabel = intervalLabel("Ends", displayed.active_until_local);
   const selector = (key, type, label) => `<label class="setting"><span>${label}</span><ha-selector data-guest-key="${key}" data-guest-selector="${type}"></ha-selector></label>`;
   const manager = (key, type, label, description) => `<details class="guest-manager eoc-details-base"><summary><span><strong>${label}</strong><small>${formatUsageNumber((config[key] || []).length)} excluded · ${description}</small></span><span class="manage-label">Manage</span></summary><div class="guest-manager-body">${selector(key,type,`Choose ${label.toLowerCase()}`)}</div></details>`;
   const mode = (key, label, values) => `<label>${label}<select data-guest-mode="${key}">${values.map(([value,text]) => `<option value="${value}" ${config[key] === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`;
   const canEditPolicy = panel._data?.is_admin && (!panel._result?.legacy_policy || panel._guestMigrationReview);
   const assistantPermission = canEditPolicy ? `<details class="guest-advanced eoc-details-base"><summary>Assistant activation permission</summary><p class="help">This permission is separate from the Guest Mode activation state.</p><label class="toggle"><span>Allow the assistant to activate Guest Mode</span><input id="guest-controls-enabled" type="checkbox" ${config.guest_mode_enabled ? "checked" : ""}></label><p class="help">Lets the assistant activate Guest Mode, start it earlier, or extend it. The assistant can never shorten or disable Guest Mode. Turning this off never ends or weakens an active restriction.</p></details>` : "";
-  const activation = `<section class="content-card"><div class="section-heading"><div><h2>Guest Mode activation</h2><p class="meta" data-guest-live-status>${panel._e(intervalSummary(panel, status, state))}</p><p>The assistant can enable or extend Guest Mode, but cannot shorten or disable it. Administrators and Home Assistant automations can change or end Guest Mode.</p></div></div>${panel._data?.is_admin ? `<div class="form-grid"><label>Starts<input id="guest-start" type="datetime-local" value="${panel._e(interval.start)}"></label><label>Ends<input id="guest-end" type="datetime-local" value="${panel._e(interval.end)}" ${interval.indefinite ? "disabled" : ""}></label></div><label class="toggle"><span>Remain active indefinitely</span><input id="guest-indefinite" type="checkbox" ${interval.indefinite ? "checked" : ""}></label><div class="section-actions" data-guest-actions>${guestActivationActions(status)}</div>` : ""}${assistantPermission}</section>`;
+  const activation = `<section class="content-card"><div class="section-heading"><div><h2>Guest Mode activation</h2><p class="meta" data-guest-live-status>${panel._e(intervalSummary(panel, status, state))}</p><p>The assistant can enable or extend Guest Mode, but cannot shorten or disable it. Administrators and Home Assistant automations can change or end Guest Mode.</p></div></div>${panel._data?.is_admin ? `<div class="form-grid"><label><span data-guest-start-label>${startLabel}</span><input id="guest-start" type="datetime-local" value="${panel._e(interval.start)}"></label><label><span data-guest-end-label>${endLabel}</span><input id="guest-end" type="datetime-local" value="${panel._e(interval.end)}" ${interval.indefinite ? "disabled" : ""}></label></div><label class="toggle"><span>Remain active indefinitely</span><input id="guest-indefinite" type="checkbox" ${interval.indefinite ? "checked" : ""}></label><div class="section-actions" data-guest-actions>${guestActivationActions(status)}</div>` : ""}${assistantPermission}</section>`;
   const baseSelectors = `${manager("guest_excluded_labels","label","Labels","Restrict groups of entities")}${manager("guest_excluded_areas","area","Areas","Hide exposed entities in selected areas")}${manager("guest_excluded_domains","domain","Domains","Hide device types such as cameras")}${manager("guest_excluded_entities","entity","Individual entities","Hide individual entities")}`;
   const controlSelectors = `${manager("guest_control_excluded_labels","label","Labels","Make labelled entities read-only")}${manager("guest_control_excluded_areas","area","Areas","Make entities in selected areas read-only")}${manager("guest_control_excluded_domains","domain","Domains","Make entire domains read-only")}${manager("guest_control_excluded_entities","entity","Individual entities","Make specific entities read-only")}`;
   const legacyNotice = panel._result?.legacy_policy && !panel._guestMigrationReview ? `<section class="notice warning legacy-migration"><strong>Previous Guest Mode settings found</strong><p>We converted your old allow-list to equivalent exclusions. The old policy remains enforced until you save.</p><div class="section-actions"><button type="button" id="guest-review-converted">Review converted settings</button><button type="button" class="secondary" id="guest-start-fresh">Start fresh with new defaults</button></div></section>` : "";

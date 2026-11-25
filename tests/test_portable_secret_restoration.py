@@ -141,7 +141,7 @@ async def test_export_inspect_materialize_round_trip(monkeypatch, kind, old):
         }
     else:
         entry, subentry = _entry_and_subentry()
-        document = transfer._new_transfer_document(entry, subentry, "custom")
+        document = transfer._new_transfer_document(entry, subentry)
         document["version"] = 1
         document.pop("provider_connection", None)
         document["sections"] = {transfer.SECTION_CONFIGURATION: exported_config}

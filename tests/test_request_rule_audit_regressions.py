@@ -71,12 +71,12 @@ async def test_management_save_then_native_execution_preserves_types(
                 "data": {
                     "function": "lookup",
                     "arguments": {},
-                    "result_alias": "lookup",
                 },
+                "response_variable": "reply",
             },
             {
                 "action": f"{rr.DOMAIN}.call_function",
-                "data": {"function": "consume", "arguments": {"value": "{lookup}"}},
+                "data": {"function": "consume", "arguments": {"value": "{{ reply.result }}"}},
             },
         ]
         text = "run"
@@ -103,7 +103,6 @@ async def test_management_save_then_native_execution_preserves_types(
                 "result": await rr.async_call_active_function(
                     data["function"],
                     data.get("arguments", {}),
-                    data.get("result_alias"),
                 )
             }
         return None

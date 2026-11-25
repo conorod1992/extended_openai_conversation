@@ -285,12 +285,12 @@ def test_malformed_answer_part_type_is_ignored():
     )
 
 
-def test_dynamic_reasoning_does_not_hide_static_model_api_incompatibility():
+def test_fixed_route_rejects_static_model_api_incompatibility():
     rule = {
         "action_type": "model_routing",
         "enabled": True,
         "name": "route",
-        "action": {"model": "gpt-4", "reasoning_effort": "{effort}"},
+        "action": {"model": "gpt-4"},
     }
     with pytest.raises(HomeAssistantError):
         validate_saved_model_routes(

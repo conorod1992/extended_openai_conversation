@@ -9,6 +9,7 @@ DOMAIN = "extended_openai_conversation_responses"
 SUBSYSTEM_STATUS_KEY = f"{DOMAIN}.subsystem_status"
 CONFIG_ENTRY_VERSION = 8
 AGENT_CONFIG_EXPORT_VERSION = 1
+LEGACY_SHARING_EXPORT_VERSION = 2
 DEFAULT_NAME = "Extended OpenAI Conversation (Responses)"
 DEFAULT_CONVERSATION_NAME = "Extended OpenAI Conversation (Responses)"
 DEFAULT_AI_TASK_NAME = "Extended OpenAI AI Task (Responses)"
@@ -303,6 +304,7 @@ DEFAULT_KNOWLEDGE_ENABLED = False
 # Backend-enforced Guest Mode. Integration-owned schedule state is stored separately.
 CONF_GUEST_MODE_ENABLED = "guest_mode_enabled"
 DEFAULT_GUEST_MODE_ENABLED = True
+DEFAULT_PERSISTED_GUEST_MODE_ENABLED = False
 # Version 2 is the exclusion-based Guest policy.  Its presence is deliberately
 # used as the migration marker; configurations without it retain legacy
 # allow-list behavior until an administrator explicitly saves the new policy.
@@ -551,7 +553,6 @@ SKILL_FILE_NAME = "SKILL.md"
 
 # Skill Services
 SERVICE_RELOAD_SKILLS = "reload_skills"
-SERVICE_DOWNLOAD_SKILL = "download_skill"
 SERVICE_MEMORY_LIST = "memory_list"
 SERVICE_MEMORY_DELETE = "memory_delete"
 SERVICE_MEMORY_CLEAR = "memory_clear"
@@ -566,12 +567,6 @@ SERVICE_PROCESS = "process"
 # Integration-owned UI and storage
 MANAGEMENT_PANEL_URL = "extended-openai"
 MANAGEMENT_PANEL_TITLE = "Extended OpenAI"
-
-# GitHub repository for downloadable skills
-GITHUB_REPO_OWNER = "conorod1992"
-GITHUB_REPO_NAME = "extended_openai_conversation"
-GITHUB_SKILLS_BRANCH = "develop"
-GITHUB_SKILLS_PATH = "examples/skills"
 
 # Working Directory
 DEFAULT_WORKING_DIRECTORY = "extended_openai_conversation_responses/"  # /config/extended_openai_conversation_responses/

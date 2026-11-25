@@ -590,6 +590,7 @@ async def test_ai_task_handler_covers_basic_and_advanced_lifecycle_paths() -> No
     assert flow.options == existing.data
 
     handler = SimpleNamespace(
+        hass=SimpleNamespace(data={}),
         options=dict(DEFAULT_AI_TASK_OPTIONS),
         _temp_data=None,
         _is_new=True,

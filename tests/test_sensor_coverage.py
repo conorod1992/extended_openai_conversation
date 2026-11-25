@@ -390,3 +390,13 @@ def test_last_response_sensor_handles_absent_and_completed_run() -> None:
         "success": False,
         "error_type": "provider_error",
     }
+
+    usage.latest_run.models = ["m" * 16000]
+    usage.latest_run.error_type = "e" * 16100
+    attributes = sensor.extra_state_attributes
+    assert attributes["models"] == []
+    assert attributes["error_type"] is None
+    assert attributes["providers"] == ["openai"]
+    assert attributes["input"] == 120
+    assert attributes["success"] is False
+    assert usage.latest_run.error_type == "e" * 16100

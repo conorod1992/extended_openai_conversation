@@ -10,8 +10,6 @@ from dataclasses import dataclass
 import logging
 from pathlib import Path
 import re
-import shutil
-from uuid import uuid4
 
 import yaml
 
@@ -25,13 +23,8 @@ from .skill_resource_limits import (
     MAX_SKILL_DISCOVERY_ENTRIES,
     read_bounded_skill_text,
 )
-from .skill_transactions import (
-    SkillDownload,
-    commit_transaction,
-    prepare_transaction,
-    recover_transaction,
-    recover_transactions,
-)
+from .skill_transactions import recover_transactions
+from .yaml_serialization import load_unicode_yaml
 
 _LOGGER = logging.getLogger(__name__)
 _SKILL_MANAGER_INSTANCE_LOCK = (
@@ -75,27 +68,27 @@ class SkillMdParser:
         if not match:
             _LOGGER.warning(
                 "Skill '%s' was not loaded because SKILL.md is missing YAML "
-                "frontmatter. Fix or reinstall the Skill in Extended OpenAI > Skills. "
+                "frontmatter. Fix the installed file and reload Skills. "
                 "File: %s",
                 skill_path.parent.name,
                 skill_path,
             )
             return None
         try:
-            frontmatter = yaml.safe_load(match.group(1))
+            frontmatter = load_unicode_yaml(match.group(1))
         except yaml.YAMLError as err:
             log_handled_failure(
                 _LOGGER,
                 f"Skill '{skill_path.parent.name}' was not loaded because its "
-                "SKILL.md YAML frontmatter is invalid. Fix or reinstall the Skill "
-                f"in Extended OpenAI > Skills. File: {skill_path}",
+                "SKILL.md YAML frontmatter is invalid. Fix the installed file and "
+                f"reload Skills. File: {skill_path}",
                 err,
             )
             return None
         if not isinstance(frontmatter, dict):
             _LOGGER.warning(
                 "Skill '%s' was not loaded because its SKILL.md frontmatter is not a "
-                "mapping. Fix or reinstall the Skill in Extended OpenAI > Skills. "
+                "mapping. Fix the installed file and reload Skills. "
                 "File: %s",
                 skill_path.parent.name,
                 skill_path,
@@ -105,8 +98,8 @@ class SkillMdParser:
         if not description:
             _LOGGER.warning(
                 "Skill '%s' was not loaded because SKILL.md is missing the required "
-                "'description' field. Fix or reinstall the Skill in Extended OpenAI "
-                "> Skills. File: %s",
+                "'description' field. Fix the installed file and reload Skills. "
+                "File: %s",
                 skill_path.parent.name,
                 skill_path,
             )
@@ -123,8 +116,8 @@ class SkillMdParser:
                 _LOGGER,
                 f"Skill '{skill_path.parent.name}' was not loaded because its "
                 "metadata is invalid. Check the name (1-64 characters) and "
-                "description (text, at most 1024 characters) in Extended OpenAI "
-                f"> Skills. File: {skill_path}",
+                "description (text, at most 1024 characters), then reload Skills. "
+                f"File: {skill_path}",
                 err,
             )
             return None
@@ -139,7 +132,7 @@ class SkillMdParser:
 
 
 class SkillManager:
-    """Own installed-Skill discovery, publication, removal, and canonical reads.
+    """Own discovery, legacy file recovery, and canonical reads for installed Skills.
 
     The shared filesystem lock protects only the global installed-Skill resource.
     Per-agent configuration and lifecycle operations remain under the existing agent
@@ -206,7 +199,7 @@ class SkillManager:
 
     @property
     def staging_dir(self) -> Path:
-        """Return a staging directory outside the installed-Skills scan root."""
+        """Return the historical staging directory outside the installed-Skills scan root."""
         skills_dir = self.user_skills_dir
         return skills_dir.parent / f".{skills_dir.name}.staging"
 
@@ -287,100 +280,9 @@ class SkillManager:
 
     @asynccontextmanager
     async def async_skill_read(self) -> AsyncIterator[None]:
-        """Prevent a canonical Skill read from crossing publish/remove."""
+        """Prevent a canonical Skill read from overlapping recovery or discovery."""
         async with self._filesystem_lock:
             yield
-
-    async def async_publish_staged_skill(
-        self,
-        skill_name: str,
-        staged_dir: Path,
-        *,
-        download: SkillDownload | None = None,
-    ) -> None:
-        """Publish a completed staged Skill and refresh the catalogue atomically."""
-        self._validate_direct_skill_name(skill_name)
-        staging_root = self.staging_dir.resolve()
-        staged = staged_dir.resolve()
-        if download is not None and download.directory.resolve() != staged:
-            raise HomeAssistantError("Skill download does not own the staged directory")
-        if staged == staging_root or not staged.is_relative_to(staging_root):
-            raise HomeAssistantError(
-                "Skill staging path is outside the managed staging area"
-            )
-        target = self.user_skills_dir / skill_name
-        backup = self.staging_dir / f"{skill_name}.backup-{uuid4().hex}"
-
-        async def publish_locked() -> None:
-            await self._hass.async_add_executor_job(
-                recover_transactions, self.staging_dir, self.user_skills_dir
-            )
-            journal = await self._hass.async_add_executor_job(
-                prepare_transaction, self.staging_dir, target, backup, staged
-            )
-            try:
-                if download is not None:
-                    await self._hass.async_add_executor_job(download.hand_off)
-                await self._hass.async_add_executor_job(
-                    self._activate_staged_skill_sync, staged, target, backup
-                )
-                loaded = await self._async_discover_skills_locked()
-                if skill_name not in loaded:
-                    raise HomeAssistantError(
-                        f"Downloaded Skill `{skill_name}` is not a valid installed Skill"
-                    )
-                await self._hass.async_add_executor_job(commit_transaction, journal)
-            except BaseException:
-                await self._hass.async_add_executor_job(
-                    recover_transaction, journal, self.user_skills_dir
-                )
-                self._skills = await self._async_discover_skills_locked()
-                raise
-            self._skills = loaded
-            await self._hass.async_add_executor_job(
-                recover_transaction, journal, self.user_skills_dir
-            )
-
-        await self._async_run_locked(publish_locked)
-
-    @staticmethod
-    def _validate_direct_skill_name(skill_name: str) -> None:
-        if (
-            not skill_name
-            or skill_name in {".", ".."}
-            or Path(skill_name).name != skill_name
-        ):
-            raise HomeAssistantError("Invalid Skill name")
-
-    @staticmethod
-    def _activate_staged_skill_sync(staged: Path, target: Path, backup: Path) -> None:
-        """Publish using same-filesystem renames with rollback."""
-        target.parent.mkdir(parents=True, exist_ok=True)
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        SkillManager._remove_path_sync(backup)
-        had_existing = target.exists()
-        if had_existing:
-            target.rename(backup)
-        try:
-            staged.rename(target)
-        except BaseException:
-            if had_existing and backup.exists() and not target.exists():
-                backup.rename(target)
-            raise
-
-    @staticmethod
-    def _rollback_staged_skill_sync(target: Path, backup: Path) -> None:
-        SkillManager._remove_path_sync(target)
-        if backup.exists():
-            backup.rename(target)
-
-    @staticmethod
-    def _remove_path_sync(path: Path) -> None:
-        if path.is_dir():
-            shutil.rmtree(path, ignore_errors=True)
-        else:
-            with suppress(FileNotFoundError):
-                path.unlink()
 
     def _iter_skill_texts_sync(self, skills_dir: Path) -> Iterator[tuple[Path, str]]:
         """Yield bounded text from published, non-temporary Skill paths."""
@@ -390,7 +292,7 @@ class SkillManager:
         if not skills_dir.is_dir():
             _LOGGER.warning(
                 "The configured Skills path is not a directory, so installed Skills "
-                "cannot be loaded. Check the Skills path in Extended OpenAI > Skills: %s",
+                "cannot be loaded. Check the installed Skills directory: %s",
                 skills_dir,
             )
             return
@@ -421,8 +323,7 @@ class SkillManager:
                 log_handled_failure(
                     _LOGGER,
                     f"Skill '{skill_dir.name}' could not be read and was skipped. "
-                    "Check the Skill file or reinstall it in Extended OpenAI "
-                    f"> Skills. File: {skill_file}",
+                    f"Check the installed file and reload Skills. File: {skill_file}",
                     err,
                 )
             else:

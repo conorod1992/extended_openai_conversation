@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import logging
 import re
 from typing import Any
 from urllib.parse import unquote
 
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .capabilities import resolve_effective_capabilities
@@ -31,7 +32,9 @@ from .const import (
     CONF_MEMORY_ENABLED,
     CONF_REASONING_EFFORT,
     CONF_SERVICE_TIER,
+    CONF_SKILLS,
     CONF_TEMPERATURE,
+    CONF_TEMPORARY_MEMORY,
     CONF_TOP_P,
     CONF_WEB_SEARCH,
     CONF_WEB_SEARCH_CONTEXT,
@@ -40,17 +43,29 @@ from .const import (
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
     DEFAULT_CHAT_MODEL,
     DEFAULT_MAX_TOKENS,
+    DEFAULT_PERSISTED_GUEST_MODE_ENABLED,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_SERVICE_TIER,
     DEFAULT_TEMPERATURE,
+    DEFAULT_TEMPORARY_MEMORY,
     DEFAULT_TOP_P,
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_CONTEXT,
+    DOMAIN,
+    TEMPORARY_MEMORY_OFF,
 )
 from .conversation_archive import archive_tools
 from .conversation_lifecycle import conversation_lifecycle_active
-from .guest_mode import GuestCapabilityPolicy, guest_mode_restrict_tool
-from .ha_llm_tools import is_ha_tool
+from .function_tool_policy import (
+    CONTINUE_CONVERSATION_TOOL_NAME,
+    runtime_function_tool_name,
+)
+from .guest_mode import (
+    GUEST_MODE_RESTRICT_TOOL_NAME,
+    GuestCapabilityPolicy,
+    guest_mode_restrict_tool,
+)
+from .ha_llm_tools import ToolSnapshot, is_ha_tool
 from .helpers import effective_api_provider, is_native_openai_connection
 from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
 from .memory import MEMORY_TOOL_NAMES, memory_tools
@@ -66,7 +81,7 @@ from .model_capabilities import (
     select_api_path,
     validate_reasoning_effort,
 )
-from .model_payload import prepare_model_function_tools
+from .model_payload import count_model_function_tools, prepare_model_function_tools
 from .temporary_memory import TEMPORARY_MEMORY_TOOL_NAMES, temporary_memory_tools
 
 _LOGGER = logging.getLogger(__name__)
@@ -94,7 +109,6 @@ _CURRENT_TURN_REASONING_MODELS = frozenset(
     }
 )
 
-CONTINUE_CONVERSATION_TOOL_NAME = "set_continue_conversation"
 CONTINUE_CONVERSATION_TOOL = {
     "spec": {
         "name": CONTINUE_CONVERSATION_TOOL_NAME,
@@ -120,21 +134,27 @@ CONTINUE_CONVERSATION_TOOL = {
     }
 }
 
-START_FRESH_CONVERSATION_TOOL_NAME = "start_fresh_conversation"
+START_FRESH_CONVERSATION_TOOL_NAME = runtime_function_tool_name(
+    "conversation_lifecycle", "start_fresh"
+)
 
 
-def provider_tool_limit(provider: str | None, api_mode: str) -> int | None:
-    """Return only a known applicable provider/API tool-array limit."""
-    return (
-        128 if provider == "azure" and api_mode == API_MODE_CHAT_COMPLETIONS else None
+CHAT_COMPLETIONS_TOOL_LIMIT = 128
+
+
+def has_chat_completions_tool_limit(
+    entry_data: Mapping[str, Any], *, client: Any = None
+) -> bool:
+    """Identify endpoints whose Chat Completions requests have a known cap."""
+    return effective_api_provider(
+        entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+    ) == "azure" or is_native_openai_connection(
+        entry_data, client=client, allow_query=True
     )
 
 
-def validate_provider_tool_count(
-    count: int, provider: str | None, api_mode: str
-) -> None:
+def validate_provider_tool_count(count: int, limit: int | None) -> None:
     """Enforce the same provider constraint before saves and live dispatch."""
-    limit = provider_tool_limit(provider, api_mode)
     if limit is not None and count > limit:
         raise HomeAssistantError(f"Provider request exceeds the {limit}-tool limit")
 
@@ -192,6 +212,10 @@ class ProviderRequestSnapshot:
     structured_outputs: bool = False
     reasoning_items_supported: bool = False
     reasoning_current_turn_only: bool = False
+    tool_limit: int | None = None
+    model_capabilities: Mapping[str, Any] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 def canonical_json(value: Any) -> str:
@@ -543,10 +567,15 @@ def auxiliary_output_token_limit(
     entry_data: Mapping[str, Any],
     *,
     client: Any = None,
+    model_capabilities: Mapping[str, Any] | None = None,
 ) -> tuple[str, int]:
     """Select a small auxiliary request's token field using live provider rules."""
-    capabilities = request_model_capabilities(
-        {**options, CONF_CHAT_MODEL: model}, entry_data, client=client
+    capabilities = (
+        model_capabilities
+        if model_capabilities is not None
+        else request_model_capabilities(
+            {**options, CONF_CHAT_MODEL: model}, entry_data, client=client
+        )
     )
     with model_capability_snapshot(model, capabilities):
         try:
@@ -602,10 +631,13 @@ def context_summary_request_settings(
     entry_data: Mapping[str, Any],
     *,
     retry: bool = False,
+    model_capabilities: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Bound auxiliary output deliberately, including the model's hidden reasoning."""
-    capabilities = request_model_capabilities(
-        {**options, CONF_CHAT_MODEL: model}, entry_data
+    capabilities = (
+        model_capabilities
+        if model_capabilities is not None
+        else request_model_capabilities({**options, CONF_CHAT_MODEL: model}, entry_data)
     )
     with model_capability_snapshot(model, capabilities):
         effort = None
@@ -624,7 +656,7 @@ def context_summary_request_settings(
             limit * (2 if retry else 1), capabilities["limits"]["max_output_tokens"]
         )
         field, value = auxiliary_output_token_limit(
-            model, api_mode, limit, options, entry_data
+            model, api_mode, limit, options, entry_data, model_capabilities=capabilities
         )
     kwargs: dict[str, Any] = {field: value}
     if effort is not None:
@@ -656,13 +688,10 @@ def build_provider_request_snapshot(
     options = dict(options)
     normalize_agent_numeric_values(options)
     model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
-    if (
-        options.get("azure_model")
-        and effective_api_provider(
-            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-        )
-        != "azure"
-    ):
+    provider = effective_api_provider(
+        entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+    )
+    if options.get("azure_model") and provider != "azure":
         raise HomeAssistantError(
             "Azure underlying model is only supported with Azure; clear the setting for this provider."
         )
@@ -781,6 +810,12 @@ def build_provider_request_snapshot(
         api_kwargs,
         (provider_tool,) if provider_tool is not None else (),
         capabilities["structured_outputs"],
+        tool_limit=(
+            CHAT_COMPLETIONS_TOOL_LIMIT
+            if api_mode == API_MODE_CHAT_COMPLETIONS
+            and has_chat_completions_tool_limit(entry_data, client=client)
+            else None
+        ),
         reasoning_items_supported=reasoning_items_supported,
         reasoning_current_turn_only=(
             api_mode == API_MODE_RESPONSES
@@ -789,6 +824,7 @@ def build_provider_request_snapshot(
             and reasoning_context_model in _CURRENT_TURN_REASONING_MODELS
             and is_native_openai_connection(entry_data, client=client)
         ),
+        model_capabilities=capabilities,
     )
 
 
@@ -800,6 +836,7 @@ def assemble_integration_function_tools(
     temporary_scope_available: bool,
     knowledge_available: bool,
     archive_available: bool = True,
+    archive_session_available: bool = True,
     guest_policy: GuestCapabilityPolicy | None = None,
     lifecycle_active: bool | None = None,
 ) -> list[dict[str, Any]]:
@@ -865,17 +902,19 @@ def assemble_integration_function_tools(
         and options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
         and guest_policy.archive_access
     ):
-        configured_archive_tools = archive_tools()
-        if not options.get(
+        search_available = options.get(
             CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
             DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
-        ):
-            configured_archive_tools = [
-                tool
-                for tool in configured_archive_tools
-                if tool["function"]["operation"] not in {"search", "get"}
-            ]
-        result.extend(configured_archive_tools)
+        )
+        result.extend(
+            tool
+            for tool in archive_tools()
+            if (
+                search_available
+                if tool["function"]["operation"] in {"search", "get"}
+                else archive_session_available
+            )
+        )
     if knowledge_available and guest_policy.knowledge_access:
         conflicts = configured_names & KNOWLEDGE_TOOL_NAMES
         if conflicts:
@@ -884,25 +923,82 @@ def assemble_integration_function_tools(
                 + ", ".join(sorted(conflicts))
             )
         result.extend(knowledge_tools())
-    if options.get(CONF_GUEST_MODE_ENABLED, False):
-        if "guest_mode_restrict" in configured_names:
+    if options.get(CONF_GUEST_MODE_ENABLED, DEFAULT_PERSISTED_GUEST_MODE_ENABLED):
+        if GUEST_MODE_RESTRICT_TOOL_NAME in configured_names:
             raise HomeAssistantError(
-                "Reserved Guest Mode tool name configured: guest_mode_restrict"
+                f"Reserved Guest Mode tool name configured: {GUEST_MODE_RESTRICT_TOOL_NAME}"
             )
         result.append(guest_mode_restrict_tool())
     return result
 
 
-def validate_runtime_readiness(
-    options: Mapping[str, Any], entry_data: Mapping[str, Any]
-) -> ProviderRequestSnapshot:
-    """Validate the deterministic, guaranteed initial Conversation request.
+async def async_capacity_ha_snapshot(
+    hass: HomeAssistant,
+    config: Mapping[str, Any],
+    user_id: str | None,
+) -> ToolSnapshot | None:
+    """Resolve eligible HA definitions when a management edit can hit a cap."""
+    import yaml
 
-    Uses the production assemblers with no loaded groups, external HA-tool
-    discovery, installed Skills, retained-data scope, or Knowledge catalogue.
-    Those request-time capabilities can still exceed a limit later; the runtime
-    and Group loader retain their own checks. Existing damaged definitions use
-    the established repair projection, never a rewritten persistence payload.
+    from homeassistant.core import Context
+
+    from .agent_config import parse_configured_function_tools
+    from .ha_llm_tools import async_discover
+    from .management_function_quarantine import (
+        inspect_function_groups,
+        inspect_function_tools,
+    )
+
+    if config.get("api_mode") == API_MODE_RESPONSES:
+        return None
+    try:
+        configured = parse_configured_function_tools(config)
+    except yaml.YAMLError:
+        # Unreadable definitions have no discoverable HA references.
+        return None
+    if not isinstance(configured, list) or not any(
+        isinstance(tool, Mapping) and is_ha_tool(tool) for tool in configured
+    ):
+        return None
+    tools = inspect_function_tools(config)
+    groups = inspect_function_groups(config.get(CONF_FUNCTION_GROUPS, []), tools)
+    references = ha_tool_discovery_references(tools, groups, config)
+    if not references:
+        return None
+
+    from homeassistant.helpers import llm
+
+    return await async_discover(
+        hass,
+        llm.LLMContext(
+            platform=DOMAIN,
+            context=Context(user_id=user_id),
+            language=hass.config.language,
+            assistant="conversation",
+            device_id=None,
+        ),
+        references,
+    )
+
+
+def validate_runtime_readiness(
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+    *,
+    model_capabilities: Mapping[str, Any] | None = None,
+    client: Any = None,
+    ha_snapshot: ToolSnapshot | None = None,
+    previous_model_capabilities: Mapping[str, Any] | None = None,
+    reserve_ha_tools: bool = False,
+) -> ProviderRequestSnapshot:
+    """Validate the initial Conversation catalogue for supported request scopes.
+
+    Reserve enabled built-ins for a request with an eligible owner and data.
+    Dynamically available HA tools are counted when a catalogue is supplied.
+    When imposing a new cap across callers, reserve slots for eligible configured
+    HA references since no one discovery context represents every caller.
+    Loaded groups and later availability changes still need live validation.
+    Existing damaged definitions use the established repair projection.
     """
     from .agent_config import (
         configured_function_tools_from_data,
@@ -910,22 +1006,27 @@ def validate_runtime_readiness(
     )
     from .const import CONF_CONTINUE_CONVERSATION, CONTINUE_CONVERSATION_CONDITIONAL
     from .function_configuration_repair import function_configuration_repair_state
-    from .function_groups import ToolRuntimeAvailability, assemble_function_tools
-    from .skill_availability import is_canonical_skill_loader
-
-    snapshot = build_provider_request_snapshot(
-        options, entry_data, tools_required=conversation_tools_required(options)
+    from .function_groups import (
+        ToolRuntimeAvailability,
+        admit_function_group_loader,
+        assemble_function_tools,
     )
-    # Unbounded providers need no catalogue traversal at mutation boundaries.
-    if (
-        provider_tool_limit(
-            effective_api_provider(
-                entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-            ),
-            snapshot.api_mode,
-        )
-        is None
-    ):
+    from .skill_availability import (
+        is_canonical_skill_loader,
+        selected_installed_skill_names,
+    )
+    from .skills import SkillManager
+
+    tools_required = conversation_tools_required(options)
+    snapshot = build_provider_request_snapshot(
+        options,
+        entry_data,
+        tools_required=tools_required,
+        model_capabilities=model_capabilities,
+        client=client,
+    )
+    # Routes without a known tool limit need no catalogue traversal here.
+    if snapshot.tool_limit is None:
         return snapshot
     state = function_configuration_repair_state(dict(options))
     configured = state.valid if state else configured_function_tools_from_data(options)
@@ -935,10 +1036,47 @@ def validate_runtime_readiness(
         else validate_function_groups(options.get(CONF_FUNCTION_GROUPS, []), configured)
     )
     budget_available = function_call_budget_available(options)
+    reserve_configured_ha_tools = reserve_ha_tools
+    if ha_snapshot is not None:
+        configured = ha_snapshot.project(configured)
+    elif (
+        previous_model_capabilities is not None
+        and budget_available
+        and any(is_ha_tool(tool) for tool in configured)
+    ):
+        try:
+            previous = build_provider_request_snapshot(
+                options,
+                entry_data,
+                tools_required=tools_required,
+                model_capabilities=previous_model_capabilities,
+                client=client,
+            )
+        except HomeAssistantError:
+            pass
+        else:
+            if previous.tool_limit is None:
+                reserve_configured_ha_tools = True
+    if reserve_configured_ha_tools:
+        configured = [
+            {**tool, "ha_available": True} if is_ha_tool(tool) else tool
+            for tool in configured
+        ]
+
+    selected_skills = options.get(CONF_SKILLS, []) or []
+    manager = SkillManager.get_loaded_instance() if selected_skills else None
+    skill_available = manager is not None and bool(
+        selected_installed_skill_names(
+            selected_skills, (skill.name for skill in manager.get_all_skills())
+        )
+    )
 
     def guaranteed(tool: dict[str, Any]) -> bool:
-        function_type = tool.get("function", {}).get("type")
-        return function_type != "ha_llm" and not is_canonical_skill_loader(tool)
+        if is_ha_tool(tool):
+            return (
+                ha_snapshot is not None or reserve_configured_ha_tools
+            ) and tool.get("ha_available") is True
+        return not is_canonical_skill_loader(tool) or skill_available
 
     assembly = assemble_function_tools(
         configured,
@@ -956,22 +1094,26 @@ def validate_runtime_readiness(
             assemble_integration_function_tools(
                 options,
                 {tool["spec"]["name"] for tool in configured},
-                memory_scope_available=False,
-                temporary_scope_available=False,
-                knowledge_available=False,
+                memory_scope_available=True,
+                temporary_scope_available=(
+                    options.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
+                    != TEMPORARY_MEMORY_OFF
+                ),
+                knowledge_available=bool(options.get(CONF_KNOWLEDGE_ENABLED)),
                 lifecycle_active=True,
             )
         )
-    tools = request_function_tools(
-        tools,
-        conditional_continue=options.get(CONF_CONTINUE_CONVERSATION)
-        == CONTINUE_CONVERSATION_CONDITIONAL,
+    conditional_continue = (
+        options.get(CONF_CONTINUE_CONVERSATION) == CONTINUE_CONVERSATION_CONDITIONAL
     )
+    tools = admit_function_group_loader(
+        tools,
+        snapshot.tool_limit,
+        extra_tool_count=int(conditional_continue) + len(snapshot.provider_tools),
+    )
+    tools = request_function_tools(tools, conditional_continue=conditional_continue)
     validate_provider_tool_count(
-        len(tools) + len(snapshot.provider_tools),
-        effective_api_provider(
-            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-        ),
-        snapshot.api_mode,
+        count_model_function_tools(tools) + len(snapshot.provider_tools),
+        snapshot.tool_limit,
     )
     return snapshot

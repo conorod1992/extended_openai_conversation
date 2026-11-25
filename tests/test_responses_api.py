@@ -630,9 +630,13 @@ async def test_function_group_loader_refreshes_tools_without_using_real_call_quo
     def tool_factory() -> list[dict[str, Any]]:
         return [reminder_tool] if loaded else [loader_tool]
 
-    def loader(groups: Any) -> dict[str, Any]:
+    def loader(
+        groups: Any, max_tools: int | None, loader_available: bool
+    ) -> dict[str, Any]:
         nonlocal loaded
         assert groups == ["reminders"]
+        assert max_tools is None
+        assert loader_available
         loaded = True
         return {"status": "success", "loaded": ["reminders"]}
 
@@ -779,7 +783,9 @@ async def test_function_group_loader_has_an_independent_hard_round_limit(hass) -
     }
     handled = 0
 
-    def loader(_groups: Any) -> dict[str, Any]:
+    def loader(
+        _groups: Any, _max_tools: int | None, _loader_available: bool
+    ) -> dict[str, Any]:
         nonlocal handled
         handled += 1
         return {"status": "error"}
@@ -1745,7 +1751,7 @@ async def test_captured_rule_punctuation_reaches_final_provider_input(
         RequestRules,
     )
     from tests.test_conversation_orchestration import _assist_fixture
-    from tests.test_request_rule_packs import captured_routing_rule
+    from tests.test_request_rule_captured_input import captured_routing_rule
     from tests.test_request_rules import MemoryStore
 
     text = "deep think why is the sky blue?"
@@ -2143,7 +2149,9 @@ async def test_reasoning_history_model_transitions(hass, mode, change, tmp_path)
             content, (conversation.ToolResultContent, conversation.SystemContent)
         )
     )
-    assert reasoning_content.native.model_dump()["encrypted_content"] == "encrypted"
+    assert (
+        reasoning_content.native.item.model_dump()["encrypted_content"] == "encrypted"
+    )
 
     entity.subentry.data = {**entity.subentry.data, CONF_CHAT_MODEL: "gpt-5-mini"}
     log.async_add_user_content(conversation.UserContent(content="Back"))
@@ -2154,6 +2162,27 @@ async def test_reasoning_history_model_transitions(hass, mode, change, tmp_path)
             "encrypted_content"
         ]
         == "encrypted"
+    )
+
+    # A different connection using the same model can consume the visible
+    # history, but cannot consume any previously retained reasoning item.
+    entity.entry.runtime_data.base_url = "https://independent.example/v1"
+    log.async_add_user_content(
+        conversation.UserContent(content="Use the new connection")
+    )
+    await entity._async_handle_chat_log(
+        log,
+        [],
+        [],
+        request_options={
+            **entity.subentry.data,
+            CONF_API_MODE: API_MODE_RESPONSES,
+            CONF_WEB_SEARCH: False,
+        },
+    )
+    assert not any(item["type"] == "reasoning" for item in requests[3]["input"])
+    assert any(
+        item.get("content") == "Historical explanation" for item in requests[3]["input"]
     )
 
 

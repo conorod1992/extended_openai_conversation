@@ -9,13 +9,13 @@ from custom_components.extended_openai_conversation_responses.tool_replay_guard 
 from tests.test_function_tool_error_recovery import _call, _chat_log, _entity, _retain_calls, _result, _tool
 
 
-@pytest.mark.parametrize("parallel", [False, True])
-async def test_recovery_records_retained_calls_after_real_dispatch(hass, parallel):
+@pytest.mark.parametrize("multi_call", [False, True])
+async def test_recovery_records_retained_calls_after_real_dispatch(hass, multi_call):
     entity = _entity(hass)
     chat_log = _chat_log(hass)
     calls = [_call("first", "effect", {"amount": 1})]
     tools = [_tool("effect", parameters={"type": "object", "properties": {"amount": {"type": "integer"}}, "required": ["amount"]})]
-    if parallel:
+    if multi_call:
         tools[0]["function"] = {"type": "memory", "operation": "list"}
         calls.append(_call("second", "effect", {"amount": 2}))
     effects = []
@@ -35,10 +35,21 @@ async def test_recovery_records_retained_calls_after_real_dispatch(hass, paralle
         retry = _call("fresh-id", call.tool_name, call.tool_args)
         assert await async_was_unacknowledged_equivalent(entity, chat_log, retry)
     retry = _call("retry", "effect", {"amount": 1})
-    _retain_calls(chat_log, [retry])
+    # A refused replay must stop the entire provider batch before even an
+    # otherwise valid earlier call can execute.
+    pending = [retry]
+    if multi_call:
+        tools.append(_tool("fresh_action"))
+        pending.insert(0, _call("fresh", "fresh_action"))
+    _retain_calls(chat_log, pending)
     from homeassistant.exceptions import HomeAssistantError
+    budget = FunctionCallBudget(10)
     with pytest.raises(HomeAssistantError, match="not acknowledged"):
-        await async_execute_tool_exchange(entity, chat_log, [retry], tools, FunctionCallBudget(10), None, [], recovery_state=ToolRecoveryState(enabled=True))
+        await async_execute_tool_exchange(
+            entity, chat_log, pending, tools, budget, None, [],
+            recovery_state=ToolRecoveryState(enabled=True),
+        )
+    assert budget.used == 0
     assert len(effects) == len(calls)
 
 

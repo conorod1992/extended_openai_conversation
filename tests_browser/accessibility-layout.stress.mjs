@@ -122,7 +122,8 @@ test("390px save bars and validation dialogs complete critical writes without pa
 
   await page.goto(fixtureUrl("data-memory/knowledge"));
   await panel.locator("#add-source").click();
-  await panel.locator("#knowledge-title").fill("Narrow source ".repeat(12));
+  const sourceTitle = "Narrow source ".repeat(8) + "for test"; // 120 characters, the title limit.
+  await panel.locator("#knowledge-title").fill(sourceTitle);
   await panel.locator("#knowledge-content").fill("Narrow persisted context");
   await page.evaluate(() => {
     const harness = window.browserHarness, original = harness.hass.callWS.bind(harness.hass);
@@ -145,7 +146,7 @@ test("390px save bars and validation dialogs complete critical writes without pa
   await retry.click();
   await expect(panel.locator("#knowledge-dialog")).not.toBeVisible();
   await page.goto(fixtureUrl("data-memory/knowledge"));
-  await expect(panel.locator("[data-source-id]")).toContainText("Narrow source");
+  await expect(panel.locator("[data-source-id]")).toContainText(sourceTitle);
   await overflow();
   await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
   await expect(panel.locator('input[type="file"]')).toBeAttached();

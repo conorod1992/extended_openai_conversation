@@ -365,7 +365,7 @@ async def test_local_run_counts_use_recorded_days_after_timezone_change(
     await hass.config.async_set_time_zone("UTC")
     if restore != "none":
         entry, subentry = agent.entry, agent.subentry
-        document = transfer._new_transfer_document(entry, subentry, "custom")
+        document = transfer._new_transfer_document(entry, subentry)
         document["sections"][transfer.SECTION_USAGE] = saved
         result = await transfer.async_restore_transfer(hass, entry, subentry, document)
         assert result["status"] == "restored"
@@ -482,6 +482,39 @@ async def test_last_response_poll_hides_expired_detail_without_new_usage(hass, f
     assert entity.extra_state_attributes == {}
     assert usage.totals.total_tokens == 10
     assert await hass.config_entries.async_unload(agent.entry.entry_id)
+
+
+@pytest.mark.parametrize(
+    "model", ["a" * 16600, "界" * 5600], ids=["ascii", "multibyte"]
+)
+async def test_last_response_keeps_recorder_counters_with_oversized_labels(hass, model):
+    from homeassistant.components.recorder import history
+
+    agent = await _sensor_agent(hass, memory_mode="off", usage_run_retention_days=7)
+    entities = await _enabled_usage_entities(hass, agent)
+    usage = entities["usage"]._usage
+    entity_id = entities["last_response_usage"].entity_id
+    await hass.async_start()
+    async with usage.async_run():
+        await usage.async_record_request(
+            model=model,
+            provider="openai",
+            successful=True,
+            usage=RequestUsage(input_tokens=17, output_tokens=39, total_tokens=56),
+        )
+    await hass.async_block_till_done()
+    await async_wait_recording_done(hass)
+
+    latest = await hass.async_add_executor_job(
+        history.get_last_state_changes, hass, 1, entity_id
+    )
+    recorded = latest[entity_id][-1]
+    assert recorded.state == "56"
+    assert recorded.attributes["providers"] == ["openai"]
+    assert recorded.attributes["api_request_count"] == 1
+    assert recorded.attributes["input"] == 17
+    assert recorded.attributes["success"] is True
+    assert usage.latest_run.models == [model]
 
 
 @pytest.mark.parametrize("checkpoint_total", [0, 503])
@@ -862,15 +895,17 @@ async def test_usage_aggregate_repair_preserves_recorder(hass, freezer, damaged_
     assert "storage repair" in summary["storage_warning"]
     chart = usage_daily_page(manager, start_date="2026-06-30", end_date="2026-06-30")
     assert chart["storage_warning"] == summary["storage_warning"]
-    assert hass.states.get(ids["usage"]).state == "85"
-    assert {hass.states.get(ids[name]).state for name in ("usage_today", "usage_month")} == {
+    assert {hass.states.get(entity_id).state for entity_id in ids.values()} == {
         "unavailable" if damaged_store == "daily" else "85"
     }
     interim = await _latest_usage_statistics(hass, freezer, start, 10, {"usage": ids["usage"]})
     assert {row["sum"] for row in interim.values()} == {85}
     await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=20))
     expected = 85 if damaged_store == "daily" else 105
-    assert hass.states.get(ids["usage"]).state == str(expected)
+    expected_sensor = "unavailable" if damaged_store == "daily" else str(expected)
+    assert {hass.states.get(entity_id).state for entity_id in ids.values()} == {
+        expected_sensor
+    }
     await manager.async_shutdown()
     await _unload_recorded_usage(hass, key, manager)
     assert await store.async_load() == damaged
@@ -878,9 +913,8 @@ async def test_usage_aggregate_repair_preserves_recorder(hass, freezer, damaged_
     await hass.async_block_till_done()
     manager = await async_get_usage(hass, *key)
     assert manager.totals.total_tokens == expected
-    assert hass.states.get(ids["usage"]).state == str(expected)
-    assert {hass.states.get(ids[name]).state for name in ("usage_today", "usage_month")} == {
-        "unavailable" if damaged_store == "daily" else "105"
+    assert {hass.states.get(entity_id).state for entity_id in ids.values()} == {
+        expected_sensor
     }
     midnight = start + timedelta(minutes=20, seconds=1)
     freezer.move_to(midnight)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -36,20 +35,15 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     RequestRuleRuntime,
     RequestRules,
     RequestRuleStore,
-    _assign_missing_result_step_ids,
-    _bounded_function_result,
     _MatchCursor,
-    _validate_result_dependencies,
     async_call_active_function,
     async_evaluate_rule,
     canonical_action_signature,
     normalize_text,
     request_rule_session_id,
-    resolve_result_values,
     validate_rule,
     validate_rule_groups,
     validate_wording_groups,
-    _ACTIVE_RULE_ACTION,
 )
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.typing import UNDEFINED
@@ -126,7 +120,7 @@ async def test_direct_match_skips_previously_excluded_rule_ids(fuzzy: bool) -> N
     assert match.rule["id"] == fallback["id"]
 
 
-def test_rule_group_metadata_and_result_step_id_assignment_are_stable() -> None:
+def test_rule_group_metadata_is_stable() -> None:
     assert validate_rule_groups([{"id": "rooms", "name": "Rooms"}]) == [
         {"id": "rooms", "name": "Rooms"}
     ]
@@ -134,25 +128,6 @@ def test_rule_group_metadata_and_result_step_id_assignment_are_stable() -> None:
         validate_rule_groups(
             [{"id": "rooms", "name": "Rooms"}, {"id": "rooms", "name": "Other"}]
         )
-
-    rule = {
-        "action": {
-            "actions": [
-                {"type": "function", "result_alias": "reading"},
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"result_alias": "status"},
-                },
-                {"type": "function", "name": "no-result"},
-            ]
-        }
-    }
-    assigned = _assign_missing_result_step_ids(rule)
-
-    assert rule["action"]["actions"][0].get("step_id") is None
-    assert len(assigned["action"]["actions"][0]["step_id"]) == 32
-    assert len(assigned["action"]["actions"][1]["data"]["step_id"]) == 32
-    assert "step_id" not in assigned["action"]["actions"][2]
 
 
 async def test_only_when_uses_first_eligible_text_match_and_preview_trace(
@@ -469,67 +444,112 @@ async def test_local_continue_to_ai_success_and_failure(hass) -> None:
     assert failed.response == "Failed safely"
 
 
-async def test_continue_matching_runs_each_local_rule_once_and_preview_is_safe(
-    hass,
-) -> None:
+async def test_first_local_handoff_uses_the_retained_route_and_captured_input(hass):
+    rule = local_rule("Prepare then ask", ["ask {question}"], "sentence_pattern")
+    rule.update(ai_input_mode="capture", ai_input_capture="question")
+    rule["action"]["continue_to_ai"] = True
+    retained = {CONF_CHAT_MODEL: "gpt-4.1"}
+    options = {CONF_CHAT_MODEL: "gpt-4.1-mini", "api_mode": "chat_completions"}
+    runtime = RequestRuleRuntime()
+    runtime.set("session", retained)
+    rules = await manager(rule, local_rule("Lower priority", ["ask why?"], order=1))
+    hass.services = FakeServices()
+    outcome = await async_evaluate_rule(
+        hass, rules, runtime, "ask why?", "session", request_options=options,
+    )
+    assert outcome.successful and not outcome.consume
+    assert outcome.provider_input == "why?"
+    assert outcome.request_override is None
+    assert len(hass.services.calls) == 1
+    effective = runtime.effective_options(options, "session")
+    wire = build_provider_request_snapshot(effective, {}, tools_required=False)
+    assert wire.api_kwargs["model"] == "gpt-4.1"
+    assert runtime.peek("session") == retained
+
+
+async def test_first_eligible_rule_runs_once_and_preview_is_safe(hass) -> None:
     from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
         async_request_rule_match_preview,
     )
 
     first = local_rule("First", phrases=["hello"])
-    first["continue_matching"] = True
     second = local_rule("Second", phrases=["hello"], order=1)
-    second["continue_matching"] = True
-    third = local_rule("Third", phrases=["hello"], order=2)
-    rules = await manager(first, second, third)
+    rules = await manager(first, second)
     services = FakeServices()
     hass.services = services
 
     preview = await async_request_rule_match_preview(hass, rules, "hello")
-    assert [item["rule"]["name"] for item in preview["matched_rules"]] == [
-        "First",
-        "Second",
-        "Third",
-    ]
-    assert [item["status"] for item in preview["matched_rules"]] == [
-        "conditional",
-        "conditional",
-        "conditional",
-    ]
-    assert preview["conditional"] is True
-    assert all(item["would_do"]["conditional"] for item in preview["matched_rules"])
-    assert all(item["ai_input"] is None for item in preview["matched_rules"])
+    assert [item["rule"]["name"] for item in preview["matched_rules"]] == ["First"]
+    assert preview["matched_rules"][0]["status"] == "stopped"
     assert services.calls == []
 
     outcome = await async_evaluate_rule(
         hass, rules, RequestRuleRuntime(), "hello", "session"
     )
-    assert outcome is not None and outcome.match.rule["name"] == "Third"
+    assert outcome is not None and outcome.match.rule["name"] == "First"
     assert outcome.consume and outcome.successful
-    assert len(services.calls) == 3
+    assert len(services.calls) == 1
 
 
-async def test_continue_matching_defaults_off_and_legacy_rules_migrate() -> None:
+def test_retired_continue_matching_is_only_retained_for_repair() -> None:
     rule = local_rule()
-    assert validate_rule(rule)["continue_matching"] is False
-    rule["continue_matching"] = "yes"
+    for flag in (False, True):
+        raw = {**rule, "continue_matching": flag}
+        if flag:
+            with pytest.raises(ValueError, match="Continue matching was removed"):
+                validate_rule(raw)
+        else:
+            assert "continue_matching" not in validate_rule(raw)
+        raw["action"] = {**raw["action"], "continue_to_ai": True}
+        assert "continue_matching" not in validate_rule(raw)
     with pytest.raises(ValueError, match="continue_matching"):
-        validate_rule(rule)
+        validate_rule({**rule, "continue_matching": "yes"})
 
 
-async def test_continue_matching_persists_and_round_trips_backup() -> None:
-    original = local_rule("First", phrases=["hello"])
-    original["continue_matching"] = True
-    source = await manager(original)
+async def test_legacy_matching_rule_round_trips_and_blocks_until_repaired(hass) -> None:
+    from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
+        async_request_rule_match_preview,
+    )
+
+    legacy = local_rule("First", phrases=["hello"])
+    legacy["continue_matching"] = True
+    later = local_rule("Second", phrases=["hello"], order=1)
+    source = await manager(legacy, later)
     backup = await source.async_backup_data()
     assert backup["rules"][0]["continue_matching"] is True
-    assert (
-        RequestRules.validate_backup_data(backup)["rules"][0]["continue_matching"]
-        is True
-    )
-    restored = RequestRules(MemoryStore())
+    restored = await manager()
     await restored.async_replace_backup(backup)
-    assert restored.snapshot()["rules"][0]["continue_matching"] is True
+    saved = restored.rule_snapshot(legacy["id"])
+    assert saved["continue_matching"] is True
+    assert restored.diagnostic_snapshot()["matching_diagnostic_ids"] == [legacy["id"]]
+
+    services = FakeServices()
+    hass.services = services
+    preview = await async_request_rule_match_preview(hass, restored, "hello")
+    assert preview["would_do"]["needs_repair"]
+    assert len(preview["matched_rules"]) == 1
+    result = await async_evaluate_rule(
+        hass, restored, RequestRuleRuntime(), "hello", "session"
+    )
+    assert result.consume and not result.successful
+    assert "Continue matching was removed" in result.response
+    assert services.calls == []
+
+    disabled = await restored.async_update(legacy["id"], {**saved, "enabled": False})
+    assert disabled["continue_matching"] is True
+    assert restored.match("hello").rule["id"] == later["id"]
+    with pytest.raises(ValueError, match="Continue matching was removed"):
+        await restored.async_update(legacy["id"], {**disabled, "enabled": True})
+
+    saved.pop("continue_matching")
+    await restored.async_update(legacy["id"], saved)
+    assert legacy["id"] not in restored.diagnostic_snapshot()["diagnostics"]
+    result = await async_evaluate_rule(
+        hass, restored, RequestRuleRuntime(), "hello", "session"
+    )
+    assert result.consume and result.successful
+    assert result.match.rule["id"] == legacy["id"]
+    assert len(services.calls) == 1
 
 
 async def test_global_drag_reorder_keeps_groups_and_compiled_patterns() -> None:
@@ -758,7 +778,7 @@ async def test_legacy_fuzzy_chain_keeps_deterministic_order() -> None:
     assert cursor.next_match() is None
 
 
-async def test_continue_matching_handoff_stops_later_rules(hass) -> None:
+async def test_legacy_terminal_handoff_loads_as_first_match(hass) -> None:
     first = local_rule("First", phrases=["hello"])
     first["continue_matching"] = True
     first["action"]["continue_to_ai"] = True
@@ -771,12 +791,12 @@ async def test_continue_matching_handoff_stops_later_rules(hass) -> None:
     )
     assert outcome is not None and not outcome.consume
     assert outcome.match.rule["name"] == "First"
+    assert "continue_matching" not in rules.rule_snapshot(first["id"])
     assert len(services.calls) == 1
 
 
-async def test_continue_matching_failure_stops_later_actions(hass) -> None:
+async def test_local_failure_stops_later_actions(hass) -> None:
     first = local_rule("First", phrases=["hello"])
-    first["continue_matching"] = True
     second = local_rule("Second", phrases=["hello"], order=1)
     rules = await manager(first, second)
     services = FakeServices(fail=True)
@@ -826,205 +846,6 @@ async def test_guest_denial_after_passing_condition_never_continues_to_ai(
     assert outcome is not None and outcome.consume and not outcome.successful
     assert outcome.response == GUEST_MODE_UNAVAILABLE
     assert hass.services.calls == []
-
-
-async def test_result_alias_validation_and_substitution() -> None:
-    rule = local_rule(phrases=["Battery of {device}"], match_type="sentence_pattern")
-    rule["action"]["actions"] = [
-        {
-            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-            "data": {
-                "function": "battery",
-                "arguments": {"device": "{{ device }}"},
-                "result_alias": "battery",
-            },
-        },
-        {
-            "action": "notify.send_message",
-            "data": {"message": "{battery.level} for {device}"},
-        },
-    ]
-    rule["action"]["success_response"] = "{battery.name} is at {battery.level}%"
-    validated = validate_rule(rule)
-    assert "step_id" not in validated["action"]["actions"][0]["data"]
-    assert validate_rule(rule) == validated
-    saved = await (await manager()).async_create(rule)
-    assert saved["action"]["actions"][0]["data"]["step_id"]
-    assert (
-        resolve_result_values(
-            validated["action"]["success_response"],
-            {"device": "tablet"},
-            {"battery": {"name": "Kitchen tablet", "level": 62}},
-        )
-        == "Kitchen tablet is at 62%"
-    )
-    assert (
-        resolve_result_values(
-            "{device} / {battery.device}",
-            {"device": "request tablet"},
-            {"battery": {"device": "returned tablet"}},
-        )
-        == "request tablet / returned tablet"
-    )
-    assert resolve_result_values("{battery}", {}, {"battery": False}) is False
-    assert resolve_result_values("{battery}", {}, {"battery": 0}) == 0
-    assert resolve_result_values(
-        {"message": "Battery: {battery.level}", "items": ["{device}", 7]},
-        {"device": "tablet"},
-        {"battery": {"level": 62}},
-    ) == {"message": "Battery: 62", "items": ["tablet", 7]}
-    assert (
-        resolve_result_values(
-            "{battery.items.0.name}", {}, {"battery": {"items": [{"name": "tablet"}]}}
-        )
-        == "tablet"
-    )
-    with pytest.raises(ValueError, match="unavailable"):
-        resolve_result_values("{battery.missing}", {}, {"battery": {}})
-    rule["action"]["actions"][0]["data"]["result_alias"] = "request"
-    with pytest.raises(ValueError, match="alias"):
-        validate_rule(rule)
-    rule["action"]["actions"][0]["data"]["result_alias"] = "bad-name"
-    with pytest.raises(ValueError, match="alias"):
-        validate_rule(rule)
-
-
-def test_result_response_formatting_preserves_native_action_values() -> None:
-    from custom_components.extended_openai_conversation_responses.request_rules import (
-        _rule_response_text,
-    )
-
-    results = {
-        "payload": {"level": 5, "enabled": True, "details": None},
-        "list": [{"value": 1}, False],
-        "flag": True,
-    }
-    assert resolve_result_values("{payload}", {}, results) is results["payload"]
-    assert resolve_result_values("{flag}", {}, results) is True
-    structured = resolve_result_values(
-        "{payload}", {}, results, stringify=_rule_response_text
-    )
-    assert _rule_response_text(structured) == (
-        '{"level": 5, "enabled": true, "details": null}'
-    )
-    embedded = resolve_result_values(
-        "Result: {payload}; flags {list} / {flag}",
-        {},
-        results,
-        stringify=_rule_response_text,
-    )
-    assert embedded == (
-        'Result: {"level": 5, "enabled": true, "details": null}; '
-        'flags [{"value": 1}, false] / true'
-    )
-    assert resolve_result_values(
-        {"native": "{flag}", "children": ["{payload}"]}, {}, results
-    ) == {"native": True, "children": [results["payload"]]}
-
-
-async def test_function_result_capture_requires_active_result_context() -> None:
-    executor = AsyncMock(return_value={"result": "completed"})
-    token = _ACTIVE_RULE_ACTION.set(
-        replace(_ACTIVE_RULE_ACTION.get(), function_executor=executor)
-    )
-    try:
-        with pytest.raises(HomeAssistantError, match="require an active Request Rule"):
-            await async_call_active_function("lookup", {}, result_alias="lookup_result")
-    finally:
-        _ACTIVE_RULE_ACTION.reset(token)
-
-    executor.assert_awaited_once_with("lookup", {})
-
-
-@pytest.mark.parametrize(
-    ("payload", "expected"),
-    [
-        ({"plain": "mapping"}, {"plain": "mapping"}),
-        ({"result": "not valid JSON"}, "not valid JSON"),
-    ],
-)
-async def test_function_capture_preserves_unwrapped_and_non_json_results(
-    payload, expected
-) -> None:
-    results = {}
-
-    async def execute(_function, _arguments):
-        return SimpleNamespace(tool_result=payload)
-
-    executor_token = _ACTIVE_RULE_ACTION.set(
-        replace(_ACTIVE_RULE_ACTION.get(), function_executor=execute)
-    )
-    results_token = _ACTIVE_RULE_ACTION.set(
-        replace(_ACTIVE_RULE_ACTION.get(), function_results=results)
-    )
-    try:
-        captured = await async_call_active_function("lookup", {}, "value")
-    finally:
-        _ACTIVE_RULE_ACTION.reset(results_token)
-        _ACTIVE_RULE_ACTION.reset(executor_token)
-
-    assert captured == expected
-    assert results["value"] == expected
-
-
-def test_result_resolution_rejects_out_of_range_list_paths() -> None:
-    with pytest.raises(ValueError, match="path .* is unavailable"):
-        resolve_result_values(
-            "{reading.items.1}", {}, {"reading": {"items": ["only item"]}}
-        )
-    with pytest.raises(ValueError, match="Function result missing is unavailable"):
-        resolve_result_values("{missing.value}", {}, {})
-
-
-async def test_result_dependencies_and_bounds() -> None:
-    rule = local_rule()
-    rule["action"]["actions"] = [
-        {
-            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-            "data": {"function": "same", "arguments": {}, "result_alias": "one"},
-        },
-        {
-            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-            "data": {
-                "function": "same",
-                "arguments": {"previous": "{one.value}"},
-                "result_alias": "two",
-            },
-        },
-    ]
-    rule["action"]["success_response"] = "{two.value}"
-    validated = await (await manager()).async_create(rule)
-    assert len(validated["action"]["actions"]) == 2
-    assert (
-        validated["action"]["actions"][0]["data"]["step_id"]
-        != validated["action"]["actions"][1]["data"]["step_id"]
-    )
-    assert (
-        validate_rule(validated)["action"]["actions"][0]["data"]["step_id"]
-        == validated["action"]["actions"][0]["data"]["step_id"]
-    )
-    duplicate = deepcopy(rule)
-    duplicate["action"]["actions"][1]["data"]["result_alias"] = "one"
-    with pytest.raises(ValueError, match="unique"):
-        validate_rule(duplicate)
-    reordered = deepcopy(rule)
-    reordered["action"]["actions"].reverse()
-    with pytest.raises(ValueError, match="earlier step"):
-        validate_rule(reordered)
-    deleted = deepcopy(rule)
-    deleted["action"]["actions"].pop(0)
-    with pytest.raises(ValueError, match="earlier step"):
-        validate_rule(deleted)
-    assert _bounded_function_result(False) is False
-    assert _bounded_function_result(0) == 0
-    with pytest.raises(HomeAssistantError, match="too large"):
-        _bounded_function_result("x" * 20000)
-    with pytest.raises(HomeAssistantError, match="deeply nested"):
-        _bounded_function_result([[[[[[[[[0]]]]]]]]])
-    with pytest.raises(HomeAssistantError, match="keys must be text"):
-        _bounded_function_result({1: "invalid key"})
-    with pytest.raises(HomeAssistantError, match="must contain JSON values"):
-        _bounded_function_result(object())
 
 
 async def test_match_cursor_deduplicates_matching_phrases_for_one_rule() -> None:
@@ -1086,149 +907,6 @@ async def test_empty_snapshot_has_no_eligible_matches() -> None:
 
     assert matches == []
     assert skipped == []
-
-
-@pytest.mark.parametrize(
-    ("actions", "slots", "success", "failure", "message"),
-    [
-        (
-            [
-                {
-                    "choose": [
-                        {
-                            "sequence": [
-                                {
-                                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                                    "data": {"result_alias": "reading"},
-                                }
-                            ]
-                        }
-                    ]
-                }
-            ],
-            set(),
-            "",
-            "",
-            "only by top-level steps",
-        ),
-        (
-            [
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"result_alias": "request"},
-                }
-            ],
-            set(),
-            "",
-            "",
-            "distinct simple identifier",
-        ),
-        (
-            [
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"result_alias": "bad-name"},
-                }
-            ],
-            set(),
-            "",
-            "",
-            "distinct simple identifier",
-        ),
-        (
-            [
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"result_alias": "device"},
-                }
-            ],
-            {"device"},
-            "",
-            "",
-            "distinct simple identifier",
-        ),
-        (
-            [
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"result_alias": "reading", "step_id": "bad"},
-                }
-            ],
-            set(),
-            "",
-            "",
-            "step IDs must be unique",
-        ),
-        (
-            [
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"result_alias": "reading", "step_id": "a" * 32},
-                },
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"result_alias": "reading", "step_id": "b" * 32},
-                },
-            ],
-            set(),
-            "",
-            "",
-            "aliases must be unique",
-        ),
-        (
-            [
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"result_alias": "reading", "step_id": "a" * 32},
-                },
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"result_alias": "other", "step_id": "a" * 32},
-                },
-            ],
-            set(),
-            "",
-            "",
-            "step IDs must be unique",
-        ),
-        (
-            [
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"result_alias": "reading"},
-                }
-            ],
-            set(),
-            "{missing.value}",
-            "",
-            "missing Function result",
-        ),
-        (
-            [
-                {
-                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-                    "data": {"result_alias": "reading"},
-                }
-            ],
-            set(),
-            "",
-            "{reading.value}",
-            "Failure response cannot reference Function results",
-        ),
-    ],
-)
-def test_result_dependency_validation_rejects_unsafe_alias_contracts(
-    actions, slots, success, failure, message
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        _validate_result_dependencies(
-            {
-                "actions": actions,
-                "success_response": success,
-                "failure_response": failure,
-            },
-            slots,
-        )
 
 
 async def test_groups_preserve_global_order_and_revision() -> None:
@@ -1325,164 +1003,6 @@ async def test_groups_survive_restart_and_backup_restore() -> None:
     restarted = RequestRules(store)
     await restarted.async_initialize()
     assert restarted.snapshot()["groups"] == restored.snapshot()["groups"]
-
-
-async def test_function_result_capture_feeds_later_step_and_response(
-    hass, monkeypatch
-) -> None:
-    from custom_components.extended_openai_conversation_responses import (
-        request_rules as module,
-    )
-
-    calls = []
-
-    class CaptureScript:
-        def __init__(self, _hass, sequence, *_args, **_kwargs):
-            self.sequence = sequence
-
-        async def async_run(self, _variables, _context=None):
-            variables = dict(_variables)
-            for step in self.sequence:
-                if "variables" in step:
-                    values = step["variables"]
-                    raw = values.variables if hasattr(values, "variables") else values
-                    if all(name.startswith(("__eoai_completed_", "__eoai_stopped_", "__eoai_wait_completed_")) for name in raw):
-                        variables.update(values.async_simple_render(variables) if hasattr(values, "async_simple_render") else values)
-                elif step.get("action") == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
-                    await async_call_active_function(
-                        step["data"]["function"],
-                        step["data"]["arguments"],
-                        step["data"].get("result_alias"),
-                    )
-                    variables.update(module._ACTIVE_RULE_ACTION.get().function_results)
-                elif "data" in step and "message" in step["data"]:
-                    message = step["data"]["message"]
-                    calls.append(
-                        message.async_render(variables, parse_result=False)
-                        if hasattr(message, "async_render")
-                        else message
-                    )
-            return SimpleNamespace(variables=variables, conversation_response=UNDEFINED)
-
-        async def async_unload(self):
-            pass
-
-    monkeypatch.setattr(module, "Script", CaptureScript)
-    rule = local_rule(phrases=["Battery {device}"], match_type="sentence_pattern")
-    rule["action"]["actions"] = [
-        {
-            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-            "data": {
-                "function": "get_battery",
-                "arguments": {},
-                "result_alias": "battery",
-            },
-        },
-        {
-            "action": "notify.send_message",
-            "data": {"message": "{battery.level} for {device}"},
-        },
-    ]
-    rule["action"]["success_response"] = "{battery.name} is at {battery.level}%"
-
-    async def execute(_name, _arguments):
-        return SimpleNamespace(
-            tool_result={"result": {"name": "Kitchen tablet", "level": 62}}
-        )
-
-    outcome = await async_evaluate_rule(
-        hass,
-        await manager(rule),
-        RequestRuleRuntime(),
-        "Battery tablet",
-        "session",
-        function_executor=execute,
-    )
-    assert outcome is not None and outcome.response == "Kitchen tablet is at 62%"
-    assert calls == ["62 for tablet"]
-
-
-async def test_missing_function_result_path_stops_later_steps(
-    hass, monkeypatch
-) -> None:
-    from custom_components.extended_openai_conversation_responses import (
-        request_rules as module,
-    )
-
-    calls = []
-
-    class CaptureScript:
-        def __init__(self, _hass, sequence, *_args, **_kwargs):
-            self.sequence = sequence
-
-        async def async_run(self, _variables, _context=None):
-            step = next(step for step in self.sequence if step.get("action"))
-            if step["action"] == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
-                await async_call_active_function(
-                    step["data"]["function"], {}, step["data"].get("result_alias")
-                )
-            else:
-                calls.append(step)
-
-        async def async_unload(self):
-            pass
-
-    monkeypatch.setattr(module, "Script", CaptureScript)
-    rule = local_rule()
-    rule["action"]["actions"] = [
-        {
-            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-            "data": {
-                "function": "get_battery",
-                "arguments": {},
-                "result_alias": "battery",
-            },
-        },
-        {"action": "notify.send_message", "data": {"message": "{battery.missing}"}},
-    ]
-
-    async def execute(_name, _arguments):
-        return SimpleNamespace(tool_result={"result": {"level": 0}})
-
-    outcome = await async_evaluate_rule(
-        hass,
-        await manager(rule),
-        RequestRuleRuntime(),
-        "good night",
-        "session",
-        function_executor=execute,
-    )
-    assert (
-        outcome is not None
-        and outcome.response == "Failed safely"
-        and not outcome.successful
-    )
-    assert calls == []
-
-
-@pytest.mark.parametrize("value", [False, 0, "", None])
-async def test_function_capture_accepts_false_zero_empty_and_null(value) -> None:
-    from custom_components.extended_openai_conversation_responses import (
-        request_rules as module,
-    )
-
-    results = {}
-
-    async def execute(_name, _arguments):
-        return SimpleNamespace(tool_result={"result": value})
-
-    executor_token = module._ACTIVE_RULE_ACTION.set(
-        replace(module._ACTIVE_RULE_ACTION.get(), function_executor=execute)
-    )
-    result_token = module._ACTIVE_RULE_ACTION.set(
-        replace(module._ACTIVE_RULE_ACTION.get(), function_results=results)
-    )
-    try:
-        await async_call_active_function("value", {}, "captured")
-        assert "captured" in results and results["captured"] == value
-    finally:
-        module._ACTIVE_RULE_ACTION.reset(result_token)
-        module._ACTIVE_RULE_ACTION.reset(executor_token)
 
 
 @pytest.mark.parametrize(
@@ -2101,6 +1621,7 @@ def fake_ha_script(monkeypatch):
 @pytest.mark.parametrize("fail", [False, True])
 async def test_multiple_local_actions_and_failure_response(fail, hass) -> None:
     rule = local_rule()
+    rule["action"]["failure_response"] = "Failed safely with {code.detail}"
     rule["action"]["actions"].append(
         {
             "domain": "light",
@@ -2116,7 +1637,7 @@ async def test_multiple_local_actions_and_failure_response(fail, hass) -> None:
         hass, rules, RequestRuleRuntime(), "good night", "conversation:one"
     )
     assert result is not None and result.consume
-    assert result.response == ("Failed safely" if fail else "Done")
+    assert result.response == ("Failed safely with {code.detail}" if fail else "Done")
     assert len(services.calls) == (1 if fail else 2)
 
 
@@ -2581,55 +2102,6 @@ async def test_conversation_overrides_compose_across_separate_rules() -> None:
     }
 
 
-async def test_conversation_reset_clears_prior_request_reset_during_rule_cascade() -> None:
-    request_reset = routing_rule(scope="request", reset=True)
-    request_reset["order"] = 0
-    request_reset["continue_matching"] = True
-    request_reset["action"]["continue_to_ai"] = False
-    conversation_reset = routing_rule(scope="conversation", reset=True)
-    conversation_reset["order"] = 1
-    conversation_reset["action"]["continue_to_ai"] = False
-    rules = await manager(request_reset, conversation_reset)
-
-    result = await async_evaluate_rule(
-        SimpleNamespace(),
-        rules,
-        RequestRuleRuntime(),
-        "think carefully about this",
-        "session",
-    )
-
-    assert result is not None
-    assert result.match.rule["action"]["scope"] == "conversation"
-    assert result.request_override is None
-
-
-async def test_conversation_route_reapplies_new_values_after_request_reset() -> None:
-    request_reset = routing_rule(scope="request", reset=True)
-    request_reset["order"] = 0
-    request_reset["continue_matching"] = True
-    request_reset["action"]["continue_to_ai"] = False
-    conversation_route = routing_rule(scope="conversation")
-    conversation_route["order"] = 1
-    conversation_route["action"]["continue_to_ai"] = False
-    rules = await manager(request_reset, conversation_route)
-
-    result = await async_evaluate_rule(
-        SimpleNamespace(),
-        rules,
-        RequestRuleRuntime(),
-        "think carefully about this",
-        "session",
-    )
-
-    assert result is not None
-    assert result.request_override == {
-        "__request_rule_reset__": "1",
-        CONF_CHAT_MODEL: "gpt-5",
-        CONF_REASONING_EFFORT: "high",
-    }
-
-
 async def test_invalid_conversation_update_is_atomic() -> None:
     runtime = RequestRuleRuntime()
     runtime.set("one", {CONF_CHAT_MODEL: "gpt-5", CONF_REASONING_EFFORT: "high"})
@@ -2959,8 +2431,6 @@ async def test_sentence_apostrophes_match_preview_and_local_evaluation(hass, pat
     assert outcome.response == "Done"
     assert len(hass.services.calls) == 1
 
-@pytest.mark.parametrize("captured", [False, True])
-@pytest.mark.parametrize("request_reset", [False, True])
 @pytest.mark.parametrize(
     ("entry_data", "model", "underlying", "accepted"),
     [
@@ -2971,31 +2441,17 @@ async def test_sentence_apostrophes_match_preview_and_local_evaluation(hass, pat
     ],
     ids=["openai-reject", "openai-accept", "azure-reject", "azure-accept"],
 )
-async def test_conversation_effort_validates_unmasked_next_turn(
-    captured, request_reset, entry_data, model, underlying, accepted
+async def test_conversation_effort_validates_retained_model(
+    entry_data, model, underlying, accepted
 ):
     runtime = RequestRuleRuntime()
     before = {CONF_CHAT_MODEL: model, **({"azure_model": underlying} if underlying else {})}
     runtime.set("kitchen", before)
-    temporary = routing_rule(reset=request_reset)
-    temporary["continue_matching"] = True
-    temporary["action"].update(
-        model=None if request_reset else "temporary" if underlying else "gpt-5.6",
-        reasoning_effort=None,
-        continue_to_ai=False,
-        **({"azure_model": "gpt-5.6"} if underlying and not request_reset else {}),
-    )
-    retained = routing_rule(
-        scope="conversation", match_type="sentence_pattern" if captured else "starts_with"
-    )
+    retained = routing_rule(scope="conversation", match_type="starts_with")
     retained["order"] = 1
-    retained["action"].update(model=None, reasoning_effort="{effort}" if captured else "high")
-    if captured:
-        retained["phrases"] = ["think carefully {effort}"]
-    rules = await manager(temporary, retained)
+    retained["action"].update(model=None, reasoning_effort="high")
+    rules = await manager(retained)
     settings = dict(before)
-    if request_reset:
-        settings = {CONF_CHAT_MODEL: "gpt-5.6"} if not underlying else {CONF_CHAT_MODEL: "configured", "azure_model": "gpt-5.6"}
     pending = async_evaluate_rule(
         SimpleNamespace(), rules, runtime, "think carefully high", "kitchen",
         configured_model=settings[CONF_CHAT_MODEL], request_options=settings, entry_data=entry_data,

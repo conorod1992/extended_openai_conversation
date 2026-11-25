@@ -9,7 +9,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
     CONF_FUNCTION_TOOLS,
 )
-from custom_components.extended_openai_conversation_responses import transfer
 from tests_real_ha.device_info_compat import device_info_field
 from tests_real_ha.test_cross_feature_acceptance import _agent, _provider
 from tests_real_ha.test_request_rules_script_semantics import _local
@@ -114,22 +113,6 @@ async def test_standard_child_service_does_not_poison_parent_response(
     assert len(child._usage.runs) == 1 and child._usage.runs[0].request_count == 0
 
 
-async def test_native_saved_rule_exports_no_encoded_credentials(hass):
-    agent = await _agent(hass)
-    secret = "synthetic-audit-token-do-not-use"
-    await agent._request_rules.async_create(
-        _local(
-            [{"action": "rest_command.report_measurement", "data": {"api_key": secret}}]
-        )
-    )
-    saved = await agent._request_rules.async_backup_data()
-    document = transfer._new_transfer_document(agent.entry, agent.subentry, "setup")
-    document["sections"] = {"configuration": {}, "request_rules": saved}
-    assert secret not in transfer.finalize_setup_export(document)["json"]
-    assert secret in saved["rules"][0]["action"]["canonical_signature"]
-    assert await agent._request_rules.async_backup_data() == saved
-
-
 @pytest.mark.parametrize("language", ["en", "de"])
 async def test_runtime_retirement_translation_and_english_fallback(hass, language):
     cache = _TranslationCache(hass)
@@ -204,13 +187,13 @@ async def test_nested_rule_uses_callee_group_and_restores_parent_group(
                     "data": {
                         "function": "surface_value_a",
                         "arguments": {},
-                        "result_alias": "answer",
                     },
+                    "response_variable": "reply",
                 },
-                {"action": "nested_group_probe.record", "data": {"value": "{answer}"}},
+                {"action": "nested_group_probe.record", "data": {"value": "{{ reply.result }}"}},
+                {"set_conversation_response": "Child value {{ reply.result }}"},
             ],
             phrase="grouped child request",
-            success="Child value {answer}",
             failure="Child function failed",
         )
     )
@@ -399,12 +382,10 @@ async def test_native_ha_interrupted_reasoning_history(hass):
 
 
 @pytest.mark.parametrize("persisted", [False, True], ids=["structured", "yaml"])
-@pytest.mark.parametrize("exporter", ["setup", "private"])
-async def test_native_http_params_and_template_exports_obey_security_contracts(
-    hass, monkeypatch, persisted, exporter
+async def test_native_private_export_preserves_http_credentials_without_rendering(
+    hass, monkeypatch, persisted
 ):
     from copy import deepcopy
-    import json
     import yaml
     from homeassistant.helpers.template import Template
     from custom_components.extended_openai_conversation_responses import backup
@@ -431,18 +412,9 @@ async def test_native_http_params_and_template_exports_obey_security_contracts(
     monkeypatch.setattr(Template, "async_render", never_render)
     private = backup.private_configuration_snapshot(agent.subentry.data)
     assert SECRET in private["functions"]
-    if exporter == "setup":
-        result = await transfer.async_create_setup_export(
-            hass, agent.entry, agent.subentry
-        )
-    else:
-        result = await backup.async_create_backup(hass, agent.entry, agent.subentry)
-    if exporter == "setup":
-        assert SECRET not in result["json"]
-        assert SECRET not in json.dumps(result["document"])
-    else:
-        assert SECRET in result["json"]
-        assert backup.inspect_backup(result["document"], agent.subentry.subentry_id).config == original
+    result = await backup.async_create_backup(hass, agent.entry, agent.subentry)
+    assert SECRET in result["json"]
+    assert backup.inspect_backup(result["document"], agent.subentry.subentry_id).config == original
     assert agent.subentry.data == original
     assert backup.private_configuration_snapshot(agent.subentry.data) == private
 
@@ -683,10 +655,13 @@ async def test_cold_multi_agent_websocket_get_reuses_worker_yaml(
     hass, hass_ws_client, monkeypatch
 ):
     import threading
+
     import yaml
+
     from custom_components.extended_openai_conversation_responses import (
         management_function_repair as repair,
         management_ui as ui,
+        yaml_serialization,
     )
     from tests_real_ha.test_management_backend_acceptance import (
         _admin_client,
@@ -725,21 +700,23 @@ async def test_cold_multi_agent_websocket_get_reuses_worker_yaml(
     from custom_components.extended_openai_conversation_responses import agent_config
 
     agent_config._decoded_function_tools.cache_clear()
+    agent_config._last_large_function_document.cache_clear()
     raw = agent.subentry.data[CONF_FUNCTION_TOOLS]
     main_thread = threading.get_ident()
     decode_threads, validation_threads = [], []
-    original_load, original_snapshot = yaml.safe_load, repair.agent_config_snapshot
+    original_load = yaml_serialization._load_yaml_or_json
+    original_snapshot = repair.agent_config_snapshot
 
-    def load(value):
+    def load(value, **kwargs):
         if value == raw:
             decode_threads.append(threading.get_ident())
-        return original_load(value)
+        return original_load(value, **kwargs)
 
     def snapshot(*args, **kwargs):
         validation_threads.append(threading.get_ident())
         return original_snapshot(*args, **kwargs)
 
-    monkeypatch.setattr(yaml, "safe_load", load)
+    monkeypatch.setattr(yaml_serialization, "_load_yaml_or_json", load)
     monkeypatch.setattr(repair, "agent_config_snapshot", snapshot)
     result = await _management_call(
         client, entry=agent.entry, section="configuration", action="get"
@@ -1204,10 +1181,13 @@ async def test_registered_toggles_preserve_group_only_quarantine(hass, kind, ena
 
 async def test_cold_runtime_and_migration_yaml_are_off_loop(hass, monkeypatch):
     import threading
+
     import yaml
+
     from custom_components.extended_openai_conversation_responses import (
         agent_config,
         async_migrate_integration,
+        yaml_serialization,
     )
     from custom_components.extended_openai_conversation_responses.management_function_repair import (
         async_prewarm_persisted_config_projection,
@@ -1237,14 +1217,14 @@ async def test_cold_runtime_and_migration_yaml_are_off_loop(hass, monkeypatch):
         )
     raw = yaml.safe_dump(tools)
     main, threads = threading.get_ident(), []
-    original = yaml.safe_load
+    original = yaml_serialization._load_yaml_or_json
 
-    def decode(value):
+    def decode(value, **kwargs):
         if value == raw:
             threads.append(threading.get_ident())
-        return original(value)
+        return original(value, **kwargs)
 
-    monkeypatch.setattr(yaml, "safe_load", decode)
+    monkeypatch.setattr(yaml_serialization, "_load_yaml_or_json", decode)
     agent_config._cached_configured_tools.cache_clear()
     agent_config._decoded_function_tools.cache_clear()
     agent = await _agent(hass, functions=raw, max_function_calls_per_conversation=0)
@@ -1281,7 +1261,9 @@ async def test_native_memory_cold_preparation_worker(
             "embeddings": {
                 r["memory_id"]: {
                     "model": "default",
-                    "fingerprint": "saved",
+                    "fingerprint": memory._embedding_fingerprint(
+                        memory._validate_persistent_memory_record(r)
+                    ),
                     "vector": [0.5] * 256,
                 }
                 for r in raw

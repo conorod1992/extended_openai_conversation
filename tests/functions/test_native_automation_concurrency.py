@@ -18,6 +18,7 @@ from custom_components.extended_openai_conversation_responses.functions.native i
     _restore_automation_file,
 )
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util.yaml import load_yaml
 from tests.lock_probe import LockProbe
 
 
@@ -27,6 +28,35 @@ async def _disable_automation_validation(monkeypatch) -> None:
         "_async_validate_config_item",
         AsyncMock(),
     )
+
+
+def test_adding_first_automation_preserves_comments_in_empty_list(tmp_path):
+    path = tmp_path / "automations.yaml"
+    path.write_text(
+        "# Keep instructions\n--- [\n  # Inside the list\n] # Original list\n...\n",
+        encoding="utf-8",
+    )
+    record = {"id": "first", "alias": "First automation"}
+    _append_automation_atomic(path, record)
+    updated = path.read_text(encoding="utf-8")
+    assert yaml.safe_load(updated) == [record]
+    for text in ("# Keep instructions", "# Inside the list", "# Original list"):
+        assert text in updated
+
+
+@pytest.mark.parametrize(
+    "document",
+    ["[ ]", "--- [ ]", "[\n  \n  ]"],
+    ids=["inline", "explicit-document", "multiline"],
+)
+def test_adding_first_automation_to_whitespace_only_flow_list(tmp_path, document):
+    path = tmp_path / "automations.yaml"
+    path.write_text(document, encoding="utf-8")
+    record = {"id": "first", "alias": "First automation", "triggers": [], "actions": []}
+    previous, _, updated = _append_automation_atomic(path, record)
+    assert previous == document
+    assert yaml.safe_load(updated) == [record]
+    assert path.read_text(encoding="utf-8") == updated
 
 
 def _symlink(path: Path, target: Path) -> None:
@@ -386,3 +416,45 @@ async def test_automation_update_finishes_before_propagating_cancellation() -> N
     with pytest.raises(asyncio.CancelledError):
         await task
     assert completed
+
+
+@pytest.mark.parametrize(
+    ("document", "closing"),
+    [
+        ("---\n- &id001 {id: first} # Entry\n# Keep instructions\n...\n# Footer\n", "...\n# Footer\n"),
+        ("---\n  - &id001 {id: first} # Entry\n# Keep instructions\n", ""),
+        ("--- [\n  &id001 {id: first}, # Entry\n  # Keep instructions\n] # Footer\n", "] # Footer\n"),
+        ("--- [\n  &id001 {id: first} # Entry\n  # Keep instructions\n] # Footer\n", "] # Footer\n"),
+    ],
+    ids=["document-end", "indented-block", "flow-trailing-comma", "flow"],
+)
+def test_append_automation_preserves_nonempty_yaml_document(tmp_path, document, closing):
+    path = tmp_path / "automations.yaml"
+    path.write_text(document, encoding="utf-8")
+    reused = ["step"]
+    record = {"id": "second", "alias": "Line one\nLine two", "actions": reused, "triggers": reused}
+    previous, _, updated = _append_automation_atomic(path, record)
+    assert previous == document
+    assert updated.startswith(document.removesuffix(closing) if closing else document)
+    assert updated.endswith(closing)
+    assert yaml.safe_load(updated) == [{"id": "first"}, record]
+
+
+@pytest.mark.parametrize(
+    "scalar",
+    ["| # Keep this comment\n    away", ">+2 # Keep this comment\n    away\n    "],
+    ids=["literal-clip", "folded-keep"],
+)
+def test_append_preserves_existing_eof_block_scalar(tmp_path, scalar):
+    path = tmp_path / "automations.yaml"
+    original = f"- id: first\n  alias: &label {scalar}"
+    path.write_text(original, encoding="utf-8")
+    existing = load_yaml(str(path))[0]
+    next_entry = {"id": "second", "alias": "New automation"}
+
+    previous, _, updated = _append_automation_atomic(path, next_entry)
+
+    assert previous == original
+    assert "# Keep this comment" in updated
+    assert "alias: &label" in updated
+    assert load_yaml(str(path)) == [existing, next_entry]

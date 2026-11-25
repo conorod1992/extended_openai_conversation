@@ -11,6 +11,9 @@ from custom_components.extended_openai_conversation_responses.memory import (
     MemoryRecord,
     PersistentMemory,
 )
+from custom_components.extended_openai_conversation_responses.record_timestamps import (
+    stored_timestamp_instant,
+)
 from tests.test_memory import FakeStorage
 
 
@@ -72,7 +75,7 @@ async def test_sort_parsing_is_bounded_and_reused_at_memory_limit(monkeypatch):
         )
     )
     await memory.async_initialize()
-    module._memory_timestamp_instant.cache_clear()
+    stored_timestamp_instant.cache_clear()
     parsed = []
     original = module.dt_util.parse_datetime
 
@@ -85,7 +88,7 @@ async def test_sort_parsing_is_bounded_and_reused_at_memory_limit(monkeypatch):
     assert (await memory.async_list_page("alice", offset=100))[0][0].memory_id == "9899"
     assert (await memory.async_browse("alice", ""))[1] == 10_000
     assert len(parsed) == 10_000
-    assert module._memory_timestamp_instant.cache_info().maxsize == 20_000
+    assert stored_timestamp_instant.cache_info().maxsize == 20_000
 
 
 @pytest.mark.parametrize("reader", ["async_list", "async_list_page", "async_browse"])

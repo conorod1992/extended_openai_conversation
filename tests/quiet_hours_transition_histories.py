@@ -5,7 +5,14 @@ Every reconcile checks the entire service-command delta, feedback-settled public
 value and convergence. Drivers provide I/O only; expected effects are literals.
 """
 
+import asyncio
 from dataclasses import dataclass
+
+import pytest
+
+from custom_components.extended_openai_conversation_responses.global_runtime import (
+    LOADED_ENTRIES,
+)
 
 
 @dataclass(frozen=True)
@@ -104,7 +111,9 @@ HISTORIES = {
         check(0.1, "baseline", "baseline"),
         Step("crash"),
         check(0.2, "baseline"),
-        check(10, "baseline"),
+        Step("return"),
+        check(0.3, "quiet", "quiet"),
+        check(10, "baseline", "baseline"),
     ),
     "departing-manual": (
         check(0, "quiet", "quiet"),
@@ -112,7 +121,66 @@ HISTORIES = {
         Step("depart"),
         check(0.1, "alternate"),
         Step("crash"),
-        check(24, "alternate"),
+        Step("return"),
+        check(0.2, "alternate"),
+        check(24, "quiet", "quiet"),
+        check(34, "alternate", "alternate"),
+    ),
+    "restoration-lost-ack-rejoin": (
+        check(0, "quiet", "quiet"),
+        Step("depart"),
+        Step("lose_ack"),
+        check(0.1, "baseline", "baseline"),
+        Step("return"),
+        check(0.2, "quiet", "quiet"),
+        check(0.3, "quiet"),
+        check(10, "baseline", "baseline"),
+    ),
+    "restoration-lost-ack-restart": (
+        check(0, "quiet", "quiet"),
+        Step("depart"),
+        Step("lose_ack"),
+        check(0.1, "baseline", "baseline"),
+        Step("return"),
+        Step("crash", state="quiet", commands=("quiet",)),
+        check(0.2, "quiet"),
+        check(10, "baseline", "baseline"),
+    ),
+    "restoration-retry-reports-after-policy-reentry": (
+        check(0, "quiet", "quiet"),
+        Step("depart"),
+        Step("reject"),
+        check(0.1, "quiet", "baseline"),
+        Step("reject"),
+        check(0.2, "quiet", "baseline"),
+        Step("return"),
+        check(0.3, "quiet"),
+        Step("late_restore_report", "baseline"),
+        check(0.4, "quiet", "quiet"),
+        check(10, "baseline", "baseline"),
+    ),
+    "replacement-retains-pending": (
+        Step("interrupt", "pending", "baseline"),
+        Step("startup_restore", state="baseline"),
+        Step("crash", state="quiet", commands=("quiet",)),
+        check(0.2, "quiet"),
+        check(10, "baseline", "baseline"),
+    ),
+    "replacement-retains-prepared": (
+        Step("interrupt", "prepared", "baseline"),
+        Step("startup_restore", state="baseline"),
+        Step("crash", state="quiet", commands=("quiet",)),
+        check(0.2, "quiet"),
+        check(10, "baseline", "baseline"),
+    ),
+    "replacement-preserves-newer-baseline-context": (
+        Step("interrupt", "prepared", "baseline"),
+        Step("report", "baseline"),
+        Step("startup_restore", state="baseline"),
+        Step("crash", state="baseline"),
+        check(0.2, "baseline"),
+        check(24, "quiet", "quiet"),
+        check(34, "baseline", "baseline"),
     ),
     "pending-daytime-restoration": (
         check(0, "quiet", "quiet"),
@@ -126,6 +194,83 @@ HISTORIES = {
         check(34, "baseline", "baseline"),
     ),
 }
+
+
+VOLUME_RETARGET_HISTORIES = {
+    "acknowledged-contextless-exact": (
+        check(0, "quiet", "quiet"),
+        Step("contextless"),
+        Step("retarget", "retargeted", "retargeted", ("retargeted",)),
+        check(0.1, "retargeted"),
+        check(10, "baseline", "baseline"),
+    ),
+    "acknowledged-contextless-late-after-restart": (
+        check(0, "quiet", "quiet"),
+        Step("hold_contextless"),
+        Step("retarget", "retargeted", "quiet", ("retargeted",)),
+        Step("crash", state="quiet"),
+        Step("release_feedback"),
+        check(0.1, "retargeted"),
+        check(10, "baseline", "baseline"),
+    ),
+    "acknowledged-then-manual-adjustment": (
+        check(0, "quiet", "quiet"),
+        Step("contextless"),
+        Step("retarget", "retargeted", "retargeted", ("retargeted",)),
+        Step("report", "alternate"),
+        check(0.1, "alternate"),
+        check(10, "alternate"),
+    ),
+    "failed-acknowledgement-with-contextless-exact-report": (
+        check(0, "quiet", "quiet"),
+        Step("contextless"),
+        Step("lose_ack"),
+        Step("retarget", "retargeted", "retargeted", ("retargeted",)),
+        check(0.1, "retargeted"),
+        check(10, "retargeted"),
+    ),
+}
+
+
+async def interrupt_application(driver, checkpoint):
+    """Interrupt after the selected durable write and before device dispatch."""
+    save = driver.manager._async_save_control_state_locked
+    # The switch scenario first observes a speaker already below the limit.
+    target = {"pending": 1, "prepared": 2}[checkpoint] + (driver.kind == "switch")
+    writes = 0
+
+    async def save_then_interrupt():
+        nonlocal writes
+        await save()
+        writes += 1
+        if writes == target:
+            raise asyncio.CancelledError
+
+    driver.manager._async_save_control_state_locked = save_then_interrupt
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await driver.reconcile(0)
+    finally:
+        del driver.manager._async_save_control_state_locked
+    active = driver.manager.active
+    if checkpoint == "pending":
+        assert driver.entity in active["pending_controls"]
+    else:
+        assert active["controls"][driver.entity]["application_state"] == "prepared"
+
+
+async def restore_while_suspended(manager):
+    """Run the startup restoration entry point without enabling the policy."""
+    hass = manager.hass
+    previous = hass.data.get(LOADED_ENTRIES)
+    hass.data[LOADED_ENTRIES] = set()
+    try:
+        await manager.async_restore_saved_controls()
+    finally:
+        if previous is None:
+            hass.data.pop(LOADED_ENTRIES)
+        else:
+            hass.data[LOADED_ENTRIES] = previous
 
 
 def retire_without_restoration(manager):
@@ -156,8 +301,34 @@ async def exercise_history(driver, history):
             driver.feedback()
         elif step.action == "lose_ack":
             driver.lose_ack = True
+        elif step.action == "reject":
+            driver.reject = True
+        elif step.action == "late_restore_report":
+            application, first_restore, second_restore = driver.command_contexts
+            assert first_restore.id == second_restore.id != application.id
+            driver.report(driver.values[step.value], first_restore)
         elif step.action == "depart":
             driver.depart()
+        elif step.action == "return":
+            driver.return_to_policy()
+        elif step.action == "interrupt":
+            await interrupt_application(driver, step.value)
+        elif step.action == "startup_restore":
+            await driver.startup_restore()
+        elif step.action in {"contextless", "hold_contextless"}:
+            driver.contextless = True
+            driver.hold_feedback = step.action == "hold_contextless"
+        elif step.action == "release_feedback":
+            driver.hold_feedback = False
+            driver.feedback()
+        elif step.action == "retarget":
+            await driver.manager.async_update_config(
+                {
+                    **driver.manager.config.as_dict(),
+                    "max_volume": driver.values[step.value],
+                }
+            )
+            driver.feedback()
         else:
             raise AssertionError(step)
         if step.action == "reconcile":

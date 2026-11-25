@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {acceptSharingReview, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 const panelFor = (page) => page.locator("extended-openai-management-panel");
 
@@ -19,13 +19,6 @@ for (const bundled of [false, true]) test(`New routing rules reflect and save th
   await expect(scope).toBeDisabled();
   await expect(scope).toHaveValue("conversation");
   await expect(help).toContainText("acknowledged locally");
-  await panel.locator("#rule-advanced > summary").click();
-  const matching = panel.locator("#rule-continue-matching");
-  await matching.check();
-  await expect(scope).toBeEnabled();
-  await expect(scope).toHaveValue("request");
-  await expect(help).toContainText("Later matching rules can run");
-  await matching.uncheck();
   await panel.locator("#rule-match").selectOption("starts_with");
   await expect(handoff).toBeChecked();
   await expect(scope).toHaveValue("request");
@@ -109,11 +102,10 @@ async function assertLocalRuleEditor(panel, {groupId, conditions, actions}) {
   await expect(panel.locator("#rule-match")).toHaveValue("contains");
   await expect(panel.locator("#rule-action-type")).toHaveValue("local_action");
   await expect(panel.locator("#rule-group")).toHaveValue(groupId);
-  await expect(panel.locator("#rule-local-continue-to-ai")).not.toBeChecked();
+  await expect(panel.locator("#rule-local-continue-to-ai")).toBeChecked();
   await expect(panel.locator("#rule-success")).toHaveValue("Local success");
   await expect(panel.locator("#rule-failure")).toHaveValue("Local failure");
   await expect(panel.locator("#rule-ai-input-mode")).toHaveValue("original");
-  await expect(panel.locator("#rule-continue-matching")).toBeChecked();
   await expect(panel.locator("#rule-matching-behavior")).toHaveValue("custom");
   await expect(panel.locator("#rule-word-forms")).not.toBeChecked();
   await expect(panel.locator("#rule-wording")).not.toBeChecked();
@@ -136,7 +128,6 @@ async function assertRoutingRuleEditor(panel, {groupId}) {
   await expect(panel.locator("#rule-reset")).not.toBeChecked();
   await expect(panel.locator("#rule-continue-to-ai")).toBeChecked();
   await expect(panel.locator("#rule-ai-input-mode")).toHaveValue("original");
-  await expect(panel.locator("#rule-continue-matching")).not.toBeChecked();
   await expect(panel.locator("#rule-matching-behavior")).toHaveValue("defaults");
 }
 
@@ -170,7 +161,7 @@ test("Request Rule editor round-trips local and routing forms through reopen and
   await panel.locator("#rule-add-conditions").click();
   await setHaSelector(panel.locator("#rule-condition-host ha-selector"), conditions);
   await panel.locator("#rule-advanced summary").click();
-  await panel.locator("#rule-continue-matching").check();
+  await panel.locator("#rule-local-continue-to-ai").check();
   await panel.locator("#rule-matching-behavior").selectOption("custom");
   await panel.locator("#rule-word-forms").uncheck();
   await panel.locator("#rule-wording").uncheck();
@@ -281,13 +272,12 @@ for (const bundled of [false, true]) {
     await panel.locator("#rule-advanced summary").click();
     for (const match of ["equals", "starts_with", "ends_with", "contains", "sentence_pattern"]) {
       await panel.locator("#rule-match").selectOption(match);
-      for (const ai of [false, true]) for (const matching of [false, true]) {
+      for (const ai of [false, true]) {
         await panel.locator("#rule-continue-to-ai").check();
         await panel.locator("#rule-scope").selectOption("request");
-        await panel.locator("#rule-continue-matching").setChecked(matching);
         await panel.locator("#rule-continue-to-ai").setChecked(ai);
-        await expect(panel.locator('#rule-scope option[value="request"]')).toHaveJSProperty("disabled", !ai && !matching);
-        await expect(panel.locator("#rule-scope")).toHaveValue(!ai && !matching ? "conversation" : "request");
+        await expect(panel.locator('#rule-scope option[value="request"]')).toHaveJSProperty("disabled", !ai);
+        await expect(panel.locator("#rule-scope")).toHaveValue(!ai ? "conversation" : "request");
       }
     }
     await panel.locator("#rule-model").fill("gpt-5.6");
@@ -297,7 +287,6 @@ for (const bundled of [false, true]) {
     await expect(panel.locator("#rule-reasoning")).toHaveValue("");
     await expect(panel.locator("#rule-reasoning option")).toHaveCount(1);
     await panel.locator("#rule-match").selectOption("contains");
-    await panel.locator("#rule-continue-matching").uncheck();
     await panel.locator("#rule-continue-to-ai").uncheck();
     await panel.locator("#rule-save").click();
     await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
@@ -307,90 +296,6 @@ for (const bundled of [false, true]) {
     await expectHarnessClean(page, errors);
   });
 }
-
-function sharingGroupPack() {
-  return {format:"extended_openai_request_rule_pack",version:1,
-    groups:[{id:"portable-group",name:"Imported group"}],
-    rules:[{id:"portable-rule",name:"Imported grouped rule",enabled:false,phrases:["shared group"],match_type:"equals",action_type:"model_routing",action:{model:"gpt-5-mini",scope:"conversation",continue_to_ai:false,success_response:"Updated"},matching_behavior:"defaults",matching:{},order:0,conditions:[],group_id:"portable-group",continue_matching:false,ai_input_mode:"original",ai_input_capture:null}]};
-}
-
-async function openSharingWithReview(page, bundled, seedGroup = false) {
-  await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
-  const panel = panelFor(page);
-  if (seedGroup) await createGroup(panel, "Existing selection");
-  await panel.locator("#rule-sharing > summary").click();
-  await panel.locator("#rule-pack-file").setInputFiles({name:"group-pack.json",mimeType:"application/json",buffer:Buffer.from(JSON.stringify(sharingGroupPack()))});
-  await panel.locator("#rule-pack-review-button").click();
-  await expect(panel.locator(".rule-pack-review")).toBeVisible();
-  await panel.locator("#rule-pack-selection").selectOption("group");
-  await panel.evaluate(host => {
-    host.__sharingPreserved = [host.shadowRoot.querySelector("#rule-pack-file"),host.shadowRoot.querySelector("#rule-pack-review .rule-pack-review"),host.shadowRoot.querySelector("#rule-pack-group")];
-  });
-  return panel;
-}
-
-async function expectSharingPreserved(panel) {
-  expect(await panel.evaluate(host => {
-    const [file,review,select] = host.__sharingPreserved;
-    return file === host.shadowRoot.querySelector("#rule-pack-file") && file.files[0]?.name === "group-pack.json" && review === host.shadowRoot.querySelector("#rule-pack-review .rule-pack-review") && select === host.shadowRoot.querySelector("#rule-pack-group") && host.shadowRoot.querySelector("#rule-sharing").open;
-  })).toBe(true);
-}
-
-for (const bundled of [false, true]) {
-  test(`Sharing group choices follow create rename and delete without losing review (${bundled})`, async ({page}) => {
-    const errors = trackPageErrors(page);
-    const panel = await openSharingWithReview(page, bundled);
-    const id = await createGroup(panel, "Kitchen");
-    const select = panel.locator("#rule-pack-group");
-    await expect(select.locator(`option[value="${id}"]`)).toHaveText("Kitchen");
-    await select.selectOption(id);
-    await expectSharingPreserved(panel);
-    await panel.locator("#rule-groups-manage").click();
-    const row = panel.locator(`.rule-group-row[data-group-id="${id}"]`);
-    await row.locator(".rule-group-name").fill("Kitchen & <Dining>");
-    await row.locator(".rule-group-rename").click();
-    await expect(select.locator(`option[value="${id}"]`)).toHaveText("Kitchen & <Dining>");
-    await expect(select).toHaveValue(id);
-    await panel.locator("#rule-groups-done").click();
-    await expectSharingPreserved(panel);
-    await panel.locator("#rule-groups-manage").click();
-    await row.locator(".rule-group-delete").click();
-    await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
-    await panel.locator("#confirm-accept").click();
-    await expect(select.locator(`option[value="${id}"]`)).toHaveCount(0);
-    await expect(select).toHaveValue("");
-    await expect(select.locator('option[value=""]')).toHaveText("Ungrouped");
-    await panel.locator("#rule-groups-done").click();
-    await expectSharingPreserved(panel);
-    await expectHarnessClean(page, errors);
-  });
-
-  test(`Sharing group choices include an imported group immediately (${bundled})`, async ({page}) => {
-    const errors = trackPageErrors(page);
-    const panel = await openSharingWithReview(page, bundled, true);
-    const existingId = await panel.evaluate(host => host._result.groups.find(group => group.name === "Existing selection").id);
-    await panel.locator("#rule-pack-group").selectOption(existingId);
-    await panel.locator("#rule-pack-confirm").click();
-    await expect(panel.locator("#rule-pack-message")).toContainText("1 disabled rules imported");
-    const groupId = await panel.evaluate(host => host._result.groups.find(group => group.name === "Imported group")?.id);
-    expect(groupId).toBeTruthy();
-    await expect(panel.locator("#rule-pack-group")).toHaveValue(existingId);
-    await expect(panel.locator(`#rule-pack-group option[value="${groupId}"]`)).toHaveText("Imported group");
-    await panel.locator("#rule-pack-group").selectOption(groupId);
-    await expect(panel.locator("#rule-sharing")).toHaveJSProperty("open", true);
-    expect(await panel.locator("#rule-pack-file").evaluate(input => input.files[0].name)).toBe("group-pack.json");
-    const download = page.waitForEvent("download");
-    await panel.locator("#rule-pack-reviewed-custom").check();
-    await panel.locator("#rule-pack-export").click();
-    await acceptSharingReview(panel);
-    await download;
-    const request = await page.evaluate(() => browserHarness.calls.filter(call => call.action === "rule_pack_export").at(-1));
-    expect(request.group_id).toBe(groupId);
-    expect(request.selection).toBe("group");
-    await expectHarnessClean(page, errors);
-  });
-}
-
 
 for (const bundled of [false, true]) {
   test(`Azure routing edits preserve explicitly bound reasoning through deployment changes (${bundled})`, async ({page}) => {
@@ -433,39 +338,22 @@ for (const bundled of [false, true]) {
     expect(await panel.evaluate(host => host._azureRuleLookups.filter(Boolean).every(model => model === "gpt-5.6"))).toBe(true);
     await panel.locator("#rule-match").selectOption("sentence_pattern");
     await panel.locator("#rule-phrases").fill("switch to {deployment}");
-    const lookups = await panel.evaluate(host => host._azureRuleLookups.length);
     await panel.locator("#rule-model").fill("{deployment}");
-    await expect.poll(() => panel.evaluate(host => host._azureRuleLookups.length)).toBeGreaterThan(lookups);
+    await panel.locator("#rule-save").click();
+    await expect(panel.locator("#rule-error")).toContainText("Replace routing captures");
+    await panel.locator("#rule-model").fill("another-deployment");
     await expect.poll(() => panel.evaluate(host => host._azureRuleLookups.at(-1))).toBe("gpt-5.6");
     await expect(panel.locator('#rule-reasoning option[value="minimal"]')).toHaveCount(0);
     await expect(panel.locator("#rule-reasoning")).toHaveValue("high");
     await panel.locator("#rule-save").click();
     const saved = await page.evaluate(() => browserHarness.getState().requestRules.rules.find(rule => rule.name === "Azure preserved route"));
-    expect(saved.action.model).toBe("{deployment}");
+    expect(saved.action.model).toBe("another-deployment");
     expect(saved.action.azure_model).toBe("gpt-5.6");
     expect(saved.action.reasoning_effort).toBe("high");
     await expectHarnessClean(page, errors);
   });
 
-  test(`mixed-case Function actions retain editable result aliases (${bundled})`, async ({page}) => {
-    const errors = trackPageErrors(page);
-    await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
-    const panel = panelFor(page);
-    await panel.getByRole("button", {name: "Create rule", exact: true}).first().click();
-    await setHaSelector(panel.locator("#rule-action-sequence-host ha-selector"), [{
-      action: "EXTENDED_OPENAI_CONVERSATION_RESPONSES.CALL_FUNCTION",
-      data_template: {function: "EchoCase", arguments: {}, result_alias: "reply"},
-    }]);
-    await expect(panel.locator(".rule-result-alias")).toHaveValue("reply");
-    await expect(panel.locator("#rule-result-aliases")).toContainText("EchoCase");
-    await panel.locator(".rule-result-alias").fill("renamed_reply");
-    await panel.locator(".rule-result-alias").dispatchEvent("change");
-    const actions = await panel.locator("#rule-action-sequence-host ha-selector").evaluate(selector => selector.value);
-    expect(actions[0].data_template.result_alias).toBe("renamed_reply");
-    expect(actions[0].action).toBe("EXTENDED_OPENAI_CONVERSATION_RESPONSES.CALL_FUNCTION");
-    expect(actions[0].data_template.function).toBe("EchoCase");
-    await expectHarnessClean(page, errors);
-  });
+
 }
 
 
@@ -501,24 +389,69 @@ for (const bundled of [false, true]) {
 }
 
 
-for (const bundled of [false, true]) test(`Routing rules can select a reasoning capture (${bundled})`, async ({page}) => {
+for (const bundled of [false, true]) test(`Routing rules use fixed choices with captured AI input (${bundled})`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
   const panel = panelFor(page);
   await panel.locator("#rule-add").click();
-  await panel.locator("#rule-name").fill("Captured model and reasoning");
+  await panel.locator("#rule-name").fill("Deep think");
   await panel.locator("#rule-match").selectOption("sentence_pattern");
   await panel.locator("#rule-action-type").selectOption("model_routing");
-  await panel.locator("#rule-model").fill("{model}");
-  await panel.locator("#rule-phrases").fill("route {model} with {effort}");
-  await panel.locator("#rule-reasoning").selectOption("{effort}");
+  await panel.locator("#rule-phrases").fill("deep think about {question}");
   await panel.locator("#rule-continue-to-ai").check();
+  await panel.locator("#rule-ai-input-mode").selectOption("capture");
+  await expect(panel.locator("#rule-ai-input-capture")).toHaveValue("question");
+  await expect(panel.locator('#rule-reasoning option[value="{question}"]')).toHaveCount(0);
+  await panel.locator("#rule-model").fill("{question}");
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-error")).toContainText("Replace routing captures");
+  const calls = await page.evaluate(() => browserHarness.calls.filter(
+    call => call.section === "request_rules" && call.action === "create"
+  ));
+  expect(calls).toEqual([]);
+  await panel.locator("#rule-model").fill("gpt-5.6");
+  await panel.locator("#rule-reasoning").selectOption("high");
   await panel.locator("#rule-save").click();
   await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
   const saved = await page.evaluate(() => browserHarness.calls.findLast(
     call => call.section === "request_rules" && call.action === "create"
   ).rule);
-  expect(saved.action.model).toBe("{model}");
-  expect(saved.action.reasoning_effort).toBe("{effort}");
+  expect(saved.action.model).toBe("gpt-5.6");
+  expect(saved.action.reasoning_effort).toBe("high");
+  expect(saved.ai_input_capture).toBe("question");
+  await expectHarnessClean(page, errors);
+});
+
+test("A legacy routing choice stays visible until replaced", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/request-rules"));
+  const panel = panelFor(page);
+  const edit = panel.locator(".rule-edit").first();
+  await expect(edit).toBeVisible();
+  await panel.evaluate(host => {
+    const rule = host._result.rules[0];
+    Object.assign(rule, {
+      action_type: "model_routing", match_type: "sentence_pattern",
+      phrases: ["reason {effort}"],
+      action: {model: "{effort}", reasoning_effort: "{effort}", scope: "request", continue_to_ai: true},
+    });
+    host._result.diagnostics[rule.id] = "Captured routing choices were removed. Replace captures with fixed choices.";
+  });
+  await edit.click();
+  await expect(panel.locator("#rule-action-repair")).toContainText("Captured routing choices were removed.");
+  await expect(panel.locator("#rule-model")).toHaveValue("{effort}");
+  await expect(panel.locator("#rule-reasoning")).toHaveValue("{effort}");
+  await expect(panel.locator('#rule-reasoning option[value="{effort}"]')).toHaveJSProperty("disabled", true);
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-error")).toContainText("Replace routing captures");
+  await panel.locator("#rule-model").fill("gpt-5.6");
+  await panel.locator("#rule-reasoning").selectOption("low");
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
+  const saved = await page.evaluate(() => browserHarness.calls.findLast(
+    call => call.section === "request_rules" && call.action === "update"
+  ).rule);
+  expect(saved.action).toMatchObject({model: "gpt-5.6", reasoning_effort: "low"});
+  expect(saved.phrases).toEqual(["reason {effort}"]);
   await expectHarnessClean(page, errors);
 });

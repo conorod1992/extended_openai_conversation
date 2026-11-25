@@ -1,6 +1,7 @@
 """Accepted configuration must reach the actual initial provider/tool boundary."""
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, date, datetime
 import json
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ import yaml
 
 from custom_components.extended_openai_conversation_responses import (
     agent_config,
+    helpers,
     management_ui as ui,
     request,
     services,
@@ -33,6 +35,12 @@ from custom_components.extended_openai_conversation_responses.function_groups im
 )
 from custom_components.extended_openai_conversation_responses.function_tool_quarantine import (
     _runtime_configured_function_tools,
+)
+from custom_components.extended_openai_conversation_responses.management_request_preview import (
+    async_preview_effective_request,
+)
+from custom_components.extended_openai_conversation_responses.request_context import (
+    _ACTIVE_TURN,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -72,11 +80,223 @@ def _agent(hass, entry, subentry):
     agent._guest_mode = agent.skill_manager = agent._function_groups_runtime = None
     agent._temporary_memory = agent._knowledge = agent._memory = agent._archive = None
     if subentry.data.get("archive_enabled"):
-        agent._archive = (
-            object()
-        )  # Healthy manager; this probe requests no archive operation.
+        agent._archive = SimpleNamespace(read_available=True)
     agent._usage = None
     return agent
+
+
+async def test_request_preview_rejects_azure_tool_count_for_signed_in_caller(hass):
+    options = _options(
+        126,
+        azure_model="gpt-4o",
+        memory_mode="manual",
+        current_datetime_enabled=False,
+        exposed_entities_enabled=False,
+        prompt="Usage test",
+    )
+    entry = SimpleNamespace(entry_id="entry", data={"api_provider": "azure"})
+    subentry = SimpleNamespace(subentry_id="agent", data=options)
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        request.validate_runtime_readiness(options, entry.data)
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        await async_preview_effective_request(hass, entry, subentry, options, "admin")
+
+
+@pytest.mark.parametrize(
+    ("entry_data", "client_url", "expected"),
+    [
+        ({}, None, 128),
+        ({"base_url": "https://eu.api.openai.com/v1"}, None, 128),
+        ({"base_url": "https://api.openai.com/v1?project=test"}, None, 128),
+        ({"api_provider": "azure"}, None, 128),
+        ({"base_url": "https://resource.openai.azure.com"}, None, 128),
+        (
+            {"api_provider": "openai", "base_url": "https://compatible.example/v1"},
+            None,
+            None,
+        ),
+        ({}, "https://compatible.example/v1", None),
+    ],
+)
+def test_tool_limit_uses_the_effective_endpoint(
+    monkeypatch, entry_data, client_url, expected
+):
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    client = None if client_url is None else SimpleNamespace(base_url=client_url)
+    assert (
+        request.build_provider_request_snapshot(
+            _options(), entry_data, client=client
+        ).tool_limit
+        == expected
+    )
+
+
+def test_official_sdk_query_preserves_the_cap_without_enabling_hosted_tools():
+    client = SimpleNamespace(
+        base_url="https://api.openai.com/v1",
+        default_query={"project": "test"},
+    )
+    assert not helpers.is_native_openai_connection({}, client=client)
+    assert (
+        request.build_provider_request_snapshot(
+            _options(), {}, client=client
+        ).tool_limit
+        == 128
+    )
+
+
+async def test_add_ha_tool_validates_available_saved_and_selected_tools(
+    hass, management_agent, management_message, rules
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+    )
+    from tests.test_ha_llm_tools import Echo, TestAPI, context, register
+
+    hass.config.language = "en"
+    entry, subentry = management_agent
+    entry.data = {"api_provider": "azure"}
+    second = Echo()
+    second.name = "second"
+    api = register(hass, TestAPI(hass, tools=[Echo(), second]))
+    snapshot = await async_discover(hass, context())
+    saved, added = [tool.reference for tool in snapshot.tools.values()]
+    existing = new_reference_tool(saved, set())
+    subentry.data = _options(
+        functions=[*[_tool(f"marker_{i}") for i in range(126)], existing],
+        azure_model="gpt-4o",
+    )
+
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        await ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            management_message("tools", "ha_add", tools=[added]),
+        )
+    hass.config_entries.async_update_subentry.assert_not_called()
+
+    # One unavailable saved reference consumes no slot in this preview context.
+    api.tools = [second]
+    result = await ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message("tools", "ha_add", tools=[added]),
+    )
+    assert [item["name"] for item in result["ha_saved"].values()] == ["second"]
+    hass.config_entries.async_update_subentry.assert_called_once()
+
+    hass.config_entries.async_update_subentry.reset_mock()
+    saved = await _save(hass, entry, subentry, {"memory_mode": "manual"})
+    assert saved["valid"] is False
+    assert "128-tool limit" in str(saved["errors"])
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        await ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            management_message("tools", "save", tool=_tool("extra")),
+        )
+    hass.config_entries.async_update_subentry.assert_not_called()
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+async def test_capacity_probe_skips_disabled_and_unreadable_ha_tools(
+    hass, monkeypatch, malformed
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        new_reference_tool,
+    )
+    from tests.test_ha_llm_tools import reference
+
+    tool = new_reference_tool(reference(), set())
+    tool["enabled"] = False
+    options = {"functions": "[" if malformed else [tool]}
+    discover = AsyncMock()
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.ha_llm_tools.async_discover",
+        discover,
+    )
+
+    assert await ui._async_capacity_ha_snapshot(hass, options, "admin") is None
+    discover.assert_not_awaited()
+
+
+@pytest.mark.parametrize("ordinary_count,loader_admitted", [(125, True), (126, False)])
+async def test_preview_and_dispatch_share_loader_capacity(
+    hass, ordinary_count, loader_admitted
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+        tool_snapshot_scope,
+    )
+    from tests.test_ha_llm_tools import TestAPI, context, register
+
+    register(hass, TestAPI(hass))
+    snapshot = await async_discover(hass, context())
+    remote = new_reference_tool(next(iter(snapshot.tools.values())).reference, set())
+    options = _options(
+        functions=[
+            *[_tool(f"marker_{i}") for i in range(ordinary_count)],
+            remote,
+            _tool("held"),
+        ],
+        function_groups=[
+            {
+                "id": "later",
+                "name": "Later",
+                "description": "Optional",
+                "functions": ["held"],
+                "loading_mode": "on_demand",
+            }
+        ],
+        azure_model="gpt-4o",
+        exposed_entities_enabled=False,
+        current_datetime_enabled=False,
+        prompt="Base",
+    )
+    provider_data = {"api_provider": "azure"}
+    entry = SimpleNamespace(data=provider_data, entry_id="entry")
+    subentry = SimpleNamespace(data=options, subentry_id="agent")
+    with tool_snapshot_scope(snapshot):
+        sent = await _dispatch(_agent(hass, entry, subentry))
+    result = await async_preview_effective_request(
+        hass, entry, subentry, options, "admin"
+    )
+    section_keys = {
+        "function_tools",
+        "function_group_loader",
+        "integration_tools",
+        "provider_tools",
+    }
+    preview = [
+        definition
+        for section in result["sections"]
+        if section["key"] in section_keys
+        for definition in json.loads(section["content"])
+    ]
+    sent_names = {item["function"]["name"] for item in sent["tools"]}
+    assert {item["function"]["name"] for item in preview} == sent_names
+    assert len(preview) == len(sent["tools"]) == 128
+    assert ("load_function_groups" in sent_names) is loader_admitted
+
+
+def test_readiness_counts_only_advertised_persistent_memory_tools():
+    from custom_components.extended_openai_conversation_responses.memory import (
+        memory_tools,
+    )
+
+    # One legacy memory tool is executable for old callers and absent from new
+    # provider schemas. The start-fresh tool uses the slot it would have taken.
+    count = 128 - len(memory_tools())
+    options = _options(count, azure_model="gpt-4o", memory_mode="manual")
+    request.validate_runtime_readiness(options, {"api_provider": "azure"})
+    options = _options(count + 1, azure_model="gpt-4o", memory_mode="manual")
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        request.validate_runtime_readiness(options, {"api_provider": "azure"})
 
 
 @pytest.fixture
@@ -93,6 +313,128 @@ def rules(monkeypatch):
         AsyncMock(return_value=SimpleNamespace(status=lambda: {})),
     )
     return manager
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "authored"),
+    [
+        ("knowledge", "knowledge_enabled", 124),
+        ("guest_mode", "guest_mode_enabled", 126),
+    ],
+)
+async def test_capability_activation_accounts_for_live_ha_tools_and_allows_restrictions(
+    hass, management_agent, management_message, rules, section, field, authored
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+    )
+    from tests.test_ha_llm_tools import Echo, TestAPI, context, register
+
+    hass.config.language = "en"
+    entry, subentry = management_agent
+    api = register(hass, TestAPI(hass, tools=[Echo()]))
+    snapshot = await async_discover(hass, context())
+    reference = new_reference_tool(next(iter(snapshot.tools.values())).reference, set())
+    subentry.data = _options(
+        functions=[*[_tool(f"marker_{i}") for i in range(authored)], reference]
+    )
+    original = deepcopy(subentry.data)
+    candidate = {**original, field: True}
+    request.validate_runtime_readiness(candidate, entry.data)
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        request.validate_runtime_readiness(candidate, entry.data, ha_snapshot=snapshot)
+
+    async def set_feature(enabled, **guest_fields):
+        if section == "guest_mode":
+            message = management_message(
+                section, "save_policy", config={field: enabled, **guest_fields}
+            )
+        else:
+            message = management_message(section, "set_enabled", enabled=enabled)
+        return await ui.async_management_command(hass, "admin", True, message)
+
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        await set_feature(True)
+    assert subentry.data == original
+    hass.config_entries.async_update_subentry.assert_not_called()
+
+    api.tools = []
+    await set_feature(True)
+    assert subentry.data[field] is True
+    api.tools = [Echo()]
+    if section == "guest_mode":
+        await set_feature(True, guest_excluded_areas=["kitchen"])
+        assert subentry.data["guest_excluded_areas"] == ["kitchen"]
+    await set_feature(False)
+    assert subentry.data[field] is False
+
+
+@pytest.mark.parametrize("section", ["knowledge", "guest_mode"])
+async def test_capability_activation_validates_retained_static_routes_and_allows_repair(
+    hass, management_agent, management_message, monkeypatch, section, rules
+):
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRules,
+    )
+    from tests.test_request_rules import MemoryStore, routing_rule
+
+    entry, subentry = management_agent
+    subentry.data = _options()
+    retained = RequestRules(MemoryStore())
+    await retained.async_initialize()
+    route = routing_rule()
+    route["action"]["model"] = "gpt-5-pro"
+    await retained.async_create(route)
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=retained))
+
+    activate = (
+        management_message(section, "set_enabled", enabled=True)
+        if section == "knowledge"
+        else management_message(
+            section, "save_policy", config={"guest_mode_enabled": True}
+        )
+    )
+
+    async def command(message):
+        return await ui.async_management_command(hass, "admin", True, message)
+
+    request.validate_runtime_readiness(subentry.data, entry.data)
+    with pytest.raises(HomeAssistantError, match=r"Request Rule .*gpt-5-pro"):
+        await command(activate)
+    hass.config_entries.async_update_subentry.assert_not_called()
+
+    disabled = await command(
+        management_message(
+            "request_rules",
+            "update",
+            rule_id=route["id"],
+            rule={"enabled": False},
+        )
+    )
+    assert disabled["rule"]["enabled"] is False
+    edited = await command(
+        management_message(
+            "request_rules",
+            "update",
+            rule_id=route["id"],
+            rule={**disabled["rule"], "name": "Repaired label", "enabled": False},
+        )
+    )
+    assert edited["rule"]["name"] == "Repaired label"
+    with pytest.raises(HomeAssistantError, match="gpt-5-pro"):
+        await command(
+            management_message(
+                "request_rules",
+                "update",
+                rule_id=route["id"],
+                rule={"enabled": True},
+            )
+        )
+    assert retained.rule_snapshot(route["id"])["enabled"] is False
+
+    await command(activate)
+    hass.config_entries.async_update_subentry.assert_called_once()
 
 
 async def _save(hass, entry, subentry, updates):
@@ -269,6 +611,12 @@ async def _dispatch(agent, *, conditional=False):
         chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
     )
     lifecycle = begin_conversation_lifecycle()
+    turn = _ACTIVE_TURN.set(
+        replace(
+            _ACTIVE_TURN.get(),
+            archive=("key", "session") if agent._archive is not None else None,
+        )
+    )
     try:
         log = _chat_log(agent.hass)
         tools = agent._get_function_tools()
@@ -277,6 +625,7 @@ async def _dispatch(agent, *, conditional=False):
         )
         assert final_assistant_text(log.content) == "Done"
     finally:
+        _ACTIVE_TURN.reset(turn)
         end_conversation_lifecycle(lifecycle)
     return create.call_args.kwargs
 
@@ -289,10 +638,11 @@ async def _dispatch(agent, *, conditional=False):
         ("azure", "chat_completions", 126, True, True),
         ("azure", "responses", 127, True, True),
         ("azure", "auto", 127, True, True),
-        ("openai", "chat_completions", 127, True, True),
+        ("openai", "chat_completions", 127, True, False),
         ("openai", "responses", 127, True, True),
         ("openai", "auto", 127, True, True),
         ("custom", "chat_completions", 127, True, True),
+        ("custom", "chat_completions", 126, True, True),
     ],
 )
 async def test_accepted_save_reaches_actual_initial_provider_request(
@@ -328,7 +678,8 @@ async def test_accepted_save_reaches_actual_initial_provider_request(
     "enabled,always,extra,accepted",
     [
         (True, False, 125, True),
-        (True, False, 126, False),
+        (True, False, 126, True),
+        (True, False, 127, False),
         (False, False, 126, True),
         (True, True, 126, False),
     ],
@@ -364,7 +715,7 @@ async def test_group_loader_counts_but_unloaded_members_do_not(
         return
     assert saved["valid"]
     sent = await _dispatch(_agent(hass, entry, subentry), conditional=True)
-    assert len(sent["tools"]) == extra + 2 + int(enabled)
+    assert len(sent["tools"]) == min(128, extra + 2 + int(enabled))
 
 
 def test_readiness_is_independent_of_ambient_runtime_and_defers_dynamic_tools(hass):
@@ -376,7 +727,7 @@ def test_readiness_is_independent_of_ambient_runtime_and_defers_dynamic_tools(ha
         pytest.raises(HomeAssistantError, match="128-tool limit"),
     ):
         request.validate_runtime_readiness(options, {"api_provider": "azure"})
-    # Scope-dependent data and discovered HA tools are not guaranteed initial tools.
+    # Enabled built-ins must fit an eligible owner's initial request.
     options = _options(
         126,
         azure_model="gpt-4o",
@@ -386,13 +737,24 @@ def test_readiness_is_independent_of_ambient_runtime_and_defers_dynamic_tools(ha
         knowledge_enabled=True,
     )
     before = deepcopy(options)
-    request.validate_runtime_readiness(options, {"api_provider": "azure"})
+    with pytest.raises(HomeAssistantError, match="128-tool limit"):
+        request.validate_runtime_readiness(options, {"api_provider": "azure"})
     assert options == before
+    request.validate_runtime_readiness(
+        _options(
+            100,
+            azure_model="gpt-4o",
+            continue_conversation="conditional",
+            memory_mode="manual",
+            temporary_memory="eager",
+            knowledge_enabled=True,
+        ),
+        {"api_provider": "azure"},
+    )
+    # Discovered HA tools still need live counts.
     dynamic = [_tool(f"discovered_{i}") for i in range(10)]
     with pytest.raises(HomeAssistantError, match="128-tool limit"):
-        request.validate_provider_tool_count(
-            128 + len(dynamic), "azure", "chat_completions"
-        )
+        request.validate_provider_tool_count(128 + len(dynamic), 128)
 
 
 @pytest.mark.parametrize("group", [False, True])
@@ -412,7 +774,7 @@ async def test_trusted_availability_mutations_cannot_publish_over_limit(
                 "name": "Later",
                 "description": "Later tools",
                 "functions": ["marker_126"],
-                "loading_mode": "on_demand",
+                "loading_mode": "always",
                 "enabled": False,
             }
         ]
@@ -537,7 +899,7 @@ async def test_dynamic_group_growth_is_checked_at_real_runtime_boundary(
     )
     lifecycle = begin_conversation_lifecycle()
     try:
-        refused = agent._load_function_groups(["later"])
+        refused = agent._load_function_groups(["later"], 128)
         assert refused["status"] == "error" and not session.loaded_group_ids
         # Even unexpected retained growth cannot bypass the final dispatch guard.
         session.loaded_group_ids.add("later")
@@ -727,6 +1089,106 @@ async def test_prepared_restore_rechecks_readiness_before_journaling(
     assert len(sent["tools"]) == 128
 
 
+@pytest.mark.parametrize("new_cap", [False, True])
+async def test_shared_provider_restore_checks_sibling_ha_capacity_before_journaling(
+    hass, monkeypatch, new_cap
+):
+    from unittest.mock import MagicMock
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        request_rules,
+        restore_recovery,
+        transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+    )
+    from homeassistant.config_entries import ConfigEntryState
+    from tests.test_ha_llm_tools import Echo, TestAPI, context, register
+    from tests.test_private_backup_fidelity import private_document
+    from tests.test_selective_restore_concurrency import RestoreHarness
+
+    tx = RestoreHarness(monkeypatch)
+    tx.hass.config = SimpleNamespace(language="en")
+    target_config = _options()
+    tx.subentry.data = deepcopy(target_config)
+    tx.entry.state = ConfigEntryState.NOT_LOADED
+    tx.entry.disabled_by = None
+    previous = {"api_key": "old", "skip_authentication": True}
+    if new_cap:
+        previous["base_url"] = "https://compatible.example/v1"
+    tx.entry.data = previous
+
+    api = register(tx.hass, TestAPI(tx.hass, tools=[Echo()]))
+    snapshot = await async_discover(tx.hass, context())
+    reference = new_reference_tool(next(iter(snapshot.tools.values())).reference, set())
+    if new_cap:
+        # The administrator cannot currently see this tool. Other callers may.
+        api.tools = []
+    tools = [*[_tool(f"marker_{i}") for i in range(126)], reference]
+    sibling = SimpleNamespace(
+        title="Sibling",
+        subentry_id="sibling",
+        subentry_type="conversation",
+        data=_options(functions=tools, continue_conversation="conditional"),
+    )
+    tx.entry.subentries["sibling"] = sibling
+    read_rules = AsyncMock(return_value=[])
+    monkeypatch.setattr(request_rules, "async_read_committed_request_rules", read_rules)
+
+    def update_entry(entry, *, data):
+        entry.data = deepcopy(data)
+        return True
+
+    update_provider = tx.hass.config_entries.async_update_entry = MagicMock(
+        side_effect=update_entry
+    )
+    tx.hass.config_entries.async_schedule_reload = MagicMock()
+    persist_provider = AsyncMock()
+    monkeypatch.setattr(
+        restore_recovery, "async_persist_config_entries", persist_provider
+    )
+
+    connection = {"api_key": "new", "skip_authentication": True}
+    document = private_document()
+    document["agent"]["config"] = target_config
+    document["provider_connection"] = connection
+    document = backup.finalize_backup_snapshot(document)["document"]
+
+    async def restore():
+        return await transfer.async_restore_transfer(
+            tx.hass,
+            tx.entry,
+            tx.subentry,
+            document,
+            sections=[transfer.SECTION_CONFIGURATION],
+            provider_connection=connection,
+            expected_provider_data=previous,
+        )
+
+    old_target = deepcopy(tx.subentry.data)
+    old_sibling = deepcopy(sibling.data)
+    with pytest.raises(backup.BackupError, match=r"Sibling.*128-tool limit"):
+        await restore()
+    assert tx.entry.data == previous
+    assert tx.subentry.data == old_target
+    assert sibling.data == old_sibling
+    assert not tx.journal.saved
+    assert not tx.writes
+    update_provider.assert_not_called()
+    persist_provider.assert_not_awaited()
+    read_rules.assert_awaited_once_with(tx.hass, tx.entry.entry_id, "sibling")
+
+    reference["enabled"] = False
+    sibling.data = _options(functions=tools, continue_conversation="conditional")
+    repaired = deepcopy(sibling.data)
+    assert (await restore())["provider_connection_restored"]
+    assert tx.entry.data == connection
+    assert sibling.data == repaired
+
+
 async def test_provider_owned_tools_are_present_in_accepted_runtime_request(
     hass, management_agent, rules
 ):
@@ -810,3 +1272,153 @@ async def test_real_ha_script_keeps_typed_backend_values(tmp_path, monkeypatch):
         json.dumps(sent)
     finally:
         await real.async_stop(force=True)
+
+
+async def test_ready_save_omits_optional_group_loader_at_capacity(
+    hass, management_agent, rules
+):
+    from tests.test_function_groups import _group
+
+    entry, subentry = management_agent
+    entry.data = {"api_provider": "azure"}
+    subentry.data = _options(
+        functions=[*[_tool(f"marker_{i}") for i in range(127)], _tool("optional")],
+        function_groups=[_group("optional", ["optional"])],
+        azure_model="gpt-4o",
+        exposed_entities_enabled=False,
+        current_datetime_enabled=False,
+        prompt="Original prompt",
+    )
+    agent = _agent(hass, entry, subentry)
+    sent = await _dispatch(agent)
+    assert len(sent["tools"]) == 128
+    preview = await async_preview_effective_request(
+        hass, entry, subentry, subentry.data, "admin"
+    )
+    assert any("no slot for" in note for note in preview["notes"])
+    result = await _save(hass, entry, subentry, {"prompt": "New prompt"})
+    assert result["valid"]
+
+
+async def test_ready_save_counts_installed_skill_loader(
+    hass, management_agent, rules, monkeypatch
+):
+    from custom_components.extended_openai_conversation_responses.const import (
+        DEFAULT_CONF_FUNCTION_TOOLS,
+    )
+    from custom_components.extended_openai_conversation_responses.skills import (
+        SkillManager,
+    )
+
+    entry, subentry = management_agent
+    entry.data = {"api_provider": "azure"}
+    loader = next(
+        t for t in DEFAULT_CONF_FUNCTION_TOOLS if t["spec"]["name"] == "load_skill"
+    )
+    subentry.data = _options(
+        functions=[*[_tool(f"marker_{i}") for i in range(127)], loader],
+        skills=["weather"],
+        azure_model="gpt-4o",
+    )
+    monkeypatch.setattr(
+        SkillManager,
+        "get_loaded_instance",
+        classmethod(
+            lambda cls: SimpleNamespace(
+                get_all_skills=lambda: [
+                    SimpleNamespace(name="weather", description="Recognized")
+                ]
+            )
+        ),
+    )
+    result = await _save(hass, entry, subentry, {"prompt": "New prompt"})
+    assert not result["valid"] and "128-tool limit" in str(result["errors"])
+
+
+async def test_ha_tool_enable_service_rejects_over_limit(
+    hass, management_agent, rules, monkeypatch
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+        tool_snapshot_scope,
+    )
+    from tests.test_ha_llm_tools import TestAPI, context, register
+
+    hass.config.language = "en"
+    entry, subentry = management_agent
+    entry.data = {"api_provider": "azure"}
+    register(hass, TestAPI(hass))
+    snapshot = await async_discover(hass, context())
+    [tool] = snapshot.tools.values()
+    reference = new_reference_tool(tool.reference, set())
+    reference["enabled"] = False
+    subentry.data = _options(
+        functions=[*[_tool(f"marker_{i}") for i in range(127)], reference],
+        azure_model="gpt-4o",
+    )
+    entry_id, subentry_id = entry.entry_id, subentry.subentry_id
+    monkeypatch.setattr(
+        services, "resolve_memory_agent", lambda *_: (entry_id, subentry_id)
+    )
+    agent = _agent(hass, entry, subentry)
+    with tool_snapshot_scope(snapshot):
+        assert len((await _dispatch(agent))["tools"]) == 128
+        with pytest.raises(HomeAssistantError, match="128-tool limit"):
+            await services.async_set_function_tools_enabled(
+                hass, entry_id, subentry_id, [reference["spec"]["name"]], True
+            )
+        assert len((await _dispatch(agent))["tools"]) == 128
+
+
+async def test_import_ha_catalogue_over_capacity(
+    hass, management_agent, management_message, rules
+):
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+    )
+    from tests.test_ha_llm_tools import TestAPI, context, register
+
+    hass.config.language = "en"
+    entry, subentry = management_agent
+    entry.data = {"api_provider": "azure"}
+    subentry.data = _options(
+        126,
+        azure_model="gpt-4o",
+        exposed_entities_enabled=False,
+        current_datetime_enabled=False,
+        prompt="Plain prompt",
+    )
+    register(hass, TestAPI(hass))
+    snapshot = await async_discover(hass, context())
+    reference = new_reference_tool(next(iter(snapshot.tools.values())).reference, set())
+    functions = [*[_tool(f"marker_{i}") for i in range(127)], reference]
+    bad = _options(
+        functions=functions,
+        azure_model="gpt-4o",
+        exposed_entities_enabled=False,
+        current_datetime_enabled=False,
+        prompt="Plain prompt",
+    )
+    saved = await _save(hass, entry, subentry, {"functions": functions})
+    assert not saved["valid"] and "128-tool limit" in str(saved["errors"]), saved
+    from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+    doc = historical_reviewed_configuration(bad)
+    serialized = json.dumps(doc)
+    for action in ("import_preview", "import"):
+        with pytest.raises(HomeAssistantError, match="128-tool limit"):
+            await ui.async_management_command(
+                hass,
+                "admin",
+                True,
+                management_message(
+                    "configuration",
+                    action,
+                    document=serialized,
+                    mode="current",
+                    confirm=True,
+                    revision=ui.persisted_config_projection(subentry).revision,
+                ),
+            )

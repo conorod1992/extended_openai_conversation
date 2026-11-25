@@ -104,7 +104,8 @@ async def test_captured_results_with_live_policy_remain_guarded(hass, local_scri
     rule["action"]["actions"] = [
         {
             "action": f"{rr.DOMAIN}.call_function",
-            "data": {"function": "read", "arguments": {}, "result_alias": "reading"},
+            "data": {"function": "read", "arguments": {}},
+            "response_variable": "reply",
         }
     ]
     live_policy = Mock(side_effect=GuestCapabilityPolicy.unrestricted)
@@ -123,7 +124,7 @@ async def test_captured_results_with_live_policy_remain_guarded(hass, local_scri
     assert live_policy.call_count == before + 1
     hass.services.async_call.assert_awaited_once()
     assert any(
-        step.get("response_variable") == "__eoai_result_reading"
+        step.get("response_variable") == "reply"
         for step in local_script.actions
     )
 
@@ -148,7 +149,7 @@ async def test_script_failure_rechecks_revision_and_cleans_up(hass, local_script
 async def test_response_format_failure_does_not_repeat_completed_actions(
     hass, monkeypatch, local_script, error
 ):
-    monkeypatch.setattr(rr, "resolve_result_values", Mock(side_effect=error))
+    monkeypatch.setattr(rr, "resolve_slot_values", Mock(side_effect=error))
     result = await _evaluate(hass, rr.validate_rule(local_rule()))
     assert not result.successful
     assert "action execution succeeded" in result.response
@@ -158,11 +159,10 @@ async def test_response_format_failure_does_not_repeat_completed_actions(
 
 
 @pytest.mark.parametrize("successful_first", [False, True])
-async def test_sentence_budget_failure_after_match_cannot_silently_handoff(
+async def test_matching_stops_before_later_sentence_budget_failure(
     hass, monkeypatch, successful_first
 ):
     rule = local_rule()
-    rule["continue_matching"] = True
     rules = await manager(rule)
 
     async def matches(*_args):
@@ -182,18 +182,13 @@ async def test_sentence_budget_failure_after_match_cannot_silently_handoff(
             )
         ),
     )
+    result = await rr.async_evaluate_rule(
+        hass, rules, rr.RequestRuleRuntime(), "run", "session"
+    )
     if successful_first:
-        with pytest.raises(HomeAssistantError, match="could not safely continue"):
-            await rr.async_evaluate_rule(
-                hass, rules, rr.RequestRuleRuntime(), "run", "session"
-            )
+        assert result.consume and result.response == "Done"
     else:
-        assert (
-            await rr.async_evaluate_rule(
-                hass, rules, rr.RequestRuleRuntime(), "run", "session"
-            )
-            is None
-        )
+        assert result is None
 
 
 async def test_fuzzy_cursor_skips_rule_already_matched_strictly():
@@ -236,56 +231,3 @@ async def test_instrumented_matcher_skips_failed_conditions_without_repeating_ru
         {"id": first["id"], "name": first["name"], "reason": "conditions_false"}
     ]
     assert matching.call_args_list[1].args == ("run", frozenset({first["id"]}))
-
-
-@pytest.mark.parametrize("reset", [False, True])
-@pytest.mark.parametrize("field", [rr.CONF_CHAT_MODEL, rr.CONF_REASONING_EFFORT])
-async def test_continued_conversation_route_reconciles_request_overrides(
-    hass, reset, field
-):
-    effort = rr.get_reasoning_effort_options("gpt-6-astra")[0]
-
-    def route(name, scope, *, reset=False, model=None, reasoning=None, handoff=False):
-        rule = local_rule(name, phrases=["run"])
-        rule.update(
-            action_type="model_routing",
-            continue_matching=True,
-            order=0 if scope == "request" else 1,
-        )
-        rule["action"] = {
-            "scope": scope,
-            "reset": reset,
-            "model": model,
-            "reasoning_effort": reasoning,
-            "continue_to_ai": handoff,
-            "success_response": "Routed",
-        }
-        return rule
-
-    first = route(
-        "Request",
-        "request",
-        reset=reset,
-        model=None if reset else "gpt-6-astra",
-        reasoning=None if reset else effort,
-    )
-    second = route(
-        "Conversation",
-        "conversation",
-        model="gpt-6-astra" if field == rr.CONF_CHAT_MODEL else None,
-        reasoning=effort if field == rr.CONF_REASONING_EFFORT else None,
-        handoff=True,
-    )
-    runtime = rr.RequestRuleRuntime()
-    rules = await manager(first, second)
-    evaluation = await rr.async_evaluate_rule(
-        hass, rules, runtime, "run", "session", configured_model="gpt-6-astra"
-    )
-    assert evaluation is not None and not evaluation.consume
-    expected = "gpt-6-astra" if field == rr.CONF_CHAT_MODEL else effort
-    assert runtime.get("session", 30)[field] == expected
-    if reset:
-        assert evaluation.request_override[rr._REQUEST_RESET_SENTINEL] == "1"
-        assert evaluation.request_override[field] == expected
-    else:
-        assert field not in (evaluation.request_override or {})

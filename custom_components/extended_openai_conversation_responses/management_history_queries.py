@@ -21,6 +21,7 @@ from .conversation_archive import (
     _normalize,
     _parse_time,
     _search_features,
+    _search_result_date,
     _tokens,
     _turn_payload,
 )
@@ -461,7 +462,7 @@ def _archive_search_sync(
             session,
             turn,
             turn_index,
-            timestamp.astimezone(time_zone).date().isoformat(),
+            _search_result_date(timestamp, time_zone),
             query,
         )
         for _, timestamp, _, _, session, turn, turn_index in page

@@ -15,14 +15,6 @@ export async function mountFreshAccountPanel(panel) {
   });
 }
 
-export async function acceptSharingReview(panel) {
-  const download = panel.locator("[data-download]");
-  await expect(download).toBeVisible();
-  const acknowledgement = panel.locator("[data-ack]");
-  if (await acknowledgement.isVisible()) await acknowledgement.check();
-  await download.click();
-}
-
 export function trackPageErrors(page) {
   const diagnostics = [];
   diagnostics.consoleErrors = [];

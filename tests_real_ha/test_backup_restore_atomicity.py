@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
+from dataclasses import replace
+from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -60,12 +64,189 @@ async def _setup_entry(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     assert entry.state is ConfigEntryState.LOADED
 
 
+async def test_selective_rule_restore_replaces_rules_preserving_saved_enabled_states(
+    hass,
+):
+    from custom_components.extended_openai_conversation_responses import transfer
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        async_get_request_rules,
+    )
+    from tests_real_ha.test_cross_feature_acceptance import _rule
+
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    key = (entry.entry_id, subentry.subentry_id)
+    manager = await async_get_request_rules(hass, *key)
+    original = {}
+    for enabled in (True, False):
+        name = "Enabled source rule" if enabled else "Disabled source rule"
+        rule = _rule(
+            "local_action",
+            {"actions": [{"set_conversation_response": "Done"}]},
+            phrase=name,
+        )
+        saved = await manager.async_create({**rule, "name": name, "enabled": enabled})
+        original[saved["id"]] = enabled
+    document = backup.finalize_backup_snapshot(
+        await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    )["document"]
+    for rule_id in original:
+        await manager.async_delete(rule_id)
+    destination = await manager.async_create(
+        _rule(
+            "local_action",
+            {"actions": [{"set_conversation_response": "Destination"}]},
+        )
+    )
+    assert destination["id"] not in original
+
+    result = await transfer.async_restore_transfer(
+        hass, entry, subentry, document, sections=[transfer.SECTION_REQUEST_RULES]
+    )
+    assert result["status"] == "restored"
+    restored = (await async_get_request_rules(hass, *key)).snapshot()["rules"]
+    assert {rule["id"]: rule["enabled"] for rule in restored} == original
+
+
 def _conversation_subentry(entry: MockConfigEntry):
     return next(
         subentry
         for subentry in entry.subentries.values()
         if subentry.subentry_type == "conversation"
     )
+
+
+@pytest.mark.parametrize(
+    "interruption", ["apply", "commit", "damaged metadata", "uncertain journal"]
+)
+async def test_disk_backed_archive_restores_verified_generation(
+    hass, real_store_io, monkeypatch, interruption
+):
+    """Exercise streamed journal and partition I/O with real Store read-back."""
+    from custom_components.extended_openai_conversation_responses import (
+        conversation_archive as archives,
+        restore_disk,
+        restore_recovery,
+        transfer,
+    )
+    from homeassistant.util import dt as dt_util
+    from tests.test_conversation_archive import _session, _turn
+
+    monkeypatch.setattr(restore_disk, "ARCHIVE_DISK_THRESHOLD", 1)
+    monkeypatch.setattr(restore_recovery, "_STREAM_JOURNAL_BYTES", 1)
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    owner = entry.entry_id, subentry.subentry_id
+    archive = await archives.async_get_archive(hass, *owner)
+    storage = archive._storage
+    now = dt_util.utcnow()
+    earlier = (now.replace(day=1) - timedelta(days=1)).isoformat()
+
+    async def seed(label, stamps):
+        session = replace(
+            _session(label, scope_id="shared:household", turn_count=len(stamps)),
+            agent_subentry_id=subentry.subentry_id,
+            scope_type="shared",
+            scope_source="shared_household",
+            started_at=stamps[0],
+            last_message_at=stamps[-1],
+        )
+        turns = [
+            _turn(label, turn_id=f"{label}-{index}", timestamp=stamp, user_text=label)
+            for index, stamp in enumerate(stamps)
+        ]
+        await archive.async_replace_backup([session], turns)
+
+    await seed("target", [earlier, now.isoformat()])
+    document = backup.finalize_backup_snapshot(
+        await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    )["document"]
+    await seed("previous", [now.isoformat()])
+    journal = restore_recovery._journal_store(hass, *owner)
+    earlier_partition = Path(storage._partition_store(earlier[:7]).path)
+    base_writer = archives.write_verified_store
+    journal_writer = restore_recovery.write_verified_store
+    attempted = False
+
+    def fail_after_first_partition(store, payload, **kwargs):
+        nonlocal attempted
+        base_writer(store, payload, **kwargs)
+        if Path(store.path) == earlier_partition and not attempted:
+            attempted = True
+            raise OSError("Partition acknowledgement lost")
+
+    async def fail_configuration(*args, **kwargs):
+        raise OSError("Configuration acknowledgement lost")
+
+    def fail_journal_verification(store, payload, **kwargs):
+        journal_writer(store, payload, **kwargs)
+        raise OSError("Journal acknowledgement lost")
+
+    with monkeypatch.context() as fault:
+        if interruption == "apply":
+            fault.setattr(archives, "write_verified_store", fail_after_first_partition)
+            message = "previous agent state was recovered"
+        elif interruption == "uncertain journal":
+            fault.setattr(restore_recovery, "write_verified_store", fail_journal_verification)
+            message = "could not be durably verified"
+        else:
+            fault.setattr(restore_recovery, "_update_configuration", fail_configuration)
+            message = "completion is pending"
+        with pytest.raises(backup.BackupError, match=message):
+            await transfer.async_restore_transfer(
+                hass, entry, subentry, document,
+                sections=[transfer.SECTION_CONVERSATION_ARCHIVE],
+                confirm_retention=True,
+            )
+
+    if interruption == "apply":
+        assert attempted
+        assert not earlier_partition.exists()
+        expected = ["previous-0"]
+    else:
+        committed = interruption != "uncertain journal"
+        assert (await journal.async_load())["phase"] == (
+            "committed" if committed else "applying"
+        )
+        if interruption == "damaged metadata":
+            await hass.async_add_executor_job(
+                Path(storage._metadata.path).write_bytes, b"{incomplete"
+            )
+        hass.data[archives._ARCHIVE_MANAGERS].pop(owner)
+        assert await restore_recovery.async_recover_pending_restore(hass, entry, subentry)
+        assert earlier_partition.exists() == committed
+        expected = ["target-0", "target-1"] if committed else ["previous-0"]
+
+    assert await journal.async_load() is None
+    archive = await archives.async_get_archive(hass, *owner)
+    assert [row["turn_id"] for row in (await archive.async_backup_data())["turns"]] == expected
+
+
+async def test_streamed_archive_partition_guards_precede_disk_writes(hass, real_store_io):
+    from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+        get_agent_maintenance_gate,
+    )
+    from custom_components.extended_openai_conversation_responses.conversation_archive import (
+        HomeAssistantArchiveStorage,
+    )
+    from tests.test_conversation_archive import _turn
+
+    identity = ("archive-guard-provider", "archive-guard-assistant")
+    storage = HomeAssistantArchiveStorage(hass, *identity)
+    gate = get_agent_maintenance_gate(hass, *identity)
+    turn = _turn(sequence=2**64)
+    path = Path(storage._partition_store(turn.timestamp[:7]).path)
+    with pytest.raises(RuntimeError, match="exclusive maintenance"):
+        await storage.async_write_restore_partitions({}, set())
+    async with gate.exclusive():
+        with pytest.raises(ValueError, match="sequence exceeds the storage limit"):
+            await storage.async_write_restore_partitions({turn.session_id: [turn]}, set())
+        storage._metadata.make_read_only()
+        with pytest.raises(OSError, match="metadata is unavailable for restore writes"):
+            await storage.async_write_restore_partitions({}, set())
+    assert not path.exists()
 
 
 @pytest.mark.asyncio
@@ -254,6 +435,161 @@ async def test_cross_provider_private_restore_and_committed_replay(hass, monkeyp
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@pytest.mark.parametrize("failed_writes", [1, 2], ids=["first-reload", "ha-retry"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_provider_restore_reloads_assistants_after_committed_write_failure(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, failed_writes: int
+) -> None:
+    """Recover the shared credentials before loading any assistant on that entry."""
+    from homeassistant.components import conversation
+    from homeassistant.core import Context, callback
+    from homeassistant.exceptions import HomeAssistantError
+    from homeassistant.helpers import entity_registry as er
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+        transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.const import (
+        API_MODE_CHAT_COMPLETIONS,
+        CONF_API_MODE,
+        CONF_CHAT_MODEL,
+    )
+    from custom_components.extended_openai_conversation_responses.provider_credentials import (
+        require_provider_restore_complete,
+    )
+    from tests_real_ha.test_acceptance_lifecycle import _make_entry, _subentry
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _install_wire,
+        _raw_client,
+    )
+
+    config = {CONF_API_MODE: API_MODE_CHAT_COMPLETIONS, CONF_CHAT_MODEL: "gpt-4o-mini"}
+    previous = {
+        CONF_API_KEY: "previous-key",
+        CONF_SKIP_AUTHENTICATION: True,
+    }
+    restored = {**previous, CONF_API_KEY: "restored-key"}
+    shared = MockConfigEntry(
+        domain=DOMAIN,
+        title="Shared provider recovery",
+        data=previous,
+        version=CONFIG_ENTRY_VERSION,
+        subentries_data=[
+            _subentry("conversation", title, config)
+            for title in ("Restore target", "First sibling", "Second sibling")
+        ],
+    )
+    other = _make_entry(
+        "Independent provider", include_ai_task=False, conversation_options=config
+    )
+    await _setup_entry(hass, shared)
+    await _setup_entry(hass, other)
+    target, *siblings = shared.subentries.values()
+    sibling_subentry_ids = {sibling.subentry_id for sibling in siblings}
+    sibling_ids = [
+        entity.entity_id
+        for entity in er.async_entries_for_config_entry(
+            er.async_get(hass), shared.entry_id
+        )
+        if entity.domain == "conversation"
+        and entity.config_subentry_id in sibling_subentry_ids
+    ]
+    assert len(sibling_ids) == 2
+
+    async def say(agent_id: str) -> str:
+        result = await conversation.async_converse(
+            hass, "Give me the provider response", None, Context(), "en", agent_id
+        )
+        assert result.response.error_code is None
+        return result.response.speech["plain"]["speech"]
+
+    source = await backup.async_collect_backup_snapshot(hass, shared, target)
+    source["provider_connection"] = restored
+    artifact = backup.finalize_backup_snapshot(source)["document"]
+    persist = restore_recovery.async_persist_config_entries
+    writes = 0
+
+    async def fail_writes(*args: Any) -> None:
+        nonlocal writes
+        writes += 1
+        if writes <= failed_writes:
+            raise OSError("injected configuration persistence failure")
+        await persist(*args)
+
+    monkeypatch.setattr(restore_recovery, "async_persist_config_entries", fail_writes)
+    with pytest.raises(backup.BackupError, match="completion is pending"):
+        await transfer.async_restore_transfer(
+            hass,
+            shared,
+            target,
+            artifact,
+            sections=[transfer.SECTION_CONFIGURATION],
+            provider_connection=restored,
+            expected_provider_data=previous,
+        )
+    journal = restore_recovery._journal_store(hass, shared.entry_id, target.subentry_id)
+    assert (await journal.async_load())["phase"] == "committed"
+    with pytest.raises(HomeAssistantError, match="shared provider connection is unavailable"):
+        require_provider_restore_complete(hass, shared.entry_id)
+
+    other_agent = conversation.async_get_agent(hass, other.entry_id)
+    unrelated_wire = _install_wire(
+        monkeypatch, other_agent, [_chat_sse_text("Independent provider replied")]
+    )
+    assert await say(other_agent.entity_id) == "Independent provider replied"
+    assert len(unrelated_wire.requests) == 1
+
+    reloaded = await hass.config_entries.async_reload(shared.entry_id)
+    if failed_writes == 2:
+        assert not reloaded
+        assert shared.state is ConfigEntryState.SETUP_RETRY
+        assert (await journal.async_load())["phase"] == "committed"
+        with pytest.raises(
+            HomeAssistantError, match="shared provider connection is unavailable"
+        ):
+            require_provider_restore_complete(hass, shared.entry_id)
+        loaded = asyncio.Event()
+
+        @callback
+        def on_state_change() -> None:
+            if shared.state is ConfigEntryState.LOADED:
+                loaded.set()
+
+        remove_listener = shared.async_on_state_change(on_state_change)
+        try:
+            async_fire_time_changed(hass, fire_all=True)
+            await asyncio.wait_for(loaded.wait(), timeout=10)
+        finally:
+            remove_listener()
+    else:
+        assert reloaded
+    await hass.async_block_till_done()
+    assert shared.state is ConfigEntryState.LOADED
+
+    agent = conversation.async_get_agent(hass, sibling_ids[0])
+    assert agent is not None
+    assert _raw_client(agent).api_key == restored[CONF_API_KEY]
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [_chat_sse_text("First reply"), _chat_sse_text("Second reply")],
+    )
+    assert [await say(agent_id) for agent_id in sibling_ids] == [
+        "First reply",
+        "Second reply",
+    ]
+    assert len(wire.requests) == 2
+    assert writes == failed_writes + 1
+    assert await journal.async_load() is None
+    require_provider_restore_complete(hass, shared.entry_id)
+    assert shared.entry_id not in hass.data.get(
+        restore_recovery.RESTORE_RELOAD_PENDING, set()
+    )
+
+
 @pytest.mark.parametrize("recover", [False, True])
 @pytest.mark.usefixtures("real_store_io")
 async def test_knowledge_restore_ignores_damaged_usage_details(hass, monkeypatch, recover):
@@ -395,4 +731,72 @@ async def test_archive_restore_keeps_only_active_destination_privacy_markers(
         )
         assert resumed.retention_state == "retained"
         assert resumed.session_id != marker.session_id
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.usefixtures("real_store_io")
+async def test_private_backup_rejects_oversized_live_ha_catalogue(hass, monkeypatch):
+    from copy import deepcopy
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        async_discover,
+        new_reference_tool,
+    )
+    from homeassistant.components import conversation
+    from tests.test_ha_llm_tools import TestAPI, context, register
+    from tests.test_runtime_readiness import _options, _tool
+    from tests_real_ha.test_acceptance_lifecycle import (
+        _conversation_subentry,
+        _make_entry,
+        _setup_entry,
+    )
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _install_wire,
+        _say,
+        _speech,
+    )
+
+    register(hass, TestAPI(hass))
+    live = await async_discover(hass, context())
+    ref = new_reference_tool(next(iter(live.tools.values())).reference, set())
+    neutral = {
+        "exposed_entities_enabled": False,
+        "current_datetime_enabled": False,
+        "prompt": "Plain prompt",
+    }
+    existing = _options(126, **neutral)
+    functions = [*[_tool(f"marker_{i}") for i in range(127)], ref]
+    incoming = _options(functions=functions, **neutral)
+    entry = _make_entry(
+        "Private restore limit", include_ai_task=False, conversation_options=existing
+    )
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    before = conversation.async_get_agent(hass, entry.entry_id)
+    baseline_wire = _install_wire(
+        monkeypatch, before, [_chat_sse_text("Baseline working")]
+    )
+    assert _speech(await _say(hass, before)) == "Baseline working"
+    assert len(baseline_wire.requests) == 1
+    source = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    source["agent"]["config"] = deepcopy(incoming)
+    artifact = backup.finalize_backup_snapshot(source)["document"]
+    sections = [transfer.SECTION_CONFIGURATION]
+    with pytest.raises(backup.BackupError, match="128-tool limit"):
+        await transfer.async_materialize_restore(
+            hass, entry, subentry, artifact, sections=sections
+        )
+    with pytest.raises(backup.BackupError, match="128-tool limit"):
+        await transfer.async_restore_transfer(
+            hass, entry, subentry, artifact, sections=sections
+        )
+    assert subentry.data["functions"] == existing["functions"]
+    wire = _install_wire(monkeypatch, before, [_chat_sse_text("Still working")])
+    assert _speech(await _say(hass, before)) == "Still working"
+    assert len(wire.requests) == 1
     assert await hass.config_entries.async_unload(entry.entry_id)

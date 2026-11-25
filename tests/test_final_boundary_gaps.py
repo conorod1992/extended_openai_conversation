@@ -22,7 +22,6 @@ from custom_components.extended_openai_conversation_responses.functions import b
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_bash_function_coverage import _process
 from tests.test_remaining_management_contracts import _request
-from tests.test_service_handlers import _call, _download_handler
 
 
 @pytest.mark.parametrize(
@@ -68,26 +67,6 @@ async def test_bounded_response_rejects_unsafe_compression_without_caching(failu
     assert bounded._body is None
 
 
-async def test_skill_download_rejects_symlink_destination_before_network(
-    hass, monkeypatch, tmp_path
-):
-    handler, manager = await _download_handler(hass, monkeypatch, tmp_path, {})
-    manager.user_skills_dir.mkdir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    sentinel = outside / "keep.txt"
-    sentinel.write_text("private")
-    try:
-        (manager.user_skills_dir / "demo").symlink_to(outside, target_is_directory=True)
-    except OSError as err:
-        pytest.skip(f"Directory symlinks unavailable on this platform: {err}")
-    with pytest.raises(HomeAssistantError, match="target directory is unsafe"):
-        await handler(_call({"skill_name": "demo"}))
-    assert sentinel.read_text() == "private"
-    manager.async_publish_staged_skill.assert_not_awaited()
-    assert not manager.staging_dir.exists()
-
-
 @pytest.mark.parametrize("parent", ["", "invalid parent", 42, []])
 def test_catalog_rejects_invalid_snapshot_parent(parent):
     candidate = deepcopy(catalog.BUNDLED_CATALOG)
@@ -131,7 +110,7 @@ async def test_catalog_checks_single_field_routing_without_losing_other_options(
             )
         ),
     )
-    build = Mock()
+    build = Mock(return_value=SimpleNamespace(tool_limit=None))
     monkeypatch.setattr(request, "build_provider_request_snapshot", build)
     manager = models.ModelCatalogManager(hass)
     assert await manager._candidate_preserves_saved_requests(catalog.BUNDLED_CATALOG)

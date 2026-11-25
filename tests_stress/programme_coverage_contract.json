@@ -147,7 +147,7 @@
     "restore_manager_settlement_cases": 2,
     "backup_chunks_transferred": 1,
     "transfer_previews": 1,
-    "coherent_setup_restore_exports": 1,
+    "coherent_custom_restore_exports": 1,
     "tls_verified_requests": 4,
     "transport_tool_recovery_cases": 2,
     "explicit_stream_close_cases": 1,
@@ -179,8 +179,6 @@
     "catalog_ai_task_reset_rejections": 1,
     "catalog_ai_task_resets": 1,
     "catalog_ai_task_wire_checks": 3,
-    "skill_download_cancellation_cases": 4,
-    "skill_download_unowned_cases": 5,
     "populated_feature_journeys": 4,
     "semantic_oracle_rejections": 28,
     "interrupted_active_speech_listener_cancel": 1,
@@ -242,5 +240,5 @@
     "quiet_service_acknowledgement_recoveries": 2,
     "provider_endpoint_wire_cases": 4
   },
-  "pytest_union_sha256": "e48fb7b49b97fa282768ac2b41ddcd0909d4e51c1dc05c9a83c5de72e244c429"
+  "pytest_union_sha256": "83db9ca557d8baa65a2ce776cb8a4562f14d0f87d179a5f0589b34cd941a8b57"
 }

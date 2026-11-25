@@ -1,5 +1,6 @@
 """Corrupt restore journals stay quarantined across genuine HA cold boots."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,12 @@ def test_corrupt_restore_journal_cold_boot_isolation_and_repair(tmp_path, stress
     assert len(journals) == 1
     journal = journals[0]
     authoritative = journal.read_bytes()
-    damaged = authoritative[: len(authoritative) // 2]
+    # Leave the journal's agent-only scope readable. If it cannot be determined,
+    # the provider is necessarily quarantined too.
+    envelope = json.loads(authoritative)
+    assert "provider_connections" not in envelope["data"]
+    envelope["data"]["phase"] = "damaged"
+    damaged = json.dumps(envelope).encode()
     journal.write_bytes(damaged)
     _run(config_dir, "quarantine", "partial")
     assert journal.read_bytes() == damaged

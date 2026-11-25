@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock, call
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call
 
 import pytest
 
@@ -1394,8 +1394,12 @@ async def test_restore_respects_manual_changes_and_retains_failed_ownership() ->
     manager._async_save_locked = AsyncMock()
 
     await manager._async_restore_locked()
-    manager._async_set_volume.assert_awaited_once_with("media_player.owned", 0.7)
-    manager._async_set_switch.assert_awaited_once_with("switch.owned", True)
+    manager._async_set_volume.assert_awaited_once_with(
+        "media_player.owned", 0.7, context_id=ANY
+    )
+    manager._async_set_switch.assert_awaited_once_with(
+        "switch.owned", True, context_id=ANY
+    )
     assert manager._active is None
 
     manager._active = {
@@ -1488,7 +1492,7 @@ def test_normalize_active_migrates_legacy_targets_and_filters_invalid() -> None:
         is None
     )
 
-    active = manager._normalize_active(
+    active = manager._normalize_active_values(
         {
             "period_started_at": "2026-09-13T22:00:00+00:00",
             "period_ends_at": "2026-09-14T07:00:00+00:00",
@@ -1504,7 +1508,7 @@ def test_normalize_active_migrates_legacy_targets_and_filters_invalid() -> None:
     assert active is not None
     assert active["controls"]["media_player.bedroom"]["original_value"] == 0.8
 
-    active = manager._normalize_active(
+    active = manager._normalize_active_values(
         {
             "period_started_at": "2026-09-13T22:00:00+00:00",
             "period_ends_at": "2026-09-14T07:00:00+00:00",
@@ -1572,11 +1576,12 @@ def test_publish_snapshot_and_reschedule(monkeypatch) -> None:
     manager._reschedule()
     assert len(manager._unsubscribers) == 3
     assert time_change.call_count == 2
-    interval.assert_called_once_with(
-        manager.hass,
-        manager._handle_discovery_tick,
-        runtime._DISCOVERY_INTERVAL,
-    )
+    interval.assert_called_once()
+    hass, discovery_callback, cadence = interval.call_args.args
+    assert hass is manager.hass
+    assert cadence == runtime._DISCOVERY_INTERVAL
+    assert discovery_callback.func == manager._handle_discovery_tick
+    assert discovery_callback.keywords["_schedule"] is manager._callback_schedule
 
 
 async def test_async_get_quiet_hours_reuses_global_manager(monkeypatch) -> None:
@@ -1861,7 +1866,7 @@ def test_normalize_active_rejects_invalid_controls(
         "controls": raw_controls,
     }
 
-    normalized = manager._normalize_active(value)
+    normalized = manager._normalize_active_values(value)
 
     if expected_ids is None:
         assert normalized is None
@@ -2229,8 +2234,9 @@ async def test_manual_same_value_adjustment_during_satellite_save_is_preserved(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("committed", [False, True])
 async def test_failed_period_metadata_save_retains_continuous_quiet_volume(
-    monkeypatch, hass
+    monkeypatch, hass, committed
 ):
     _install_registry(monkeypatch, "bedroom")
     _seed_room(hass, "bedroom", volume=0.55)
@@ -2241,7 +2247,7 @@ async def test_failed_period_metadata_save_retains_continuous_quiet_volume(
     monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
     calls, _ = await _install_services(hass)
     await manager.async_reconcile(now=now)
-    persisted = {}
+    persisted = deepcopy(manager._store.async_save.call_args.args[0])
     failed = False
 
     async def save(data):
@@ -2252,6 +2258,8 @@ async def test_failed_period_metadata_save_retains_continuous_quiet_volume(
             and not failed
         ):
             failed = True
+            if committed:
+                persisted = deepcopy(data)
             raise OSError("period metadata write failed")
         persisted = deepcopy(data)
 
@@ -2265,8 +2273,7 @@ async def test_failed_period_metadata_save_retains_continuous_quiet_volume(
             _config(start="21:00", max_volume=0.1, wake_sound="unchanged").as_dict()
         )
     assert manager._initialized
-    # A committed policy change is reconciled before reporting its lost ack.
-    assert calls[-1] == ("media_player.bedroom", 0.1)
+    assert calls[-1] == ("media_player.bedroom", 0.1 if committed else 0.2)
     calls.clear()
     await manager.async_reconcile(now=now)
     assert calls == []

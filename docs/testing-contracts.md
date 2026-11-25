@@ -125,8 +125,8 @@ acceptance is required by these deterministic checks.
 
 - Replay identity describes the prepared operation. Native-only Composite trees compare every child; a child that observes the original representation or consumes another child's response prevents unsafe whole-operation equivalence. JSON Schema `default` annotations remain annotations. HA-owned tools apply their authoritative HA schema defaults.
 - Rejected, completed and uncertain execution are distinct from result presentation and provider acknowledgement. A completed effect survives unexpected exceptions, cancellation and output processing failures. Partial or uncertain execution blocks changed-argument retries of that tool in the same conversation until a subsequent successful turn resolves the ambiguity. First-turn failures retain the conversation identity too.
-- A Request Rule alias belongs to its producing invocation. Both native script variables and final response construction read that invocation's published result. Administrators can retain shared `response_variable` names; skipped or failed producers do not publish their previous contents. Only EOAI `call_function` actions receive generated result machinery. Nested producing aliases remain unsupported.
-- Local Function consumers retain typed values and exact literal text. Request Rule aliases retain the separate 16,384-byte bound. Model output uses a 32,000-character presentation bound: structured overflow is a complete explicit result, while text truncation is marked. Literal JSON-looking text is never inferred to be an integration envelope.
+- Request Rule Function responses use native Home Assistant `response_variable` values and `set_conversation_response` actions. Nested actions follow Home Assistant variable scope. Skipped or failed actions preserve any existing value according to Home Assistant script semantics. An older rule that captures a Function response needs explicit review before it can run with the single `result` envelope. Stored alias configuration stays available for repair.
+- Local Function consumers retain typed values and exact literal text, including false, zero, empty text, and null. The native service bridge removes the integration-owned result wrapper once and keeps user-defined `result` keys. Model output uses a 32,000-character presentation bound. Structured overflow is a complete explicit result, and text truncation is marked. Literal JSON-looking text is never inferred to be an integration envelope.
 - Memory and Knowledge searches continue through ranked matches using `next_offset` as `offset` with the same query, category/source filters, retrieval mode and unchanged corpus/ranking inputs (including Hybrid embedding availability). Restart at offset zero after mutations or permission changes. Whole-record budgeting includes escaping and metadata; list paging keeps its existing budgeting. An individually oversized record raises an explicit error rather than returning a nonadvancing page.
 - Native lazy template fields retain HA evaluation timing. Concrete condition/trigger selectors resolve supported request captures before validation; unsupported dynamic placements fail at save. This shared validator is used by management, import, sharing and repair paths. Invalid retained rules remain available with repair diagnostics.
 - Native implementation validation belongs to its backend and runs recursively before any Composite child executes. Stored configuration stays serializable; runtime hydration remains a separate boundary.
@@ -190,14 +190,13 @@ or promote members out of disabled/on-demand groups. Unit boundary cases and the
 native backup-transfer export collector cover these contracts without mutating
 the source configuration.
 
-Reviewed exports reconcile selected Skills after Tool and Group omissions, then
-round-trip through the ordinary configuration importer. Typed YAML and unsafe Group
-metadata must not leave a dangling loader dependency or enable a disabled loader.
+Historical restricted and reviewed public files still use import validation.
+Private backups preserve custom definitions.
 Nested Composite result aliases belong to the parent step; hydration, persistence
 and execution retain those aliases without passing them to strict child validators.
 Provider connection recovery is shared by the credential endpoint and registered
 `change_config` action, including authentication-failed, unchanged and disabled
-entries. Provider-aware configuration reads, writes, copies, sharing and browser
+entries. Provider-aware configuration reads, writes, copies, legacy imports and browser
 catalogue lookups use the actual parent provider. Cached scalar snapshots also
 track provider context while reusing unchanged Function validation. Portable
 configuration validation preserves explicit provider-specific efforts until the
@@ -241,11 +240,7 @@ replacement, authorization changes, cancellation, and failures after insertion.
 Uncertain attempts survive snapshot refresh; edits and revoked authentication
 lifetimes require explicit new-send confirmation. Fresh sends obtain a current
 server retry window without renewing an uncertain predecessor; failed preparation
-does not count as a dispatched send. Real-browser disclosure/rebind
-journeys preserve Rule Sharing files, review and export choices, and initialization
-failure remains retryable. Already-open mounted disclosures initialize without
-needing another toggle. These journeys are registered in the nightly browser
-execution inventory in addition to PR smoke collection.
+does not count as a dispatched send. Real-browser coverage checks that rebinding Request Rules preserves a single activation per editor control.
 
 PR lint runs the nightly selection and execution-catalog guards without Home
 Assistant fixtures. A new real-HA file must be selected by Enhanced or explicitly

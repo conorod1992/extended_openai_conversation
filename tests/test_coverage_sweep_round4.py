@@ -478,13 +478,16 @@ async def test_runtime_configuration_partial_entity_returns_without_manager_reco
 
 
 def test_agent_config_serialization_falls_back_for_runtime_objects(monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses import agent_config
+    from custom_components.extended_openai_conversation_responses import (
+        agent_config,
+        function_yaml,
+    )
 
     class RuntimeOnly:
         pass
 
     dump = Mock(return_value="fallback-yaml")
-    monkeypatch.setattr(agent_config, "dump_yaml", dump)
+    monkeypatch.setattr(function_yaml, "dump_yaml", dump)
 
     result = agent_config._configured_tools_yaml(
         {agent_config.CONF_FUNCTION_TOOLS: [{"runtime": RuntimeOnly()}]}
@@ -508,70 +511,6 @@ def test_native_statistics_migration_non_mapping_parameters_is_rejected(
     tool = {"spec": {"parameters": EqualLegacy()}}
 
     assert migration._migrate_statistics_schema(tool) is False
-
-
-@pytest.mark.asyncio
-async def test_parallel_outcome_cleanup_cancels_pending_task_on_gather_failure(
-    monkeypatch,
-) -> None:
-    from custom_components.extended_openai_conversation_responses import (
-        parallel_tool_execution,
-    )
-
-    pending = asyncio.get_running_loop().create_future()
-    monkeypatch.setattr(
-        parallel_tool_execution.asyncio,
-        "ensure_future",
-        Mock(return_value=pending),
-    )
-
-    calls = 0
-
-    async def broken_gather(*_tasks, **_kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise RuntimeError("gather failed")
-        return []
-
-    monkeypatch.setattr(
-        parallel_tool_execution.asyncio,
-        "gather",
-        broken_gather,
-    )
-
-    with pytest.raises(RuntimeError, match="gather failed"):
-        await parallel_tool_execution.async_execute_parallel_safe_batch_outcomes(
-            [(object(), object())],
-            Mock(return_value=pending),
-        )
-
-    assert pending.cancelled()
-
-
-@pytest.mark.asyncio
-async def test_skill_source_ref_explicit_version_and_development_fallback(
-    hass, monkeypatch
-) -> None:
-    from custom_components.extended_openai_conversation_responses import services
-
-    assert await services.async_skill_source_ref(hass, "  custom-ref  ") == "custom-ref"
-    with pytest.raises(HomeAssistantError, match="cannot be empty"):
-        await services.async_skill_source_ref(hass, "   ")
-
-    monkeypatch.setattr(
-        services,
-        "async_get_integration",
-        AsyncMock(return_value=SimpleNamespace(version="7.0.0")),
-    )
-    assert await services.async_skill_source_ref(hass) == "7.0.0"
-
-    monkeypatch.setattr(
-        services,
-        "async_get_integration",
-        AsyncMock(return_value=SimpleNamespace(version="  ")),
-    )
-    assert await services.async_skill_source_ref(hass) == services.GITHUB_SKILLS_BRANCH
 
 
 @pytest.mark.asyncio
@@ -683,11 +622,11 @@ async def test_archive_query_cancels_without_waiting_for_snapshot_worker(monkeyp
         completed = True
         return "done"
 
-    monkeypatch.setattr(archives.asyncio, "to_thread", to_thread)
     from tests.test_conversation_archive import FakeArchiveStorage
 
     archive = archives.ConversationArchive(FakeArchiveStorage(), "agent")
     await archive.async_initialize()
+    monkeypatch.setattr(archives.asyncio, "to_thread", to_thread)
     archive._ensure_initialized = Mock(wraps=archive._ensure_initialized)
 
     task = asyncio.create_task(archive.async_query_snapshot("scope", query))
@@ -703,21 +642,18 @@ async def test_archive_query_cancels_without_waiting_for_snapshot_worker(monkeyp
     archive._ensure_initialized.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_service_call_function_without_result_alias_uses_active_executor(
-    monkeypatch,
-) -> None:
-    from custom_components.extended_openai_conversation_responses import services
+@pytest.mark.parametrize("field", ["result_alias", "step_id"])
+def test_call_function_service_schema_rejects_retired_metadata(field):
+    import voluptuous as vol
 
-    executor = AsyncMock(return_value={"result": {"ok": True}})
-    monkeypatch.setattr(services, "async_call_active_function", executor)
+    from custom_components.extended_openai_conversation_responses.services import (
+        CALL_FUNCTION_SCHEMA,
+    )
 
-    # Exercise the registered closure indirectly by reproducing its deliberately
-    # tiny branch contract through the public helper inputs.
-    result = await services.async_call_active_function("demo", {"value": 1})
-
-    assert result == {"result": {"ok": True}}
-    executor.assert_awaited_once_with("demo", {"value": 1})
+    with pytest.raises(vol.Invalid, match=field):
+        CALL_FUNCTION_SCHEMA({"function": "demo", field: "old"})
+    payload = CALL_FUNCTION_SCHEMA({"function": "demo", "arguments": {field: "business data"}})
+    assert payload["arguments"] == {field: "business data"}
 
 
 @pytest.mark.asyncio
@@ -897,35 +833,6 @@ def test_usage_month_summary_merges_only_requested_month() -> None:
     assert result["input_tokens"] == 12
     assert result["output_tokens"] == 18
     assert result["run_count"] == 2
-
-
-def test_skill_activation_failure_restores_previous_target(tmp_path, monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses.skills import (
-        SkillManager,
-    )
-
-    target = tmp_path / "installed" / "demo"
-    target.mkdir(parents=True)
-    (target / "old.txt").write_text("old")
-    staged = tmp_path / "staged"
-    staged.mkdir()
-    (staged / "new.txt").write_text("new")
-    backup = tmp_path / "backup"
-
-    original_rename = type(staged).rename
-
-    def failing_rename(self, destination):
-        if self == staged:
-            raise OSError("publish failed")
-        return original_rename(self, destination)
-
-    monkeypatch.setattr(type(staged), "rename", failing_rename)
-
-    with pytest.raises(OSError, match="publish failed"):
-        SkillManager._activate_staged_skill_sync(staged, target, backup)
-
-    assert target.exists()
-    assert (target / "old.txt").read_text() == "old"
 
 
 def test_skill_directory_capture_records_loaded_directory(tmp_path) -> None:

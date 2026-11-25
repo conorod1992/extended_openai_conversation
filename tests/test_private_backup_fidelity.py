@@ -14,6 +14,7 @@ import yaml
 from custom_components.extended_openai_conversation_responses import (
     backup,
     backup_transfer,
+    request_rules,
     transfer,
 )
 from custom_components.extended_openai_conversation_responses.private_backup import (
@@ -173,7 +174,7 @@ def test_custom_snapshot_builder_marks_private_memory_data_before_wire_encoding(
     full = private_document()
     entry = SimpleNamespace(entry_id="entry", data=full["provider_connection"])
     subentry = SimpleNamespace(subentry_id="agent", title="Private")
-    snapshot = transfer._new_transfer_document(entry, subentry, "custom")
+    snapshot = transfer._new_transfer_document(entry, subentry)
     snapshot["sections"]["configuration"] = full["agent"]["config"]
     assert isinstance(snapshot, DecodedPrivateDocument)
     for value in (snapshot, json.loads(json.dumps(encode_document(snapshot)))):
@@ -496,6 +497,9 @@ async def test_provider_restore_rejects_incompatible_sibling_without_writes(
         data={"chat_model": "gpt-5.6", "api_mode": "responses", "web_search": True},
     )
     tx.entry.subentries[sibling.subentry_id] = sibling
+    monkeypatch.setattr(
+        request_rules, "async_read_committed_request_rules", AsyncMock(return_value=[])
+    )
     document = private_document()
     options = {
         "sections": [transfer.SECTION_CONFIGURATION],

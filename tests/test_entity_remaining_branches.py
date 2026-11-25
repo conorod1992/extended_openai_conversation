@@ -312,23 +312,32 @@ async def test_truncation_fallback_and_summary_success(monkeypatch) -> None:
         CONF_CONTEXT_THRESHOLD: 10,
     }
     calls: list[tuple[int | None, int]] = []
+    empty_log = SimpleNamespace(content=[])
 
     def fake_keep(
-        content: list[Any], observed: int | None, threshold: int, estimate=None
+        content: list[Any],
+        observed: int | None,
+        threshold: int,
+        estimate=None,
+        *,
+        chat_log,
     ) -> bool:
         assert estimate is None
+        assert chat_log is empty_log
+        assert content is empty_log.content
         calls.append((observed, threshold))
         return False
 
     monkeypatch.setattr(
         module, "async_keep_recent_messages", AsyncMock(side_effect=fake_keep)
     )
-    await entity._truncate_message_history(
-        SimpleNamespace(content=[]), observed_input_tokens=20
-    )
+    await entity._truncate_message_history(empty_log, observed_input_tokens=20)
     assert calls == [(20, 10)]
     system = conversation.SystemContent(content="system")
-    older = [conversation.UserContent(content="old")]
+    older = [
+        conversation.UserContent(content="old"),
+        conversation.AssistantContent(agent_id=entity.entity_id, content="old reply"),
+    ]
     retained = [system, conversation.UserContent(content="new")]
     entity.subentry.data[CONF_CONTEXT_TRUNCATE_STRATEGY] = CONTEXT_TRUNCATE_SUMMARIZE
     monkeypatch.setattr(
@@ -337,9 +346,11 @@ async def test_truncation_fallback_and_summary_success(monkeypatch) -> None:
         AsyncMock(return_value=(older, retained)),
     )
     entity._async_summarize_history = AsyncMock(return_value="durable facts")
-    chat_log = SimpleNamespace(content=[system, *older, *retained[1:]])
+    chat_log = SimpleNamespace(content=[system, *older, *retained[1:]], turn_start=3)
     await entity._truncate_message_history(chat_log, observed_input_tokens=20)
     assert "durable facts" in chat_log.content[1].content
+    assert chat_log.turn_start == 2
+    assert chat_log.content[chat_log.turn_start] is retained[1]
 
     monkeypatch.setattr(
         module, "async_select_summary_history", AsyncMock(return_value=None)

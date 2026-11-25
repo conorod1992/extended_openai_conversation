@@ -4,9 +4,6 @@ import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, s
 import {ensureTemporaryScope, memoryCollectionIdentity} from "./management-data-state.js";
 import {embeddedFeatureStatusMarkup} from "./management-feature-status-core.js";
 import {friendlySettingValue} from "./management-setting-metadata.js";
-const CONTENT_LIMIT = 500;
-const CATEGORY_LIMIT = 64;
-
 function validOwnerScope(scope) {
   return scope?.scope_type === "user" || scope?.scope_type === "shared";
 }
@@ -32,7 +29,7 @@ function temporaryMemoryCard(panel, memory) {
   return `<article class="list-card" data-memory-id="${panel._e(memory.memory_id)}">
     <div class="card-main clickable edit-temporary-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}">
       <p class="primary-copy">${panel._e(memory.content)}</p>
-      <p class="meta">${panel._e(memory.category)} · ${panel._e(ownerLabel(panel, memory.owner_scope_id))} · Expires ${panel._e((memory.expires_at_local?.replace("T", " ") || panel._formatDate(memory.expires_at)))}</p>
+      <p class="meta">${panel._e(memory.category)} · ${panel._e(ownerLabel(panel, memory.owner_scope_id))} · Expires ${panel._e(memory.expires_at_local === null ? memory.expires_at : (memory.expires_at_local?.replace("T", " ") || panel._formatDate(memory.expires_at)))}</p>
     </div>
     <div class="actions"><button type="button" class="secondary edit-temporary-memory" data-id="${panel._e(memory.memory_id)}">Edit</button><button type="button" class="danger delete-temporary" data-id="${panel._e(memory.memory_id)}">Delete</button></div>
   </article>`;
@@ -115,10 +112,10 @@ function temporaryDialog(panel) {
     <form id="temporary-memory-form">
       <div class="dialog-header"><h2 id="temporary-memory-dialog-title">Edit short-term memory</h2><button type="button" class="icon close-temporary-editor" aria-label="Close">×</button></div>
       <div class="dialog-body">
-        <label>Memory<textarea id="temporary-memory-content" maxlength="${CONTENT_LIMIT}" required spellcheck="true"></textarea></label>
-        <label>Category<input id="temporary-memory-category" maxlength="${CATEGORY_LIMIT}" required></label>
-        <label>Type<input value="Short-term" readonly></label><label>Expires<input id="temporary-memory-expiry" type="datetime-local" step="1" required></label>
-        <p class="help">Home Assistant local time. Choose a future time within one year.</p>
+        <label>Memory<textarea id="temporary-memory-content" required spellcheck="true"></textarea></label>
+        <label>Category<input id="temporary-memory-category" required></label>
+        <label>Type<input value="Short-term" readonly></label><label><span id="temporary-memory-expiry-label">Expires</span><input id="temporary-memory-expiry" type="datetime-local" step="1" required></label>
+        <p id="temporary-memory-expiry-help" class="help">Home Assistant local time. Choose a future time within one year.</p>
         <p id="temporary-memory-meta" class="meta"></p>
         <div id="temporary-memory-error" class="inline-error" role="alert"></div>
       </div>
@@ -132,11 +129,13 @@ export function openTemporaryMemory(panel, memoryId) {
   if (!memory) return;
   panel._ensureOwnedDialog("temporary-memory-dialog");
   bindTemporaryMemory(panel);
+  const utcExpiry = memory.expires_at_local === null;
   panel._temporaryMemoryDraft = {
     memory_id: memory.memory_id,
     content: memory.content || "",
     category: memory.category || "general",
-    expires_at: memory.expires_at_local || memoryLocalDateTime(panel, memory.expires_at),
+    expires_at: utcExpiry ? new Date(memory.expires_at).toISOString().slice(0, 19) : (memory.expires_at_local || memoryLocalDateTime(panel, memory.expires_at)),
+    utc_expiry: utcExpiry,
     original_expiry: memory.expires_at,
     owner_scope_id: memory.owner_scope_id || panel._scopeId,
   };
@@ -144,6 +143,10 @@ export function openTemporaryMemory(panel, memoryId) {
   panel.shadowRoot.querySelector("#temporary-memory-content").value = panel._temporaryMemoryDraft.content;
   panel.shadowRoot.querySelector("#temporary-memory-category").value = panel._temporaryMemoryDraft.category;
   const expiry = panel.shadowRoot.querySelector("#temporary-memory-expiry");
+  const label = panel.shadowRoot.querySelector("#temporary-memory-expiry-label");
+  if (label) label.textContent = utcExpiry ? "Expires (UTC)" : "Expires";
+  const help = panel.shadowRoot.querySelector("#temporary-memory-expiry-help");
+  if (help) help.textContent = utcExpiry ? "Home Assistant cannot display this instant in local time. Choose a future UTC time within one year to replace it." : "Home Assistant local time. Choose a future time within one year.";
   expiry.value = panel._temporaryMemoryDraft.expires_at;
   // Native datetime inputs normalize zero seconds; baseline the displayed value.
   panel._temporaryMemoryDraft.expires_at = expiry.value;
@@ -163,7 +166,7 @@ export function temporaryMemoryDirty(panel) {
 export function temporaryMemoryExpiryForSave(panel, value, draft) {
   return value === draft.expires_at
     ? draft.original_expiry
-    : memoryExpiryISO(panel, value, draft.original_expiry);
+    : draft.utc_expiry ? `${value}Z` : memoryExpiryISO(panel, value, draft.original_expiry);
 }
 
 async function closeTemporaryMemory(panel, force = false) {
@@ -202,8 +205,8 @@ async function saveTemporaryMemory(panel) {
       category,
       // An unrelated edit must not reinterpret the displayed wall time if HA's
       // timezone changed while this editor was open.
-      expires_at: expiresAt === draft.expires_at ? draft.original_expiry : expiresAt,
-      ...(expiresAt === draft.expires_at ? {} : {local_times: {expires_at: expiresAt}}),
+      expires_at: expiresAt === draft.expires_at ? draft.original_expiry : draft.utc_expiry ? `${expiresAt}Z` : expiresAt,
+      ...(expiresAt === draft.expires_at || draft.utc_expiry ? {} : {local_times: {expires_at: expiresAt}}),
     });
     if (!configurationSubmissionIsCurrent(panel, submission) || !panel._ownsRetainedMutation(owner)) return;
     requireMutationAcknowledgement(response?.memory?.memory_id, "saving the temporary memory");
@@ -244,7 +247,7 @@ async function deleteTemporaryMemory(panel, memoryId, button = null) {
     });
     if (!panel._ownsRetainedMutation(owner)) return false;
     requireMutationAcknowledgement([0, 1].includes(response?.deleted), "deleting the temporary memory");
-    if (response.deleted === 0) return false;
+    if (response.deleted === 0) throw new Error("This memory is no longer available to delete. Refresh the list and try again if it is still present.");
     return await presentAcknowledgedMutation(panel, submission, "Temporary memory deleted", async () => {
       panel._result = {...panel._result, memories: (panel._result.memories || []).filter(item => item.memory_id !== memoryId)};
       if (panel._temporaryMemoryDraft?.memory_id === memoryId) {
@@ -299,8 +302,7 @@ export function renderTemporaryScopePicker(panel) {
 
 export {
   temporaryDialog,
-  CATEGORY_LIMIT,
-  CONTENT_LIMIT,
+  deleteTemporaryMemory,
   ensureTemporaryScope,
   ownerLabel,
   renderTemporaryMemories,

@@ -26,6 +26,7 @@ async def test_ai_task_form_saves_the_selected_azure_effort(hass, bound):
     }
     entry = SimpleNamespace(data={"api_provider": "azure"})
     flow = SimpleNamespace(
+        hass=hass,
         options=options,
         _temp_data=None,
         _is_new=False,
@@ -51,6 +52,7 @@ def _reconfigure_task(options, *, provider="azure"):
         state=ConfigEntryState.LOADED,
     )
     flow = SimpleNamespace(
+        hass=SimpleNamespace(data={}),
         options=dict(options),
         _temp_data=None,
         _is_new=False,

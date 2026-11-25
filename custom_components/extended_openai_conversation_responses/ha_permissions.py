@@ -15,7 +15,7 @@ from homeassistant.auth import (
     permissions as ha_permissions,
 )
 from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
-from homeassistant.core import Context, Event, HomeAssistant, callback
+from homeassistant.core import Context, Event, HomeAssistant, callback, valid_entity_id
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
@@ -172,6 +172,10 @@ def entity_access_error(
     )
 
     ids = list(entity_ids)
+    # Home Assistant's exposure and permission diagnostics expect real entity
+    # IDs. Report malformed targets before those helpers try to parse them.
+    if any(not valid_entity_id(entity_id) for entity_id in ids):
+        return EntityNotExposed("", reason="invalid_target")
     context = get_active_ha_context()
     if context is not None and context.user_id:
         user = hass.data.get(_USER_CACHE_KEY, {}).get(context.user_id)

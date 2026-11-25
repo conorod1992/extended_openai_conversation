@@ -1,4 +1,4 @@
-"""Compact coverage for catalogue, Rule Pack, and management boundary edges."""
+"""Compact coverage for catalogue and management boundary edges."""
 
 from __future__ import annotations
 
@@ -10,18 +10,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     management_loading_performance,
     model_catalog,
-    request_rule_packs,
 )
-from custom_components.extended_openai_conversation_responses.request_rule_packs import (
-    async_append_rule_pack,
-    export_rule_pack,
-    validate_rule_pack,
-)
-from custom_components.extended_openai_conversation_responses.request_rules import (
-    RequestRules,
-    validate_rule,
-)
-from tests.test_request_rules import MemoryStore, local_rule
 
 
 def _valid_model() -> dict:
@@ -108,78 +97,6 @@ def test_model_metadata_rejects_reasoning_effort_union_mismatch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rule_pack_group_export_rejects_known_but_empty_group() -> None:
-    source = RequestRules(
-        MemoryStore(
-            {
-                "groups": [{"id": "unused", "name": "Unused"}],
-                "rules": [local_rule("Only")],
-            }
-        )
-    )
-    await source.async_initialize()
-
-    with pytest.raises(ValueError, match="Choose at least one"):
-        export_rule_pack(source, "group", group_id="unused", reviewed=True)
-
-
-@pytest.mark.asyncio
-async def test_rule_pack_export_applies_encoded_size_limit(monkeypatch) -> None:
-    source = RequestRules(MemoryStore({"rules": [local_rule("Only")]}))
-    await source.async_initialize()
-    monkeypatch.setattr(request_rule_packs, "MAX_PACK_BYTES", 32)
-
-    with pytest.raises(ValueError, match="2 MB safety limit"):
-        export_rule_pack(source, "all", reviewed=True)
-
-
-@pytest.mark.asyncio
-async def test_rule_pack_validation_rejects_rule_missing_required_field() -> None:
-    source = RequestRules(MemoryStore({"rules": [local_rule("Only")]}))
-    await source.async_initialize()
-    pack = export_rule_pack(source, "all", reviewed=True)
-    pack["rules"][0].pop("conditions")
-
-    with pytest.raises(ValueError, match="missing required fields"):
-        validate_rule_pack(pack)
-
-
-@pytest.mark.asyncio
-async def test_rule_pack_import_reuses_group_name_case_insensitively() -> None:
-    source_rule = local_rule("Imported")
-    source_rule["group_id"] = "source-group"
-    source = RequestRules(
-        MemoryStore(
-            {
-                "groups": [{"id": "source-group", "name": "Lighting"}],
-                "rules": [source_rule],
-            }
-        )
-    )
-    await source.async_initialize()
-    prepared = validate_rule_pack(export_rule_pack(source, "all", reviewed=True))
-
-    target = RequestRules(
-        MemoryStore(
-            {
-                "groups": [{"id": "target-group", "name": "lighting"}],
-                "rules": [local_rule("Existing")],
-            }
-        )
-    )
-    await target.async_initialize()
-
-    result = await async_append_rule_pack(
-        target,
-        prepared,
-        expected_revision=target.revision(),
-    )
-
-    assert result["groups"] == [{"id": "target-group", "name": "lighting"}]
-    assert result["rules"][0]["group_id"] == "target-group"
-
-
-@pytest.mark.asyncio
 async def test_management_scope_catalog_rejects_unknown_scope_before_loading(
     hass,
 ) -> None:
@@ -206,63 +123,4 @@ async def test_management_overview_detail_rejects_unknown_kind(hass) -> None:
             subentry,
             is_admin=True,
             kind="invalid",
-        )
-
-
-def test_rule_pack_validation_rejects_non_serializable_mapping() -> None:
-    pack = {
-        "format": request_rule_packs.PACK_FORMAT,
-        "version": request_rule_packs.PACK_VERSION,
-        "groups": [],
-        "rules": {object()},
-    }
-
-    with pytest.raises(ValueError, match="invalid or overly nested data"):
-        validate_rule_pack(pack)
-
-
-def test_rule_pack_validation_rejects_oversized_parsed_mapping(monkeypatch) -> None:
-    pack = {
-        "format": request_rule_packs.PACK_FORMAT,
-        "version": request_rule_packs.PACK_VERSION,
-        "groups": [],
-        "rules": [],
-        "padding": "x" * 100,
-    }
-    # Preserve the exact top-level schema while making the serialized document
-    # exceed a deliberately tiny bound.
-    pack.pop("padding")
-    pack["groups"] = [{"id": "g", "name": "x" * 100}]
-    monkeypatch.setattr(request_rule_packs, "MAX_PACK_BYTES", 32)
-
-    with pytest.raises(ValueError, match="2 MB safety limit"):
-        validate_rule_pack(pack)
-
-
-def test_rule_pack_validation_rejects_unrecognized_format() -> None:
-    pack = {
-        "format": "some_other_format",
-        "version": request_rule_packs.PACK_VERSION,
-        "groups": [],
-        "rules": [validate_rule(local_rule("Only"))],
-    }
-
-    with pytest.raises(ValueError, match="Unrecognized Request Rule pack format"):
-        validate_rule_pack(pack)
-
-
-@pytest.mark.asyncio
-async def test_rule_pack_append_enforces_destination_rule_limit() -> None:
-    target = RequestRules(MemoryStore({"rules": []}))
-    await target.async_initialize()
-    target._rules = [{} for _ in range(request_rule_packs.MAX_RULES)]
-    source = RequestRules(MemoryStore({"rules": [local_rule("Imported")]}))
-    await source.async_initialize()
-    prepared = validate_rule_pack(export_rule_pack(source, "all", reviewed=True))
-
-    with pytest.raises(ValueError, match="Request Rule limit reached"):
-        await async_append_rule_pack(
-            target,
-            prepared,
-            expected_revision=target.revision(),
         )

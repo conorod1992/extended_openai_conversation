@@ -12,7 +12,7 @@ These steps apply to an existing installation of **Extended OpenAI Conversation 
 4. Review **Assistant → Basics**, **Capabilities**, and **Data & Memory**. Saved models and custom prompts are preserved. Exact historical stock prompts, including the unchanged 6.8.3 default, adopt the current default. Agents predating the separate date/time and exposed-device controls keep those blocks off when migrated; existing saved choices are retained. Check your prompt before changing those controls to avoid duplicate context.
 5. Run the connection test in **Usage & Maintenance → Diagnostics**, then test representative Assist requests, local Request Rules, Function Tools, Guest Mode and any automations that use this integration.
 
-Settings pages share a draft and require **Save**. Function Tools, Function Groups, Knowledge sources and other collections have their own save controls. Review imported Request Rules before enabling them: imports start disabled and may refer to tools or Home Assistant entities that do not exist on the destination.
+Settings pages share a draft and require **Save**. Function Tools, Function Groups, Knowledge sources and other collections have their own save controls. Before restoring Request Rules, review which rules are enabled in the backup and check that their tools and Home Assistant entities exist on the destination. Restoring this section replaces the destination rule set and preserves the saved enabled states, subject to validation.
 
 Compatibility repairs also update exact historical stock native Function Tool schemas. Custom definitions are validated rather than silently rewritten. A saved `gpt-5-mini` configuration using the historical `flex` tier default is corrected to the normal `default` tier when Flex is unsupported; the saved model is not substituted.
 
@@ -21,6 +21,14 @@ Broadcast voice handling changes from published 6.8.3: the automatic free-form t
 Live conversation context, loaded Function Groups and conversation-scoped Request Rule routing are not restored after a restart. Durable data such as memories, Knowledge sources and optional archived conversations is separate. Pending delayed Function Tools are recovered where eligible and are checked against current permissions; work that may already have started is not automatically replayed. See [Delayed Function Tools](features/delayed-function-tools.md) and [Backup & Restore](features/backup-restore.md).
 
 If recovery reports damaged or ambiguous storage, follow the reported repair instructions and preserve the affected files. Do not assume a blank collection means its previous data was intentionally deleted. See [Troubleshooting](troubleshooting.md).
+
+### Existing public export files
+
+7.0.0 retires **Shareable Setup** and **Export configuration**. Use **Custom (private)** in **Usage & Maintenance → Backup & Restore** to move selected sections, or **Full Backup (private)** for complete agent recovery. Private files can contain provider credentials and retained data. Existing public export JSON files remain importable through **Import / Restore**. Configuration export files also work with **Assistant actions → Import configuration**.
+
+### Skill installation
+
+The `extended_openai_conversation_responses.download_skill` action has been removed. If an automation, script, or Request Rule calls it, update that action before running the workflow again. Install Skill files by [copying the complete directory and reloading Skills](skills/discover-skills.md). Previously installed files and saved per-agent Skill selections carry over on upgrade.
 
 ## Side-by-side installation
 

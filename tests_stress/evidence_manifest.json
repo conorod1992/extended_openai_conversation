@@ -205,7 +205,6 @@
       "rule-match",
       "rule-continue-to-ai",
       "rule-local-continue-to-ai",
-      "rule-continue-matching",
       "rule-matching-behavior",
       "rule-fuzzy"
     ],
@@ -215,16 +214,18 @@
       "tests_stress/test_request_rules_provider_wire.py::test_matcher_route_scope_reaches_wire_and_next_turn"
     ]
   },
-  "capabilities/request-rules::captures_result_aliases": {
+  "capabilities/request-rules::captures_native_responses": {
     "controls": [
       "rule-ai-input-mode",
       "rule-ai-input-capture",
-      "rule-result-alias"
+      "rule-action-sequence-host",
+      "rule-native-response-reviewed"
     ],
     "classification": "runtime_effect",
-    "effect": "Rule captures and local result aliases reach the intended conversation input.",
+    "effect": "Rule captures reach the intended conversation input and native Function response variables feed local actions and replies.",
     "evidence": [
-      "tests_real_ha/test_request_rules_script_semantics.py::test_function_capture_preserves_ha_variables_and_survives_reload"
+      "tests_real_ha/test_request_rules_script_semantics.py::test_function_capture_preserves_ha_variables_and_survives_reload",
+      "tests_real_ha/test_request_rules_live_management.py::test_legacy_function_response_repair_through_registered_management"
     ]
   },
   "capabilities/request-rules::matching_defaults_wording_pattern_helpers": {
@@ -330,16 +331,16 @@
       "tests_real_ha/test_live_config_mutation_semantics.py::test_conversation_route_survives_rule_edit_disable_and_delete"
     ]
   },
-  "capabilities/request-rules::continue_matching_execution": {
+  "capabilities/request-rules::first_local_handoff": {
     "controls": [
-      "rule-continue-matching"
+      "rule-local-continue-to-ai"
     ],
     "classification": "runtime_effect",
-    "effect": "Eligible chained rules execute in priority order and stop at terminal/provider outcomes.",
+    "effect": "The first eligible local rule may hand off to AI after its actions. Native termination suppresses handoff.",
     "evidence": [
-      "tests_stress/test_request_rules_provider_wire.py::test_continue_matching_skips_false_condition_and_reaches_later_rule",
-      "tests_stress/test_request_rules_provider_wire.py::test_continue_matching_stops_on_provider_handoff",
-      "tests_stress/test_request_rules_provider_wire.py::test_continue_matching_stops_on_terminal_local_outcome"
+      "tests_stress/test_request_rules_provider_wire.py::test_first_eligible_rule_skips_false_condition",
+      "tests_stress/test_request_rules_provider_wire.py::test_first_local_rule_hands_off_once",
+      "tests_stress/test_request_rules_provider_wire.py::test_local_terminal_outcome_suppresses_ai_handoff"
     ]
   },
   "capabilities/request-rules::group_management": {

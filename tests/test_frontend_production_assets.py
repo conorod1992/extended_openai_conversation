@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -83,3 +84,33 @@ async def test_register_frontend_assets_once_with_cache_headers() -> None:
     assert static_path.url_path == f"/{DOMAIN}/frontend"
     assert Path(static_path.path) == frontend_assets._PRODUCTION_DIR
     assert static_path.cache_headers is True
+
+
+async def test_concurrent_asset_registration_survives_caller_cancellation(hass):
+    entered = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def register(_paths):
+        entered.set()
+        await finish.wait()
+
+    hass.http.async_register_static_paths = AsyncMock(side_effect=register)
+    first = asyncio.create_task(frontend_assets.async_register_frontend_assets(hass))
+    await entered.wait()
+    second = asyncio.create_task(frontend_assets.async_register_frontend_assets(hass))
+    first.cancel()
+    finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    await second
+
+    hass.http.async_register_static_paths.assert_awaited_once()
+    assert frontend_assets.frontend_entry_url(hass, "management")
+
+
+async def test_manifest_invalid_utf8_is_reported_as_unavailable(monkeypatch, tmp_path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_bytes(b"\xff")
+    monkeypatch.setattr(frontend_assets, "_MANIFEST_PATH", manifest)
+    with pytest.raises(RuntimeError, match="manifest is unavailable"):
+        frontend_assets._load_entry_urls_sync()

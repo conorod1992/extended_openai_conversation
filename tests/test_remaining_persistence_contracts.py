@@ -150,40 +150,6 @@ async def test_skill_mutation_retains_lock_through_repeated_cancellation(
     assert not manager._filesystem_lock.locked()
 
 
-def test_failed_staged_skill_activation_restores_original(tmp_path, monkeypatch):
-    staged, target, backup = (
-        tmp_path / name for name in ("staged", "target", "backup")
-    )
-    staged.mkdir()
-    target.mkdir()
-    (target / "SKILL.md").write_text("original")
-    (staged / "SKILL.md").write_text("candidate")
-    original = type(staged).rename
-
-    def rename(path, destination):
-        if path == staged:
-            raise OSError("publish failed")
-        return original(path, destination)
-
-    monkeypatch.setattr(type(staged), "rename", rename)
-    with pytest.raises(OSError, match="publish failed"):
-        SkillManager._activate_staged_skill_sync(staged, target, backup)
-    assert (target / "SKILL.md").read_text() == "original"
-    assert (staged / "SKILL.md").read_text() == "candidate"
-    assert not backup.exists()
-
-
-def test_staged_skill_rollback_restores_previous_installation(tmp_path):
-    target, backup = tmp_path / "target", tmp_path / "backup"
-    target.mkdir()
-    backup.mkdir()
-    (target / "SKILL.md").write_text("new")
-    (backup / "SKILL.md").write_text("old")
-    SkillManager._rollback_staged_skill_sync(target, backup)
-    assert (target / "SKILL.md").read_text() == "old"
-    assert not backup.exists()
-
-
 def test_quiet_hours_normalizes_spring_clock_gap():
     now = datetime(2026, 3, 29, 2, 45, tzinfo=ZoneInfo("Europe/Dublin"))
     period = quiet.quiet_period_for(now, "01:30", "03:00")

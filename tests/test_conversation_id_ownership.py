@@ -165,6 +165,68 @@ def test_cleanup_registration_releases_claim_and_ignores_unsupported_session() -
         unsupported, hass, "conversation", owner
     )
 
+
+def test_restore_marks_only_exact_owned_native_history() -> None:
+    from homeassistant.components import conversation
+
+    owner = ("assistant", "user:owner")
+    other_owner = ("sibling", "user:owner")
+    hass = SimpleNamespace(
+        data={
+            ownership._CONVERSATION_ID_OWNERS: {
+                "reset": owner,
+                "retained": owner,
+                "managed": owner,
+                "sibling": other_owner,
+                "superseded": owner,
+            },
+            ownership.DATA_CHAT_SESSION: {},
+        }
+    )
+    native = hass.data[ownership.DATA_CHAT_SESSION]
+
+    def register(chat_id, claimant, *, ha_default=True):
+        session = SimpleNamespace(conversation_id=chat_id, async_on_cleanup=Mock())
+        native[chat_id] = session
+        ownership.register_conversation_id_cleanup(
+            session, hass, chat_id, claimant, ha_default=ha_default
+        )
+        return session
+
+    reset = register("reset", owner)
+    retained = register("retained", owner)
+    managed = register("managed", owner, ha_default=False)
+    sibling = register("sibling", other_owner)
+    unclaimed = register("unclaimed", owner)
+    superseded = register("superseded", owner)
+    replacement = SimpleNamespace(conversation_id="superseded")
+    native["superseded"] = replacement
+    cached = SimpleNamespace(
+        content=[
+            conversation.SystemContent(content="Old system"),
+            conversation.UserContent(content="Old question"),
+        ],
+        extra_system_prompt="Old prompt",
+        llm_api=object(),
+    )
+    hass.data[ownership.DATA_CHAT_LOGS] = {"reset": cached}
+    admitted = SimpleNamespace(content=cached.content.copy())
+
+    ownership.mark_default_history_for_restore(
+        hass, "assistant", frozenset({"retained"})
+    )
+
+    assert ownership.take_default_history_reset(hass, reset, admitted)
+    # Legacy Core can abandon the admitted copy instead of publishing it.
+    assert [(item.role, item.content) for item in cached.content] == [("system", "")]
+    assert cached.extra_system_prompt is None
+    assert cached.llm_api is None
+    for unaffected in (
+        reset, retained, managed, sibling, unclaimed, superseded, replacement
+    ):
+        assert not ownership.take_default_history_reset(hass, unaffected, admitted)
+
+
 class _UnownedLog(SimpleNamespace):
     """Weak-referenceable stand-in with Core's lifetime and identity semantics."""
 
@@ -178,7 +240,6 @@ def test_unclaimed_history_is_excluded_only_while_that_exact_core_log_is_live():
     hass.data[DATA_CHAT_LOGS]["foreign"] = source
     reference = weakref.ref(source)
     assert not ownership.conversation_id_is_owned(hass, "foreign")
-    ownership.retain_unclaimed_chat_log(source)
     routed = ownership.claim_conversation_id(
         hass, "agent", _scope(), "foreign", guest_active=False
     )
@@ -196,25 +257,6 @@ def test_unclaimed_history_is_excluded_only_while_that_exact_core_log_is_live():
         == "foreign"
     )
 
-
-def test_replacement_log_does_not_inherit_a_retained_foreign_logs_exclusion():
-    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
-
-    hass = SimpleNamespace(data={DATA_CHAT_LOGS: {}})
-    source = _UnownedLog(hass=hass, conversation_id="reused")
-    hass.data[DATA_CHAT_LOGS]["reused"] = source
-    ownership.retain_unclaimed_chat_log(source)
-    replacement = _UnownedLog(hass=hass, conversation_id="reused")
-    hass.data[DATA_CHAT_LOGS]["reused"] = replacement
-    assert (
-        ownership.claim_conversation_id(
-            hass, "agent", _scope(), "reused", guest_active=False
-        )
-        == "reused"
-    )
-    assert hass.data[ownership._UNCLAIMED_CHAT_LOGS]["reused"].source() is source
-    assert not ownership.conversation_id_is_owned(None, "reused")
-    assert not ownership.conversation_id_is_owned(SimpleNamespace(data=None), "reused")
 
 def test_parent_binding_is_scoped_and_does_not_outlive_its_owned_target():
     from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
@@ -284,11 +326,14 @@ def test_replacement_parent_and_retired_weak_callback_cannot_reuse_or_remove_new
         )
         == "parent"
     )
-    ownership.retain_unclaimed_chat_log(replacement)
     new_target = ownership.claim_conversation_id(
         hass, "agent", _scope(), "parent", guest_active=False
     )
     assert new_target != old_target
+    assert new_target != "parent"
+    assert hass.data[ownership._UNCLAIMED_CHAT_LOGS]["parent"].source() is replacement
+    assert not ownership.conversation_id_is_owned(None, "parent")
+    assert not ownership.conversation_id_is_owned(SimpleNamespace(data=None), "parent")
     del source
     assert old_record.source() is None
     assert (
@@ -305,7 +350,6 @@ def test_actual_guest_target_can_bind_to_parent_after_namespace_resolution():
     hass = SimpleNamespace(data={DATA_CHAT_LOGS: {}})
     source = _UnownedLog(hass=hass, conversation_id="parent")
     hass.data[DATA_CHAT_LOGS]["parent"] = source
-    ownership.retain_unclaimed_chat_log(source)
     assert (
         ownership.claim_conversation_id(
             hass, "agent", _scope(), "actual-guest", guest_active=True

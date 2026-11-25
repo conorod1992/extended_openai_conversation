@@ -328,8 +328,10 @@ async def test_retained_settings_survive_public_writes_and_reload(
     before = deepcopy(dict(entry.subentries[subentry_id].data))
     current = await command("get")
     if writer == "import":
-        document = (await command("export"))["document"]
-        assert "reasoning_effort" not in document["config"]
+        from tests.helpers import historical_shareable_export
+
+        document = historical_shareable_export("configuration")
+        document["config"].update(api_mode=api_mode, guest_function_policy="on")
         preview = await command("import_preview", document=document)
         assert preview["valid"]
         assert "reasoning_effort" not in preview["config"]

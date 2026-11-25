@@ -1,17 +1,13 @@
 import {expect, test} from "@playwright/test";
-import {acceptConfirmation, acceptSharingReview, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 test("Backup export modes validate selection, preserve settings and reset on reopen", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
   let panel = page.locator("extended-openai-management-panel");
-  for (const mode of ["setup", "custom", "full"]) {
+  for (const mode of ["custom", "full"]) {
     await panel.locator("#transfer-export-mode").selectOption(mode);
-    if (mode === "setup") {
-      await panel.locator("#create-backup-transfer").click();
-      await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(call => call.action === "setup_export").length)).toBe(1);
-      await acceptSharingReview(panel);
-    } else if (mode === "custom") {
+    if (mode === "custom") {
       await expect(panel.locator("#transfer-custom-options")).toBeVisible();
       for (const input of await panel.locator(".transfer-custom-section").all()) await input.uncheck();
       const downloads = page.waitForEvent("download");
@@ -30,9 +26,10 @@ test("Backup export modes validate selection, preserve settings and reset on reo
       await expect(await download).toBeTruthy();
     }
     await page.goto(fixtureUrl("assistant/basics"));
+    await expect(panel.locator("#config-max_tokens")).toBeVisible();
     await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
     panel = page.locator("extended-openai-management-panel");
-    await expect(panel.locator("#transfer-export-mode")).toHaveValue("setup");
+    await expect(panel.locator("#transfer-export-mode")).toHaveValue("full");
     await expect(panel.locator("#transfer-custom-options")).toBeHidden();
   }
   await expectHarnessClean(page, errors);

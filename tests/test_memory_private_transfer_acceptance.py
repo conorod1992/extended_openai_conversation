@@ -54,7 +54,7 @@ async def test_private_full_and_memory_only_transfers_preserve_sensitive_values(
     assert prepared.temporary_memories[0].expires_at == temporary["expires_at"]
 
     selected = [transfer.SECTION_PERSISTENT_MEMORY, transfer.SECTION_TEMPORARY_MEMORY]
-    custom = await transfer.async_collect_transfer_snapshot(hass, entry, subentry, mode="custom", sections=selected)
+    custom = await transfer.async_collect_transfer_snapshot(hass, entry, subentry, sections=selected)
     assert set(custom["sections"]) == set(selected)
     assert "provider_connection" not in custom
     assert "synthetic-provider-connection-value" not in str(custom)
@@ -75,12 +75,6 @@ async def test_private_full_and_memory_only_transfers_preserve_sensitive_values(
     assert (await target.async_list("destination-user"))[0].content == persistent["content"]
     assert await target.async_list("user-1") == []
     assert (await target_temporary.async_list_owned("user:destination-user"))[0].content == temporary["content"]
-
-    # Sharing still reads only setup sections; deliberately retained values stay private.
-    shareable = await transfer.async_create_setup_export(hass, entry, subentry, reviewed=True)
-    assert set(shareable["document"]["sections"]) == transfer.SETUP_SECTIONS
-    assert "synthetic-private-value" not in shareable["json"]
-    assert "synthetic-provider-connection-value" not in shareable["json"]
 
     damaged = deepcopy(custom)
     damaged["sections"][transfer.SECTION_PERSISTENT_MEMORY]["memories"][0]["key"] = "Invalid Key"

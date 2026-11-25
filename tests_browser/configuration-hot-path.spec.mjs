@@ -502,7 +502,8 @@ test("returning to baseline restores saved-state actions without rebuilding the 
   });
   await title.fill(baseline);
   await expect(host.locator("#duplicate-agent")).toBeEnabled();
-  await expect(host.locator("#export-agent")).toBeEnabled();
+  await expect(host.locator("#export-agent")).toHaveCount(0);
+  await expect(host.locator("#import-agent")).toBeAttached();
   await expect(host.locator(".save-bar")).toHaveCount(0);
   expect(await page.evaluate(() => window.cleanInput === window.browserHarness.panel.shadowRoot.querySelector('[data-config="__title"]'))).toBe(true);
 });

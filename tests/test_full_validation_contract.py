@@ -178,7 +178,30 @@ def test_dispatch_and_discovery_use_same_ref_and_exact_candidate(
     monkeypatch.setattr(driver, "api", api)
     assert driver.dispatch(workflow, {})["run_id"] == 42
     assert api.call_args_list[0].args[2]["ref"] == expected_ref
+    assert api.call_args_list[0].args[2]["return_run_details"] is True
     assert f"branch={expected_ref}" in api.call_args_list[1].args[1]
+
+
+def test_dispatch_uses_returned_run_id_without_waiting_for_workflow_list(
+    monkeypatch, tmp_path
+):
+    driver = _driver(monkeypatch, tmp_path)
+    workflow = "side-by-side-isolation.yml"
+    url = "https://github.com/owner/repository/actions/runs/42"
+    api = Mock(return_value={"workflow_run_id": 42, "html_url": url})
+    monkeypatch.setattr(driver, "api", api)
+
+    assert driver.dispatch(workflow, {}) == {
+        "workflow": workflow,
+        "run_id": 42,
+        "run_attempt": 1,
+        "url": url,
+    }
+    api.assert_called_once_with(
+        "POST",
+        f"actions/workflows/{workflow}/dispatches",
+        {"ref": driver.REF_NAME, "inputs": {}, "return_run_details": True},
+    )
 
 
 def test_run_discovery_rejects_an_unexpected_candidate(monkeypatch, tmp_path):

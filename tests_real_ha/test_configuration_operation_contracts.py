@@ -71,10 +71,15 @@ async def test_section_save_preserves_sampling_presence_but_transfer_materialize
     assert _speech(result) == "Before transfer"
     for key in ("temperature", "top_p"):
         assert (key in wire.requests[0]["body"]) is explicit_sampling
-    exported = await async_management_command(
-        hass, owner.id, True, {**base, "action": "export"}
+    from tests.helpers import historical_shareable_export
+
+    document = historical_shareable_export("configuration")
+    document["config"].update(
+        chat_model=options["chat_model"],
+        api_mode=options["api_mode"],
+        temperature=defaults["temperature"],
+        top_p=defaults["top_p"],
     )
-    assert "reasoning_effort" not in exported["document"]["config"]
     imported = await async_management_command(
         hass,
         owner.id,
@@ -83,7 +88,7 @@ async def test_section_save_preserves_sampling_presence_but_transfer_materialize
             **base,
             "action": "import",
             "mode": "current",
-            "document": exported["document"],
+            "document": document,
             "confirm": True,
             "revision": saved["revision"],
         },

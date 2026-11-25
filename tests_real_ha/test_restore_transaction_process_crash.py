@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 import json
 import os
 from pathlib import Path
 import socket
 import subprocess
 import sys
+from threading import Event
 import time
 from types import MappingProxyType
 from unittest.mock import patch
@@ -177,10 +179,16 @@ def _pause(config_dir: Path, name: str) -> None:
 
 async def _provider_boundary(hass, entry, directory, phase, cut):
     from custom_components.extended_openai_conversation_responses import (
-        backup, restore_recovery, transfer,
+        backup,
+        restore_recovery,
+        transfer,
     )
-    from custom_components.extended_openai_conversation_responses.conversation_archive import async_get_archive
-    from custom_components.extended_openai_conversation_responses.scope import user_scope
+    from custom_components.extended_openai_conversation_responses.conversation_archive import (
+        async_get_archive,
+    )
+    from custom_components.extended_openai_conversation_responses.scope import (
+        user_scope,
+    )
 
     subentry, _, _ = await _state(hass, entry)
     archive = await async_get_archive(hass, entry.entry_id, subentry.subentry_id)
@@ -260,14 +268,132 @@ async def _provider_boundary(hass, entry, directory, phase, cut):
     raise AssertionError("provider restore returned before process kill")
 
 
+async def _archive_boundary(hass, entry, directory, phase, cut):
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        conversation_archive,
+        restore_disk,
+        restore_recovery,
+        transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_ARCHIVE_RETENTION_DAYS,
+    )
+
+    subentry, _, _ = await _state(hass, entry)
+    if phase == "archive-seed":
+        hass.config_entries.async_update_subentry(
+            entry, subentry, data={**subentry.data, CONF_ARCHIVE_RETENTION_DAYS: 90}
+        )
+        await hass.async_block_till_done()
+        subentry = entry.subentries[subentry.subentry_id]
+    archive = await conversation_archive.async_get_archive(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    storage = archive._storage
+    journal = restore_recovery._journal_store(hass, entry.entry_id, subentry.subentry_id)
+    seed = directory / "archive-seed.json"
+
+    if phase == "archive-seed":
+        now = datetime.now(UTC)
+        earlier = now.replace(day=1) - timedelta(days=1)
+
+        async def replace(records):
+            sessions, turns = [], []
+            for label, when in records:
+                stamp = when.isoformat()
+                sessions.append(conversation_archive.ArchiveSession(
+                    label, None, subentry.subentry_id, _OWNER, "user", "test", None,
+                    stamp, stamp, label, 1, "retained",
+                ))
+                turns.append(conversation_archive.ArchiveTurn(
+                    label, label, None, stamp, label, "response", True, 0,
+                ))
+            await archive.async_replace_backup(sessions, turns)
+
+        await replace([("target-earlier", earlier), ("target-current", now)])
+        snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+        seed.write_text(json.dumps({
+            "artifact": backup.finalize_backup_snapshot(snapshot)["document"],
+            "earlier_month": earlier.isoformat()[:7],
+            "current_month": now.isoformat()[:7],
+        }), encoding="utf-8")
+        await replace([("previous-current", now)])
+        return
+
+    saved = json.loads(seed.read_text(encoding="utf-8"))
+    earlier_file = Path(storage._partition_store(saved["earlier_month"]).path)
+    current_file = Path(storage._partition_store(saved["current_month"]).path)
+
+    async def verify():
+        expected = {"target-earlier", "target-current"} if cut == "committed" else {"previous-current"}
+        turns = (await archive.async_backup_data())["turns"]
+        assert {turn["user_text"] for turn in turns} == expected
+        assert current_file.is_file()
+        assert earlier_file.is_file() == (cut == "committed")
+        assert await journal.async_load() is None
+        assert not list(directory.joinpath(".storage").glob("*" + restore_disk.RESTORE_STAGING_SUFFIX))
+
+    if phase == "archive-verify":
+        await verify()
+        return
+
+    original_write = conversation_archive.write_verified_store
+    initial_write = True
+
+    def after_first_partition(store, payload, **kwargs):
+        nonlocal initial_write
+        original_write(store, payload, **kwargs)
+        if initial_write and Path(store.path) == earlier_file:
+            initial_write = False
+            if cut == "write-error":
+                raise OSError("injected Archive write error")
+            if cut == "partial":
+                _pause(directory, "archive-restore-paused")
+                Event().wait()
+
+    original_journal = restore_recovery._async_write_journal_verified
+
+    async def after_commit(store, data):
+        result = await original_journal(store, data)
+        if result and cut == "committed" and data["phase"] == "committed":
+            _pause(directory, "archive-restore-paused")
+            await asyncio.Event().wait()
+        return result
+
+    async def restore():
+        await transfer.async_restore_transfer(
+            hass, entry, subentry, saved["artifact"],
+            sections=[transfer.SECTION_CONVERSATION_ARCHIVE], confirm_retention=True,
+        )
+
+    with (
+        patch.object(conversation_archive, "write_verified_store", after_first_partition),
+        patch.object(restore_recovery, "_async_write_journal_verified", after_commit),
+    ):
+        if cut == "write-error":
+            with pytest.raises(backup.BackupError, match="previous agent state was recovered"):
+                await restore()
+            assert not initial_write
+            await verify()
+            return
+        await restore()
+    raise AssertionError("Archive restore returned before process kill")
+
+
 async def _child(config_dir: Path, phase: str, cut: str) -> None:
     from custom_components.extended_openai_conversation_responses import (
+        restore_disk,
         restore_recovery,
     )
     from custom_components.extended_openai_conversation_responses.memory import (
         PersistentMemory,
     )
     from homeassistant import bootstrap, runner
+
+    if phase.startswith("archive-"):
+        restore_disk.ARCHIVE_DISK_THRESHOLD = 1
+        restore_recovery._STREAM_JOURNAL_BYTES = 1
 
     original_replace = PersistentMemory.async_replace_backup
 
@@ -292,6 +418,8 @@ async def _child(config_dir: Path, phase: str, cut: str) -> None:
         entry = await _ensure_entry(hass)
         if phase.startswith("provider-"):
             await _provider_boundary(hass, entry, config_dir, phase, cut)
+        elif phase.startswith("archive-"):
+            await _archive_boundary(hass, entry, config_dir, phase, cut)
         elif phase == "seed":
             await _seed(hass, entry, config_dir)
         elif phase == "verify":
@@ -566,6 +694,22 @@ def test_provider_restore_pairs_credentials_and_assistant_across_process_kill(tm
     _run(tmp_path, "provider-seed", cut)
     _kill_at(tmp_path, "provider-restore", cut, "provider-restore-paused")
     _run(tmp_path, "provider-verify", cut)
+
+
+@pytest.mark.parametrize("cut", ["write-error", "partial", "committed"])
+@pytest.mark.usefixtures("socket_enabled")
+def test_disk_backed_archive_rollback_and_cold_recovery(tmp_path, cut):
+    source = Path(__file__).resolve().parents[1] / "custom_components" / DOMAIN
+    destination = tmp_path / "custom_components" / DOMAIN
+    destination.parent.mkdir()
+    _stage_component(source, destination)
+    (tmp_path / "configuration.yaml").write_text(_configuration("Archive Restore"), encoding="utf-8")
+    _run(tmp_path, "archive-seed", cut)
+    if cut == "write-error":
+        _run(tmp_path, "archive-restore", cut)
+    else:
+        _kill_at(tmp_path, "archive-restore", cut, "archive-restore-paused")
+    _run(tmp_path, "archive-verify", cut)
 
 
 if __name__ == "__main__" and os.environ.get(_PHASE):

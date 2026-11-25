@@ -2,6 +2,35 @@ import {expect,test} from "@playwright/test";
 import {openDataCollection} from "./data-collection-helpers.mjs";
 import {acceptConfirmation,expectHarnessClean,trackPageErrors} from "./browser-helpers.mjs";
 
+for (const bundled of [false, true]) test(`Short-term Memory can retain or replace a UTC-only expiry (${bundled ? "shipped" : "source"})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  const panel = await openDataCollection(page, "temporary", 12, bundled);
+  const originalExpiry = "9999-12-31T23:59:59.123456+00:00";
+  await panel.evaluate(async (host, expires_at) => {
+    Object.assign(dataCollectionBackend.state.temporary[0], {expires_at, expires_at_local:null});
+    await host._loadSection();
+  }, originalExpiry);
+  const card = panel.locator('[data-memory-id="temporary-0"]');
+  await expect(card).toContainText(originalExpiry);
+  const edit = card.locator("button.edit-temporary-memory");
+  await edit.click();
+  const expiry = panel.locator("#temporary-memory-expiry");
+  await expect(panel.locator("#temporary-memory-expiry-label")).toHaveText("Expires (UTC)");
+  await expect(expiry).toHaveValue("9999-12-31T23:59:59");
+  await panel.locator("#temporary-memory-content").fill("Retained the exact instant");
+  await panel.locator("#temporary-memory-save").click();
+  await expect(panel.locator("#temporary-memory-dialog")).toHaveJSProperty("open", false);
+  await edit.click();
+  const tomorrow = await page.evaluate(() => new Date(Date.now() + 86400000).toISOString().slice(0, 10));
+  await expiry.fill(`${tomorrow}T15:17:23`);
+  await panel.locator("#temporary-memory-save").click();
+  await expect(panel.locator("#temporary-memory-dialog")).toHaveJSProperty("open", false);
+  const updates = await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "temporary_update"));
+  expect(updates.map(call => call.expires_at)).toEqual([originalExpiry, `${tomorrow}T15:17:23Z`]);
+  expect(updates.every(call => !Object.hasOwn(call, "local_times"))).toBe(true);
+  await expectHarnessClean(page, errors);
+});
+
 test("Short-term Memory acknowledges the submitted values while preserving later editor input",async({page})=>{
   for(const bundled of [false,true]) for(const finish of ["save","discard","replacement","unchanged"]) {
   const errors=trackPageErrors(page);

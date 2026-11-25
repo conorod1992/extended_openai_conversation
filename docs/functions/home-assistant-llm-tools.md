@@ -10,6 +10,8 @@ In **Functions**, choose **+ Add**, then **Home Assistant tool**. Search by name
 select individual tools, or filter sources and choose **Select all shown**. You can
 assign the selected tools to an existing Function Group in the same dialog.
 Already-added tools are marked and cannot be added twice.
+Choose an Assist satellite under **Preview device** to discover tools that
+Home Assistant exposes only for that device, such as satellite timers.
 
 Bulk addition saves **only those individual tools selected at that time**. Tools
 introduced by future updates are never automatically exposed. A source is not
@@ -46,9 +48,10 @@ Functions or retain request-owned tool/API objects for background execution. A
 source can implement its own scheduling capability as part of its native behavior.
 Both Responses and Chat Completions use the same live capability adapter.
 
-If a tool fails after it may have acted, a later turn in the same conversation
-cannot retry it with changed arguments until the unresolved exchange is
-acknowledged. A returned HA error result has the same protection as an exception.
+If a dispatched tool raises or returns an error and its effect is uncertain,
+ExtendedOpenAI ends the current provider turn and reports that the action may have
+taken effect. A later turn in the same conversation cannot retry the action with
+changed arguments until the unresolved exchange is acknowledged.
 The same conservative guard applies after a failed provider continuation when
 schema normalization changed the submitted arguments or uses validators whose
 value preservation cannot be established. The native tool owns its own
@@ -60,7 +63,7 @@ fresh scope. Normal successful repetitions remain possible.
 Unavailable or renamed tools remain saved. They are omitted from model requests,
 and the management preview marks them unavailable. No similar-name replacement is
 chosen. When the exact saved identity returns, the tool becomes usable again.
-Normal save, duplication, configuration export/import and full backup retain these
+Normal save, duplication and private backup and restore retain these
 references, including when the destination lacks their sources.
 
 ## Identity and Home Assistant compatibility

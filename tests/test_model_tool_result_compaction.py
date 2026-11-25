@@ -104,8 +104,20 @@ def test_model_memory_projection_keeps_every_populated_optional_field() -> None:
     }
 
 
-def test_nested_memory_results_only_remove_null_optional_fields() -> None:
-    """Statuses, IDs, scope labels, content and populated fields remain unchanged."""
+def test_model_memory_scope_uses_friendly_selector_without_account_id() -> None:
+    record = _memory()
+    for candidate, scope in (
+        (record, "personal"),
+        (_memory(user_id="shared:household"), "household"),
+    ):
+        model = model_memory_as_dict(candidate, include_scope=True)
+        assert model["scope"] == scope
+        assert "scope_id" not in model
+        assert model["revision"] == memory_revision(candidate)
+        assert memory_as_dict(candidate, include_scope=True)["scope_id"] == candidate.user_id
+
+
+def test_nested_memory_results_omit_local_owner_and_null_metadata() -> None:
     raw = {
         "status": "updated",
         "memory": {
@@ -125,7 +137,7 @@ def test_nested_memory_results_only_remove_null_optional_fields() -> None:
 
     assert compacted["status"] == "updated"
     assert compacted["memory"]["memory_id"] == "m1"
-    assert compacted["memory"]["scope_id"] == "shared:household"
+    assert "scope_id" not in compacted["memory"]
     assert compacted["memory"]["scope"] == "Shared household"
     assert compacted["memory"]["key"] == "drink.preference"
     assert "subject" not in compacted["memory"]

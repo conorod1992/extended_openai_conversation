@@ -13,7 +13,6 @@ from custom_components.extended_openai_conversation_responses.secret_redaction i
 )
 from tests.test_backup import _document
 from tests.test_secret_restore_context import _rest_tool
-from tests.test_transfer import _portable_document
 
 SECRET = "EOAI_REVIEW_CREDENTIAL_42"
 ALIASES = ("key", "sig", "signature", "credential")
@@ -46,43 +45,23 @@ def configuration(kind, persisted=False, function_type="rest"):
     }
 
 
-def export(config, exporter):
-    if exporter == "setup":
-        document = _portable_document(mode="setup")
-        document["sections"]["configuration"] = config
-        result = transfer.finalize_setup_export(document)
-        public = result["document"]["sections"]["configuration"]
-    else:
-        document = _document()
-        document["agent"]["config"] = config
-        result = backup.finalize_backup_snapshot(document)
-        public = result["document"]["agent"]["config"]
-    return result, public
+def legacy_backup_export(config):
+    document = _document()
+    document["agent"]["config"] = config
+    result = backup.finalize_backup_snapshot(document)
+    return result, result["document"]["agent"]["config"]
 
 
 @pytest.mark.parametrize("kind", [*("params-" + key for key in ALIASES), *TEMPLATES])
 @pytest.mark.parametrize("function_type", ["rest", "scrape"])
 @pytest.mark.parametrize("persisted", [False, True])
-@pytest.mark.parametrize("exporter", ["setup", "legacy"])
-def test_complete_exports_remove_http_credentials(
-    kind, function_type, persisted, exporter
-):
+def test_legacy_export_removes_http_credentials(kind, function_type, persisted):
     config = configuration(kind, persisted, function_type)
     original = deepcopy(config)
-    result, public = export(config, exporter)
+    result, public = legacy_backup_export(config)
     assert SECRET not in result["json"]
     assert SECRET not in json.dumps(result["document"])
     assert redact_secrets(public) == public
-    request = public["functions"][0]["function"]
-    if kind.startswith("params-"):
-        assert (
-            request["params"][kind.removeprefix("params-")] == REDACTED_SECRET_SENTINEL
-        )
-        assert request["params"]["units"] == "c"
-    else:
-        assert request["resource_template"] == {
-            "__extended_openai_redacted_url__": None
-        }
     assert config == original
 
 
@@ -149,10 +128,7 @@ async def test_private_snapshots_keep_credentials_without_rendering_templates(
 
 
 @pytest.mark.parametrize("persisted", [False, True])
-@pytest.mark.parametrize("exporter", ["setup", "legacy"])
-def test_nonsecret_payloads_schemas_and_literal_templates_survive_complete_exports(
-    persisted, exporter
-):
+def test_nonsecret_payloads_schemas_and_literal_templates_survive_legacy_export(persisted):
     tool = _rest_tool()
     tool["function"].pop("headers")
     tool["function"].pop("resource")
@@ -180,7 +156,7 @@ def test_nonsecret_payloads_schemas_and_literal_templates_survive_complete_expor
     tools = [tool, script]
     config = {"functions": yaml.safe_dump(tools) if persisted else tools}
     original = deepcopy(config)
-    _result, public = export(config, exporter)
+    _result, public = legacy_backup_export(config)
     assert public["functions"] == tools
     assert config == original
 

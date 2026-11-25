@@ -3,7 +3,6 @@ import {captureAuthentication} from "./authentication-presentation.js";
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
 import {bindExportOptions, TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
 import {backupSummaryLines, unassignedTemporaryMemoryNotice} from "./backup-summary.js";
-import {reviewSharingExport} from "./sharing-review.js";
 import {callMutation, captureConfigurationSubmission, captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft} from "./configuration-acknowledgement.js";
 export {backupSummaryLines};
 export {TRANSFER_SECTIONS, renderBackupTransferPanel} from "./backup-transfer-shell.js";
@@ -62,6 +61,18 @@ export async function callBackupTransfer(panel, action, data = {}, owner = selec
   return result;
 }
 
+async function inspectBackup(panel, data, owner, requireCurrent) {
+  for (;;) {
+    requireCurrent();
+    try {
+      return await callBackupTransfer(panel, "import_inspect", data, owner);
+    } catch (error) {
+      if (error.code !== "inspection_pending") throw error;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+}
+
 export function bytesToBase64(bytes) {
   const source = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   let binary = "";
@@ -89,18 +100,6 @@ async function defaultSaveBlob(blob, filename) {
   } finally {
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }
-}
-
-export async function downloadSetupExport(panel, saveBlob = defaultSaveBlob, {reviewedCustom = false, review = false} = {}) {
-  const current = captureAuthentication(panel);
-  const result = await callBackupTransfer(panel, "setup_export", reviewedCustom ? {reviewed_custom: true} : {});
-  if (!current()) return {...result, cancelled:true};
-  if (!result?.json || !result?.filename) throw new Error("The server returned an invalid setup export");
-  if (review && !await reviewSharingExport(panel, result)) return {...result, cancelled: true};
-  if (!current()) return {...result, cancelled:true};
-  const blob = new Blob([result.json], {type: "application/json"});
-  await saveBlob(blob, result.filename, result);
-  return result;
 }
 
 export async function downloadArchiveBackup(panel, {mode = "full", sections = null} = {}, saveBlob = defaultSaveBlob) {
@@ -202,7 +201,7 @@ export async function uploadFullBackup(panel, file, isCurrent = () => true, owne
       }
     }
     if (sent !== file.size) throw new Error("The selected transfer file was not uploaded completely");
-    const inspection = await callBackupTransfer(panel, "import_inspect", {session_id: sessionId, inspect_only: true}, owner);
+    const inspection = await inspectBackup(panel, {session_id: sessionId, inspect_only: true}, owner, requireCurrent);
     requireCurrent();
     if (!inspection?.valid) throw new Error("The transfer could not be validated");
     return {...inspection, session_id: sessionId, session: transferSession(sessionId, owner)};
@@ -281,7 +280,7 @@ function selectedValues(root, selector) {
 
 function formatSourceKind(value) {
   return {
-    portable_transfer: "Shareable Setup",
+    portable_transfer: "Legacy Shareable Setup",
     custom_backup: "Custom Backup",
     full_backup: "Full Backup",
     legacy_setup: "Legacy setup export",
@@ -438,7 +437,9 @@ function sendLatestImportPreview(panel) {
     const status = panel.shadowRoot?.querySelector(`#${RESTORE_STATUS_ID}`);
     const apply = panel.shadowRoot?.querySelector(`#${APPLY_ID}`);
     try {
-      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.session.session_id, sections: request.sections, user_scope_mappings: request.userScopeMappings, ...(request.restoreProvider ? {restore_provider_connection:true} : {})}, request.session.owner);
+      const result = await inspectBackup(panel, {session_id: request.session.session_id, sections: request.sections, user_scope_mappings: request.userScopeMappings, ...(request.restoreProvider ? {restore_provider_connection:true} : {})}, request.session.owner, () => {
+        if (!current()) throw new Error("The backup preview was superseded");
+      });
       if (!current()) return;
       panel._backupTransferPreview = result.preview;
       panel._backupTransferPreviewToken = result.preview_token;
@@ -524,7 +525,7 @@ export function bindBackupTransfer(panel) {
 
   root.querySelector(`#${CREATE_ID}`)?.addEventListener("click", async () => {
     const button = root.querySelector(`#${CREATE_ID}`);
-    const mode = exportMode?.value || "setup";
+    const mode = exportMode?.value || "full";
     const sections = selectedValues(root, ".transfer-custom-section");
     if (mode === "custom" && !sections.length) {
       panel._toast("Select at least one section for the custom backup", true);
@@ -532,13 +533,9 @@ export function bindBackupTransfer(panel) {
     }
     panel._setSaving(button, true);
     try {
-      if (mode === "setup") {
-        const exported = await downloadSetupExport(panel, defaultSaveBlob, {reviewedCustom: Boolean(root.querySelector("#transfer-reviewed-custom")?.checked), review: true});
-        if (exported.cancelled) return;
-      }
-      else if (mode === "custom") await downloadCustomBackup(panel, sections);
+      if (mode === "custom") await downloadCustomBackup(panel, sections);
       else await downloadFullBackup(panel);
-      panel._toast(mode === "setup" ? "Shareable setup exported" : mode === "custom" ? "Custom backup created" : "Full backup created");
+      panel._toast(mode === "custom" ? "Custom backup created" : "Full backup created");
     } catch (err) {
       panel._toast(`Unable to create export: ${err.message || String(err)}`, true);
     } finally {

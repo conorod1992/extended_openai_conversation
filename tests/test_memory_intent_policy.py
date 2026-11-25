@@ -118,7 +118,7 @@ async def test_mutation_mode_scope_matrix(
 
 
 @pytest.mark.parametrize(
-    "intent", [True, False, 1, [], {}, "explicit", "requested", None]
+    "intent", [True, False, 1, [], {}, "explicit", "requested"]
 )
 @pytest.mark.parametrize("operation", ["upsert", "update", "delete"])
 async def test_malformed_intent_is_not_permission(intent, operation):

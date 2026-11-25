@@ -1,86 +1,18 @@
 """Provider context and sharing dependency contracts across public operations."""
 
 from copy import deepcopy
-from datetime import date
-import json
 from types import SimpleNamespace
 
 import pytest
-import yaml
 
 from custom_components.extended_openai_conversation_responses import management_ui as ui
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_snapshot,
-    normalize_agent_config,
 )
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
 from tests.test_management_ui import _entry_pair, _message, retained_rules  # noqa: F401
-from tests.test_skill_availability import _group, _loader
-
-
-@pytest.mark.parametrize("cause", ["typed", "unsafe_group", "healthy", "on_demand"])
-@pytest.mark.parametrize("kind", ["configuration", "setup"])
-def test_reviewed_export_reconciles_skill_dependencies(hass, cause, kind):
-    tools = [_loader()]
-    groups = []
-    if cause == "typed":
-        tools.append(
-            {
-                "spec": {
-                    "name": "announce_holiday",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-                "function": {
-                    "type": "script",
-                    "sequence": [{"variables": {"holiday_date": date(2026, 12, 25)}}],
-                },
-            }
-        )
-    elif cause in {"unsafe_group", "on_demand"}:
-        groups = [_group()]
-        if cause == "unsafe_group":
-            groups[0]["description"] = (
-                "Authorization: Bearer sk-FABRICATED123456789012345"
-            )
-    config = {
-        "functions": yaml.safe_dump(tools),
-        "function_groups": groups,
-        "skills": ["calendar"],
-    }
-    normalize_agent_config(config)
-    original = deepcopy(config)
-    if kind == "configuration":
-        artifact = ui._export_agent(SimpleNamespace(data=config), reviewed=True)
-    else:
-        from tests.test_reviewed_quarantine_export import setup_roundtrip
-
-        result, _restored = setup_roundtrip(config, reviewed=True)
-        artifact = {
-            "schema": "extended_openai_conversation.agent",
-            "version": 2,
-            "title": "Shared",
-            "config": result["document"]["sections"]["configuration"],
-            "security": result["security"],
-        }
-    restored = ui._parse_import_document(json.dumps(artifact))["config"]
-    unavailable = cause in {"typed", "unsafe_group"}
-    assert restored["skills"] == ([] if unavailable else ["calendar"])
-    assert (
-        any(item["field"] == "skills" for item in artifact["security"]["omitted"])
-        is unavailable
-    )
-    if cause == "unsafe_group":
-        assert (
-            next(
-                tool
-                for tool in yaml.safe_load(restored["functions"])
-                if tool["spec"]["name"] == "load_skill"
-            )["enabled"]
-            is False
-        )
-    assert config == original
 
 
 @pytest.mark.parametrize("identity", ["o3-pro", "o3-pro-2025-06-10"])
@@ -123,8 +55,10 @@ async def test_management_preserves_parent_provider_reasoning(
     assert result["api_provider"] == provider
     await command("duplicate")
     duplicate = hass.config_entries.async_add_subentry.call_args.args[1]
-    exported = await command("export", reviewed_custom=True)
-    imported = await command("import_preview", document=exported["json"], mode="new")
+    from tests.test_agent_config_transfer import historical_reviewed_configuration
+
+    document = historical_reviewed_configuration(saved)
+    imported = await command("import_preview", document=document, mode="new")
     for config in (duplicate.data, imported["config"]):
         sent = build_provider_request_snapshot(
             dict(config), entry.data, tools_required=False

@@ -247,13 +247,12 @@ def test_nested_shapes_agree_across_function_inspection_consumers(
     )
     preview = request_rule_match_preview(rr.RuleMatch(rule, "run", False, 100.0))
     assert preview["would_do"]["functions"] == [
-        {"name": "lookup", "result_alias": None}
+        {"name": "lookup"}
     ]
     _reject_device_actions(canonical)
     nested_leaf = list(rr._iter_script_actions(canonical))[-1]
-    nested_leaf["data"]["result_alias"] = "answer"
-    with pytest.raises(ValueError, match="captured only by top-level steps"):
-        rr._validate_result_dependencies({"actions": canonical}, set())
+    nested_leaf["response_variable"] = "answer"
+    assert rr.request_rule_repair(rule).startswith("Function response format changed.")
     nested_leaf["action"] = "lock.unlock"
     assert rr.rule_has_sensitive_actions(rule)
 

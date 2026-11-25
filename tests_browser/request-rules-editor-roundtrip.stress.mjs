@@ -2,11 +2,11 @@ import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 const MATCH_CASES = [
-  {match:"equals", action:"model_routing", continueAi:false, scope:"conversation", reset:true, continueMatching:false, custom:false},
-  {match:"starts_with", action:"model_routing", continueAi:true, scope:"request", reset:false, continueMatching:true, custom:true},
-  {match:"ends_with", action:"local_action", continueAi:false, continueMatching:false, custom:true, conditions:true},
-  {match:"contains", action:"local_action", continueAi:true, continueMatching:true, custom:true},
-  {match:"sentence_pattern", action:"model_routing", continueAi:true, scope:"conversation", reset:false, continueMatching:false, custom:false},
+  {match:"equals", action:"model_routing", continueAi:false, scope:"conversation", reset:true, custom:false},
+  {match:"starts_with", action:"model_routing", continueAi:true, scope:"request", reset:false, custom:true},
+  {match:"ends_with", action:"local_action", continueAi:false, custom:true, conditions:true},
+  {match:"contains", action:"local_action", continueAi:true, custom:true},
+  {match:"sentence_pattern", action:"model_routing", continueAi:true, scope:"conversation", reset:false, custom:false},
 ];
 
 const nameFor = (index, item) => `Nightly editor ${index + 1} ${item.match}`;
@@ -104,7 +104,6 @@ async function configureCase(panel, item, index, groupId) {
   }
 
   await panel.locator("#rule-advanced").evaluate((details) => { details.open = true; });
-  if (item.continueMatching) await panel.locator("#rule-continue-matching").check();
   if (item.custom) {
     await panel.locator("#rule-matching-behavior").selectOption("custom");
     if (index % 2 === 0) await panel.locator("#rule-word-forms").uncheck();
@@ -124,7 +123,6 @@ async function assertCase(panel, item, index, groupId) {
   await expect(panel.locator("#rule-action-type")).toHaveValue(item.action);
   await expect(panel.locator("#rule-ai-input-mode")).toHaveValue("original");
   await expect(panel.locator("#rule-group")).toHaveValue(index % 2 === 0 ? groupId : "");
-  await expect(panel.locator("#rule-continue-matching")).toBeChecked({checked:item.continueMatching});
 
   if (item.action === "local_action") {
     await expect(panel.locator("#rule-local-continue-to-ai")).toBeChecked({checked:item.continueAi});

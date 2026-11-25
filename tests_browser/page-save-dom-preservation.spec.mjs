@@ -62,6 +62,48 @@ test("Quiet Hours page save preserves DOM and patches saved status", async ({pag
   await expectHarnessClean(page, errors);
 });
 
+for (const bundled of [false, true]) {
+  test(`Quiet Hours applies replacement acknowledgement without a second read (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/quiet-hours", `&quiet_replacement=1&bundle=${Number(bundled)}`));
+    const panel = page.locator("extended-openai-management-panel");
+    const rebind = panel.getByRole("button", {name:"Use replacement satellite"});
+    await expect(rebind).toBeVisible();
+    await panel.evaluate(host => {
+      const call = host.hass.callWS.bind(host.hass);
+      host.hass.callWS = async message => {
+        if (message.section === "quiet_hours" && message.action === "rebind") {
+          return {...structuredClone(host._result), revision:"replacement-saved", selection_issues:{}};
+        }
+        if (message.section === "quiet_hours" && message.action === "get") {
+          throw new Error("Quiet Hours read unavailable");
+        }
+        return call(message);
+      };
+    });
+    await rebind.click();
+    await expect(rebind).toHaveCount(0);
+    await expect(panel.getByText("Replacement saved.")).toBeVisible();
+    expect(await panel.evaluate(host => host._result.revision)).toBe("replacement-saved");
+    await expectHarnessClean(page, errors);
+  });
+
+  test(`Quiet Hours removes a cleared orphaned override after saving (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/quiet-hours", `&quiet_replacement=1&bundle=${Number(bundled)}`));
+    const panel = page.locator("extended-openai-management-panel");
+    const clear = panel.getByRole("button", {name:"Clear saved override"});
+    await expect(clear).toBeVisible();
+    const orphan = await clear.getAttribute("data-id");
+    await clear.click();
+    await panel.locator("#save-page").click();
+    await expect(panel.locator(".save-bar")).toHaveCount(0);
+    await expect(panel.locator(`[data-qh-satellite="${orphan}"]`)).toHaveCount(0);
+    await expect(clear).toHaveCount(0);
+    await expectHarnessClean(page, errors);
+  });
+}
+
 test("Guest Mode policy save preserves DOM", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/guest-mode"));

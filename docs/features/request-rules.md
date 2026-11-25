@@ -20,9 +20,9 @@ The editor follows the way a command is usually designed:
 
 ## Only when conditions
 
-Rules with no conditions behave exactly as before. For a conditional rule, phrase or sentence-pattern matching runs first. Only if the text matches are its Home Assistant conditions evaluated. A false condition skips that rule and checks later text-matching rules in global priority order. The first text match whose conditions pass is the next eligible rule. By default it handles the request and stops matching; a rule with **Continue matching after this rule** enabled can allow later eligible rules to run too.
+Rules with no conditions behave exactly as before. For a conditional rule, phrase or sentence-pattern matching runs first. Only if the text matches are its Home Assistant conditions evaluated. A false condition skips that rule and checks later text-matching rules in global priority order. The first text match whose conditions pass handles the request.
 
-The **Only when** editor uses Home Assistant's condition selector. For example, an Equals rule for `good night` can require a state condition that `input_boolean.bedtime` is `on`. You can use native nested `and`/`or`/`not`, numeric state, time, template, device, and other conditions offered by Home Assistant. Saved condition structures remain intact when the rule is edited. A missing device does not prevent disabling a rule. Rule Pack review reports unavailable device conditions as dependencies and imports those rules disabled. Malformed conditions are still rejected; enabling a rule requires its condition dependencies to be available.
+The **Only when** editor uses Home Assistant's condition selector. For example, an Equals rule for `good night` can require a state condition that `input_boolean.bedtime` is `on`. You can use native nested `and`/`or`/`not`, numeric state, time, template, device, and other conditions offered by Home Assistant. Saved condition structures remain intact when the rule is edited. A missing device does not prevent disabling a rule. Malformed conditions are still rejected; enabling a rule requires its condition dependencies to be available.
 
 If a text-matching condition cannot be evaluated, Request Rules stop safely for that request. No lower-priority rule runs, and the user receives a rule error. Match Preview reports the error. This avoids treating an uncertain higher-priority rule as false and executing another local action.
 
@@ -42,7 +42,7 @@ Turn on **Continue to AI** when the local sequence should run first and the prov
 4. After normal completion without a final conversation response or stop, **Continue to AI** calls the provider once when enabled.
 5. Otherwise, the rule returns its success response.
 
-A condition inside `if`, `choose`, `repeat`, or another nested sequence halts only the scope Home Assistant halts. A fatal wait timeout (`continue_on_timeout: false`) follows the failure path; `continue_on_timeout: true` can complete normally. Earlier successful side effects are not rolled back if a later step fails. Native `variables` and service `response_variable` values remain available to later actions in the script, but are not automatically interpolated in the separate Request Rule success response. Only request captures and dedicated Function Tool result aliases are supported there.
+A condition inside `if`, `choose`, `repeat`, or another nested sequence halts only the scope Home Assistant halts. A fatal wait timeout (`continue_on_timeout: false`) follows the failure path; `continue_on_timeout: true` can complete normally. Earlier successful side effects are not rolled back if a later step fails. Use native `variables` and service `response_variable` values in later script actions, including **Set conversation response** for templated replies. The separate success and failure responses are static text with optional sentence-pattern captures such as `{device}`.
 
 ### Example: fast local script
 
@@ -53,7 +53,9 @@ A condition inside `if`, `choose`, `repeat`, or another nested sequence halts on
 
 ## AI routing
 
-An **AI routing** rule can override the model, reasoning effort, or both. Matching and request flow are separate choices: **Equals**, **Starts with**, **Ends with**, **Contains**, and **ExtendedOpenAI sentence pattern** decide only whether a rule matches.
+An **AI routing** rule saves a fixed model, reasoning effort, or both. Leaving a choice blank keeps the current value. Matching and request flow are separate choices: **Equals**, **Starts with**, **Ends with**, **Contains**, and **ExtendedOpenAI sentence pattern** decide only whether a rule matches.
+
+You can disable or edit a disabled rule even when its saved model is incompatible with the provider. Enabling a rule with a fixed model checks it against the current provider and assistant tools. Reasoning-only routes are checked against the effective model when they run.
 
 Use **Continue to AI** to choose what happens after a routing rule matches:
 
@@ -74,6 +76,18 @@ Existing routing rules created before this option was added retain their previou
 
 Reasoning effort is validated against the model that will actually receive it, including a model supplied by another active conversation override. Model-specific values are supported where the model allows them; for example, GPT-6 Astra routing can use `xhigh` and `max` in addition to the normal reasoning levels.
 
+### Example: deep think about a question
+
+Create a sentence-pattern rule with the trigger `deep think about {question}`. Choose the model and set **Reasoning effort** to **High** if that model supports it. Turn on **Continue to AI** and choose **Captured value** with **question** as the AI input. Saying “Deep think about why the dishwasher smells” sends “why the dishwasher smells” with the saved model and effort. **This request only** applies these settings for that answer.
+
+For a standalone “Use low reasoning” command, leave the model blank, choose **Low**, and turn off **Continue to AI**. The effort applies to the rest of the conversation if the active model supports it. To select different models or efforts by voice, create a rule for each choice and give it one or more phrases.
+
+### Repair rules that captured a routing choice
+
+Older rules that used a capture in **Model**, **Underlying Azure model**, or **Reasoning effort** retain their values when loaded or restored. An enabled affected rule that matches and passes its **Only when** conditions stops with a repair message before changing routes, trying lower-priority rules, or sending a request to AI.
+
+Open the rule and replace the previous captures with fixed values. You can also explicitly choose **Reset to configured defaults**. Save and check **Match Preview**. Captures in trigger phrases, acknowledgement text, and the selected AI input remain available. Disable the rule to let lower-priority rules handle the request while you repair it.
+
 ## Matching modes
 
 ### Text matching
@@ -83,11 +97,11 @@ Reasoning effort is validated against the model that will actually receive it, i
 - **Normalize word forms** handles conservative English forms such as `light/lights`.
 - **Wording alternatives** map different ways of saying the same thing to a main phrase. The seeded alternatives preserve the previous built-in behavior, such as `switch on` to `turn on` and `television` to `tv`. Alternatives can be added, edited, and removed. Ambiguous duplicate phrases are rejected.
 
-Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen. The first eligible match handles the request by default, regardless of match type. A rule with **Continue matching** on can let later matching rules run.
+Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen. The first eligible match handles the request, regardless of match type.
 
 Optional fuzzy matching was retired in 7.0.0. Saved 6.8.3 rules and backups remain loadable: legacy `fuzzy` and `fuzzy_threshold` settings are accepted and discarded, while all other rule settings are preserved. Previously fuzzy-only phrases now follow the normal unmatched-request route. Add explicit trigger phrases or wording alternatives for variations you want to accept. Newly saved configurations and exports omit the retired settings.
 
-Eligibility is checked before a candidate runs: a candidate whose **Only when** conditions are false is skipped, while conditions are never evaluated for rules whose text did not match. An eligible rule then follows the normal stop-or-continue behavior described above.
+Eligibility is checked before a candidate runs: a candidate whose **Only when** conditions are false is skipped, while conditions are never evaluated for rules whose text did not match. Once a rule is eligible, its actions or routing determine how to handle the request.
 
 For example, if an earlier **Contains** rule and a later **Equals** rule both match the same request, the earlier rule wins. Move the Equals rule above it when that more specific case should take priority.
 
@@ -183,9 +197,9 @@ The current safety limits are:
 
 The same parser, compiled matcher, input bounds, winner-selection rules, and aggregate work budget are used by live requests and Match Preview. Matching itself runs outside Home Assistant's main event loop. Each match reads one complete configuration snapshot, even if rules or defaults are being saved concurrently. Compiled patterns are immutable and reused through a bounded cache.
 
-Deterministic candidates are evaluated in displayed rule order. Matching stops after an ordinary matched rule or an AI handoff; a continued rule lets later candidates run. An unresolved sentence-pattern candidate that could determine the next match causes evaluation to fail safely if it exceeds the work budget.
+Deterministic candidates are evaluated in displayed rule order. Matching stops at the first eligible rule. An unresolved sentence-pattern candidate that could determine the next match causes evaluation to fail safely if it exceeds the work budget.
 
-If a live request is larger than the matching limit, or matching exceeds its work budget before any rule has run, no Request Rule action runs and the original request continues through the normal AI path. If a continued rule has already run when a later matching limit is reached, the request stops with an error instead of handing off to AI; earlier actions are not rolled back or retried. The matcher never treats an interrupted higher-priority rule as a failed match and then executes a lower-priority local action. Match Preview reports the limit as an error.
+If a live request is larger than the matching limit or matching exceeds its work budget, the original request continues through the normal AI path without running a Request Rule action. The matcher never treats an interrupted higher-priority rule as a failed match and then executes a lower-priority local action. Match Preview reports the limit as an error.
 
 If an existing stored sentence pattern is no longer accepted by the documented grammar or its safety bounds, it is preserved rather than silently deleted. The Request Rules screen marks that rule inactive with an actionable diagnostic so it can be edited or removed.
 
@@ -197,11 +211,42 @@ A rule can call an enabled Function Tool directly without sending the request to
 
 For example, match `Show {entity_id} attributes`, add **Call configured function**, set **Function tool** to `get_attributes`, and set **Arguments** to `entity_id: "{{ entity_id }}"`. Direct execution uses the same implementation, argument validation, current enabled state, Guest Mode policy, and entity-access checks as a model-initiated call.
 
-To use a Function Tool's return value, set an optional **Result alias** on its action step. For `get_device_battery(device={device})`, name the result `battery`; an object result such as `{"name":"Kitchen tablet","level":62}` can then be used in the local success response as `{battery.name} is at {battery.level}%`. A scalar string, number, boolean, or null can be referenced as `{battery}`. Nested object paths and simple numeric array indexes such as `{battery.items.0.name}` are supported. A missing path in an executed action stops the sequence and uses the failure response. If only the separate success response cannot be constructed after actions finish, Extended OpenAI reports that the actions succeeded but the response failed. Completed actions are not retried, and placeholders are never spoken unresolved.
+### Branch and reply using a Function result
 
-Request captures and Function results stay separate. `{device}` remains a request capture, while `{battery.device}` reads a field from the Function result. A Function result cannot overwrite a capture. Each result-producing call needs a unique editable alias, even when the same Function Tool is called twice. Aliases use letters, digits, and underscores, start with a letter or underscore, and cannot use reserved names such as `request`, `conversation`, or `system`. The editor suggests an alias from the Function Tool name; the saved step ID remains stable when you rename the alias. References to an earlier alias in simple `{alias.path}` form are updated on rename. Removing a referenced producing step or moving it after a consumer is rejected on save.
+Set a Home Assistant `response_variable` on **Call configured function**. The variable holds the service response, with the Function's return value under `result`. Use it in later actions and in **Set conversation response**. This example optionally turns on a charger, then speaks the battery level.
 
-Function execution success is determined by the execution outcome, not the truthiness of its result: `false`, `0`, empty string, and null are valid values. Retained results are limited to 16 KiB and eight levels of nesting. The safe Match Preview lists the Function Tool and alias but never runs it or invents a result. Live Test can run it after the normal explicit confirmation. **Function results are not automatically sent to the AI provider**, including when Continue to AI is on; the provider receives the selected AI input.
+```yaml
+- action: extended_openai_conversation_responses.call_function
+  data:
+    function: get_device_battery
+    arguments:
+      device: Kitchen tablet
+  response_variable: battery
+- if:
+    - condition: template
+      value_template: >-
+        {{ battery.result.level < 20 }}
+  then:
+    - action: switch.turn_on
+      target:
+        entity_id: switch.tablet_charger
+- set_conversation_response: >-
+    The kitchen tablet is at {{ battery.result.level }}%.
+```
+
+Use the path that matches the Function's return value. For a scalar, use `battery.result`. A Function can return its own `result` field, which remains under `battery.result.result`. If a producing action can be skipped or its errors can be continued, check that the variable and expected fields are defined before using them. Native Home Assistant variable scope applies in nested sequences.
+
+Execution success is independent of the return value. False, zero, empty text and null are valid. **Match Preview** lists configured Functions without running them. **Test request** can run them after confirmation. Continue to AI passes the selected AI input to the provider. It does not automatically pass Function results. A final **Set conversation response** consumes the request locally.
+
+### Repair rules from earlier versions
+
+Rules that use retired Function result aliases or that captured a Function response before 7.0.0 retain their authored actions and responses when loaded or restored. An enabled affected rule that matches and passes its **Only when** conditions stops with a repair message before running its actions, trying lower-priority rules, or handing off to AI. Disable the rule if you want lower-priority rules to handle the request during repair.
+
+1. Open the affected rule. Use the action YAML editor to remove `result_alias` and `step_id` from the Function action's service data. Give the action a `response_variable` if it needs one.
+2. Update references in downstream actions and move result-dependent acknowledgements from the static success response into **Set conversation response**. For example, replace `{battery.level}` with `{{ battery.result.level }}` there. If the rule already uses a native response variable, remove only the extra wrapper that EOAI used to add to the Function value. Review each path against the Function's actual result.
+3. Confirm the response-format review when prompted, then save and run **Match Preview**. Use **Test request** when it is safe to perform the actions.
+
+Review separately stored Home Assistant scripts or custom actions that call the Function service on a rule's behalf. The rule editor can review service calls in its saved action tree. Templates in separate Home Assistant configurations need to be checked where they are defined.
 
 ### Example: targeted Broadcast
 
@@ -213,27 +258,30 @@ Groups help organize and filter rules. They do not affect priority. Use **Show**
 
 In **All rules**, drag a card or use **Move up**, **Move down**, **Move to top**, and **Move to bottom** to change the one global sequence. Reordering is unavailable while search or a group filter hides rules. Changing a rule's group or deleting a group preserves the global order; deleted-group rules become Ungrouped. Groups and order are included in backups. The server checks the current revision when saving a reorder, so an older tab cannot silently overwrite a newer order.
 
-### Continue matching
+### Repairing rules that used Continue matching
 
-Open a rule's advanced settings to enable **Continue matching after this rule**. After a local sequence succeeds, later matching rules can run in priority order. A later rule with this option off stops normally. A routing command can also apply its model or reasoning choice and let later rules run. If later routing rules change the same setting, the later matching choice wins.
+Rules that already had **Continue to AI** enabled keep their behavior. Other rules that used **Continue matching** are preserved in storage and backups and flagged for repair. When an enabled affected rule matches and its **Only when** conditions pass, Assist reports that it needs repair before running any actions or calling AI. Disable it to allow lower-priority rules to handle the request while you work on the repair.
 
-**Continue to AI** always ends rule checking. The provider is called once, after successful local actions where applicable. A failed local action or Function Tool, Guest Mode denial, or condition evaluation error stops the chain safely. A successful Script Stop or a final non-null conversation response also consumes the request locally, even when Continue matching or Continue to AI is selected. Function results remain within their own rule.
+Put any steps that should run together in one local rule. For example, combine two action sequences in one rule, or use native **Choose** and conditions to decide which steps to run. Enable **Continue to AI** if the rule should send the selected input after running its actions. It uses the current conversation model. You can change that model with a separate **Model routing** command scoped to the rest of the conversation. Review the updated rule in Match Preview before using it.
+
+### Match Preview
 
 Match Preview uses the real matcher and current Only when conditions without running actions, action templates, Function Tools or the provider. It recognizes an enabled, unconditional top-level Stop and a final literal conversation response (including empty text) as terminal. Disabled actions are skipped, and an explicit null response clears an earlier response. A Stop message is literal HA text; a templated action-enabled flag is not evaluated by preview.
 
-Preview deliberately does not interpret nested branches, loops, parallel actions, service outcomes or action templates. When their outcome could stop the chain or change the response, later matches and possible AI input are marked **conditional**, rather than predicting a guaranteed winner or handoff. Later literal responses can establish termination again, but opaque actions after a response make it uncertain. The selected conditional match is a possible final rule, not a promise it will run. Only when conditions are checked against the current state; preceding actions might change that state during a real request. Use the confirmed Live Test or Assist to observe execution.
+Preview does not interpret nested branches, loops, parallel actions, service outcomes or action templates. When those actions could stop the script or set a final response, the AI handoff is marked **conditional**. Use the confirmed Live Test or Assist to observe execution.
 
-### AI input
+### AI handoff
+
+In a local rule, enable **Continue to AI** to send the selected input after the actions complete successfully. A native Script Stop or a final non-null conversation response consumes the request locally. A local handoff uses the current conversation model.
+
 
 For any rule with **Continue to AI** on, **Original request** sends the user's full request, as existing rules do. **Captured value** sends only the chosen named value from a Sentence Pattern trigger. For example, `deep think {question}` can send `why is the sky blue?` from `deep think why is the sky blue?`.
 
 The selected capture must be present on every trigger variant and every possible match of those variants. If editing a trigger removes it, the editor keeps the selection visible and requires you to fix the trigger or switch back to **Original request**. Match Preview shows the exact selected AI input, marked conditional when the handoff depends on action outcomes. It does not run local actions or call the provider.
 
-### Rule Sharing
+### Moving Request Rules between installations
 
-Open **Rule Sharing** at the bottom of Request Rules to export all rules, one group, or selected rules. Restricted sharing omits custom Rule content by default. To share executable definitions, choose reviewed custom content and inspect the exact file before download. Designated credentials and their derived signatures are excluded; affected rules are omitted and reported. Included reviewed rules carry only their groups and effective matching settings, without Function Tool definitions, memories, knowledge, archive data, unrelated settings or agent-wide wording alternatives. Arbitrary reviewed content may still contain undetected secrets. New Rule Packs use version 2; version 1 imports remain supported. See the [sharing security contract](credential-security.md).
-
-Import first shows **Review Rule Pack**, including rules, actions, conditions, Function Tool references, and unavailable resources. Nothing executes during review. Confirming appends the rules after your existing rules in their exported relative order and leaves every imported rule **disabled**. Newly created rules start enabled and can be toggled from the Request Rules list. Enable and test each rule after checking its dependencies. Groups with the same name are reused; other groups receive new internal IDs. Rule Sharing never changes the destination agent's wording alternatives; if a shared rule's author relies on additional alternative phrases, those remain a separate setup choice. A conflicting or invalid pack is rejected without replacing existing rules. Full agent backup and selective transfer remain separate capabilities.
+Use **Usage & Maintenance → Backup & Restore** to export a **Custom (private)** backup with **Request Rules** selected. On the destination, restore the Request Rules section to replace the assistant's saved rules, groups, priority order, matching settings, and wording alternatives. The restore preserves each rule's saved enabled state, subject to validation. Review enabled rules before restoring and check their Home Assistant entities, scripts, and services. Restore configuration too if you need the matching Function Tools. See [Backup & Restore](backup-restore.md).
 
 ## Request Rules compared with native automations
 

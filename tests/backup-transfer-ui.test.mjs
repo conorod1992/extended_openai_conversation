@@ -104,6 +104,7 @@ for (const failDownload of [false, true]) {
   Object.defineProperty(file, "name", {value: "legacy.json"});
   const received = [];
   const calls = [];
+  let inspectionAttempts = 0;
   const panel = makePanel(async (message) => {
     calls.push(message.action);
     if (message.action === "import_start") {
@@ -121,6 +122,10 @@ for (const failDownload of [false, true]) {
       };
     }
     if (message.action === "import_inspect") {
+      assert.equal(message.data.session_id, "import-1");
+      if (inspectionAttempts++ === 0) {
+        throw Object.assign(new Error("Backup inspection is still running"), {code: "inspection_pending"});
+      }
       return {
         valid: true,
         title: "Agent",
@@ -134,7 +139,7 @@ for (const failDownload of [false, true]) {
   assert.equal(result.session_id, "import-1");
   assert.equal(result.title, "Agent");
   assert.deepEqual(received, [...source]);
-  assert.deepEqual(calls, ["import_start", "import_chunk", "import_chunk", "import_chunk", "import_inspect"]);
+  assert.deepEqual(calls, ["import_start", "import_chunk", "import_chunk", "import_chunk", "import_inspect", "import_inspect"]);
 }
 
 {

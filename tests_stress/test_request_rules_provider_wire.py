@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 from typing import Any
 
@@ -82,32 +83,14 @@ async def test_seeded_competing_rules_preserve_eligible_public_effects(
                         {"condition": "template", "value_template": "{{ false }}"}
                     ]
                     first = _local(
-                        [_record_action("eligible-first")],
+                        [_record_action("{{ fact }}" if matcher == "sentence_pattern" else "eligible-first")],
                         phrase=phrase,
                         match_type=matcher,
+                        success="First complete",
                     )
-                    first["continue_matching"] = True
-                    final = _local(
-                        [
-                            _record_action(
-                                "{{ fact }}"
-                                if matcher == "sentence_pattern"
-                                else "eligible-final"
-                            )
-                        ],
-                        phrase=phrase,
-                        match_type=matcher,
-                        success="Final complete",
-                    )
+                    final = _local([_record_action("lower-priority")], phrase=phrase, match_type=matcher)
                     if route:
-                        final["action_type"] = "model_routing"
-                        final["action"] = {
-                            "model": "gpt-5.2",
-                            "reasoning_effort": "xhigh",
-                            "scope": "request",
-                            "reset": False,
-                            "continue_to_ai": True,
-                        }
+                        first["action"]["continue_to_ai"] = True
                     if text == "liagt":
                         for rule in (first, final):
                             rule["phrases"].append(text)
@@ -119,7 +102,7 @@ async def test_seeded_competing_rules_preserve_eligible_public_effects(
                             }
                     blockers = [disabled, ineligible]
                     rng.shuffle(blockers)
-                    await _create_ordered_chain(agent, *blockers, first, final)
+                    await _create_ordered_rules(agent, *blockers, first, final)
                     reply = (
                         _chat_sse_text
                         if api == API_MODE_CHAT_COMPLETIONS
@@ -137,21 +120,14 @@ async def test_seeded_competing_rules_preserve_eligible_public_effects(
                         str(result.response.as_dict()),
                     )
                     assert _speech(result) == (
-                        "Routed complete" if route else "Final complete"
+                        "Routed complete" if route else "First complete"
                     )
-                    assert calls[start:] == (
-                        ["eligible-first"]
-                        if route
-                        else [
-                            "eligible-first",
-                            "cobalt"
-                            if matcher == "sentence_pattern"
-                            else "eligible-final",
-                        ]
-                    )
+                    assert calls[start:] == [
+                        "cobalt" if matcher == "sentence_pattern" else "eligible-first"
+                    ]
                     assert len(wire.requests) == int(route)
                     if route:
-                        assert wire.requests[0]["body"]["model"] == "gpt-5.2"
+                        assert wire.requests[0]["body"]["model"] == agent.subentry.data["chat_model"]
                     record(
                         stress_trace,
                         "competing_rule_witness",
@@ -217,30 +193,27 @@ async def test_function_result_values_survive_public_request_rule(
     async def marker(call):
         calls.append(call.data["message"])
 
-    from custom_components.extended_openai_conversation_responses import services
+    async def observe(call):
+        captured.append(json.loads(call.data["native_value"].removeprefix("result:")))
 
-    original = services.async_call_active_function
-
-    async def observe(*args, **kwargs):
-        value = await original(*args, **kwargs)
-        if capture:
-            captured.append(value)
-        return value
-
-    monkeypatch.setattr(services, "async_call_active_function", observe)
     hass.services.async_register("rule_probe", "record", marker)
-    data = {"function": "reading", "arguments": {}}
+    hass.services.async_register("rule_probe", "observe", observe)
+    producer = {
+        "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+        "data": {"function": "reading", "arguments": {}},
+    }
+    actions = [_record_action("before"), producer]
     if capture:
-        data["result_alias"] = "reading"
-    await agent._request_rules.async_create(
-        _local(
-            [
-                _record_action("before"),
-                {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": data},
-                _record_action("after"),
-            ]
+        producer["response_variable"] = "reading"
+        actions.append(
+            {
+                "action": "rule_probe.observe",
+                # Prefix the JSON to preserve its type across HA template parsing.
+                "data": {"native_value": "result:{{ reading.result | to_json }}"},
+            }
         )
-    )
+    actions.append(_record_action("after"))
+    await agent._request_rules.async_create(_local(actions))
     assert (
         _cross_feature_speech(await _cross_feature_say(hass, agent, "run rule"))
         == "Done"
@@ -301,14 +274,17 @@ async def test_function_execution_failure_stops_rule_independently_of_capture(
 
     hass.services.async_register("rule_probe", "record", marker)
     hass.services.async_register("rule_probe", "fail", fail)
-    data = {"function": "failing", "arguments": {}}
+    producer = {
+        "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+        "data": {"function": "failing", "arguments": {}},
+    }
     if capture:
-        data["result_alias"] = "failure"
+        producer["response_variable"] = "failure"
     await agent._request_rules.async_create(
         _local(
             [
                 _record_action("before"),
-                {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": data},
+                producer,
                 _record_action("after"),
             ]
         )
@@ -475,7 +451,6 @@ async def test_inflight_rule_identity_rejects_replacement_and_aba(
         }
     )
     before = rules.revision()
-    assert not rules._has_continuation
     entered, release = asyncio.Event(), asyncio.Event()
     if phase == "matching":
         match = rules.async_match
@@ -590,7 +565,7 @@ def _rule(match_type: str, action_type: str, action: dict) -> dict:
     }
 
 
-async def _create_ordered_chain(agent, *items: dict) -> None:
+async def _create_ordered_rules(agent, *items: dict) -> None:
     """Priority is part of each scenario, independent of generated UUID order."""
     created = []
     for priority, item in enumerate(items):
@@ -707,12 +682,12 @@ async def test_matcher_local_action_calls_ha_without_provider(
     )
 
 
-async def test_continue_matching_skips_false_condition_and_reaches_later_rule(
+async def test_first_eligible_rule_skips_false_condition(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
     stress_trace: list[dict],
 ) -> None:
-    """UI-authored continuation semantics execute later eligible rules in order."""
+    """A false condition leaves the next rule eligible."""
     agent = await _agent(hass, API_MODE_CHAT_COMPLETIONS)
     calls: list[str] = []
 
@@ -722,19 +697,11 @@ async def test_continue_matching_skips_false_condition_and_reaches_later_rule(
     hass.services.async_register("rule_probe", "record", record_call)
     hass.states.async_set("input_boolean.chain_allowed", "off")
 
-    first = _local(
-        [_record_action("first")],
-        phrase="run chain",
-        success="First complete",
-    )
-    first["continue_matching"] = True
-
     skipped = _local(
         [_record_action("conditional")],
         phrase="run chain",
         success="Conditional complete",
     )
-    skipped["continue_matching"] = True
     skipped["conditions"] = [
         {
             "condition": "state",
@@ -749,28 +716,28 @@ async def test_continue_matching_skips_false_condition_and_reaches_later_rule(
         success="Final complete",
     )
 
-    await _create_ordered_chain(agent, first, skipped, final)
+    await _create_ordered_rules(agent, skipped, final)
 
     wire = _install_wire(monkeypatch, agent, [])
     result = await _say(hass, agent, "run chain")
     assert _speech(result) == "Final complete"
-    assert calls == ["first", "final"]
+    assert calls == ["final"]
     assert not wire.requests
     record(
         stress_trace,
         "summary",
-        scenario="continue_matching_condition_skip",
+        scenario="first_match_condition_skip",
         executed=calls,
         provider_requests=0,
     )
 
 
-async def test_continue_matching_stops_on_provider_handoff(
+async def test_first_local_rule_hands_off_once(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
     stress_trace: list[dict],
 ) -> None:
-    """A Continue-to-AI handoff is terminal even when Continue Matching is enabled."""
+    """A local handoff sends one request using the current model."""
     agent = await _agent(hass, API_MODE_CHAT_COMPLETIONS)
     calls: list[str] = []
 
@@ -783,7 +750,6 @@ async def test_continue_matching_stops_on_provider_handoff(
         phrase="handoff chain",
         success="Unused",
     )
-    first["continue_matching"] = True
     first["action"]["continue_to_ai"] = True
 
     later = _local(
@@ -791,17 +757,18 @@ async def test_continue_matching_stops_on_provider_handoff(
         phrase="handoff chain",
         success="Later should not run",
     )
-    await _create_ordered_chain(agent, first, later)
+    await _create_ordered_rules(agent, first, later)
 
     wire = _install_wire(monkeypatch, agent, [_chat_sse_text("Provider response")])
     result = await _say(hass, agent, "handoff chain")
     assert _speech(result) == "Provider response"
     assert calls == ["first"]
     assert len(wire.requests) == 1
+    assert wire.requests[0]["body"]["model"] == agent.subentry.data["chat_model"]
     record(
         stress_trace,
         "summary",
-        scenario="continue_matching_provider_handoff",
+        scenario="first_local_handoff",
         executed=calls,
         provider_requests=1,
     )
@@ -822,7 +789,7 @@ async def test_continue_matching_stops_on_provider_handoff(
         ),
     ],
 )
-async def test_continue_matching_stops_on_terminal_local_outcome(
+async def test_local_terminal_outcome_suppresses_ai_handoff(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
     stress_trace: list[dict],
@@ -843,13 +810,13 @@ async def test_continue_matching_stops_on_terminal_local_outcome(
         phrase="terminal chain",
         success="First complete",
     )
-    first["continue_matching"] = True
+    first["action"]["continue_to_ai"] = True
     later = _local(
         [_record_action("later")],
         phrase="terminal chain",
         success="Later should not run",
     )
-    await _create_ordered_chain(agent, first, later)
+    await _create_ordered_rules(agent, first, later)
 
     wire = _install_wire(monkeypatch, agent, [])
     result = await _say(hass, agent, "terminal chain")
@@ -859,13 +826,13 @@ async def test_continue_matching_stops_on_terminal_local_outcome(
     record(
         stress_trace,
         "summary",
-        scenario=f"continue_matching_{scenario}",
+        scenario=f"local_handoff_{scenario}",
         executed=calls,
         provider_requests=0,
     )
 
 
-async def test_continue_matching_stops_on_local_failure(
+async def test_local_failure_suppresses_ai_handoff(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
     stress_trace: list[dict],
@@ -888,13 +855,13 @@ async def test_continue_matching_stops_on_local_failure(
         success="Should not succeed",
         failure="Failed safely",
     )
-    first["continue_matching"] = True
+    first["action"]["continue_to_ai"] = True
     later = _local(
         [_record_action("later")],
         phrase="failure chain",
         success="Later should not run",
     )
-    await _create_ordered_chain(agent, first, later)
+    await _create_ordered_rules(agent, first, later)
 
     wire = _install_wire(monkeypatch, agent, [])
     result = await _say(hass, agent, "failure chain")
@@ -905,7 +872,7 @@ async def test_continue_matching_stops_on_local_failure(
     record(
         stress_trace,
         "summary",
-        scenario="continue_matching_failure",
+        scenario="local_handoff_failure",
         executed=calls,
         provider_requests=0,
     )

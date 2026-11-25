@@ -65,7 +65,7 @@ def test_discovery_reports_positions_without_private_frontmatter(tmp_path, caplo
         record for record in caplog.records if record.levelno == logging.WARNING
     )
     assert "Skill 'weather' was not loaded" in warning.getMessage()
-    assert "Extended OpenAI > Skills" in warning.getMessage()
+    assert "Fix the installed file and reload Skills" in warning.getMessage()
     assert "yaml_parse" in warning.getMessage()
     assert "line=" in warning.getMessage() and "column=" in warning.getMessage()
     assert warning.exc_info is None and warning.exc_text is None

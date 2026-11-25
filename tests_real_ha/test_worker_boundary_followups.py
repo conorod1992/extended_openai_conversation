@@ -15,9 +15,7 @@ async def test_skill_recovery_failure_keeps_conversation_and_recovers_on_reload(
         DEFAULT_WORKING_DIRECTORY,
         DOMAIN,
     )
-    from custom_components.extended_openai_conversation_responses.skill_transactions import (
-        prepare_transaction,
-    )
+    from tests.skill_transaction_fixtures import write_legacy_transaction
     from tests_real_ha.test_cross_feature_acceptance import _agent, _say, _speech
     from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire
 
@@ -30,7 +28,7 @@ async def test_skill_recovery_failure_keeps_conversation_and_recovers_on_reload(
         encoding="utf-8",
     )
     backup = staging / f"review.remove-{'a' * 32}"
-    journal = prepare_transaction(staging, installed, backup, None)
+    journal = write_legacy_transaction(staging, installed, backup, None)
     installed.rename(backup)
     good_journal = journal.read_text(encoding="utf-8")
     bad_journal = json.loads(good_journal)

@@ -13,6 +13,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses import backup_transfer
+from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.knowledge import (
     async_get_knowledge,
 )
@@ -20,6 +21,7 @@ from custom_components.extended_openai_conversation_responses.memory import (
     async_get_memory,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.setup import async_setup_component
 from tests_real_ha.test_backup_transfer_protocol import (
     _conversation_subentry,
     _entry,
@@ -36,7 +38,6 @@ async def test_setup_staging_failure_recovers_before_registered_backup_transfer(
     hass, hass_ws_client, monkeypatch, stress_trace
 ):
     """Repair a real allocation failure in-process, then use normal HA transfer APIs."""
-    import custom_components.extended_openai_conversation_responses as integration
     from custom_components.extended_openai_conversation_responses import transfer_staging as staging
 
     lock_file = staging._lock_file
@@ -51,14 +52,12 @@ async def test_setup_staging_failure_recovers_before_registered_backup_transfer(
         return lock_file(path)
 
     monkeypatch.setattr(staging, "_lock_file", fail_once)
-    with pytest.raises(PermissionError, match="controlled temporary"):
-        await integration.async_setup(hass, {})
+    assert await async_setup_component(hass, DOMAIN, {})
+    assert attempts == 1
     assert staging._OWNER_KEY not in hass.data
     entry = _entry()
     await _setup_entry(hass, entry)
-    assert attempts == 2
-    owner_directory = await staging.async_get_transfer_staging(hass)
-    assert list(owner_directory.parent.glob("owner-*")) == [owner_directory]
+    assert attempts == 1
     subentry = _conversation_subentry(entry)
     memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
     MockUser(id="transfer-owner", name="Transfer owner").add_to_hass(hass)
@@ -67,6 +66,9 @@ async def test_setup_staging_failure_recovers_before_registered_backup_transfer(
         hass, MockUser(id="staging-retry-admin", name="Transfer admin", is_owner=True)))
     exported = await _real_transfer_call(client, entry=entry, action="export_start", data={"mode": "full"})
     assert exported["success"], exported
+    assert attempts == 2
+    owner_directory = await staging.async_get_transfer_staging(hass)
+    assert list(owner_directory.parent.glob("owner-*")) == [owner_directory]
     metadata = exported["result"]
     parts = []
     for index in range(metadata["chunk_count"]):

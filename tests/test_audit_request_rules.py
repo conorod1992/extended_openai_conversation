@@ -21,23 +21,25 @@ def prepare_native(hass):
 
 
 def function_step(**extra):
-    return {"service": f"{DOMAIN}.call_function", "data": {"function": "lookup", "arguments": {}, "result_alias": "lookup"}, **extra}
+    return {"service": f"{DOMAIN}.call_function", "data": {"function": "lookup", "arguments": {}}, **extra}
 
 
 async def evaluate_functions(hass, actions, executor):
     prepare_native(hass)
     async def dispatch(domain, service, service_data, **kwargs):
-        return {"result": await module.async_call_active_function(service_data["function"], service_data.get("arguments", {}), service_data.get("result_alias"))}
+        return {"result": await module.async_call_active_function(service_data["function"], service_data.get("arguments", {}))}
     hass.services.async_call.side_effect = dispatch
     rule = local_rule(phrases=["run"])
     rule["action"]["actions"] = actions
-    return await module.async_evaluate_rule(hass, await manager(rule), module.RequestRuleRuntime(), "run", "session", function_executor=executor)
+    configured = await manager()
+    await configured.async_create(rule)
+    return await module.async_evaluate_rule(hass, configured, module.RequestRuleRuntime(), "run", "session", function_executor=executor)
 
 
 async def test_unreachable_missing_result_field_does_not_abort(hass):
     async def execute(*args):
         return {"status": "not_found"}
-    result = await evaluate_functions(hass, [function_step(), {"choose": [{"conditions": "{{ false }}", "sequence": [{"set_conversation_response": "{lookup.value}"}]}], "default": [{"set_conversation_response": "Nothing found"}]}], execute)
+    result = await evaluate_functions(hass, [function_step(response_variable="reply"), {"choose": [{"conditions": "{{ false }}", "sequence": [{"set_conversation_response": "{{ reply.result.value }}"}]}], "default": [{"set_conversation_response": "Nothing found"}]}], execute)
     assert result.successful and result.response == "Nothing found"
 
 
@@ -69,13 +71,12 @@ def test_reserved_capture_names_rejected(name):
         compile_sentence_pattern("ask {" + name + "}")
 
 
-async def test_service_spelling_validates_result_aliases(hass):
+async def test_service_spelling_rejects_retired_alias_metadata(hass):
     rule = local_rule()
     rule["action"]["actions"] = [function_step()]
     rule["action"]["success_response"] = "{lookup.value}"
-    assert module.validate_rule(rule)["action"]["success_response"] == "{lookup.value}"
-    rule["action"]["actions"][0]["data"]["result_alias"] = "request"
-    with pytest.raises(ValueError):
+    rule["action"]["actions"][0]["data"]["result_alias"] = "lookup"
+    with pytest.raises(ValueError, match="result_alias"):
         module.validate_rule(rule)
 
 

@@ -157,7 +157,7 @@ async def test_restore_revalidates_preview_before_writing(
         AsyncMock(side_effect=lambda value, *_: value),
     )
 
-    async def snapshot(*_, include_usage=True):
+    async def snapshot(*_, include_usage=True, capture_usage_revision=False):
         if change == "cancel-during-snapshot":
             bt._imports(hass).pop("session")
         return _Snapshot({"prompt": "changed" if change == "target" else "original"})
@@ -241,7 +241,7 @@ async def test_cancelled_import_cannot_publish_new_preview(
         ),
     )
 
-    async def snapshot(*_, include_usage=True):
+    async def snapshot(*_, include_usage=True, capture_usage_revision=False):
         bt._imports(hass).pop("session")
         return _Snapshot({"prompt": "original"})
 

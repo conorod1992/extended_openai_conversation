@@ -1,5 +1,5 @@
 import {test, expect} from "@playwright/test";
-import {acceptConfirmation, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 import {openCollection, beginCollectionMeasure, finishCollectionMeasure} from "./collection-helpers.mjs";
 
 const tool = (panel, name) => panel.locator(`[data-tool-key="${name}"]`);
@@ -205,6 +205,70 @@ test("Functions: HA availability refresh changes only the affected tool", async 
   await expectRetained(page, '[data-tool-key="tool_1"]');
 });
 
+test("Functions: a retired HA catalogue refresh cannot update the reopened page", async ({page}) => {
+  const errors = trackPageErrors(page);
+  const route = fixtureUrl("capabilities/functions");
+  await page.goto(route);
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(tool(panel, "baseline_tool")).toHaveCount(1);
+  await page.evaluate(() => {
+    const state = browserHarness.getState();
+    state.configuration.config.functions[0].function = {
+      type:"ha_llm", tool_name:"baseline_ha", source_id:"fixture", api_id:"assist",
+    };
+    localStorage.setItem("extended-openai-browser-harness-state-v3", JSON.stringify(state));
+  });
+  await page.goto(route);
+  const refresh = panel.locator("#refresh-ha-tools");
+  await expect(refresh).toBeVisible();
+  await panel.evaluate(async host => {
+    await host._ensureHALlmTools();
+    await host._haCatalogLoad?.promise;
+    const hass = host.hass, original = hass.callWS.bind(hass);
+    const reads = [];
+    window.haCatalogueVisitReads = reads;
+    hass.callWS = message => {
+      if (message.section === "tools" && message.action === "ha_catalog") {
+        return new Promise((resolve, reject) => reads.push({resolve, reject}));
+      }
+      return original(message);
+    };
+    host._haCatalog = {saved:{baseline_tool:{description:"Accepted catalogue", available:true}}};
+    host._haCatalogAgent = host._agentId;
+    host._haCatalogLoadedAt = Date.now();
+    host._render();
+  });
+  for (const [index, outcome] of ["success", "failure"].entries()) {
+    await refresh.click();
+    await expect.poll(() => page.evaluate(() => haCatalogueVisitReads.length)).toBe(index + 1);
+    await panel.evaluate(async (host, index) => {
+      haCatalogueVisitReads[index].completion = host._haCatalogLoad.promise.catch(() => null);
+      await host._navigate("guide");
+      await host._navigate("capabilities", "functions");
+    }, index);
+    await expect(refresh).toBeVisible();
+    await page.evaluate(async ({index, outcome}) => {
+      const read = haCatalogueVisitReads[index];
+      if (outcome === "success") {
+        read.resolve({saved:{baseline_tool:{description:"Retired catalogue", available:false}}});
+      } else {
+        read.reject(new Error("Retired catalogue refresh failed"));
+      }
+      await read.completion;
+    }, {index, outcome});
+    await expect(tool(panel, "baseline_tool")).toContainText("Accepted catalogue");
+    await expect(panel.locator("#toast")).not.toContainText("Retired catalogue refresh failed");
+  }
+  await refresh.click();
+  await expect.poll(() => page.evaluate(() => haCatalogueVisitReads.length)).toBe(3);
+  await page.evaluate(() => haCatalogueVisitReads[2].resolve({
+    saved:{baseline_tool:{description:"Current catalogue", available:false}},
+  }));
+  await expect(tool(panel, "baseline_tool")).toContainText("Current catalogue");
+  await expect(refresh).toBeEnabled();
+  await expectHarnessClean(page, errors);
+});
+
 test("Request Rules: moved cards retain identity and boundary buttons remain disabled after completion", async ({page}) => {
   const panel = await openCollection(page, "capabilities/request-rules", 2);
   await remember(page, '[data-rule-key="rule-1"]');
@@ -247,19 +311,27 @@ test("Functions: create and rename a group preserve tool and other group identit
   expect(await page.evaluate(() => retainedGroup === browserHarness.panel.shadowRoot.querySelector('.function-group-card[data-group-id="group-0"]'))).toBe(true);
 });
 
-test("Functions: adding HA tools refreshes saved metadata without rebinding existing cards", async ({page}) => {
+test("Functions: a satellite tool can be added without rebinding existing cards", async ({page}) => {
   const panel = await openCollection(page, "capabilities/functions");
   await remember(page, '[data-tool-key="tool_0"]');
   await page.evaluate(() => {
     const hass = browserHarness.hass, original = hass.callWS.bind(hass);
     const reference = {type: "ha_llm", source_id: "fixture", api_id: "assist", tool_name: "new_ha_tool"};
-    window.catalogReads = 0;
+    window.catalogReads = [];
+    window.addDevice = null;
     hass.callWS = message => {
       if (message.section === "tools" && message.action === "ha_catalog") {
-        catalogReads++;
-        return Promise.resolve({tools: [{name: "new_ha_tool", source: "fixture", description: "Fixture live tool", reference}], saved: {}});
+        catalogReads.push(message.preview_device_id ?? null);
+        return Promise.resolve({
+          tools: message.preview_device_id === "kitchen" ? [{name: "new_ha_tool", source: "fixture", description: "Fixture live tool", reference}] : [],
+          saved: addDevice && !message.preview_device_id
+            ? {new_ha_tool: {description: "Unavailable in this preview context", available: false, source: "fixture"}}
+            : {},
+          preview_devices: [{device_id: "kitchen", name: "Kitchen satellite"}],
+        });
       }
       if (message.section === "tools" && message.action === "ha_add") {
+        addDevice = message.preview_device_id;
         const config = browserHarness.panel._draft;
         return Promise.resolve({revision:browserHarness.panel._configData.revision, functions: [...structuredClone(config.functions), {spec: {name: "new_ha_tool"}, function: reference}], function_groups: structuredClone(config.function_groups), ha_saved: {new_ha_tool: {description: "Saved tool metadata", available: true, source: "fixture"}}});
       }
@@ -269,12 +341,18 @@ test("Functions: adding HA tools refreshes saved metadata without rebinding exis
   await panel.locator("#function-add").click();
   await panel.locator("#add-ha-tools").click();
   const dialog = panel.locator('dialog[aria-label="Add Home Assistant tools"]');
+  await expect(dialog.locator("[data-tools]")).toContainText("No matching tools");
+  await dialog.getByLabel("Preview device").selectOption({label:"Kitchen satellite"});
   await dialog.locator("[data-tools] input").check();
   await dialog.locator("[data-add]").click();
   await expect(dialog).toHaveCount(0);
-  await expect(tool(panel, "new_ha_tool")).toContainText("Saved tool metadata");
+  await expect(tool(panel, "new_ha_tool")).toContainText("Unavailable in preview");
+  await expect(tool(panel, "new_ha_tool")).not.toContainText("Saved tool metadata");
   await expectRetained(page, '[data-tool-key="tool_0"]');
-  expect(await page.evaluate(() => catalogReads)).toBe(1);
+  expect(await page.evaluate(() => ({catalogReads, addDevice}))).toEqual({
+    catalogReads: [null, "kitchen", null],
+    addDevice: "kitchen",
+  });
 });
 
 

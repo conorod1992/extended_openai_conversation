@@ -4,6 +4,8 @@ The optional conversation archive stores what was actually discussed. It is sepa
 
 The archive is **off by default**. When enabled, the default retention is 30 days; model archive search, unidentified voice retention, and the shared-household archive are off until explicitly enabled.
 
+Once a transcript passes the configured retention cutoff, it disappears from Archive history, search, and portable backups. Scheduled maintenance removes the expired storage records.
+
 ## What is stored
 
 Only the user message, the final assistant reply, timestamps, session/run identifiers, success state, and resolved scope/source metadata are stored. A title is normalized and truncated from the first user message locally.
@@ -44,6 +46,8 @@ These commands use backend tools; they are not a promise made only in generated 
 
 Private mode applies only to the exact active session. Enabling it deletes already retained turns and the conversation-derived title for that session, returns the exact turn count, and prevents future turns in that session from being archived. Existing private-session titles are removed when loaded; importing an older backup also removes those titles. Other browser or satellite sessions are unaffected. Resuming saving creates a new retained session for future turns; private messages are not restored or saved retroactively. A request that makes the conversation private is never archived, even if it also resumes saving later in the same turn. This applies when saving was already active and is resumed before making the conversation private.
 
+If the private marker is saved during a storage failure, the session is private and its previous turns are removed from Archive results. The reply reports that cleanup of the stored transcript is pending until Archive recovery finishes.
+
 Archive privacy controls only this integration's transcript retention. It does not stop the active conversation from being sent to the configured provider, disable separate memory features or opt-in Request debugging, or erase copies already exported or recorded elsewhere. Review those settings separately when you do not want information retained.
 
 Single-session deletion is exact. Semantic deletion begins with bounded search and requires selected session IDs. Date-range deletion selects whole sessions by their last retained turn in Home Assistant's timezone. The preview shows affected sessions and counts turns outside the selected dates. If the preview includes turns outside the requested range, open **Extended OpenAI → Data & Memory → Conversation history**. Review each affected conversation and confirm its deletion there to remove all of its turns. Date-range and whole-scope deletion return exact session and turn counts after confirmation. Deleting transcript text never changes token aggregates.
@@ -76,6 +80,8 @@ Existing `__anonymous__` records are preserved as **Legacy anonymous**. They are
 Normal users can manage only their personal memory/archive scope. Home Assistant administrators can select personal, shared, and legacy scopes and manage integration-wide retention and voice mappings. Administrator panel selection never changes the scope available to model-facing tools.
 
 Manage archive retention and model search, and review or delete transcripts, from **Extended OpenAI → Data & Memory → Conversation history**. Configure device ownership under **Assistant → Voice & identity**. Select the intended conversation agent before changing its settings; conversation-agent reconfiguration in **Devices & services** points to this panel.
+
+If a transcript page fails to load, use **Retry loading turns** in the same dialog. The last loaded page stays available while you retry or choose another page.
 
 The Archive upgrades its local storage format when opened. Older releases such as 6.8.3 leave the upgraded history on disk and cannot open it. Restore a pre-upgrade Home Assistant backup if you need access to the history while running the older release. Reinstalling the newer integration can reopen the upgraded Archive.
 

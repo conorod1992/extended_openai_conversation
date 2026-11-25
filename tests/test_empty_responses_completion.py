@@ -20,6 +20,9 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
     make_tool_result_content,
     tool_result_data,
 )
+from custom_components.extended_openai_conversation_responses.provider_content import (
+    RoutedReasoning,
+)
 from custom_components.extended_openai_conversation_responses.provider_errors import (
     ProviderStreamError,
 )
@@ -155,7 +158,10 @@ async def exercise_empty_responses_completion(
     assert entity._execute_function_tool.await_count == int(action_first)
     if expected_error:
         assert expected_error in str(failure.value)
-        if shape in {"reasoning", "commentary"}:
+        if shape == "reasoning":
+            assert isinstance(log.content[-1].native, RoutedReasoning)
+            assert log.content[-1].native.item == items[0]
+        elif shape == "commentary":
             assert log.content[-1].native == items[0]
         else:
             assert log.content[-1].role == "tool_result"
@@ -186,7 +192,11 @@ async def exercise_empty_responses_completion(
         for item in log.content
         if isinstance(item, conversation.AssistantContent) and item.native
     ]
-    assert all(item in native for item in items)
+    if shape == "reasoning":
+        assert isinstance(log.content[-1].native, RoutedReasoning)
+        assert log.content[-1].native.item == items[0]
+    else:
+        assert all(item in native for item in items)
     if action_first:
         results = [
             item

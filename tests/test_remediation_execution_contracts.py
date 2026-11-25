@@ -10,6 +10,7 @@ from custom_components.extended_openai_conversation_responses.entity import (
 )
 from custom_components.extended_openai_conversation_responses.function_groups import (
     FunctionGroupRuntime,
+    admit_function_group_loader,
     assemble_function_tools,
     load_function_groups,
 )
@@ -18,7 +19,7 @@ from custom_components.extended_openai_conversation_responses.functions import (
     CompositeFunction,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
-    _native_result_sequence,
+    _native_action_sequence,
 )
 from custom_components.extended_openai_conversation_responses.safety_hardening import (
     _normalized_statistics_arguments,
@@ -31,16 +32,17 @@ from tests.test_function_groups import _group, _tool
 def test_captured_result_preserves_whole_data_template():
     actions = [
         {
-            "action": "extended_openai_conversation_responses.execute_function",
-            "data": {"name": "answer", "result_alias": "answer"},
+            "action": "extended_openai_conversation_responses.call_function",
+            "data": {"function": "answer"},
+            "response_variable": "answer",
         },
         {
             "action": "persistent_notification.create",
-            "data": "{{ {'message': answer} }}",
+            "data": "{{ {'message': answer.result} }}",
         },
     ]
     original = deepcopy(actions)
-    sequence = _native_result_sequence(actions, {})
+    sequence = _native_action_sequence(actions, {})
     assert sequence[-1] == actions[-1]
     assert actions == original
 
@@ -90,7 +92,7 @@ def test_free_form_object_selector_is_rejected_before_strict_submission():
         _format_structured_output(caller, None)
 
 
-@pytest.mark.parametrize("size,accepted", [(126, True), (127, False)])
+@pytest.mark.parametrize("size,accepted", [(126, True), (127, True), (128, False)])
 def test_group_budget_counts_loader_and_reserved_builtin(size, accepted):
     tools = [_tool(f"tool_{index}") for index in range(size + 1)]
     groups = [
@@ -103,10 +105,12 @@ def test_group_budget_counts_loader_and_reserved_builtin(size, accepted):
     )
     assert (result["status"] == "success") == accepted
     assert session.loaded_group_ids == ({"first"} if accepted else set())
-    assert (
-        len(assemble_function_tools(tools, groups, set(session.loaded_group_ids)).tools)
-        + 1
-        <= 128
+    effective = assemble_function_tools(tools, groups, set(session.loaded_group_ids))
+    assert len(
+        admit_function_group_loader(effective.tools, 128, extra_tool_count=1)
+    ) + 1 <= 128
+    assert not accepted or result["loadable_groups"] == (
+        ["last"] if size == 126 else []
     )
 
 

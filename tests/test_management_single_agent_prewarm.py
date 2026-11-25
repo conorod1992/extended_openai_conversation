@@ -80,13 +80,16 @@ def _hass(*entries):
 
 
 def _stub_setup(monkeypatch):
-    from custom_components.extended_openai_conversation_responses import conversation_archive
+    from custom_components.extended_openai_conversation_responses import (
+        conversation_archive,
+    )
 
     monkeypatch.setattr(conversation_archive, "async_start_archive_retention", lambda *_: None)
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.agent_deletion.async_delete_removed_subentries",
         AsyncMock(),
     )
+    monkeypatch.setattr(integration, "async_recover_pending_provider_restore", AsyncMock())
     monkeypatch.setattr(integration, "async_get_quiet_hours", AsyncMock())
     monkeypatch.setattr(integration, "async_setup_intercom_services", AsyncMock())
     monkeypatch.setattr(model_lifecycle.ir, "async_get", lambda _hass: SimpleNamespace(async_get_issue=lambda *_args: None))

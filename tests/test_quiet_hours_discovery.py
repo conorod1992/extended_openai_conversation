@@ -426,6 +426,91 @@ async def test_ambiguous_ownership_checks_registry_identity(setup_controls, chan
         assert (MEDIA, 0.8) in s.calls
 
 
+@pytest.mark.parametrize("removed_was_bound", [False, True])
+async def test_selection_collision_preserves_overrides_and_unrelated_controls(
+    setup_controls, removed_was_bound,
+):
+    s = setup_controls
+    removed = "assist_satellite.office"
+    office = "media_player.office"
+    kitchen_sat = "assist_satellite.kitchen"
+    kitchen_media = "media_player.kitchen"
+    s.entries[removed] = _entry(removed, device_id="office")
+    s.entries[office] = _entry(office, device_id="office")
+    s.entries[kitchen_sat] = _entry(kitchen_sat, device_id="kitchen")
+    s.entries[kitchen_media] = _entry(kitchen_media, device_id="kitchen")
+    s.report(office, 0.7)
+    s.report(kitchen_sat, "idle")
+    s.report(kitchen_media, 0.6)
+    config = {
+        "enabled": True,
+        "overrides": {
+            SAT: {"media_player_entity_id": MEDIA},
+            removed: {"media_player_entity_id": office},
+        },
+    }
+    s.manager._config = qh._config_from_data(config)
+    assert s.manager._migrate_selected_entity_ids()
+    if not removed_was_bound:
+        s.manager._selection_identities.pop(removed)
+    bindings = deepcopy(s.manager._selection_identities)
+
+    living = s.entries.pop(SAT)
+    living.entity_id = removed
+    s.entries[removed] = living
+    s.states.pop(SAT)
+    s.report(removed, "idle")
+    await s.manager.async_reconcile(now=START)
+
+    snapshot = s.manager.snapshot()
+    assert snapshot["config"]["overrides"] == s.stored["config"]["overrides"]
+    assert s.stored["selection_identities"] == bindings
+    assert snapshot["selection_issues"][SAT]["status"] == "rename_conflict"
+    assert snapshot["selection_issues"][removed]["status"] == "rename_conflict"
+    assert s.calls == [(kitchen_media, 0.2)]
+
+    # Clear the removed satellite's assignment to release the destination.
+    recovered = deepcopy(snapshot["config"])
+    del recovered["overrides"][removed]
+    await s.manager.async_update_config(recovered, expected_revision=snapshot["revision"])
+    assert s.manager.config.as_dict()["overrides"] == {
+        removed: {"media_player_entity_id": MEDIA, "wake_sound_entity_id": None}
+    }
+    assert s.manager._selection_identities[removed] == bindings[SAT]
+    assert (MEDIA, 0.2) in s.calls
+    assert all(entity != office for entity, _ in s.calls)
+
+
+@pytest.mark.parametrize("independent_volume", [None, 0.4])
+async def test_detached_control_restores_only_original_registry_identity_after_restart(
+    setup_controls, independent_volume,
+):
+    s = setup_controls
+    await s.manager.async_reconcile(now=START)
+    original = s.entries.pop(MEDIA)
+    s.entries[MEDIA] = _entry(MEDIA, unique_id="replacement")
+    s.report(MEDIA, 0.2)
+    await s.manager.async_reconcile(now=END)
+    assert (MEDIA, 0.8) not in s.calls
+    assert MEDIA not in s.stored["active"]["controls"]
+    assert len(s.stored["active"]["detached_controls"]) == 1
+
+    restarted = type(s.manager)(s.hass)
+    restarted._store = s.manager._store
+    assert await restarted._async_load_initial_state_locked()
+    assert restarted.active["detached_controls"] == s.stored["active"]["detached_controls"]
+    now_returned = "media_player.returned"
+    original.entity_id = now_returned
+    s.entries[now_returned] = original
+    s.report(now_returned, 0.2 if independent_volume is None else independent_volume)
+    await restarted.async_reconcile(now=END)
+
+    assert ((now_returned, 0.8) in s.calls) is (independent_volume is None)
+    assert (MEDIA, 0.8) not in s.calls
+    assert restarted.active is None
+    assert s.stored["active"] is None
+
+
 @pytest.mark.parametrize("clear", [False, True])
 @pytest.mark.parametrize("kind", ["volume", "switch"])
 async def test_explicit_midperiod_selection_uses_departure_contract(
@@ -507,3 +592,28 @@ async def test_ambiguous_unavailable_owner_does_not_carry_into_next_occurrence(
     await s.manager.async_reconcile(now=NEXT)
     assert s.calls[-2:] == [(MEDIA, 0.8), (WAKE, "turn_on")]
     assert s.manager.active["controls"] == {}
+
+
+async def test_released_control_observation_survives_registry_removal_and_restart(setup_controls):
+    s = setup_controls
+    await s.manager.async_reconcile(now=START)
+    s.report(MEDIA, 0.45)
+    await s.manager.async_reconcile(now=MID)
+    assert MEDIA not in s.manager.active["controls"]
+
+    original = s.entries.pop(MEDIA)
+    s.states.pop(MEDIA)
+    await s.manager.async_reconcile(now=MID)
+    restarted = type(s.manager)(s.hass)
+    restarted._store = s.manager._store
+    assert await restarted._async_load_initial_state_locked()
+
+    returned = "media_player.returned"
+    original.entity_id = returned
+    s.entries[returned] = original
+    s.report(returned, 0.45)
+    await restarted.async_reconcile(now=MID)
+    assert s.states[returned].attributes["volume_level"] == 0.45
+    assert (returned, 0.2) not in s.calls
+    await restarted.async_reconcile(now=NEXT)
+    assert (returned, 0.2) in s.calls

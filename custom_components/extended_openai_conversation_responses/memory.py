@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime
 from functools import lru_cache
 import hashlib
 import json
@@ -20,7 +19,6 @@ from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .agent_maintenance import get_agent_maintenance_gate
@@ -36,6 +34,11 @@ from .const import (
     MEMORY_MODE_OFF,
     MEMORY_MODES,
 )
+from .function_tool_policy import (
+    runtime_function_tool_name,
+    runtime_function_tool_names,
+)
+from .memory_tool_arguments import nullable_memory_tool_arguments
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .persistence_hardening import (
@@ -43,10 +46,15 @@ from .persistence_hardening import (
     _async_settle_transactional_save,
 )
 from .provider_errors import provider_failure_category, provider_log_remediation
+from .record_timestamps import parse_datetime, stored_timestamp_instant
 from .retrieval_text import _stem, bounded_phrase, ordered_term_phrase, word_tokens
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 from .storage_namespaces import MEMORY_PREFIX as STORAGE_KEY_PREFIX
-from .strict_store import PropagatingWriteStore, async_storage_lock
+from .strict_store import (
+    AcknowledgedWriteStore,
+    PropagatingWriteStore,
+    async_storage_lock,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +63,7 @@ STORAGE_VERSION = 2
 EMBEDDING_CACHE_VERSION = 1
 EMBEDDING_CACHE_BATCH_SIZE = 64
 AUTO_RECALL_EMBEDDING_BATCHES = 2
+INTERACTIVE_SEARCH_EMBEDDING_BATCHES = 4
 HYBRID_RETRY_INITIAL_SECONDS = 30.0
 HYBRID_RETRY_MAX_SECONDS = 300.0
 EMBEDDING_CACHE_RETRY_SECONDS = 60
@@ -66,14 +75,7 @@ MAX_SUBJECT_LENGTH = 128
 MAX_KEY_LENGTH = 160
 MAX_SEARCH_LIMIT = 50
 MAX_LIST_LIMIT = 100
-MEMORY_TOOL_NAMES = {
-    "memory_add",
-    "memory_upsert",
-    "memory_search",
-    "memory_list",
-    "memory_update",
-    "memory_delete",
-}
+MEMORY_TOOL_NAMES = runtime_function_tool_names("memory")
 MIN_LEXICAL_RELEVANCE_SCORE = 0.08
 MIN_SEMANTIC_SIMILARITY = 0.55
 
@@ -167,6 +169,33 @@ _AUTOMATIC_MEMORY_FILLER_TERMS = frozenset(
         "about",
         "thanks",
     )
+)
+
+
+# Match complete, topic-free courtesy clauses at the edges of a request.
+# Topic-bearing requests such as "remind me when the train arrives" must keep
+# their terms. The ranking fallback still requires strong topic overlap.
+_REMINDER_REQUEST = (
+    r"i(?:\s+would|['\u2019]d)\s+appreciate\s+a\s+(?:quick\s+)?"
+    r"reminder\s+(?:of|about)\s+something\s+from\s+before"
+)
+_RECALL_COURTESY_CLAUSE = (
+    r"(?:"
+    r"(?:please\s+)?help\s+me\s+remember\s+something\s+we\s+"
+    r"(?:discussed|talked\s+about)\s+(?:previously|before)"
+    r"|(?:please\s+)?recall\s+the\s+details(?:\s+right\s+now)?"
+    r"|(?:please\s+)?remind\s+me\s+when\s+you\s+have\s+a\s+moment"
+    r"|(?:(?:if|when)\s+you\s+have\s+a\s+moment,?\s+)?"
+    r"(?:would\s+you\s+mind\s+refreshing\s+my\s+memory"
+    r"|could\s+you\s+help\s+me\s+think\s+back\s+to\s+this)"
+    r"|i\s+just\s+want\s+to\s+remember,?\s+if\s+you\s+can\s+help"
+    r")"
+)
+_RECALL_REQUEST_FRAMING = re.compile(
+    rf"^\s*(?:{_REMINDER_REQUEST}|{_RECALL_COURTESY_CLAUSE})\s*[.!?,:;]\s*"
+    rf"|(?<=[\s.!?,:;]){_REMINDER_REQUEST}(?:\s*[.!?])?\s*\Z"
+    rf"|(?<=[.!?])\s+{_RECALL_COURTESY_CLAUSE}(?:\s*[.!?])?\s*\Z",
+    re.IGNORECASE,
 )
 
 
@@ -274,7 +303,7 @@ class HomeAssistantMemoryStorage:
         await self._store.async_save(data)
 
 
-class _EmbeddingCacheStore(Store[dict[str, Any]]):
+class _EmbeddingCacheStore(AcknowledgedWriteStore):
     """Allow an explicit removal to discard any deferred cache generation."""
 
     async def async_remove(self) -> None:
@@ -298,7 +327,7 @@ class HomeAssistantEmbeddingCacheStorage:
             atomic_writes=True,
             serialize_in_event_loop=False,
         )
-        # Register cleanup ownership without changing best-effort cache I/O.
+        # Register cleanup ownership. The Memory manager owns cache retry policy.
         get_agent_maintenance_gate(hass, entry_id, subentry_id).register_store(
             self._store
         )
@@ -407,16 +436,39 @@ class PersistentMemory:
             if self._embedding_provider != provider:
                 self._embedding_provider = provider
             return
+        self._install_embedding_binding(provider, model, space_id, identity)
+        self._set_hybrid_status(
+            "ready" if provider is not None else "lexical_fallback",
+            None if provider is not None else "provider_not_configured",
+        )
+
+    def mark_embedding_binding_unavailable(self, model: str, error_type: str) -> bool:
+        """Revoke the previous binding and report whether failure diagnostics changed."""
+        changed = (
+            self._embedding_provider is not None
+            or self._embedding_model != model
+            or self._hybrid_status.get("reason") != "provider_binding_failed"
+            or self._hybrid_status.get("error_type") != error_type
+        )
+        self._install_embedding_binding(None, model, "", None)
+        self._set_hybrid_status(
+            "lexical_fallback", "provider_binding_failed", error_type=error_type
+        )
+        return changed
+
+    def _install_embedding_binding(
+        self,
+        provider: EmbeddingProvider | None,
+        model: str,
+        space_id: str,
+        identity: object,
+    ) -> None:
         self._embedding_retry_identity = identity
         self._query_embedding_model = self._embedding_model_changed_at = None
         self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
         self._embedding_provider = provider
         self._embedding_model = model
         self._embedding_space_id = space_id
-        self._set_hybrid_status(
-            "ready" if provider is not None else "lexical_fallback",
-            None if provider is not None else "provider_not_configured",
-        )
 
     def hybrid_status(self) -> dict[str, Any]:
         """Return non-sensitive hybrid-retrieval availability diagnostics."""
@@ -714,6 +766,10 @@ class PersistentMemory:
         scope_ids = {user_id} if isinstance(user_id, str) else set(user_id)
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
+            if self._embedding_cache_dirty:
+                await async_settle_owned_operation(
+                    self._async_save_embedding_cache_locked()
+                )
             corpus = tuple(
                 memory
                 for memory in self._memories.values()
@@ -756,39 +812,61 @@ class PersistentMemory:
         """Prepare embeddings for the search corpus and return the query vector."""
         category_filter = _clean_category(category) if category else None
         if self._embedding_provider is None:
-            self._set_hybrid_status("lexical_fallback", "provider_not_configured")
             return None
         if monotonic() < self._hybrid_retry_at:
             return None
+        allowed_scopes = set(scope_ids)
+        async with async_storage_lock(self._storage, self._lock):
+            self._ensure_initialized()
+            if not any(
+                memory.user_id in allowed_scopes
+                and (category_filter is None or memory.category == category_filter)
+                for memory in self._memories.values()
+            ):
+                return None
         attempt_identity = self._embedding_retry_identity
         attempt_provider = self._embedding_provider
+        if attempt_provider is None:
+            return None
+        model = self._embedding_model
+        space_id = self._embedding_space_id
+
+        def binding_changed() -> bool:
+            if (
+                self._embedding_provider is attempt_provider
+                and self._embedding_retry_identity == attempt_identity
+            ):
+                return False
+            # A stale request must not replace diagnostics for a new binding.
+            if (
+                self._embedding_provider is None
+                and self._hybrid_status.get("reason") != "provider_binding_failed"
+            ):
+                self._set_hybrid_status("lexical_fallback", "provider_changed")
+            return True
+
         migrated_model = None
-        batch_budget = (
-            iter(range(AUTO_RECALL_EMBEDDING_BATCHES)) if automatic_recall else None
+        batch_budget = iter(
+            range(
+                AUTO_RECALL_EMBEDDING_BATCHES
+                if automatic_recall
+                else INTERACTIVE_SEARCH_EMBEDDING_BATCHES
+            )
         )
         try:
-            if not await self._async_refresh_missing_embeddings(
+            prepared = await self._async_refresh_missing_embeddings(
                 scope_ids, category_filter=category_filter, batch_budget=batch_budget
-            ):
+            )
+            if binding_changed():
+                return None
+            if not prepared:
                 self._set_hybrid_status(
                     "lexical_fallback",
                     "embedding_preparation_failed",
                 )
                 return None
-            provider = self._embedding_provider
-            model = self._embedding_model
-            space_id = self._embedding_space_id
-            if provider is None:
-                self._set_hybrid_status("lexical_fallback", "provider_changed")
-                return None
-            batch = _embedding_batch(await provider([query]))
-            if (
-                self._embedding_provider is not provider
-                or self._embedding_model != model
-                or self._embedding_space_id != space_id
-                or self._embedding_retry_identity != attempt_identity
-            ):
-                self._set_hybrid_status("lexical_fallback", "provider_changed")
+            batch = _embedding_batch(await attempt_provider([query]))
+            if binding_changed():
                 return None
             if len(batch.vectors) != 1:
                 raise ValueError(
@@ -796,7 +874,6 @@ class PersistentMemory:
                 )
             vector = _clean_embedding(batch.vectors[0])
             width = len(vector)
-            allowed_scopes = set(scope_ids)
             readable = [
                 entry
                 for memory_id, entry in self._embedding_cache.items()
@@ -847,7 +924,10 @@ class PersistentMemory:
                 provider_model=batch.provider_model,
                 batch_budget=batch_budget,
             ):
-                self._set_hybrid_status("lexical_fallback", "provider_changed")
+                if not binding_changed():
+                    self._set_hybrid_status("lexical_fallback", "provider_changed")
+                return None
+            if binding_changed():
                 return None
             self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
             self._set_hybrid_status(
@@ -858,15 +938,13 @@ class PersistentMemory:
             )
             return vector
         except _EmbeddingPreparationBudgetExhausted:
-            self._set_hybrid_status(
-                "lexical_fallback", "embedding_preparation_budget_exhausted"
-            )
+            if not binding_changed():
+                self._set_hybrid_status(
+                    "lexical_fallback", "embedding_preparation_budget_exhausted"
+                )
             return None
         except Exception as err:
-            if (
-                attempt_identity != self._embedding_retry_identity
-                or attempt_provider is not self._embedding_provider
-            ):
+            if binding_changed():
                 return None
             self._hybrid_retry_delay = min(
                 HYBRID_RETRY_MAX_SECONDS,
@@ -924,10 +1002,8 @@ class PersistentMemory:
             self._embedding_cache_retry_at = 0.0
             self._query_embedding_model = self._embedding_model_changed_at = None
             self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
-            self._set_hybrid_status(
-                "ready" if self._embedding_provider else "lexical_fallback",
-                None if self._embedding_provider else "provider_not_configured",
-            )
+            if self._embedding_provider is not None:
+                self._set_hybrid_status("ready")
             self._committed_state = self._snapshot_mutation_state()
 
         async with async_storage_lock(self._storage, self._lock):
@@ -970,7 +1046,7 @@ class PersistentMemory:
                 and (category_filter is None or memory.category == category_filter)
             ]
             memories.sort(
-                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                key=lambda memory: stored_timestamp_instant(memory.updated_at),
                 reverse=True,
             )
             return memories[offset : offset + limit]
@@ -996,7 +1072,7 @@ class PersistentMemory:
                 and (category_filter is None or memory.category == category_filter)
             ]
             memories.sort(
-                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                key=lambda memory: stored_timestamp_instant(memory.updated_at),
                 reverse=True,
             )
             end = offset + limit
@@ -1041,7 +1117,7 @@ class PersistentMemory:
                 ).casefold()
             ]
             memories.sort(
-                key=lambda memory: _memory_timestamp_instant(memory.updated_at),
+                key=lambda memory: stored_timestamp_instant(memory.updated_at),
                 reverse=True,
             )
             total = len(memories)
@@ -1593,6 +1669,8 @@ class PersistentMemory:
         try:
             batch_model = provider_model
             for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
+                if not provider_is_current():
+                    return False
                 if batch_budget is not None and next(batch_budget, None) is None:
                     raise _EmbeddingPreparationBudgetExhausted
                 batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
@@ -1649,12 +1727,11 @@ class PersistentMemory:
             # Save once per refill, including progress before a failed batch.
             # A warm scope still retries a previous failed save after cooldown.
             async with async_storage_lock(self._storage, self._lock):
-                same_provider = provider_is_current()
-                if same_provider:
+                if provider_is_current():
                     await async_settle_owned_operation(
                         self._async_save_embedding_cache_locked()
                     )
-        return same_provider
+        return provider_is_current()
 
     async def _async_save_locked(self, *, replacing: bool = False) -> None:
         """Settle writes and rebuild memory indexes from authoritative storage."""
@@ -1677,6 +1754,8 @@ class PersistentMemory:
         await disk_state.async_initialize()
         self._repair_required = disk_state._repair_required
         self._restore_mutation_state(disk_state._snapshot_mutation_state())
+        self._embedding_cache_write_failed = disk_state._embedding_cache_write_failed
+        self._embedding_cache_retry_at = disk_state._embedding_cache_retry_at
         self._initialized = True
         self._committed_state = self._snapshot_mutation_state()
 
@@ -1740,8 +1819,11 @@ class PersistentMemory:
             return
         try:
             data = await self._embedding_cache_storage.async_load()
-            self._embedding_cache = await asyncio.to_thread(
-                _prepare_stored_embedding_cache, data
+            (
+                self._embedding_cache,
+                self._embedding_cache_dirty,
+            ) = await asyncio.to_thread(
+                _prepare_stored_embedding_cache, data, self._memories
             )
         except Exception as err:
             self._embedding_cache.clear()
@@ -1749,6 +1831,11 @@ class PersistentMemory:
                 _LOGGER,
                 "Persistent memory embedding cache is unavailable; it will regenerate",
                 err,
+            )
+            return
+        if self._embedding_cache_dirty:
+            await async_settle_owned_operation(
+                self._async_save_embedding_cache_locked()
             )
 
     async def _async_save_embedding_cache_locked(self) -> bool:
@@ -1851,6 +1938,16 @@ def automatic_memory_enabled(options: dict[str, Any] | Any) -> bool:
     return get_memory_mode(options) == MEMORY_MODE_AUTOMATIC
 
 
+def get_loaded_memory(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> PersistentMemory | None:
+    """Return the retained manager without creating or initializing it."""
+    managers: dict[tuple[str, str], PersistentMemory] = hass.data.get(
+        _MEMORY_MANAGERS, {}
+    )
+    return managers.get((entry_id, subentry_id))
+
+
 async def async_get_memory(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> PersistentMemory:
@@ -1928,12 +2025,34 @@ def memory_revision(memory: MemoryRecord) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+MEMORY_OPTIONAL_ARGUMENTS = {
+    "add": frozenset({"subject", "key", "valid_from", "scope", "intent"}),
+    "upsert": frozenset({"subject", "key", "valid_from", "scope", "intent"}),
+    "search": frozenset({"category", "scope", "offset", "limit", "ranking"}),
+    "list": frozenset({"category", "scope", "offset", "limit"}),
+    "update": frozenset(
+        {
+            "source",
+            "content",
+            "category",
+            "subject",
+            "key",
+            "valid_from",
+            "scope",
+            "intent",
+            "clear_fields",
+        }
+    ),
+    "delete": frozenset({"scope", "intent"}),
+}
+
+
 def memory_tools() -> list[dict[str, Any]]:
     """Return internal function definitions for persistent memory."""
-    return [
+    tools = [
         {
             "spec": {
-                "name": "memory_add",
+                "name": runtime_function_tool_name("memory", "add"),
                 "description": "Store one concise, durable fact for the current user.",
                 "parameters": {
                     "type": "object",
@@ -1962,7 +2081,7 @@ def memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "memory_upsert",
+                "name": runtime_function_tool_name("memory", "upsert"),
                 "description": (
                     "Propose a NEW durable fact; never overwrite or bypass a conflict by changing "
                     "keys. needs_resolution means no write; search and decide what the facts mean."
@@ -2010,7 +2129,7 @@ def memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "memory_search",
+                "name": runtime_function_tool_name("memory", "search"),
                 "description": (
                     "Find relevant facts for answers and before proposing or correcting. Rankings are "
                     "candidates, not semantic matches; absence is not proof of novelty."
@@ -2020,6 +2139,11 @@ def memory_tools() -> list[dict[str, Any]]:
                     "properties": {
                         "query": {"type": "string", "minLength": 1},
                         "offset": {"type": "integer", "minimum": 0, "default": 0},
+                        "ranking": {
+                            "type": "string",
+                            "enum": ["lexical", "hybrid"],
+                            "description": "For the next page, copy the prior result's ranking and use its next_offset.",
+                        },
                         "category": {"type": "string"},
                         "scope": {"type": "string", "enum": ["personal", "household"]},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 50},
@@ -2032,7 +2156,7 @@ def memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "memory_list",
+                "name": runtime_function_tool_name("memory", "list"),
                 "description": "Browse existing facts, their provenance and exact revisions.",
                 "parameters": {
                     "type": "object",
@@ -2049,11 +2173,12 @@ def memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "memory_update",
+                "name": runtime_function_tool_name("memory", "update"),
                 "description": (
                     "Correct a scoped record using its exact ID and current revision. "
                     "Use intent=user_request for a current user correction request, or automatic "
-                    "for clear corrections in Automatic mode. Never guess missing fields."
+                    "for clear corrections in Automatic mode. If scope is omitted, the exact readable "
+                    "record determines the scope. Use personal or household to select it explicitly."
                 ),
                 "parameters": {
                     "type": "object",
@@ -2098,11 +2223,13 @@ def memory_tools() -> list[dict[str, Any]]:
         },
         {
             "spec": {
-                "name": "memory_delete",
+                "name": runtime_function_tool_name("memory", "delete"),
                 "description": (
                     "Delete only specifically identified scoped records using their exact "
                     "IDs and fresh revisions. Set intent=user_request for current user requests, "
-                    "or automatic for clear obsolete facts in Automatic mode. Confirm before broad deletion."
+                    "or automatic for clear obsolete facts in Automatic mode. Omitted scope follows the exact "
+                    "readable targets. Use separate calls for personal and household targets. "
+                    "Confirm before broad deletion."
                 ),
                 "parameters": {
                     "type": "object",
@@ -2134,6 +2261,7 @@ def memory_tools() -> list[dict[str, Any]]:
             "function": {"type": "memory", "operation": "delete"},
         },
     ]
+    return nullable_memory_tool_arguments(tools, MEMORY_OPTIONAL_ARGUMENTS)
 
 
 def _memory_intent_schema() -> dict[str, Any]:
@@ -2253,15 +2381,18 @@ def _rank_memory_snapshot(
     )
     if not corpus or (not query_tokens and not (hybrid and query_embedding)):
         return []
+    topic = _RECALL_REQUEST_FRAMING.sub("", query)
+    topic_terms = _token_list(topic) if topic != query else []
+    topic_weights = _bm25_term_weights(topic_terms)
     document_data: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
-    document_frequency = {token: 0 for token in query_tokens}
+    document_frequency = dict.fromkeys(query_tokens | topic_weights.keys(), 0)
     total_length = 0
     for memory in corpus:
         terms = _cached_memory_record_terms(memory)
         token_set = _cached_memory_record_token_set(memory)
         document_data[memory.memory_id] = (terms, token_set)
         total_length += len(terms)
-        for token in query_tokens:
+        for token in document_frequency:
             if token in token_set:
                 document_frequency[token] += 1
     average_length = max(1.0, total_length / len(corpus))
@@ -2328,6 +2459,27 @@ def _rank_memory_snapshot(
             previous_lexical += phrase_bonus
             if previous_lexical >= MIN_LEXICAL_RELEVANCE_SCORE:
                 lexical = max(lexical, previous_lexical)
+        # A standalone reminder request can drown out a strong topic match.
+        # Retry the lexical score with just the topic when the full query
+        # missed. Compound aliases count collectively as one anchor.
+        if (
+            lexical < MIN_LEXICAL_RELEVANCE_SCORE
+            and topic_weights
+            and sum(
+                weight for term, weight in topic_weights.items() if term in token_set
+            )
+            >= 2.5
+        ):
+            topic_lexical = _bm25_score(
+                topic_terms,
+                terms,
+                document_frequency,
+                len(corpus),
+                average_length,
+                query_weights=topic_weights,
+            )
+            if topic_lexical >= MIN_LEXICAL_RELEVANCE_SCORE:
+                lexical = topic_lexical
         genuine_lexical = lexical
         if lexical <= 0:
             lexical = _fuzzy_relevance(query_tokens, token_set)
@@ -2521,13 +2673,28 @@ def _cosine_similarity(
 ) -> float | None:
     if not left or not right or len(left) != len(right):
         return None
-    left_norm = math.sqrt(sum(value * value for value in left))
-    right_norm = math.sqrt(sum(value * value for value in right))
-    if not left_norm or not right_norm:
+    # Scaling each vector independently keeps all products bounded even for
+    # finite vectors close to the limits of the float representation.
+    left_scale = max(map(abs, left))
+    right_scale = max(map(abs, right))
+    if (
+        not left_scale
+        or not right_scale
+        or not math.isfinite(left_scale)
+        or not math.isfinite(right_scale)
+    ):
         return None
-    return sum(a * b for a, b in zip(left, right, strict=True)) / (
-        left_norm * right_norm
-    )
+    dot = left_squared = right_squared = 0.0
+    for a, b in zip(left, right, strict=True):
+        a /= left_scale
+        b /= right_scale
+        dot += a * b
+        left_squared += a * a
+        right_squared += b * b
+    if not math.isfinite(dot):
+        return None
+    cosine = dot / math.sqrt(left_squared * right_squared)
+    return max(-1.0, min(1.0, cosine))
 
 
 def _embedding_text(memory: MemoryRecord) -> str:
@@ -2548,12 +2715,10 @@ def _embedding_fingerprint(memory: MemoryRecord) -> str:
 def _clean_embedding(value: Any) -> list[float]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         raise ValueError("embedding must be a numeric sequence")
+    if not 0 < len(value) <= 16_384:
+        raise ValueError("embedding is invalid")
     result = [float(item) for item in value]
-    if (
-        not result
-        or len(result) > 16_384
-        or not all(math.isfinite(item) for item in result)
-    ):
+    if not all(math.isfinite(item) for item in result) or not any(result):
         raise ValueError("embedding is invalid")
     return result
 
@@ -2624,19 +2789,36 @@ def _prepare_stored_memories(
     return memories, key_index, payload, repair_required
 
 
-def _prepare_stored_embedding_cache(data: Any) -> dict[str, EmbeddingCacheEntry]:
-    """Validate detached regenerable cache entries before atomic publication."""
+def _prepare_stored_embedding_cache(
+    data: Any, memories: Mapping[str, MemoryRecord]
+) -> tuple[dict[str, EmbeddingCacheEntry], bool]:
+    """Keep only usable embeddings for the loaded generation of memory facts."""
     entries: dict[str, EmbeddingCacheEntry] = {}
-    raw_entries = data.get("embeddings", {}) if isinstance(data, Mapping) else {}
+    if data is None:
+        return entries, False
+    if not isinstance(data, Mapping):
+        return entries, True
+    raw_entries = data.get("embeddings", {})
     if not isinstance(raw_entries, Mapping):
-        raise ValueError("embedding cache entries must be an object")
+        return entries, True
     for memory_id, raw in raw_entries.items():
         if not isinstance(memory_id, str) or not isinstance(raw, Mapping):
-            raise ValueError("embedding cache entry is malformed")
+            continue
+        memory = memories.get(memory_id)
         model = raw.get("model")
         fingerprint = raw.get("fingerprint")
-        if not isinstance(model, str) or not isinstance(fingerprint, str):
-            raise ValueError("embedding cache metadata is malformed")
+        if (
+            memory is None
+            or not isinstance(model, str)
+            or not isinstance(fingerprint, str)
+        ):
+            continue
+        try:
+            if fingerprint != _embedding_fingerprint(memory):
+                continue
+            vector = _clean_embedding(raw.get("vector"))
+        except TypeError, ValueError, OverflowError:
+            continue
         entries[memory_id] = EmbeddingCacheEntry(
             model=model,
             fingerprint=fingerprint,
@@ -2646,9 +2828,9 @@ def _prepare_stored_embedding_cache(data: Any) -> dict[str, EmbeddingCacheEntry]
             provider_model=raw.get("provider_model")
             if isinstance(raw.get("provider_model"), str)
             else None,
-            vector=_clean_embedding(raw.get("vector")),
+            vector=vector,
         )
-    return entries
+    return entries, len(entries) != len(raw_entries)
 
 
 def _record_as_storage_dict(memory: MemoryRecord) -> dict[str, Any]:
@@ -2692,13 +2874,13 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
         key=_clean_key(record.key),
     )
     if (
-        dt_util.parse_datetime(record.created_at) is None
-        or dt_util.parse_datetime(record.updated_at) is None
+        parse_datetime(record.created_at) is None
+        or parse_datetime(record.updated_at) is None
     ):
         raise ValueError("persistent memory timestamp is invalid")
     for value in (record.valid_from,):
         if value is not None and (
-            not isinstance(value, str) or dt_util.parse_datetime(value) is None
+            not isinstance(value, str) or parse_datetime(value) is None
         ):
             raise ValueError("persistent memory timestamp is invalid")
     return record
@@ -2784,31 +2966,17 @@ def _clean_key(value: str | None) -> str | None:
     return value
 
 
-@lru_cache(maxsize=20_000)
-def _memory_timestamp_instant(value: str) -> datetime:
-    """Sort validated timestamps by instant; legacy naive values mean UTC.
-
-    Keep stored strings intact and reuse parsing across management pages. Python's
-    stable sort retains storage insertion order when instants are equal.
-    """
-    parsed = dt_util.parse_datetime(value)
-    assert parsed is not None  # Record validation precedes publication.
-    # Aware datetime comparisons already compare instants. Converting to UTC
-    # would overflow for valid offset timestamps at the year 1/9999 boundaries.
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
-
-
 def _same_validity_instant(first: str | None, second: str | None) -> bool:
     return first == second or (
         first is not None
         and second is not None
-        and _memory_timestamp_instant(first) == _memory_timestamp_instant(second)
+        and stored_timestamp_instant(first) == stored_timestamp_instant(second)
     )
 
 
 def _clean_timestamp(value: str | None, field: str) -> str | None:
     cleaned = _clean_optional(value, field, 64)
-    if cleaned is not None and dt_util.parse_datetime(cleaned) is None:
+    if cleaned is not None and parse_datetime(cleaned) is None:
         raise ValueError(f"{field} must be an ISO 8601 timestamp")
     return cleaned
 

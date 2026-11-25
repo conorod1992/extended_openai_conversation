@@ -23,9 +23,10 @@ import {readFileSync} from "node:fs";
 const fixture = JSON.parse(readFileSync(0, "utf8"));
 const module = await import(fixture.module);
 class Element {
-  constructor() { this.children = []; this.style = {}; this.listeners = {}; }
+  constructor() { this.children = []; this.style = {}; this.listeners = {}; this.attributes = {}; }
   append(element) { this.children.push(element); }
   addEventListener(name, callback) { this.listeners[name] = callback; }
+  setAttribute(name, value) { this.attributes[name] = value; }
   set innerHTML(value) { this.html = value; this.children = []; }
 }
 globalThis.document = {createElement: () => new Element()};
@@ -123,9 +124,10 @@ async def test_search_card_and_view_open_matching_size_limited_turn(
         ),
         text=True,
         capture_output=True,
-        check=True,
+        check=False,
         timeout=10,
     )
+    assert result.returncode == 0, result.stderr
     navigation = json.loads(result.stdout)
     assert len(navigation["requests"]) == 3  # Card, View, then Start of conversation.
     for request, body in zip(

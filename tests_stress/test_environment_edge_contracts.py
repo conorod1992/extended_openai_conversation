@@ -33,7 +33,7 @@ def test_unicode_filename_atomic_roundtrip_and_path_identity(hass, tmp_path, str
     payload = "Unicode payload: café — 資料 — 🦕"
 
     assert _atomic_replace_text(path, payload) == len(payload.encode("utf-8"))
-    assert _read_text_bounded(path) == payload
+    assert _read_text_bounded(path) == (payload, len(payload.encode("utf-8")))
 
     reader = ReadFileFunction()
     resolved = reader._resolve_path(hass, str(path), [str(workspace)])
@@ -58,7 +58,7 @@ def test_unicode_filename_atomic_roundtrip_and_path_identity(hass, tmp_path, str
         decomposed = workspace / decomposed_name
         _atomic_replace_text(decomposed, "decomposed")
         if decomposed.resolve() != resolved:
-            assert _read_text_bounded(decomposed) == "decomposed"
+            assert _read_text_bounded(decomposed) == ("decomposed", len("decomposed"))
             assert _get_edit_lock(hass, decomposed.resolve()) is not _get_edit_lock(
                 hass, resolved
             )

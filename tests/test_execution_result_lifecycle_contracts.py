@@ -1,6 +1,5 @@
 """Combined guarantees for execution provenance, local dataflow and durable cleanup."""
 
-from dataclasses import replace
 
 from dataclasses import asdict, dataclass
 from io import BytesIO
@@ -35,6 +34,7 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 )
 from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeLibrary,
+    knowledge_source_as_dict,
 )
 from custom_components.extended_openai_conversation_responses.model_tool_results import (
     OwnedJSONPayload,
@@ -221,38 +221,12 @@ async def test_structured_overflow_is_complete_and_does_not_mutate_local_result(
     overflow = json.loads(serialize_model_tool_result(projected))["result"]
     assert overflow["execution_completed"] is True
     assert len(json.dumps(overflow)) < 32000
-    with pytest.raises(HomeAssistantError, match="too large"):
-        rr._bounded_function_result(value)
 
 
-def test_alias_copy_uses_current_producer_and_leaves_authored_response_untouched():
-    binding = rr._ResultAliasVariables(
-        rr.ScriptVariables({"second": "{{ shared.result }}"}), "second", "shared"
-    )
-    shared = {"shared": {"result": "from A"}}
-    token = rr._ACTIVE_RULE_ACTION.set(
-        replace(rr._ACTIVE_RULE_ACTION.get(), function_results={"first": "from A"})
-    )
-    try:
-        assert binding.async_simple_render(shared) == {}
-        rr._ACTIVE_RULE_ACTION.get().function_results["second"] = False
-        assert binding.async_simple_render(shared) == {"second": False}
-        assert shared == {"shared": {"result": "from A"}}
-    finally:
-        rr._ACTIVE_RULE_ACTION.reset(token)
 
-
-def test_unrelated_result_alias_fields_are_not_function_metadata():
+def test_unrelated_result_alias_fields_remain_native_service_data():
     action = {"action": "script.ordinary", "data": {"result_alias": "input"}}
-    assert rr._native_result_sequence([action], {}) == [action]
-    rr._validate_result_dependencies(
-        {
-            "actions": [{"sequence": [action]}],
-            "success_response": "Done",
-            "failure_response": "Failed",
-        },
-        set(),
-    )
+    assert rr._native_action_sequence([action], {}) == [action]
 
 
 @pytest.mark.parametrize(
@@ -264,7 +238,7 @@ def test_condition_capture_save_runtime_schema_parity(hass, selector):
         "then": [{"stop": "Done"}],
     }
     saved = rr._validate_script_sequence([action])
-    runtime = rr._native_result_sequence(
+    runtime = rr._native_action_sequence(
         saved, {"room": "kitchen", "entity": "light.kitchen"}
     )
     validated = cv.SCRIPT_SCHEMA(runtime)
@@ -301,7 +275,7 @@ async def test_canonical_knowledge_survives_storage_reload_and_export():
         "description": "Description here",
         "content": "One\nTwo",
     }
-    assert asdict(records[0]) == expected
+    assert knowledge_source_as_dict(records[0]) == expected
     assert storage.data == {"sources": [expected]}
     fresh = KnowledgeLibrary(storage)
     await fresh.async_initialize()
@@ -375,6 +349,7 @@ async def test_successful_restore_reports_cleanup_pending_without_repeating(
     session = bt.ImportSession(
         "upload", "entry", "agent", str(path), "backup.json", 7, "legacy_json", 10**12
     )
+    session.preview_token = "token"
     bt._imports(hass)[session.session_id] = session
     monkeypatch.setattr(bt, "_async_cleanup_expired", AsyncMock())
     monkeypatch.setattr(bt, "_completed_import", lambda *_: session)
@@ -735,15 +710,24 @@ async def test_failed_save_reconciliation_decodes_the_actual_durable_generation(
         }
         payload = {"sources": [raw]}
         expected = {
-            "sources": [asdict(KnowledgeLibrary.validate_backup_data(payload)[0])]
+            "sources": [
+                {
+                    **raw,
+                    "title": "Changed title",
+                    "description": "Changed description",
+                    "content": "First\nSecond",
+                }
+            ]
         }
-        storage = AmbiguousStorage(expected)
+        storage = AmbiguousStorage({"sources": [{**raw, "title": "Original title"}]})
         manager = KnowledgeLibrary(storage)
         await manager.async_initialize()
         storage.replacement = payload
         with pytest.raises(OSError, match="lost save"):
             await manager.async_replace_backup(
-                KnowledgeLibrary.validate_backup_data(expected)
+                KnowledgeLibrary.validate_backup_data(
+                    {"sources": [{**raw, "title": "Attempted title"}]}
+                )
             )
         assert await manager.async_backup_data() == expected
         fresh = KnowledgeLibrary(storage)

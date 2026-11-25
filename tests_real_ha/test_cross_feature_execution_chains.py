@@ -108,7 +108,7 @@ async def test_batch_distinct_call_ids_and_results_then_followup(hass, monkeypat
     assert len(wire.requests) == 3
 
 
-async def test_edit_working_rule_then_execute_again_without_stale_alias(
+async def test_edit_working_rule_then_execute_again_with_native_response(
     hass, monkeypatch
 ):
     """Rule editing changes execution rather than just its saved representation."""
@@ -144,22 +144,24 @@ async def test_edit_working_rule_then_execute_again_without_stale_alias(
         "data": {
             "function": "probe_reading",
             "arguments": {},
-            "result_alias": "reading",
-            "step_id": "1234567890abcdef1234567890abcdef",
         },
+        "response_variable": "result_data",
     }
     created = await agent._request_rules.async_create(
         _local(
-            [capture, _record_action("before={reading.rows.0.level}")],
-            success="First {reading.rows.0.level}",
+            [
+                capture,
+                _record_action("before={{ result_data.result.rows[0].level }}"),
+                {"set_conversation_response": "First {{ result_data.result.rows[0].level }}"},
+            ],
         )
     )
     assert _speech(await _say(hass, agent, "run rule")) == "First 73"
     assert seen == ["before=73"]
     modified = deepcopy(created)
-    modified["action"]["actions"][0]["data"]["result_alias"] = "updated"
-    modified["action"]["actions"][1]["data"]["message"] = "after={updated.rows.0.level}"
-    modified["action"]["success_response"] = "Second {updated.rows.0.level}"
+    modified["action"]["actions"][0]["response_variable"] = "updated"
+    modified["action"]["actions"][1]["data"]["message"] = "after={{ updated.result.rows[0].level }}"
+    modified["action"]["actions"][2]["set_conversation_response"] = "Second {{ updated.result.rows[0].level }}"
     await agent._request_rules.async_update(created["id"], modified)
     assert _speech(await _say(hass, agent, "run rule")) == "Second 73"
     assert seen == ["before=73", "after=73"]

@@ -22,31 +22,48 @@
             "description": "Descriptive origin only; explicit is not model authorization."
           },
           "subject": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Specific person, device or item the assertion concerns; never infer another person's preference."
           },
           "key": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 160,
             "pattern": "^[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*$",
             "description": "Stable canonical identifier for this exact subject; never change it to evade a conflict."
           },
           "valid_from": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "ISO 8601 time when the fact became true, if known."
           },
           "scope": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "personal",
-              "household"
+              "household",
+              null
             ]
           },
           "intent": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "automatic",
-              "user_request"
+              "user_request",
+              null
             ],
             "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
           }
@@ -72,22 +89,47 @@
             "minLength": 1
           },
           "offset": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 0,
             "default": 0
           },
+          "ranking": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "lexical",
+              "hybrid",
+              null
+            ],
+            "description": "For the next page, copy the prior result's ranking and use its next_offset."
+          },
           "category": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "scope": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "personal",
-              "household"
+              "household",
+              null
             ]
           },
           "limit": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1,
             "maximum": 50
           }
@@ -107,22 +149,35 @@
         "type": "object",
         "properties": {
           "category": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "scope": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "personal",
-              "household"
+              "household",
+              null
             ]
           },
           "limit": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1,
             "maximum": 100
           },
           "offset": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 0
           }
         },
@@ -133,7 +188,7 @@
     {
       "type": "function",
       "name": "memory_update",
-      "description": "Correct a scoped record using its exact ID and current revision. Use intent=user_request for a current user correction request, or automatic for clear corrections in Automatic mode. Never guess missing fields.",
+      "description": "Correct a scoped record using its exact ID and current revision. Use intent=user_request for a current user correction request, or automatic for clear corrections in Automatic mode. If scope is omitted, the exact readable record determines the scope. Use personal or household to select it explicitly.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -147,49 +202,79 @@
             "description": "Current revision from memory_search, memory_list or opening context; never guess."
           },
           "source": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "explicit",
-              "implicit"
+              "implicit",
+              null
             ],
             "description": "Legacy descriptive origin only; cannot authorize edits or change provenance."
           },
           "content": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "category": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "subject": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "key": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 160,
             "pattern": "^[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*$",
             "description": "Optional stable lowercase identifier such as pet.oscar.breed. Use only a-z, 0-9, underscore, hyphen, and dot-separated components."
           },
           "valid_from": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "ISO 8601 time when the fact became true, if known."
           },
           "scope": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "personal",
-              "household"
+              "household",
+              null
             ]
           },
           "intent": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "automatic",
-              "user_request"
+              "user_request",
+              null
             ],
             "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
           },
           "clear_fields": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "type": "string",
               "enum": [
@@ -214,7 +299,7 @@
     {
       "type": "function",
       "name": "memory_delete",
-      "description": "Delete only specifically identified scoped records using their exact IDs and fresh revisions. Set intent=user_request for current user requests, or automatic for clear obsolete facts in Automatic mode. Confirm before broad deletion.",
+      "description": "Delete only specifically identified scoped records using their exact IDs and fresh revisions. Set intent=user_request for current user requests, or automatic for clear obsolete facts in Automatic mode. Omitted scope follows the exact readable targets. Use separate calls for personal and household targets. Confirm before broad deletion.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -241,17 +326,25 @@
             "maxItems": 50
           },
           "scope": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "personal",
-              "household"
+              "household",
+              null
             ]
           },
           "intent": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "automatic",
-              "user_request"
+              "user_request",
+              null
             ],
             "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
           }
@@ -278,7 +371,10 @@
             "description": "ISO 8601 with timezone."
           },
           "category": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -300,13 +396,22 @@
             "type": "string"
           },
           "content": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "expires_at": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "category": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -812,31 +917,48 @@
               "description": "Descriptive origin only; explicit is not model authorization."
             },
             "subject": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "description": "Specific person, device or item the assertion concerns; never infer another person's preference."
             },
             "key": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "maxLength": 160,
               "pattern": "^[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*$",
               "description": "Stable canonical identifier for this exact subject; never change it to evade a conflict."
             },
             "valid_from": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "description": "ISO 8601 time when the fact became true, if known."
             },
             "scope": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "personal",
-                "household"
+                "household",
+                null
               ]
             },
             "intent": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "automatic",
-                "user_request"
+                "user_request",
+                null
               ],
               "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
             }
@@ -863,22 +985,47 @@
               "minLength": 1
             },
             "offset": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 0,
               "default": 0
             },
+            "ranking": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "lexical",
+                "hybrid",
+                null
+              ],
+              "description": "For the next page, copy the prior result's ranking and use its next_offset."
+            },
             "category": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "scope": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "personal",
-                "household"
+                "household",
+                null
               ]
             },
             "limit": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 1,
               "maximum": 50
             }
@@ -899,22 +1046,35 @@
           "type": "object",
           "properties": {
             "category": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "scope": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "personal",
-                "household"
+                "household",
+                null
               ]
             },
             "limit": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 1,
               "maximum": 100
             },
             "offset": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 0
             }
           },
@@ -926,7 +1086,7 @@
       "type": "function",
       "function": {
         "name": "memory_update",
-        "description": "Correct a scoped record using its exact ID and current revision. Use intent=user_request for a current user correction request, or automatic for clear corrections in Automatic mode. Never guess missing fields.",
+        "description": "Correct a scoped record using its exact ID and current revision. Use intent=user_request for a current user correction request, or automatic for clear corrections in Automatic mode. If scope is omitted, the exact readable record determines the scope. Use personal or household to select it explicitly.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -940,49 +1100,79 @@
               "description": "Current revision from memory_search, memory_list or opening context; never guess."
             },
             "source": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "explicit",
-                "implicit"
+                "implicit",
+                null
               ],
               "description": "Legacy descriptive origin only; cannot authorize edits or change provenance."
             },
             "content": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "category": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "subject": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "key": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "maxLength": 160,
               "pattern": "^[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*$",
               "description": "Optional stable lowercase identifier such as pet.oscar.breed. Use only a-z, 0-9, underscore, hyphen, and dot-separated components."
             },
             "valid_from": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "description": "ISO 8601 time when the fact became true, if known."
             },
             "scope": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "personal",
-                "household"
+                "household",
+                null
               ]
             },
             "intent": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "automatic",
-                "user_request"
+                "user_request",
+                null
               ],
               "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
             },
             "clear_fields": {
-              "type": "array",
+              "type": [
+                "array",
+                "null"
+              ],
               "items": {
                 "type": "string",
                 "enum": [
@@ -1008,7 +1198,7 @@
       "type": "function",
       "function": {
         "name": "memory_delete",
-        "description": "Delete only specifically identified scoped records using their exact IDs and fresh revisions. Set intent=user_request for current user requests, or automatic for clear obsolete facts in Automatic mode. Confirm before broad deletion.",
+        "description": "Delete only specifically identified scoped records using their exact IDs and fresh revisions. Set intent=user_request for current user requests, or automatic for clear obsolete facts in Automatic mode. Omitted scope follows the exact readable targets. Use separate calls for personal and household targets. Confirm before broad deletion.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -1035,17 +1225,25 @@
               "maxItems": 50
             },
             "scope": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "personal",
-                "household"
+                "household",
+                null
               ]
             },
             "intent": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "automatic",
-                "user_request"
+                "user_request",
+                null
               ],
               "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
             }
@@ -1073,7 +1271,10 @@
               "description": "ISO 8601 with timezone."
             },
             "category": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -1096,13 +1297,22 @@
               "type": "string"
             },
             "content": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "expires_at": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "category": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [

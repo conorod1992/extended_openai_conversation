@@ -22,7 +22,6 @@ from custom_components.extended_openai_conversation_responses.agent_maintenance 
 from custom_components.extended_openai_conversation_responses.context_summary import (
     DeferredContextSummaryManager,
 )
-from custom_components.extended_openai_conversation_responses.skills import SkillManager
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_model_catalog_refresh_failures import MemoryStore
@@ -181,16 +180,6 @@ async def test_disabled_quiet_hours_reconciliation_removes_remaining_timer(
     assert manager._unsubscribers == [] and manager._active is None
 
 
-def test_new_skill_install_rollback_without_previous_version_removes_candidate(
-    tmp_path,
-):
-    target, backup = tmp_path / "candidate", tmp_path / "absent-backup"
-    target.mkdir()
-    (target / "SKILL.md").write_text("Candidate")
-    SkillManager._rollback_staged_skill_sync(target, backup)
-    assert not target.exists() and not backup.exists()
-
-
 @pytest.mark.parametrize(
     "body", [{"error": "not an object"}, {"error": None}, {"error": []}]
 )
@@ -200,11 +189,10 @@ def test_malformed_provider_error_body_does_not_hide_explicit_model_error(body):
 
 
 @pytest.mark.parametrize("matched", [False, True])
-async def test_continuation_chain_exhaustion_returns_last_result_or_no_match(
+async def test_first_match_returns_result_or_no_match(
     hass, monkeypatch, matched
 ):
     rule = local_rule()
-    rule["continue_matching"] = True
     rules = await manager(rule)
     if matched:
         monkeypatch.setattr(
