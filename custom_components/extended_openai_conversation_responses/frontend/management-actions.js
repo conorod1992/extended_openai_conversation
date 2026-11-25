@@ -242,11 +242,11 @@ async function saveConfiguration(panel, button) {
     });
   } catch (err) {
     const retention = submission.fields.filter(key => USAGE_RETENTION_FIELDS.includes(key));
-    if (configurationSubmissionIsCurrent(panel, submission) && retention.length
-        && (err.mutationOutcome === "committed" || err.code === "eoai_mutation_committed")) {
+    const committed = err.mutationOutcome === "committed" || err.code === "eoai_mutation_committed";
+    if (configurationSubmissionIsCurrent(panel, submission) && retention.length && committed) {
       await recoverCommittedRetention(panel, submission, retention);
     }
-    if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);
+    if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(committed ? err.message : `Unable to save configuration: ${err.message || String(err)}`, true);
   } finally {
     for (const type of focusEvents) focusDocument?.removeEventListener(type, relinquishErrorFocus, true);
     if (panel._eocConfigurationSubmission === submission) panel._eocConfigurationSubmission = null;

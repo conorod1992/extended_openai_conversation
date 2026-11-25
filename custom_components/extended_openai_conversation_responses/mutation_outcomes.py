@@ -1,7 +1,11 @@
 """Transaction-owned failure evidence, independent of exception prose or type."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Literal
+
+from homeassistant.exceptions import HomeAssistantError
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +30,17 @@ def mark_mutation_failure[E: Exception](
 def mutation_failure(error: Exception) -> MutationFailure | None:
     value = getattr(error, "_eoai_mutation_failure", None)
     return value if isinstance(value, MutationFailure) else None
+
+
+@contextmanager
+def after_confirmed_mutation(message: str) -> Iterator[None]:
+    """Report a failed follow-up after its owner has confirmed the write."""
+    try:
+        yield
+    except Exception as err:
+        if mutation_failure(err) is not None:
+            raise
+        raise mark_mutation_failure(HomeAssistantError(message), "committed") from err
 
 
 def mutation_error_code(error: Exception) -> str:

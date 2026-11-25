@@ -76,6 +76,80 @@ async def _library(storage=None) -> KnowledgeLibrary:
     return library
 
 
+async def test_management_knowledge_create_replay_and_duplicate_confirmation(
+    hass, management_agent, management_message, monkeypatch
+):
+    entry, subentry = management_agent
+    token = "1" * 32
+    message = management_message(
+        "knowledge", "create", title="Reference", description="Notes",
+        content="The source text", enabled=True, create_token=token,
+    )
+    saved, concurrent = await asyncio.gather(*(
+        async_management_command(hass, "admin", True, message) for _ in range(2)
+    ))
+    source = saved["source"]
+    assert concurrent["source"] == source
+    assert "creation_fingerprint" not in source
+
+    storage = knowledge.HomeAssistantKnowledgeStorage(hass, entry.entry_id, subentry.subentry_id)
+    assert Path(storage._store.path).is_file()
+    fresh = await _library(storage)
+    monkeypatch.setattr("custom_components.extended_openai_conversation_responses.management_ui.async_get_knowledge", AsyncMock(return_value=fresh))
+    assert fresh.total_source_count == 1
+    assert (await async_management_command(hass, "admin", True, message))["source"] == source
+    with pytest.raises(ValueError, match="different submission"):
+        await async_management_command(hass, "admin", True, {**message, "content": "Other text"})
+
+    duplicate = {**message, "create_token": "2" * 32}
+    assert await async_management_command(hass, "admin", True, duplicate) == {"status": "duplicate"}
+    assert fresh.total_source_count == 1
+    copy = await async_management_command(hass, "admin", True, {**duplicate, "confirm_duplicate": True})
+    assert copy["source"]["source_id"] != source["source_id"]
+    other = await async_management_command(hass, "admin", True, {**message, "create_token": "3" * 32, "content": "Other text"})
+    assert other["source"]["title"] == source["title"]
+    assert fresh.total_source_count == 3
+
+    await fresh.async_update(source["source_id"], title="Edited meanwhile")
+    fresh = await _library(storage)
+    replay = await fresh.async_create("Reference", "Notes", "The source text", create_token=token)
+    assert replay.source_id == source["source_id"]
+    assert replay.updated_at == source["updated_at"]
+    with pytest.raises(ValueError, match="changed in another tab"):
+        await fresh.async_update(replay.source_id, title="Stale edit", expected_revision=replay.updated_at)
+    assert fresh.total_source_count == 3
+
+
+async def test_knowledge_create_retries_after_disk_write_loses_acknowledgement(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses.mutation_outcomes import (
+        mutation_failure,
+    )
+    from tests.ha_store_test_helpers import disk_write_boundary
+
+    storage = knowledge.HomeAssistantKnowledgeStorage(hass, "entry", "agent")
+    library = await _library(storage)
+    writer, write_name = disk_write_boundary(storage._store)
+    write = getattr(writer, write_name)
+
+    def lose_acknowledgement(*args):
+        write(*args)
+        raise OSError("lost write acknowledgement")
+
+    token = "4" * 32
+    with monkeypatch.context() as fault:
+        fault.setattr(writer, write_name, lose_acknowledgement)
+        with pytest.raises(OSError) as failure:
+            await library.async_create("Reference", "", "The source text", create_token=token)
+        assert mutation_failure(failure.value).outcome == "uncertain"
+
+    fresh = await _library(knowledge.HomeAssistantKnowledgeStorage(hass, "entry", "agent"))
+    sources = await fresh.async_list()
+    assert len(sources) == 1
+    replay = await fresh.async_create("Reference", "", "The source text", create_token=token)
+    assert replay.source_id == sources[0]["source_id"]
+    assert fresh.total_source_count == 1
+
+
 async def test_phrase_ranking_preserves_programming_identifiers() -> None:
     library = await _library()
     await library.async_create("C# setup", "", "Follow the device instructions.")

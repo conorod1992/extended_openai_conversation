@@ -59,6 +59,7 @@ from .const import (
 from .function_tool_policy import runtime_function_tool_name
 from .functions.security import FunctionSecurity, classify_tool
 from .helpers import get_exposed_entities
+from .mutation_outcomes import after_confirmed_mutation
 from .persistence_hardening import _async_settle_transactional_save
 from .storage_namespaces import GUEST_MODE_PREFIX as GUEST_MODE_STORAGE_PREFIX
 from .strict_store import PropagatingWriteStore
@@ -430,7 +431,8 @@ class GuestModeManager:
                     end = max(existing_end, requested_end)
             schedule = self._schedule_value(start, end, "llm")
             await self._async_commit_schedule(schedule)
-            return self.status(current)
+            with after_confirmed_mutation("Guest Mode was saved. Refresh to read the schedule."):
+                return self.status(current)
 
     async def async_update_trusted(
         self,
@@ -459,13 +461,15 @@ class GuestModeManager:
         schedule = self._schedule_value(start, end, "home_assistant")
         async with self._mutation_lock:
             await self._async_commit_schedule(schedule)
-            return self.status(current)
+            with after_confirmed_mutation("Guest Mode was saved. Refresh to read the schedule."):
+                return self.status(current)
 
     async def async_disable_trusted(self) -> dict[str, Any]:
         """End or cancel Guest Mode from a trusted HA control surface."""
         async with self._mutation_lock:
             await self._async_commit_schedule(None)
-            return self.status()
+            with after_confirmed_mutation("Guest Mode was saved. Refresh to read the schedule."):
+                return self.status()
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return JSON-compatible Guest Mode state for a private agent backup."""
@@ -606,6 +610,7 @@ class GuestModeManager:
 
         previous = self._schedule
         was_available = self.authoritative_available
+        settled = False
         try:
             await _async_settle_transactional_save(
                 self._store.async_save(payload),
@@ -614,6 +619,7 @@ class GuestModeManager:
                 reconcile,
                 invalidate,
             )
+            settled = True
         finally:
             # A failed write followed by a failed authoritative readback can
             # leave the old in-memory schedule unchanged but untrustworthy.
@@ -623,7 +629,19 @@ class GuestModeManager:
                 or self._schedule != previous
                 or self.authoritative_available != was_available
             ):
-                self._notify()
+                if settled:
+                    with after_confirmed_mutation(
+                        "Guest Mode was saved, but transition notifications could not "
+                        "be scheduled. Reload the integration to restore notifications."
+                    ):
+                        self._notify()
+                else:
+                    # An observer failure must not replace failed-write evidence
+                    # or consume the original cancellation.
+                    try:
+                        self._notify()
+                    except Exception:
+                        _LOGGER.warning("Could not notify Guest Mode listeners during save recovery")
 
     def _live_or_future_schedule(self, now: Any) -> GuestModeSchedule | None:
         if self._persistence_unavailable:
@@ -637,12 +655,14 @@ class GuestModeManager:
         return schedule if now < end else None
 
     def _notify(self) -> None:
-        self._reschedule_transition()
-        for listener in tuple(self._listeners):
-            try:
-                listener()
-            except Exception as err:
-                _LOGGER.warning("Guest Mode listener failed (%s)", type(err).__name__)
+        try:
+            self._reschedule_transition()
+        finally:
+            for listener in tuple(self._listeners):
+                try:
+                    listener()
+                except Exception as err:
+                    _LOGGER.warning("Guest Mode listener failed (%s)", type(err).__name__)
 
 
 async def async_stage_guest_mode_journal_recovery(

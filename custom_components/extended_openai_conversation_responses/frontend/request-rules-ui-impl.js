@@ -466,10 +466,12 @@ export function bindRequestRuleEditor(panel) {
     }catch(err){
       // Safety evidence belongs to the exact intent even when authentication
       // retires its authority to publish collection data or feedback.
-      if(ownsIntent() && dialog.open && err?.mutationOutcome === "uncertain") dialog.__eocUncertainMutation=err;
+      const committed = err?.mutationOutcome === "committed";
+      const needsRecovery = committed || err?.mutationOutcome === "uncertain";
+      if(ownsIntent() && dialog.open && needsRecovery) dialog.__eocUncertainMutation=err;
       if(!current())return;
-      if (err?.mutationOutcome === "uncertain") {
-        await recoverRequestRuleMutation(panel, err, "Request Rule outcome is unknown", current);
+      if (needsRecovery) {
+        await recoverRequestRuleMutation(panel, err, committed ? "Request Rule saved" : "Request Rule outcome is unknown", current);
       }
       const message = err.message || String(err);
       q("#rule-error").textContent = message;

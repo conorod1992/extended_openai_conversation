@@ -36,6 +36,10 @@ Select a conversation agent, then use the panel to:
 - review availability, character count and last-updated time;
 - delete a source after confirmation.
 
+If a create reply is lost, saving again in the same editor retries the original
+submission. Any newer edits remain in the editor. A separate submission with the
+same title, description, content, and availability prompts before creating a copy.
+
 New and existing sources are available by default. Disabling one source does **not** delete it. The source remains stored, visible, editable, included in backups, and can be re-enabled later. While disabled, it is excluded from the model-facing source catalogue, local search index and retrieval. `knowledge_get` cannot bypass the disabled state even if an exact source ID is supplied.
 
 Use a clear, specific title and a short description. Structure long content with headings, paragraphs, and one fact or procedure per line where practical. This improves lexical matching.

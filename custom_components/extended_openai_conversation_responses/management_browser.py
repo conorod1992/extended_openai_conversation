@@ -91,3 +91,14 @@ def management_memory_dict(record: Any, *, include_scope: bool) -> dict[str, Any
             result[field] = timestamp.replace(tzinfo=UTC).isoformat()
     result["revision"] = memory_revision(record)
     return result
+
+
+def memory_mutation_result(record: Any, *, include_scope: bool) -> dict[str, Any]:
+    """Keep the saved record and edit revision if display formatting fails."""
+    try:
+        return management_memory_dict(record, include_scope=include_scope)
+    except Exception:
+        return {
+            **memory_as_dict(record, include_scope=include_scope),
+            "revision": memory_revision(record),
+        }

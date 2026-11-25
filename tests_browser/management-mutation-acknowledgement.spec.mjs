@@ -185,14 +185,16 @@ for (const bundled of [false, true]) for (const action of ["delete", "clear"]) f
   });
 }
 
-for (const bundled of [false, true]) for (const replacement of [false, true, "pending", "authentication", "authentication acknowledged"]) test(`generic Knowledge error replacement=${replacement} blocks the next create until authoritative reopening (${bundled ? "bundle" : "source"})`, async ({page}) => {
+for (const bundled of [false, true]) for (const replacement of [false, true, "pending", "authentication", "authentication acknowledged"]) test(`Knowledge recovery reuses the create token, replacement=${replacement} (${bundled ? "bundle" : "source"})`, async ({page}) => {
   const panel = await openDataCollection(page, "knowledge", 1, bundled);
   await panel.evaluate((host, replacement) => {
     host.hass = {...host.hass, user:{...host.hass.user, id:"knowledge-owner"}};
     const send = host.hass.callWS.bind(host.hass);
+    let first = true;
     host.hass.callWS = async request => {
       const result = await send(request);
-      if (request.section === "knowledge" && request.action === "create") {
+      if (first && request.section === "knowledge" && request.action === "create") {
+        first = false;
         if (["pending", "authentication", "authentication acknowledged"].includes(replacement) && !window.releaseUnknownKnowledge) await new Promise(resolve => {window.releaseUnknownKnowledge = resolve;});
         if (replacement === "authentication acknowledged") return result;
         throw {code:"unknown_error", message:"Unknown error"};
@@ -221,15 +223,14 @@ for (const bundled of [false, true]) for (const replacement of [false, true, "pe
     if (["pending", "authentication", "authentication acknowledged"].includes(replacement)) await page.evaluate(() => releaseUnknownKnowledge());
     await expect(panel.locator("#knowledge-content")).toHaveValue("Already stored");
   }
+  expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "create").length)).toBe(1);
+  await expect(panel.locator("#knowledge-save")).toBeEnabled();
   await panel.evaluate(host => host._saveKnowledge());
-  expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "create").length)).toBe(1);
-  await expect(panel.locator("#knowledge-save")).toBeDisabled();
-  // A presentation reset cannot confer authority to repeat this editor intent.
-  await panel.evaluate(host => {
-    host.shadowRoot.querySelector("#knowledge-save").disabled = false;
-    return host._saveKnowledge();
-  });
-  expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "create").length)).toBe(1);
+  const submissions = await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.section === "knowledge" && call.action === "create"));
+  expect(submissions).toHaveLength(2);
+  expect(submissions[0].create_token).toMatch(/^[0-9a-f]{32}$/);
+  expect(submissions[1].create_token).toBe(submissions[0].create_token);
+  expect(submissions[1].content).toBe(submissions[0].content);
   const sources = await page.evaluate(() => dataCollectionBackend.state.sources);
   expect(sources.filter(source => source.title === "Ambiguous committed source")).toHaveLength(1);
   const saved = sources.find(source => source.title === "Ambiguous committed source");
@@ -248,9 +249,11 @@ for (const bundled of [false, true]) test(`Knowledge partial acknowledgement can
   const panel = await openDataCollection(page, "knowledge", 1, bundled);
   await panel.evaluate(host => {
     const send = host.hass.callWS.bind(host.hass);
+    let first = true;
     host.hass.callWS = async request => {
       const result = await send(request);
-      if (request.section === "knowledge" && request.action === "create") {
+      if (first && request.section === "knowledge" && request.action === "create") {
+        first = false;
         await new Promise(resolve => {window.releasePartialSource = resolve;});
         delete result.source.updated_at;
       }
@@ -270,11 +273,15 @@ for (const bundled of [false, true]) test(`Knowledge partial acknowledgement can
     releasePartialSource();
   });
   await expect.poll(() => panel.evaluate(host => host._eocAgentMutations)).toBe(0);
-  // The next user action must not combine a known identity with no revision.
+  // The first action recovers the original receipt without publishing an update.
+  await expect(panel.locator("#knowledge-error")).toContainText("outcome is unknown");
   await panel.evaluate(host => host._saveKnowledge());
   expect(await page.evaluate(() => dataCollectionBackend.state.sources.find(source => source.title === "Partial source").content)).toBe("Concurrent committed content");
   expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "update").length)).toBe(0);
-  await expect(panel.locator("#knowledge-error")).toContainText("outcome is unknown");
+  await expect(panel.locator("#knowledge-content")).toHaveValue("Later draft");
+  await panel.evaluate(host => host._saveKnowledge());
+  await expect(panel.locator("#knowledge-error")).toContainText(/source changed in another tab/i);
+  expect(await page.evaluate(() => dataCollectionBackend.state.sources.find(source => source.title === "Partial source").content)).toBe("Concurrent committed content");
 });
 
 for (const bundled of [false, true]) test(`Knowledge reads retire with their authentication lifetime (${bundled ? "bundle" : "source"})`, async ({page}) => {

@@ -1,4 +1,6 @@
-from unittest.mock import AsyncMock
+from inspect import unwrap
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 import pytest
 from custom_components.extended_openai_conversation_responses import (
     management_ui,
@@ -9,7 +11,34 @@ from tests.test_management_ui import _entry_pair, _hass, _message, retained_rule
 from tests.test_knowledge import FakeStorage
 
 
-@pytest.mark.parametrize("fault", ["feature", "summary", "stats"])
+async def test_failed_websocket_reply_reports_saved_knowledge_and_allows_same_token_retry(
+    hass, management_agent, management_message
+):
+    message = management_message(
+        "knowledge", "create", title="Reference", content="Reference body", create_token="5" * 32,
+    )
+    connection = SimpleNamespace(
+        user=SimpleNamespace(id="admin", is_admin=True),
+        send_result=Mock(side_effect=TypeError("could not serialize")),
+        send_error=Mock(),
+    )
+    endpoint = unwrap(management_ui.websocket_management)
+    await endpoint(hass, connection, {"id": 1, **message})
+    assert connection.send_error.call_args.args[:2] == (1, "eoai_mutation_committed")
+    assert "was saved" in connection.send_error.call_args.args[2]
+    attempted = connection.send_result.call_args.args[1]["source"]["source_id"]
+
+    connection.send_result.side_effect = None
+    connection.send_error.reset_mock()
+    await endpoint(hass, connection, {"id": 2, **message})
+    connection.send_error.assert_not_called()
+    assert connection.send_result.call_args.args[1]["source"]["source_id"] == attempted
+    assert (await management_ui.async_management_command(
+        hass, "admin", True, management_message("knowledge", "list"),
+    ))["stats"]["knowledge_source_count"] == 1
+
+
+@pytest.mark.parametrize("fault", ["feature", "summary", "stats", "source"])
 async def test_committed_knowledge_identity_survives_enrichment_and_next_update(
     monkeypatch, fault
 ):
@@ -30,6 +59,8 @@ async def test_committed_knowledge_identity_survives_enrichment_and_next_update(
         monkeypatch.setattr(feature_status, "management_feature_status", fail)
     elif fault == "summary":
         monkeypatch.setattr(knowledge, "source_summary", fail)
+    elif fault == "source":
+        monkeypatch.setattr(management_ui, "knowledge_source_as_dict", fail)
     else:
         monkeypatch.setattr(library, "stats", fail)
     saved = await management_ui.async_management_command(
@@ -41,7 +72,9 @@ async def test_committed_knowledge_identity_survives_enrichment_and_next_update(
     source_id = saved["source"]["source_id"]
     fresh = knowledge.KnowledgeLibrary(storage)
     await fresh.async_initialize()
-    assert (await fresh.async_get(source_id)).title == "Original"
+    original = await fresh.async_get(source_id)
+    assert original.title == "Original"
+    assert saved["source"]["updated_at"] == original.updated_at
     updated = await management_ui.async_management_command(
         hass,
         "admin",

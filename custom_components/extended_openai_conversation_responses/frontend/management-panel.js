@@ -3,7 +3,7 @@ import {clearRequestRuleUncertainty, requestRuleUncertainty, requireRequestRuleA
 import {mutationEffects} from "./management-mutation-effects.js";
 import {clearVoiceMappingDraft} from "./voice-mapping-draft.js";
 import {observeCatalogGeneration} from "./model-catalog.js";
-import {scheduleWallTime} from "./schedule-time.js";
+import {guestIntervalWallTime, scheduleWallTime} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
 import {updateAuthenticationPresentation} from "./authentication-presentation.js";
 import {stopLiveStatus, pauseLiveStatus, resumeLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
@@ -1106,7 +1106,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         mutationTrace.wsResponseAt = requestTrace.responseAt;
         mutationTrace.wsDurationMs = requestTrace.durationMs;
       }
-      if (err?.mutationOutcome === "uncertain") requestTrace.status = "uncertain";
+      if (["uncertain", "committed"].includes(err?.mutationOutcome)) requestTrace.status = err.mutationOutcome;
       throw err;
     } finally {
       this._eocRequestDiagnostics ||= [];
@@ -2248,6 +2248,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._render();
   }
 
+  async _recoverSavedGuestSchedule(agentId, submission, intervalSubmission = null) {
+    try {
+      const result = await this._call("guest_mode", "get");
+      if (!result?.status || !configurationSubmissionIsCurrent(this, submission)) return;
+      if (intervalSubmission) getRouteFeature("capabilities/guest-mode")?.acknowledgeGuestInterval(this, intervalSubmission, result.status);
+      await this._refreshGuestModeMutation(agentId, result);
+    } catch {
+      // The existing saved notice remains accurate if a read is unavailable.
+    }
+  }
+
   _updateGuestMode(now = false) {
     return this._runGuestOperation(async () => {
       const root = this.shadowRoot;
@@ -2267,7 +2278,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const status = this._result?.status || {};
       const localTimes = {};
       const originalInstant = (field, value, original) => {
-        if (original && value === this._dateTimeLocal(original)) return original;
+        if (original && value === guestIntervalWallTime(status, field, value => this._dateTimeLocal(value))) return original;
+        if (status[`${field}_local`] === null) return `${value}Z`;
         localTimes[field] = value;
         return value;
       };
@@ -2293,7 +2305,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         }, result);
       } catch (err) {
         getRouteFeature("capabilities/guest-mode")?.retainUncertainGuestInterval(this, intervalSubmission, err);
-        if (configurationSubmissionIsCurrent(this, submission)) this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
+        if (!configurationSubmissionIsCurrent(this, submission)) return;
+        if (err?.mutationOutcome === "committed") {
+          this._toast(err.message, true);
+          await this._recoverSavedGuestSchedule(agentId, submission, intervalSubmission);
+        } else this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
       }
     });
   }
@@ -2310,7 +2326,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
         await presentAcknowledgedMutation(this, submission, "Guest Mode ended", () => this._refreshGuestModeMutation(agentId, result), result);
       } catch (err) {
-        if (configurationSubmissionIsCurrent(this, submission)) this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);
+        if (!configurationSubmissionIsCurrent(this, submission)) return;
+        if (err?.mutationOutcome === "committed") {
+          this._toast(err.message, true);
+          await this._recoverSavedGuestSchedule(agentId, submission);
+        } else this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);
       }
     });
   }
@@ -2498,6 +2518,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const root = this.shadowRoot;
     const dialog = root.querySelector("#knowledge-dialog");
     delete dialog.__eocUncertainMutation;
+    delete dialog.__eocKnowledgeCreate;
     const loadToken = (this._knowledgeLoadToken || 0) + 1;
     this._knowledgeLoadToken = loadToken;
     this._editingSource = null;
@@ -2661,9 +2682,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _saveKnowledge() {
     const button = this.shadowRoot.querySelector("#knowledge-save");
-    if (button.disabled || this.shadowRoot.querySelector("#knowledge-dialog").__eocUncertainMutation
+    const dialog = this.shadowRoot.querySelector("#knowledge-dialog");
+    if (button.disabled || dialog.__eocUncertainMutation
         || !["create", "edit"].includes(this._knowledgeMode)) return;
-    const values = this._knowledgeValues();
+    const editing = this._knowledgeMode === "edit";
+    const previousCreate = editing ? null : dialog.__eocKnowledgeCreate;
+    const retrying = previousCreate?.pending === true;
+    const values = retrying ? previousCreate.values : this._knowledgeValues();
     for (const [label, value, limit] of [
       ["Title", normalizedKnowledgeLine(values.title), KNOWLEDGE_TITLE_LIMIT],
       ["Description", normalizedKnowledgeLine(values.description), KNOWLEDGE_DESCRIPTION_LIMIT],
@@ -2674,10 +2699,19 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         return;
       }
     }
-    const editing = this._knowledgeMode === "edit";
+    // Keep an unacknowledged create bound to the exact original submission.
+    // Edits made while it was pending stay available for a later update.
+    let create = editing ? null : previousCreate;
+    if (!editing && (!create || !same(create.values, values))) {
+      const random = globalThis.crypto.getRandomValues(new Uint8Array(16));
+      create = {values, token:Array.from(random, byte => byte.toString(16).padStart(2, "0")).join("")};
+    }
+    if (create) {
+      create.pending = true;
+      dialog.__eocKnowledgeCreate = create;
+    }
     const owner = this._retainedMutationOwner();
     const submission = captureConfigurationOwner(this);
-    const dialog = this.shadowRoot.querySelector("#knowledge-dialog");
     const ownsOperation = beginOperation(this, "knowledge-editor");
     const ownsEditor = () => ownsOperation() && dialog.open
       && this.shadowRoot.querySelector("#knowledge-dialog") === dialog;
@@ -2685,26 +2719,36 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // A reconnect read can refresh the same editor's list without changing
       // its operation, dialog or owner. Its save still needs acknowledgement.
       && this._ownsRetainedMutation(owner, {allowRefresh:true});
-    let uncertain = false;
     this._setDialogError("knowledge", "");
     this._setSaving(button, true);
     try {
-      const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id, expected_revision: this._editingSource.updated_at } : {}), ...values });
+      const response = await this._call("knowledge", editing ? "update" : "create", {
+        ...(editing ? {source_id:this._editingSource.source_id, expected_revision:this._editingSource.updated_at} : {
+          create_token:create.token, ...(create.confirmDuplicate ? {confirm_duplicate:true} : {}),
+        }), ...values,
+      });
       if (!current()) {
         // Retired authentication cannot adopt this reply, but the original
         // draft must not become a fresh create when it is recovered later.
         if (ownsEditor()) requireMutationAcknowledgement(false, "reconciling the Knowledge save after its owner changed");
         return;
       }
+      if (create && response?.status === "duplicate") {
+        create.pending = false;
+        create.confirmDuplicate = true;
+        this._setDialogError("knowledge", "An identical Knowledge source already exists. Select Save again to create another copy.");
+        return;
+      }
       const ownsList = this._ownsRetainedMutation(owner);
       this._requireKnowledgeSource(response?.source, editing ? this._editingSource.source_id : null);
+      delete dialog.__eocKnowledgeCreate;
       // Retain the committed identity before touching the collection or DOM. A
       // failed patch/close must never turn the next save into another create.
       this._editingSource = response.source;
       this._knowledgeMode = "edit";
       setDialogBaseline(this, "knowledge-dialog", values);
       return await presentAcknowledgedMutation(this, submission, editing ? "Knowledge source updated" : "Knowledge source saved", async () => {
-        if (ownsList && !getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response)) throw new Error("The saved source could not be displayed.");
+        if (ownsList && !retrying && !getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response)) throw new Error("The saved source could not be displayed.");
         this._setSaving(button, false);
         const returnFocus = Boolean(dialog.contains?.(this.shadowRoot.activeElement));
         if (same(this._knowledgeValues(), values)) dialog.close();
@@ -2719,25 +2763,26 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         }
         // The editor owns its acknowledgement across a refresh, but only the
         // original visit owns collection data. A newer read must remain intact.
-        if (ownsList) writeSectionCache(this, this._sectionCacheKey(), this._result);
+        if (ownsList && !retrying) writeSectionCache(this, this._sectionCacheKey(), this._result);
         this._render();
         if (returnFocus && !dialog.open) getRouteFeature("data-memory/knowledge")?.restoreCollectionFocus(this.shadowRoot, `.source-edit-button[data-id="${CSS.escape(response.source.source_id)}"]`, "#add-source");
-        if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
+        if (retrying || !this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {
-      uncertain = err?.mutationOutcome === "uncertain";
-      // Retain safety evidence on its original editor even if authentication
-      // retired publication. It must accompany that same draft on recovery.
-      if (ownsEditor() && uncertain) dialog.__eocUncertainMutation = err;
+      const uncertain = err?.mutationOutcome === "uncertain";
+      const committed = err?.mutationOutcome === "committed";
+      if (create) create.pending = uncertain || committed;
+      else if (ownsEditor() && (uncertain || committed)) dialog.__eocUncertainMutation = err;
       if (current()) {
-        this._setDialogError("knowledge", `Unable to save source: ${err.message || String(err)}`);
+        const message = err.message || String(err);
+        this._setDialogError("knowledge", create?.pending
+          ? `${uncertain ? "The save outcome is unknown." : message} Select Save again to recover the original submission.`
+          : committed ? message : `Unable to save source: ${message}`);
       }
     } finally {
       if (ownsEditor()) {
         this._setSaving(button, false);
-        // This editor cannot identify a possibly committed create or certify an
-        // update's revision. Reopen against authoritative state before retrying.
-        if (uncertain) button.disabled = true;
+        if (dialog.__eocUncertainMutation) button.disabled = true;
       }
     }
   }
@@ -2830,8 +2875,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {
-      if (ownsEditor() && err?.mutationOutcome === "uncertain") dialog.__eocUncertainMutation = err;
-      if (current()) this._setDialogError("memory", `Unable to save memory: ${err.message || String(err)}`);
+      if (ownsEditor() && ["uncertain", "committed"].includes(err?.mutationOutcome)) dialog.__eocUncertainMutation = err;
+      if (current()) this._setDialogError("memory", err.mutationOutcome === "committed" ? err.message : `Unable to save memory: ${err.message || String(err)}`);
     } finally { if (ownsEditor()) { unlock(); this._setSaving(button, false); if (dialog.__eocUncertainMutation) button.disabled = true; const type = this.shadowRoot.querySelector("#memory-type"); if (this._editingMemory && type) type.disabled = true; } }
   }
 

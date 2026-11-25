@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from contextvars import copy_context
 from dataclasses import asdict, dataclass, replace
 from functools import partial
+from hashlib import sha256
 import json
 import logging
 import re
@@ -130,6 +131,11 @@ class KnowledgeSource:
     created_at: str
     updated_at: str
     enabled: bool = True
+    creation_fingerprint: str | None = None
+
+
+class DuplicateKnowledgeSource(ValueError):
+    """An independently submitted source matches an existing source."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -486,26 +492,63 @@ class KnowledgeLibrary:
             }
 
     async def async_create(
-        self, title: str, description: str, content: str, enabled: bool = True
+        self,
+        title: str,
+        description: str,
+        content: str,
+        enabled: bool = True,
+        *,
+        create_token: str | None = None,
+        confirm_duplicate: bool = False,
     ) -> KnowledgeSource:
-        """Create and persist a source."""
+        """Create a source or acknowledge the same submission again."""
         title, description, content = _validated_fields(title, description, content)
         enabled = _validated_enabled(enabled)
+        if not isinstance(confirm_duplicate, bool):
+            raise ValueError("confirm_duplicate must be a boolean")
+        fields = (title, description, content, enabled)
+        if create_token is not None:
+            if not isinstance(create_token, str) or not re.fullmatch(r"[0-9a-f]{32}", create_token):
+                raise ValueError("Invalid Knowledge create token")
+            source_id = sha256(f"knowledge/create/{create_token}".encode()).hexdigest()[:32]
+            fingerprint = sha256(json.dumps(fields).encode()).hexdigest()
+        else:
+            source_id = uuid4().hex
+            fingerprint = None
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
+            if (existing := self._sources.get(source_id)) is not None:
+                if fingerprint is None or existing.creation_fingerprint != fingerprint:
+                    raise ValueError("Knowledge create token belongs to a different submission")
+                # A receipt acknowledges the original create. Its revision
+                # must not authorize an edit over a later writer's changes.
+                return replace(
+                    existing,
+                    title=title,
+                    description=description,
+                    content=content,
+                    enabled=enabled,
+                    updated_at=existing.created_at,
+                )
+            if not confirm_duplicate and any(
+                (source.title, source.description, source.content, source.enabled) == fields
+                for source in self._sources.values()
+            ):
+                raise DuplicateKnowledgeSource("An identical Knowledge source already exists")
             if len(self._sources) >= MAX_SOURCES_PER_AGENT:
                 raise ValueError(
                     "knowledge source limit reached; delete a source before adding more"
                 )
             timestamp = dt_util.utcnow().isoformat()
             source = KnowledgeSource(
-                source_id=uuid4().hex,
+                source_id=source_id,
                 title=title,
                 description=description,
                 content=content,
                 created_at=timestamp,
                 updated_at=timestamp,
                 enabled=enabled,
+                creation_fingerprint=fingerprint,
             )
             # The worker owns all derived structures. Cancellation before it
             # returns cannot mutate or publish any part of the live index.
@@ -543,13 +586,11 @@ class KnowledgeLibrary:
             new_enabled = (
                 current.enabled if enabled is None else _validated_enabled(enabled)
             )
-            updated = KnowledgeSource(
-                source_id=current.source_id,
+            updated = replace(
+                current,
                 title=new_title,
                 description=new_description,
                 content=new_content,
-                created_at=current.created_at,
-                updated_at=current.updated_at,
                 enabled=new_enabled,
             )
             if updated == current:
@@ -839,7 +880,7 @@ class KnowledgeLibrary:
         """Return canonical Knowledge sources, excluding the derived index."""
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
-            return {"sources": [asdict(source) for source in self._sources.values()]}
+            return {"sources": [_stored_source_dict(source) for source in self._sources.values()]}
 
     @staticmethod
     def validate_backup_data(data: Any) -> list[KnowledgeSource]:
@@ -935,7 +976,7 @@ class KnowledgeLibrary:
         # builder. Never fall back to a synchronous complete-index rebuild.
         await _async_settle_transactional_save(
             self._storage.async_save(
-                {"sources": [asdict(source) for source in self._sources.values()]}
+                {"sources": [_stored_source_dict(source) for source in self._sources.values()]}
             ),
             self._invalidate_after_unreadable_store,
             self._remember_committed_state,
@@ -1023,7 +1064,22 @@ async def async_get_knowledge(
 
 def knowledge_source_as_dict(source: KnowledgeSource) -> dict[str, Any]:
     """Serialize a complete source."""
-    return asdict(source)
+    return {
+        "source_id": source.source_id,
+        "title": source.title,
+        "description": source.description,
+        "content": source.content,
+        "created_at": source.created_at,
+        "updated_at": source.updated_at,
+        "enabled": source.enabled,
+    }
+
+
+def _stored_source_dict(source: KnowledgeSource) -> dict[str, Any]:
+    result = asdict(source)
+    if source.creation_fingerprint is None:
+        del result["creation_fingerprint"]
+    return result
 
 
 def source_summary(source: KnowledgeSource) -> dict[str, Any]:
@@ -1178,6 +1234,11 @@ def _source_from_stored(raw: Any) -> KnowledgeSource:
     enabled = raw.get("enabled", True)
     if not isinstance(enabled, bool):
         raise ValueError("enabled must be a boolean")
+    fingerprint = raw.get("creation_fingerprint")
+    if fingerprint is not None and (
+        not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)
+    ):
+        raise ValueError("Knowledge creation fingerprint is invalid")
     source = KnowledgeSource(
         source_id=raw["source_id"],
         title=raw["title"],
@@ -1186,6 +1247,7 @@ def _source_from_stored(raw: Any) -> KnowledgeSource:
         created_at=raw["created_at"],
         updated_at=raw["updated_at"],
         enabled=enabled,
+        creation_fingerprint=fingerprint,
     )
     if not all(
         isinstance(value, str)
