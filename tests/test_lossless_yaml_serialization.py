@@ -146,6 +146,30 @@ def test_small_yaml_expansion_budget_is_enforced_before_construction(monkeypatch
         )
 
 
+def test_yaml_alias_height_is_checked_at_each_reference():
+    with pytest.raises(SerializedDocumentLimit, match="nesting limit"):
+        load_unicode_yaml(
+            "base: &base [first, [second, third]]\nuse: [[[*base]]]",
+            limits=YamlLimits(max_depth=6),
+        )
+
+
+def test_yaml_rejects_over_budget_scalars_with_their_specific_limits():
+    with pytest.raises(SerializedDocumentLimit, match="numeric scalar"):
+        load_unicode_yaml("amount: !!int " + "7" * 16_385)
+    with pytest.raises(SerializedDocumentLimit, match="scalar exceeds the expansion"):
+        load_unicode_yaml(
+            "label: " + "a" * 20, limits=YamlLimits(max_expanded_chars=12)
+        )
+
+
+def test_yaml_preserves_aliases_but_rejects_invalid_merge_sources():
+    with pytest.raises(InvalidSerializedDocument, match="Recursive YAML merges"):
+        load_yaml_or_json("recursive: &recursive {<<: *recursive}")
+    with pytest.raises(InvalidSerializedDocument, match="merge requires a mapping"):
+        load_authored_config("invalid: {<<: [text]}")
+
+
 def test_json_fast_path_checks_source_size_depth_and_nodes(monkeypatch):
     monkeypatch.setattr(
         yaml_serialization,

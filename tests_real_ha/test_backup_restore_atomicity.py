@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from dataclasses import replace
+from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -112,6 +115,138 @@ def _conversation_subentry(entry: MockConfigEntry):
         for subentry in entry.subentries.values()
         if subentry.subentry_type == "conversation"
     )
+
+
+@pytest.mark.parametrize(
+    "interruption", ["apply", "commit", "damaged metadata", "uncertain journal"]
+)
+async def test_disk_backed_archive_restores_verified_generation(
+    hass, real_store_io, monkeypatch, interruption
+):
+    """Exercise streamed journal and partition I/O with real Store read-back."""
+    from custom_components.extended_openai_conversation_responses import (
+        conversation_archive as archives,
+        restore_disk,
+        restore_recovery,
+        transfer,
+    )
+    from homeassistant.util import dt as dt_util
+    from tests.test_conversation_archive import _session, _turn
+
+    monkeypatch.setattr(restore_disk, "ARCHIVE_DISK_THRESHOLD", 1)
+    monkeypatch.setattr(restore_recovery, "_STREAM_JOURNAL_BYTES", 1)
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    owner = entry.entry_id, subentry.subentry_id
+    archive = await archives.async_get_archive(hass, *owner)
+    storage = archive._storage
+    now = dt_util.utcnow()
+    earlier = (now.replace(day=1) - timedelta(days=1)).isoformat()
+
+    async def seed(label, stamps):
+        session = replace(
+            _session(label, scope_id="shared:household", turn_count=len(stamps)),
+            agent_subentry_id=subentry.subentry_id,
+            scope_type="shared",
+            scope_source="shared_household",
+            started_at=stamps[0],
+            last_message_at=stamps[-1],
+        )
+        turns = [
+            _turn(label, turn_id=f"{label}-{index}", timestamp=stamp, user_text=label)
+            for index, stamp in enumerate(stamps)
+        ]
+        await archive.async_replace_backup([session], turns)
+
+    await seed("target", [earlier, now.isoformat()])
+    document = backup.finalize_backup_snapshot(
+        await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    )["document"]
+    await seed("previous", [now.isoformat()])
+    journal = restore_recovery._journal_store(hass, *owner)
+    earlier_partition = Path(storage._partition_store(earlier[:7]).path)
+    base_writer = archives.write_verified_store
+    journal_writer = restore_recovery.write_verified_store
+    attempted = False
+
+    def fail_after_first_partition(store, payload, **kwargs):
+        nonlocal attempted
+        base_writer(store, payload, **kwargs)
+        if Path(store.path) == earlier_partition and not attempted:
+            attempted = True
+            raise OSError("Partition acknowledgement lost")
+
+    async def fail_configuration(*args, **kwargs):
+        raise OSError("Configuration acknowledgement lost")
+
+    def fail_journal_verification(store, payload, **kwargs):
+        journal_writer(store, payload, **kwargs)
+        raise OSError("Journal acknowledgement lost")
+
+    with monkeypatch.context() as fault:
+        if interruption == "apply":
+            fault.setattr(archives, "write_verified_store", fail_after_first_partition)
+            message = "previous agent state was recovered"
+        elif interruption == "uncertain journal":
+            fault.setattr(restore_recovery, "write_verified_store", fail_journal_verification)
+            message = "could not be durably verified"
+        else:
+            fault.setattr(restore_recovery, "_update_configuration", fail_configuration)
+            message = "completion is pending"
+        with pytest.raises(backup.BackupError, match=message):
+            await transfer.async_restore_transfer(
+                hass, entry, subentry, document,
+                sections=[transfer.SECTION_CONVERSATION_ARCHIVE],
+                confirm_retention=True,
+            )
+
+    if interruption == "apply":
+        assert attempted
+        assert not earlier_partition.exists()
+        expected = ["previous-0"]
+    else:
+        committed = interruption != "uncertain journal"
+        assert (await journal.async_load())["phase"] == (
+            "committed" if committed else "applying"
+        )
+        if interruption == "damaged metadata":
+            await hass.async_add_executor_job(
+                Path(storage._metadata.path).write_bytes, b"{incomplete"
+            )
+        hass.data[archives._ARCHIVE_MANAGERS].pop(owner)
+        assert await restore_recovery.async_recover_pending_restore(hass, entry, subentry)
+        assert earlier_partition.exists() == committed
+        expected = ["target-0", "target-1"] if committed else ["previous-0"]
+
+    assert await journal.async_load() is None
+    archive = await archives.async_get_archive(hass, *owner)
+    assert [row["turn_id"] for row in (await archive.async_backup_data())["turns"]] == expected
+
+
+async def test_streamed_archive_partition_guards_precede_disk_writes(hass, real_store_io):
+    from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+        get_agent_maintenance_gate,
+    )
+    from custom_components.extended_openai_conversation_responses.conversation_archive import (
+        HomeAssistantArchiveStorage,
+    )
+    from tests.test_conversation_archive import _turn
+
+    identity = ("archive-guard-provider", "archive-guard-assistant")
+    storage = HomeAssistantArchiveStorage(hass, *identity)
+    gate = get_agent_maintenance_gate(hass, *identity)
+    turn = _turn(sequence=2**64)
+    path = Path(storage._partition_store(turn.timestamp[:7]).path)
+    with pytest.raises(RuntimeError, match="exclusive maintenance"):
+        await storage.async_write_restore_partitions({}, set())
+    async with gate.exclusive():
+        with pytest.raises(ValueError, match="sequence exceeds the storage limit"):
+            await storage.async_write_restore_partitions({turn.session_id: [turn]}, set())
+        storage._metadata.make_read_only()
+        with pytest.raises(OSError, match="metadata is unavailable for restore writes"):
+            await storage.async_write_restore_partitions({}, set())
+    assert not path.exists()
 
 
 @pytest.mark.asyncio

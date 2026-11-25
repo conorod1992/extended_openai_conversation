@@ -1,4 +1,4 @@
-"""Pending/corrupt restore evidence must quarantine only its owning assistant."""
+"""Restore recovery quarantines the affected assistant or provider."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from custom_components.extended_openai_conversation_responses.management_ui impo
 from custom_components.extended_openai_conversation_responses.memory import (
     async_get_memory,
 )
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
 from tests_real_ha.test_cross_feature_acceptance import _say, _speech
 from tests_real_ha.test_provider_wire_e2e import _agent, _chat_sse_text, _install_wire
@@ -199,21 +200,21 @@ async def test_bad_journal_is_preserved_and_other_assistant_remains_usable(
     valid_bytes = path.read_bytes()
     if fault == "structure":
         envelope = json.loads(valid_bytes)
-        envelope["data"] = {"phase": "applying"}
+        envelope["data"]["phase"] = "damaged"
         path.write_text(json.dumps(envelope))
     elif fault == "truncated":
         path.write_bytes(valid_bytes[: len(valid_bytes) // 2])
     elif fault == "corrupt":
         path.write_bytes(b"{not JSON or a recoverable generation}")
     evidence = path.read_bytes()
-    read_text, replace = Path.read_text, atomicwrites.replace_atomic
+    open_file, replace = Path.open, atomicwrites.replace_atomic
     observed_faults = []
 
     def fail_read(current, *args, **kwargs):
         if current == path:
             observed_faults.append("read")
             raise PermissionError(errno.EACCES, "journal cannot be read")
-        return read_text(current, *args, **kwargs)
+        return open_file(current, *args, **kwargs)
 
     def fail_destination(source, destination):
         if Path(destination) == Path(memory._storage._store.path):
@@ -223,11 +224,10 @@ async def test_bad_journal_is_preserved_and_other_assistant_remains_usable(
 
     with monkeypatch.context() as problem:
         if fault == "unreadable":
-            problem.setattr(Path, "read_text", fail_read)
+            problem.setattr(Path, "open", fail_read)
         if fault == "destination":
             problem.setattr(atomicwrites, "replace_atomic", fail_destination)
-        # Startup recovery catches only the affected assistant's failure and keeps
-        # its journal, rather than aborting integration setup for every assistant.
+        # Startup preserves the failed journal and isolates the separate provider.
         await restore_recovery.async_recover_pending_restores(hass)
         assert get_agent_maintenance_gate(
             hass, entry.entry_id, subentry.subentry_id
@@ -235,7 +235,8 @@ async def test_bad_journal_is_preserved_and_other_assistant_remains_usable(
         assert not get_agent_maintenance_gate(
             hass, sibling.entry.entry_id, sibling.subentry.subentry_id
         ).recovery_required
-        assert path.read_bytes() == evidence
+        with open_file(path, "rb") as preserved:
+            assert preserved.read() == evidence
         assert not list(path.parent.glob(path.name + ".corrupt*"))
         if fault in {"unreadable", "destination"}:
             assert observed_faults
@@ -248,8 +249,12 @@ async def test_bad_journal_is_preserved_and_other_assistant_remains_usable(
             == "SIBLING HEALTHY"
         )
         assert len(sibling_wire.requests) == 1
-        assert await hass.config_entries.async_reload(entry.entry_id)
+        known_scope = fault in {"structure", "destination"}
+        assert await hass.config_entries.async_reload(entry.entry_id) is known_scope
         await hass.async_block_till_done()
+        assert entry.state is (
+            ConfigEntryState.LOADED if known_scope else ConfigEntryState.SETUP_RETRY
+        )
         # No affected conversation entity may initialize against the mixed state.
         from homeassistant.components import conversation
 
