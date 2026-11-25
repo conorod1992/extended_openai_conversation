@@ -54,6 +54,14 @@ assert.equal(diagnostics.average_tokens_per_run, 400);
 assert.equal(summarizeUsageDiagnostics([{run_count: 2}]).average_tokens_per_run, null);
 assert.equal(diagnostics.average_duration_ms, 3000);
 assert.deepEqual(diagnostics.provider_breakdown, {OpenAI:1800});
+for (const field of ["model_breakdown", "provider_breakdown", "api_mode_breakdown"]) {
+  const breakdown = summarizeUsageDiagnostics([
+    {[field]:JSON.parse('{"constructor":120,"toString":60,"__proto__":20,"normal":100}')},
+    {[field]:JSON.parse('{"constructor":30,"toString":10,"__proto__":12,"normal":40}')},
+  ])[field];
+  assert.deepEqual(breakdown, JSON.parse('{"constructor":150,"toString":70,"__proto__":32,"normal":140}'));
+  assert.deepEqual(sortedUsageBreakdown(breakdown).map(({name}) => name), ["constructor", "normal", "toString", "__proto__"]);
+}
 assert.deepEqual(sortedUsageBreakdown({beta:20,alpha:20,gamma:40}), [
   {name:"gamma",tokens:40},{name:"alpha",tokens:20},{name:"beta",tokens:20},
 ]);

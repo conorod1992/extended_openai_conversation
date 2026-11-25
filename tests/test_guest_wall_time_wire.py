@@ -9,11 +9,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from tests.test_guest_mode import _manager
-
 from custom_components.extended_openai_conversation_responses.management_datetime import (
+    project_management_dates,
     resolve_management_dates,
 )
+from tests.test_guest_mode import _manager
 
 
 @pytest.mark.parametrize("browser_zone", ["UTC", "Pacific/Auckland"])
@@ -67,6 +67,61 @@ def test_guest_wall_times_survive_panel_wire_normalization(
     assert by_case["legacy-naive"]["active_from"] == expected_legacy.isoformat(
         timespec="milliseconds"
     ).replace("+00:00", "Z")
+
+
+@pytest.mark.parametrize("implementation", ["source", "bundle"])
+async def test_restored_offset_expiry_uses_utc_for_display_and_edits(
+    hass, implementation
+):
+    hass.config.time_zone = "Asia/Tokyo"
+    manager = _manager(hass)
+    original = "9999-12-31T23:59:59.123456+01:00"
+    schedule = manager.validate_backup_data(
+        {
+            "schedule": {
+                "active_from": "2027-06-04T12:00:00+00:00",
+                "active_until": original,
+                "source": "home_assistant",
+                "updated_at": None,
+            }
+        }
+    )
+    await manager.async_replace_backup(schedule)
+    status = project_management_dates(hass, "guest_mode", {"status": manager.status()})[
+        "status"
+    ]
+    assert status["active_until"] == original
+    assert status["active_until_local"] is None
+    assert status["active_until_utc"] == "9999-12-31T22:59:59"
+    result = subprocess.check_output(
+        [
+            "node",
+            str(Path(__file__).with_name("guest-wall-time-wire.mjs")),
+            hass.config.time_zone,
+            implementation,
+            "2027-06-01T12:00:00Z",
+            json.dumps(status),
+        ],
+        env={**os.environ, "TZ": "Pacific/Auckland"},
+        text=True,
+    )
+    unchanged, edited = json.loads(result)
+    for case in (unchanged, edited):
+        assert case["displayed"]["end"] == "9999-12-31T22:59"
+        assert "Ends 9999-12-31 22:59:59 UTC" in case["displayed"]["summary"]
+        assert case["message"]["local_times"] == {}
+    assert unchanged["message"]["active_until"] == original
+    edited_message = resolve_management_dates(hass, edited["message"])
+    assert edited_message["active_until"] == "9999-12-31T22:58Z"
+    saved = await manager.async_update_trusted(
+        active_from=edited_message["active_from"],
+        active_until=edited_message["active_until"],
+        indefinite=False,
+        now=datetime(2027, 6, 1, tzinfo=UTC),
+    )
+    assert datetime.fromisoformat(saved["active_until"]) < datetime.fromisoformat(
+        original
+    )
 
 
 @pytest.mark.parametrize("implementation", ["source", "bundle"])

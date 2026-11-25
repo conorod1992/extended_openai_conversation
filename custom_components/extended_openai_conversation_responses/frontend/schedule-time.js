@@ -10,9 +10,16 @@ export function scheduleWallTime(value, timeZone = "UTC") {
 
 // A null projection means HA could represent the instant only in UTC.
 export function guestIntervalWallTime(status, field, format) {
-  const instant = status[field];
-  if (status[`${field}_local`] === null) return instant?.slice(0, 16) || "";
-  return status[`${field}_local`] || format(instant);
+  if (status[`${field}_local`] === null) return guestIntervalUtc(status, field).slice(0, 16);
+  return status[`${field}_local`] || format(status[field]);
+}
+
+export function guestIntervalUtc(status, field) {
+  const projected = status[`${field}_utc`];
+  if (projected !== undefined) return projected || "";
+  const value = status[field];
+  const millis = Date.parse(value);
+  return Number.isFinite(millis) ? new Date(millis).toISOString().slice(0, 19) : "";
 }
 
 export function scheduleInstant(value, timeZone = "UTC", original) {

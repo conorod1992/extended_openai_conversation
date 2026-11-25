@@ -4,7 +4,7 @@ import {captureConfigurationDraftOwner, configurationSubmissionIsCurrent} from "
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
 import {reviewRecoveredScope, scopeNeedsRecoveryReview} from "./management-state-safety.js";
-import {guestIntervalWallTime} from "./schedule-time.js";
+import {guestIntervalUtc, guestIntervalWallTime} from "./schedule-time.js";
 
 const GUEST_VIEW = "capabilities/guest-mode";
 const intervalLabel = (label, local) => local === null ? `${label} (UTC)` : label;
@@ -24,6 +24,7 @@ function adoptIntervalTimestamps(state, status, saved) {
     if (state.values[key] === saved[key] && (key !== "end" || !status.indefinite)) {
       displayed[field] = status[field];
       displayed[`${field}_local`] = status[`${field}_local`];
+      displayed[`${field}_utc`] = status[`${field}_utc`];
     }
   }
   state.timestampStatus = displayed;
@@ -225,9 +226,13 @@ export function bindGuestInterval(panel) {
 }
 
 function intervalSummary(panel, status, state) {
-  const date = key => status[`${key}_local`] === null
-    ? `${status[key].slice(0, 19).replace("T", " ")} UTC`
-    : status[`${key}_local`]?.replace("T", " ") || panel._formatDate(status[key]);
+  const date = key => {
+    if (status[`${key}_local`] === null) {
+      const utc = guestIntervalUtc(status, key);
+      return utc ? `${utc.replace("T", " ")} UTC` : status[key];
+    }
+    return status[`${key}_local`]?.replace("T", " ") || panel._formatDate(status[key]);
+  };
   const interval = status.active_from ? "Starts " + date("active_from")
     + (status.active_until ? " · Ends " + date("active_until") : " · No expiry") : "No interval configured";
   return panel._titleCase(state) + " · " + interval;

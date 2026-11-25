@@ -18,7 +18,10 @@ if (process.argv[3] === "bundle") {
   if (!bundlePanel) throw new Error("Production management panel did not register");
 }
 const results=[];
-for (const scenario of ["schedule","now-finite","edit-start","edit-end","unchanged","now-indefinite","legacy","legacy-naive"]) {
+const restored = process.argv[5] ? JSON.parse(process.argv[5]) : null;
+const scenarios = restored ? ["restored-unchanged", "restored-edited"]
+  : ["schedule","now-finite","edit-start","edit-end","unchanged","now-indefinite","legacy","legacy-naive"];
+for (const scenario of scenarios) {
   const document = globalThis.document;
   delete globalThis.document;
   const {create}=fixture(), panel=create();
@@ -31,20 +34,29 @@ for (const scenario of ["schedule","now-finite","edit-start","edit-end","unchang
     await panel._loadSection();
     if (panel._error) throw new Error(panel._error);
   } else await routeAssetPromise("capabilities/guest-mode",panel);
-  const status=scenario.startsWith("edit") || scenario==="unchanged" ? {
+  const status=restored || (scenario.startsWith("edit") || scenario==="unchanged" ? {
     active_from:"2027-06-04T12:00:00+00:00", active_until:"2027-06-04T13:00:00+00:00",
     active_from_local:panel._hass.config.time_zone === "America/New_York" ? "2027-06-04T08:00" : "2027-06-04T12:00",
     active_until_local:panel._hass.config.time_zone === "America/New_York" ? "2027-06-04T09:00" : "2027-06-04T13:00",
-  } : {};
+  } : {});
   panel._result={status};
+  const view = restored && panel._guestPolicyView(status, {}, status.state);
+  const displayed = view && {
+    end:panel._guestIntervalDraft.values.end,
+    summary:view.match(/data-guest-live-status>([^<]*)/)[1],
+  };
   const controls=new Map([
     ["#guest-start",{value:scenario==="edit-start" ? status.active_from_local.replace(":00", ":15") : status.active_from_local || "2027-06-04T12:00"}],
     ["#guest-end",{value:scenario==="edit-end" ? status.active_until_local.replace(":00", ":15") : status.active_until_local || "2027-06-04T13:00",checkValidity:()=>true}],
     ["#guest-indefinite",{checked:scenario==="now-indefinite"}],
   ]);
+  if (restored) {
+    controls.get("#guest-start").value = panel._guestIntervalDraft.values.start;
+    controls.get("#guest-end").value = scenario === "restored-edited" ? "9999-12-31T22:58" : displayed.end;
+  }
   panel.shadowRoot.querySelector=key=>controls.get(key)||null;
   panel._refreshGuestModeMutation=async()=>{};
-  panel._hass.callWS=async message=> {results.push({scenario,message}); return {status:{state:"scheduled"}};};
+  panel._hass.callWS=async message=> {results.push({scenario,message,...(displayed ? {displayed} : {})}); return {status:{state:"scheduled"}};};
   if(scenario.startsWith("legacy")) await panel._callCore("guest_mode","update",{active_from:scenario==="legacy" ? "2027-06-04T12:00:00+02:00" : "2027-06-04T12:00",indefinite:true});
   else await panel._updateGuestMode(scenario.startsWith("now-"));
   retire(panel);
