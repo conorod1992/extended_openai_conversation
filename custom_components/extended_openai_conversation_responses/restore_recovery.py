@@ -1635,7 +1635,7 @@ async def _async_recover_pending_restore(
         raw = await _async_read_restore_journal(hass, entry_id, subentry_id, store)
         if isinstance(store, _RestoreJournalStore):
             try:
-                await hass.async_add_executor_job(
+                await store.hass.async_add_executor_job(
                     remove_restore_staging, Path(store.path)
                 )
             except OSError as err:

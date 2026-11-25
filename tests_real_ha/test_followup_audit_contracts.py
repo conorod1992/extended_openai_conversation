@@ -655,10 +655,13 @@ async def test_cold_multi_agent_websocket_get_reuses_worker_yaml(
     hass, hass_ws_client, monkeypatch
 ):
     import threading
+
     import yaml
+
     from custom_components.extended_openai_conversation_responses import (
         management_function_repair as repair,
         management_ui as ui,
+        yaml_serialization,
     )
     from tests_real_ha.test_management_backend_acceptance import (
         _admin_client,
@@ -697,21 +700,23 @@ async def test_cold_multi_agent_websocket_get_reuses_worker_yaml(
     from custom_components.extended_openai_conversation_responses import agent_config
 
     agent_config._decoded_function_tools.cache_clear()
+    agent_config._last_large_function_document.cache_clear()
     raw = agent.subentry.data[CONF_FUNCTION_TOOLS]
     main_thread = threading.get_ident()
     decode_threads, validation_threads = [], []
-    original_load, original_snapshot = yaml.safe_load, repair.agent_config_snapshot
+    original_load = yaml_serialization._load_yaml_or_json
+    original_snapshot = repair.agent_config_snapshot
 
-    def load(value):
+    def load(value, **kwargs):
         if value == raw:
             decode_threads.append(threading.get_ident())
-        return original_load(value)
+        return original_load(value, **kwargs)
 
     def snapshot(*args, **kwargs):
         validation_threads.append(threading.get_ident())
         return original_snapshot(*args, **kwargs)
 
-    monkeypatch.setattr(yaml, "safe_load", load)
+    monkeypatch.setattr(yaml_serialization, "_load_yaml_or_json", load)
     monkeypatch.setattr(repair, "agent_config_snapshot", snapshot)
     result = await _management_call(
         client, entry=agent.entry, section="configuration", action="get"
@@ -1176,10 +1181,13 @@ async def test_registered_toggles_preserve_group_only_quarantine(hass, kind, ena
 
 async def test_cold_runtime_and_migration_yaml_are_off_loop(hass, monkeypatch):
     import threading
+
     import yaml
+
     from custom_components.extended_openai_conversation_responses import (
         agent_config,
         async_migrate_integration,
+        yaml_serialization,
     )
     from custom_components.extended_openai_conversation_responses.management_function_repair import (
         async_prewarm_persisted_config_projection,
@@ -1209,14 +1217,14 @@ async def test_cold_runtime_and_migration_yaml_are_off_loop(hass, monkeypatch):
         )
     raw = yaml.safe_dump(tools)
     main, threads = threading.get_ident(), []
-    original = yaml.safe_load
+    original = yaml_serialization._load_yaml_or_json
 
-    def decode(value):
+    def decode(value, **kwargs):
         if value == raw:
             threads.append(threading.get_ident())
-        return original(value)
+        return original(value, **kwargs)
 
-    monkeypatch.setattr(yaml, "safe_load", decode)
+    monkeypatch.setattr(yaml_serialization, "_load_yaml_or_json", decode)
     agent_config._cached_configured_tools.cache_clear()
     agent_config._decoded_function_tools.cache_clear()
     agent = await _agent(hass, functions=raw, max_function_calls_per_conversation=0)
