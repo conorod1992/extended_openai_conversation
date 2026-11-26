@@ -230,6 +230,21 @@ def test_effective_loader_requires_at_least_one_selected_installed_skill() -> No
     assert skill_loader_status(["calendar"], [loader], []).available
     loader["spec"]["parameters"]["properties"]["file"]["pattern"] = "^README"
     assert not skill_loader_status(["calendar"], [loader], []).available
+    loader = _loader()
+    parameters = loader["spec"]["parameters"]
+    pattern = (
+        "^(?:calendar|" + "|".join(f"installed-skill-{i}" for i in range(65)) + ")$"
+    )
+    assert len(pattern) > 1024
+    parameters["properties"]["name"]["pattern"] = pattern
+    assert skill_loader_status(["calendar"], [loader], []).available
+    assert not skill_loader_status(["weather"], [loader], []).available
+    parameters.update({"additionalProperties": False, "minProperties": 3})
+    assert skill_loader_status(["calendar"], [loader], []).available
+    parameters["properties"].pop("offset")
+    assert not skill_loader_status(["calendar"], [loader], []).available
+    parameters["additionalProperties"] = True
+    assert skill_loader_status(["calendar"], [loader], []).available
 
 
 def test_effective_loader_accounts_for_runtime_and_group_loader_support() -> None:

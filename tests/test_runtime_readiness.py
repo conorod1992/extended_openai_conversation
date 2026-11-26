@@ -718,25 +718,32 @@ async def test_group_loader_counts_but_unloaded_members_do_not(
     assert len(sent["tools"]) == min(128, extra + 2 + int(enabled))
 
 
-@pytest.mark.parametrize("allowed_name", ["weather", "calendar"])
+@pytest.mark.parametrize("loader_case", ["weather", "calendar", "closed-object"])
 async def test_prompt_save_counts_only_loadable_installed_skills(
-    hass, management_agent, rules, monkeypatch, allowed_name
+    hass, management_agent, rules, monkeypatch, loader_case
 ):
-    from custom_components.extended_openai_conversation_responses.skills import SkillManager
+    from custom_components.extended_openai_conversation_responses.skills import (
+        SkillManager,
+    )
     from tests.test_skill_availability import _loader
 
     entry, subentry = management_agent
     entry.data = {"api_provider": "azure"}
     options = _options(127, azure_model="gpt-4o")
     loader = _loader()
-    loader["spec"]["parameters"]["properties"]["name"]["enum"] = [allowed_name]
+    parameters = loader["spec"]["parameters"]
+    if loader_case == "closed-object":
+        parameters["properties"].pop("offset")
+        parameters.update({"additionalProperties": False, "minProperties": 3})
+    else:
+        parameters["properties"]["name"]["enum"] = [loader_case]
     options["functions"] = [*yaml.safe_load(options["functions"]), loader]
     options["skills"] = ["calendar"]
     subentry.data = options
     manager = SimpleNamespace(get_all_skills=lambda: [SimpleNamespace(name="calendar")])
     monkeypatch.setattr(SkillManager, "get_loaded_instance", lambda: manager)
     saved = await _save(hass, entry, subentry, {"prompt": "Updated instructions"})
-    if allowed_name == "calendar":
+    if loader_case == "calendar":
         assert not saved["valid"]
         assert "128-tool limit" in str(saved["errors"])
     else:

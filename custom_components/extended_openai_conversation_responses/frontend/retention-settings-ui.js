@@ -20,12 +20,12 @@ export function usageRetentionDeletionNotice(shortened) {
 }
 
 function selectMarkup(panel, key, label) {
-  const value = String(panel._draft?.[key] ?? panel._result?.config?.[key]);
+  const value = panel._draft?.[key] ?? panel._result?.config?.[key];
   const choices = panel._result?.options?.[key] || [];
-  const suspended = !choices.some(item => String(item?.value ?? item) === value);
+  const suspended = !choices.some(item => (item?.value ?? item) === value);
   const options = choices.map(item => {
-    const option = String(item?.value ?? item);
-    return `<option value="${panel._e(option)}" ${option === value ? "selected" : ""}>${panel._e(item?.label ?? option)}</option>`;
+    const option = item?.value ?? item;
+    return `<option value="${panel._e(String(option))}" ${option === value ? "selected" : ""}>${panel._e(item?.label ?? String(option))}</option>`;
   });
   return `<div class="setting" data-field="${key}" data-setting data-search="${panel._e(`${label} usage history retention details ${key}`.toLowerCase())}">
     <label for="config-${key}">${panel._e(label)}</label>
@@ -79,7 +79,7 @@ export function bindRetentionSettings(panel) {
   root.querySelectorAll("[data-retention-config]").forEach((control) => {
     control.addEventListener("change", () => {
       const key = control.dataset.retentionConfig;
-      if (!key || !panel._draft) return;
+      if (!key || !panel._draft || control.value === "") return;
       panel._draft[key] = Number(control.value);
       applyTargetedConfigDirty(panel, [key], control, false);
       refreshSaveBar(panel);

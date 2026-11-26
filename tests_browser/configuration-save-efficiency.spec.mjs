@@ -71,7 +71,7 @@ test("Suspended Usage retention keeps Disabled an explicit choice", async ({page
       const result = await call(message);
       if (message.section === "configuration" && message.action === "retention_get") {
         return {...result, config:{...result.config,
-          usage_request_retention_days:false, usage_run_retention_days:"15.0",
+          usage_request_retention_days:[0], usage_run_retention_days:{toString:null},
         }};
       }
       return result;
@@ -82,6 +82,7 @@ test("Suspended Usage retention keeps Disabled an explicit choice", async ({page
   const run = panel.locator("#config-usage_run_retention_days");
   await expect(request.locator("option:checked")).toHaveText(/Suspended/);
   await expect(run.locator("option:checked")).toHaveText(/Suspended/);
+  await request.dispatchEvent("change");
   await expect(panel.locator("#save-config")).toHaveCount(0);
   await request.selectOption("0");
   await panel.locator("#save-config").click();

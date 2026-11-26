@@ -6,6 +6,7 @@ import asyncio
 from contextvars import ContextVar
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
+import errno
 import hashlib
 import json
 from pathlib import Path
@@ -13,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import atomicwrites
 import pytest
 
 from custom_components.extended_openai_conversation_responses.agent_maintenance import (
@@ -361,15 +363,18 @@ async def test_due_call_uses_current_tool_and_current_exposure(
     record = _record()
     manager._records = {record.call_id: record}
     persisted = {"calls": [record.as_dict()]}
+    claim_writes = 0
+    acknowledged_claim = False
+    dispatch_acknowledgements = []
 
     async def save(payload):
+        nonlocal claim_writes, acknowledged_claim
         persisted.update(payload)
-        if (
-            lost_claim_ack
-            and payload["calls"]
-            and payload["calls"][0]["status"] == _EXECUTING
-        ):
-            raise OSError("claim acknowledgement failed after replace")
+        if payload["calls"] and payload["calls"][0]["status"] == _EXECUTING:
+            claim_writes += 1
+            if lost_claim_ack and claim_writes == 1:
+                raise OSError("claim acknowledgement failed after replace")
+            acknowledged_claim = True
 
     manager._store = SimpleNamespace(
         async_save=AsyncMock(side_effect=save),
@@ -397,7 +402,11 @@ async def test_due_call_uses_current_tool_and_current_exposure(
         lambda _hass: [{"entity_id": "light.current"}],
     )
 
-    agent = SimpleNamespace(_execute_function_tool=AsyncMock(return_value=object()))
+    async def execute(*_args):
+        dispatch_acknowledgements.append(acknowledged_claim)
+        return object()
+
+    agent = SimpleNamespace(_execute_function_tool=AsyncMock(side_effect=execute))
     monkeypatch.setattr(manager, "_resolve_agent", lambda *_args: agent)
 
     retry = await manager._async_execute_due(record.call_id)
@@ -407,6 +416,7 @@ async def test_due_call_uses_current_tool_and_current_exposure(
     assert persisted["calls"] == []
     assert await manager._async_execute_due(record.call_id) is False
     agent._execute_function_tool.assert_awaited_once()
+    assert dispatch_acknowledgements == [True]
     called_tool, tool_input, context, exposed = (
         agent._execute_function_tool.await_args.args
     )
@@ -417,7 +427,65 @@ async def test_due_call_uses_current_tool_and_current_exposure(
     assert context.device_id == "device-1"
     assert getattr(context, _DELAYED_EXECUTION_MARKER) is True
     assert exposed == [{"entity_id": "light.current"}]
-    assert manager._store.async_save.await_count == 2
+    assert manager._store.async_save.await_count == 2 + int(lost_claim_ack)
+
+
+async def test_visible_claim_with_failed_directory_sync_cannot_dispatch(
+    hass, monkeypatch
+) -> None:
+    manager = DelayedToolManager(hass)
+    await manager.async_setup()
+    record = _record()
+    await manager._async_save_records_transactionally({record.call_id: record})
+    original_pending = Path(manager._store.path).read_bytes()
+    current_tool = {
+        "enabled": True,
+        "spec": {"name": "control_light"},
+        "function": {"type": "native", "name": "execute_service_single"},
+    }
+    hass.config_entries.async_get_entry = MagicMock(
+        return_value=SimpleNamespace(
+            disabled_by=None,
+            subentries={
+                "agent": SimpleNamespace(subentry_type="conversation", data={})
+            },
+        )
+    )
+    hass.auth.async_get_user = AsyncMock(return_value=SimpleNamespace(is_active=True))
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.delayed_tools.configured_function_tools_from_data",
+        lambda _data: [current_tool],
+    )
+    run = AsyncMock()
+    monkeypatch.setattr(
+        manager,
+        "_resolve_agent",
+        lambda *_args: SimpleNamespace(_execute_function_tool=run),
+    )
+    failed_syncs = 0
+
+    def fail_directory_sync(_path):
+        nonlocal failed_syncs
+        failed_syncs += 1
+        raise OSError(errno.EIO, "directory sync failed after rename")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(atomicwrites, "_sync_directory", fail_directory_sync)
+        await manager._async_execute_due(record.call_id)
+    run.assert_not_awaited()
+    assert failed_syncs == 2
+    assert (await manager._store.async_load())["calls"][0]["status"] == _EXECUTING
+
+    restarted = DelayedToolManager(hass)
+    await restarted.async_setup()
+    assert record.call_id not in restarted._records
+
+    # If a host crash instead restored the last synced generation, it is safe
+    # to try the pending action because the unconfirmed claim never dispatched.
+    Path(manager._store.path).write_bytes(original_pending)
+    recovered = DelayedToolManager(hass)
+    await recovered.async_setup()
+    assert await recovered._async_claim_due(record.call_id) == (True, False)
 
 
 @pytest.mark.parametrize(

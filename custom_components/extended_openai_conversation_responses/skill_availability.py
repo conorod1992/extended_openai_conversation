@@ -83,7 +83,7 @@ def _string_argument_allowed(
     if (pattern := schema.get("pattern")) is None:
         return True
     remaining = deadline - monotonic()
-    if not isinstance(pattern, str) or len(pattern) > 1024 or remaining <= 0:
+    if not isinstance(pattern, str) or remaining <= 0:
         return False
     try:
         # Availability also runs in synchronous HA projections. Bound matching
@@ -112,6 +112,14 @@ def _loader_allowed_names(
         return None
     maximum = parameters.get("maxProperties")
     if type(maximum) is int and maximum < len({"name", "file", *required}):
+        return None
+    minimum = parameters.get("minProperties")
+    if (
+        type(minimum) is int
+        and parameters.get("additionalProperties") is False
+        and not parameters.get("patternProperties")
+        and minimum > len(properties)
+    ):
         return None
     deadline = monotonic() + 0.01
     for key in ("file", "name"):

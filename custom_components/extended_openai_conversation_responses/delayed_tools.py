@@ -1289,7 +1289,12 @@ class DelayedToolManager:
             except Exception:
                 if self._records.get(call_id) != claim:
                     raise
-                _LOGGER.warning("Recovered a committed delayed Function Tool claim")
+                # Readback confirms visibility, but the original rename may
+                # have failed its directory sync. Require an acknowledged
+                # write of the reconciled claim before dispatching.
+                await self._async_save_records_transactionally(
+                    dict(self._records), claim=claim
+                )
             return True, False
 
     async def _async_retry_agent(self, record: DelayedToolCall) -> bool:
