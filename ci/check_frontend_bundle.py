@@ -64,7 +64,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # 913 bytes (894,648 -> 895,561). Keep 39 bytes of headroom for the total.
 # Conversation search drafts and Quiet Hours replacement controls bring the
 # minified JS bundle to 898,856 bytes. Allow 44 bytes of total JS headroom.
-CEILINGS = {"javascript": 898_900, "css": 65_000, "management_entry": 120_000}
+# Scheduled Actions increases the measured management entry by 837 bytes
+# (119,626 -> 120,463); allow 37 bytes of headroom. Keep total JS/CSS unchanged.
+CEILINGS = {"javascript": 898_900, "css": 65_000, "management_entry": 120_500}
 
 
 def measure(dist: Path) -> dict[str, int]:
