@@ -114,6 +114,7 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
         {
             "list": {
                 "type": "array",
+                "minItems": 1,
                 "maxItems": MAX_NATIVE_SERVICE_ACTIONS,
                 "items": {
                     "type": "object",

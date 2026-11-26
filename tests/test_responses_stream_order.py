@@ -96,6 +96,84 @@ async def test_argument_snapshot_is_authoritative_without_preceding_deltas(field
     assert done in [frame async for frame in ordered_output_events(stream([done]))]
 
 
+@pytest.mark.parametrize("mode", ["indexed", "legacy", "mixed", "mixed-no-id"])
+@pytest.mark.parametrize("matches", [False, True])
+async def test_late_argument_snapshot_must_agree_with_completed_item(mode, matches):
+    item_fields = {} if mode == "legacy" else {"output_index": 0}
+    argument_fields = {
+        "indexed": {"output_index": 0},
+        "legacy": {"item_id": "item-1"},
+        "mixed": {"item_id": "item-1"},
+        "mixed-no-id": {},
+    }[mode]
+    item = SimpleNamespace(
+        type="function_call",
+        id="item-1",
+        call_id="call-1",
+        name="test",
+        arguments='{"value":1}',
+    )
+    frames = [
+        event("response.output_item.added", item=item, **item_fields),
+        event("response.output_item.done", item=item, **item_fields),
+        event(
+            "response.function_call_arguments.done",
+            arguments=item.arguments if matches else "{}",
+            **argument_fields,
+        ),
+        event("response.completed", response=SimpleNamespace(output=[item])),
+    ]
+    if matches:
+        assert [
+            frame async for frame in ordered_output_events(stream(frames))
+        ] == frames
+    else:
+        with pytest.raises(ProviderStreamError, match="conflicting tool arguments"):
+            _ = [frame async for frame in ordered_output_events(stream(frames))]
+
+
+@pytest.mark.parametrize("matches", [False, True])
+async def test_unindexed_snapshot_before_indexed_item_is_bound_by_identity(matches):
+    item = SimpleNamespace(
+        type="function_call", id="item-1", call_id="call-1", name="test", arguments="{}"
+    )
+    frames = [
+        event(
+            "response.function_call_arguments.done",
+            item_id=item.id,
+            arguments=item.arguments if matches else '{"value":1}',
+        ),
+        event("response.output_item.done", item=item, output_index=0),
+        event("response.completed", response=SimpleNamespace(output=[item])),
+    ]
+    if matches:
+        parsed = [frame async for frame in ordered_output_events(stream(frames))]
+        assert parsed[-2:] == frames[-2:]
+    else:
+        with pytest.raises(ProviderStreamError, match="conflicting tool arguments"):
+            _ = [frame async for frame in ordered_output_events(stream(frames))]
+
+
+async def test_unindexed_snapshot_is_rejected_when_multiple_calls_could_own_it():
+    frames = [
+        event(
+            "response.output_item.done",
+            output_index=index,
+            item=SimpleNamespace(
+                type="function_call",
+                id=f"item-{index}",
+                call_id=f"call-{index}",
+                name="test",
+                arguments="{}",
+            ),
+        )
+        for index in range(2)
+    ]
+    frames.append(event("response.function_call_arguments.done", arguments="{}"))
+    with pytest.raises(ProviderStreamError, match="ambiguous unindexed tool arguments"):
+        _ = [frame async for frame in ordered_output_events(stream(frames))]
+
+
 @pytest.mark.parametrize(
     "status,error", [("failed", None), ("completed", {"message": "failure"})]
 )
@@ -112,12 +190,72 @@ async def test_completed_event_rejects_failure_in_embedded_response(status, erro
     [
         ("response.function_call_arguments.delta", {"delta": 42}),
         ("response.function_call_arguments.done", {"arguments": None}),
+        ("response.output_text.delta", {"delta": 42}),
+        ("response.output_text.done", {"text": ["not text"]}),
     ],
 )
-async def test_invalid_argument_fields_raise_structured_provider_error(kind, values):
+async def test_invalid_string_fields_raise_structured_provider_error(kind, values):
     bad = event(kind, output_index=0, **values)
     with pytest.raises(ProviderStreamError, match="must be a string"):
         _ = [frame async for frame in ordered_output_events(stream([bad]))]
+
+
+async def test_invalid_text_in_completed_message_raises_structured_provider_error():
+    item = SimpleNamespace(
+        type="message", content=[SimpleNamespace(type="output_text", text=42)]
+    )
+    frame = event("response.output_item.done", output_index=0, item=item)
+    with pytest.raises(ProviderStreamError, match="output text must be a string"):
+        _ = [value async for value in ordered_output_events(stream([frame]))]
+
+
+@pytest.mark.parametrize("identified", [False, True])
+@pytest.mark.parametrize("completion_has_id", [False, True])
+async def test_late_unindexed_refusal_snapshot_cannot_repeat_a_finalized_message(
+    identified, completion_has_id,
+):
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+
+    frames = []
+    for item_id, prefix, full in [
+        ("first", "No", "No thanks."),
+        ("second", "Later", "Later today."),
+    ]:
+        item = SimpleNamespace(
+            type="message",
+            id=item_id,
+            content=[SimpleNamespace(type="refusal", refusal=full)],
+        )
+        identity = {"item_id": item_id} if identified else {}
+        completed = (
+            item if completion_has_id
+            else SimpleNamespace(type=item.type, content=item.content)
+        )
+        frames.extend(
+            [
+                event("response.output_item.added", item=item),
+                event(
+                    "response.refusal.delta", delta=prefix, content_index=0, **identity
+                ),
+                event("response.output_item.done", item=completed),
+                event(
+                    "response.refusal.done", refusal=full, content_index=0, **identity
+                ),
+            ]
+        )
+    frames.append(event("response.completed", response=SimpleNamespace(usage=None)))
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    parsed = entity._transform_responses_stream(
+        SimpleNamespace(content=[]), stream(frames)
+    )
+    assert [delta["content"] async for delta in parsed if "content" in delta] == [
+        "No",
+        " thanks.",
+        "Later",
+        " today.",
+    ]
 
 
 async def test_consecutive_unindexed_messages_complete_their_own_text():

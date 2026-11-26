@@ -48,7 +48,7 @@ async def test_guest_io_failure_keeps_sibling_and_usage_sensors(tmp_path, monkey
     await hass.async_stop(force=True)
 
 
-@pytest.mark.parametrize("damage", ["schedule", "json", "envelope"])
+@pytest.mark.parametrize("damage", ["schedule", "json", "envelope", "version-type", "future-version"])
 async def test_guest_store_corruption_does_not_remove_sibling_sensors(
     tmp_path, monkeypatch, damage, caplog
 ):
@@ -72,18 +72,21 @@ async def test_guest_store_corruption_does_not_remove_sibling_sensors(
     manager = guest_mode.GuestModeManager(hass, entry.entry_id, bad.subentry_id)
     path = Path(manager._store.path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    raw = (
-        json.dumps(
-            {
-                "version": guest_mode.GUEST_MODE_STORAGE_VERSION,
-                "minor_version": 1,
-                "key": path.name,
-                "data": {"schedule": {"active_from": "invalid-time"}},
-            }
-        )
-        if damage == "schedule"
-        else '{"version":' if damage == "json" else '{"key": "damaged", "data": {}}'
-    )
+    envelope = {
+        "version": guest_mode.GUEST_MODE_STORAGE_VERSION,
+        "minor_version": 1,
+        "key": path.name,
+        "data": {"schedule": None},
+    }
+    if damage == "schedule":
+        envelope["data"] = {"schedule": {"active_from": "invalid-time"}}
+    elif damage == "envelope":
+        del envelope["version"]
+    elif damage == "version-type":
+        envelope["version"] = "1"
+    elif damage == "future-version":
+        envelope["version"] = 999
+    raw = '{"version":' if damage == "json" else json.dumps(envelope)
     path.write_text(raw, encoding="utf-8")
     monkeypatch.setattr(sensor, "async_get_usage", AsyncMock(return_value=FakeUsage()))
     additions = []

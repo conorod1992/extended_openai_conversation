@@ -23,12 +23,23 @@ from homeassistant.exceptions import HomeAssistantError
 from tests.test_configuration_lifecycle_hardening import _disabled_runtime_config
 
 
+@pytest.mark.parametrize("version", [None, "1", 999])
 async def test_guest_failure_during_startup_retains_fail_closed_manager(
-    hass, entry_agent, entry_input, monkeypatch
+    hass, entry_agent, entry_input, monkeypatch, version
 ):
     entry_agent.subentry.data = _disabled_runtime_config()
     guest = GuestModeManager(hass, "entry", "agent")
-    await guest._store.async_save({"schedule": {"active_from": "invalid"}})
+    if version is None:
+        await guest._store.async_save({"schedule": {"active_from": "invalid"}})
+    else:
+        path = Path(guest._store.path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {"version": version, "key": path.name, "data": {"schedule": None}}
+            ),
+            encoding="utf-8",
+        )
     await entry_agent._async_initialize_agent_state()
     assert not entry_agent._guest_mode.authoritative_available
     monkeypatch.setattr(

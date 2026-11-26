@@ -203,9 +203,26 @@ class ProviderOutputBudget:
             ) > MAX_ARGUMENT_CHARACTERS:
                 _exceeded()
             self._account(key, native=item)
+            if getattr(item, "type", None) == "message":
+                parts = getattr(item, "content", None)
+                if parts is not None and not isinstance(parts, (list, tuple)):
+                    raise ProviderStreamError(
+                        "Provider returned malformed data: message content must be an array",
+                        error_type="invalid_event_sequence",
+                    )
+                for part in parts or ():
+                    if getattr(part, "type", None) == "output_text":
+                        _responses_string_length(
+                            getattr(part, "text", ""), "output text"
+                        )
+                    elif getattr(part, "type", None) == "refusal":
+                        _responses_string_length(
+                            getattr(part, "refusal", ""), "refusal text"
+                        )
             if index is None and kind.endswith(".done"):
                 self._active_unindexed = None
         elif kind in {"response.output_text.delta", "response.refusal.delta"}:
+            delta = getattr(event, "delta", None)
             self._text(
                 key,
                 (
@@ -213,7 +230,9 @@ class ProviderOutputBudget:
                     getattr(event, "content_index", None),
                     kind.removesuffix(".delta"),
                 ),
-                _text_weight(event.delta),
+                _responses_string_length(delta, "text delta")
+                if kind == "response.output_text.delta"
+                else _text_weight(delta),
             )
         elif kind == "response.function_call_arguments.delta":
             self._account(
@@ -238,9 +257,9 @@ class ProviderOutputBudget:
                     getattr(event, "content_index", None),
                     kind.removesuffix(".done"),
                 ),
-                _text_weight(
-                    event.text if kind == "response.output_text.done" else event.refusal
-                ),
+                _responses_string_length(getattr(event, "text", None), "output text")
+                if kind == "response.output_text.done"
+                else _text_weight(getattr(event, "refusal", None)),
                 complete=True,
             )
         elif kind == "response.output_text.annotation.added":

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from datetime import UTC, datetime, timedelta
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -33,6 +35,24 @@ async def test_malformed_broadcast_preferences_fail_closed(hass, saved):
         await manager.async_initialize()
     assert not manager.enabled
     assert await manager._store.async_load() == saved
+
+
+@pytest.mark.parametrize("version", ["1", 999])
+async def test_broadcast_unreadable_native_version_fails_closed(hass, version):
+    manager = IntercomManager(hass)
+    path = Path(manager._store.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    evidence = json.dumps(
+        {"version": version, "key": path.name, "data": {"enabled": True}}
+    )
+    path.write_text(evidence, encoding="utf-8")
+    with pytest.raises(HomeAssistantError, match="requires repair"):
+        await manager.async_initialize()
+    assert not manager.enabled
+    assert path.read_text(encoding="utf-8") == evidence
+    await manager._store.async_save({"enabled": False})
+    await manager.async_initialize()
+    assert not manager.enabled and manager.builtin_voice_command
 
 
 @pytest.mark.asyncio

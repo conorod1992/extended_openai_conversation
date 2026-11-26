@@ -68,7 +68,7 @@ from .persistence_hardening import (
 )
 from .record_timestamps import parse_datetime
 from .storage_namespaces import GUEST_MODE_PREFIX as GUEST_MODE_STORAGE_PREFIX
-from .strict_store import PropagatingWriteStore
+from .strict_store import STORE_ENVELOPE_ERRORS, PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -262,7 +262,7 @@ class GuestModeManager:
             except Exception as err:
                 self._persistence_unavailable = True
                 self._cancel_transition_timer()
-                if isinstance(err, (KeyError, NotImplementedError)):
+                if isinstance(err, STORE_ENVELOPE_ERRORS):
                     raise StorageRepairRequired("Guest Mode") from err
                 raise
             recovering = self._persistence_unavailable

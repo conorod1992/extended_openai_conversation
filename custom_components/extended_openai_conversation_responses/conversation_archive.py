@@ -331,7 +331,11 @@ def _stored_archive_partitions(
     """Inventory exact owned monthly files when damaged metadata lost its index."""
     stem = prefix + ".turns."
     result: set[str] = set()
-    for path in Path(metadata_path).parent.iterdir():
+    try:
+        paths = list(Path(metadata_path).parent.iterdir())
+    except FileNotFoundError:
+        return result
+    for path in paths:
         if not path.name.startswith(stem):
             continue
         month = path.name[len(stem) :]
@@ -342,6 +346,36 @@ def _stored_archive_partitions(
         ):
             result.add(month)
     return result
+
+
+def _has_unindexed_partition_data(
+    metadata_path: str, prefix: str, indexed: set[str]
+) -> bool:
+    """Accept only recognizable empty Store files as obsolete housekeeping."""
+    directory = Path(metadata_path).parent
+    for month in _stored_archive_partitions(metadata_path, prefix) - indexed:
+        key = f"{prefix}.turns.{month}"
+        try:
+            # An empty native envelope is small. Keep the read bounded and avoid
+            # the Store loader, whose corruption and migration paths can write.
+            with (directory / key).open("rb") as file:
+                raw = file.read(4097)
+            if len(raw) > 4096:
+                return True
+            envelope = json.loads(raw)
+        except FileNotFoundError:
+            continue
+        except OSError, ValueError, RecursionError:
+            return True
+        if (
+            not isinstance(envelope, dict)
+            or type(envelope.get("version")) is not int
+            or envelope["version"] != _PARTITION_STORAGE_VERSION
+            or envelope.get("key") != key
+            or envelope.get("data") != {"turns": []}
+        ):
+            return True
+    return False
 
 
 class _ArchiveMetadataStore(PropagatingWriteStore):
@@ -435,6 +469,20 @@ class HomeAssistantArchiveStorage:
     async def async_load_partition(self, partition: str) -> dict[str, Any] | None:
         return await self._partition_store(partition).async_load()
 
+    async def async_stored_partitions(self) -> set[str]:
+        if self._metadata._load_empty:
+            return set()
+        return await asyncio.to_thread(
+            _stored_archive_partitions, self._metadata.path, self._prefix
+        )
+
+    async def async_has_unindexed_partition_data(self, indexed: set[str]) -> bool:
+        if self._metadata._load_empty:
+            return False
+        return await asyncio.to_thread(
+            _has_unindexed_partition_data, self._metadata.path, self._prefix, indexed
+        )
+
     async def async_save_partition(self, partition: str, data: dict[str, Any]) -> None:
         self._metadata.require_migrated()
         await self._partition_store(partition).async_save(data)
@@ -524,7 +572,6 @@ class HomeAssistantArchiveStorage:
 
         session_map, turn_map, bindings = await asyncio.to_thread(prepare)
         writer = self
-        discovered: set[str] = set()
         try:
             old = await self.async_load_metadata()
         except StorageRepairRequired:
@@ -532,10 +579,8 @@ class HomeAssistantArchiveStorage:
             # corruption evidence and its ordinary write barrier intact; only
             # this correctly bound fresh writer may stage the recovery intent.
             old = None
-            discovered = await asyncio.to_thread(
-                _stored_archive_partitions, self._metadata.path, self._prefix
-            )
             writer = HomeAssistantArchiveStorage(self._hass, *self._agent_identity)
+        discovered = await self.async_stored_partitions()
         old_names: list[Any] = []
         if isinstance(old, dict):
             if isinstance(old.get("partitions"), list):
@@ -741,6 +786,11 @@ class ConversationArchive:
                 not isinstance(partitions, list)
                 or len(staged_partitions) != len(partitions)
             )
+            inspect_unindexed = getattr(
+                self._storage, "async_has_unindexed_partition_data", None
+            )
+            if callable(inspect_unindexed):
+                repair_required |= await inspect_unindexed(staged_partitions)
             raw_payloads: dict[str, Any] = {}
             for partition in sorted(staged_partitions):
                 payload = await self._storage.async_load_partition(partition)
@@ -1911,11 +1961,17 @@ class ConversationArchive:
                 )
                 return
             new_partitions = {turn.timestamp[:7] for turn in turns}
+            previous_partitions = set(self._partitions)
+            if self._repair_required and isinstance(
+                self._storage, HomeAssistantArchiveStorage
+            ):
+                # A validated complete replacement owns all destination months.
+                previous_partitions |= await self._storage.async_stored_partitions()
             await self._async_commit_state_locked(
                 sessions=session_map,
                 turns=dict(turn_map),
                 active=bindings,
-                changed_partitions=set(self._partitions) | new_partitions,
+                changed_partitions=previous_partitions | new_partitions,
                 replacing=True,
             )
 

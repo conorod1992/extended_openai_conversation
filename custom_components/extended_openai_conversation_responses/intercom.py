@@ -29,7 +29,8 @@ from homeassistant.helpers.storage import Store
 from .global_runtime import global_runtime_available, require_global_runtime
 from .intercom_permissions import async_authorized_broadcast_targets
 from .operation_settlement import async_settle_owned_operation
-from .strict_store import PropagatingWriteStore
+from .persistence_hardening import StorageRepairRequired
+from .strict_store import STORE_ENVELOPE_ERRORS, PropagatingWriteStore
 
 DOMAIN = "extended_openai_conversation_responses"
 DATA_KEY = f"{DOMAIN}.intercom"
@@ -203,7 +204,7 @@ class IntercomManager:
                 return
             try:
                 stored = await self._store.async_load()
-            except (KeyError, NotImplementedError) as err:
+            except (*STORE_ENVELOPE_ERRORS, StorageRepairRequired) as err:
                 raise HomeAssistantError(
                     "Broadcast settings storage requires repair"
                 ) from err

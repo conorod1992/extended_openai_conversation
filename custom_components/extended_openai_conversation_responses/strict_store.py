@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Self
 
+from homeassistant.exceptions import UnsupportedStorageVersionError
 from homeassistant.helpers.storage import Store
 from homeassistant.util.file import WriteError
 from homeassistant.util.json import SerializationError
@@ -20,6 +21,13 @@ from .agent_maintenance import AgentMaintenanceGate, get_agent_maintenance_gate
 from .operation_settlement import async_settle_owned_operation as _async_settle_store_io
 from .operational_errors import storage_failure_reason
 from .persistence_hardening import StorageRepairRequired
+
+STORE_ENVELOPE_ERRORS = (
+    KeyError,
+    NotImplementedError,
+    TypeError,
+    UnsupportedStorageVersionError,
+)
 
 
 def _missing_store_has_corruption_evidence(path: str) -> bool:

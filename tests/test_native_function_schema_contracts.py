@@ -199,10 +199,9 @@ def test_service_presets_advertise_open_service_data(implementation: str) -> Non
     assert "floor_id" in service_data["description"]
     assert "label_id" in service_data["description"]
     if implementation == "execute_service":
-        assert (
-            tool["spec"]["parameters"]["properties"]["list"]["maxItems"]
-            == MAX_NATIVE_SERVICE_ACTIONS
-        )
+        batch = tool["spec"]["parameters"]["properties"]["list"]
+        assert batch["minItems"] == 1
+        assert batch["maxItems"] == MAX_NATIVE_SERVICE_ACTIONS
 
 
 def test_service_preset_validation_preserves_service_specific_data() -> None:
