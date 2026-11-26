@@ -8,12 +8,29 @@ import subprocess
 from zoneinfo import ZoneInfo
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses.management_datetime import (
     project_management_dates,
     resolve_management_dates,
+    resolve_local_time,
 )
 from tests.test_guest_mode import _manager
+
+
+@pytest.mark.parametrize(
+    ("zone", "wall_time", "message"),
+    [
+        ("Missing/Timezone", "2027-06-04T12:00", "timezone is unavailable"),
+        ("Asia/Tokyo", "0001-01-01T00:00", "Choose a valid local date"),
+    ],
+)
+def test_local_time_rejects_unavailable_zones_and_unrepresentable_utc(
+    hass, zone, wall_time, message
+):
+    hass.config.time_zone = zone
+    with pytest.raises(HomeAssistantError, match=message):
+        resolve_local_time(hass, wall_time, reject_ambiguous=True)
 
 
 @pytest.mark.parametrize("browser_zone", ["UTC", "Pacific/Auckland"])

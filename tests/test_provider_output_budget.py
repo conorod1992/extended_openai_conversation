@@ -88,6 +88,37 @@ async def parse(hass, mode, values):
     return [value async for value in parser(log, values)]
 
 
+def test_empty_chat_tool_fragments_still_consume_the_normalization_budget(monkeypatch):
+    monkeypatch.setattr(limits, "MAX_OUTPUT_NODES", 2)
+    fragments = [NS(index=0, id=None, function=NS(name=None, arguments=None))] * 3
+    budget = limits.ProviderOutputBudget()
+    with pytest.raises(ProviderStreamError, match="safety limits"):
+        budget.chat_delta(NS(content=None, refusal=None, tool_calls=fragments))
+    assert not budget.items
+
+
+def test_distinct_responses_content_parts_cannot_bypass_item_budget(monkeypatch):
+    monkeypatch.setattr(limits, "MAX_OUTPUT_ITEMS", 2)
+    budget = limits.ProviderOutputBudget()
+    for part in (0, 1):
+        budget.responses_event(
+            NS(type="response.output_text.delta", output_index=0, content_index=part, delta="a")
+        )
+    with pytest.raises(ProviderStreamError, match="safety limits"):
+        budget.responses_event(
+            NS(type="response.output_text.delta", output_index=0, content_index=2, delta="a")
+        )
+    assert budget.total == 2
+
+
+def test_streaming_message_accepts_a_content_placeholder_only_at_opening():
+    budget = limits.ProviderOutputBudget()
+    item = NS(type="message", id="item-1", content=None)
+    budget.responses_event(NS(type="response.output_item.added", output_index=0, item=item))
+    with pytest.raises(ProviderStreamError, match="message content must be an array"):
+        budget.responses_event(NS(type="response.output_item.done", output_index=0, item=item))
+
+
 @pytest.mark.parametrize("mode", ["chat", "responses"])
 @pytest.mark.parametrize("streaming", [False, True])
 async def test_oversized_arguments_never_become_executable(

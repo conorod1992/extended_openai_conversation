@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses import (
     model_tool_results,
     runtime_hardening,
@@ -103,3 +105,47 @@ async def test_owned_knowledge_get_omits_terminal_cursor() -> None:
     compacted = await agent._async_execute_knowledge_tool("get", {"source_id": "doc-1"})
     assert compacted == {"content": "document text", "has_more": False}
     agent._knowledge.async_get_section.assert_awaited_once_with("doc-1", 0, 6000)
+
+
+@pytest.mark.parametrize(
+    ("oversized_records", "error"),
+    [
+        (True, "record exceeds"),
+        (False, "record metadata exceeds"),
+    ],
+)
+def test_record_pages_reject_unpageable_content(oversized_records, error):
+    oversized = "x" * (runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS + 1)
+    source = {
+        "items": [oversized] if oversized_records else [],
+        "scope": "test" if oversized_records else oversized,
+        "offset": 3,
+    }
+    original_items = source["items"].copy()
+    with pytest.raises(ValueError, match=error):
+        model_tool_results.bounded_record_page(source, "items")
+    assert source["items"] == original_items
+
+
+@pytest.mark.parametrize("offset", [-1, 5])
+def test_text_page_requires_a_valid_character_offset(offset):
+    with pytest.raises(ValueError, match="outside the file's character range"):
+        model_tool_results.bounded_text_page({"content": "four"}, offset)
+
+
+def test_text_page_rejects_metadata_that_prevents_cursor_progress():
+    oversized = "x" * (runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS + 1)
+    with pytest.raises(ValueError, match="File metadata exceeds"):
+        model_tool_results.bounded_text_page(
+            {"content": "remaining", "metadata": oversized}, 1
+        )
+
+
+def test_oversized_non_result_envelope_reaches_the_provider_as_a_bounded_notice():
+    oversized = "x" * (runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS + 1)
+    content = SimpleNamespace(tool_result={"details": oversized})
+    wire = model_tool_results.model_tool_result_data(content)
+    assert wire["status"] == "output_overflow"
+    assert wire["execution_completed"] is True
+    assert "details" not in wire and oversized not in wire["message"]
+    assert content.tool_result == {"details": oversized}

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from custom_components.extended_openai_conversation_responses import request_rules as rr
+from custom_components.extended_openai_conversation_responses import script_structure
 from custom_components.extended_openai_conversation_responses.functions.script import (
     _reject_device_actions,
 )
@@ -109,6 +110,45 @@ def test_payload_and_condition_lookalikes_are_not_script_children():
     _reject_device_actions(normalized)
     assert normalized[0]["data"] == lookalike
     assert normalized[3]["choose"][0]["conditions"] == [lookalike]
+
+
+def test_invalid_container_members_are_preserved_for_ha_validation():
+    source = [
+        None,
+        {"choose": "invalid branch container"},
+        {"repeat": "invalid repeat"},
+        {"repeat": {"count": 2}},
+        {"parallel": [False, {"delay": 0}]},
+        {"parallel": "invalid parallel container"},
+        {"choose": [False, {"conditions": []}]},
+    ]
+    normalized = script_structure.normalize_script_containers(source)
+    assert normalized == [
+        None,
+        {"choose": "invalid branch container"},
+        {"repeat": "invalid repeat"},
+        {"repeat": {"count": 2}},
+        {"parallel": [False, {"sequence": [{"delay": 0}]}]},
+        {"parallel": "invalid parallel container"},
+        {"choose": [False, {"conditions": [], "sequence": []}]},
+    ]
+    assert list(script_structure.iter_script_actions(normalized[1:])) == normalized[1:]
+
+
+def test_selector_inspection_handles_malformed_members_and_opaque_payloads():
+    trigger = {"trigger": "event", "event_type": "test", "options": "invalid"}
+    wrapped = {"triggers": [None, trigger]}
+    condition = {"condition": ["invalid", {"condition": "state", "entity_id": "light.hall"}]}
+    actions = [
+        {"wait_for_trigger": [wrapped]},
+        {"choose": [False, {"conditions": [condition], "sequence": []}]},
+        {"action": "light.turn_on", "data": {"wait_for_trigger": [wrapped]}},
+    ]
+    assert script_structure.script_selector_fields(None) == {}
+    assert script_structure.script_selector_fields(actions) == {
+        id(item): frozenset({"entity_id", "zone", "device_id"})
+        for item in (trigger, condition, condition["condition"][1])
+    }
 
 
 def test_action_budget_boundary_and_shared_counter():
@@ -302,8 +342,8 @@ def test_request_rule_consumers_forward_the_same_existing_limits(monkeypatch):
 
 
 @pytest.mark.parametrize("form", ["list", "and", "or", "not"])
-def test_selector_walk_preserves_native_condition_shorthand_and_payload_boundaries(
-    form,
+async def test_selector_walk_preserves_native_condition_shorthand_and_payload_boundaries(
+    hass, form,
 ):
     state = {"condition": "state", "entity_id": "{device}", "state": "on"}
     guard = {"condition": [state]} if form == "list" else {form: [state]}

@@ -26,6 +26,53 @@ from custom_components.extended_openai_conversation_responses.const import DOMAI
 from tests.test_backup_transfer import _write_archive
 
 
+@pytest.mark.parametrize("damage", ["signature", "member-count-span"])
+def test_corrupted_central_directory_is_rejected_before_member_loading(
+    tmp_path, monkeypatch, damage
+):
+    path = tmp_path / "backup.zip"
+    _write_archive(path, b'{"test": true}')
+    content = bytearray(path.read_bytes())
+    end_offset = content.rindex(b"PK\x05\x06")
+    directory_size, directory_offset = struct.unpack_from("<II", content, end_offset + 12)
+    if damage == "signature":
+        content[directory_offset] = 0
+    else:
+        # The declared entry count remains two, but the first entry exhausts
+        # the directory span and leaves no complete header for the second.
+        first_name, first_extra = struct.unpack_from("<HH", content, directory_offset + 28)
+        struct.pack_into(
+            "<H", content, directory_offset + 32,
+            directory_size - 46 - first_name - first_extra,
+        )
+    path.write_bytes(content)
+    loader = MagicMock(side_effect=AssertionError("corrupt directory was admitted"))
+    monkeypatch.setattr(backup_transfer, "_load_open_archive_document", loader)
+    with pytest.raises(backup.BackupError, match="incomplete or corrupted"):
+        backup_transfer._load_archive_document(str(path))
+    loader.assert_not_called()
+    assert path.read_bytes() == content
+
+
+def test_archived_payload_actual_expansion_is_bounded_even_if_metadata_undercounts(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "backup.zip"
+    payload = b'{"test": true}'
+    _write_archive(path, payload)
+    monkeypatch.setattr(backup_transfer, "MAX_BACKUP_UNCOMPRESSED_BYTES", len(payload))
+    open_member = zipfile.ZipFile.open
+
+    def read_member(archive, name, *args, **kwargs):
+        if name == backup_transfer.PAYLOAD_NAME:
+            return io.BytesIO(payload + b" ")
+        return open_member(archive, name, *args, **kwargs)
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", read_member)
+    with pytest.raises(backup.BackupError, match="uncompressed safety limit"):
+        backup_transfer._load_archive_document(str(path))
+
+
 @pytest.mark.parametrize("member", [backup_transfer.MANIFEST_NAME, backup_transfer.PAYLOAD_NAME])
 def test_archive_translates_corrupted_deflate_member(tmp_path, member) -> None:
     path = tmp_path / "corrupted.zip"

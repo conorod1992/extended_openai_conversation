@@ -133,6 +133,25 @@ def test_selected_skills_require_reachable_enabled_group_and_tool_budget() -> No
     assert "per request" in str(no_budget.reason)
 
 
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        pytest.param(False, id="malformed-parameters"),
+        pytest.param({"properties": []}, id="malformed-properties"),
+        pytest.param(
+            {"properties": {"name": False, "file": {"type": "string"}}},
+            id="disabled-name",
+        ),
+    ],
+)
+def test_unusable_loader_schema_keeps_selected_skill_unavailable(parameters):
+    loader = _loader()
+    loader["spec"]["parameters"] = parameters
+    status = skill_loader_status(["calendar"], [loader], [], max_function_calls=3)
+    assert not status.available
+    assert "schema" in str(status.reason)
+
+
 def test_no_selected_skills_do_not_require_loader_for_persisted_config() -> None:
     status = skill_loader_status([], [], [], max_function_calls=0)
     assert status.available is True

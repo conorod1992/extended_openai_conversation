@@ -48,6 +48,36 @@ async def test_load_journal_rejects_corrupt_envelope(mutate) -> None:
         await restore_recovery._async_load_journal(mutate(_journal()), "entry-1", "agent-new")
 
 
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("replaces_usage", "false", "Usage replacement intent is corrupted"),
+        ("data_sections", "memories", "sections are corrupted"),
+        ("data_sections", ["memories", "memories"], "sections are corrupted"),
+        ("data_sections", ["unknown"], "sections are corrupted"),
+        ("provider_connections", {"target": {}}, "provider connection is corrupted"),
+        (
+            "provider_connections",
+            {"target": "not a provider", "rollback": {}},
+            "provider connection is corrupted",
+        ),
+    ],
+)
+async def test_journal_never_uses_inconsistent_restore_intent(key, value, message):
+    journal = {**_journal(), key: value}
+    snapshot = deepcopy(journal)
+    with pytest.raises(backup.BackupError, match=message):
+        await restore_recovery._async_load_journal(journal, "entry-1", "agent-new")
+    assert journal == snapshot
+
+
+async def test_restore_journal_requires_the_same_sections_as_its_backup_snapshots():
+    journal = {**_journal(), "data_sections": ["memories"]}
+    with pytest.raises(backup.BackupError, match="transaction is corrupted") as error:
+        await restore_recovery._async_load_journal(journal, "entry-1", "agent-new")
+    assert "sections do not match" in str(error.value.__cause__)
+
+
 async def test_load_journal_allows_valid_rollback_for_invalid_uncommitted_target() -> None:
     journal = _journal()
     journal["target"] = {"not": "a valid backup"}

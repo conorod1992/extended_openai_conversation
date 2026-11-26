@@ -384,13 +384,17 @@ jobs:
             tests_real_ha/test_agent_private_data_deletion.py \
             tests_real_ha/test_archive_record_integrity.py \
             tests_real_ha/test_archive_private_activity.py \
+            tests_real_ha/test_assist_streaming_speech_processing.py \
+            tests_real_ha/test_audited_runtime_contracts.py \
             tests_real_ha/test_backup_processing_boundary.py \
             tests_real_ha/test_backup_transfer_protocol.py \
             tests_real_ha/test_backup_restore_atomicity.py \
             tests_real_ha/test_backup_restore_delayed_tool_collision.py \
             tests_real_ha/test_backup_restore_live_runtime_refresh.py \
             tests_real_ha/test_entry_point_contract_matrix.py \
+            tests_real_ha/test_execution_result_lifecycle_contracts.py \
             tests_real_ha/test_followup_audit_contracts.py \
+            tests_real_ha/test_guest_admission_failure.py \
             tests_real_ha/test_live_config_mutation_semantics.py \
             tests_real_ha/test_native_yaml_management_acceptance.py \
             tests_real_ha/test_optional_startup_ownership.py \
@@ -402,12 +406,15 @@ jobs:
             tests_real_ha/test_quiet_hours_scheduling.py \
             tests_real_ha/test_quiet_hours_timezone.py \
             tests_real_ha/test_request_rules_live_management.py \
+            tests_real_ha/test_request_rules_script_semantics.py \
             tests_real_ha/test_unreadable_restore_provider_scope.py \
             tests_real_ha/test_usage_period_statistics.py \
             tests_real_ha/test_usage_accounting_failure_recovery.py \
             tests_real_ha/test_live_history_regressions.py \
-            tests_real_ha/test_ai_task_provider_wire.py::test_structured_task_returns_selector_normalized_data \
+            tests_real_ha/test_ai_task_provider_wire.py \
             tests_real_ha/test_provider_group_budget.py \
+            tests_real_ha/test_service_effect_identity.py \
+            tests_real_ha/test_service_receipt_compatibility.py \
             tests_real_ha/test_service_target_exclusions.py \
             -n 2 \
             --dist=loadscope \

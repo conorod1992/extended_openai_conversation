@@ -81,6 +81,45 @@ async def test_repeated_completion_reaches_existing_validation():
         _ = [value async for value in ordered_output_events(stream([done, done]))]
 
 
+@pytest.mark.parametrize("phase", ["snapshot", "delta"])
+async def test_mixed_index_tool_arguments_are_only_merged_after_both_snapshots(phase):
+    item = SimpleNamespace(
+        type="function_call", id="item-1", call_id="call-1", name="perform", arguments="{}"
+    )
+    kind = "response.function_call_arguments"
+    # The unindexed snapshot arrives before the provider announces ownership.
+    legacy = event(f"{kind}.done", item_id=item.id, arguments="{}")
+    indexed = (
+        event(f"{kind}.done", output_index=0, arguments="{}")
+        if phase == "snapshot"
+        else event(f"{kind}.delta", output_index=0, delta="{")
+    )
+    added = event("response.output_item.added", output_index=0, item=item)
+    done = event("response.output_item.done", output_index=0, item=item)
+    frames = ordered_output_events(stream([legacy, indexed, added, done]))
+    if phase == "delta":
+        with pytest.raises(ProviderStreamError, match="ambiguous mixed-index tool arguments"):
+            _ = [frame async for frame in frames]
+    else:
+        presented = [frame async for frame in frames]
+        assert presented.count(added) == presented.count(done) == 1
+        assert presented[-1] is done
+
+
+async def test_unindexed_snapshot_cannot_repeat_refusal_from_a_finished_indexed_item():
+    item = SimpleNamespace(
+        type="message", id="message-1", role="assistant",
+        content=[SimpleNamespace(type="refusal", refusal="No.")],
+    )
+    added = event("response.output_item.added", item=item, output_index=0)
+    done = event("response.output_item.done", item=item, output_index=0)
+    late = event("response.refusal.done", item_id=item.id, refusal="No.", content_index=0)
+    terminal = event("response.completed", response=SimpleNamespace(output=[item]))
+    assert [
+        frame async for frame in ordered_output_events(stream([added, done, late, terminal]))
+    ] == [added, done, terminal]
+
+
 @pytest.mark.parametrize("fields", [{}, {"output_index": 0}], ids=["legacy", "indexed"])
 async def test_argument_snapshot_is_authoritative_without_preceding_deltas(fields):
     arguments = event(

@@ -31,6 +31,62 @@ def _active(entity_id, kind):
     }
 
 
+@pytest.mark.parametrize(
+    ("field", "damaged", "error"),
+    [
+        ("detached_controls", [], "detached controls"),
+        ("detached_controls", {"wrong-identity": {}}, "detached controls"),
+        (
+            "detached_controls",
+            {
+                "wrong-identity": {
+                    "kind": "volume",
+                    "satellite_entity_id": "assist_satellite.bedroom",
+                    "original_value": 0.8,
+                    "quiet_value": 0.2,
+                    "registry_identity": ["media_player", "test", "original-device"],
+                }
+            },
+            "detached control identity",
+        ),
+        ("detached_observations", [], "detached observations"),
+        (
+            "detached_observations",
+            {"wrong-identity": ["media_player", "test", "original-device"]},
+            "detached observation identity",
+        ),
+    ],
+)
+def test_damaged_detached_ownership_cannot_be_used_for_restoration(
+    hass, field, damaged, error
+):
+    manager = _stateful_public_manager(hass)
+    active = {**_active("media_player.bedroom", "volume"), field: damaged}
+    original = deepcopy(active)
+    with pytest.raises(ValueError, match=error):
+        manager._normalize_active(active)
+    assert active == original
+    assert manager.active is None
+    hass.services.async_call.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "label"),
+    [
+        ("attained_context_id", 123, "attained context"),
+        ("restoration_context_id", "", "restoration context"),
+    ],
+)
+def test_unusable_saved_context_cannot_establish_device_ownership(hass, field, value, label):
+    manager = _stateful_public_manager(hass)
+    active = _active("media_player.bedroom", "volume")
+    active["controls"]["media_player.bedroom"][field] = value
+    with pytest.raises(ValueError, match=label):
+        manager._normalize_active(active)
+    assert manager.active is None
+    hass.services.async_call.assert_not_awaited()
+
+
 @pytest.mark.parametrize("manager_type", ["base", "public"])
 @pytest.mark.parametrize("kind", ["volume", "switch"])
 async def test_unavailable_control_retains_baseline_until_return(

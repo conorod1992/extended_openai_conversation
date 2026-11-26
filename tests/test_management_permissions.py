@@ -203,6 +203,29 @@ async def test_quiet_hours_rejects_unknown_action(
         )
 
 
+async def test_quiet_hours_update_forwards_editor_revision_and_rejects_stale_edits(
+    monkeypatch,
+):
+    update = AsyncMock(return_value={"enabled": False})
+    monkeypatch.setattr(
+        management_permissions,
+        "async_get_quiet_hours",
+        AsyncMock(return_value=SimpleNamespace(async_update_config=update)),
+    )
+    config = {"enabled": False}
+    message = {"action": "update", "config": config, "revision": "editor-revision"}
+    assert await management_permissions.async_quiet_hours_command(
+        SimpleNamespace(), True, message
+    ) == {"enabled": False}
+    update.assert_awaited_once_with(config, expected_revision="editor-revision")
+
+    update.side_effect = ValueError("configuration changed; reload before saving")
+    with pytest.raises(HomeAssistantError, match="reload before saving"):
+        await management_permissions.async_quiet_hours_command(
+            SimpleNamespace(), True, message
+        )
+
+
 async def test_quiet_hours_global_command_needs_no_agent_selection(hass, monkeypatch):
     from custom_components.extended_openai_conversation_responses import management_ui
 

@@ -22,6 +22,33 @@ def _begin(manager: DebugManager, index: int = 0):
     )
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ({"unattainable": "private-value"}, {"__debug_truncated__": True}),
+        (["private-value"], ["<debug capture budget exhausted>"]),
+    ],
+)
+def test_debug_snapshot_stays_bounded_after_allocating_its_top_level_container(value, expected):
+    assert debug._jsonable(value, budget=debug._CaptureBudget(128)) == expected
+
+
+@pytest.mark.parametrize(
+    "payload", [{"nested": {"large": "0123456789" * 16}}, [["0123456789" * 16]]]
+)
+def test_debug_fingerprints_are_omitted_instead_of_claiming_partial_hashes(monkeypatch, payload):
+    monkeypatch.setattr(debug, "_MAX_METRIC_CHARACTERS", 80)
+    assert debug._original_payload_metrics(payload) == (None, None)
+
+
+def test_debug_uninspectable_payload_is_not_guessed():
+    class FailingKey:
+        def __str__(self):
+            raise ValueError("private data")
+
+    assert debug._original_payload_metrics({FailingKey(): "ignored"}) == (None, None)
+
+
 def test_debug_manager_status_configure_and_clear() -> None:
     manager = DebugManager()
 

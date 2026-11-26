@@ -485,6 +485,32 @@ def test_native_summary_bounds_batches_targets_and_allowlisted_numbers(hass):
 
 
 @pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({"brightness": 128}, "light.turn_on (brightness 128/255)"),
+        ({"brightness": False, "brightness_pct": True}, "light.turn_on"),
+        ({"brightness": 256, "brightness_pct": 101}, "light.turn_on"),
+    ],
+)
+def test_scheduled_light_summary_describes_only_supported_brightness(hass, data, expected):
+    hass.services.async_register("light", "turn_on", lambda _call: None)
+    assert describe_native_action(
+        hass,
+        "execute_service",
+        {"list": [{"domain": "light", "service": "turn_on", "service_data": data}]},
+        lambda entities: entities,
+    ) == expected
+
+
+@pytest.mark.parametrize("batch", [[], [False], [{"domain": "light", "service": "missing"}]])
+def test_invalid_scheduled_service_batches_have_no_effect_summary(hass, batch):
+    hass.services.has_service.return_value = False
+    assert describe_native_action(
+        hass, "execute_service", {"list": batch}, lambda entities: entities
+    ) is None
+
+
+@pytest.mark.parametrize(
     ("utterance", "recognized"),
     [
         ("Turn off the hall lights in twenty minutes", True),
@@ -607,6 +633,32 @@ async def test_execution_rechecks_guest_and_uses_physical_origin(
         agent._effective_guest_policy.return_value.guest_active = True
     assert (await cancel)["status"] == "denied"
     assert job.call_id in manager._records
+
+
+@pytest.mark.parametrize("user", [None, SimpleNamespace(is_active=False)])
+async def test_removed_or_inactive_owner_cannot_view_scheduled_actions(
+    manager, owner, agent, monkeypatch, user
+):
+    await _schedule(manager, agent)
+    monkeypatch.setattr(agent.hass.auth, "async_get_user", AsyncMock(return_value=user))
+    assert await async_execute_scheduled_action_tool(agent, owner, "list", {}) == {
+        "status": "denied",
+        "error": "Scheduled actions are unavailable for this caller.",
+    }
+    assert len(manager._records) == 1
+
+
+async def test_guest_activation_during_owner_lookup_denies_access(
+    manager, owner, agent, monkeypatch
+):
+    async def get_user(_user_id):
+        agent._effective_guest_policy.return_value.guest_active = True
+        return SimpleNamespace(is_active=True)
+
+    monkeypatch.setattr(agent.hass.auth, "async_get_user", get_user)
+    assert (await async_execute_scheduled_action_tool(agent, owner, "list", {}))[
+        "status"
+    ] == "denied"
 
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])
