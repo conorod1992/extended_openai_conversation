@@ -23,6 +23,31 @@ from homeassistant.exceptions import HomeAssistantError
 from tests.test_configuration_lifecycle_hardening import _disabled_runtime_config
 
 
+async def test_guest_failure_during_startup_retains_fail_closed_manager(
+    hass, entry_agent, entry_input, monkeypatch
+):
+    entry_agent.subentry.data = _disabled_runtime_config()
+    guest = GuestModeManager(hass, "entry", "agent")
+    await guest._store.async_save({"schedule": {"active_from": "invalid"}})
+    await entry_agent._async_initialize_agent_state()
+    assert not entry_agent._guest_mode.authoritative_available
+    monkeypatch.setattr(
+        conversation,
+        "async_reconcile_runtime_configuration",
+        runtime.async_reconcile_runtime_configuration,
+    )
+
+    async def continue_request(_request):
+        return entry_agent._guest_mode.is_active()
+
+    entry_agent._async_process_with_continuity = continue_request
+    with pytest.raises(HomeAssistantError, match="unavailable"):
+        await entry_agent.async_process(entry_input)
+    await guest._store.async_save({"schedule": None})
+    assert await entry_agent.async_process(entry_input) is False
+    assert entry_agent._guest_mode.authoritative_available
+
+
 @pytest.mark.parametrize("after_write", [False, True])
 async def test_conversation_recovers_guest_state_and_keeps_corruption_fail_closed(
     hass,

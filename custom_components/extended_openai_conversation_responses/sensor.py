@@ -50,15 +50,21 @@ async def async_setup_entry(
                 guest_mode = await async_get_guest_mode(
                     hass, config_entry.entry_id, subentry.subentry_id
                 )
-            except (OSError, HomeAssistantError) as err:
-                if not isinstance(err, OSError) and not isinstance(
-                    err.__cause__, OSError
-                ):
+            except (StorageRepairRequired, OSError, HomeAssistantError) as err:
+                if not isinstance(
+                    err, (StorageRepairRequired, OSError)
+                ) and not isinstance(err.__cause__, OSError):
                     raise
-                _LOGGER.error(
-                    "Assistant %s Guest Mode storage is unavailable",
-                    subentry.subentry_id,
-                )
+                if isinstance(err, StorageRepairRequired):
+                    _LOGGER.error(
+                        "Assistant %s Guest Mode storage requires repair",
+                        subentry.subentry_id,
+                    )
+                else:
+                    _LOGGER.error(
+                        "Assistant %s Guest Mode storage is unavailable",
+                        subentry.subentry_id,
+                    )
                 # The getter retains the unavailable manager so recovery can
                 # later notify the same entity. Usage and sibling sensors work.
                 guest_mode = get_loaded_guest_mode(

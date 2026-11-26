@@ -53,7 +53,6 @@ from .const import DOMAIN
 from .ha_schema import websocket_command as ha_websocket_command
 from .operation_settlement import async_settle_owned_operation, async_wait_owned_cleanup
 from .strict_json import has_surrogate
-from .yaml_serialization import SerializedDocumentLimit
 
 WS_BACKUP_TRANSFER = f"{DOMAIN}/management/backup_transfer"
 ARCHIVE_FORMAT = "extended_openai_conversation_backup_archive"
@@ -479,15 +478,10 @@ def _resolve_agent(
 
 
 def _redacted_document(snapshot: dict[str, Any]) -> dict[str, Any]:
-    from .private_backup import encode_document, is_private_document
+    from .private_backup import is_private_document
 
     if is_private_document(snapshot):
-        try:
-            return encode_document(snapshot)
-        except SerializedDocumentLimit:
-            raise backup.BackupError(
-                "The backup configuration or Request Rules exceed the YAML safety limit"
-            ) from None
+        return backup._encode_private_export(snapshot)
     if snapshot.get("format") == transfer.TRANSFER_FORMAT:
         return transfer.redact_transfer_document(snapshot)
     return {

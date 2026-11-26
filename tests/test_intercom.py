@@ -23,6 +23,18 @@ from custom_components.extended_openai_conversation_responses.intercom import (
 )
 
 
+@pytest.mark.parametrize(
+    "saved", [{"enabled": "false"}, {"enabled": True, "builtin_voice_command": 1}, []]
+)
+async def test_malformed_broadcast_preferences_fail_closed(hass, saved):
+    manager = IntercomManager(hass)
+    await manager._store.async_save(saved)
+    with pytest.raises(HomeAssistantError, match="requires repair"):
+        await manager.async_initialize()
+    assert not manager.enabled
+    assert await manager._store.async_load() == saved
+
+
 @pytest.mark.asyncio
 async def test_disabled_broadcast_rejects_send(hass) -> None:
     manager = IntercomManager(hass)

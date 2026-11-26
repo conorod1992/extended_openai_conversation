@@ -618,6 +618,29 @@ async def test_failed_refresh_keeps_downloaded_catalog_and_forced_retry_succeeds
     assert manager.store.saved["available_catalog"] == refreshed
 
 
+@pytest.mark.parametrize("damaged", ["available_catalog", "etag", "last_checked"])
+async def test_load_keeps_active_catalog_when_other_cached_data_is_invalid(
+    hass, damaged
+):
+    active = _versioned_candidate(increment=1)
+    pending = _versioned_candidate(increment=2)
+    saved = {
+        "catalog": active,
+        "available_catalog": pending,
+        "etag": '"pending"',
+        "last_checked": 1,
+    }
+    saved[damaged] = {"invalid": True}
+    manager = runtime.ModelCatalogManager(hass)
+    manager.store = MemoryStore(saved)
+    await manager.async_load()
+    assert manager.catalog == active and manager.status()["source"] == "downloaded"
+    assert manager.available_catalog == (
+        None if damaged == "available_catalog" else pending
+    )
+    assert manager.etag is None and manager.last_checked == 0.0
+
+
 @pytest.mark.parametrize("pending", [False, True])
 @pytest.mark.parametrize("save_failure", [False, True])
 async def test_clock_rollback_preserves_catalogues_through_failed_refresh_and_restart(
@@ -759,8 +782,12 @@ async def test_future_timestamp_does_not_bypass_other_storage_validation(
     manager.store = MemoryStore(saved)
     monkeypatch.setattr(runtime.time, "time", lambda: 100.0)
     await manager.async_load()
-    assert manager.catalog is None
-    assert manager.available_catalog is None
+    assert manager.catalog == (None if corruption == "catalog" else saved["catalog"])
+    assert manager.available_catalog == (
+        None if corruption == "available_catalog" else saved["available_catalog"]
+    )
+    assert manager.incompatible_catalog is None
+    assert manager.last_checked == 0.0
     assert manager.etag is None
     assert manager.last_error
     assert manager.store.save_calls == 0

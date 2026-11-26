@@ -405,8 +405,8 @@ class UsageManager:
         detail_storage: UsageStorage | None = None,
         *,
         agent_subentry_id: str = "",
-        request_retention_days: int = DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-        run_retention_days: int = DEFAULT_USAGE_RUN_RETENTION_DAYS,
+        request_retention_days: int | None = DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+        run_retention_days: int | None = DEFAULT_USAGE_RUN_RETENTION_DAYS,
     ) -> None:
         self._storage = storage
         self._daily_storage = daily_storage
@@ -744,8 +744,8 @@ class UsageManager:
                     run.successful = False
                     run.error_type = error_type or run.error_type or "provider_error"
             retain_request = (
-                self.request_retention_days > 0 and not self._repair_required
-            )
+                self.request_retention_days or 0
+            ) > 0 and not self._repair_required
             if retain_request:
                 self.requests.append(
                     UsageRequest(
@@ -801,7 +801,7 @@ class UsageManager:
                         * 1000
                     ),
                 )
-                if self.run_retention_days > 0 and not self._repair_required:
+                if (self.run_retention_days or 0) > 0 and not self._repair_required:
                     self.runs.append(run)
                 if not self._aggregates_need_repair:
                     self.totals.conversation_count = add_usage_counts(
@@ -1051,8 +1051,9 @@ class UsageManager:
     def detail_is_current(self, timestamp: str, *, request: bool = False) -> bool:
         """Do not expose expired details between periodic maintenance runs."""
         days = self.request_retention_days if request else self.run_retention_days
-        return days > 0 and _parse_time(timestamp) >= dt_util.utcnow() - timedelta(
-            days=days
+        return days is None or (
+            days > 0
+            and _parse_time(timestamp) >= _detail_cutoff(dt_util.utcnow(), days)
         )
 
     def recent_runs(
@@ -1924,26 +1925,35 @@ def _parse_time(value: Any) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_util.UTC)
 
 
+def _detail_cutoff(now: datetime, days: int) -> datetime:
+    earliest = datetime.min.replace(tzinfo=now.tzinfo)
+    return (
+        earliest if days > (now - earliest).days else now - timedelta(days=max(0, days))
+    )
+
+
 def retained_usage_details(
     requests: list[UsageRequest],
     runs: list[UsageRun],
     *,
-    request_days: int,
-    run_days: int,
+    request_days: int | None,
+    run_days: int | None,
 ) -> tuple[list[UsageRequest], list[UsageRun], dict[str, int]]:
     """Project the same retained details for restore review and storage."""
     now = dt_util.utcnow()
-    request_cutoff = now - timedelta(days=max(0, request_days))
-    run_cutoff = now - timedelta(days=max(0, run_days))
+    request_cutoff = _detail_cutoff(now, request_days or 0)
+    run_cutoff = _detail_cutoff(now, run_days or 0)
     retained_requests = [
         item
         for item in requests
-        if request_days > 0 and _parse_time(item.timestamp) >= request_cutoff
+        if request_days is None
+        or (request_days > 0 and _parse_time(item.timestamp) >= request_cutoff)
     ]
     retained_runs = [
         item
         for item in runs
-        if run_days > 0 and _parse_time(item.started_at) >= run_cutoff
+        if run_days is None
+        or (run_days > 0 and _parse_time(item.started_at) >= run_cutoff)
     ]
     return (
         retained_requests,
@@ -1978,25 +1988,33 @@ def _register_usage_maintenance(hass: HomeAssistant, manager: UsageManager) -> N
 
 def _saved_retention(
     hass: HomeAssistant, entry_id: str, subentry_id: str
-) -> dict[str, int]:
+) -> dict[str, int | None]:
     """Resolve authoritative policy before any caller loads durable detail."""
     entry = hass.config_entries.async_get_entry(entry_id)
     subentry = entry.subentries.get(subentry_id) if entry is not None else None
     return usage_retention_policy(subentry.data if subentry is not None else {})
 
 
-def usage_retention_policy(options: Mapping[str, Any]) -> dict[str, int]:
+def usage_retention_policy(options: Mapping[str, Any]) -> dict[str, int | None]:
     """Read retention consistently for durable, volatile and platform consumers."""
-    from .agent_config import normalized_agent_integer
+    from .agent_config import AgentConfigError, normalized_agent_integer
+
+    def retention_days(key: str, default: int) -> int | None:
+        # Invalid persisted policy pauses detail collection and expiry until repair.
+        # Treating False as zero would permanently erase the old details.
+        try:
+            days = normalized_agent_integer(options, key, default)
+        except AgentConfigError, ValueError:
+            return None
+        return days if days >= 0 else None
 
     return {
-        "request_retention_days": normalized_agent_integer(
-            options,
+        "request_retention_days": retention_days(
             CONF_USAGE_REQUEST_RETENTION_DAYS,
             DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
         ),
-        "run_retention_days": normalized_agent_integer(
-            options, CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
+        "run_retention_days": retention_days(
+            CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
         ),
     }
 
@@ -2127,7 +2145,7 @@ async def async_get_durable_usage(
 
 
 async def async_apply_volatile_usage_retention(
-    hass: HomeAssistant, entry_id: str, subentry_id: str, policy: dict[str, int]
+    hass: HomeAssistant, entry_id: str, subentry_id: str, policy: dict[str, int | None]
 ) -> None:
     """Apply committed policy to any existing in-memory fallback."""
     fallback = hass.data.get(_VOLATILE_USAGE_MANAGERS, {}).get((entry_id, subentry_id))

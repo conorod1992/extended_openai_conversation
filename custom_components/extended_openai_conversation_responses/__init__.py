@@ -326,25 +326,27 @@ async def async_setup_entry(
         entry.subentries
     )
 
-    entry.runtime_data = _wrap_provider_client(client, entry, authentication_snapshot)
     await async_retry_unused_volatile_usage(hass, entry.entry_id)
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    sync_entry_model_lifecycle(hass, entry)
+    entry.runtime_data = _wrap_provider_client(client, entry, authentication_snapshot)
     try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        sync_entry_model_lifecycle(hass, entry)
         await async_setup_templates(hass, entry.entry_id)
         entry.async_on_unload(entry.add_update_listener(update_listener))
         await _async_activate_global_effects(hass, entry.entry_id)
     except BaseException:
         try:
-            await async_settle_owned_operation(
-                _async_release_global_effects(hass, entry.entry_id)
-            )
-        finally:
             try:
-                await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+                await async_settle_owned_operation(
+                    _async_release_global_effects(hass, entry.entry_id)
+                )
             finally:
-                await async_unload_templates(hass, entry.entry_id)
+                try:
+                    await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+                finally:
+                    await async_unload_templates(hass, entry.entry_id)
+        finally:
+            del entry.runtime_data
         raise
     with suppress(Exception):
         # Optional cache preparation must never affect integration setup.

@@ -48,7 +48,7 @@ async def test_guest_io_failure_keeps_sibling_and_usage_sensors(tmp_path, monkey
     await hass.async_stop(force=True)
 
 
-@pytest.mark.parametrize("damage", ["schedule", "json"])
+@pytest.mark.parametrize("damage", ["schedule", "json", "envelope"])
 async def test_guest_store_corruption_does_not_remove_sibling_sensors(
     tmp_path, monkeypatch, damage, caplog
 ):
@@ -82,7 +82,7 @@ async def test_guest_store_corruption_does_not_remove_sibling_sensors(
             }
         )
         if damage == "schedule"
-        else '{"version":'
+        else '{"version":' if damage == "json" else '{"key": "damaged", "data": {}}'
     )
     path.write_text(raw, encoding="utf-8")
     monkeypatch.setattr(sensor, "async_get_usage", AsyncMock(return_value=FakeUsage()))
@@ -92,7 +92,12 @@ async def test_guest_store_corruption_does_not_remove_sibling_sensors(
         entry,
         lambda entities, **kw: additions.append((kw["config_subentry_id"], entities)),
     )
-    assert [(key, len(entities)) for key, entities in additions] == [("healthy", 5)]
+    assert [(key, len(entities)) for key, entities in additions] == [
+        ("damaged", 5),
+        ("healthy", 5),
+    ]
+    assert not additions[0][1][-1].available
+    assert additions[1][1][-1].available
     assert (
         await guest_mode.async_get_guest_mode(hass, "provider", "healthy")
     ).status()["state"] == "inactive"
@@ -101,7 +106,7 @@ async def test_guest_store_corruption_does_not_remove_sibling_sensors(
     assert not guest_mode.get_loaded_guest_mode(hass, "provider", "damaged").initialized
     evidence = (
         [path]
-        if damage == "schedule"
+        if damage != "json"
         else list(path.parent.glob(path.name + ".corrupt*"))
     )
     assert evidence and any(

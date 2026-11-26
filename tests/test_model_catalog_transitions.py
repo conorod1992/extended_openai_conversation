@@ -937,3 +937,31 @@ async def test_saved_ai_task_catalogue_guards_do_not_load_request_rules(
         not blocked
     )
     rules.assert_not_awaited()
+
+
+@pytest.mark.parametrize("feature", ["structured_outputs", "tools"])
+async def test_catalogue_change_cannot_remove_a_task_callers_existing_capabilities(
+    hass, feature
+):
+    subentry = SimpleNamespace(
+        data={**DEFAULT_AI_TASK_OPTIONS, CONF_CHAT_MODEL: "gpt-5.6"},
+        subentry_id="ai-task-alpha",
+        subentry_type="ai_task_data",
+    )
+    entry = SimpleNamespace(
+        entry_id="provider-alpha",
+        data={CONF_API_KEY: "test"},
+        subentries={subentry.subentry_id: subentry},
+    )
+    hass.config_entries.async_entries.return_value = [entry]
+    manager = runtime.ModelCatalogManager(hass)
+    candidate = _catalog()
+    model = next(row for row in candidate["models"] if row["id"] == "gpt-5.6")
+    if feature == "structured_outputs":
+        model[feature] = False
+    else:
+        model["function_calling"].update(responses=False, chat_completions=False)
+        model["tools"]["function"] = {
+            name: {"support": "never"} for name in ("responses", "chat_completions")
+        }
+    assert not await manager._candidate_preserves_saved_requests(candidate)

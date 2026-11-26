@@ -154,6 +154,7 @@ async def test_cross_provider_restore_validates_each_generation(
 
     tx = RestoreHarness(monkeypatch)
     tx.entry.data = _connection(old)
+    monkeypatch.setattr(restore_recovery, "_async_construct_provider_client", AsyncMock(return_value=object()))
     tx.entry.state = ConfigEntryState.NOT_LOADED
     tx.entry.disabled_by = None
     tx.subentry.data = _provider_config(old)

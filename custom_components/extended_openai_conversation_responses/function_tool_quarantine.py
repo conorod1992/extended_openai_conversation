@@ -81,11 +81,8 @@ def _runtime_validate_function_groups(
 
     quarantined_names = _RUNTIME_QUARANTINED_FUNCTION_NAMES.get()
     quarantine_all = _RUNTIME_QUARANTINE_ALL_FUNCTIONS.get()
-    if not quarantine_all and not quarantined_names:
-        return validate_function_groups(value, function_tools)
-
-    safe = deepcopy(value)
-    if isinstance(safe, list):
+    safe = deepcopy(value) if quarantine_all or quarantined_names else value
+    if (quarantine_all or quarantined_names) and isinstance(safe, list):
         for group in safe:
             if not isinstance(group, dict):
                 continue
@@ -102,4 +99,61 @@ def _runtime_validate_function_groups(
                     for name in functions
                     if not isinstance(name, str) or name not in quarantined_names
                 ]
-    return validate_function_groups(safe, function_tools)
+    try:
+        return validate_function_groups(safe, function_tools)
+    except (HomeAssistantError, TypeError, ValueError) as err:
+        _LOGGER.warning(
+            "Invalid Function Groups were quarantined (%s)", type(err).__name__
+        )
+        return _safe_group_memberships(safe, function_tools)
+
+
+def _safe_group_memberships(
+    value: Any, function_tools: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Retain healthy groups and block any tool whose membership is ambiguous."""
+    from .agent_config import MAX_FUNCTION_GROUPS, validate_function_groups
+
+    names = {tool["spec"]["name"] for tool in function_tools}
+    if not isinstance(value, list) or len(value) > MAX_FUNCTION_GROUPS:
+        valid_groups = []
+        blocked = names
+    else:
+        valid_groups = []
+        blocked = set()
+        for group in value:
+            try:
+                valid_groups.extend(validate_function_groups([group], function_tools))
+            except HomeAssistantError, TypeError, ValueError:
+                members = group.get("functions") if isinstance(group, dict) else None
+                if not isinstance(members, list):
+                    blocked = names
+                    break
+                blocked.update(member for member in members if isinstance(member, str))
+        else:
+            try:
+                valid_groups = validate_function_groups(valid_groups, function_tools)
+            except HomeAssistantError, TypeError, ValueError:
+                # Collection-wide identity/membership conflicts cannot safely be
+                # attributed to a single group. Preserve only independent tools.
+                blocked.update(
+                    name for group in valid_groups for name in group["functions"]
+                )
+                valid_groups = []
+    blocked &= names
+    if blocked:
+        for group in valid_groups:
+            group["functions"] = [
+                name for name in group["functions"] if name not in blocked
+            ]
+        valid_groups.append(
+            {
+                "id": "",
+                "name": "",
+                "description": "",
+                "enabled": False,
+                "loading_mode": "on_demand",
+                "functions": sorted(blocked),
+            }
+        )
+    return valid_groups

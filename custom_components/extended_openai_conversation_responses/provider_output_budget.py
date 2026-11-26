@@ -68,6 +68,15 @@ def _text_weight(value: Any) -> int:
     )
 
 
+def _responses_string_length(value: Any, field: str) -> int:
+    if not isinstance(value, str):
+        raise ProviderStreamError(
+            f"Provider returned malformed data: {field} must be a string",
+            error_type="invalid_event_sequence",
+        )
+    return len(value)
+
+
 @dataclass
 class _ItemSize:
     content: int = 0
@@ -183,7 +192,15 @@ class ProviderOutputBudget:
                 self._active_unindexed = key
         if kind in {"response.output_item.added", "response.output_item.done"}:
             arguments = getattr(item, "arguments", None)
-            if isinstance(arguments, str) and len(arguments) > MAX_ARGUMENT_CHARACTERS:
+            if (
+                arguments is not None
+                or (
+                    kind.endswith(".done")
+                    and getattr(item, "type", None) == "function_call"
+                )
+            ) and _responses_string_length(
+                arguments, "tool arguments"
+            ) > MAX_ARGUMENT_CHARACTERS:
                 _exceeded()
             self._account(key, native=item)
             if index is None and kind.endswith(".done"):
@@ -199,9 +216,19 @@ class ProviderOutputBudget:
                 _text_weight(event.delta),
             )
         elif kind == "response.function_call_arguments.delta":
-            self._account(key, arguments=len(event.delta))
+            self._account(
+                key,
+                arguments=_responses_string_length(
+                    getattr(event, "delta", None), "tool argument delta"
+                ),
+            )
         elif kind == "response.function_call_arguments.done":
-            if len(event.arguments) > MAX_ARGUMENT_CHARACTERS:
+            if (
+                _responses_string_length(
+                    getattr(event, "arguments", None), "tool arguments"
+                )
+                > MAX_ARGUMENT_CHARACTERS
+            ):
                 _exceeded()
         elif kind in {"response.output_text.done", "response.refusal.done"}:
             self._text(

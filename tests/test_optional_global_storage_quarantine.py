@@ -17,6 +17,45 @@ from custom_components.extended_openai_conversation_responses.quiet_hours_runtim
 from homeassistant.exceptions import HomeAssistantError
 
 
+async def test_failed_provider_setup_withdraws_runtime_without_closing_transport(
+    hass, monkeypatch
+):
+    from custom_components import extended_openai_conversation_responses as integration
+    from custom_components.extended_openai_conversation_responses import agent_deletion
+    from custom_components.extended_openai_conversation_responses import (
+        conversation_archive,
+    )
+
+    entry = SimpleNamespace(
+        entry_id="provider", data={"api_key": "test"}, subentries={}
+    )
+    client = SimpleNamespace(close=AsyncMock())
+    monkeypatch.setattr(integration, "initialize_global_runtime", Mock())
+    monkeypatch.setattr(integration, "async_start_model_catalog_refresh", Mock())
+    monkeypatch.setattr(
+        integration, "async_recover_pending_provider_restore", AsyncMock()
+    )
+    monkeypatch.setattr(
+        integration, "get_authenticated_client", AsyncMock(return_value=client)
+    )
+    monkeypatch.setattr(integration, "_wrap_provider_client", lambda client, *_: client)
+    monkeypatch.setattr(integration, "_async_release_global_effects", AsyncMock())
+    monkeypatch.setattr(integration, "async_unload_templates", AsyncMock())
+    monkeypatch.setattr(agent_deletion, "async_reconcile_with_retry", AsyncMock())
+    monkeypatch.setattr(conversation_archive, "async_start_archive_retention", Mock())
+
+    async def fail_forward(*_):
+        assert entry.runtime_data is client
+        raise RuntimeError("platform setup failed")
+
+    monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", fail_forward)
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", AsyncMock())
+    with pytest.raises(RuntimeError, match="platform setup failed"):
+        await integration.async_setup_entry(hass, entry)
+    assert not hasattr(entry, "runtime_data")
+    client.close.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "raw",
     [

@@ -274,6 +274,8 @@ async def async_delete_removed_subentries(hass: Any, entry: Any) -> None:
 
 async def async_reconcile_agent_storage(hass: Any) -> None:
     """Reconcile disabled parents too, before recovery and delayed work starts."""
+    from .delayed_tools import async_prune_orphaned_delayed_calls
+
     entries = list(hass.config_entries.async_entries(DOMAIN))
     for entry in entries:
         await async_delete_removed_subentries(hass, entry)
@@ -289,6 +291,7 @@ async def async_reconcile_agent_storage(hass: Any) -> None:
         await async_delete_entry_data(
             hass, SimpleNamespace(entry_id=entry_id, subentries={})
         )
+    await async_prune_orphaned_delayed_calls(hass)
 
 
 async def async_delete_entry_data(hass: Any, entry: Any) -> None:

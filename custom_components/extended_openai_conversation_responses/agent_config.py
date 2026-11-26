@@ -1033,13 +1033,15 @@ def normalized_agent_integer(data: Mapping[str, Any], key: str, default: int) ->
     return cast(int, scalar[key])
 
 
-def normalized_function_call_budget(data: Mapping[str, Any]) -> int:
+def normalized_function_call_budget(
+    data: Mapping[str, Any], *, allow_unlimited: bool = False
+) -> int:
     """Read and validate the historical Function Tool budget."""
     key = CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION
     budget = normalized_agent_integer(
         data, key, DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION
     )
-    if budget < 0:
+    if budget < 0 and not allow_unlimited:
         raise AgentConfigError(key, "must be at least 0")
     return budget
 
@@ -1173,11 +1175,17 @@ def agent_config_value_snapshot(
     return result
 
 
+_USAGE_RETENTION_FIELDS = (
+    CONF_USAGE_REQUEST_RETENTION_DAYS,
+    CONF_USAGE_RUN_RETENTION_DAYS,
+)
+
+
 def agent_retention_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
     """Project the lightweight retention view with the same numeric semantics."""
     result = {
         key: deepcopy(data.get(key, AGENT_CONFIG_DEFAULTS[key]))
-        for key in (CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS)
+        for key in _USAGE_RETENTION_FIELDS
     }
     normalize_agent_numeric_values(result)
     return result
@@ -1222,6 +1230,7 @@ def normalize_agent_config(
     | None = None,
     function_tools_as_list: bool = False,
     allow_unavailable_skills: bool = False,
+    allow_legacy_usage_retention: bool = False,
     provider: str | None = None,
 ) -> dict[str, Any]:
     """Validate config; reuse Function results only for identical Function inputs.
@@ -1232,6 +1241,7 @@ def normalize_agent_config(
 
     ``allow_unavailable_skills`` is an internal persisted/recovery policy, not an
     edit permission. Updates use merge_agent_config's blocker-transition check.
+    Legacy Usage retention can remain visible until the administrator repairs it.
     """
     if not isinstance(data, dict):
         raise AgentConfigError("config", "must be an object")
@@ -1354,6 +1364,8 @@ def normalize_agent_config(
         or not 1 <= timeout <= 1440
     ):
         raise AgentConfigError(CONF_CONVERSATION_TIMEOUT_MINUTES, "unsupported value")
+    if not allow_legacy_usage_retention:
+        _require_type(result, _USAGE_RETENTION_FIELDS, int)
     for key, options in choices.items():
         if key in result and result[key] not in options:
             message = (
@@ -1498,11 +1510,13 @@ def merge_agent_config(
         # recommended profile. Retaining the prior model's effort can make a
         # perfectly valid switch to a non-reasoning model unsavable.
         known.pop(CONF_REASONING_EFFORT, None)
+    _require_type(agent_retention_snapshot(updates), _USAGE_RETENTION_FIELDS, int)
     normalized = normalize_agent_config(
         {**known, **updates},
         validated_functions=validated_functions,
         function_tools_as_list=function_tools_as_list,
         allow_unavailable_skills=True,
+        allow_legacy_usage_retention=True,
         provider=provider,
     )
     if normalized.get(CONF_SKILLS):
@@ -1590,6 +1604,7 @@ def normalize_persisted_agent_config(
         source,
         function_tools_as_list=function_tools_as_list,
         allow_unavailable_skills=True,
+        allow_legacy_usage_retention=True,
         provider=provider,
     )
 

@@ -9,16 +9,15 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
+from .agent_config import normalized_function_call_budget
 from .const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
-    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_SKILLS,
     CONF_WEB_SEARCH,
     DEFAULT_API_MODE,
-    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
 )
 from .exposed_attributes import exposed_attribute_catalog
 from .helpers import effective_api_provider, is_native_openai_connection
@@ -106,9 +105,8 @@ def configuration_guidance_snapshot(
                 options[CONF_SKILLS],
                 tools,
                 groups,
-                max_function_calls=options.get(
-                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                max_function_calls=normalized_function_call_budget(
+                    options, allow_unlimited=True
                 ),
             )
             available, message = status.available, status.reason

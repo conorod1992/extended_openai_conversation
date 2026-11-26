@@ -124,6 +124,33 @@ async def test_removed_subentry_remains_known_until_cleanup_succeeds(hass, monke
     assert hass.data[agent_deletion.KNOWN_AGENTS]["entry"] == {"kept"}
 
 
+async def test_queue_only_orphans_are_removed_while_disabled_owners_are_preserved(hass):
+    from dataclasses import replace
+
+    from custom_components.extended_openai_conversation_responses.delayed_tools import (
+        DelayedToolManager,
+    )
+    from tests.test_delayed_tools import _record
+
+    owner = SimpleNamespace(
+        entry_id="entry",
+        domain=DOMAIN,
+        disabled_by="user",
+        subentries={"agent": object()},
+    )
+    hass.config_entries.async_entries.return_value = [owner]
+    hass.config_entries.async_get_entry.side_effect = {owner.entry_id: owner}.get
+    kept = _record()
+    deleted_child = replace(kept, call_id="orphan-child", subentry_id="deleted")
+    deleted_parent = replace(kept, call_id="orphan-parent", entry_id="deleted")
+    manager = DelayedToolManager(hass)
+    await manager._store.async_save(
+        {"calls": [call.as_dict() for call in (kept, deleted_child, deleted_parent)]}
+    )
+    await agent_deletion.async_reconcile_agent_storage(hass)
+    assert await manager._store.async_load() == {"calls": [kept.as_dict()]}
+
+
 async def test_restore_reload_is_deferred_until_exclusive_lease_released(hass):
     hass.async_create_task = asyncio.create_task
     entry = SimpleNamespace(entry_id="entry", state=ConfigEntryState.LOADED)

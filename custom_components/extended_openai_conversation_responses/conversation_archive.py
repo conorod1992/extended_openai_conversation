@@ -42,7 +42,7 @@ from .retrieval_text import (
     word_tokens,
 )
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
-from .scope import ResolvedDataScope
+from .scope import UNRETAINED_SCOPE_ID, ResolvedDataScope
 from .storage_namespaces import ARCHIVE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore
 
@@ -737,7 +737,7 @@ class ConversationArchive:
                 if isinstance(value, str)
                 and re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", value)
             }
-            repair_required |= "partitions" in data and (
+            repair_required |= loaded is not None and (
                 not isinstance(partitions, list)
                 or len(staged_partitions) != len(partitions)
             )
@@ -938,7 +938,7 @@ class ConversationArchive:
         load successfully. Unchanged partitions must still validate because the
         journal does not contain replacement evidence for them.
         """
-        names = data.get("partitions", [])
+        names = data.get("partitions")
         if (
             not isinstance(names, list)
             or any(
@@ -1257,6 +1257,8 @@ class ConversationArchive:
                 for key, session in self._sessions.items()
                 if session.scope_id == scope_id
                 and session.retention_state == "retained"
+                and scope_id != UNRETAINED_SCOPE_ID
+                and session.scope_type != "unretained"
                 and not self._retention_hidden(session, cutoff)
             }
             if include_turns:
@@ -1979,7 +1981,12 @@ class ConversationArchive:
 
     def _require_owned_session(self, scope_id: str, session_id: str) -> ArchiveSession:
         session = self._require_session(session_id)
-        if session.scope_id != scope_id or session.retention_state != "retained":
+        if (
+            session.scope_id != scope_id
+            or session.retention_state != "retained"
+            or scope_id == UNRETAINED_SCOPE_ID
+            or session.scope_type == "unretained"
+        ):
             raise ValueError("conversation session not found")
         return session
 
@@ -2704,6 +2711,13 @@ def _validated_session(raw: Any, *, allow_unretained: bool = False) -> ArchiveSe
             {"retained", "private", "unretained"}
             if allow_unretained
             else {"retained", "private"}
+        )
+        or (
+            session.retention_state == "retained"
+            and (
+                session.scope_id == UNRETAINED_SCOPE_ID
+                or session.scope_type == "unretained"
+            )
         )
         or not isinstance(session.turn_count, int)
         or isinstance(session.turn_count, bool)

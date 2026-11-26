@@ -136,6 +136,32 @@ class _TransientCatalogUpdateError(_CatalogHTTPError):
     """Remote catalogue refresh failed for an ordinary transient reason."""
 
 
+def _stored_refresh_metadata(
+    saved: Mapping[str, Any],
+) -> tuple[str | None, float, dict[str, Any] | None]:
+    checked = saved.get("last_checked", 0)
+    etag = saved.get("etag")
+    incompatible = saved.get("incompatible_catalog")
+    if incompatible is not None and (
+        not isinstance(incompatible, dict)
+        or type(incompatible.get("schema_version")) is not int
+        or type(incompatible.get("catalog_version")) is not int
+        or (
+            incompatible.get("minimum_eoai_version") is not None
+            and not isinstance(incompatible["minimum_eoai_version"], str)
+        )
+    ):
+        raise ValueError("Invalid incompatible catalogue status")
+    if type(checked) not in (float, int) or not 0 <= checked < math.inf:
+        raise ValueError("Invalid catalogue check time")
+    if etag is not None and (
+        not isinstance(etag, str) or len(etag) > 256 or "\n" in etag or "\r" in etag
+    ):
+        raise ValueError("Invalid catalogue ETag")
+    # A wall-clock rollback marks the cache unchecked without losing catalogue data.
+    return etag, checked if checked <= time.time() else 0.0, incompatible
+
+
 class ModelCatalogManager:
     """Serialize catalogue checks/apply/reset and retain last good data."""
 
@@ -154,94 +180,88 @@ class ModelCatalogManager:
 
     async def async_load(self) -> None:
         """Load/migrate stored data without making startup depend on the network."""
+        self.catalog = self.available_catalog = self.incompatible_catalog = None
+        self.etag = self.last_error = None
+        self.last_checked = 0.0
         try:
             saved = await self.store.async_load()
-            migrated = False
-            if saved:
-                candidate = saved.get("catalog")
-                if candidate is not None:
-                    candidate, migrated = validate_or_migrate_catalog(candidate)
-                available = saved.get("available_catalog")
-                if available is not None:
-                    available = validate_catalog(available)
-                checked = saved.get("last_checked", 0)
-                etag = saved.get("etag")
-                incompatible = saved.get("incompatible_catalog")
-                if incompatible is not None and (
-                    not isinstance(incompatible, dict)
-                    or type(incompatible.get("schema_version")) is not int
-                    or type(incompatible.get("catalog_version")) is not int
-                    or (
-                        incompatible.get("minimum_eoai_version") is not None
-                        and not isinstance(incompatible["minimum_eoai_version"], str)
-                    )
-                ):
-                    raise ValueError("Invalid incompatible catalogue status")
-                if type(checked) not in (float, int) or not 0 <= checked < math.inf:
-                    raise ValueError("Invalid catalogue check time")
-                if checked > time.time():
-                    # A wall-clock rollback does not invalidate downloaded data.
-                    # Mark it unchecked; the next refresh persists the corrected time.
-                    checked = 0.0
-                if etag is not None and (
-                    not isinstance(etag, str)
-                    or len(etag) > 256
-                    or "\n" in etag
-                    or "\r" in etag
-                ):
-                    raise ValueError("Invalid catalogue ETag")
-                stale_candidate_discarded = False
-                if (
-                    candidate is not None
-                    and candidate["catalog_version"]
-                    < BUNDLED_CATALOG["catalog_version"]
-                ):
-                    candidate = None
-                    stale_candidate_discarded = True
-                elif candidate is not None:
-                    validate_catalog_transition(None, candidate)
-
-                active = candidate or BUNDLED_CATALOG
-                if available is not None:
-                    if available["catalog_version"] <= active["catalog_version"]:
-                        available = None
-                    else:
-                        validate_catalog_transition(candidate, available)
-                if stale_candidate_discarded and available is None:
-                    etag = None
-
-                self.catalog = candidate
-                self.available_catalog = available
-                self.etag = etag
-                self.last_checked = checked
-                self.incompatible_catalog = incompatible
-                if incompatible is not None:
-                    # The response ETag belongs to rejected data, never to active data.
-                    self.etag = None
-                if migrated:
-                    _LOGGER.debug(
-                        "Migrated stored model capability catalogue to schema v4; "
-                        "bundled model data is authoritative"
-                    )
-                    try:
-                        await self._save(
-                            candidate, available, etag, checked, incompatible
-                        )
-                    except Exception as err:
-                        log_handled_failure(
-                            _LOGGER, "Unable to persist migrated model catalogue", err
-                        )
+            if saved is not None and not isinstance(saved, Mapping):
+                raise ValueError("Invalid catalogue store")
         except Exception as err:
-            self.catalog = None
-            self.available_catalog = None
-            self.etag = None
-            self.last_checked = 0.0
-            self.incompatible_catalog = None
             self.last_error = (
                 "Stored model data could not be loaded; using bundled data."
             )
             log_handled_failure(_LOGGER, self.last_error + " operation=load", err)
+        else:
+            if saved:
+                await self._async_load_saved(saved)
         activate_catalog(self.catalog)
+
+    async def _async_load_saved(self, saved: Mapping[str, Any]) -> None:
+        migrated = stale = invalid_active = invalid_pending = False
+        if (raw := saved.get("catalog")) is not None:
+            try:
+                candidate, migrated = validate_or_migrate_catalog(raw)
+                stale = (
+                    candidate["catalog_version"] < BUNDLED_CATALOG["catalog_version"]
+                )
+                if not stale:
+                    validate_catalog_transition(None, candidate)
+                    self.catalog = candidate
+            except (KeyError, TypeError, ValueError) as err:
+                invalid_active = True
+                self.last_error = (
+                    "Stored model data could not be loaded; using bundled data."
+                )
+                log_handled_failure(_LOGGER, self.last_error + " operation=load", err)
+        if (raw := saved.get("available_catalog")) is not None:
+            try:
+                available = validate_catalog(raw)
+                if (
+                    available["catalog_version"]
+                    > (self.catalog or BUNDLED_CATALOG)["catalog_version"]
+                ):
+                    validate_catalog_transition(self.catalog, available)
+                    self.available_catalog = available
+            except (KeyError, TypeError, ValueError) as err:
+                invalid_pending = True
+                message = "Stored model update could not be loaded; the active catalogue is still available."
+                self.last_error = self.last_error or message
+                log_handled_failure(_LOGGER, message + " operation=load", err)
+        try:
+            self.etag, self.last_checked, self.incompatible_catalog = (
+                _stored_refresh_metadata(saved)
+            )
+        except ValueError as err:
+            message = "Stored model catalogue refresh metadata was invalid."
+            self.last_error = self.last_error or (
+                message
+                if self.catalog is not None or self.available_catalog is not None
+                else "Stored model data could not be loaded; using bundled data."
+            )
+            log_handled_failure(_LOGGER, message + " operation=load", err)
+        if invalid_active or invalid_pending:
+            self.last_checked = 0.0
+        if (
+            invalid_active
+            or invalid_pending
+            or (stale and self.available_catalog is None)
+            or self.incompatible_catalog is not None
+        ):
+            self.etag = None
+        if migrated and not invalid_active:
+            try:
+                await self._save(
+                    self.catalog,
+                    self.available_catalog,
+                    self.etag,
+                    self.last_checked,
+                    self.incompatible_catalog,
+                )
+            except Exception as err:
+                log_handled_failure(
+                    _LOGGER, "Unable to persist migrated model catalogue", err
+                )
 
     def status(self) -> dict[str, Any]:
         """Return active and remotely available catalogue state."""
@@ -445,11 +465,10 @@ class ModelCatalogManager:
         self, candidate: dict[str, Any], inventory: _SavedInventory
     ) -> bool:
         """Reject invalid base routes before any Request Rules storage reads."""
-        from .request import build_provider_request_snapshot, capability_model_identity
+        from .request import capability_model_identity
 
         for connection in inventory:
             entry_data = connection.entry_data
-            client = connection.client
             provider = connection.provider
             for assistant in connection.assistants:
                 options = assistant.options
@@ -458,17 +477,57 @@ class ModelCatalogManager:
                 try:
                     if assistant.subentry.subentry_type == "conversation":
                         self._validate_candidate_request(options, connection, metadata)
-                    else:
-                        build_provider_request_snapshot(
-                            options,
-                            entry_data,
-                            tools_required=False,
-                            model_capabilities=metadata,
-                            client=client,
-                        )
+                    elif not self._candidate_preserves_task_capabilities(
+                        options, connection, model, metadata
+                    ):
+                        return False
                 except Exception:
                     return False
         return True
+
+    def _candidate_preserves_task_capabilities(
+        self,
+        options: Mapping[str, Any],
+        connection: _SavedConnection,
+        model: str,
+        candidate: Mapping[str, Any],
+    ) -> bool:
+        """Protect caller-supplied tools and structures on configured task agents."""
+        from .request import build_provider_request_snapshot
+
+        active = catalog_model_metadata(
+            self.catalog, model, provider=connection.provider
+        )
+
+        def snapshot(metadata: Mapping[str, Any], *, tools: bool):
+            return build_provider_request_snapshot(
+                options,
+                connection.entry_data,
+                tools_required=tools,
+                model_capabilities=metadata,
+                client=connection.client,
+            )
+
+        text_request = snapshot(candidate, tools=False)
+        try:
+            active_text = snapshot(active, tools=False)
+        except HomeAssistantError:
+            pass  # A candidate may repair an already unusable task route.
+        else:
+            if active_text.structured_outputs and not text_request.structured_outputs:
+                return False
+
+        try:
+            active_tools = snapshot(active, tools=True)
+        except HomeAssistantError:
+            return True
+        candidate_tools = snapshot(candidate, tools=True)
+        if active_tools.structured_outputs and not candidate_tools.structured_outputs:
+            return False
+        return candidate_tools.tool_limit is None or (
+            active_tools.tool_limit is not None
+            and candidate_tools.tool_limit >= active_tools.tool_limit
+        )
 
     async def _candidate_inventory(
         self, candidate: dict[str, Any], *, reset: bool = False

@@ -317,7 +317,28 @@ async def async_remove_stored_agent_calls(
         if isinstance(manager, DelayedToolManager):
             await manager._async_remove_agent_locked(entry_id, subentry_id)
         else:
-            await _async_remove_stored_agent_calls_locked(hass, entry_id, subentry_id)
+            await _async_remove_stored_agent_calls_locked(
+                hass, lambda parent, child: (parent, child) == (entry_id, subentry_id)
+            )
+
+
+async def async_prune_orphaned_delayed_calls(hass: HomeAssistant) -> None:
+    """Remove records whose saved owner no longer exists, including disk-only jobs."""
+
+    def deleted(entry_id: str, subentry_id: str) -> bool:
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
+            return True
+        if entry.domain != DOMAIN:
+            return False
+        return subentry_id not in entry.subentries
+
+    async with _delayed_store_lock(hass):
+        manager = delayed_tool_manager(hass)
+        if manager is not None and manager._setup_complete and not manager._quarantined:
+            await manager._async_remove_calls_locked(deleted)
+        else:
+            await _async_remove_stored_agent_calls_locked(hass, deleted)
 
 
 def _delayed_store_lock(hass: HomeAssistant) -> asyncio.Lock:
@@ -340,7 +361,7 @@ async def _async_load_delayed_queue_store(
 
 
 async def _async_remove_stored_agent_calls_locked(
-    hass: HomeAssistant, entry_id: str, subentry_id: str
+    hass: HomeAssistant, remove: Callable[[str, str], bool]
 ) -> None:
     """Read and replace stored calls while retaining shared-store ownership."""
     store = PropagatingWriteStore(
@@ -360,8 +381,11 @@ async def _async_remove_stored_agent_calls_locked(
         for raw in data["calls"]
         if not (
             isinstance(raw, dict)
-            and raw.get("entry_id") == entry_id
-            and raw.get("subentry_id") == subentry_id
+            and isinstance(parent := raw.get("entry_id"), str)
+            and isinstance(child := raw.get("subentry_id"), str)
+            and parent
+            and child
+            and remove(parent, child)
         )
     ]
     if len(survivors) != len(data["calls"]):
@@ -515,6 +539,14 @@ class DelayedToolManager:
             )
         if not self._setup_complete:
             raise HomeAssistantError("Delayed Function Tool scheduler is unavailable")
+        implementation = (function_tool or {}).get("function", {})
+        if (
+            implementation.get("type") == "native"
+            and implementation.get("name") == "execute_service"
+        ):
+            from .safety_hardening import _validate_execute_service_request
+
+            _validate_execute_service_request(arguments)
         delay = _delay_as_timedelta(
             execution_delay if execution_delay is not None else arguments.get("delay")
         )
@@ -827,17 +859,24 @@ class DelayedToolManager:
 
     async def _async_remove_agent_locked(self, entry_id: str, subentry_id: str) -> None:
         """Erase one agent from the current authoritative storage generation."""
+
+        def matching_owner(parent: str, child: str) -> bool:
+            return (parent, child) == (entry_id, subentry_id)
+
         if not self._setup_complete or self._quarantined:
             # Setup or quarantine can leave runtime records empty while storage
             # still contains jobs. Delete from the authoritative generation.
-            await _async_remove_stored_agent_calls_locked(
-                self.hass, entry_id, subentry_id
-            )
+            await _async_remove_stored_agent_calls_locked(self.hass, matching_owner)
             return
+        await self._async_remove_calls_locked(matching_owner)
+
+    async def _async_remove_calls_locked(
+        self, remove: Callable[[str, str], bool]
+    ) -> None:
         removed = {
             call_id
             for call_id, record in self._records.items()
-            if record.entry_id == entry_id and record.subentry_id == subentry_id
+            if remove(record.entry_id, record.subentry_id)
         }
         if not removed:
             return
@@ -1256,7 +1295,7 @@ class DelayedToolManager:
                 agent = conversation.async_get_agent(
                     self.hass, registry_entry.entity_id
                 )
-                if agent is not None:
+                if getattr(agent, "ready_for_scheduled_actions", False):
                     return agent
         return None
 

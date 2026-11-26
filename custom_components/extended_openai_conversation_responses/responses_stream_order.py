@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from .non_streaming import completed_responses_output_events
-from .provider_errors import ProviderStreamError
+from .provider_errors import ProviderStreamError, ensure_successful_responses_result
 from .provider_output_budget import MAX_OUTPUT_ITEMS, ProviderOutputBudget
 
 _ADDED = "response.output_item.added"
@@ -48,6 +48,7 @@ class _OutputItem:
     signature: tuple[Any, ...] | None = None
     completion: tuple[Any, ...] | None = None
     arguments: str | None = None
+    arguments_done: bool = False
     opening: Any = None
     presented: bool = False
     done: bool = False
@@ -101,9 +102,13 @@ class _OutputItem:
 
     def observe_arguments(self, event: Any, kind: str) -> None:
         if kind == _ARGUMENT_DELTA:
+            if self.arguments_done:
+                raise _malformed("tool argument delta after completion")
             self.arguments = (self.arguments or "") + event.delta
         elif kind == _ARGUMENT_DONE:
             self.check_arguments(event.arguments)
+            self.arguments = event.arguments
+            self.arguments_done = True
 
     def check_arguments(self, arguments: str | None) -> None:
         if self.arguments is not None and self.arguments != arguments:
@@ -156,6 +161,7 @@ async def ordered_output_events(
                 if any(index >= next_index for index in items):
                     raise _malformed("unfinished output item")
                 response = getattr(event, "response", None)
+                ensure_successful_responses_result(response)
                 output = getattr(response, "output", ())
                 if isinstance(output, (list, tuple)) and output:
                     if len(output) > MAX_OUTPUT_ITEMS:
@@ -229,6 +235,7 @@ async def ordered_output_events(
                     legacy.item_id = item_id
                     legacy_start = True
                 elif kind == _DONE:
+                    legacy.check_arguments(getattr(event.item, "arguments", None))
                     if item_id:
                         if item_id in legacy_completions:
                             raise _malformed("repeated completed output item")
@@ -259,6 +266,7 @@ async def ordered_output_events(
             ):
                 item.presented = True
                 item.arguments = legacy.arguments
+                item.arguments_done = legacy.arguments_done
                 legacy = _OutputItem()
                 legacy_start = False
 

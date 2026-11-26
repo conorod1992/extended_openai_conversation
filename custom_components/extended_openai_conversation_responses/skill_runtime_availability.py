@@ -7,15 +7,12 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-from .agent_config import validate_function_groups
-from .const import (
-    CONF_FUNCTION_GROUPS,
-    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-    CONF_SKILLS,
-    DEFAULT_FUNCTION_GROUPS,
-    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-)
+from .agent_config import normalized_function_call_budget
+from .const import CONF_FUNCTION_GROUPS, CONF_SKILLS, DEFAULT_FUNCTION_GROUPS
 from .function_groups import function_tool_runtime_scope
+from .function_tool_quarantine import (
+    _runtime_validate_function_groups as validate_function_groups,
+)
 from .skill_availability import effective_skill_loader_status, is_canonical_skill_loader
 from .skills import Skill, SkillManager
 
@@ -59,15 +56,8 @@ def effective_tool_runtime_scope(
     installed = (
         manager.get_all_skills() if manager is not None and selected_names else []
     )
-    max_function_calls = int(
-        options.get(
-            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-        )
-    )
-    from .request import function_call_budget_available
-
-    function_tools_supported = function_call_budget_available(options)
+    max_function_calls = normalized_function_call_budget(options, allow_unlimited=True)
+    function_tools_supported = max_function_calls > 0
     group_loader_supported = function_tools_supported
     skill_status = effective_skill_loader_status(
         selected_names,

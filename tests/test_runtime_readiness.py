@@ -1114,6 +1114,7 @@ async def test_shared_provider_restore_checks_sibling_ha_capacity_before_journal
     from tests.test_selective_restore_concurrency import RestoreHarness
 
     tx = RestoreHarness(monkeypatch)
+    monkeypatch.setattr(restore_recovery, "_async_construct_provider_client", AsyncMock(return_value=object()))
     tx.hass.config = SimpleNamespace(language="en")
     target_config = _options()
     tx.subentry.data = deepcopy(target_config)

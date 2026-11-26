@@ -98,7 +98,7 @@ def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
 
 def is_azure_url(base_url: str | None) -> bool:
     """Classify supported Azure hostnames without inspecting other URL fields."""
-    if not base_url:
+    if not isinstance(base_url, str) or not base_url:
         return False
     try:
         hostname = urlsplit(base_url).hostname

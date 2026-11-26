@@ -81,6 +81,82 @@ async def test_repeated_completion_reaches_existing_validation():
         _ = [value async for value in ordered_output_events(stream([done, done]))]
 
 
+@pytest.mark.parametrize("fields", [{}, {"output_index": 0}], ids=["legacy", "indexed"])
+async def test_argument_snapshot_is_authoritative_without_preceding_deltas(fields):
+    arguments = event(
+        "response.function_call_arguments.done", arguments='{"value":1}', **fields
+    )
+    item = SimpleNamespace(
+        type="function_call", call_id="call-1", name="test", arguments='{"value":2}'
+    )
+    done = event("response.output_item.done", item=item, **fields)
+    with pytest.raises(ProviderStreamError, match="conflicting tool arguments"):
+        _ = [frame async for frame in ordered_output_events(stream([arguments, done]))]
+    # Providers that send arguments only in the final item are still supported.
+    assert done in [frame async for frame in ordered_output_events(stream([done]))]
+
+
+@pytest.mark.parametrize(
+    "status,error", [("failed", None), ("completed", {"message": "failure"})]
+)
+async def test_completed_event_rejects_failure_in_embedded_response(status, error):
+    done = event(
+        "response.completed", response=SimpleNamespace(status=status, error=error)
+    )
+    with pytest.raises(ProviderStreamError):
+        _ = [frame async for frame in ordered_output_events(stream([done]))]
+
+
+@pytest.mark.parametrize(
+    "kind,values",
+    [
+        ("response.function_call_arguments.delta", {"delta": 42}),
+        ("response.function_call_arguments.done", {"arguments": None}),
+    ],
+)
+async def test_invalid_argument_fields_raise_structured_provider_error(kind, values):
+    bad = event(kind, output_index=0, **values)
+    with pytest.raises(ProviderStreamError, match="must be a string"):
+        _ = [frame async for frame in ordered_output_events(stream([bad]))]
+
+
+async def test_consecutive_unindexed_messages_complete_their_own_text():
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+
+    events = []
+    for index, prefix, completion in [
+        (0, "Long prefix", "Long prefix complete"),
+        (1, "Next", "Next reply"),
+    ]:
+        item = SimpleNamespace(
+            id=f"message_{index}",
+            type="message",
+            role="assistant",
+            content=[SimpleNamespace(type="output_text", text=completion)],
+        )
+        events.extend(
+            [
+                event("response.output_item.added", item=item),
+                event("response.output_text.delta", content_index=0, delta=prefix),
+                event("response.output_text.done", content_index=0, text=completion),
+                event("response.output_item.done", item=item),
+            ]
+        )
+    events.append(event("response.completed", response=SimpleNamespace(usage=None)))
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    parsed = entity._transform_responses_stream(
+        SimpleNamespace(content=[]), stream(events)
+    )
+    assert [delta["content"] async for delta in parsed if "content" in delta] == [
+        "Long prefix",
+        " complete",
+        "Next",
+        " reply",
+    ]
+
+
 async def test_closing_output_adapter_closes_all_owned_layers():
     closed = []
 

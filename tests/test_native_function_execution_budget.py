@@ -303,6 +303,29 @@ async def test_zero_budget_does_not_consume_conditional_finalizer(hass) -> None:
     entity._execute_function_tool.assert_not_awaited()
 
 
+async def test_unadvertised_conditional_finalizer_cannot_replace_the_reply(hass):
+    entity = _entity(
+        hass,
+        [
+            _function_call_stream(
+                [
+                    (
+                        "unsolicited",
+                        CONTINUE_CONVERSATION_TOOL_NAME,
+                        {"response": "Unexpected text", "continue_conversation": True},
+                    )
+                ]
+            )
+        ],
+        limit="1.0",
+    )
+    entity._execute_function_tool = _executor(entity)
+    log = _chat_log(hass)
+    with pytest.raises(HomeAssistantError, match="was not advertised"):
+        await entity._async_handle_chat_log(log, [], [])
+    entity._execute_function_tool.assert_not_awaited()
+
+
 async def test_zero_budget_does_not_consume_function_group_loader(hass) -> None:
     loader = _tool(
         FUNCTION_GROUP_LOADER_TOOL_NAME,

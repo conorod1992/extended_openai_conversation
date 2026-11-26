@@ -345,17 +345,7 @@ class KnowledgeLibrary:
                 return
             try:
                 data = await self._storage.async_load()
-                if data is not None and not isinstance(data, Mapping):
-                    raise ValueError("Knowledge Library store has invalid structure")
-                if (
-                    isinstance(data, Mapping)
-                    and "sources" in data
-                    and not isinstance(data["sources"], list)
-                ):
-                    raise ValueError("Knowledge Library sources have invalid structure")
-                raw_sources = (
-                    data.get("sources", []) if isinstance(data, Mapping) else []
-                )
+                raw_sources = _stored_sources(data)
                 sources, index = await asyncio.to_thread(_load_index, raw_sources)
                 self._repair_required = len(sources) != len(raw_sources)
                 self._sources = sources
@@ -1244,15 +1234,12 @@ def _migrated_storage_payload(old_data: Any) -> dict[str, Any]:
     """Normalize legacy stores and make previous sources explicitly enabled."""
     if not isinstance(old_data, (list, Mapping)):
         raise StorageRepairRequired("Knowledge Library")
-    raw_sources = (
-        old_data
-        if isinstance(old_data, list)
-        else old_data.get("sources", [])
-        if isinstance(old_data, Mapping)
-        else []
-    )
-    if not isinstance(raw_sources, list):
-        raise StorageRepairRequired("Knowledge Library")
+    try:
+        raw_sources = (
+            old_data if isinstance(old_data, list) else _stored_sources(old_data)
+        )
+    except ValueError as err:
+        raise StorageRepairRequired("Knowledge Library") from err
     migrated: list[Any] = []
     for raw in raw_sources:
         if isinstance(raw, Mapping):
@@ -1262,6 +1249,18 @@ def _migrated_storage_payload(old_data: Any) -> dict[str, Any]:
         else:
             migrated.append(raw)
     return {**(old_data if isinstance(old_data, Mapping) else {}), "sources": migrated}
+
+
+def _stored_sources(data: Any) -> list[Any]:
+    if data is None or (isinstance(data, Mapping) and not data):
+        return []
+    if not isinstance(data, Mapping):
+        raise ValueError("Knowledge Library store has invalid structure")
+    if "sources" not in data:
+        raise StorageRepairRequired("Knowledge Library")
+    if not isinstance(data["sources"], list):
+        raise ValueError("Knowledge Library sources have invalid structure")
+    return data["sources"]
 
 
 def _source_from_stored(raw: Any) -> KnowledgeSource:

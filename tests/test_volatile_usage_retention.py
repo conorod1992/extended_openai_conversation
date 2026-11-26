@@ -14,6 +14,43 @@ from custom_components.extended_openai_conversation_responses import (
 from homeassistant.config_entries import ConfigEntryState
 
 
+async def test_invalid_saved_retention_preserves_details_and_aggregate_accounting():
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        AgentConfigError,
+        agent_config_snapshot,
+        merge_agent_config,
+        normalize_agent_config,
+    )
+
+    options = {"usage_request_retention_days": False, "usage_run_retention_days": False}
+    with pytest.raises(AgentConfigError, match="usage_request_retention_days"):
+        normalize_agent_config({**options, "functions": "[]"})
+    saved = {**options, "functions": "[]"}
+    assert agent_config_snapshot(saved)["usage_run_retention_days"] is False
+    corrected = merge_agent_config(saved, {"usage_request_retention_days": 30})
+    assert corrected["usage_request_retention_days"] == 30
+    assert corrected["usage_run_retention_days"] is False
+    with pytest.raises(AgentConfigError, match="usage_run_retention_days"):
+        merge_agent_config(saved, {"usage_run_retention_days": False})
+    manager = usage.UsageManager(usage._VolatileUsageStorage())
+    await manager.async_initialize()
+    async with manager.async_run():
+        await manager.async_record_request(
+            successful=True, usage=usage.RequestUsage(total_tokens=5)
+        )
+    assert len(manager.requests) == len(manager.runs) == 1
+    policy = usage.usage_retention_policy(options)
+    manager.request_retention_days = policy["request_retention_days"]
+    manager.run_retention_days = policy["run_retention_days"]
+    await manager.async_prune_details(save=False)
+    async with manager.async_run():
+        await manager.async_record_request(
+            successful=True, usage=usage.RequestUsage(total_tokens=8)
+        )
+    assert len(manager.requests) == len(manager.runs) == 1
+    assert manager.totals.total_tokens == 13
+
+
 @pytest.mark.parametrize("days", [0, 30])
 @pytest.mark.parametrize("action", ["save", "update", "import"])
 async def test_committed_policy_reaches_existing_volatile_accounting(

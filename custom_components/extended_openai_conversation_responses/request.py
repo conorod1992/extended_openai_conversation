@@ -402,20 +402,9 @@ def build_web_search_tool(
 
 def function_call_budget_available(options: Mapping[str, Any]) -> bool:
     """Share the ordinary Function/Group-loader exposure rule with runtime."""
-    from .const import (
-        CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-        DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-    )
+    from .agent_config import normalized_function_call_budget
 
-    return (
-        int(
-            options.get(
-                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            )
-        )
-        > 0
-    )
+    return normalized_function_call_budget(options, allow_unlimited=True) > 0
 
 
 def ha_tool_discovery_references(

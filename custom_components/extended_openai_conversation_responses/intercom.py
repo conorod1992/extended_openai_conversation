@@ -201,12 +201,22 @@ class IntercomManager:
         async with self._state_lock:
             if self._loaded:
                 return
-            stored = await self._store.async_load()
-            self._settings = dict(stored or {})
-            self._enabled = bool(self._settings.get("enabled", False))
-            self._builtin_voice_command = bool(
-                self._settings.get("builtin_voice_command", True)
-            )
+            try:
+                stored = await self._store.async_load()
+            except (KeyError, NotImplementedError) as err:
+                raise HomeAssistantError(
+                    "Broadcast settings storage requires repair"
+                ) from err
+            if stored is None:
+                stored = {}
+            if not isinstance(stored, dict) or any(
+                key in stored and not isinstance(stored[key], bool)
+                for key in ("enabled", "builtin_voice_command")
+            ):
+                raise HomeAssistantError("Broadcast settings storage requires repair")
+            self._settings = stored.copy()
+            self._enabled = stored.get("enabled", False)
+            self._builtin_voice_command = stored.get("builtin_voice_command", True)
             self._loaded = True
 
     @property

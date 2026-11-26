@@ -183,6 +183,7 @@ from .guest_mode import (
     async_get_guest_mode,
     can_reuse_request_policy,
     execution_failure_result,
+    get_loaded_guest_mode,
     guest_arguments_allowed_runtime,
     guest_mode_denial_result,
     resolve_guest_policy,
@@ -477,6 +478,18 @@ class ExtendedOpenAIAgentEntity(
         finally:
             ready.set()
 
+    @property
+    def ready_for_scheduled_actions(self) -> bool:
+        """Expose the current registration and Guest policy admission boundary."""
+        ready = self._agent_ready
+        return (
+            ready is not None
+            and ready.is_set()
+            and not self._agent_initialization_failed
+            and self._guest_mode is not None
+            and self._guest_mode.authoritative_available
+        )
+
     async def _async_initialize_agent_state(self) -> None:
         """Load required shared state and reset per-registration request state."""
         # Calculate skills directory based on working directory
@@ -503,9 +516,24 @@ class ExtendedOpenAIAgentEntity(
         self._usage = await async_get_usage(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
-        self._guest_mode = await async_get_guest_mode(
-            self.hass, self.entry.entry_id, self.subentry.subentry_id
-        )
+        try:
+            self._guest_mode = await async_get_guest_mode(
+                self.hass, self.entry.entry_id, self.subentry.subentry_id
+            )
+        except (StorageRepairRequired, OSError, HomeAssistantError) as err:
+            manager = get_loaded_guest_mode(
+                self.hass, self.entry.entry_id, self.subentry.subentry_id
+            )
+            if manager is None or manager.authoritative_available:
+                raise
+            # An unavailable manager denies requests and lets reconciliation retry.
+            # None would represent an unrestricted assistant.
+            self._guest_mode = manager
+            log_handled_failure(
+                _LOGGER,
+                "Guest Mode could not be initialized; requests remain blocked",
+                err,
+            )
         retention = usage_retention_policy(self.subentry.data)
         self._usage.request_retention_days = retention["request_retention_days"]
         self._usage.run_retention_days = retention["run_retention_days"]
@@ -1912,6 +1940,7 @@ class ExtendedOpenAIAgentEntity(
         """Build system prompt with exposed entities and skills."""
         started = time.monotonic()
         policy = self._effective_guest_policy()
+        scope = _ACTIVE_TURN.get().scope
         render_started = time.monotonic()
         effective = render_effective_prompt(
             self.hass,
@@ -1937,7 +1966,8 @@ class ExtendedOpenAIAgentEntity(
                 optional_manager_ready(getattr(self, "_temporary_memory", None))
                 and _ACTIVE_TURN.get().temporary_scope is not None
             ),
-            archive_available=self._archive_reads_available,
+            archive_available=self._archive_reads_available
+            and (scope is None or scope.allows_retention),
             archive_session_available=self._archive_session_available,
         )
         record_prompt_render(effective, render_started)
@@ -2380,6 +2410,7 @@ class ExtendedOpenAIAgentEntity(
         self, configured_tools: list[dict[str, Any]], policy: GuestCapabilityPolicy
     ) -> list[dict[str, Any]]:
         """Assemble the integration tools for the active request and owner."""
+        scope = _ACTIVE_TURN.get().scope
         return assemble_integration_function_tools(
             self.subentry.data,
             {
@@ -2396,7 +2427,8 @@ class ExtendedOpenAIAgentEntity(
                 and _ACTIVE_TURN.get().temporary_scope is not None
             ),
             knowledge_available=self._knowledge_available,
-            archive_available=self._archive_reads_available,
+            archive_available=self._archive_reads_available
+            and (scope is None or scope.allows_retention),
             archive_session_available=self._archive_session_available,
             guest_policy=policy,
             scheduled_action_owner_available=(
@@ -3522,6 +3554,10 @@ class ExtendedOpenAIAgentEntity(
             scope = turn.scope
             if scope is None:
                 raise RuntimeError("active conversation session is unavailable")
+            if operation in {"search", "get"} and not scope.allows_retention:
+                raise RuntimeError(
+                    "archive reads require a retained conversation scope"
+                )
             if operation == "search":
                 if not self.subentry.data.get(
                     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,

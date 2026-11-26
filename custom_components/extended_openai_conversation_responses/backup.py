@@ -248,7 +248,10 @@ def _configuration_snapshot_preserving_quarantine(
         # A backup is also a repair path for older inactive Skill selections.
         # All other scalar, Function and permission validation remains strict.
         return normalize_agent_config(
-            value, allow_unavailable_skills=True, provider=provider
+            value,
+            allow_unavailable_skills=True,
+            allow_legacy_usage_retention=persisted_source,
+            provider=provider,
         )
 
     try:
@@ -376,23 +379,18 @@ def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             "This backup is too large for the legacy one-message JSON export; "
             "use the full backup transfer interface"
         ) from err
-    try:
-        document = (
-            encode_document(snapshot)
-            if snapshot.get("version") == PRIVATE_BACKUP_VERSION
-            else {
-                **snapshot,
-                "agent": {
-                    **snapshot["agent"],
-                    "config": _safe_configuration(snapshot["agent"]["config"]),
-                },
-                "request_rules": _safe_configuration(snapshot["request_rules"]),
-            }
-        )
-    except SerializedDocumentLimit:
-        raise BackupError(
-            "The backup configuration or Request Rules exceed the YAML safety limit"
-        ) from None
+    document = (
+        _encode_private_export(snapshot)
+        if snapshot.get("version") == PRIVATE_BACKUP_VERSION
+        else {
+            **snapshot,
+            "agent": {
+                **snapshot["agent"],
+                "config": _safe_configuration(snapshot["agent"]["config"]),
+            },
+            "request_rules": _safe_configuration(snapshot["request_rules"]),
+        }
+    )
     try:
         _validate_import_structure(document)
         serialized = bounded_json_dumps(document, MAX_LEGACY_EXPORT_BYTES)
@@ -600,6 +598,17 @@ def _validate_import_structure(value: Any) -> None:
         check_decoded_structure(value)
     except BackupInputLimit as err:
         raise BackupError(str(err)) from None
+
+
+def _encode_private_export(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Check the same decoded structure that an import must admit."""
+    _validate_import_structure(snapshot)
+    try:
+        return encode_document(snapshot)
+    except SerializedDocumentLimit:
+        raise BackupError(
+            "The backup configuration or Request Rules exceed the YAML safety limit"
+        ) from None
 
 
 def _validate_backup_configuration_unicode(document: Mapping[str, Any]) -> None:

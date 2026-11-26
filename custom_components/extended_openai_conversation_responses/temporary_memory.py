@@ -832,9 +832,13 @@ def _decode_stored_records(
     data: Any,
 ) -> Iterator[tuple[Mapping[str, Any], TemporaryMemoryRecord, datetime]]:
     """Validate a saved generation before offering live or preview context."""
-    if data is not None and not isinstance(data, Mapping):
+    if data is None:
+        return
+    if not isinstance(data, Mapping):
         raise ValueError("Temporary Memory store has invalid structure")
-    raw_records = data.get("records", []) if data is not None else []
+    if "records" not in data:
+        raise StorageRepairRequired("Temporary Memory")
+    raw_records = data["records"]
     if not isinstance(raw_records, list):
         raise ValueError("Temporary Memory records have invalid structure")
     seen_ids: set[str] = set()

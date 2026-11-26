@@ -49,6 +49,23 @@ class Storage:
         self.data = data
 
 
+async def test_missing_records_cannot_be_interpreted_as_empty():
+    from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+        StorageRepairRequired,
+    )
+
+    data = {"recoverable": ["original contents"]}
+    storage = Storage(data)
+    memory = TemporaryMemory(storage)
+    with pytest.raises(StorageRepairRequired):
+        await memory.async_initialize()
+    with pytest.raises(StorageRepairRequired):
+        await memory.async_add(
+            "device:kitchen", "New fact", future(), owner_scope_id="user:alice"
+        )
+    assert storage.data == data
+
+
 @pytest.mark.parametrize("committed", [False, True])
 async def test_invalidated_add_recovers_authoritative_generation(committed):
     class FaultStorage(Storage):

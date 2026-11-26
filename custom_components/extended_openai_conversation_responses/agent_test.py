@@ -13,6 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
     configured_function_tools_from_data,
+    normalized_function_call_budget,
     parse_configured_function_tools,
     validate_function_groups,
 )
@@ -26,13 +27,11 @@ from .const import (
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
     CONF_FUNCTION_GROUPS,
-    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_SKILLS,
     CONF_WEB_SEARCH,
     DEFAULT_API_MODE,
     DEFAULT_CHAT_MODEL,
     DEFAULT_FUNCTION_GROUPS,
-    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_WEB_SEARCH,
 )
 from .functions import get_function
@@ -285,11 +284,8 @@ async def async_test_agent(
                 selected_skills,
                 configured_tools,
                 groups,
-                max_function_calls=int(
-                    subentry.data.get(
-                        CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                        DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                    )
+                max_function_calls=normalized_function_call_budget(
+                    subentry.data, allow_unlimited=True
                 ),
             )
             if not loader_status.available:

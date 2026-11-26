@@ -76,6 +76,21 @@ async def _library(storage=None) -> KnowledgeLibrary:
     return library
 
 
+async def test_nonempty_storage_without_sources_requires_repair():
+    from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+        StorageRepairRequired,
+    )
+
+    data = {"recoverable": ["original contents"]}
+    storage = FakeStorage(data)
+    with pytest.raises(StorageRepairRequired):
+        await _library(storage)
+    with pytest.raises(StorageRepairRequired):
+        knowledge._migrated_storage_payload(data)
+    assert storage.data == data
+    assert (await _library(FakeStorage({}))).source_count == 0
+
+
 async def test_management_knowledge_create_replay_and_duplicate_confirmation(
     hass, management_agent, management_message, monkeypatch
 ):

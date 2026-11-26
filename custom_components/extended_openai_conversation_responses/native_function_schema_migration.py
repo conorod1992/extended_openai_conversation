@@ -211,6 +211,7 @@ def _migrate_service_schema(tool: dict[str, Any], implementation: str) -> bool:
     if implementation == "execute_service":
         properties = cast(dict[str, Any], parameters["properties"])
         list_schema = cast(dict[str, Any], properties["list"])
+        list_schema["minItems"] = 1
         list_schema["maxItems"] = MAX_NATIVE_SERVICE_ACTIONS
     if legacy_default:
         parameters["required"] = ["list"]

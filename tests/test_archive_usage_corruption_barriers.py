@@ -76,7 +76,7 @@ async def test_usage_replacement_clears_barrier_only_after_all_authoritative_wri
 
 
 @pytest.mark.parametrize(
-    "damage", ["session", "turn", "duplicate", "container", "metadata", "partition"]
+    "damage", ["session", "turn", "duplicate", "container", "metadata", "partition", "missing_index"]
 )
 async def test_archive_native_evidence_survives_mutation_and_restart(hass, damage):
     storage = HomeAssistantArchiveStorage(hass, "entry", "agent")
@@ -96,6 +96,8 @@ async def test_archive_native_evidence_survives_mutation_and_restart(hass, damag
         payload["turns"] = {"recoverable": payload["turns"]}
     elif damage == "metadata":
         metadata["active"] = {"recoverable": ["bad binding"]}
+    elif damage == "missing_index":
+        del metadata["partitions"]
     else:
         metadata["partitions"].append("2026-13")
     await storage.async_save_metadata(metadata)

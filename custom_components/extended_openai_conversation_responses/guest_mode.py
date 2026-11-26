@@ -9,6 +9,8 @@ from datetime import datetime
 import logging
 from typing import Any, cast
 
+from homeassistant.components import conversation
+from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
@@ -60,7 +62,10 @@ from .function_tool_policy import runtime_function_tool_name
 from .functions.security import FunctionSecurity, classify_tool
 from .helpers import get_exposed_entities
 from .mutation_outcomes import after_confirmed_mutation
-from .persistence_hardening import _async_settle_transactional_save
+from .persistence_hardening import (
+    StorageRepairRequired,
+    _async_settle_transactional_save,
+)
 from .record_timestamps import parse_datetime
 from .storage_namespaces import GUEST_MODE_PREFIX as GUEST_MODE_STORAGE_PREFIX
 from .strict_store import PropagatingWriteStore
@@ -254,9 +259,11 @@ class GuestModeManager:
             # later getter/setup can retry instead of silently disabling Guest Mode.
             try:
                 data = await self._store.async_load()
-            except Exception:
+            except Exception as err:
                 self._persistence_unavailable = True
                 self._cancel_transition_timer()
+                if isinstance(err, (KeyError, NotImplementedError)):
+                    raise StorageRepairRequired("Guest Mode") from err
                 raise
             recovering = self._persistence_unavailable
             try:
@@ -264,8 +271,6 @@ class GuestModeManager:
             except TypeError, ValueError:
                 self._persistence_unavailable = True
                 self._cancel_transition_timer()
-                from .persistence_hardening import StorageRepairRequired
-
                 raise StorageRepairRequired("Guest Mode") from None
             self._schedule = schedule
             self._persistence_unavailable = False
@@ -1002,8 +1007,19 @@ def guest_policy_editor_snapshot(
         for item in exposed
         if isinstance(item, Mapping) and isinstance(item.get("entity_id"), str)
     }
-    readable = _resolve_legacy_entity_ids(hass, options, control=False)
-    controllable = _resolve_legacy_entity_ids(hass, options, control=True) & readable
+    baseline.update(
+        entity_id
+        for entity_id in getattr(er.async_get(hass), "entities", {})
+        if hass.states.get(entity_id) is None
+        and async_should_expose(hass, conversation.DOMAIN, entity_id)
+    )
+    readable = _resolve_legacy_entity_ids(
+        hass, options, control=False, entity_ids=baseline
+    )
+    controllable = (
+        _resolve_legacy_entity_ids(hass, options, control=True, entity_ids=baseline)
+        & readable
+    )
     legacy_tools = _resolve_legacy_policy(hass, options, configured_tools)
     shared_read = bool(options.get(CONF_GUEST_SHARED_MEMORY_READ, False))
     shared_write = bool(options.get(CONF_GUEST_SHARED_MEMORY_WRITE, False))
@@ -1058,7 +1074,11 @@ def _effective_guest_entity_area(
 
 
 def _resolve_legacy_entity_ids(
-    hass: HomeAssistant, options: Mapping[str, Any], *, control: bool
+    hass: HomeAssistant,
+    options: Mapping[str, Any],
+    *,
+    control: bool,
+    entity_ids: set[str] | None = None,
 ) -> set[str]:
     prefix = "controllable" if control else "readable"
     entity_key = (
@@ -1079,8 +1099,12 @@ def _resolve_legacy_entity_ids(
     device_registry = dr.async_get(hass)
     area_registry = ar.async_get(hass)
     allowed: set[str] = set()
-    for state in hass.states.async_all():
-        entity_id = state.entity_id
+    candidates = (
+        (state.entity_id for state in hass.states.async_all())
+        if entity_ids is None
+        else entity_ids
+    )
+    for entity_id in candidates:
         registry_entry = entity_registry.async_get(entity_id)
         device = (
             device_registry.async_get(registry_entry.device_id)

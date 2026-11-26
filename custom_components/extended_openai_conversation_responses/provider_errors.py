@@ -136,7 +136,7 @@ def responses_incomplete_reason(response: object | None) -> str | None:
 
 
 def ensure_successful_responses_result(response: object) -> None:
-    """Reject explicit failed/incomplete non-stream Responses API results."""
+    """Reject explicit failed or incomplete Responses API results."""
     response_id = _value(response, "id")
     error = _value(response, "error")
     if error is not None:
@@ -144,7 +144,14 @@ def ensure_successful_responses_result(response: object) -> None:
             "OpenAI response failed", error, response_id=response_id
         )
 
-    status = _text(_value(response, "status"))
+    raw_status = _value(response, "status")
+    status = _text(raw_status)
+    if raw_status is not None and status is None:
+        raise ProviderStreamError(
+            "OpenAI response status is malformed",
+            error_type="response_status",
+            response_id=_text(response_id),
+        )
     if status == "incomplete":
         reason = responses_incomplete_reason(response) or "unknown reason"
         raise ProviderStreamError(

@@ -1208,7 +1208,7 @@ def test_resolve_agent_filters_registry_and_returns_live_agent(
         "custom_components.extended_openai_conversation_responses.delayed_tools.er.async_get",
         lambda _hass: registry,
     )
-    agent = object()
+    agent = SimpleNamespace(ready_for_scheduled_actions=True)
     get_agent = MagicMock(return_value=agent)
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.delayed_tools.conversation.async_get_agent",
@@ -1217,6 +1217,9 @@ def test_resolve_agent_filters_registry_and_returns_live_agent(
 
     assert manager._resolve_agent("entry", "agent") is agent
     get_agent.assert_called_once_with(hass, "conversation.agent")
+
+    agent.ready_for_scheduled_actions = False
+    assert manager._resolve_agent("entry", "agent") is None
 
     get_agent.return_value = None
     assert manager._resolve_agent("entry", "agent") is None

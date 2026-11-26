@@ -106,8 +106,8 @@ async def test_category_contract_detects_deliberate_regressions(mutation):
         old = "if prepared.archive_active is not None"
         new = "if prepared.archive_active"
     else:
-        old = "managers.usage.request_retention_days = int("
-        new = "managers.usage.ignored_retention_days = int("
+        old = 'managers.usage.request_retention_days = retention["request_retention_days"]'
+        new = 'managers.usage.ignored_retention_days = retention["request_retention_days"]'
     assert source.count(old) == 1
     namespace = dict(vars(restore_recovery))
     exec(

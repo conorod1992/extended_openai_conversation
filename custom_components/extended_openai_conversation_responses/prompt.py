@@ -11,7 +11,7 @@ from typing import Any
 from homeassistant.helpers import template
 from homeassistant.helpers.template.helpers import resolve_area_id
 
-from .agent_config import normalized_agent_integer
+from .agent_config import normalized_function_call_budget
 from .capabilities import (
     persistent_memory_scope_available,
     resolve_effective_capabilities,
@@ -24,7 +24,6 @@ from .const import (
     CONF_CURRENT_DATETIME_TEMPLATE,
     CONF_EXPOSED_ENTITIES_ENABLED,
     CONF_EXPOSED_ENTITIES_TEMPLATE,
-    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_PROMPT,
     CONF_SHARED_MEMORY_MODE,
     CONF_TEMPORARY_MEMORY,
@@ -35,7 +34,6 @@ from .const import (
     DEFAULT_CURRENT_DATETIME_TEMPLATE,
     DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE,
     DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
-    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_PROMPT,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_TEMPORARY_MEMORY,
@@ -364,12 +362,7 @@ def render_effective_prompt(
     )
     retrieval_safety_added = False
     function_tools_available = (
-        normalized_agent_integer(
-            options,
-            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-        )
-        > 0
+        normalized_function_call_budget(options, allow_unlimited=True) > 0
     )
 
     if policy.guest_active:

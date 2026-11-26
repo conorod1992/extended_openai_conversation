@@ -29,6 +29,32 @@ def _phone_tool(*, min_length):
     }
 
 
+def test_malformed_group_members_remain_blocked_and_independent_tools_are_available():
+    from custom_components.extended_openai_conversation_responses.function_groups import (
+        assemble_function_tools,
+    )
+
+    tools = [{"spec": {"name": name}} for name in ("protected", "unguarded", "healthy")]
+    group = {
+        "id": "working",
+        "name": "Working",
+        "description": "Valid group",
+        "loading_mode": "always",
+        "functions": ["healthy"],
+    }
+    damaged = {
+        **group,
+        "id": "damaged",
+        "name": "Damaged",
+        "loading_mode": "broken",
+        "functions": ["protected"],
+    }
+    groups = quarantine._runtime_validate_function_groups([group, damaged], tools)
+    assembly = assemble_function_tools(tools, groups, set())
+    assert [tool["spec"]["name"] for tool in assembly.tools] == ["unguarded", "healthy"]
+    assert damaged["functions"] == ["protected"] and damaged["loading_mode"] == "broken"
+
+
 def test_runtime_quarantine_does_not_leak_into_next_request(monkeypatch) -> None:
     """A later clean request must not inherit an earlier quarantined tool name."""
     from custom_components.extended_openai_conversation_responses import agent_config

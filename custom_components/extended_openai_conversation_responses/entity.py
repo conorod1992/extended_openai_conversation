@@ -32,6 +32,7 @@ from homeassistant.helpers import device_registry as dr, llm
 from homeassistant.helpers.entity import Entity
 from homeassistant.util import slugify
 
+from .agent_config import normalized_function_call_budget
 from .assistant_response import (
     classify_provider_output,
     provider_output_presentation,
@@ -49,7 +50,6 @@ from .const import (
     CONF_CONTEXT_THRESHOLD,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONF_FUNCTION_TOOL_ERROR_RECOVERY,
-    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_SHORTEN_TOOL_CALL_ID,
     CONTEXT_TRUNCATE_CLEAR,
     CONTEXT_TRUNCATE_KEEP_RECENT,
@@ -60,7 +60,6 @@ from .const import (
     DEFAULT_CONTEXT_THRESHOLD,
     DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
     DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,
-    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_SHORTEN_TOOL_CALL_ID,
     DOMAIN,
     FUNCTION_GROUP_LOADER_TOOL_NAME,
@@ -1102,11 +1101,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if function_tools_factory is not None
                     else function_tools
                 )
-                max_calls = options.get(
-                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                )
-                if int(max_calls) == 0:
+                if normalized_function_call_budget(options, allow_unlimited=True) == 0:
                     initial_tools = [
                         tool for tool in initial_tools if is_function_group_loader(tool)
                     ]
@@ -1241,11 +1236,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     chat_log, enabled=api_mode == API_MODE_RESPONSES
                 )
             )
-            max_function_calls = options.get(
-                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+            function_call_budget = FunctionCallBudget(
+                normalized_function_call_budget(options, allow_unlimited=True)
             )
-            function_call_budget = FunctionCallBudget(int(max_function_calls))
             recovery_state = ToolRecoveryState(
                 enabled=options.get(
                     CONF_FUNCTION_TOOL_ERROR_RECOVERY,
@@ -1643,6 +1636,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             if n_requests == 0
                             else "after_tool",
                             error_type=type(err).__name__,
+                            web_search_used=web_search_used,
                         )
                     if isinstance(
                         err, (TimeoutError, ConnectionError, httpx.RequestError)
@@ -1746,6 +1740,20 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         integration_loader_seen=integration_loader_seen,
                     )
                 )
+                if control_calls and not conditional_continue:
+                    call = control_calls[0]
+                    error = HomeAssistantError(
+                        f"Tool `{call.tool_name}` was not advertised"
+                    )
+                    append_unresolved_tool_results(
+                        chat_log,
+                        self.entity_id,
+                        round_tool_calls,
+                        failed_call_id=call.id,
+                        error=error,
+                        existing_content_ids=existing_content_ids,
+                    )
+                    raise error
                 validate_retained_tool_calls(
                     self,
                     chat_log,
@@ -2613,8 +2621,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         """Transform a Responses API event stream to Home Assistant format."""
         request_usage = request_usage or RequestTokenMeasurements()
         recovery_state = current_tool_recovery_state()
-        response_text_lengths: dict[tuple[int | None, int | None], int] = {}
-        response_refusal_lengths: dict[tuple[int | None, int | None], int] = {}
+        response_text_lengths: dict[int | None, dict[int | None, int]] = {}
+        response_refusal_lengths: dict[int | None, dict[int | None, int]] = {}
         url_citations: dict[tuple[int | None, int | None], list[dict[str, Any]]] = {}
         terminal_event_seen = False
         completed_calls: list[llm.ToolInput] = []
@@ -2654,25 +2662,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if event_type == "response.output_text.delta":
                     if event.delta:
                         streamed_messages.add(output_index)
-                        part_key = (
-                            output_index,
-                            getattr(event, "content_index", None),
-                        )
-                        response_text_lengths[part_key] = response_text_lengths.get(
-                            part_key, 0
-                        ) + len(event.delta)
+                        part = getattr(event, "content_index", None)
+                        lengths = response_text_lengths.setdefault(output_index, {})
+                        lengths[part] = lengths.get(part, 0) + len(event.delta)
                         yield {"content": event.delta}
                     continue
 
                 if event_type == "response.output_text.done":
-                    part_key = (output_index, getattr(event, "content_index", None))
+                    part = getattr(event, "content_index", None)
                     # Before an item is introduced its final phase is unknown.
                     # The completed item below supplies the fallback in that case.
                     if output_index in started_messages and (text := event.text):
-                        already_streamed = response_text_lengths.get(part_key, 0)
+                        lengths = response_text_lengths.setdefault(output_index, {})
+                        already_streamed = lengths.get(part, 0)
                         if len(text) > already_streamed:
                             streamed_messages.add(output_index)
-                            response_text_lengths[part_key] = len(text)
+                            lengths[part] = len(text)
                             yield {"content": text[already_streamed:]}
                     continue
 
@@ -2682,41 +2687,34 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         streamed_messages.add(output_index)
                         if not isinstance(refusal_delta, str):
                             refusal_delta = str(refusal_delta)
-                        part_key = (
-                            getattr(event, "output_index", None),
-                            getattr(event, "content_index", None),
-                        )
-                        response_refusal_lengths[part_key] = (
-                            response_refusal_lengths.get(part_key, 0)
-                            + len(refusal_delta)
-                        )
+                        part = getattr(event, "content_index", None)
+                        lengths = response_refusal_lengths.setdefault(output_index, {})
+                        lengths[part] = lengths.get(part, 0) + len(refusal_delta)
                         yield {"content": refusal_delta}
                     continue
 
                 if event_type == "response.refusal.done":
                     refusal = getattr(event, "refusal", None)
                     if refusal:
-                        part_key = (
-                            output_index,
-                            getattr(event, "content_index", None),
-                        )
+                        part = getattr(event, "content_index", None)
+                        lengths = response_refusal_lengths.get(output_index, {})
                         # Defer an indexed refusal with no open message to the
                         # completed item, which can establish its own role and phase.
                         if (
                             output_index is not None
                             and output_index not in started_messages
                             and None not in started_messages
-                            and part_key not in response_refusal_lengths
+                            and part not in lengths
                         ):
                             continue
                         streamed_messages.add(output_index)
                         if not isinstance(refusal, str):
                             refusal = str(refusal)
-                        already_streamed = response_refusal_lengths.get(part_key, 0)
+                        already_streamed = lengths.get(part, 0)
                         if len(refusal) > already_streamed:
                             yield {"content": refusal[already_streamed:]}
-                        response_refusal_lengths[part_key] = max(
-                            already_streamed, len(refusal)
+                        response_refusal_lengths.setdefault(output_index, {})[part] = (
+                            max(already_streamed, len(refusal))
                         )
                     continue
 
@@ -2730,7 +2728,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             getattr(event, "content_index", None),
                         )
                         url_citations.setdefault(part_key, []).append(citation)
-                        current_length = response_text_lengths.get(part_key, 0)
+                        current_length = response_text_lengths.get(part_key[0], {}).get(
+                            part_key[1], 0
+                        )
                         timing = (
                             "after cited text"
                             if citation["end_index"] <= current_length
@@ -2765,25 +2765,39 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 and None not in streamed_messages
                             ):
                                 yield {"role": "assistant"}
-                        # SDK events index every content part. Legacy providers
-                        # with unindexed deltas already supplied this item's text.
-                        if None not in streamed_messages:
+                        text_lengths = response_text_lengths.pop(output_index, {})
+                        refusal_lengths = response_refusal_lengths.pop(output_index, {})
+                        # A provider that switches to indexed output mid-item can
+                        # leave deltas whose part ownership cannot be established.
+                        if output_index is None or None not in streamed_messages:
                             for content_index, part in enumerate(item.content):
-                                part_key = (output_index, content_index)
                                 part_type = getattr(part, "type", None)
                                 if part_type == "output_text":
-                                    missing = (part.text or "")[
-                                        response_text_lengths.get(part_key, 0) :
-                                    ]
+                                    lengths, text = (
+                                        text_lengths,
+                                        getattr(part, "text", None),
+                                    )
                                 elif part_type == "refusal":
-                                    missing = (part.refusal or "")[
-                                        response_refusal_lengths.get(part_key, 0) :
-                                    ]
+                                    lengths, text = (
+                                        refusal_lengths,
+                                        getattr(part, "refusal", None),
+                                    )
                                 else:
                                     continue
+                                # Without a content index, a single part is the
+                                # only completion we can associate unambiguously.
+                                if None in lengths and len(item.content) != 1:
+                                    continue
+                                missing = (text or "")[
+                                    lengths.get(content_index, lengths.get(None, 0)) :
+                                ]
                                 if missing:
                                     yield {"content": missing}
+                        if None in streamed_messages:
+                            response_text_lengths.pop(None, None)
+                            response_refusal_lengths.pop(None, None)
                         streamed_messages.discard(None)
+                        streamed_messages.discard(output_index)
                         started_messages.discard(output_index)
                         # Keep URL citation annotations internally. Home Assistant's
                         # native field is not exposed to the streaming listener, so the

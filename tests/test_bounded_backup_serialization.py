@@ -11,12 +11,26 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     backup,
+    backup_input,
     backup_transfer,
     bounded_json,
     transfer,
 )
 from tests.test_backup import _document
 from tests.test_transfer import _portable_document
+
+
+@pytest.mark.parametrize(
+    "export", [backup.finalize_backup_snapshot, backup_transfer._build_archive_file]
+)
+def test_private_export_obeys_decoded_structure_budget(monkeypatch, export):
+    from tests.test_private_backup_fidelity import private_document
+
+    document = private_document()
+    document["agent"]["config"]["many_small_values"] = [0] * 2000
+    monkeypatch.setattr(backup_input, "MAX_DECODED_BYTES", 32 * 1024)
+    with pytest.raises(backup.BackupError, match="safety limit"):
+        export(document)
 
 
 @pytest.mark.parametrize("indent", [None, 2])

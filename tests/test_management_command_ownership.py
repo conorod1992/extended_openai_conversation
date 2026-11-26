@@ -72,6 +72,8 @@ def test_real_installer_activation_and_repeated_setup_preserve_identity() -> Non
     script = r"""
 import asyncio
 from contextlib import ExitStack
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 import homeassistant  # Core starts before custom integrations in a real installation.
 from custom_components import extended_openai_conversation_responses as integration
@@ -95,6 +97,8 @@ async def main():
         "async_setup_services", "async_setup_intercom_services",
     )
     with ExitStack() as stack:
+        workspace = Path(stack.enter_context(TemporaryDirectory()))
+        hass.config.path.side_effect = lambda *parts: str(workspace.joinpath(*parts))
         stack.enter_context(patch.object(transfer_staging, "async_get_transfer_staging", AsyncMock()))
         for name in async_io:
             stack.enter_context(patch.object(integration, name, AsyncMock()))

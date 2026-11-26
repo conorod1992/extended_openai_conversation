@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
+from httpx import InvalidURL
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -20,7 +22,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import backup
-from .agent_config import agent_retention_snapshot, normalized_agent_integer
+from .agent_config import normalized_agent_integer
 from .agent_maintenance import (
     _async_run_exclusive_operation,
     get_agent_maintenance_gate,
@@ -29,8 +31,6 @@ from .const import (
     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
-    CONF_USAGE_REQUEST_RETENTION_DAYS,
-    CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
@@ -38,6 +38,7 @@ from .const import (
     SUBSYSTEM_STATUS_KEY,
 )
 from .conversation_archive import ArchiveSession, archive_session_inactive
+from .helpers import ProviderEndpointError
 from .live_subentry_updates import (
     configuration_supports_live_update,
     live_subentry_update,
@@ -263,6 +264,7 @@ def _new_journal(
         "created_at": dt_util.utcnow().isoformat(),
         "target": _prepared_document(target, entry_id, subentry_id),
         "rollback": _prepared_document(rollback, entry_id, subentry_id),
+        **({"replaces_usage": False} if not target.replaces_usage else {}),
         **(
             {"data_sections": sorted(target.journaled_sections)}
             if target.journaled_sections is not None
@@ -368,7 +370,12 @@ async def _async_load_journal(
         or not value.keys() >= _JOURNAL_REQUIRED_FIELDS
         or set(value)
         - _JOURNAL_REQUIRED_FIELDS
-        - {"configuration_providers", "data_sections", "provider_connections"}
+        - {
+            "configuration_providers",
+            "data_sections",
+            "provider_connections",
+            "replaces_usage",
+        }
     ):
         raise backup.BackupError("Pending restore transaction is corrupted")
     transaction_id = value["transaction_id"]
@@ -385,6 +392,11 @@ async def _async_load_journal(
     ):
         raise backup.BackupError("Pending restore transaction is corrupted")
     journal = dict(value)
+    replaces_usage = journal.get("replaces_usage", True)
+    if not isinstance(replaces_usage, bool):
+        raise backup.BackupError(
+            "Pending restore Usage replacement intent is corrupted"
+        )
     sections = None
     if "data_sections" in journal:
         raw_sections = journal["data_sections"]
@@ -439,6 +451,8 @@ async def _async_load_journal(
         raise backup.BackupError("Pending restore transaction is corrupted") from err
     if sections is not None:
         target.journaled_sections = rollback.journaled_sections = sections
+    if not replaces_usage:
+        target.replaces_usage = False
     return journal, target, rollback
 
 
@@ -504,15 +518,13 @@ async def _apply_prepared(
 ) -> None:
     """Apply validated durable categories in a deterministic, idempotent order."""
     if prepared.restores("usage"):
+        from .usage import usage_retention_policy
+
         if managers.usage is None:
             raise RuntimeError("Usage restore requires a durable manager")
-        retention = agent_retention_snapshot(prepared.config)
-        managers.usage.request_retention_days = int(
-            retention[CONF_USAGE_REQUEST_RETENTION_DAYS]
-        )
-        managers.usage.run_retention_days = int(
-            retention[CONF_USAGE_RUN_RETENTION_DAYS]
-        )
+        retention = usage_retention_policy(prepared.config)
+        managers.usage.request_retention_days = retention["request_retention_days"]
+        managers.usage.run_retention_days = retention["run_retention_days"]
 
     if prepared.restores("memories"):
         await managers.memory.async_replace_backup(prepared.memories)
@@ -972,6 +984,7 @@ async def _update_configuration(
     provider: str | None = None,
     previous_provider: str | None = None,
     provider_data: dict[str, Any] | None = None,
+    provider_client: Any = None,
 ) -> None:
     # The owned restore already resets live subsystem runtimes. Apply its
     # configuration through the normal live-update path instead of starting an
@@ -983,7 +996,7 @@ async def _update_configuration(
     )
     if provider_data is not None:
         await _async_publish_provider_pair(
-            hass, entry, subentry, prepared, provider_data
+            hass, entry, subentry, prepared, provider_data, client=provider_client
         )
         return
     # A committed journal can be replayed after target configuration was already
@@ -1071,11 +1084,14 @@ async def _async_publish_provider_pair(
     subentry: Any,
     prepared: backup.PreparedRestore,
     provider_data: dict[str, Any],
+    *,
+    client: Any = None,
 ) -> None:
     """Publish one Core config snapshot with the matching runtime connection."""
     from homeassistant.config_entries import ConfigEntryState
 
-    client = await _async_prepare_provider_runtime(hass, entry, provider_data)
+    if client is None:
+        client = await _async_prepare_provider_runtime(hass, entry, provider_data)
     previous_config = dict(subentry.data)
     previous_title = subentry.title
     if getattr(entry, "state", None) is ConfigEntryState.LOADED and (
@@ -1108,7 +1124,7 @@ async def _async_publish_provider_pair(
     await _apply_restored_volatile_retention(
         hass, entry.entry_id, subentry.subentry_id, prepared
     )
-    if client is not None:
+    if client is not None and getattr(entry, "state", None) is ConfigEntryState.LOADED:
         _publish_provider_runtime(entry, client)
 
 
@@ -1118,10 +1134,17 @@ async def _async_prepare_provider_runtime(
     """Construct the runtime for a provider generation before changing Core."""
     from homeassistant.config_entries import ConfigEntryState
 
-    from .helpers import get_authenticated_client
-
     if getattr(entry, "state", None) is not ConfigEntryState.LOADED:
         return None
+    return await _async_construct_provider_client(hass, provider_data)
+
+
+async def _async_construct_provider_client(
+    hass: HomeAssistant, provider_data: dict[str, Any]
+) -> Any:
+    """Construct the SDK client locally, without probing the provider."""
+    from .helpers import get_authenticated_client
+
     return await get_authenticated_client(
         hass,
         provider_data["api_key"],
@@ -1504,10 +1527,19 @@ async def _async_restore_backup_recoverably(
             rollback_provider=rollback_provider,
             provider_connections=connections,
         )
+        provider_client = None
         if connections:
             _journal_provider_connections(
                 journal, {"target": target_provider, "rollback": rollback_provider}
             )
+            try:
+                provider_client = await _async_construct_provider_client(
+                    hass, connections["target"]
+                )
+            except (InvalidURL, ProviderEndpointError) as err:
+                raise backup.BackupError(
+                    "The restored provider URL could not be used to construct the client"
+                ) from err
         # PreparedRestore bypasses inspect_backup's serialized-size validation.
         # Validate the actual journal documents before even the write-ahead save.
         for section in ("target", "rollback"):
@@ -1534,6 +1566,10 @@ async def _async_restore_backup_recoverably(
         # This is the write-ahead boundary. If it cannot be verified, no category
         # has changed and a possibly-written journal remains harmless recovery data.
         if connections:
+            if entry.data != connections["rollback"]:
+                raise backup.BackupError(
+                    "The provider connection changed after preview; import and preview again"
+                )
             _claim_provider_restore(hass, entry_id, subentry_id)
         try:
             journal_saved = await _async_write_journal_verified(store, journal)
@@ -1601,6 +1637,7 @@ async def _async_restore_backup_recoverably(
                 context["provider"] = target_provider
             if connections:
                 context["provider_data"] = connections["target"]
+                context["provider_client"] = provider_client
             await _update_configuration(
                 hass,
                 entry,
@@ -1687,7 +1724,9 @@ async def _async_recover_pending_restore(
                 subentry_id,
                 managers,
                 journal["phase"] != _PHASE_COMMITTED,
-                journal["phase"] == _PHASE_COMMITTED and selected.restores("usage"),
+                side == "target"
+                and selected.replaces_usage
+                and selected.restores("usage"),
                 reset_native_history=side == "target",
             )
             context: dict[str, Any] = {}
