@@ -17,6 +17,12 @@ export function observeCatalogGeneration(panel, result = {}, forceInvalidate = f
   panel._cleanConfigSnapshots?.clear();
   panel._invalidateCleanConfiguration?.(panel._draftAgentId || panel._agentId);
   panel._eocCatalogValidation = null;
+  for (const key of panel._sectionCache?.keys() || []) {
+    if (key.endsWith("|overview")) {
+      panel._sectionCache.delete(key);
+      panel._eocSectionCacheTimes?.delete(key);
+    }
+  }
   panel._settingsSearchConfig = null;
   panel._settingsSearchConfigAgentId = null;
   panel._settingsSearchConfigError = null;

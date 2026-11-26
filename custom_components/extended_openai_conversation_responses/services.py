@@ -797,7 +797,14 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         result = await async_call_active_function(
             call.data["function"], call.data.get("arguments", {})
         )
-        return cast(ServiceResponse, {"result": result})
+        from .ha_tool_result_compat import ScheduledExecution
+
+        return cast(
+            ServiceResponse,
+            dict(result)
+            if isinstance(result, ScheduledExecution)
+            else {"result": result},
+        )
 
     hass.services.async_register(
         DOMAIN,

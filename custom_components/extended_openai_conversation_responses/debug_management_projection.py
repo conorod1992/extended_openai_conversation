@@ -194,7 +194,10 @@ def _provider_request(request: Any, page_budget: _ProjectionBudget) -> dict[str,
             "request": request_value,
             "request_meta": {
                 **request_meta,
-                "captured_characters": request.metrics.get("request_characters"),
+                "captured_characters": request.metrics.get(
+                    "captured_request_characters",
+                    request.metrics.get("request_characters"),
+                ),
             },
             "metrics": dict(request.metrics),
             "stream_open_ms": request.stream_open_ms,

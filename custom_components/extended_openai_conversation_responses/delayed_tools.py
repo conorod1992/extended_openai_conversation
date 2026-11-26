@@ -41,6 +41,7 @@ from .function_yaml import dump_authored_function_configuration
 from .ha_permissions import bind_active_ha_context, filter_entities_for_active_user
 from .ha_tool_result_compat import ExecutionFailure, tool_result_data
 from .helpers import get_exposed_entities
+from .model_tool_results import local_function_results
 from .mutation_outcomes import mark_mutation_failure
 from .operational_errors import log_handled_failure
 from .persistence_hardening import (
@@ -1166,6 +1167,7 @@ class DelayedToolManager:
                 with (
                     bind_active_ha_context(execution_context),
                     bind_request_satellite(record.satellite_id),
+                    local_function_results(),
                 ):
                     exposed_entities = get_exposed_entities(self.hass)
                     scheduled_utc = _parse_scheduled_utc(record.due_at)

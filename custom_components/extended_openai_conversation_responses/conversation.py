@@ -196,7 +196,12 @@ from .ha_llm_tools import (
     tool_snapshot_scope,
 )
 from .ha_permissions import bind_active_ha_context
-from .ha_tool_result_compat import make_tool_result_content, tool_result_data
+from .ha_tool_result_compat import (
+    ExecutionFailure,
+    ScheduledExecution,
+    make_tool_result_content,
+    tool_result_data,
+)
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
@@ -1183,12 +1188,23 @@ class ExtendedOpenAIAgentEntity(
                         else None
                     )
                     lifecycle_token = begin_conversation_lifecycle()
+                    restored_history_items = 0
+                    admitted_history = len(chat_log.content) > 2
                     if resolution.history and len(chat_log.content) <= 2:
                         # Core history can expire before the integration's session.
                         current_user = chat_log.content[-1]
                         replace_chat_log_content(
                             chat_log, [*resolution.history, current_user]
                         )
+                        restored_history_items = len(resolution.history)
+                    from .debug import record_continuity_admission
+
+                    record_continuity_admission(
+                        chat_log.conversation_id,
+                        resumed=(chat_log.conversation_id == resolution.conversation_id)
+                        and (admitted_history or bool(restored_history_items)),
+                        restored_history_items=restored_history_items,
+                    )
                     async with (
                         self._usage.async_run(
                             home_assistant_conversation_id=user_input.conversation_id,
@@ -1581,6 +1597,24 @@ class ExtendedOpenAIAgentEntity(
             retrieved_memories,
             temporary_memories,
         )
+        prompt_without_skills = None
+
+        def prompt_for_admitted_tools(
+            tools: list[dict[str, Any]], admission: FunctionToolAdmission
+        ) -> str:
+            nonlocal prompt_without_skills
+            if self._skill_loader_reachable(tools, admission):
+                return system_prompt
+            if prompt_without_skills is None:
+                prompt_without_skills = self._build_system_prompt(
+                    exposed_entities,
+                    llm_context,
+                    user_input,
+                    retrieved_memories,
+                    temporary_memories,
+                    include_skills=False,
+                )
+            return prompt_without_skills
 
         # Set system prompt in chat log
         chat_log.content[0] = conversation.SystemContent(content=system_prompt)
@@ -1613,6 +1647,12 @@ class ExtendedOpenAIAgentEntity(
                     self._reset_loaded_function_groups if group_session_active else None
                 ),
                 request_options=request_options,
+                prompt_for_admitted_tools=(
+                    prompt_for_admitted_tools
+                    if getattr(self, "skills", None)
+                    and not current_snapshot().require_positive_delay
+                    else None
+                ),
             )
             continuation_accepted = True
         except asyncio.CancelledError:
@@ -1925,7 +1965,12 @@ class ExtendedOpenAIAgentEntity(
                 )
                 # This local producer always wraps the complete Function value
                 # once. Read that envelope here, before HA adds its service result.
-                return tool_result_data(content)["result"]
+                result = tool_result_data(content)
+                return (
+                    result
+                    if isinstance(result, ScheduledExecution)
+                    else result["result"]
+                )
         finally:
             _ACTIVE_FUNCTION_CONFIG.reset(function_config_token)
 
@@ -1936,6 +1981,8 @@ class ExtendedOpenAIAgentEntity(
         user_input: ConversationInput,
         memories: list[MemoryRecord] | None = None,
         temporary_memories: list[TemporaryMemoryRecord] | None = None,
+        *,
+        include_skills: bool = True,
     ) -> str:
         """Build system prompt with exposed entities and skills."""
         started = time.monotonic()
@@ -1952,7 +1999,7 @@ class ExtendedOpenAIAgentEntity(
                 else llm_context.device_id or getattr(user_input, "satellite_id", None)
             ),
             user_input=user_input,
-            skills=self._get_enabled_skills(),
+            skills=self._get_enabled_skills() if include_skills else [],
             memories=memories,
             temporary_memories=temporary_memories,
             knowledge_available=self._knowledge_available,
@@ -2270,7 +2317,11 @@ class ExtendedOpenAIAgentEntity(
 
     def _get_enabled_skills(self) -> list[Skill]:
         """Advertise only installed Skills reachable by this request's loader."""
-        if not self._effective_guest_policy().skills or not self.skills:
+        if (
+            current_snapshot().require_positive_delay
+            or not self._effective_guest_policy().skills
+            or not self.skills
+        ):
             return []
         manager = self.skill_manager or SkillManager.get_loaded_instance()
         if manager is None:
@@ -2281,6 +2332,43 @@ class ExtendedOpenAIAgentEntity(
             self.subentry.data, tools, manager, groups
         ) as skills:
             return skills
+
+    def _skill_loader_reachable(
+        self, admitted: list[dict[str, Any]], admission: FunctionToolAdmission
+    ) -> bool:
+        from .function_groups import is_function_group_loader
+        from .skill_availability import (
+            SKILL_LOADER_TOOL_NAME,
+            function_group_for_tool,
+            is_canonical_skill_loader,
+        )
+
+        if not admission.function_calls_available:
+            return False
+        if any(map(is_canonical_skill_loader, admitted)):
+            return True
+        loader = next(
+            (tool for tool in admitted if is_function_group_loader(tool)), None
+        )
+        if loader is None:
+            return False
+        configured = self._get_configured_function_tools()
+        group = function_group_for_tool(
+            SKILL_LOADER_TOOL_NAME, _request_function_groups(self, configured)
+        )
+        if (
+            group is None
+            or group["id"]
+            not in loader["spec"]["parameters"]["properties"]["groups"]["items"]["enum"]
+        ):
+            return False
+        return (
+            admission.max_tools is None
+            or self._load_function_groups([group["id"]], admission, preview=True).get(
+                "status"
+            )
+            == "success"
+        )
 
     def _get_exposed_entities(self) -> list[dict[str, Any]]:
         started = time.monotonic()
@@ -2454,6 +2542,8 @@ class ExtendedOpenAIAgentEntity(
         self,
         requested: Any,
         admission: FunctionToolAdmission,
+        *,
+        preview: bool = False,
     ) -> dict[str, Any]:
         """Apply an integration-owned loader call to the active conversation."""
         session = _ACTIVE_TURN.get().function_group_session
@@ -2462,6 +2552,8 @@ class ExtendedOpenAIAgentEntity(
                 "status": "error",
                 "error": "No active conversation is available for group loading",
             }
+        if preview:
+            session = replace(session, loaded_group_ids=session.loaded_group_ids.copy())
         configured_tools = self._get_configured_function_tools()
         policy = self._effective_guest_policy()
         groups = _request_function_groups(self, configured_tools)
@@ -2805,13 +2897,14 @@ class ExtendedOpenAIAgentEntity(
     ) -> conversation.ToolResultContent:
         # Only integration-owned outcomes use this helper. Configured Function
         # return values remain business data, regardless of their field names.
+        failed = result.get("status") in {"error", "denied", "unavailable"}
         if function_execution_errors_propagate():
             if (
                 result.get("status") == "denied"
                 and result.get("reason") == "guest_mode"
             ):
                 raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
-            if result.get("status") in {"error", "denied", "unavailable"}:
+            if failed:
                 raise HomeAssistantError(EXECUTION_FAILED)
         from .model_tool_results import OwnedJSONPayload, local_results_requested
 
@@ -2819,7 +2912,7 @@ class ExtendedOpenAIAgentEntity(
             agent_id=self.entity_id,
             tool_call_id=tool_input.id,
             tool_name=tool_input.tool_name,
-            tool_result={"result": result}
+            tool_result={"result": ExecutionFailure(result) if failed else result}
             if local_results_requested()
             else OwnedJSONPayload(result),
         )

@@ -125,6 +125,7 @@ from .helpers import (
 from .knowledge import (
     DuplicateKnowledgeSource,
     async_get_knowledge,
+    get_loaded_knowledge,
     knowledge_source_as_dict,
 )
 from .live_subentry_updates import update_configuration_subentry, update_live_subentry
@@ -1034,10 +1035,17 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 **details_result,
                 "revision": persisted_config_projection(subentry).revision,
             }
+        details_result["policy_revision"] = persisted_config_projection(
+            subentry
+        ).revision
 
         if is_admin:
             phase = perf_counter()
-            library = await async_get_knowledge(hass, entry_id, subentry_id)
+            library = None
+            try:
+                library = await async_get_knowledge(hass, entry_id, subentry_id)
+            except HomeAssistantError, OSError:
+                details_result["knowledge_catalogue_unavailable"] = True
             knowledge_manager_ms = _elapsed_ms(phase)
 
             phase = perf_counter()
@@ -1056,12 +1064,15 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 }
 
             phase = perf_counter()
-            knowledge_sources = await library.async_list()
+            if library is not None:
+                try:
+                    details_result["knowledge_sources"] = await library.async_list()
+                except HomeAssistantError, OSError:
+                    details_result["knowledge_catalogue_unavailable"] = True
             knowledge_list_ms = _elapsed_ms(phase)
 
             details_result.update(
                 {
-                    "knowledge_sources": knowledge_sources,
                     "functions": [
                         {
                             "name": tool["spec"]["name"],
@@ -3043,9 +3054,12 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
     subentry_id = request.subentry_id
     action = request.message["action"]
     _selected_scope(request.user_id, request.is_admin, request.message.get("scope_id"))
-    library = await async_get_knowledge(hass, entry_id, subentry_id)
     if action == "list":
-        sources = await library.async_list()
+        try:
+            library = await async_get_knowledge(hass, entry_id, subentry_id)
+            sources = await library.async_list()
+        except HomeAssistantError, OSError:
+            return {"sources_unavailable": True}
         # The list includes disabled sources even when diagnostics are malformed.
         listed = sources if isinstance(sources, list) else []
         enabled_count = sum(
@@ -3064,6 +3078,11 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         enabled = message.get("enabled")
         if not isinstance(enabled, bool):
             raise HomeAssistantError("enabled must be a boolean")
+        loaded_library = (
+            await async_get_knowledge(hass, entry_id, subentry_id)
+            if enabled
+            else get_loaded_knowledge(hass, entry_id, subentry_id)
+        )
         normalized, snapshot = merge_unchanged_function_configuration(
             request.subentry,
             {CONF_KNOWLEDGE_ENABLED: enabled},
@@ -3085,7 +3104,9 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             "revision": None,
             "knowledge_enabled": bool(persisted.get(CONF_KNOWLEDGE_ENABLED, False)),
             "feature_status": _knowledge_availability(
-                persisted, library.source_count, library.total_source_count
+                persisted,
+                loaded_library.source_count if loaded_library is not None else 0,
+                loaded_library.total_source_count if loaded_library is not None else 0,
             ),
         }
         update_live_subentry(
@@ -3104,6 +3125,7 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
                 "Committed Knowledge setting could not seed its optional cache"
             )
         return result
+    library = await async_get_knowledge(hass, entry_id, subentry_id)
     if action == "get":
         return {
             "source": knowledge_source_as_dict(

@@ -60,7 +60,7 @@ function overviewAgentFeatureProjection(agent) {
 }
 
 function snapshotCard(panel, title, status, detail, pageName, section, action) {
-  return `<article class="dashboard-card eoc-overview-snapshot-card"><div><h3>${panel._e(title)}</h3><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p></div><button type="button" class="secondary dashboard-action" data-page="${pageName}" data-subsection="${section}">${action}</button></article>`;
+  return `<article class="dashboard-card eoc-overview-snapshot-card"><div><h3>${panel._e(title)}</h3><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p></div>${panel._canAccessView?.(pageName, section) === false ? "" : `<button type="button" class="secondary dashboard-action" data-page="${pageName}" data-subsection="${section}">${action}</button>`}</article>`;
 }
 
 export function renderOverviewSnapshot(panel, sourceAgent) {

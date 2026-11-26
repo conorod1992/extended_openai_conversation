@@ -24,6 +24,12 @@ from .const import (
     CONF_CHAT_MODEL,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
+    CONF_GUEST_CONTROL_EXCLUDED_AREAS,
+    CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
+    CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
+    CONF_GUEST_CONTROL_EXCLUDED_LABELS,
+    CONF_GUEST_POLICY_VERSION,
+    CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_TEMPORARY_MEMORY,
     DEFAULT_API_PROVIDER,
@@ -32,6 +38,7 @@ from .const import (
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
+    GUEST_POLICY_VERSION,
 )
 from .conversation_archive import async_get_archive
 from .feature_status import management_feature_status
@@ -41,6 +48,8 @@ from .management_function_repair import (
     group_collection_is_addressable,
     management_function_tool_health,
     peek_function_tool_health,
+    persisted_config_projection,
+    repair_state_for_projection,
 )
 from .management_history_queries import usage_summary
 from .management_projections import async_scope_catalog_projection, settings_snapshot
@@ -89,9 +98,24 @@ def _overview_guest_status(
     status: dict[str, Any], options: dict[str, Any]
 ) -> dict[str, Any]:
     """Keep primary, detail and cached Overview status projections complete."""
+    visibility = _guest_has_ha_exclusions(options)
+    control = options.get(CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS) is True and any(
+        options.get(key)
+        for key in (
+            CONF_GUEST_CONTROL_EXCLUDED_AREAS,
+            CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
+            CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
+            CONF_GUEST_CONTROL_EXCLUDED_LABELS,
+        )
+    )
     return {
         **status,
-        "has_home_assistant_exclusions": _guest_has_ha_exclusions(options),
+        "has_home_assistant_exclusions": visibility,
+        "has_home_assistant_restrictions": (
+            visibility
+            or control
+            or options.get(CONF_GUEST_POLICY_VERSION) != GUEST_POLICY_VERSION
+        ),
     }
 
 
@@ -495,7 +519,12 @@ async def async_overview_detail(
     if kind == "setup_health":
         phase = perf_counter()
         options = dict(subentry.data)
-        health = management_function_tool_health(options)
+        health = dict(management_function_tool_health(options))
+        group_repair, _ = repair_state_for_projection(
+            persisted_config_projection(subentry)
+        )
+        if group_repair is not None:
+            health["invalid_group_count"] = len(group_repair.group_issues)
         function_tools_ms = _ms(phase)
         try:
             from .management_setup_health import _exposed_entity_count

@@ -28,6 +28,10 @@ class BackendExecutionFailure(ExecutionFailure):
     """Backend-owned diagnostic prose; retain locally, contain at the model boundary."""
 
 
+class ScheduledExecution(ToolResultPayload):
+    """Acknowledgement produced by the durable scheduler, separate from tool data."""
+
+
 @lru_cache(maxsize=1)
 def _uses_result_envelope(content_type: Any) -> bool:
     """Resolve the constructor contract once, also following HA class reloads."""

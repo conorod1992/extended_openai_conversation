@@ -709,6 +709,15 @@ async def test_guest_mode_details_reuses_one_exposed_entity_projection(monkeypat
     assert result["policy"]["guest_active"] is False
     assert result["_performance"]["total_ms"] >= 0
 
+    monkeypatch.setattr(management_ui, "async_get_knowledge", AsyncMock(side_effect=OSError("read failed")))
+    unavailable = await management_ui.async_management_command(
+        hass, "admin", True,
+        {"entry_id": "entry-1", "subentry_id": "agent-1", "section": "guest_mode", "action": "details"},
+    )
+    assert unavailable["knowledge_catalogue_unavailable"] is True
+    assert "knowledge_sources" not in unavailable
+    assert unavailable["domains"] == result["domains"]
+
 
 async def test_agent_catalog_does_not_initialize_per_agent_managers(
     monkeypatch,

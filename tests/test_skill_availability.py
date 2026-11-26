@@ -18,6 +18,7 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 )
 from custom_components.extended_openai_conversation_responses.function_groups import (
     FunctionGroupRuntime,
+    FunctionToolAdmission,
     assemble_function_tools,
     load_function_groups,
 )
@@ -92,6 +93,12 @@ def test_selected_skills_require_canonical_enabled_loader() -> None:
 
     available = skill_loader_status(["calendar"], [_loader()], [], max_function_calls=1)
     assert available.available is True
+    assert ExtendedOpenAIAgentEntity._skill_loader_reachable(
+        None, [_loader()], FunctionToolAdmission()
+    )
+    assert not ExtendedOpenAIAgentEntity._skill_loader_reachable(
+        None, [_loader()], FunctionToolAdmission(function_calls_available=False)
+    )
 
     loader = _loader()
     parameters = loader["spec"]["parameters"]

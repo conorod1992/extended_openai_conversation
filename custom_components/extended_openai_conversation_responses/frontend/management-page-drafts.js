@@ -201,14 +201,30 @@ function refreshSavedGuestPolicy(panel, scope, owner) {
   };
   metrics?.setAttribute("aria-busy", "true");
   paint(null, true);
-  scope.refreshPromise = panel._call("guest_mode", "policy").then((details) => {
+  const reloadDetails = Boolean(panel._result?.loading?.details);
+  scope.refreshPromise = panel._call("guest_mode", reloadDetails ? "details" : "policy").then((details) => {
     if (!current()) return;
-    if (details?.revision && details.revision !== owner.revision) throw new Error("Policy changed; reload the latest saved metrics");
+    const revision = reloadDetails ? details?.policy_revision : details?.revision;
+    if (revision && revision !== owner.revision) throw new Error("Policy changed; reload the latest saved metrics");
+    if (reloadDetails) {
+      panel._result = {...panel._result, ...details, loading:{...panel._result.loading, details:false},
+        load_errors:(panel._result.load_errors || []).filter(issue => issue.key !== "details")};
+      scope.result = panel._result;
+      panel._render();
+      return;
+    }
     panel._result = {...panel._result, policy:details.policy};
     paint(details.policy);
   }).catch((err) => {
     if (!current()) return;
     scope.refreshWarning = `Saved policy metrics could not be refreshed: ${err.message || String(err)}`;
+    if (reloadDetails) {
+      panel._result = {...panel._result, loading:{...panel._result.loading, details:false},
+        load_errors:[...(panel._result.load_errors || []).filter(issue => issue.key !== "details"),
+          {key:"details", label:"Guest Mode capabilities", message:scope.refreshWarning}]};
+      scope.result = panel._result;
+      panel._render();
+    }
     if (metrics) metrics.innerHTML = panel._metric("Saved policy metrics", "Unavailable");
     panel._toast?.(`Changes saved. ${scope.refreshWarning}`, true);
   }).finally(() => {

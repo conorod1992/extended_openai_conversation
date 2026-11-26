@@ -61,7 +61,7 @@ assert.match(debug.shadowRoot.innerHTML, /Previous requests/);
 assert.match(debug.shadowRoot.innerHTML, /Copy visible page/);
 assert.match(debug.shadowRoot.innerHTML, /<label hidden>Conversation agent/);
 await debug._getRun("debug-1",5);
-assert.deepEqual(debugCalls.at(-1), {type:"extended_openai_conversation_responses/request_debug",action:"get",entry_id:"entry-a",subentry_id:"agent-a",debug_id:"debug-1",provider_offset:5,provider_limit:5});
+assert.deepEqual(debugCalls.at(-1), {type:"extended_openai_conversation_responses/request_debug",action:"get",entry_id:"entry-a",subentry_id:"agent-a",debug_id:"debug-1",provider_offset:5,provider_limit:1});
 
 // Standalone mode keeps the unpaged request and its original visible controls.
 const standalone = new Debug();

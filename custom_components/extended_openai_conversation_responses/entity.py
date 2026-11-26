@@ -131,6 +131,7 @@ from .ha_llm_tools import (
 from .ha_schema import SchemaValidator
 from .ha_tool_result_compat import (
     HAToolResultError,
+    ScheduledExecution,
     execution_tool_result,
     is_tool_result_content,
     make_tool_result_content,
@@ -1023,6 +1024,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         reset_loaded_function_groups: Callable[[], bool] | None = None,
         request_options: Mapping[str, Any] | None = None,
         structure_schema: dict[str, Any] | None = None,
+        prompt_for_admitted_tools: Callable[
+            [list[dict[str, Any]], FunctionToolAdmission], str
+        ]
+        | None = None,
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
         from .provider_credentials import require_provider_restore_complete
@@ -1316,6 +1321,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 base_system_prompt
             )
             ha_prompt_applied = False
+            selected_system_prompt = base_system_prompt
             draft_content_ids: set[int] = set()
             draft_content: list[conversation.AssistantContent] = []
             context_measurement: ContextInputMeasurement | None = None
@@ -1410,13 +1416,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if tools:
                     tool_kwargs.update(tools=tools, tool_choice=tool_choice)
 
-                ha_prompt = current_snapshot().prompt_for(
-                    [] if force_finalizer_only else request_function_tools
+                admitted_tools = [] if force_finalizer_only else request_function_tools
+                round_prompt = (
+                    prompt_for_admitted_tools(admitted_tools, admission)
+                    if prompt_for_admitted_tools is not None
+                    else base_system_prompt
                 )
-                if ha_prompt or ha_prompt_applied:
+                ha_prompt = current_snapshot().prompt_for(admitted_tools)
+                if (
+                    ha_prompt
+                    or ha_prompt_applied
+                    or round_prompt != selected_system_prompt
+                ):
                     ha_prompt_applied = bool(ha_prompt)
+                    selected_system_prompt = round_prompt
                     effective_prompt = "\n".join(
-                        part for part in (base_system_prompt, ha_prompt) if part
+                        part for part in (round_prompt, ha_prompt) if part
                     )
                     chat_log.content[0] = conversation.SystemContent(
                         content=effective_prompt
@@ -2955,11 +2970,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     agent_id=self.entity_id,
                     tool_call_id=tool_input.id,
                     tool_name=tool_input.tool_name,
-                    tool_result={
-                        "result": "Scheduled",
-                        "action_id": record.call_id,
-                        "scheduled_at": record.due_at,
-                    },
+                    tool_result=ScheduledExecution(
+                        result="Scheduled",
+                        action_id=record.call_id,
+                        scheduled_at=record.due_at,
+                    ),
                 )
         execution_error = False
         try:

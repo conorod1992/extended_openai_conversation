@@ -93,7 +93,10 @@ export function renderOverviewModelDataCard(panel) {
       await lookupModelData(panel, model, "apply");
       panel._eocOverviewModelDataError = null;
       panel._toast?.("Model data update applied");
-      renderOverviewModelDataCard(panel);
+      if (panel._page === "overview") {
+        renderOverviewModelDataCard(panel);
+        await panel._loadSection?.(true);
+      }
     } catch (err) {
       panel._toast?.(`Unable to apply model data update: ${err.message || String(err)}`, true);
       button.disabled = false;

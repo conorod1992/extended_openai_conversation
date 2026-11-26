@@ -101,12 +101,17 @@ def record_tool_execution(
                 or (isinstance(value.get("exit_code"), int) and value["exit_code"] != 0)
             ):
                 outcome = "failed"
-        trace.memory.setdefault(_INTERNAL_TOOL_CALLS, []).append(
+        calls = trace.memory.setdefault(_INTERNAL_TOOL_CALLS, [])
+        if len(calls) >= 256:
+            return
+        calls.append(
             {
                 "name": str(
                     spec.get("name") or getattr(tool_input, "tool_name", "unknown")
-                ),
-                "implementation_type": str(implementation.get("type") or "unknown"),
+                )[:256],
+                "implementation_type": str(implementation.get("type") or "unknown")[
+                    :128
+                ],
                 "duration_ms": int((time.monotonic() - started) * 1000),
                 "handler_returned": successful,
                 "outcome": outcome,
@@ -126,7 +131,7 @@ def record_provider_metrics(trace: Any, request: Any, api_surface: str) -> Any:
         request.metrics.update(provider_payload_metrics(input_value, tools))
         request.metrics["request_index"] = len(trace.provider_requests)
         request.metrics["approx_request_tokens"] = approximate_tokens(
-            int(request.metrics.get("request_characters", 0))
+            int(request.metrics.get("request_characters") or 0)
         )
         is_model = api_surface in _MODEL_API_SURFACES
         request.metrics["model_request"] = is_model

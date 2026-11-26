@@ -417,3 +417,35 @@ def test_completed_reply_uses_arrival_for_text_and_action_timings(monkeypatch, s
     monkeypatch.setattr(debug.time, "monotonic", lambda: 10.125)
     request.add_event(payload, completed=True)
     assert request.first_event_ms == request.first_text_ms == request.first_action_ms == 125
+
+
+def test_debug_capture_budgets_and_original_hashes(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import debug
+
+    monkeypatch.setattr(debug, "DEBUG_MAX_STRING_CHARACTERS", 64)
+    monkeypatch.setattr(debug, "DEBUG_MAX_REQUEST_BYTES", 2_000)
+    monkeypatch.setattr(debug, "DEBUG_MAX_RUN_BYTES", 4_000)
+    monkeypatch.setattr(debug, "DEBUG_MAX_RETAINED_BYTES", 3_000)
+    manager = DebugManager()
+
+    def capture(suffix, credential):
+        trace = manager.begin(
+            entry_id="entry", subentry_id="agent", user_input={},
+            incoming_conversation_id=None,
+        )
+        request = trace.start_provider_request("responses", (), {
+            "input": ["x" * 10_000 + suffix], "api_key": credential,
+        })
+        manager.finish(trace, successful=True)
+        return request
+
+    first = capture("a", "first-secret")
+    redacted = capture("a", "second-secret")
+    different = capture("b", "second-secret")
+    assert first.request == different.request
+    assert first.metrics["request_sha256"] == redacted.metrics["request_sha256"]
+    assert first.metrics["request_sha256"] != different.metrics["request_sha256"]
+    assert first.metrics["request_capture_truncated"]
+    assert first.metrics["request_characters"] > first.metrics["captured_request_characters"]
+    assert first.request["kwargs"]["api_key"] == "<redacted credential>"
+    assert len(manager.summaries()) < 3

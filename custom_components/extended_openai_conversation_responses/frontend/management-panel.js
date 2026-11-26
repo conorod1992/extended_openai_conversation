@@ -2401,7 +2401,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
     if (view === "data-memory/conversations") {
       this._bindActiveConversationActions();
-      root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id, button); }));
     }
     if (view === "usage-maintenance/usage") q("#clear-details")?.addEventListener("click", (event) => this._clearUsageDetails(event.currentTarget));
     q("#test-agent")?.addEventListener("click", () => this._testAgent());
@@ -2753,7 +2752,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         // original visit owns collection data. A newer read must remain intact.
         if (ownsList && !retrying) writeSectionCache(this, this._sectionCacheKey(), this._result);
         this._render();
-        if (returnFocus && !dialog.open) getRouteFeature("data-memory/knowledge")?.restoreCollectionFocus(this.shadowRoot, `.source-edit-button[data-id="${CSS.escape(response.source.source_id)}"]`, "#add-source");
+        if (returnFocus && !dialog.open) getRouteFeature("data-memory/knowledge")?.restoreKnowledgeFocus(this.shadowRoot, response.source.source_id);
         if (retrying || !this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {

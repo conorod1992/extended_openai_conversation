@@ -1,7 +1,7 @@
 import {buildSetupHealth} from "./overview-health.js";
 
 function card(panel, title, status, detail, page, section, action, icon, tone = "neutral", warning = "") {
-  return `<article class="dashboard-card dashboard-tone-${tone}"><div class="dashboard-card-main"><span class="dashboard-icon" aria-hidden="true"><ha-icon icon="${panel._e(icon)}"></ha-icon></span><div><h3>${panel._e(title)}</h3><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p>${warning ? `<p role="status">${panel._e(warning)}</p>` : ""}</div></div><button type="button" class="secondary dashboard-action" data-page="${page}" data-subsection="${section}">${action}</button></article>`;
+  return `<article class="dashboard-card dashboard-tone-${tone}" data-overview-section="${section}"><div class="dashboard-card-main"><span class="dashboard-icon" aria-hidden="true"><ha-icon icon="${panel._e(icon)}"></ha-icon></span><div><h3>${panel._e(title)}</h3><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p>${warning ? `<p role="status">${panel._e(warning)}</p>` : ""}</div></div>${panel._canAccessView?.(page, section) === false ? "" : `<button type="button" class="secondary dashboard-action" data-page="${page}" data-subsection="${section}">${action}</button>`}</article>`;
 }
 
 const HEALTH_ICONS = {
@@ -68,6 +68,12 @@ function setupHealthMarkup(panel, health, cards) {
 }
 
 const broadcastCard = '<section id="broadcast-card" class="content-card" aria-label="Broadcast"><p class="empty">Loading Broadcast…</p></section>';
+const activeGuest = status => ["active", "active_indefinitely"].includes(status.state);
+const unrestrictedGuest = status => activeGuest(status)
+  && (status.has_home_assistant_restrictions ?? status.has_home_assistant_exclusions) === false;
+const guestWarning = status => unrestrictedGuest(status)
+  ? '<div class="notice warning"><strong>Review recommended</strong><p>Guest Mode is active without configured Home Assistant exclusions.</p></div>'
+  : "";
 
 export function renderOverview(panel, agent) {
   if (!agent) {
@@ -81,7 +87,6 @@ export function renderOverview(panel, agent) {
   const web = checks.web_search;
   const guest = agent.guest_mode || {};
   const warnings = [];
-  if (["active", "active_indefinitely"].includes(guest.state) && guest.has_home_assistant_exclusions === false) warnings.push("Guest Mode is active without configured Home Assistant exclusions.");
   const loadErrors = result.load_errors || [];
   const metadataErrors = (agent.metadata_errors || []).filter(issue =>
     !["knowledge", "guest_mode"].includes(issue.key) || result.loading?.[issue.key] !== false);
@@ -125,12 +130,46 @@ export function renderOverview(panel, agent) {
       ${card(panel,"Usage",loading.usage ? "Loading usage…" : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage unavailable" : `${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,loading.usage ? "Loading today and monthly totals." : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage summary could not be loaded." : `${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View","mdi:chart-line",usage.storage_warning ? "warning" : "neutral",usage.storage_warning)}
       ${card(panel,"Web Search",web?.value || "Status unavailable",web?.detail || "Web Search status could not be loaded.",web?.action?.page || "capabilities",web?.action?.subsection || "web-skills","Configure","mdi:web",web?.state === "warning" ? "warning" : web?.state === "ready" ? "positive" : "neutral")}
     </section>`)}
-    ${warnings.length ? `<section class="overview-warnings" aria-label="Actionable warnings">${warnings.map((warning) => `<div class="notice warning"><strong>Review recommended</strong><p>${panel._e(warning)}</p></div>`).join("")}</section>` : ""}
+    <section class="overview-warnings" aria-label="Actionable warnings" ${warnings.length || unrestrictedGuest(guest) ? "" : "hidden"}><div data-overview-guest-warning>${guestWarning(guest)}</div>${warnings.map((warning) => `<div class="notice warning"><strong>Review recommended</strong><p>${panel._e(warning)}</p></div>`).join("")}</section>
 
     ${broadcastCard}`;
 }
 
 export function bindOverview(panel, broadcastPromise) {
+  if (panel._selectedAgent?.()) void bindOverviewGuestStatus(panel).catch(() => {});
+  bindOverviewDashboard(panel, broadcastPromise);
+}
+
+async function bindOverviewGuestStatus(panel) {
+  const {boundaryDelay, watchLiveStatus} = await import("./management-live-status.js");
+  if (panel._viewKey?.() !== "overview") return;
+  watchLiveStatus(panel, "overview-guest", {
+    view: "overview",
+    delay: () => {
+      const status = panel._selectedAgent?.()?.guest_mode;
+      return status ? boundaryDelay(status.scheduled ? status.active_from : status.active_until) : null;
+    },
+    refresh: async current => {
+      const agent = panel._selectedAgent?.();
+      if (!agent) return;
+      const visit = panel._loadToken;
+      const result = await panel._call("overview", "detail", {kind:"guest_mode"});
+      const status = result?.agent?.guest_mode;
+      if (!current() || panel._loadToken !== visit || panel._selectedAgent?.() !== agent || !status) return;
+      agent.guest_mode = status;
+      const card = panel.shadowRoot?.querySelector('[data-overview-section="guest-mode"]');
+      const value = card?.querySelector("strong");
+      if (value) value.textContent = panel._titleCase(String(status.state || "inactive").replaceAll("_", " "));
+      const warning = panel.shadowRoot?.querySelector("[data-overview-guest-warning]");
+      if (warning) {
+        warning.innerHTML = guestWarning(status);
+        warning.parentElement.hidden = !warning.parentElement.querySelector(".notice");
+      }
+    },
+  });
+}
+
+function bindOverviewDashboard(panel, broadcastPromise) {
   const details = panel.shadowRoot.querySelector("#overview-health-details");
   if (details) {
     details.open = panel._overviewHealthExpanded === panel._agentId;

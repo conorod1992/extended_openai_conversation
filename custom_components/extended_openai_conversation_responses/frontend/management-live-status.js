@@ -72,7 +72,7 @@ export function watchLiveStatus(panel, key, {view, delay, refresh, maxRefreshes 
   schedule();
 }
 
-function boundaryDelay(value) {
+export function boundaryDelay(value) {
   const boundary = Date.parse(value || "");
   return Number.isFinite(boundary) && boundary > Date.now()
     ? Math.min(60000, boundary - Date.now() + 200) : 60000;
@@ -110,7 +110,13 @@ export function watchTimedFeatureStatus(panel, feature) {
       const fresh = await panel._call(guest ? "guest_mode" : "quiet_hours", "get");
       if (!current() || pending() || panel._result !== previous) return;
       if (guest && !completePolicyResponse(fresh, true)) return;
-      const result = guest ? {...previous, ...fresh} : fresh;
+      let policy = previous?.policy;
+      if (guest && (fresh.status?.currently_active || fresh.status?.state?.startsWith("active"))) {
+        const details = await panel._call("guest_mode", "policy").catch(() => null);
+        if (!current() || pending() || panel._result !== previous) return;
+        policy = details?.revision === fresh.revision ? details?.policy : null;
+      } else if (guest) policy = null;
+      const result = guest ? {...previous, ...fresh, policy} : fresh;
       if (!acceptPageRead(panel, result, read, {publish:true})) return;
       if (guest) {
         const agent = panel._selectedAgent?.();

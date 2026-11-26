@@ -1,4 +1,9 @@
 import assert from "node:assert/strict";
+import {encodeCollectionId, decodeCollectionId} from "../custom_components/extended_openai_conversation_responses/frontend/collection-identifiers.js";
+
+const unusualId = "entry\rpart\0text%00";
+assert.doesNotMatch(encodeCollectionId(unusualId), /[\r\0]/);
+assert.equal(decodeCollectionId(encodeCollectionId(unusualId)), unusualId);
 import {readFile} from "node:fs/promises";
 
 const frontend = (name) => new URL(
@@ -75,8 +80,8 @@ const historyChunk = Object.entries(manifest).find(([asset]) =>
 );
 assert.ok(historyChunk, "History pagination must be emitted as a production lazy chunk");
 assert.equal(historyChunk[1].isDynamicEntry, true);
-assert.deepEqual(historyChunk[1].imports || [], [],
-  "History list chunk must not import the broad memory browser or configuration editor");
+assert.ok((historyChunk[1].imports || []).every(asset => asset.startsWith("_collection-identifiers-")),
+  "History list chunk may share the identifier codec without loading broad editor code");
 // Backend ownership changes must not bypass the same bounded projections.
 assert.match(management, /"overview": async_overview_command/);
 assert.match(management, /"usage": async_usage_command/);

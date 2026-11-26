@@ -39,7 +39,13 @@ from .request_diagnostics import (
 DEBUG_DEFAULT_LIMIT = 10
 DEBUG_ALLOWED_LIMITS = (5, 10, 25, 50)
 DEBUG_MAX_EVENT_BYTES = 2_000_000
+DEBUG_MAX_EVENT_CAPTURE_BYTES = 2_000_000
 DEBUG_MAX_STRING_CHARACTERS = 1_000_000
+DEBUG_MAX_REQUEST_BYTES = 2_000_000
+DEBUG_MAX_RUN_BYTES = 12_000_000
+DEBUG_MAX_RETAINED_BYTES = 32_000_000
+DEBUG_MAX_PROVIDER_REQUESTS = 128
+_MAX_METRIC_CHARACTERS = 32_000_000
 _DEBUG_MANAGERS = f"{DOMAIN}.request_debug_managers"
 
 _ACTIVE_DEBUG_TRACE: ContextVar[DebugTrace | None] = ContextVar(
@@ -60,62 +66,90 @@ def _iso_now() -> str:
     return dt_util.utcnow().isoformat()
 
 
-def _jsonable(value: Any, *, _depth: int = 0) -> Any:
+@dataclass(slots=True)
+class _CaptureBudget:
+    remaining: int
+
+    def take(self, amount: int) -> bool:
+        if amount > self.remaining:
+            self.remaining = 0
+            return False
+        self.remaining -= amount
+        return True
+
+
+def _jsonable(
+    value: Any, *, _depth: int = 0, budget: _CaptureBudget | None = None
+) -> Any:
     """Convert arbitrary SDK/HA values into bounded JSON-safe debug data."""
+    if budget is not None and not budget.take(128):
+        return "<debug capture budget exhausted>"
     if _depth > 20:
         return "<maximum debug serialization depth reached>"
+
+    def child(item: Any) -> Any:
+        return _jsonable(item, _depth=_depth + 1, budget=budget)
+
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, str):
-        if len(value) <= DEBUG_MAX_STRING_CHARACTERS:
+        limit = DEBUG_MAX_STRING_CHARACTERS
+        if budget is not None:
+            limit = min(limit, budget.remaining // 4)
+            budget.take(min(len(value), limit) * 4)
+        if len(value) <= limit:
             return value
-        return (
-            value[:DEBUG_MAX_STRING_CHARACTERS]
-            + f"\n<truncated {len(value) - DEBUG_MAX_STRING_CHARACTERS} characters>"
-        )
+        return value[:limit] + f"\n<truncated {len(value) - limit} characters>"
     if isinstance(value, bytes):
         return f"<binary payload: {len(value)} bytes>"
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, Template):
-        return value.template
+        return child(value.template)
     if isinstance(value, Mapping):
         result: dict[str, Any] = {}
         for raw_key, item in value.items():
             key = str(raw_key)
+            if budget is not None and not budget.take(128 + len(key) * 4):
+                result["__debug_truncated__"] = True
+                break
             if key.casefold().replace("-", "_") in _SENSITIVE_KEYS:
                 result[key] = "<redacted credential>"
             else:
-                result[key] = _jsonable(item, _depth=_depth + 1)
+                result[key] = child(item)
         return result
     if isinstance(value, (list, tuple, set, frozenset, deque)):
-        return [_jsonable(item, _depth=_depth + 1) for item in value]
+        result_list: list[Any] = []
+        for item in value:
+            if budget is not None and budget.remaining < 128:
+                result_list.append("<debug capture budget exhausted>")
+                break
+            result_list.append(child(item))
+        return result_list
     if is_dataclass(value) and not isinstance(value, type):
-        return _jsonable(
-            {item.name: getattr(value, item.name) for item in fields(value)},
-            _depth=_depth + 1,
-        )
+        return child({item.name: getattr(value, item.name) for item in fields(value)})
     if hasattr(value, "model_dump"):
         try:
-            return _jsonable(value.model_dump(exclude_none=True), _depth=_depth + 1)
+            return child(value.model_dump(exclude_none=True))
         except Exception:
             pass
     if hasattr(value, "as_dict"):
         try:
-            return _jsonable(value.as_dict(), _depth=_depth + 1)
+            return child(value.as_dict())
         except Exception:
             pass
     if hasattr(value, "to_dict"):
         try:
-            return _jsonable(value.to_dict(), _depth=_depth + 1)
+            return child(value.to_dict())
         except Exception:
             pass
     if hasattr(value, "__dict__"):
         try:
-            return _jsonable(vars(value), _depth=_depth + 1)
+            return child(vars(value))
         except Exception:
             pass
-    return repr(value)
+    representation = repr(value)
+    return child(representation) if budget is not None else representation
 
 
 def _canonical_json(value: Any) -> str:
@@ -133,6 +167,71 @@ def _sha256(value: Any) -> str:
 
 def _json_characters(value: Any) -> int:
     return len(_canonical_json(value))
+
+
+def _original_payload_metrics(value: Any) -> tuple[int | None, str | None]:
+    """Hash credential-redacted JSON incrementally, including large strings."""
+    digest = hashlib.sha256()
+    size = 0
+    structure = _CaptureBudget(400_000)
+
+    def write(text: str) -> bool:
+        nonlocal size
+        size += len(text)
+        if size > _MAX_METRIC_CHARACTERS:
+            return False
+        digest.update(text.encode("utf-8", "surrogatepass"))
+        return True
+
+    def visit(item: Any, depth: int) -> bool:
+        if depth > 20 or not structure.take(1):
+            return False
+        if isinstance(item, str):
+            return (
+                write('"')
+                and all(
+                    write(
+                        json.dumps(item[offset : offset + 16_384], ensure_ascii=False)[
+                            1:-1
+                        ]
+                    )
+                    for offset in range(0, len(item), 16_384)
+                )
+                and write('"')
+            )
+        if isinstance(item, Mapping):
+            if len(item) > structure.remaining or not write("{"):
+                return False
+            keys = sorted((str(key), index, key) for index, key in enumerate(item))
+            for index, (key, _, raw_key) in enumerate(keys):
+                child = (
+                    "<redacted credential>"
+                    if key.casefold().replace("-", "_") in _SENSITIVE_KEYS
+                    else item[raw_key]
+                )
+                if (index and not write(",")) or not (
+                    visit(key, depth + 1) and write(":") and visit(child, depth + 1)
+                ):
+                    return False
+            return write("}")
+        if isinstance(item, (list, tuple)):
+            if len(item) > structure.remaining or not write("["):
+                return False
+            return all(
+                (not index or write(",")) and visit(child, depth + 1)
+                for index, child in enumerate(item)
+            ) and write("]")
+        if item is None or isinstance(item, (bool, int, float)):
+            return write(json.dumps(item, ensure_ascii=False))
+        normalized = _jsonable(item, budget=_CaptureBudget(DEBUG_MAX_REQUEST_BYTES))
+        return visit(normalized, depth + 1)
+
+    try:
+        if visit(value, 0):
+            return size, digest.hexdigest()
+    except TypeError, ValueError, OverflowError:
+        pass
+    return None, None
 
 
 def _extract_usage(event: Any) -> dict[str, int] | None:
@@ -285,13 +384,30 @@ class DebugProviderRequest:
     response_events_truncated: bool = False
     _started_monotonic: float = field(default=0.0, repr=False)
     _event_bytes: int = field(default=0, repr=False)
+    _budget: _CaptureBudget | None = field(default=None, repr=False)
 
     def add_event(self, event: Any, *, completed: bool = False) -> None:
         """Retain provider events up to a hard per-request byte ceiling."""
         now_ms = int((time.monotonic() - self._started_monotonic) * 1000)
         if self.first_event_ms is None:
             self.first_event_ms = now_ms
-        serialized = _jsonable(event)
+        budget = self._budget
+        if self.response_events_truncated or (
+            budget is not None and budget.remaining < 128
+        ):
+            self.response_events_truncated = True
+            # Usage and timings still describe the wire even after retained events are full.
+            serialized = _jsonable(event, budget=_CaptureBudget(64_000))
+        else:
+            if budget is None:
+                serialized = _jsonable(event)
+            else:
+                limit = min(budget.remaining, DEBUG_MAX_EVENT_CAPTURE_BYTES)
+                event_budget = _CaptureBudget(limit)
+                serialized = _jsonable(event, budget=event_budget)
+                budget.take(limit - event_budget.remaining)
+                if event_budget.remaining < 128:
+                    self.response_events_truncated = True
         if completed and isinstance(serialized, dict):
             text, action = _completed_output_signals(serialized)
             if text and self.first_text_ms is None:
@@ -375,21 +491,37 @@ class DebugTrace:
     result: Any = None
     notes: list[str] = field(default_factory=list)
     _started_monotonic: float = field(default=0.0, repr=False)
+    _budget: _CaptureBudget = field(
+        default_factory=lambda: _CaptureBudget(DEBUG_MAX_RUN_BYTES), repr=False
+    )
 
     def start_provider_request(
         self, api_surface: str, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> DebugProviderRequest:
-        request_payload = {"args": _jsonable(args), "kwargs": _jsonable(kwargs)}
+        capture_limit = min(DEBUG_MAX_REQUEST_BYTES, self._budget.remaining)
+        capture_budget = _CaptureBudget(capture_limit)
+        request_data = {"args": args, "kwargs": kwargs}
+        request_payload = _jsonable(request_data, budget=capture_budget)
+        if not isinstance(request_payload, dict):
+            request_payload = {"__debug_truncated__": True}
+        self._budget.take(capture_limit - capture_budget.remaining)
         input_value = kwargs.get("input", kwargs.get("messages"))
         tools = kwargs.get("tools")
+        request_chars, request_hash = _original_payload_metrics(request_data)
+        input_chars, input_hash = _original_payload_metrics(input_value)
+        tool_chars, tool_hash = _original_payload_metrics(tools)
+        captured_chars = _json_characters(request_payload)
         metrics = {
-            "request_characters": _json_characters(request_payload),
-            "request_sha256": _sha256(request_payload),
-            "input_characters": _json_characters(input_value),
-            "input_sha256": _sha256(input_value),
+            "request_characters": request_chars,
+            "request_sha256": request_hash,
+            "captured_request_characters": captured_chars,
+            "request_capture_truncated": capture_budget.remaining < 128
+            or (request_chars is not None and request_chars != captured_chars),
+            "input_characters": input_chars,
+            "input_sha256": input_hash,
             "tool_count": len(tools) if isinstance(tools, list) else 0,
-            "tool_characters": _json_characters(tools),
-            "tools_sha256": _sha256(tools),
+            "tool_characters": tool_chars,
+            "tools_sha256": tool_hash,
         }
         provider_request = DebugProviderRequest(
             request_id=uuid4().hex,
@@ -399,9 +531,13 @@ class DebugTrace:
             request=request_payload,
             metrics=metrics,
             _started_monotonic=time.monotonic(),
+            _budget=self._budget,
         )
-        self.provider_requests.append(provider_request)
-        record_provider_metrics(self, provider_request, api_surface)
+        if len(self.provider_requests) < DEBUG_MAX_PROVIDER_REQUESTS:
+            self.provider_requests.append(provider_request)
+            record_provider_metrics(self, provider_request, api_surface)
+        elif "Additional provider calls were omitted from capture." not in self.notes:
+            self.notes.append("Additional provider calls were omitted from capture.")
         return provider_request
 
     def as_dict(self) -> dict[str, Any]:
@@ -502,14 +638,16 @@ class DebugManager:
         user_input: Any,
         incoming_conversation_id: str | None,
     ) -> DebugTrace:
+        budget = _CaptureBudget(DEBUG_MAX_RUN_BYTES)
         return DebugTrace(
             debug_id=uuid4().hex,
             entry_id=entry_id,
             subentry_id=subentry_id,
             started_at=_iso_now(),
-            user_input=_jsonable(user_input),
+            user_input=_jsonable(user_input, budget=budget),
             incoming_conversation_id=incoming_conversation_id,
             _started_monotonic=time.monotonic(),
+            _budget=budget,
         )
 
     def finish(
@@ -527,8 +665,14 @@ class DebugManager:
             trace.error_type = type(error).__name__
             trace.error = provider_error_metadata(error)
         if result is not None:
-            trace.result = _jsonable(result)
+            trace.result = _jsonable(result, budget=trace._budget)
         self._runs.append(trace)
+        while (
+            self._runs
+            and sum(DEBUG_MAX_RUN_BYTES - item._budget.remaining for item in self._runs)
+            > DEBUG_MAX_RETAINED_BYTES
+        ):
+            self._runs.popleft()
 
     def clear(self) -> int:
         count = len(self._runs)
@@ -764,7 +908,9 @@ def record_memory_retrieval(kind: str, started: float, records: list[Any]) -> No
             (time.monotonic() - started) * 1000
         )
         trace.memory[f"{kind}_count"] = len(records)
-        trace.memory[f"{kind}_records"] = _jsonable(records)
+        trace.memory[f"{kind}_records"] = _jsonable(
+            records, budget=getattr(trace, "_budget", None)
+        )
 
 
 @contextmanager
@@ -794,10 +940,15 @@ def record_system_prompt(agent: Any, prompt: str, started: float) -> None:
         trace.phases_ms["system_prompt_render"] = int(
             (time.monotonic() - started) * 1000
         )
-        trace.system_prompt = prompt
+        trace.system_prompt = _jsonable(prompt, budget=trace._budget)
+        digest = hashlib.sha256()
+        for offset in range(0, len(prompt), 16_384):
+            digest.update(
+                prompt[offset : offset + 16_384].encode("utf-8", "surrogatepass")
+            )
         trace.prompt_metrics = {
             "characters": len(prompt),
-            "sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+            "sha256": digest.hexdigest(),
         }
 
 
@@ -826,5 +977,18 @@ def record_continuity_resolution(
             "timeout_minutes": timeout_minutes,
             "namespace": namespace,
             "device_id": device_id,
-            "scope": _jsonable(scope),
+            "scope": _jsonable(scope, budget=getattr(trace, "_budget", None)),
         }
+
+
+def record_continuity_admission(
+    conversation_id: str, *, resumed: bool, restored_history_items: int
+) -> None:
+    """Publish the identity and history accepted by the native ChatLog."""
+    trace = current_debug_trace()
+    if trace is not None:
+        trace.continuity.update(
+            resolved_conversation_id=conversation_id,
+            resumed=resumed,
+            restored_history_items=restored_history_items,
+        )

@@ -300,3 +300,12 @@ async def test_call_function_action_uses_request_scoped_bridge(
     )
     assert result == {"result": {"ok": True}}
     execute.assert_awaited_once_with("remember", {"fact": "Tuesday"})
+
+    from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import ScheduledExecution
+
+    acknowledgement = {"result": "Scheduled", "action_id": "action", "scheduled_at": "tomorrow"}
+    execute.return_value = ScheduledExecution(acknowledgement)
+    call = SimpleNamespace(data={"function": "remember", "arguments": {}})
+    assert await handler(call) == acknowledgement
+    execute.return_value = acknowledgement
+    assert await handler(call) == {"result": acknowledgement}

@@ -68,6 +68,7 @@ function functionToolsCheck(facts) {
     action: action("capabilities", "functions"),
   };
   const invalid = Number(tools.invalid_count || 0);
+  const invalidGroups = Number(tools.invalid_group_count || 0);
   const usable = Number(tools.usable_count || 0);
   const enabled = Number(tools.enabled_count || 0);
   if (tools.validation_error && tools.isolatable === false) {
@@ -87,6 +88,16 @@ function functionToolsCheck(facts) {
       title: "Function Tools",
       value: `${invalid} ${invalid === 1 ? "function needs" : "functions need"} repair`,
       detail: `${enabled} ${enabled === 1 ? "Function Tool is" : "Function Tools are"} available. Invalid tools remain unavailable until they are repaired.`,
+      action: action("capabilities", "functions"),
+    };
+  }
+  if (invalidGroups > 0) {
+    return {
+      id: "function_tools",
+      state: "warning",
+      title: "Function Tools",
+      value: `${invalidGroups} Function ${invalidGroups === 1 ? "Group needs" : "Groups need"} repair`,
+      detail: `${enabled} Function ${enabled === 1 ? "Tool is" : "Tools are"} available.`,
       action: action("capabilities", "functions"),
     };
   }

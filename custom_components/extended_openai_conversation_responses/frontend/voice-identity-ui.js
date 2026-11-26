@@ -1,4 +1,4 @@
-import {initializeVoiceUserPicker, voiceUserCatalogue, voiceUserPickerValue} from "./voice-user-picker.js";
+import {initializeVoiceUserPicker, unavailableVoiceUser, voiceUserCatalogue, voiceUserPickerValue} from "./voice-user-picker.js";
 import {voiceMappingDraft, newVoiceMappingRow, updateVoiceMappingRows, voiceMappingDraftError, voiceMappingRowIsCurrent} from "./voice-mapping-draft.js";
 import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 const SHARED_SCOPE = "shared:household";
@@ -87,17 +87,21 @@ export function renderVoiceMappings(panel) {
   return `<section id="voice-mappings" class="supporting-panel voice-mappings-card" data-voice-mappings-card data-setting><div class="section-heading"><div><h2>Voice device assignments</h2><p>Assign an Assist satellite to one Home Assistant user, the shared household, or no saved personal data.</p></div><button type="button" class="secondary" id="add-voice-mapping">+ Add assignment</button></div><div id="voice-mapping-list" class="voice-mapping-list">${entries.length ? entries.map(row => mappingRow(panel,row)).join("") : '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the setting for unassigned voice devices will be used.</div>'}</div><span class="field-error" data-error="voice_device_mappings"></span></section>`;
 }
 
-export function voiceIdentitySummary(config={},users=[]) {
+export function voiceIdentitySummary(config={},users=[],isUnavailable=()=>false) {
   const userName = (value) => users.find((user) => user.id === rawUserId(value))?.name || "the selected Home Assistant user";
   const target = (policy) => {
     if (policy === "shared") return "shared household data";
-    if (policy === "default_user") return config.voice_default_user_id ? `the default user (${userName(config.voice_default_user_id)})` : "the default user, but none is selected — so no personal data is used or saved";
+    if (policy === "default_user") {
+      if (isUnavailable(rawUserId(config.voice_default_user_id))) return "no saved personal data because the default user is unavailable";
+      return config.voice_default_user_id ? `the default user (${userName(config.voice_default_user_id)})` : "the default user, but none is selected — so no personal data is used or saved";
+    }
     if (policy === "device_mapping") return "a device assignment";
     return "no saved personal data";
   };
   const main = String(config.voice_scope_policy || "unretained");
   if (main !== "device_mapping") return `Unidentified voice requests use ${target(main)}.`;
-  const count = mappingEntries(config).length;
+  const entries = mappingEntries(config);
+  const count = entries.filter(([,value]) => value && !isUnavailable(normalizedOwner(value).id)).length;
   const fallback = String(config.voice_unmapped_policy || "unretained");
   return `Unidentified voice requests use ${count} device assignment${count === 1 ? "" : "s"}. Devices without an assignment use ${target(fallback === "device_mapping" ? "unretained" : fallback)}.`;
 }
@@ -197,7 +201,13 @@ function updateDependencies(panel) {
   root.querySelector("#config-voice_default_user_picker")?.toggleAttribute("inert", !defaultActive);
   if (mappingActive) root.querySelectorAll("[data-voice-mapping-row]").forEach((row) => updateOwnerPicker(row,true));
   const summary = root.querySelector("#voice-current-summary");
-  if (summary) summary.textContent = voiceIdentitySummary(config,voiceUsers(panel));
+  if (summary) summary.textContent = voiceIdentitySummary(config,voiceUsers(panel),id => unavailableVoiceUser(panel,id));
+  for (const row of root.querySelectorAll("[data-voice-mapping-row]")) {
+    const owner = normalizedOwner(row.querySelector(".voice-mapping-owner")?.value);
+    if (unavailableVoiceUser(panel,owner.id)) {
+      setWarning(row.querySelector(".voice-owner-warning"),"This user is unavailable. The device uses the unassigned-device fallback.");
+    }
+  }
 }
 
 function syncMappings(panel) {
@@ -318,7 +328,12 @@ function bindRows(panel) {
     });
     ownerPicker?.addEventListener("value-changed",(event) => {
       if (!row.isConnected || !voiceMappingRowIsCurrent(panel,row.dataset.voiceRowId)) return;
-      ownerPicker.value = rawUserId(event?.detail?.value || "");
+      const candidate = rawUserId(event?.detail?.value || "");
+      if (unavailableVoiceUser(panel, candidate)) {
+        ownerPicker.value = rawUserId(row.querySelector(".voice-mapping-owner")?.value);
+        return;
+      }
+      ownerPicker.value = candidate;
       syncOwner(row);
       syncMappings(panel);
     });
@@ -346,6 +361,10 @@ export function bindVoiceIdentity(panel) {
       return;
     }
     const value = rawUserId(event?.detail?.value || "");
+    if (unavailableVoiceUser(panel, value)) {
+      defaultPicker.value = defaultHidden?.value || "";
+      return;
+    }
     defaultPicker.value = value;
     if (defaultHidden) {
       defaultHidden.value = value;

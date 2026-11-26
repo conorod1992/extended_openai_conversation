@@ -154,6 +154,7 @@ async def test_overview_guest_mode_detail_uses_loaded_status(hass, monkeypatch) 
     assert result["agent"]["guest_mode"] == {
         "active": True,
         "has_home_assistant_exclusions": False,
+        "has_home_assistant_restrictions": True,
     }
     guest.status.assert_called_once()
 
