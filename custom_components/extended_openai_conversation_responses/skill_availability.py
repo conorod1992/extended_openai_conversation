@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any
+
+import regex
 
 from .const import FUNCTION_GROUP_LOADING_ON_DEMAND, SKILL_FILE_NAME
 
@@ -64,16 +67,32 @@ def function_group_enabled(group: dict[str, Any]) -> bool:
     return group.get("enabled", True) is True
 
 
-def _string_argument_allowed(schema: dict[str, Any], value: str) -> bool:
+def _string_argument_allowed(
+    schema: dict[str, Any], value: str, deadline: float
+) -> bool:
     minimum, maximum = schema.get("minLength"), schema.get("maxLength")
     choices = schema.get("enum")
-    return (
+    if not (
         isinstance(value, str)
         and (type(minimum) is not int or len(value) >= minimum)
         and (type(maximum) is not int or len(value) <= maximum)
         and ("const" not in schema or value == schema["const"])
         and (not isinstance(choices, list) or value in choices)
-    )
+    ):
+        return False
+    if (pattern := schema.get("pattern")) is None:
+        return True
+    remaining = deadline - monotonic()
+    if not isinstance(pattern, str) or len(pattern) > 1024 or remaining <= 0:
+        return False
+    try:
+        # Availability also runs in synchronous HA projections. Bound matching
+        # without running administrator-supplied patterns through stdlib re.
+        return (
+            regex.search(pattern, value, regex.VERSION0, timeout=remaining) is not None
+        )
+    except regex.error, TimeoutError:
+        return False
 
 
 def _loader_allowed_names(
@@ -86,7 +105,16 @@ def _loader_allowed_names(
     properties = parameters.get("properties", {})
     if not isinstance(properties, dict):
         return None
-    for key in ("name", "file"):
+    required = parameters.get("required", [])
+    if not isinstance(required, list) or not all(
+        isinstance(key, str) for key in required
+    ):
+        return None
+    maximum = parameters.get("maxProperties")
+    if type(maximum) is int and maximum < len({"name", "file", *required}):
+        return None
+    deadline = monotonic() + 0.01
+    for key in ("file", "name"):
         schema = properties.get(key)
         if key not in properties:
             additional = parameters.get("additionalProperties")
@@ -110,9 +138,11 @@ def _loader_allowed_names(
             if type(maximum) is int and maximum == 0:
                 return None
             selected = tuple(
-                name for name in selected if _string_argument_allowed(schema, name)
+                name
+                for name in selected
+                if _string_argument_allowed(schema, name, deadline)
             )
-        elif not _string_argument_allowed(schema, SKILL_FILE_NAME):
+        elif not _string_argument_allowed(schema, SKILL_FILE_NAME, deadline):
             return None
     return selected
 

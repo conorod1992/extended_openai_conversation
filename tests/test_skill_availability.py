@@ -206,7 +206,10 @@ def test_effective_loader_requires_at_least_one_selected_installed_skill() -> No
     )
     assert multiple.available is True
     assert multiple.loadable_skills == ("calendar", "weather")
-    for restriction in ({"enum": ["weather"]}, {"const": "weather"}, {"maxLength": 7}):
+    for restriction in (
+        {"enum": ["weather"]}, {"const": "weather"}, {"maxLength": 7},
+        {"pattern": "^weather$"},
+    ):
         loader = _loader()
         loader["spec"]["parameters"]["properties"]["name"].update(restriction)
         assert not skill_loader_status(["calendar"], [loader], []).available
@@ -220,6 +223,13 @@ def test_effective_loader_requires_at_least_one_selected_installed_skill() -> No
         assert not effective_skill_loader_status(
             ["calendar"], ["calendar", "weather"], [loader], []
         ).available
+    loader = _loader()
+    loader["spec"]["parameters"]["maxProperties"] = 1
+    assert not skill_loader_status(["calendar"], [loader], []).available
+    loader["spec"]["parameters"]["maxProperties"] = 2
+    assert skill_loader_status(["calendar"], [loader], []).available
+    loader["spec"]["parameters"]["properties"]["file"]["pattern"] = "^README"
+    assert not skill_loader_status(["calendar"], [loader], []).available
 
 
 def test_effective_loader_accounts_for_runtime_and_group_loader_support() -> None:

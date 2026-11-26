@@ -996,8 +996,8 @@ def validate_runtime_readiness(
         assemble_function_tools,
     )
     from .skill_availability import (
+        effective_skill_loader_status,
         is_canonical_skill_loader,
-        selected_installed_skill_names,
     )
     from .skills import SkillManager
 
@@ -1051,10 +1051,16 @@ def validate_runtime_readiness(
 
     selected_skills = options.get(CONF_SKILLS, []) or []
     manager = SkillManager.get_loaded_instance() if selected_skills else None
-    skill_available = manager is not None and bool(
-        selected_installed_skill_names(
-            selected_skills, (skill.name for skill in manager.get_all_skills())
-        )
+    skill_available = (
+        manager is not None
+        and effective_skill_loader_status(
+            selected_skills,
+            (skill.name for skill in manager.get_all_skills()),
+            configured,
+            groups,
+            function_tools_supported=budget_available,
+            group_loader_supported=budget_available,
+        ).available
     )
 
     def guaranteed(tool: dict[str, Any]) -> bool:

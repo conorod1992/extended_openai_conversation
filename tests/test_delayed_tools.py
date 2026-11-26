@@ -1694,6 +1694,43 @@ async def test_transient_execution_failure_retries_same_pending_call(
     assert _AGENT_RETRY_SECONDS in sleeps
 
 
+@pytest.mark.parametrize("fault", ["transient", "persistent", "after-claim"])
+async def test_waiter_recovers_only_durably_pending_actions(hass, monkeypatch, fault):
+    manager = DelayedToolManager(hass)
+    await manager.async_setup()
+    record = _race_record()
+    manager._started = True
+    await manager._async_save_records_transactionally({record.call_id: record})
+    attempts = 0
+
+    async def execute(call_id):
+        nonlocal attempts
+        attempts += 1
+        if fault == "after-claim":
+            assert await manager._async_claim_due(call_id) == (True, False)
+            raise RuntimeError("interrupted after durable claim")
+        if fault == "persistent" or attempts == 1:
+            raise RuntimeError("user lookup failed")
+        assert await manager._async_claim_due(call_id) == (True, False)
+        await manager._async_finalize(call_id)
+        return False
+
+    monkeypatch.setattr(manager, "_async_execute_due", execute)
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    manager._arm(record.call_id)
+    await manager._tasks[record.call_id]
+    assert record.call_id not in manager._tasks
+    saved = (await manager._store.async_load())["calls"]
+    if fault == "after-claim":
+        assert attempts == 1
+        assert [item["status"] for item in saved] == ["executing"]
+        manager._arm(record.call_id)
+        assert record.call_id not in manager._tasks
+    else:
+        assert attempts == (2 if fault == "transient" else 3)
+        assert saved == []
+
+
 async def test_waiter_cancellation_propagates_and_removes_task(
     hass, monkeypatch
 ) -> None:

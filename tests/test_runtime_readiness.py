@@ -718,6 +718,32 @@ async def test_group_loader_counts_but_unloaded_members_do_not(
     assert len(sent["tools"]) == min(128, extra + 2 + int(enabled))
 
 
+@pytest.mark.parametrize("allowed_name", ["weather", "calendar"])
+async def test_prompt_save_counts_only_loadable_installed_skills(
+    hass, management_agent, rules, monkeypatch, allowed_name
+):
+    from custom_components.extended_openai_conversation_responses.skills import SkillManager
+    from tests.test_skill_availability import _loader
+
+    entry, subentry = management_agent
+    entry.data = {"api_provider": "azure"}
+    options = _options(127, azure_model="gpt-4o")
+    loader = _loader()
+    loader["spec"]["parameters"]["properties"]["name"]["enum"] = [allowed_name]
+    options["functions"] = [*yaml.safe_load(options["functions"]), loader]
+    options["skills"] = ["calendar"]
+    subentry.data = options
+    manager = SimpleNamespace(get_all_skills=lambda: [SimpleNamespace(name="calendar")])
+    monkeypatch.setattr(SkillManager, "get_loaded_instance", lambda: manager)
+    saved = await _save(hass, entry, subentry, {"prompt": "Updated instructions"})
+    if allowed_name == "calendar":
+        assert not saved["valid"]
+        assert "128-tool limit" in str(saved["errors"])
+    else:
+        assert saved["valid"]
+        assert subentry.data["prompt"] == "Updated instructions"
+
+
 def test_readiness_is_independent_of_ambient_runtime_and_defers_dynamic_tools(hass):
     options = _options(127, azure_model="gpt-4o", continue_conversation="conditional")
     with (

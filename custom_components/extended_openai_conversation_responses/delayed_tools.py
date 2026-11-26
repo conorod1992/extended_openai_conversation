@@ -66,6 +66,7 @@ _AGENT_RETRY_SECONDS = 30
 _CLOCK_RECHECK_SECONDS = 30
 _DEFAULT_GRACE_SECONDS = 15 * 60
 _MAX_AGENT_RETRIES = 10
+_MAX_UNEXPECTED_DUE_FAILURES = 3
 _PENDING = "pending"
 _EXECUTING = "executing"
 _DELAYED_EXECUTION_MARKER = "_extended_openai_delayed_execution"
@@ -1001,11 +1002,21 @@ class DelayedToolManager:
 
     async def _async_wait_and_execute(self, call_id: str) -> None:
         """Wait until due, retry transient state failures, then execute once."""
+        unexpected_failures = 0
         try:
-            while self._started:
+            while self._started and not self._quarantined:
                 record = self._records.get(call_id)
                 if record is None or record.status != _PENDING:
                     return
+                if unexpected_failures >= _MAX_UNEXPECTED_DUE_FAILURES:
+                    # If cancellation cannot be persisted yet, retain ownership
+                    # of cleanup without making another execution attempt.
+                    if await self._async_discard(
+                        call_id, "pre-execution checks repeatedly failed"
+                    ):
+                        return
+                    await asyncio.sleep(_AGENT_RETRY_SECONDS)
+                    continue
                 due_at = _parse_scheduled_utc(record.due_at)
                 if due_at is None:
                     if await self._async_discard(call_id, "invalid due timestamp"):
@@ -1022,9 +1033,27 @@ class DelayedToolManager:
                 record = self._records.get(call_id)
                 if record is None or record.status != _PENDING:
                     return
-                retry = await self._async_execute_due(call_id)
-                if not retry:
-                    return
+                try:
+                    retry = await self._async_execute_due(call_id)
+                except Exception as err:
+                    log_handled_failure(
+                        _LOGGER,
+                        "Unexpected failure while processing a Scheduled Action",
+                        err,
+                    )
+                    pending = self._records.get(call_id)
+                    # A successful claim or uncertain write can never enter
+                    # the pre-execution retry path.
+                    if (
+                        not self.available
+                        or pending is None
+                        or pending.status != _PENDING
+                    ):
+                        return
+                    unexpected_failures += 1
+                else:
+                    if not retry:
+                        return
                 await asyncio.sleep(_AGENT_RETRY_SECONDS)
         except asyncio.CancelledError:
             raise
