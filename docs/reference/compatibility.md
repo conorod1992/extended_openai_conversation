@@ -38,9 +38,9 @@ See [Model data](../features/model-data.md) for catalogue updates and [Responses
 
 ## Base URL
 
-Leave **Base URL** unchanged for direct OpenAI usage.
+Leave **Base URL** unchanged for the global OpenAI endpoint.
 
-Set a custom Base URL only when your compatible provider requires it.
+Set **Base URL** when using an official OpenAI regional endpoint or when your compatible provider requires a different endpoint. See [Web Search](#web-search) below for the recognised OpenAI endpoints.
 
 A provider calling itself “OpenAI-compatible” may support only part of the OpenAI API. In particular, support for `/v1/chat/completions` does not imply support for `/v1/responses`.
 
@@ -57,7 +57,12 @@ When a provider does not work:
 
 ## Web Search
 
-The integration's hosted Web Search tool requires the OpenAI Responses API. It supports the global OpenAI endpoint and the official AE, AU, CA, EU, GB, IN, JP, KR, SG and US regional endpoints, subject to model and project availability.
+The integration's hosted Web Search tool requires the direct OpenAI Responses API. EOAI recognises:
+
+- the global endpoint, `https://api.openai.com/v1`;
+- regional endpoints, `https://<region>.api.openai.com/v1`, where `<region>` is `ae`, `au`, `ca`, `eu`, `gb`, `in`, `jp`, `kr`, `sg`, or `us`.
+
+Model and project availability still apply. Use the HTTPS `/v1` endpoint, with an optional trailing slash, without URL credentials, query parameters or a fragment. The default HTTPS port or explicit port `443` is accepted. A recognised regional Base URL remains a direct OpenAI connection; Azure, third-party endpoints and proxies do not support this hosted tool in EOAI.
 
 ## Short tool-call IDs
 

@@ -51,16 +51,16 @@ Web Search in this integration requires direct OpenAI Responses usage.
 
 Check that:
 
-- the Base URL is the direct OpenAI endpoint
+- the Base URL is the global OpenAI endpoint or a [recognised official regional endpoint](reference/compatibility.md#web-search)
 - API mode resolves to Responses
 - Web Search is enabled
 - the selected model supports the hosted Web Search tool
 
-It is not available through Chat Completions, custom Base URLs, or Azure OpenAI in the current implementation.
+It is not available through Chat Completions, third-party endpoints or proxies, or Azure OpenAI in the current implementation.
 
 ## Voice follow-ups do not happen
 
-Check the **Listen for a follow-up** option and the voice client.
+Check **Assistant → Basics → Listen for a follow-up** and the voice client.
 
 Set the mode temporarily to **Always**:
 
@@ -128,7 +128,7 @@ Select the conversation agent under **Extended OpenAI → Usage & Maintenance �
 
 The test checks local configuration plus at most one minimal model request. It does not execute Home Assistant device or service actions.
 
-The separate **Test request** feature runs the normal request pipeline and can perform real actions, write memories, or consume API usage. Use harmless wording and test devices when checking Request Rules or tools.
+The separate **Run live request** feature runs the normal request pipeline and can perform real actions, write memories, or consume API usage. Use harmless wording and test devices when checking Request Rules or tools.
 
 ## A save reports a conflict or its result is uncertain
 

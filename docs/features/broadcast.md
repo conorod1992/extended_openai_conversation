@@ -35,7 +35,7 @@ Create a Request Rule with:
       message: "{{ message }}"
 ```
 
-“Tell the kitchen dinner is ready” calls `send_broadcast` with `destination: kitchen` and `message: dinner is ready`, without an LLM request. **Match Preview** checks matching without sending; **Live Test** performs the announcement. Unknown/ambiguous destinations, disabled tools, policy denials and queue failures use the rule's failure response. No new rule capabilities are required. See [Request Rules](request-rules.md#function-actions).
+“Tell the kitchen dinner is ready” calls `send_broadcast` with `destination: kitchen` and `message: dinner is ready`, without an LLM request. **Preview match** checks matching without sending; **Run live request** performs the announcement. Unknown/ambiguous destinations, disabled tools, policy denials and queue failures use the rule's failure response. No new rule capabilities are required. See [Request Rules](request-rules.md#function-actions).
 
 ### Upgrading from 6.8.3
 

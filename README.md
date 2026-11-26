@@ -1,5 +1,8 @@
 # Extended OpenAI Conversation (Responses)
 
+> [!NOTE]
+> **Development documentation — 7.0.0 is in preparation.** This README describes the `develop` branch, including its requirements and unreleased changes. The latest published release is [6.8.3](https://github.com/conorod1992/extended_openai_conversation/releases/tag/6.8.3); use the [6.8.3 README](https://github.com/conorod1992/extended_openai_conversation/blob/6.8.3/README.md) for that version. A normal HACS release installation does not include all development features described below.
+
 Bring a more capable AI conversation agent to Home Assistant.
 
 Extended OpenAI Conversation connects Home Assistant Assist to the OpenAI API, or a compatible provider, and adds richer Home Assistant control, memory, web search, local request handling, custom tools, voice features, privacy controls, diagnostics, and more.
@@ -112,7 +115,7 @@ The built-in **Guide** provides concise in-app orientation. The [full documentat
 
 Conversation settings require a Home Assistant administrator. Settings share an unsaved draft across sections; save when finished. Collections such as Function Tools and Knowledge sources have their own save controls.
 
-## Upgrading to 7.0.0
+## Preparing for the upcoming 7.0.0 upgrade
 
 Back up Home Assistant before updating, and check the [release notes](https://conorod1992.github.io/extended_openai_conversation/release-notes/) and [upgrade notes](https://conorod1992.github.io/extended_openai_conversation/migration/#upgrading-this-fork-to-700). Conversation settings live in the **Extended OpenAI** sidebar panel, with reorganised sections for memory, Web search & Skills, and local handling. Saved model choices and custom prompts are preserved; untouched historical stock prompts adopt the current default. Restart Home Assistant after replacing the integration and reload the browser if it still shows the previous interface.
 

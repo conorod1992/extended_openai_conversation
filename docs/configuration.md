@@ -118,7 +118,7 @@ Do not force Responses with a custom provider unless it implements a compatible 
 
 See [Responses API](features/responses-api.md).
 
-## Continue conversation
+## Listen for a follow-up {#continue-conversation}
 
 **Listen for a follow-up** only controls responses handled by ExtendedOpenAI. Home Assistant sentence triggers and native local handling may intercept a request before ExtendedOpenAI is invoked; their follow-up behavior remains controlled by Home Assistant.
 
@@ -183,7 +183,7 @@ data:
 response_variable: result
 ```
 
-The response contains final `response` text, the `conversation_id`, and `handled_locally`. Optional agent, conversation, device, satellite, and language fields preserve available context. The Request Rules page can run the same real path from **Test request**. Testing can perform Home Assistant actions; it is not a dry run.
+The response contains final `response` text, the `conversation_id`, and `handled_locally`. Optional agent, conversation, device, satellite, and language fields preserve available context. The Request Rules page can run the same real path from **Run live request**. Testing can perform Home Assistant actions; it is not a dry run.
 
 ## Context management
 
@@ -236,6 +236,7 @@ AI Task agents use a smaller configuration surface focused on:
 - model
 - API mode
 - maximum output tokens
+- optional Web Search
 - supported advanced model settings
 
 AI Task also supports optional hosted Web Search on compatible OpenAI Responses connections. Conversation-only options such as voice follow-ups, memory, the Knowledge Library, Skills and custom Functions are not shown there.

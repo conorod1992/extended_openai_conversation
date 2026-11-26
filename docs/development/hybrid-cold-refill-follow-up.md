@@ -1,4 +1,9 @@
-# Hybrid cold-cache refill follow-up
+# Hybrid cold-cache refill follow-up (historical)
+
+!!! note "Earlier proposal — superseded"
+    This page records the earlier complete-refill behaviour and a proposed background drain. Current preparation uses bounded foreground batches, retains completed progress for later searches and falls back to keyword ranking while the required vectors remain incomplete. The proposed background drain has not been implemented. See [Persistent Memory retrieval modes](../features/persistent-memory.md#retrieval-modes) for the current behaviour and limits.
+
+## Earlier design discussion
 
 Cooldown ships independently of cold-cache latency. Current preparation holds the request reader/maintenance lease while generating every missing vector in the authorized scopes. At 10,000 facts and batches of 64 that means 157 corpus calls plus a query embedding call. Automatic bundle reuse already avoids a new search on every continuing turn. Failed durable fact saves normally reconcile vectors; this change does not replace that rollback mechanism.
 

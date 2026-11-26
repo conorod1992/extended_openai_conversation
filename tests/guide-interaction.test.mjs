@@ -73,3 +73,106 @@ assert.match(broadcastText, /CONTROL/);
 assert.doesNotMatch(broadcastText, /clear targeted wording can be resolved without/);
 const broadcastCode = broadcastGuide.body.find(block => block.type === "code").text;
 assert.equal(broadcastCode, '- action: extended_openai_conversation_responses.call_function\n  data:\n    function: send_broadcast\n    arguments:\n      destination: kitchen\n      message: "{{ message }}"');
+
+const {bindGuide, renderGuide} = await import("../custom_components/extended_openai_conversation_responses/frontend/guide-page-impl.js");
+const escape = value => String(value ?? "").replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+const guideMarkup = renderGuide({_e:escape});
+assert.match(guideMarkup, /href="https:\/\/conorod1992\.github\.io\/extended_openai_conversation\/features\/quiet-hours\/#legacy-ownership-recovery" target="_blank" rel="noopener noreferrer">Legacy ownership recovery<\/a>/);
+
+// Exercise the public binder and its real input/click handlers without replacing
+// the route DOM. The small nodes retain identity, visibility and accordion state.
+const scrolls = [];
+function node(properties = {}) {
+  const listeners = new Map();
+  return {
+    hidden: false,
+    open: false,
+    ...properties,
+    addEventListener(type, listener) {
+      listeners.set(type, [...(listeners.get(type) || []), listener]);
+    },
+    dispatch(type) {
+      for (const listener of listeners.get(type) || []) listener({target:this});
+    },
+    scrollIntoView() { scrolls.push(this.id); },
+  };
+}
+const search = node({value:""});
+const topics = new Map(GUIDE_TOPICS.map(topic => [topic.id, node({id:`guide-${topic.id}`})]));
+const groups = new Map([...guideMarkup.matchAll(/data-guide-group="([^"]+)"/g)].map(([, id]) => {
+  const description = {textContent:""};
+  return [id, node({dataset:{guideGroup:id}, querySelector:() => description})];
+}));
+const quickTasks = [...guideMarkup.matchAll(/data-guide-topic="([^"]+)"/g)].map(([, topic]) => node({dataset:{guideTopic:topic}}));
+const noResults = node();
+const host = {insertBefore() {}};
+const root = {
+  querySelector(selector) {
+    if (selector === "#guide-search") return search;
+    if (selector === ".guide-groups") return host;
+    if (selector === ".guide-no-results") return noResults;
+    if (selector === ".guide-topic[open]") return [...topics.values()].find(topic => topic.open) || null;
+    if (selector.startsWith("#guide-")) return topics.get(selector.slice(7)) || null;
+    const group = selector.match(/^\[data-guide-group="([^"]+)"\]$/)?.[1];
+    return groups.get(group) || null;
+  },
+  querySelectorAll(selector) {
+    if (selector === ".guide-topic") return [...topics.values()];
+    if (selector === ".guide-group") return [...groups.values()];
+    if (selector === "[data-guide-topic]") return quickTasks;
+    return [];
+  },
+};
+const panel = {
+  shadowRoot:root,
+  _guideQuery:"",
+  _render() { assert.fail("Guide filtering and quick-task navigation must preserve the route DOM"); },
+};
+const originalCSS = globalThis.CSS;
+globalThis.CSS = {escape:String};
+try {
+  bindGuide(panel);
+  function filter(query) {
+    search.value = query;
+    search.dispatch("input");
+    assert.equal(panel._guideQuery, query);
+  }
+  for (const topic of GUIDE_TOPICS) {
+    filter(topic.title.toUpperCase());
+    assert.equal(topics.get(topic.id).hidden, false, `The displayed title must find ${topic.id}`);
+  }
+  for (const [query, id] of [["shareable setup", "backup-restore"], ["captures", "request-debugging"], ["capture limit", "request-debugging"]]) {
+    filter(query);
+    assert.equal(topics.get(id).hidden, false, `Visible topic content must be searchable: ${query}`);
+  }
+
+  const previous = topics.get("persistent-memory");
+  const destination = topics.get("broadcast");
+  previous.open = true;
+  previous.dispatch("toggle");
+  filter("memory");
+  assert.equal(destination.hidden, true);
+  quickTasks.find(button => button.dataset.guideTopic === "broadcast").dispatch("click");
+  assert.equal(panel._guideQuery, "");
+  assert.equal(search.value, "");
+  assert.equal(noResults.hidden, true);
+  assert.ok([...topics.values(), ...groups.values()].every(item => !item.hidden));
+  assert.equal(previous.open, false);
+  assert.equal(destination.open, true);
+  assert.equal(panel._guideTopic, "broadcast");
+  assert.equal(panel._openGuideTopicElement, destination);
+  assert.deepEqual(scrolls, ["guide-broadcast"]);
+
+  filter("zzzz-no-guide-topic");
+  assert.equal(noResults.hidden, false);
+  quickTasks.find(button => button.dataset.guideTopic === "knowledge").dispatch("click");
+  assert.equal(noResults.hidden, true);
+  assert.equal(search.value, "");
+  assert.equal(panel._guideQuery, "");
+  assert.equal(destination.open, false);
+  assert.equal(topics.get("knowledge").open, true);
+  assert.deepEqual(scrolls, ["guide-broadcast", "guide-knowledge"]);
+} finally {
+  if (originalCSS === undefined) delete globalThis.CSS;
+  else globalThis.CSS = originalCSS;
+}
