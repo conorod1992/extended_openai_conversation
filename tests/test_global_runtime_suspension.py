@@ -198,7 +198,7 @@ async def test_broadcast_suspend_cancels_volatile_work_and_preserves_preferences
         ),
         async_save=AsyncMock(),
     )
-    monkeypatch.setattr(intercom, "PropagatingWriteStore", lambda *_: store)
+    monkeypatch.setattr(intercom, "_BroadcastStore", lambda *_: store)
     monkeypatch.setattr(
         hass, "async_create_task", lambda coro: asyncio.create_task(coro)
     )

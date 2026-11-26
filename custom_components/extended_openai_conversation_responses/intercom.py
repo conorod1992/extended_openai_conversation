@@ -169,6 +169,12 @@ def _aliases(value: Any) -> list[str]:
     )
 
 
+class _BroadcastStore(PropagatingWriteStore):
+    """Preserve malformed native Broadcast envelopes for repair."""
+
+    _null_payload_label = "Broadcast"
+
+
 class IntercomManager:
     """Resolve destinations and serialize announcements per Assist satellite."""
 
@@ -180,7 +186,7 @@ class IntercomManager:
         self._state_generations: dict[str, int] = {}
         self._tracked_entities: set[str] = set()
         self._unsub_state: Any = None
-        self._store: Store[dict[str, Any]] = PropagatingWriteStore(
+        self._store: Store[dict[str, Any]] = _BroadcastStore(
             hass, STORAGE_VERSION, STORAGE_KEY
         )
         self._enabled = False

@@ -1638,7 +1638,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     current_run = getattr(usage_manager, "current_run", None)
                     usage_run = current_run() if callable(current_run) else None
                     run_id = getattr(usage_run, "run_id", None)
-                    routing_rule = _ACTIVE_INVOCATION.get().routing_rule
+                    invocation = _ACTIVE_INVOCATION.get()
                     append_unresolved_tool_results(
                         chat_log,
                         self.entity_id,
@@ -1670,7 +1670,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             api_mode,
                             stage,
                             run_id,
-                            routing_rule=routing_rule,
+                            routing_rule=invocation.routing_rule,
+                            retained_routing_rules=invocation.retained_routing_rules,
                         )
                         raise transport from err
                     if isinstance(err, ValueError):
@@ -1684,7 +1685,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             api_mode,
                             stage,
                             run_id,
-                            routing_rule=routing_rule,
+                            routing_rule=invocation.routing_rule,
+                            retained_routing_rules=invocation.retained_routing_rules,
                         )
                         raise malformed from err
                     if isinstance(err, OpenAIError):
@@ -1694,7 +1696,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             api_mode,
                             stage,
                             run_id,
-                            routing_rule=routing_rule,
+                            routing_rule=invocation.routing_rule,
+                            retained_routing_rules=invocation.retained_routing_rules,
                         )
                     raise
                 else:

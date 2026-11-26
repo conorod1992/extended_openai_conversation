@@ -18,6 +18,7 @@ from custom_components.extended_openai_conversation_responses import (
     memory,
     provider_errors as provider,
     regex_execution,
+    request_rules,
     scheduled_action_summary,
     storage_repairs,
 )
@@ -225,6 +226,49 @@ def test_provider_remediation_covers_schema_parameter_and_invalid_response():
     assert "requested output schema" in provider.provider_user_message(schema)
     with pytest.raises(provider.ProviderStreamError, match="status is malformed"):
         provider.ensure_successful_responses_result({"status": " "})
+
+
+def test_retained_route_attribution_tracks_the_effective_fields(monkeypatch):
+    now = 10.0
+    monkeypatch.setattr(request_rules, "monotonic", lambda: now)
+    runtime = request_rules.RequestRuleRuntime()
+    runtime.set("session", {"model": "routed"}, 1, rule_id="model-rule")
+    runtime.set("session", {"reasoning_effort": "high"}, 1, rule_id="reasoning-rule")
+    assert runtime.effective_options(
+        {"model": "default"}, "session", timeout_minutes=1
+    ) == {
+        "model": "routed",
+        "reasoning_effort": "high",
+    }
+    assert runtime.effective_routing_sources("session", None) == (
+        "model-rule",
+        "reasoning-rule",
+    )
+    assert runtime.effective_routing_sources("session", {"model": "temporary"}) == (
+        "reasoning-rule",
+    )
+    assert (
+        runtime.effective_routing_sources(
+            "session", {request_rules._REQUEST_RESET_SENTINEL: "1"}
+        )
+        == ()
+    )
+    error = RuntimeError()
+    provider.annotate_provider_request(
+        error,
+        "routed",
+        "responses",
+        "initial",
+        None,
+        retained_routing_rules=runtime.effective_routing_sources("session", None),
+    )
+    assert error._eoai_provider_request["retained_routing_rules"] == [
+        "model-rule",
+        "reasoning-rule",
+    ]
+    now = 71.0
+    assert runtime.effective_options({}, "session", timeout_minutes=1) == {}
+    assert runtime.effective_routing_sources("session", None) == ()
 
 
 @pytest.mark.parametrize(

@@ -1,4 +1,4 @@
-import {initializeVoiceUserPicker, voiceUserCatalogue} from "./voice-user-picker.js";
+import {initializeVoiceUserPicker, unavailableVoiceUser, voiceUserCatalogue} from "./voice-user-picker.js";
 import {captureVoiceMappingDraft} from "./voice-mapping-draft.js";
 const escape = (panel, value) => panel._e(String(value ?? ""));
 const rawUserId = (value) => String(value || "").replace(/^user:/, "");
@@ -11,12 +11,14 @@ const policyLabels = {
 
 const users = voiceUserCatalogue;
 
-function summary(config, catalogue) {
+function summary(config, panel) {
   const target = (policy) => {
     if (policy === "shared") return "shared household data";
     if (policy === "default_user") {
       if (!config.voice_default_user_id) return "the default user, but none is selected — so no personal data is used or saved";
-      const name = catalogue.find((user) => user.id === rawUserId(config.voice_default_user_id))?.name || "the selected Home Assistant user";
+      const id = rawUserId(config.voice_default_user_id);
+      if (unavailableVoiceUser(panel, id)) return "no saved personal data because the default user is unavailable";
+      const name = users(panel).find((user) => user.id === id)?.name || "the selected Home Assistant user";
       return `the default user (${name})`;
     }
     if (policy === "device_mapping") return "a device assignment";
@@ -48,7 +50,7 @@ export function renderVoiceIdentityCore(panel) {
   const defaultCard = `<section class="supporting-panel voice-default-card" data-voice-default-card><h2>Default voice user</h2><p>Used only when an unidentified-voice policy explicitly chooses the default user.</p><div class="setting" data-field="voice_default_user_id" data-setting><label>Home Assistant user</label><ha-user-picker id="config-voice_default_user_picker" class="voice-native-picker" data-user-picker></ha-user-picker><input type="hidden" id="config-voice_default_user_id" data-config="voice_default_user_id" value="${escape(panel, selectedUser)}"><small>Choose a Home Assistant user.</small><span class="field-error" data-error="voice_default_user_id"></span></div></section>`;
   return `<p class="help">Authenticated Home Assistant identity takes precedence over these settings.</p>
     <details class="eoc-details-base voice-identity-help"><summary>How voice identity is resolved</summary><div class="voice-identity-flow"><div class="voice-flow-step"><strong>1 · Signed-in identity wins</strong><small>If Home Assistant supplies an authenticated user, that user's personal scope is used regardless of the settings below.</small></div><div class="voice-flow-step"><strong>2 · Otherwise use the voice policy</strong><small>Unidentified requests can use no saved personal data, shared household data, a default user, or a device assignment.</small></div><div class="voice-flow-step"><strong>3 · No identity guessing</strong><small>Device assignments use Home Assistant's source device ID only; room, presence, Bluetooth, and camera data are not used to guess a speaker.</small></div></div></details>
-    <div class="notice"><strong>Behaviour with these settings</strong><p id="voice-current-summary">${escape(panel, summary(config, users(panel)))}</p></div>
+    <div class="notice"><strong>Behaviour with these settings</strong><p id="voice-current-summary">${escape(panel, summary(config, panel))}</p></div>
     <div class="voice-policy-grid" data-voice-policy-grid><section class="supporting-panel voice-policy-card"><h2>Unidentified voice requests</h2>${policySelect(panel, "voice_scope_policy", "Use saved data from", String(config.voice_scope_policy || "unretained"), "Choose the data owner for unidentified voice requests.")}</section>${mapping ? fallbackCard : ""}</div>
     <div data-voice-default-host>${defaultActive ? defaultCard : ""}</div>
     <details class="eoc-details-base voice-inactive-settings" data-voice-inactive-settings ${mapping && defaultActive ? "hidden" : ""}><summary>Saved inactive voice settings</summary><p class="help">These saved values are retained, but are used only when the voice policy above selects them.</p><div data-voice-inactive-host>${mapping ? "" : fallbackCard}${defaultActive ? "" : defaultCard}</div></details>
@@ -75,7 +77,7 @@ export function updatePolicy(panel) {
   const inactiveSettings = root.querySelector("[data-voice-inactive-settings]");
   if (inactiveSettings) inactiveSettings.hidden = mapping && defaultActive;
   const text = root.querySelector("#voice-current-summary");
-  if (text) text.textContent = summary({...panel._draft, voice_scope_policy: policy, voice_unmapped_policy: fallback, voice_default_user_id: defaultUser}, users(panel));
+  if (text) text.textContent = summary({...panel._draft, voice_scope_policy: policy, voice_unmapped_policy: fallback, voice_default_user_id: defaultUser}, panel);
   const mappingFeature = root.querySelector("[data-voice-mapping-feature]");
   if (mappingFeature) {
     mappingFeature.hidden = !mapping;
@@ -120,6 +122,10 @@ export function bindVoiceIdentityCore(panel) {
     initializeVoiceUserPicker(panel, picker, hidden?.value, () => updatePolicy(panel));
     picker.addEventListener("value-changed", (event) => {
       const value = rawUserId(event.detail?.value || "");
+      if (picker.inert || unavailableVoiceUser(panel, value)) {
+        picker.value = rawUserId(hidden?.value);
+        return;
+      }
       picker.value = value;
       if (hidden?.isConnected && root.contains(hidden)) {
         hidden.value = value;

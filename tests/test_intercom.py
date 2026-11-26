@@ -55,6 +55,23 @@ async def test_broadcast_unreadable_native_version_fails_closed(hass, version):
     assert not manager.enabled and manager.builtin_voice_command
 
 
+async def test_explicit_null_broadcast_settings_preserve_the_native_envelope(hass):
+    manager = IntercomManager(hass)
+    path = Path(manager._store.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    await manager._store.async_save(None)
+    evidence = path.read_bytes()
+    with pytest.raises(HomeAssistantError, match="requires repair"):
+        await manager.async_initialize()
+    with pytest.raises(ValueError, match="Broadcast storage needs repair"):
+        await manager._store.async_save({"enabled": True})
+    assert not manager.enabled
+    assert path.read_bytes() == evidence
+    path.unlink()
+    await manager.async_initialize()
+    assert not manager.enabled
+
+
 @pytest.mark.asyncio
 async def test_disabled_broadcast_rejects_send(hass) -> None:
     manager = IntercomManager(hass)

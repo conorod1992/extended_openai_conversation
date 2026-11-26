@@ -21,7 +21,6 @@ from homeassistant.helpers import (
 )
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.util import dt as dt_util
-from homeassistant.util.json import load_json
 
 from .agent_config import CONF_GUEST_WEB_SEARCH, DEFAULT_GUEST_WEB_SEARCH
 from .agent_maintenance import get_agent_maintenance_gate
@@ -227,29 +226,7 @@ def can_reuse_request_policy(request_policy: Any, guest_mode: Any) -> bool:
 class _GuestModeStore(PropagatingWriteStore):
     """Distinguish a corrupt null payload from absent Guest Mode settings."""
 
-    async def _async_load_data(self) -> Any:
-        result = await super()._async_load_data()
-        if result is None and not self._load_empty:
-            # HA returns None for both a missing file and a stored null payload.
-            # Its JSON reader preserves that distinction before decoding the envelope.
-            envelope = await self.hass.async_add_executor_job(load_json, self.path)
-            if (
-                isinstance(envelope, dict)
-                and "data" in envelope
-                and envelope["data"] is None
-            ):
-                raise StorageRepairRequired("Guest Mode")
-        return result
-
-    async def _async_migrate_func(
-        self, old_major_version: int, old_minor_version: int, old_data: Any
-    ) -> Any:
-        if old_data is None:
-            # Reject before HA's migration path can rewrite the native envelope.
-            raise StorageRepairRequired("Guest Mode")
-        return await super()._async_migrate_func(
-            old_major_version, old_minor_version, old_data
-        )
+    _null_payload_label = "Guest Mode"
 
 
 class GuestModeManager:

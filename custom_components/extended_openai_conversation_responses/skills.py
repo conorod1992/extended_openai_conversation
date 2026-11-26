@@ -266,11 +266,11 @@ class SkillManager:
                 skill = SkillMdParser.parse(content, skill_path, skills_dir)
                 if skill is not None:
                     loaded[skill.name] = skill
-                    _LOGGER.debug("Loaded skill: %s from %s", skill.name, skill_path)
+                    _LOGGER.debug("Loaded skill: %s", skill.name)
             except Exception as err:
                 log_handled_failure(
                     _LOGGER,
-                    f"Unexpected error loading Skill: {skill_path}",
+                    "An installed Skill could not be parsed and was skipped",
                     err,
                     level=logging.ERROR,
                 )
@@ -288,13 +288,12 @@ class SkillManager:
     def _iter_skill_texts_sync(self, skills_dir: Path) -> Iterator[tuple[Path, str]]:
         """Yield bounded text from published, non-temporary Skill paths."""
         if not skills_dir.exists():
-            _LOGGER.debug("Skills directory does not exist: %s", skills_dir)
+            _LOGGER.debug("The installed Skills directory does not exist")
             return
         if not skills_dir.is_dir():
             _LOGGER.warning(
                 "The configured Skills path is not a directory, so installed Skills "
-                "cannot be loaded. Check the installed Skills directory: %s",
-                skills_dir,
+                "cannot be loaded. Check the installed Skills directory.",
             )
             return
         entries_seen = 0
@@ -311,7 +310,7 @@ class SkillManager:
                 continue
             skill_file = skill_dir / SKILL_FILE_NAME
             if not skill_file.exists():
-                _LOGGER.debug("No SKILL.md found in %s", skill_dir)
+                _LOGGER.debug("An installed Skills directory has no SKILL.md")
                 continue
             if readable_files >= MAX_DISCOVERED_SKILLS:
                 _LOGGER.warning(

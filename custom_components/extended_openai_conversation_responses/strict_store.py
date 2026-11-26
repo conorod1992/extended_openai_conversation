@@ -15,7 +15,7 @@ from typing import Any, Self
 from homeassistant.exceptions import UnsupportedStorageVersionError
 from homeassistant.helpers.storage import Store
 from homeassistant.util.file import WriteError
-from homeassistant.util.json import SerializationError
+from homeassistant.util.json import SerializationError, load_json
 
 from .agent_maintenance import AgentMaintenanceGate, get_agent_maintenance_gate
 from .operation_settlement import async_settle_owned_operation as _async_settle_store_io
@@ -147,6 +147,8 @@ class PropagatingWriteStore(AcknowledgedWriteStore):
     """Require successful writes and guard authoritative data against corruption."""
 
     _corruption_unavailable = False
+    _null_payload_label: str | None = None
+    _null_payload_unavailable = False
 
     @property
     def corruption_unavailable(self) -> bool:
@@ -166,9 +168,32 @@ class PropagatingWriteStore(AcknowledgedWriteStore):
             self._corruption_unavailable = True
         if self._corruption_unavailable:
             raise StorageRepairRequired("EOAI")
+        if result is None and self._null_payload_label is not None:
+            # Native Store returns None for both an absent file and stored null.
+            envelope = await self.hass.async_add_executor_job(load_json, self.path)
+            if (
+                isinstance(envelope, dict)
+                and "data" in envelope
+                and envelope["data"] is None
+            ):
+                self._null_payload_unavailable = True
+                raise StorageRepairRequired(self._null_payload_label)
+        self._null_payload_unavailable = False
         return result
 
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: Any
+    ) -> Any:
+        if old_data is None and self._null_payload_label is not None:
+            self._null_payload_unavailable = True
+            raise StorageRepairRequired(self._null_payload_label)
+        return await super()._async_migrate_func(
+            old_major_version, old_minor_version, old_data
+        )
+
     async def _async_save_owned(self, data: dict[str, Any]) -> None:
+        if self._null_payload_unavailable and self._null_payload_label is not None:
+            raise StorageRepairRequired(self._null_payload_label)
         if self._corruption_unavailable:
             raise StorageRepairRequired("EOAI")
         await super()._async_save_owned(data)

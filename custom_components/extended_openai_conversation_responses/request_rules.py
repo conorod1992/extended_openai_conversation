@@ -21,7 +21,7 @@ import json
 import logging
 import re
 from time import monotonic
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 import unicodedata
 from urllib.parse import quote
 from uuid import uuid4
@@ -1580,11 +1580,18 @@ class RequestRules:
         self._sort_and_compile()
 
 
+class _ConversationRoute(NamedTuple):
+    values: dict[str, str]
+    last_used: float
+    timeout: int
+    sources: tuple[tuple[str, str], ...] = ()
+
+
 class RequestRuleRuntime:
     """Per-agent, in-memory conversation routing overrides."""
 
     def __init__(self) -> None:
-        self._conversation_overrides: dict[str, tuple[dict[str, str], float, int]] = {}
+        self._conversation_overrides: dict[str, _ConversationRoute] = {}
         self._requests = ConversationRequests[str]()
 
     def get(
@@ -1593,24 +1600,19 @@ class RequestRuleRuntime:
         timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     ) -> dict[str, str]:
         now = monotonic()
-        for key, (_, last_used, stored_timeout) in list(
-            self._conversation_overrides.items()
-        ):
+        for key, route in list(self._conversation_overrides.items()):
             if (
                 not self._requests.active(key)
-                and now - last_used >= max(1, stored_timeout) * 60
+                and now - route.last_used >= max(1, route.timeout) * 60
             ):
                 self._conversation_overrides.pop(key, None)
         entry = self._conversation_overrides.get(session_id)
         if entry is None:
             return {}
-        values, _, _ = entry
-        self._conversation_overrides[session_id] = (
-            values,
-            now,
-            max(1, timeout_minutes),
+        self._conversation_overrides[session_id] = entry._replace(
+            last_used=now, timeout=max(1, timeout_minutes)
         )
-        return dict(values)
+        return dict(entry.values)
 
     def begin_request(self, session_id: str, timeout_minutes: int) -> object:
         """Resolve idle expiration before protecting an active request."""
@@ -1622,13 +1624,12 @@ class RequestRuleRuntime:
         entry = self._conversation_overrides.get(session_id)
         if entry is None:
             return {}
-        values, last_used, timeout = entry
         if (
             not self._requests.active(session_id)
-            and monotonic() - last_used >= timeout * 60
+            and monotonic() - entry.last_used >= entry.timeout * 60
         ):
             return {}
-        return dict(values)
+        return dict(entry.values)
 
     def request_ownership(
         self, session_id: str
@@ -1641,20 +1642,32 @@ class RequestRuleRuntime:
         session_id = self._requests.finish(token, successful=successful)
         entry = self._conversation_overrides.get(session_id) if session_id else None
         if session_id is not None and entry is not None:
-            values, _, timeout = entry
-            self._conversation_overrides[session_id] = (values, monotonic(), timeout)
+            self._conversation_overrides[session_id] = entry._replace(
+                last_used=monotonic()
+            )
 
     def set(
         self,
         session_id: str,
         override: Mapping[str, str],
         timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+        *,
+        rule_id: str | None = None,
     ) -> None:
         values = {**self.get(session_id, timeout_minutes), **dict(override)}
-        self._conversation_overrides[session_id] = (
+        previous = self._conversation_overrides.get(session_id)
+        sources = {
+            key: source
+            for key, source in (previous.sources if previous else ())
+            if key not in override
+        }
+        if rule_id:
+            sources.update(dict.fromkeys(override, rule_id))
+        self._conversation_overrides[session_id] = _ConversationRoute(
             values,
             monotonic(),
             max(1, timeout_minutes),
+            tuple(sources.items()),
         )
 
     def reset(self, session_id: str) -> None:
@@ -1700,6 +1713,22 @@ class RequestRuleRuntime:
             **self.get(session_id, timeout_minutes),
             **request_values,
         }
+
+    def effective_routing_sources(
+        self, session_id: str, request_override: Mapping[str, str] | None
+    ) -> tuple[str, ...]:
+        """Report sources still contributing to the resolved conversation route."""
+        if request_override and request_override.get(_REQUEST_RESET_SENTINEL) == "1":
+            return ()
+        route = self._conversation_overrides.get(session_id)
+        if route is None:
+            return ()
+        overrides = request_override or {}
+        return tuple(
+            dict.fromkeys(
+                source for key, source in route.sources if key not in overrides
+            )
+        )
 
 
 def request_rule_session_id(continuity_key: str | None, conversation_id: str) -> str:
@@ -3657,7 +3686,10 @@ async def _async_evaluate_matched_rule(
     if action["scope"] == "conversation" and (
         can_retain_conversation_route is None or can_retain_conversation_route()
     ):
-        runtime.set(session_id, override, timeout_minutes)
+        if isinstance(runtime, RequestRuleRuntime):
+            runtime.set(session_id, override, timeout_minutes, rule_id=rule["id"])
+        else:
+            runtime.set(session_id, override, timeout_minutes)
         request_override = None
     else:
         request_override = override

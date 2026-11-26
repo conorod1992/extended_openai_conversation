@@ -463,6 +463,7 @@ def annotate_provider_request(
     run_id: str | None,
     *,
     routing_rule: str | None = None,
+    retained_routing_rules: tuple[str, ...] = (),
 ) -> None:
     """Attach identifiers from the actual failing provider round."""
     safe_model = (
@@ -471,7 +472,11 @@ def annotate_provider_request(
         and not model.startswith(("sk-", "sess-"))
         else "<custom model>"
     )
-    request = {"model": safe_model, "api_mode": api_mode, "stage": stage}
+    request: dict[str, str | list[str]] = {
+        "model": safe_model,
+        "api_mode": api_mode,
+        "stage": stage,
+    }
     if isinstance(run_id, str) and run_id:
         request["operation"] = hashlib.sha256(
             run_id.encode(errors="surrogatepass")
@@ -480,4 +485,11 @@ def annotate_provider_request(
         r"[A-Za-z0-9_-]{1,80}", routing_rule
     ):
         request["routing_rule"] = routing_rule
+    retained = [
+        rule
+        for rule in retained_routing_rules
+        if rule != routing_rule and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", rule)
+    ]
+    if retained:
+        request["retained_routing_rules"] = retained
     error.__dict__["_eoai_provider_request"] = request

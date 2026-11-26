@@ -1305,6 +1305,7 @@ class ExtendedOpenAIAgentEntity(
                             request_successful = evaluation.successful
                             return result
                         model_input = user_input
+                        routing_rule = None
                         if (
                             evaluation is not None
                             and evaluation.provider_input is not None
@@ -1335,7 +1336,18 @@ class ExtendedOpenAIAgentEntity(
                             and evaluation.match.rule.get("action_type")
                             == "model_routing"
                         ):
-                            set_invocation_routing_rule(evaluation.match.rule["id"])
+                            routing_rule = evaluation.match.rule["id"]
+                        if isinstance(self._request_rule_runtime, RequestRuleRuntime):
+                            retained_rules = (
+                                self._request_rule_runtime.effective_routing_sources(
+                                    rule_session_key,
+                                    evaluation.request_override if evaluation else None,
+                                )
+                            )
+                        else:
+                            retained_rules = ()
+                        if routing_rule or retained_rules:
+                            set_invocation_routing_rule(routing_rule, retained_rules)
                         if self._usage is None:
                             result = await self._async_dispatch_message(
                                 model_input,

@@ -57,6 +57,7 @@ class RequestInvocation:
     metadata: dict[str, Any] | None = None
     temporary_memory_prefetch: asyncio.Task[Any] | None = None
     routing_rule: str | None = None
+    retained_routing_rules: tuple[str, ...] = ()
 
 
 _NO_INVOCATION = RequestInvocation()
@@ -72,9 +73,15 @@ def set_temporary_memory_prefetch(task: asyncio.Task[Any] | None) -> None:
     )
 
 
-def set_invocation_routing_rule(rule_id: str) -> None:
-    """Retain the matching routing rule for provider failure diagnostics."""
-    _ACTIVE_INVOCATION.set(replace(_ACTIVE_INVOCATION.get(), routing_rule=rule_id))
+def set_invocation_routing_rule(rule_id: str | None, retained: tuple[str, ...]) -> None:
+    """Retain routing provenance for provider failure diagnostics."""
+    _ACTIVE_INVOCATION.set(
+        replace(
+            _ACTIVE_INVOCATION.get(),
+            routing_rule=rule_id,
+            retained_routing_rules=retained,
+        )
+    )
 
 
 @asynccontextmanager

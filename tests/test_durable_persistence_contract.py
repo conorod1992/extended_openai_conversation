@@ -116,6 +116,8 @@ def test_transactional_store_subclasses_propagate_writer_failures() -> None:
         ("conversation_archive.py", "_ArchiveMetadataStore"),
         ("usage.py", "_UsageStore"),
         ("guest_mode.py", "_GuestModeStore"),
+        ("delayed_tools.py", "_ScheduledActionStore"),
+        ("intercom.py", "_BroadcastStore"),
     ):
         tree = ast.parse((INTEGRATION / module).read_text(encoding="utf-8"))
         declaration = next(

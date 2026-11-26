@@ -219,10 +219,26 @@ test("Voice policies retain native picker identity and saved inactive choices ac
   await panel.locator('.settings-result[data-target="config-voice_default_user_id"]').click();
   await expect(inactive).toHaveJSProperty("open",true);
   await expect(picker).toHaveJSProperty("disabled",true);
+  await expect(picker).toHaveJSProperty("inert",true);
+  await picker.evaluate(node => {
+    node.value="another-user";
+    node.dispatchEvent(new CustomEvent("value-changed",{detail:{value:"another-user"},bubbles:true,composed:true}));
+  });
   expect(await picker.evaluate(node => node===window.savedVoicePicker)).toBe(true);
   await expect(panel.locator("#config-voice_default_user_id")).toHaveValue("test-user");
   await panel.locator("#config-voice_scope_policy").selectOption("default_user");
   await expect(picker).toHaveJSProperty("disabled",false);
+  await expect(picker).toHaveJSProperty("inert",false);
+  await panel.evaluate(p => {
+    const hass=p.hass || p._hass;
+    p._voiceUsersConnection=hass.connection || hass;
+    p._voiceUsers=[{id:"test-user",name:"Test User",is_active:true}];
+  });
+  await picker.evaluate(node => {
+    node.value="removed-user";
+    node.dispatchEvent(new CustomEvent("value-changed",{detail:{value:"removed-user"},bubbles:true,composed:true}));
+  });
+  await expect(picker).toHaveJSProperty("value","test-user");
   expect(await panel.evaluate(p=>({policy:p._draft.voice_scope_policy,fallback:p._draft.voice_unmapped_policy,user:p._draft.voice_default_user_id}))).toEqual({policy:"default_user",fallback:"default_user",user:"test-user"});
   await expectHarnessClean(page, errors);
 });

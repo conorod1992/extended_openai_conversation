@@ -361,11 +361,17 @@ async def _async_load_delayed_queue_store(
         raise ValueError("Persisted delayed Function Tool Store is malformed") from err
 
 
+class _ScheduledActionStore(PropagatingWriteStore):
+    """Preserve malformed native queue envelopes for repair."""
+
+    _null_payload_label = "Scheduled Actions"
+
+
 async def _async_remove_stored_agent_calls_locked(
     hass: HomeAssistant, remove: Callable[[str, str], bool]
 ) -> None:
     """Read and replace stored calls while retaining shared-store ownership."""
-    store = PropagatingWriteStore(
+    store = _ScheduledActionStore(
         hass,
         DELAYED_TOOL_STORAGE_VERSION,
         DELAYED_TOOL_STORAGE_KEY,
@@ -399,7 +405,7 @@ class DelayedToolManager:
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the scheduler."""
         self.hass = hass
-        self._store = PropagatingWriteStore(
+        self._store = _ScheduledActionStore(
             hass,
             DELAYED_TOOL_STORAGE_VERSION,
             DELAYED_TOOL_STORAGE_KEY,

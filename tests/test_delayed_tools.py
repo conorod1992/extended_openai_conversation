@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -86,6 +87,23 @@ def test_delay_normalization_accepts_ha_time_period_shapes() -> None:
 
     with pytest.raises(HomeAssistantError, match="Invalid Function Tool delay"):
         _delay_as_timedelta("not-a-duration")
+
+
+async def test_explicit_null_queue_is_quarantined_and_preserved(hass) -> None:
+    manager = DelayedToolManager(hass)
+    path = Path(manager._store.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    await manager._store.async_save(None)
+    evidence = path.read_bytes()
+
+    await manager.async_setup()
+
+    assert manager._quarantined
+    assert not manager._records
+    assert not manager._tasks
+    with pytest.raises(ValueError, match="Scheduled Actions storage needs repair"):
+        await manager._store.async_save({"calls": []})
+    assert path.read_bytes() == evidence
 
 
 @pytest.mark.parametrize("catch_up", [False, True])
