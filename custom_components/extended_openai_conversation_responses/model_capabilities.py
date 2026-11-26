@@ -19,6 +19,10 @@ class ModelCapabilityError(ValueError):
     """A configuration is incompatible with the selected model capabilities."""
 
 
+class OutputTokenLimitError(ModelCapabilityError):
+    """The configured maximum response length is invalid for the model."""
+
+
 _ACTIVE_CAPABILITY_SNAPSHOT: ContextVar[tuple[str, Mapping[str, Any]] | None] = (
     ContextVar("extended_openai_model_capability_snapshot", default=None)
 )
@@ -240,15 +244,15 @@ def normalize_output_token_limit(
     try:
         value = int(configured_limit)
     except (TypeError, ValueError) as err:
-        raise ModelCapabilityError("Output token limit must be an integer.") from err
+        raise OutputTokenLimitError("Output token limit must be an integer.") from err
     if value <= 0:
-        raise ModelCapabilityError("Output token limit must be greater than zero.")
+        raise OutputTokenLimitError("Output token limit must be greater than zero.")
     if api == API_MODE_RESPONSES and value < 16:
-        raise ModelCapabilityError("Responses output token limit must be at least 16.")
+        raise OutputTokenLimitError("Responses output token limit must be at least 16.")
     capabilities = _request_capabilities(model)
     ceiling = capabilities["limits"]["max_output_tokens"]
     if value > ceiling:
-        raise ModelCapabilityError(
+        raise OutputTokenLimitError(
             f"Output token limit {value} exceeds {model}'s maximum of {ceiling}."
         )
     field = cast(str, capabilities["output_tokens"][api])

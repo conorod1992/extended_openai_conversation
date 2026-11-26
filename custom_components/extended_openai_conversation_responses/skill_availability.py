@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .const import FUNCTION_GROUP_LOADING_ON_DEMAND
+from .const import FUNCTION_GROUP_LOADING_ON_DEMAND, SKILL_FILE_NAME
 
 SKILL_LOADER_TOOL_NAME = "load_skill"
 CANONICAL_SKILL_LOADER_PATH = "{{extended_openai.skill_dir(name)}}/{{file}}"
@@ -70,16 +70,38 @@ def _loader_arguments_allowed(tool: dict[str, Any]) -> bool:
     if not isinstance(properties, dict):
         return False
     for key in ("name", "file"):
-        if key not in properties and parameters.get("additionalProperties") is False:
-            return False
         schema = properties.get(key)
+        if key not in properties:
+            additional = parameters.get("additionalProperties")
+            if additional is False:
+                return False
+            if not parameters.get("patternProperties"):
+                schema = additional
         if schema is False:
             return False
+        if not isinstance(schema, dict):
+            continue
+        kind = schema.get("type")
         if (
-            isinstance(schema, dict)
-            and (kind := schema.get("type")) is not None
+            kind is not None
             and kind != "string"
             and not (isinstance(kind, list) and "string" in kind)
+        ):
+            return False
+        maximum = schema.get("maxLength")
+        if key == "name":
+            if type(maximum) is int and maximum == 0:
+                return False
+            continue
+        minimum = schema.get("minLength")
+        if (
+            (type(maximum) is int and len(SKILL_FILE_NAME) > maximum)
+            or (type(minimum) is int and len(SKILL_FILE_NAME) < minimum)
+            or ("const" in schema and schema["const"] != SKILL_FILE_NAME)
+            or (
+                isinstance(choices := schema.get("enum"), list)
+                and SKILL_FILE_NAME not in choices
+            )
         ):
             return False
     return True

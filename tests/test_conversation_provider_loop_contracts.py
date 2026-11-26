@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from openai import OpenAIError
+from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
@@ -300,6 +301,48 @@ async def test_web_search_usage_is_carried_from_stream_without_history_rescan(
     assert result.response.speech["plain"]["speech"] == "Found it."
     assert usage.async_record_request.await_count == 1
     assert usage.async_record_request.call_args.kwargs["web_search_used"] is True
+
+
+@pytest.mark.parametrize("complete_search", [False, True])
+async def test_failed_stream_accounts_only_for_a_completed_web_search(
+    hass, monkeypatch, complete_search
+):
+    usage = _UsageHarness()
+    search = SimpleNamespace(type="web_search_call", id="search", status="completed")
+    events = [_event("response.output_item.added", item=search, output_index=0)]
+    if complete_search:
+        events.append(_event("response.output_item.done", item=search, output_index=0))
+    events.append(_event(
+        "response.failed",
+        response=SimpleNamespace(error=SimpleNamespace(message="Stream failed")),
+    ))
+    _, _, _, _, invoke = _provider_fixture(
+        hass, monkeypatch, [FakeStream(events)], usage=usage
+    )
+    await invoke()
+    usage.async_record_request.assert_awaited_once()
+    recorded = usage.async_record_request.call_args.kwargs
+    assert recorded["successful"] is False
+    assert recorded["web_search_used"] is complete_search
+
+
+async def test_unindexed_text_delta_uses_known_message_identity(hass, monkeypatch):
+    opened = ResponseOutputMessage(
+        type="message", id="message", role="assistant", status="in_progress", content=[]
+    )
+    done = ResponseOutputMessage(
+        type="message", id="message", role="assistant", status="completed",
+        content=[ResponseOutputText(type="output_text", text="Hello world.", annotations=[])],
+    )
+    events = [
+        _event("response.output_item.added", item=opened, output_index=0),
+        _event("response.output_text.delta", item_id="message", content_index=0, delta="Hello"),
+        _event("response.output_item.done", item=done, output_index=0),
+        _completed_event(),
+    ]
+    _, _, _, _, invoke = _provider_fixture(hass, monkeypatch, [FakeStream(events)])
+    result = await invoke()
+    assert result.response.speech["plain"]["speech"] == "Hello world."
 
 
 async def test_conversation_single_tool_call_then_final_text(hass, monkeypatch) -> None:

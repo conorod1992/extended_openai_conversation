@@ -14,7 +14,8 @@ export function diagnosticResultMarkup(panel, result) {
   const checks = Array.isArray(result?.checks) ? result.checks : [];
   const rows = checks.map((check) => {
     const status = diagnosticStatusMeta(check?.status);
-    const route = {
+    const field = check?.recovery_setting;
+    const route = field === "max_tokens" || field === "azure_model" ? `assistant/basics/config-${field}` : {
       "API mode":"assistant/basics/config-api_mode",
       "Model access":"assistant/basics/config-chat_model",
       "Saved request settings":"assistant/model-responses",

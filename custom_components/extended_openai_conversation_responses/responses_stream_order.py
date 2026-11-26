@@ -20,6 +20,14 @@ _ARGUMENT_DELTA = "response.function_call_arguments.delta"
 _ARGUMENT_DONE = "response.function_call_arguments.done"
 _ARGUMENT_EVENTS = {_ARGUMENT_DELTA, _ARGUMENT_DONE}
 _PART_SNAPSHOTS = {"response.output_text.done", "response.refusal.done"}
+_CONTENT_EVENTS = {
+    *_PART_SNAPSHOTS,
+    "response.output_text.delta",
+    "response.refusal.delta",
+    "response.output_text.annotation.added",
+    "response.content_part.added",
+    "response.content_part.done",
+}
 _USAGE = {"response.usage", "response.usage.updated"}
 _RESPONSE_EVENTS = {
     "response.created",
@@ -45,6 +53,17 @@ def _item_identity(item: Any) -> tuple[Any, ...]:
         getattr(item, field, None)
         for field in ("type", "id", "call_id", "name", "arguments")
     )
+
+
+@dataclass
+class _IndexedContentEvent:
+    """Keep the provider's event intact while associating it with a known item."""
+
+    event: Any
+    output_index: int
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.event, name)
 
 
 @dataclass(slots=True)
@@ -158,6 +177,7 @@ async def ordered_output_events(
     events: AsyncIterator[Any],
     *,
     recover_usage: Callable[[], Awaitable[None]] | None = None,
+    record_web_search: Callable[[], None] | None = None,
 ) -> AsyncGenerator[Any]:
     """Validate in wire order and present each indexed item as one HA entry."""
     budget = ProviderOutputBudget()
@@ -177,8 +197,13 @@ async def ordered_output_events(
             index = getattr(event, "output_index", None)
             if index is not None and (type(index) is not int or index < 0):
                 raise _malformed("invalid output index")
-            budget.responses_event(event)
             kind = getattr(event, "type", "")
+            if index is None and kind in _CONTENT_EVENTS:
+                content_owner = getattr(event, "item_id", None)
+                if isinstance(content_owner, str) and content_owner in owners:
+                    index = owners[content_owner]
+                    event = _IndexedContentEvent(event, index)
+            budget.responses_event(event)
             if terminal_seen and kind.startswith("response.") and kind not in _USAGE:
                 raise _malformed("event after terminal response")
 
@@ -312,6 +337,11 @@ async def ordered_output_events(
                         if completed_id in legacy_completions:
                             raise _malformed("repeated completed output item")
                         legacy_completions[completed_id] = legacy
+                    if (
+                        record_web_search is not None
+                        and getattr(event.item, "type", None) == "web_search_call"
+                    ):
+                        record_web_search()
                     last_legacy_completed = legacy
                     legacy_message_finished = (
                         getattr(event.item, "type", None) == "message"
@@ -365,6 +395,12 @@ async def ordered_output_events(
 
             was_done = item.done
             item.observe(event, kind, item_id)
+            if (
+                kind == _DONE
+                and record_web_search is not None
+                and getattr(event.item, "type", None) == "web_search_call"
+            ):
+                record_web_search()
             if was_done and kind in _PART_SNAPSHOTS:
                 # A late part snapshot cannot alter already finalized content.
                 continue

@@ -95,8 +95,20 @@ async def test_invalid_saved_tier_does_not_skip_the_connectivity_probe():
     assert result.status == "Failed"
     assert checks["Saved request settings"].status == "Failed"
     assert "processing tier" in checks["Saved request settings"].message
+    serialized = next(item for item in result.as_dict()["checks"] if item["name"] == "Saved request settings")
+    assert "recovery_setting" not in serialized
     client.chat.completions.create.assert_awaited_once()
     assert "service_tier" not in client.chat.completions.create.await_args.kwargs
+
+
+async def test_invalid_saved_output_limit_targets_output_limit_setting():
+    hass, entry, subentry, client, usage = _objects({"max_tokens": 999999999})
+    with patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)):
+        result = await async_test_agent(hass, entry, subentry)
+    check = next(item for item in result.as_dict()["checks"] if item["name"] == "Saved request settings")
+    assert check["status"] == "Failed"
+    assert check["recovery_setting"] == "max_tokens"
+    client.chat.completions.create.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
@@ -346,6 +358,8 @@ async def test_underlying_model_binding_requires_azure_before_probe() -> None:
         result = await async_test_agent(hass, entry, subentry)
     assert result.status == "Failed"
     assert "only supported with Azure" in result.as_text()
+    check = next(item for item in result.as_dict()["checks"] if item["name"] == "Configuration")
+    assert check["recovery_setting"] == "azure_model"
     client.chat.completions.create.assert_not_awaited()
 
 

@@ -336,7 +336,9 @@ async def async_prune_orphaned_delayed_calls(hass: HomeAssistant) -> None:
 
     async with _delayed_store_lock(hass):
         manager = delayed_tool_manager(hass)
-        if manager is not None and manager._setup_complete and not manager._quarantined:
+        if manager is not None and manager._quarantined:
+            return  # An opportunistic scan cannot repair a quarantined queue.
+        if manager is not None and manager._setup_complete:
             await manager._async_remove_calls_locked(deleted)
         else:
             await _async_remove_stored_agent_calls_locked(hass, deleted)

@@ -192,6 +192,7 @@ from .mutation_outcomes import (
     mutation_failure,
 )
 from .operation_settlement import async_settle_owned_operation
+from .persistence_hardening import StorageRepairRequired
 from .regex_execution import async_process_speech_text
 from .request import (
     async_capacity_ha_snapshot as _async_capacity_ha_snapshot,
@@ -1044,7 +1045,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             library = None
             try:
                 library = await async_get_knowledge(hass, entry_id, subentry_id)
-            except HomeAssistantError, OSError:
+            except HomeAssistantError, OSError, StorageRepairRequired:
                 details_result["knowledge_catalogue_unavailable"] = True
             knowledge_manager_ms = _elapsed_ms(phase)
 
@@ -1067,7 +1068,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             if library is not None:
                 try:
                     details_result["knowledge_sources"] = await library.async_list()
-                except HomeAssistantError, OSError:
+                except HomeAssistantError, OSError, StorageRepairRequired:
                     details_result["knowledge_catalogue_unavailable"] = True
             knowledge_list_ms = _elapsed_ms(phase)
 
@@ -3085,7 +3086,7 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         try:
             library = await async_get_knowledge(hass, entry_id, subentry_id)
             sources = await library.async_list()
-        except HomeAssistantError, OSError:
+        except HomeAssistantError, OSError, StorageRepairRequired:
             return {"sources_unavailable": True}
         # The list includes disabled sources even when diagnostics are malformed.
         listed = sources if isinstance(sources, list) else []

@@ -89,7 +89,9 @@ def test_delay_normalization_accepts_ha_time_period_shapes() -> None:
         _delay_as_timedelta("not-a-duration")
 
 
-async def test_explicit_null_queue_is_quarantined_and_preserved(hass) -> None:
+async def test_explicit_null_queue_is_quarantined_and_preserved(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
     manager = DelayedToolManager(hass)
     path = Path(manager._store.path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,6 +105,11 @@ async def test_explicit_null_queue_is_quarantined_and_preserved(hass) -> None:
     assert not manager._tasks
     with pytest.raises(ValueError, match="Scheduled Actions storage needs repair"):
         await manager._store.async_save({"calls": []})
+    hass.data.setdefault(DOMAIN, {})[DATA_DELAYED_TOOL_MANAGER] = manager
+    read_queue = AsyncMock(side_effect=AssertionError("quarantined queue was reopened"))
+    monkeypatch.setattr(delayed_tools, "_async_remove_stored_agent_calls_locked", read_queue)
+    await delayed_tools.async_prune_orphaned_delayed_calls(hass)
+    read_queue.assert_not_awaited()
     assert path.read_bytes() == evidence
 
 

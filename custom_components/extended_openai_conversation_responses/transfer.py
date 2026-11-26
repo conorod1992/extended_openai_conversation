@@ -1441,7 +1441,7 @@ def _prepared_restore_from_selection(
         if imported.raw_configuration is not None:
             raw, kept, absent = _restore_section_secrets(
                 imported.raw_configuration,
-                backup.recoverable_configuration_snapshot(
+                backup.private_configuration_snapshot(
                     current.config, provider=current_provider
                 ),
             )

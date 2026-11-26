@@ -34,6 +34,7 @@ from .const import (
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DOMAIN,
+    USAGE_RETENTION_OPTIONS,
 )
 from .debug import record_current_run_failure
 from .mutation_outcomes import MutationFailure, mark_mutation_failure
@@ -2055,7 +2056,7 @@ def usage_retention_policy(options: Mapping[str, Any]) -> dict[str, int | None]:
             days = normalized_agent_integer(options, key, default)
         except AgentConfigError, ValueError:
             return None
-        return days if days >= 0 else None
+        return days if days in USAGE_RETENTION_OPTIONS else None
 
     return {
         "request_retention_days": retention_days(

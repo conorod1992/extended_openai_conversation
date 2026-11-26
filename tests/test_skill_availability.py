@@ -113,6 +113,26 @@ def test_selected_skills_require_canonical_enabled_loader() -> None:
     del parameters["properties"]["file"]
     parameters["additionalProperties"] = False
     assert not skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+    parameters["patternProperties"] = {"^other$": {"type": "string"}}
+    assert not skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+    del parameters["patternProperties"]
+    parameters["additionalProperties"] = {"type": "integer"}
+    assert not skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+    parameters["additionalProperties"] = {"type": "string"}
+    assert skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+    parameters["properties"]["name"]["maxLength"] = 0
+    assert not skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+
+    for schema, available in [
+        ({"maxLength": 0}, False),
+        ({"minLength": 9}, False),
+        ({"const": "README.md"}, False),
+        ({"enum": ["notes.md", "SKILL.md"], "maxLength": 8}, True),
+    ]:
+        loader = _loader()
+        loader["spec"]["parameters"]["properties"]["file"].update(schema)
+        status = skill_loader_status(["calendar"], [loader], [], max_function_calls=1)
+        assert status.available is available, schema
 
 
 def test_selected_skills_require_reachable_enabled_group_and_tool_budget() -> None:

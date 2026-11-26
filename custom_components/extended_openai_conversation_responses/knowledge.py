@@ -288,10 +288,14 @@ class KnowledgeStorage(Protocol):
 class KnowledgeStore(PropagatingWriteStore):
     """Versioned Home Assistant Store backend."""
 
+    _null_payload_label = "Knowledge"
+
     async def _async_migrate_func(
         self, old_major_version: int, old_minor_version: int, old_data: Any
     ) -> dict[str, Any]:
         """Migrate older knowledge payloads."""
+        if old_data is None:
+            self._raise_null_payload_repair()
         if old_major_version in {0, 1}:
             return _migrated_storage_payload(old_data)
         raise NotImplementedError

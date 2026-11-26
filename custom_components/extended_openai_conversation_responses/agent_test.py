@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from openai import OpenAIError
 
@@ -45,6 +45,7 @@ from .helpers import (
 )
 from .memory import async_get_memory, memory_enabled
 from .model_capabilities import (
+    OutputTokenLimitError,
     capability_allowed,
     model_capability_snapshot,
     recommended_reasoning_effort,
@@ -78,6 +79,7 @@ class TestCheck:
     name: str
     status: str
     message: str
+    recovery_setting: Literal["azure_model", "max_tokens"] | None = None
 
 
 @dataclass(slots=True)
@@ -92,7 +94,14 @@ class AgentTestResult:
         """Return a JSON-safe response for flows and WebSocket clients."""
         return {
             "status": self.status,
-            "checks": [asdict(check) for check in self.checks],
+            "checks": [
+                {
+                    key: value
+                    for key, value in asdict(check).items()
+                    if value is not None
+                }
+                for check in self.checks
+            ],
             "authentication_rejected": self.authentication_rejected,
         }
 
@@ -171,10 +180,11 @@ async def async_test_agent(
     )
     if subentry.data.get("azure_model") and usage_provider != "azure":
         checks.append(
-            _check(
+            TestCheck(
                 "Configuration",
                 "Failed",
                 "Azure underlying model is only supported with Azure; clear the setting for this provider.",
+                recovery_setting="azure_model",
             )
         )
         return AgentTestResult(_overall(checks), checks)
@@ -189,7 +199,16 @@ async def async_test_agent(
             client=client,
         )
     except HomeAssistantError as err:
-        checks.append(_check("Saved request settings", "Failed", str(err)))
+        checks.append(
+            TestCheck(
+                "Saved request settings",
+                "Failed",
+                str(err),
+                recovery_setting="max_tokens"
+                if isinstance(err.__cause__, OutputTokenLimitError)
+                else None,
+            )
+        )
     else:
         checks.append(
             _check(

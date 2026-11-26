@@ -1556,7 +1556,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 existing_content = tuple(chat_log.content)
                 existing_content_ids = {id(content) for content in existing_content}
                 pending_tool_calls: list[llm.ToolInput] = []
-                web_search_used = False
                 provider_stream: AsyncStream[Any] | None = None
                 transformed_stream: AsyncGenerator[Any] | None = None
                 streaming = api_kwargs.get("stream", True)
@@ -1621,7 +1620,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 if isinstance(content, conversation.AssistantContent):
                                     native = getattr(content, "native", None)
                                     if getattr(native, "type", "") == "web_search_call":
-                                        web_search_used = True
+                                        request_usage.record_web_search()
                                     if content.tool_calls:
                                         pending_tool_calls.extend(content.tool_calls)
                         finally:
@@ -1658,7 +1657,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             ),
                             request_stage=stage,
                             error_type=type(err).__name__,
-                            web_search_used=web_search_used,
+                            web_search_used=request_usage.web_search_used,
                         )
                     if isinstance(
                         err, (TimeoutError, ConnectionError, httpx.RequestError)
@@ -1719,7 +1718,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                     "initial" if n_requests == 0 else "after_tool"
                                 ),
                                 tool_calls_requested=len(pending_tool_calls),
-                                web_search_used=web_search_used,
+                                web_search_used=request_usage.web_search_used,
                             )
                     except BaseException as err:
                         append_unresolved_tool_results(
@@ -2689,6 +2688,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             aclosing(
                 ordered_output_events(
                     normalized_responses_stream(chat_log, result, request_usage),
+                    record_web_search=request_usage.record_web_search,
                     recover_usage=lambda: async_recover_trailing_usage(
                         result, request_usage
                     ),

@@ -1,7 +1,9 @@
 """Cover observed failures and the recovery boundaries exposed in Management."""
 
 import errno
+import json
 import logging
+from pathlib import Path
 import socket
 import ssl
 from types import SimpleNamespace
@@ -13,6 +15,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.extended_openai_conversation_responses import (
+    knowledge,
     management_setup_health as health,
     management_ui,
     memory,
@@ -21,6 +24,7 @@ from custom_components.extended_openai_conversation_responses import (
     request_rules,
     scheduled_action_summary,
     storage_repairs,
+    temporary_memory,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
@@ -32,6 +36,9 @@ from custom_components.extended_openai_conversation_responses.exceptions import 
 )
 from custom_components.extended_openai_conversation_responses.operational_errors import (
     failure_diagnostic,
+)
+from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+    StorageRepairRequired,
 )
 from custom_components.extended_openai_conversation_responses.skill_transactions import (
     recover_transactions,
@@ -60,7 +67,7 @@ def test_overview_observes_authentication_until_matching_recovery(monkeypatch):
     subentry = SimpleNamespace(
         subentry_id="assistant",
         title="Example",
-        data={"memory_mode": "manual", "knowledge_enabled": True},
+        data={"memory_mode": "manual", "memory_retrieval_mode": "hybrid", "knowledge_enabled": True},
     )
     manager = SimpleNamespace(
         needs_storage_repair=True, hybrid_status=lambda: {"status": "lexical_fallback"}
@@ -101,6 +108,35 @@ def test_overview_observes_authentication_until_matching_recovery(monkeypatch):
     assert not facts()["provider_runtime"]["authentication_rejected"]
     manager.needs_storage_repair = False
     assert not facts()["knowledge"]["repair_required"]
+    subentry.data["memory_retrieval_mode"] = "lexical"
+    assert not facts()["memory"]["keyword_fallback"]
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("store_name", ["knowledge", "temporary"])
+async def test_retained_native_null_payload_is_preserved(hass, store_name, legacy):
+    if store_name == "knowledge":
+        storage = knowledge.HomeAssistantKnowledgeStorage(hass, "entry", "agent")
+        manager = knowledge.KnowledgeLibrary(storage)
+        store = storage._store
+    else:
+        store = temporary_memory.TemporaryMemoryStore(
+            hass, temporary_memory.STORAGE_VERSION, "temporary-memory-probe"
+        )
+        manager = temporary_memory.TemporaryMemory(store)
+    path = Path(store.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    await store.async_save(None)
+    if legacy:
+        envelope = json.loads(path.read_bytes())
+        envelope["version"] = 1
+        path.write_text(json.dumps(envelope), encoding="utf-8")
+    evidence = path.read_bytes()
+    with pytest.raises(StorageRepairRequired):
+        await manager.async_initialize()
+    with pytest.raises(StorageRepairRequired):
+        await store.async_save({})
+    assert path.read_bytes() == evidence
 
 
 async def test_storage_repairs_resolve_and_are_assistant_specific(hass, monkeypatch):

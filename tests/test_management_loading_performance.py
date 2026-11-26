@@ -38,6 +38,9 @@ from custom_components.extended_openai_conversation_responses.management_loading
 from custom_components.extended_openai_conversation_responses.management_ui import (
     async_setup_management_ui,
 )
+from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+    StorageRepairRequired,
+)
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -709,14 +712,20 @@ async def test_guest_mode_details_reuses_one_exposed_entity_projection(monkeypat
     assert result["policy"]["guest_active"] is False
     assert result["_performance"]["total_ms"] >= 0
 
-    monkeypatch.setattr(management_ui, "async_get_knowledge", AsyncMock(side_effect=OSError("read failed")))
-    unavailable = await management_ui.async_management_command(
-        hass, "admin", True,
-        {"entry_id": "entry-1", "subentry_id": "agent-1", "section": "guest_mode", "action": "details"},
-    )
-    assert unavailable["knowledge_catalogue_unavailable"] is True
-    assert "knowledge_sources" not in unavailable
-    assert unavailable["domains"] == result["domains"]
+    scope = {"entry_id": "entry-1", "subentry_id": "agent-1"}
+    for error in (OSError("read failed"), StorageRepairRequired("Knowledge")):
+        monkeypatch.setattr(
+            management_ui, "async_get_knowledge", AsyncMock(side_effect=error)
+        )
+        unavailable = await management_ui.async_management_command(
+            hass, "admin", True, {**scope, "section": "guest_mode", "action": "details"}
+        )
+        assert unavailable["knowledge_catalogue_unavailable"] is True
+        assert "knowledge_sources" not in unavailable
+        assert unavailable["domains"] == result["domains"]
+        assert await management_ui.async_management_command(
+            hass, "admin", True, {**scope, "section": "knowledge", "action": "list"}
+        ) == {"sources_unavailable": True}
 
 
 async def test_agent_catalog_does_not_initialize_per_agent_managers(

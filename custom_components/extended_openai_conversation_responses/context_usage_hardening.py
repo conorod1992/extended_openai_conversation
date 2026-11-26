@@ -58,6 +58,11 @@ class RequestTokenMeasurements:
 
     reported: RequestUsage = dataclass_field(default_factory=RequestUsage)
     context_estimate: int | None = None
+    web_search_used: bool = False
+
+    def record_web_search(self) -> None:
+        """Record a completed hosted tool before Home Assistant materializes it."""
+        self.web_search_used = True
 
     @property
     def context_tokens(self) -> int:

@@ -108,6 +108,7 @@ class _InvalidStoredMetadata(ValueError):
 class TemporaryMemoryStore(PropagatingWriteStore):
     """Versioned private Home Assistant storage."""
 
+    _null_payload_label = "Temporary Memory"
     needs_format_upgrade = False
     _migration_payload: tuple[dict[str, Any]] | None = None
 
@@ -119,8 +120,13 @@ class TemporaryMemoryStore(PropagatingWriteStore):
             self._migration_payload = None
 
     async def _async_migrate_func(
-        self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
+        self,
+        old_major_version: int,
+        old_minor_version: int,
+        old_data: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        if old_data is None:
+            self._raise_null_payload_repair()
         if old_major_version != 1:
             raise NotImplementedError
         # Inspect v1 in place. A manager validates and commits it as v2;

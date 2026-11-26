@@ -10,7 +10,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Never, Self
 
 from homeassistant.exceptions import UnsupportedStorageVersionError
 from homeassistant.helpers.storage import Store
@@ -155,6 +155,10 @@ class PropagatingWriteStore(AcknowledgedWriteStore):
         """Report a native read rejection without permitting its barrier to be reset."""
         return self._corruption_unavailable
 
+    def _raise_null_payload_repair(self) -> Never:
+        self._null_payload_unavailable = True
+        raise StorageRepairRequired(self._null_payload_label or "EOAI")
+
     async def _async_load_data(self) -> Any:
         """Retain HA's raw payload contract; managers validate record shapes."""
         result = await super()._async_load_data()
@@ -176,8 +180,7 @@ class PropagatingWriteStore(AcknowledgedWriteStore):
                 and "data" in envelope
                 and envelope["data"] is None
             ):
-                self._null_payload_unavailable = True
-                raise StorageRepairRequired(self._null_payload_label)
+                self._raise_null_payload_repair()
         self._null_payload_unavailable = False
         return result
 
@@ -185,8 +188,7 @@ class PropagatingWriteStore(AcknowledgedWriteStore):
         self, old_major_version: int, old_minor_version: int, old_data: Any
     ) -> Any:
         if old_data is None and self._null_payload_label is not None:
-            self._null_payload_unavailable = True
-            raise StorageRepairRequired(self._null_payload_label)
+            self._raise_null_payload_repair()
         return await super()._async_migrate_func(
             old_major_version, old_minor_version, old_data
         )

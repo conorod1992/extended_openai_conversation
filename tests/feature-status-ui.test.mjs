@@ -77,6 +77,8 @@ const diagnostics = diagnosticResultMarkup(panel, {
     {name: "Authentication", status: "Passed", message: "API client is available"},
     {name: "Exposed entities", status: "Warning", message: "0"},
     {name: "Configuration", status: "Failed", message: "Unsafe <script>alert('x')</script>"},
+    {name: "Configuration", status: "Failed", message: "Invalid model binding", recovery_setting: "azure_model"},
+    {name: "Saved request settings", status: "Failed", message: "Invalid output limit", recovery_setting: "max_tokens"},
   ],
 });
 assert.match(diagnostics, /diagnostic-summary warning/);
@@ -88,3 +90,5 @@ assert.match(diagnostics, /Show raw diagnostic data/);
 assert.match(diagnostics, /&lt;script&gt;/);
 assert.doesNotMatch(diagnostics, /<script>/);
 assert.match(diagnostics, /authentication_rejected/);
+assert.match(diagnostics, /data-recovery="assistant\/basics\/config-azure_model"/);
+assert.match(diagnostics, /data-recovery="assistant\/basics\/config-max_tokens"/);

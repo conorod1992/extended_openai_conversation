@@ -15,12 +15,14 @@ from .const import (
     CONF_API_PROVIDER,
     CONF_CHAT_MODEL,
     CONF_KNOWLEDGE_ENABLED,
+    CONF_MEMORY_RETRIEVAL_MODE,
     CONF_PROMPT,
     CONF_WEB_SEARCH,
     DEFAULT_API_MODE,
     DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
     DEFAULT_PROMPT,
+    MEMORY_RETRIEVAL_HYBRID,
     SUBSYSTEM_STATUS_KEY,
 )
 from .knowledge import get_loaded_knowledge
@@ -115,7 +117,9 @@ def build_setup_health_facts(
             "failed": bool(statuses.get("persistent_memory", {}).get("error_type")),
             "repair_required": bool(memory and memory.needs_storage_repair),
             "keyword_fallback": bool(
-                memory and memory.hybrid_status().get("status") == "lexical_fallback"
+                options.get(CONF_MEMORY_RETRIEVAL_MODE) == MEMORY_RETRIEVAL_HYBRID
+                and memory
+                and memory.hybrid_status().get("status") == "lexical_fallback"
             ),
         },
         "knowledge": {

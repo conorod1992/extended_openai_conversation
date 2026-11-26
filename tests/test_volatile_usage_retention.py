@@ -1,7 +1,6 @@
 """A recovered durable store cannot leave session-local Usage on an old policy."""
 
-from tests.helpers import historical_shareable_export
-
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,6 +11,43 @@ from custom_components.extended_openai_conversation_responses import (
     usage,
 )
 from homeassistant.config_entries import ConfigEntryState
+from tests.helpers import historical_shareable_export
+from tests.test_usage import FakeStorage
+
+
+@pytest.mark.parametrize("invalid_days", [1, "366.0"])
+async def test_unsupported_saved_retention_preserves_old_history_at_startup(
+    monkeypatch, invalid_days
+):
+    now = usage.dt_util.utcnow()
+    monkeypatch.setattr(usage.dt_util, "utcnow", lambda: now - timedelta(days=3))
+    aggregate = FakeStorage()
+    detail = FakeStorage()
+    initial = usage.UsageManager(aggregate, detail_storage=detail)
+    await initial.async_initialize()
+    async with initial.async_run():
+        await initial.async_record_request(
+            successful=True, usage=usage.RequestUsage(total_tokens=5)
+        )
+    if initial._prune_task:
+        await initial._prune_task
+    monkeypatch.setattr(usage.dt_util, "utcnow", lambda: now)
+    policy = usage.usage_retention_policy(
+        {"usage_request_retention_days": invalid_days, "usage_run_retention_days": invalid_days}
+    )
+    assert policy == {"request_retention_days": None, "run_retention_days": None}
+    recovered = usage.UsageManager(aggregate, detail_storage=detail, **policy)
+    await recovered.async_initialize()
+    assert len(recovered.requests) == len(recovered.runs) == 1
+    async with recovered.async_run():
+        await recovered.async_record_request(
+            successful=True, usage=usage.RequestUsage(total_tokens=8)
+        )
+    assert len(recovered.requests) == len(recovered.runs) == 1
+    assert recovered.totals.total_tokens == 13
+    assert usage.usage_retention_policy({"usage_request_retention_days": "7.0"})[
+        "request_retention_days"
+    ] == 7
 
 
 async def test_invalid_saved_retention_preserves_details_and_aggregate_accounting():
@@ -52,7 +88,7 @@ async def test_invalid_saved_retention_preserves_details_and_aggregate_accountin
 
 
 @pytest.mark.parametrize("days", [0, 30])
-@pytest.mark.parametrize("action", ["save", "update", "import"])
+@pytest.mark.parametrize("action", ["save", "update", "import", "import-legacy"])
 async def test_committed_policy_reaches_existing_volatile_accounting(
     hass, management_agent, management_message, monkeypatch, days, action
 ):
@@ -63,8 +99,8 @@ async def test_committed_policy_reaches_existing_volatile_accounting(
         subentry,
         data={
             **subentry.data,
-            "usage_request_retention_days": 30 if days == 0 else 0,
-            "usage_run_retention_days": 30 if days == 0 else 0,
+            "usage_request_retention_days": False if action == "import-legacy" else (30 if days == 0 else 0),
+            "usage_run_retention_days": False if action == "import-legacy" else (30 if days == 0 else 0),
         },
     )
     native_load = usage._UsageStore.async_load
@@ -109,7 +145,8 @@ async def test_committed_policy_reaches_existing_volatile_accounting(
         hass, "admin", True, management_message("configuration", "get")
     )
     policy = {"usage_request_retention_days": days, "usage_run_retention_days": days}
-    if action == "import":
+    if action.startswith("import"):
+        action = "import"
         artifact = historical_shareable_export("configuration")
         artifact["config"].update(policy)
         payload = {"document": artifact, "mode": "current", "confirm": True, "confirm_retention": True}
