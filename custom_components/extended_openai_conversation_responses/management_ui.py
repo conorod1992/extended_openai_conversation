@@ -1450,7 +1450,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     action = request.message["action"]
     _require_admin(is_admin)
     if action in {"skills_catalogue", "skills_reload"}:
-        from .management_configuration_guidance import configuration_guidance_snapshot
+        from .management_configuration_guidance import configuration_skill_loader_status
         from .operational_errors import log_handled_failure
         from .skills import SkillManager
 
@@ -1461,13 +1461,12 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         except (HomeAssistantError, OSError, ValueError) as err:
             log_handled_failure(_LOGGER, "Unable to load the Skill catalogue", err)
             return {"available": False}
-        guidance = configuration_guidance_snapshot(
-            entry.data, subentry.data, client=getattr(entry, "runtime_data", None)
-        )
         return {
             "available": True,
             "installed": sorted(skill.name for skill in manager.get_all_skills()),
-            "loader_available": guidance.get("skills", {}).get("available", True),
+            "loader_available": configuration_skill_loader_status(
+                subentry.data
+            ).available,
         }
     if action == "save":
         return await _async_save_configuration(request)

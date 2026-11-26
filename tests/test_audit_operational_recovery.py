@@ -140,7 +140,8 @@ async def test_storage_repairs_resolve_and_are_assistant_specific(hass, monkeypa
     assert issue("archive", "second") is None and issue("restore", "second") is None
 
 
-async def test_management_skill_refresh_preserves_selection(monkeypatch):
+@pytest.mark.parametrize("selected", [[], ["Weather", "Missing"]])
+async def test_management_skill_refresh_preserves_selection(monkeypatch, selected):
     manager = SimpleNamespace(
         get_all_skills=lambda: [SimpleNamespace(name="Weather")],
         async_load_skills=AsyncMock(),
@@ -150,7 +151,7 @@ async def test_management_skill_refresh_preserves_selection(monkeypatch):
     )
     subentry = SimpleNamespace(
         data={
-            "skills": ["Weather", "Missing"],
+            "skills": selected.copy(),
             "max_function_calls_per_conversation": 0,
         }
     )
@@ -176,7 +177,7 @@ async def test_management_skill_refresh_preserves_selection(monkeypatch):
         "Weather"
     ]
     manager.async_load_skills.assert_awaited_once()
-    assert subentry.data["skills"] == ["Weather", "Missing"]
+    assert subentry.data["skills"] == selected
     manager.async_load_skills.side_effect = OSError("private filesystem path")
     assert await management_ui.async_configuration_command(request) == {
         "available": False

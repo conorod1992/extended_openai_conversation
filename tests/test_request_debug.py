@@ -419,6 +419,93 @@ def test_completed_reply_uses_arrival_for_text_and_action_timings(monkeypatch, s
     assert request.first_event_ms == request.first_text_ms == request.first_action_ms == 125
 
 
+@pytest.mark.parametrize("capture_full", [False, True])
+@pytest.mark.parametrize("surface", ["responses", "chat.completions"])
+def test_large_completed_reply_keeps_diagnostics_when_capture_is_truncated(
+    monkeypatch, capture_full, surface
+):
+    from custom_components.extended_openai_conversation_responses import debug
+
+    request = DebugProviderRequest(
+        request_id="timing",
+        api_surface=surface,
+        started_at="now",
+        started_offset_ms=0,
+        request={},
+        metrics={},
+        _started_monotonic=10.0,
+        _budget=debug._CaptureBudget(1024),
+        response_events_truncated=capture_full,
+    )
+    monkeypatch.setattr(debug.time, "monotonic", lambda: 10.125)
+    usage = SimpleNamespace(input_tokens=31, output_tokens=7)
+    large = "private response content" * 10_000
+    if surface == "responses":
+        payload = SimpleNamespace(
+            prefix=large,
+            output=[
+                SimpleNamespace(type="message", content=[
+                    SimpleNamespace(type="refusal", refusal="Declined"),
+                ]),
+                SimpleNamespace(type="function_call"),
+            ],
+            usage=usage,
+            status="incomplete",
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        )
+    else:
+        payload = {
+            "prefix": large,
+            "choices": [{"message": {"content": "Done", "tool_calls": [{"id": "call"}]}}],
+            "usage": usage,
+        }
+
+    request.add_event(payload, completed=True)
+    request.finish(successful=True)
+
+    assert request.response_events_truncated and request.response_events == []
+    assert request.first_event_ms == request.first_text_ms == request.first_action_ms == 125
+    assert request.usage["total_tokens"] == 38
+    assert request.successful is (surface == "chat.completions")
+    assert request.error_type == (
+        "TokenLengthExceededError" if surface == "responses" else None
+    )
+
+
+def test_stream_terminal_recovers_metadata_after_debug_capture_is_full(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import debug
+
+    request = DebugProviderRequest(
+        request_id="timing",
+        api_surface="responses",
+        started_at="now",
+        started_offset_ms=0,
+        request={},
+        metrics={},
+        _started_monotonic=10.0,
+        response_events_truncated=True,
+    )
+    monkeypatch.setattr(debug.time, "monotonic", lambda: 10.125)
+
+    def reject_serialization(*_args, **_kwargs):
+        pytest.fail("Payload retention should stop when the capture is full")
+
+    monkeypatch.setattr(debug, "_jsonable", reject_serialization)
+    request.add_event(SimpleNamespace(
+        type="response.incomplete",
+        response=SimpleNamespace(
+            output=[SimpleNamespace(type="web_search_call")],
+            usage=SimpleNamespace(output_tokens=5),
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        ),
+    ))
+
+    assert request.first_text_ms is None
+    assert request.first_action_ms == 125
+    assert request.usage["output_tokens"] == 5
+    assert request.error_type == "TokenLengthExceededError"
+
+
 def test_debug_capture_budgets_and_original_hashes(monkeypatch):
     from custom_components.extended_openai_conversation_responses import debug
 

@@ -156,6 +156,25 @@ for (const admin of [true,false]) {
       await toggle.check();
       await expect(panel.locator("#knowledge-status")).toContainText("Needs sources");
     }
+    await expect(panel.locator("#add-source")).toBeVisible();
+    await panel.evaluate(p => {
+      const original = p._call.bind(p);
+      p._call = (section, action, ...args) => window.knowledgeUnavailable && section === "knowledge" && action === "list"
+        ? Promise.resolve({sources_unavailable: true}) : original(section, action, ...args);
+      window.knowledgeUnavailable = true;
+      p._sectionCache.delete(p._sectionCacheKey());
+      return p._loadSection(true);
+    });
+    await expect(panel.locator("main")).toContainText("Knowledge sources are unavailable");
+    await expect(panel.locator("main")).not.toContainText("No Knowledge sources yet");
+    await expect(panel.locator("#add-source")).toHaveCount(0);
+    await panel.evaluate(p => {
+      window.knowledgeUnavailable = false;
+      p._sectionCache.delete(p._sectionCacheKey());
+      return p._loadSection(true);
+    });
+    await expect(panel.locator("#add-source")).toBeVisible();
+    await expect(panel.locator("main")).not.toContainText("Knowledge sources are unavailable");
     await expectHarnessClean(page, errors);
   });
 }

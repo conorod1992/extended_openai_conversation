@@ -22,7 +22,7 @@ from .const import (
 from .exposed_attributes import exposed_attribute_catalog
 from .helpers import effective_api_provider, is_native_openai_connection
 from .request import build_provider_request_snapshot
-from .skill_availability import skill_loader_status
+from .skill_availability import SkillLoaderStatus, skill_loader_configuration_status
 
 _CONFIGURATION_ACTIONS = {"get", "validate", "update", "save"}
 _FUNCTION_REPAIR_CONFIGURATION_ACTIONS = {
@@ -30,6 +30,38 @@ _FUNCTION_REPAIR_CONFIGURATION_ACTIONS = {
     "configuration_validate": "validate",
     "configuration_save": "save",
 }
+
+
+def configuration_skill_loader_status(
+    options: Mapping[str, Any], *, decoded_functions: bool = False
+) -> SkillLoaderStatus:
+    """Check the configured loader independently of the Skill selection."""
+    from .agent_config import (
+        configured_function_tools_from_data,
+        validate_function_groups,
+        validate_function_tools,
+    )
+
+    try:
+        # Decoded responses use an explicit list, including an empty list.
+        tools = (
+            validate_function_tools(options.get(CONF_FUNCTION_TOOLS))
+            if decoded_functions
+            else configured_function_tools_from_data(options)
+        )
+        groups = validate_function_groups(options.get(CONF_FUNCTION_GROUPS, []), tools)
+        return skill_loader_configuration_status(
+            tools,
+            groups,
+            max_function_calls=normalized_function_call_budget(
+                options, allow_unlimited=True
+            ),
+        )
+    except HomeAssistantError:
+        return SkillLoaderStatus(
+            available=False,
+            reason="Repair unavailable Function Tools before loading selected Skills",
+        )
 
 
 def configuration_guidance_snapshot(
@@ -84,40 +116,12 @@ def configuration_guidance_snapshot(
         },
     }
     if options.get(CONF_SKILLS):
-        from .agent_config import (
-            configured_function_tools_from_data,
-            validate_function_groups,
-            validate_function_tools,
+        status = configuration_skill_loader_status(
+            options, decoded_functions=decoded_functions
         )
-
-        try:
-            # Configuration responses contain decoded collections. An empty list
-            # there is explicit, unlike a legacy falsy persisted Functions field.
-            tools = (
-                validate_function_tools(options.get(CONF_FUNCTION_TOOLS))
-                if decoded_functions
-                else configured_function_tools_from_data(options)
-            )
-            groups = validate_function_groups(
-                options.get(CONF_FUNCTION_GROUPS, []), tools
-            )
-            status = skill_loader_status(
-                options[CONF_SKILLS],
-                tools,
-                groups,
-                max_function_calls=normalized_function_call_budget(
-                    options, allow_unlimited=True
-                ),
-            )
-            available, message = status.available, status.reason
-        except HomeAssistantError:
-            available, message = (
-                False,
-                "Repair unavailable Function Tools before loading selected Skills",
-            )
         guidance["skills"] = {
-            "available": available,
-            "message": message,
+            "available": status.available,
+            "message": status.reason,
             "repair": (
                 "Restore or enable the built-in load_skill Function Tool and its group, "
                 "and allow at least one tool call per request; or clear the Skill selection. "

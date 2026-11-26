@@ -123,6 +123,18 @@ def skill_loader_status(
     """
     if not selected_skills:
         return SkillLoaderStatus(available=True)
+    return skill_loader_configuration_status(
+        tools, groups, max_function_calls=max_function_calls
+    )
+
+
+def skill_loader_configuration_status(
+    tools: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+    *,
+    max_function_calls: int | None = None,
+) -> SkillLoaderStatus:
+    """Check whether the configured loader can serve a Skill selection."""
     # Track all structural blockers so an edit cannot hide a new problem behind
     # the first diagnostic, and a partial repair can safely remove one blocker.
     blockers: list[str] = []

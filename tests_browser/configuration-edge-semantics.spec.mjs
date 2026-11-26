@@ -40,7 +40,15 @@ for (const {route, field, selector, populated, cleared} of cases) {
         };
       });
       const catalogue = panel.locator("#skill-catalogue");
+      await edit(control, field, []);
       await catalogue.locator("summary").click();
+      await expect(catalogue.getByRole("status")).toContainText("Selected: None");
+      await expect(catalogue.getByRole("status")).not.toContainText("cannot load");
+      await edit(control, field, ["weather"]);
+      await expect(catalogue.getByRole("status")).toContainText("Saved settings cannot load Skills");
+      await edit(control, field, []);
+      await expect(catalogue.getByRole("status")).not.toContainText("cannot load");
+      await edit(control, field, populated);
       await expect(catalogue.getByRole("status")).toContainText("Missing: calendar");
       await expect(catalogue.getByRole("status")).toContainText("cannot load");
       await catalogue.getByRole("button", {name: "Reload Skills"}).click();

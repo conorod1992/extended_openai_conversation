@@ -15,6 +15,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime
 import hashlib
+from itertools import islice
 import json
 import time
 from typing import Any, cast
@@ -28,6 +29,7 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .exceptions import TokenLengthExceededError
 from .provider_errors import provider_error_metadata, responses_incomplete_reason
+from .provider_output_budget import MAX_OUTPUT_ITEMS, MAX_OUTPUT_NODES
 from .request_diagnostics import (
     first_text_latency,
     provider_diagnostics,
@@ -234,130 +236,104 @@ def _original_payload_metrics(value: Any) -> tuple[int | None, str | None]:
     return None, None
 
 
+def _event_value(value: Any, name: str) -> Any:
+    return value.get(name) if isinstance(value, Mapping) else getattr(value, name, None)
+
+
 def _extract_usage(event: Any) -> dict[str, int] | None:
-    """Extract usage while avoiding repeat normalization for hot-path dicts."""
-    data = event if isinstance(event, dict) else _jsonable(event)
-    if not isinstance(data, dict):
-        return None
-    usage = data.get("usage")
-    response = data.get("response")
-    if usage is None and isinstance(response, dict):
-        usage = response.get("usage")
-    if not isinstance(usage, dict):
+    """Read only named usage counters from raw provider objects or mappings."""
+    usage = _event_value(event, "usage")
+    if usage is None:
+        usage = _event_value(_event_value(event, "response"), "usage")
+    if not isinstance(usage, Mapping) and not hasattr(usage, "__dict__"):
         return None
 
     def _integer(value: Any) -> int:
         return value if isinstance(value, int) and value >= 0 else 0
 
-    input_tokens = _integer(usage.get("input_tokens")) or _integer(
-        usage.get("prompt_tokens")
+    input_tokens = _integer(_event_value(usage, "input_tokens")) or _integer(
+        _event_value(usage, "prompt_tokens")
     )
-    output_tokens = _integer(usage.get("output_tokens")) or _integer(
-        usage.get("completion_tokens")
+    output_tokens = _integer(_event_value(usage, "output_tokens")) or _integer(
+        _event_value(usage, "completion_tokens")
     )
-    total_tokens = _integer(usage.get("total_tokens")) or input_tokens + output_tokens
-    input_details = usage.get("input_tokens_details") or usage.get(
-        "prompt_tokens_details"
+    total_tokens = (
+        _integer(_event_value(usage, "total_tokens")) or input_tokens + output_tokens
     )
-    output_details = usage.get("output_tokens_details") or usage.get(
-        "completion_tokens_details"
+    input_details = _event_value(usage, "input_tokens_details") or _event_value(
+        usage, "prompt_tokens_details"
     )
-    cached = (
-        _integer(input_details.get("cached_tokens"))
-        if isinstance(input_details, dict)
-        else 0
-    )
-    reasoning = (
-        _integer(output_details.get("reasoning_tokens"))
-        if isinstance(output_details, dict)
-        else 0
+    output_details = _event_value(usage, "output_tokens_details") or _event_value(
+        usage, "completion_tokens_details"
     )
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
-        "cached_input_tokens": cached,
-        "reasoning_tokens": reasoning,
+        "cached_input_tokens": _integer(_event_value(input_details, "cached_tokens")),
+        "reasoning_tokens": _integer(_event_value(output_details, "reasoning_tokens")),
     }
+
+
+def _event_sequence(value: Any, limit: int = MAX_OUTPUT_ITEMS) -> Iterator[Any]:
+    return islice(value, limit) if isinstance(value, (list, tuple)) else iter(())
 
 
 def _event_has_text(event: Any) -> bool:
-    """Detect text while avoiding repeat normalization for hot-path dicts."""
-    data = event if isinstance(event, dict) else _jsonable(event)
-    if not isinstance(data, dict):
-        return False
-    event_type = str(data.get("type", ""))
-    if "output_text.delta" in event_type and data.get("delta"):
+    """Detect chat or Responses text without copying provider payloads."""
+    event_type = _event_value(event, "type")
+    if event_type == "response.output_text.delta" and _event_value(event, "delta"):
         return True
-    choices = data.get("choices")
-    if isinstance(choices, list):
-        for choice in choices:
-            if not isinstance(choice, dict):
-                continue
-            delta = choice.get("delta")
-            if isinstance(delta, dict) and delta.get("content"):
-                return True
-    return False
+    return any(
+        _event_value(_event_value(choice, "delta"), "content")
+        for choice in _event_sequence(_event_value(event, "choices"))
+    )
 
 
 def _event_has_action(event: Any) -> bool:
-    """Detect actions while avoiding repeat normalization for hot-path dicts."""
-    data = event if isinstance(event, dict) else _jsonable(event)
-    if not isinstance(data, dict):
-        return False
-    event_type = str(data.get("type", ""))
-    if "function_call" in event_type or "web_search_call" in event_type:
-        return True
-    choices = data.get("choices")
-    if isinstance(choices, list) and any(
-        isinstance(choice, dict)
-        and isinstance(choice.get("delta"), dict)
-        and choice["delta"].get("tool_calls")
-        for choice in choices
+    """Detect chat or Responses tool activity from raw metadata."""
+    event_type = _event_value(event, "type")
+    if isinstance(event_type, str) and (
+        "function_call" in event_type or "web_search_call" in event_type
     ):
         return True
-    item = data.get("item")
-    return isinstance(item, dict) and item.get("type") in {
+    if any(
+        _event_value(_event_value(choice, "delta"), "tool_calls")
+        for choice in _event_sequence(_event_value(event, "choices"))
+    ):
+        return True
+    return _event_value(_event_value(event, "item"), "type") in (
         "function_call",
         "web_search_call",
-    }
+    )
 
 
-def _completed_output_signals(data: dict[str, Any]) -> tuple[bool, bool]:
+def _completed_output_signals(event: Any) -> tuple[bool, bool]:
     """Identify visible text and tool activity when a whole reply arrives."""
-    choices = data.get("choices")
-    if isinstance(choices, list):
-        messages = [
-            message
-            for choice in choices
-            if isinstance(choice, dict)
-            and isinstance(message := choice.get("message"), dict)
-        ]
-        return (
-            any(
-                message.get("content") or message.get("refusal") for message in messages
-            ),
-            any(message.get("tool_calls") for message in messages),
-        )
-    output = data.get("output")
-    if not isinstance(output, list):
-        return False, False
+    choices = _event_value(event, "choices")
     text = action = False
-    for item in output:
-        if not isinstance(item, dict):
-            continue
-        if item.get("type") in ("function_call", "web_search_call"):
-            action = True
-        parts = item.get("content")
-        if item.get("type") == "message" and isinstance(parts, list):
-            text |= any(
-                isinstance(part, dict)
-                and (
-                    (part.get("type") == "output_text" and part.get("text"))
-                    or (part.get("type") == "refusal" and part.get("refusal"))
-                )
-                for part in parts
+    if isinstance(choices, (list, tuple)):
+        for choice in _event_sequence(choices):
+            message = _event_value(choice, "message")
+            text |= bool(
+                _event_value(message, "content") or _event_value(message, "refusal")
             )
+            action |= bool(_event_value(message, "tool_calls"))
+        return text, action
+    remaining = MAX_OUTPUT_NODES
+    for item in _event_sequence(_event_value(event, "output")):
+        kind = _event_value(item, "type")
+        if kind in ("function_call", "web_search_call"):
+            action = True
+        if kind == "message" and not text:
+            for part in _event_sequence(_event_value(item, "content"), remaining):
+                remaining -= 1
+                part_type = _event_value(part, "type")
+                if (part_type == "output_text" and _event_value(part, "text")) or (
+                    part_type == "refusal" and _event_value(part, "refusal")
+                ):
+                    text = True
+                    break
     return text, action
 
 
@@ -391,48 +367,58 @@ class DebugProviderRequest:
         now_ms = int((time.monotonic() - self._started_monotonic) * 1000)
         if self.first_event_ms is None:
             self.first_event_ms = now_ms
-        budget = self._budget
-        if self.response_events_truncated or (
-            budget is not None and budget.remaining < 128
-        ):
-            self.response_events_truncated = True
-            # Usage and timings still describe the wire even after retained events are full.
-            serialized = _jsonable(event, budget=_CaptureBudget(64_000))
-        else:
-            if budget is None:
-                serialized = _jsonable(event)
-            else:
-                limit = min(budget.remaining, DEBUG_MAX_EVENT_CAPTURE_BYTES)
-                event_budget = _CaptureBudget(limit)
-                serialized = _jsonable(event, budget=event_budget)
-                budget.take(limit - event_budget.remaining)
-                if event_budget.remaining < 128:
-                    self.response_events_truncated = True
-        if completed and isinstance(serialized, dict):
-            text, action = _completed_output_signals(serialized)
+        # Diagnostics are bounded field reads from the wire object. The
+        # retention serializer can omit any key once its budget is exhausted.
+        kind = _event_value(event, "type")
+        terminal = (
+            _event_value(event, "response")
+            if kind in ("response.completed", "response.incomplete")
+            else event
+            if completed
+            else None
+        )
+        if terminal is not None:
+            text, action = _completed_output_signals(terminal)
             if text and self.first_text_ms is None:
                 self.first_text_ms = now_ms
             if action and self.first_action_ms is None:
                 self.first_action_ms = now_ms
         else:
-            if self.first_text_ms is None and _event_has_text(serialized):
+            if self.first_text_ms is None and _event_has_text(event):
                 self.first_text_ms = now_ms
-            if self.first_action_ms is None and _event_has_action(serialized):
+            if self.first_action_ms is None and _event_has_action(event):
                 self.first_action_ms = now_ms
-        if usage := _extract_usage(serialized):
+        if usage := _extract_usage(event):
             self.usage = usage
-        if self.api_surface == "responses" and isinstance(serialized, dict):
-            terminal = (
-                serialized.get("response")
-                if serialized.get("type") == "response.incomplete"
-                else serialized
-                if serialized.get("status") == "incomplete"
-                else None
+        if (
+            self.api_surface == "responses"
+            and (
+                kind == "response.incomplete"
+                or _event_value(event, "status") == "incomplete"
             )
-            if responses_incomplete_reason(terminal) == "max_output_tokens":
-                self.finish(successful=False, error=TokenLengthExceededError(None))
-        if self.response_events_truncated:
+            and responses_incomplete_reason(
+                terminal if kind == "response.incomplete" else event
+            )
+            == "max_output_tokens"
+        ):
+            self.finish(successful=False, error=TokenLengthExceededError(None))
+
+        budget = self._budget
+        if self.response_events_truncated or (
+            budget is not None and budget.remaining < 128
+        ):
+            self.response_events_truncated = True
             return
+        if budget is None:
+            serialized = _jsonable(event)
+        else:
+            limit = min(budget.remaining, DEBUG_MAX_EVENT_CAPTURE_BYTES)
+            event_budget = _CaptureBudget(limit)
+            serialized = _jsonable(event, budget=event_budget)
+            budget.take(limit - event_budget.remaining)
+            if event_budget.remaining < 128:
+                self.response_events_truncated = True
+                return
         try:
             event_json = json.dumps(
                 serialized, ensure_ascii=False, sort_keys=True, separators=(",", ":")

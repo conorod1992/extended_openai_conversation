@@ -286,7 +286,7 @@ export function bindConfiguration(panel) {
         `Installed: ${catalogue.installed.join(", ") || "None"}`,
         `Selected: ${selected.join(", ") || "None"}`,
         missing.length ? `Missing: ${missing.join(", ")}` : null,
-        catalogue.loader_available === false ? "Selected Skills cannot load. Review the load_skill Function Tool." : null,
+        selected.length && catalogue.loader_available === false ? "Saved settings cannot load Skills. Review the load_skill Function Tool." : null,
       ].filter(Boolean).join(" · ");
     };
     const load = async (action) => {

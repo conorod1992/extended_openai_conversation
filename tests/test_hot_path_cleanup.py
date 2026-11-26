@@ -78,19 +78,18 @@ async def test_temporary_memory_expiry_save_runs_after_active_read_returns() -> 
 class DumpCountingEvent:
     def __init__(self) -> None:
         self.calls = 0
+        self.type = "response.output_text.delta"
+        self.delta = "hello"
+        self.response = SimpleNamespace(
+            usage=SimpleNamespace(input_tokens=3, output_tokens=1, total_tokens=4)
+        )
 
     def model_dump(self, *, exclude_none: bool = True):
         self.calls += 1
         return {
-            "type": "response.output_text.delta",
-            "delta": "hello",
-            "response": {
-                "usage": {
-                    "input_tokens": 3,
-                    "output_tokens": 1,
-                    "total_tokens": 4,
-                }
-            },
+            "type": self.type,
+            "delta": self.delta,
+            "response": {"usage": vars(self.response.usage)},
         }
 
 

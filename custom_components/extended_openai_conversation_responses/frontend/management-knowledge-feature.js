@@ -154,6 +154,7 @@ export function filterKnowledge(panel) {
 }
 
 export function reconcileKnowledge(panel) {
+  if (panel._result?.sources_unavailable) return false;
   const state = collections.get(panel);
   if (!state || state.host !== panel.shadowRoot.querySelector("[data-knowledge-collection]") || state.identity !== identity(panel)) return false;
   const sources = panel._result?.sources || [];
