@@ -115,6 +115,7 @@ def test_transactional_store_subclasses_propagate_writer_failures() -> None:
         ("request_rules.py", "RequestRuleStore"),
         ("conversation_archive.py", "_ArchiveMetadataStore"),
         ("usage.py", "_UsageStore"),
+        ("guest_mode.py", "_GuestModeStore"),
     ):
         tree = ast.parse((INTEGRATION / module).read_text(encoding="utf-8"))
         declaration = next(

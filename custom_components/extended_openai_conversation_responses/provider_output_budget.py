@@ -77,6 +77,16 @@ def _responses_string_length(value: Any, field: str) -> int:
     return len(value)
 
 
+def responses_array(value: Any, field: str) -> list[Any] | tuple[Any, ...]:
+    """Validate an external Responses collection before callers iterate it."""
+    if not isinstance(value, (list, tuple)):
+        raise ProviderStreamError(
+            f"Provider returned malformed data: {field} must be an array",
+            error_type="invalid_event_sequence",
+        )
+    return value
+
+
 @dataclass
 class _ItemSize:
     content: int = 0
@@ -162,6 +172,14 @@ class ProviderOutputBudget:
     def responses_event(self, event: Any) -> None:
         self.event()
         kind = getattr(event, "type", "")
+        content_index = getattr(event, "content_index", None)
+        if content_index is not None and (
+            type(content_index) is not int or content_index < 0
+        ):
+            raise ProviderStreamError(
+                "Provider returned malformed data: invalid content index",
+                error_type="invalid_event_sequence",
+            )
         if kind == "response.output_item.added":
             self._started_items += 1
             if self._started_items > MAX_OUTPUT_ITEMS:
@@ -204,13 +222,10 @@ class ProviderOutputBudget:
                 _exceeded()
             self._account(key, native=item)
             if getattr(item, "type", None) == "message":
-                parts = getattr(item, "content", None)
-                if parts is not None and not isinstance(parts, (list, tuple)):
-                    raise ProviderStreamError(
-                        "Provider returned malformed data: message content must be an array",
-                        error_type="invalid_event_sequence",
-                    )
-                for part in parts or ():
+                parts = getattr(item, "content", ())
+                if parts is None and kind == "response.output_item.added":
+                    parts = ()  # A streaming opener can be a content placeholder.
+                for part in responses_array(parts, "message content"):
                     if getattr(part, "type", None) == "output_text":
                         _responses_string_length(
                             getattr(part, "text", ""), "output text"
@@ -227,7 +242,7 @@ class ProviderOutputBudget:
                 key,
                 (
                     key,
-                    getattr(event, "content_index", None),
+                    content_index,
                     kind.removesuffix(".delta"),
                 ),
                 _responses_string_length(delta, "text delta")
@@ -254,7 +269,7 @@ class ProviderOutputBudget:
                 key,
                 (
                     key,
-                    getattr(event, "content_index", None),
+                    content_index,
                     kind.removesuffix(".done"),
                 ),
                 _responses_string_length(getattr(event, "text", None), "output text")

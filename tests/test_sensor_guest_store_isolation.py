@@ -48,7 +48,10 @@ async def test_guest_io_failure_keeps_sibling_and_usage_sensors(tmp_path, monkey
     await hass.async_stop(force=True)
 
 
-@pytest.mark.parametrize("damage", ["schedule", "json", "envelope", "version-type", "future-version"])
+@pytest.mark.parametrize(
+    "damage",
+    ["schedule", "json", "envelope", "version-type", "future-version", "null-payload"],
+)
 async def test_guest_store_corruption_does_not_remove_sibling_sensors(
     tmp_path, monkeypatch, damage, caplog
 ):
@@ -86,6 +89,8 @@ async def test_guest_store_corruption_does_not_remove_sibling_sensors(
         envelope["version"] = "1"
     elif damage == "future-version":
         envelope["version"] = 999
+    elif damage == "null-payload":
+        envelope["data"] = None
     raw = '{"version":' if damage == "json" else json.dumps(envelope)
     path.write_text(raw, encoding="utf-8")
     monkeypatch.setattr(sensor, "async_get_usage", AsyncMock(return_value=FakeUsage()))

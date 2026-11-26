@@ -116,7 +116,7 @@
     "stores": [
       {
         "module": "guest_mode.py",
-        "constructor": "PropagatingWriteStore",
+        "constructor": "_GuestModeStore",
         "count": 1
       }
     ],

@@ -209,10 +209,40 @@ async def test_invalid_text_in_completed_message_raises_structured_provider_erro
         _ = [value async for value in ordered_output_events(stream([frame]))]
 
 
+@pytest.mark.parametrize("index", [[], -1, True, "0"])
+async def test_invalid_content_index_raises_structured_provider_error(index):
+    frame = event(
+        "response.output_text.delta", output_index=0, content_index=index, delta="text"
+    )
+    with pytest.raises(ProviderStreamError, match="invalid content index"):
+        _ = [value async for value in ordered_output_events(stream([frame]))]
+
+
+@pytest.mark.parametrize("delivery", ["terminal-only", "non-streaming", "item"])
+async def test_null_completed_message_content_raises_structured_provider_error(
+    delivery,
+):
+    from custom_components.extended_openai_conversation_responses.non_streaming import (
+        completed_responses_events,
+    )
+
+    item = SimpleNamespace(type="message", role="assistant", content=None)
+    response = SimpleNamespace(output=[item])
+    if delivery == "non-streaming":
+        frames = completed_responses_events(response)
+    elif delivery == "item":
+        frames = stream([event("response.output_item.done", output_index=0, item=item)])
+    else:
+        frames = stream([event("response.completed", response=response)])
+    with pytest.raises(ProviderStreamError, match="message content must be an array"):
+        _ = [value async for value in ordered_output_events(frames)]
+
+
 @pytest.mark.parametrize("identified", [False, True])
 @pytest.mark.parametrize("completion_has_id", [False, True])
 async def test_late_unindexed_refusal_snapshot_cannot_repeat_a_finalized_message(
-    identified, completion_has_id,
+    identified,
+    completion_has_id,
 ):
     from custom_components.extended_openai_conversation_responses.entity import (
         ExtendedOpenAIBaseLLMEntity,
@@ -230,7 +260,8 @@ async def test_late_unindexed_refusal_snapshot_cannot_repeat_a_finalized_message
         )
         identity = {"item_id": item_id} if identified else {}
         completed = (
-            item if completion_has_id
+            item
+            if completion_has_id
             else SimpleNamespace(type=item.type, content=item.content)
         )
         frames.extend(

@@ -364,7 +364,10 @@ class KnowledgeLibrary:
                     # or modifying independent restore-journal evidence.
                     await _async_settle_transactional_save(
                         self._storage.async_save(
-                            {**(data or {}), "sources": normalized}
+                            {
+                                **(data if isinstance(data, Mapping) else {}),
+                                "sources": normalized,
+                            }
                         ),
                         self._invalidate_after_unreadable_store,
                         self._remember_committed_state,

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from .context_usage_hardening import RequestTokenMeasurements, _capture_provider_usage
+from .provider_output_budget import responses_array
 
 
 async def completed_responses_events(
@@ -31,12 +32,16 @@ async def completed_responses_events(
 
 def completed_responses_output_events(response: Any) -> Iterator[Any]:
     """Adapt completed output without emitting another request terminal."""
-    for output_index, item in enumerate(getattr(response, "output", ())):
+    for output_index, item in enumerate(
+        responses_array(getattr(response, "output", ()), "response output")
+    ):
         yield SimpleNamespace(
             type="response.output_item.added", item=item, output_index=output_index
         )
         if getattr(item, "type", None) == "message":
-            for content_index, part in enumerate(getattr(item, "content", ())):
+            for content_index, part in enumerate(
+                responses_array(getattr(item, "content", ()), "message content")
+            ):
                 part_type = getattr(part, "type", None)
                 if part_type == "output_text":
                     text = getattr(part, "text", "")
@@ -47,7 +52,9 @@ def completed_responses_output_events(response: Any) -> Iterator[Any]:
                             output_index=output_index,
                             content_index=content_index,
                         )
-                    for annotation in getattr(part, "annotations", ()):
+                    for annotation in responses_array(
+                        getattr(part, "annotations", ()), "output text annotations"
+                    ):
                         yield SimpleNamespace(
                             type="response.output_text.annotation.added",
                             annotation=annotation,

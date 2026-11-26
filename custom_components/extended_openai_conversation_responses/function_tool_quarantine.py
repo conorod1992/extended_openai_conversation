@@ -115,11 +115,10 @@ def _safe_group_memberships(
     from .agent_config import MAX_FUNCTION_GROUPS, validate_function_groups
 
     names = {tool["spec"]["name"] for tool in function_tools}
+    valid_groups: list[dict[str, Any]] = []
     if not isinstance(value, list) or len(value) > MAX_FUNCTION_GROUPS:
-        valid_groups = []
         blocked = names
     else:
-        valid_groups = []
         blocked = set()
         for group in value:
             try:

@@ -11,6 +11,7 @@ from .provider_output_budget import (
     MAX_ARGUMENT_CHARACTERS,
     MAX_OUTPUT_ITEMS,
     ProviderOutputBudget,
+    responses_array,
 )
 
 _ADDED = "response.output_item.added"
@@ -188,8 +189,10 @@ async def ordered_output_events(
                     raise _malformed("tool arguments have no completed output item")
                 response = getattr(event, "response", None)
                 ensure_successful_responses_result(response)
-                output = getattr(response, "output", ())
-                if isinstance(output, (list, tuple)) and output:
+                output = responses_array(
+                    getattr(response, "output", ()), "response output"
+                )
+                if output:
                     if len(output) > MAX_OUTPUT_ITEMS:
                         raise ProviderStreamError(
                             "Provider output exceeded local safety limits",
@@ -227,7 +230,9 @@ async def ordered_output_events(
                                 or any(
                                     getattr(part, "type", None)
                                     not in {"output_text", "refusal"}
-                                    for part in getattr(item, "content", ())
+                                    for part in responses_array(
+                                        getattr(item, "content", ()), "message content"
+                                    )
                                 )
                                 for item in messages
                             )
@@ -257,8 +262,10 @@ async def ordered_output_events(
             if index is None and kind in _ARGUMENT_EVENTS:
                 if item_id:
                     index = owners.get(item_id)
-                    if index is None and (completed := legacy_completions.get(item_id)):
-                        completed.observe_arguments(event, kind)
+                    if index is None and (
+                        legacy_item := legacy_completions.get(item_id)
+                    ):
+                        legacy_item.observe_arguments(event, kind)
                         yield event
                         continue
                 elif not legacy_start and legacy.arguments is None:
