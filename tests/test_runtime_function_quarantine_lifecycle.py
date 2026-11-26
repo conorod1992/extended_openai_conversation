@@ -240,3 +240,63 @@ def test_runtime_group_validation_without_quarantine_uses_strict_value(
         quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.reset(names_token)
 
     validate.assert_called_once_with(groups, tools)
+
+ 
+def test_group_quarantine_blocks_tools_when_membership_cannot_be_determined():
+    from custom_components.extended_openai_conversation_responses.function_groups import (
+        assemble_function_tools,
+    )
+
+    tools = [{"spec": {"name": name}} for name in ("protected", "independent")]
+    group = {
+        "id": "valid",
+        "name": "Valid",
+        "description": "Valid group",
+        "loading_mode": "always",
+        "functions": ["protected"],
+    }
+    for damaged in ({"groups": [group]}, [group, {"functions": "independent"}]):
+        groups = quarantine._runtime_validate_function_groups(damaged, tools)
+        assert assemble_function_tools(tools, groups, set()).tools == []
+    assert group["functions"] == ["protected"]
+
+
+def test_group_quarantine_preserves_only_unambiguous_independent_tools():
+    from custom_components.extended_openai_conversation_responses.function_groups import (
+        assemble_function_tools,
+    )
+
+    tools = [
+        {"spec": {"name": name}}
+        for name in ("protected", "other", "independent")
+    ]
+    group = {
+        "id": "valid",
+        "name": "Valid",
+        "description": "Valid group",
+        "loading_mode": "always",
+        "functions": ["protected"],
+    }
+    # Each group is valid alone; their duplicate ID makes the collection invalid.
+    conflicting = {**group, "name": "Other", "functions": ["other"]}
+    groups = quarantine._runtime_validate_function_groups(
+        [group, conflicting], tools
+    )
+    assembly = assemble_function_tools(tools, groups, set())
+    assert [tool["spec"]["name"] for tool in assembly.tools] == ["independent"]
+
+    # A group with only an unknown reference cannot claim an existing tool.
+    unknown = {
+        **group,
+        "id": "unknown",
+        "name": "Unknown",
+        "functions": ["missing"],
+    }
+    groups = quarantine._runtime_validate_function_groups([group, unknown], tools)
+    assembly = assemble_function_tools(tools, groups, set())
+    assert {tool["spec"]["name"] for tool in assembly.tools} == {
+        "protected",
+        "other",
+        "independent",
+    }
+    assert conflicting["functions"] == ["other"]

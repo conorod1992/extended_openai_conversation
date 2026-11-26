@@ -267,3 +267,29 @@ async def test_usage_native_evidence_survives_immediate_delayed_and_shutdown_wri
         assert reloaded.persistence_status()["survives_restart"]
         assert reloaded.requests == reloaded.runs == []
         assert reloaded.totals.total_tokens == 40
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"{",
+        b"x" * 4097,
+        b'{"version":999,"key":"wrong","data":{"turns":[]}}',
+    ],
+    ids=["malformed-json", "oversized", "unrecognized-envelope"],
+)
+async def test_unindexed_unreadable_archive_partition_is_not_treated_as_empty(
+    hass, raw
+):
+    storage = HomeAssistantArchiveStorage(hass, "entry", "agent")
+    await storage.async_save_metadata(
+        {"sessions": [], "active": {}, "partitions": []}
+    )
+    path = Path(storage._partition_store("2026-09").path)
+    path.write_bytes(raw)
+    archive = ConversationArchive(storage, "agent")
+    await archive.async_initialize()
+    assert archive.stats()["storage_repair_required"]
+    with pytest.raises(ValueError, match="needs repair"):
+        await archive.async_backup_data()
+    assert path.read_bytes() == raw

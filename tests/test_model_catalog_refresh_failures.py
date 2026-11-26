@@ -791,3 +791,17 @@ async def test_future_timestamp_does_not_bypass_other_storage_validation(
     assert manager.etag is None
     assert manager.last_error
     assert manager.store.save_calls == 0
+
+
+@pytest.mark.parametrize("raw", [[], "invalid catalogue"])
+async def test_malformed_catalogue_store_falls_back_without_overwriting(
+    check_manager, raw
+):
+    check_manager.store = MemoryStore(raw)
+    await check_manager.async_load()
+    assert check_manager.catalog is None
+    assert check_manager.available_catalog is None
+    assert check_manager.status()["source"] == "bundled"
+    assert "using bundled data" in check_manager.last_error
+    assert check_manager.store.saved == raw
+    assert check_manager.store.save_calls == 0

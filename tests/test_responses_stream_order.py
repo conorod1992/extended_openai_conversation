@@ -435,3 +435,173 @@ async def test_unannounced_content_uses_the_backlog_budget(monkeypatch):
     delta = event("response.output_text.delta", output_index=0, item_id="msg_0", delta="Waiting")
     with pytest.raises(ProviderStreamError, match="local safety limits"):
         _ = [frame async for frame in ordered_output_events(stream([delta, delta]))]
+
+
+@pytest.mark.parametrize(
+    "case,reason",
+    [
+        ("duplicate-start", "repeated output item start"),
+        ("late-delta", "content after completed output item"),
+        ("changed-signature", "conflicting output item"),
+        ("message-arguments", "non-function output item"),
+        ("late-argument-delta", "tool argument delta after completion"),
+        ("orphan-arguments", "no completed output item"),
+        ("terminal-conflict", "terminal output conflicts"),
+        ("legacy-duplicate", "repeated completed output item"),
+    ],
+)
+async def test_conflicting_output_lifecycle_is_rejected(case, reason):
+    message = SimpleNamespace(
+        type="message", id="msg", role="assistant", content=[]
+    )
+    tool = SimpleNamespace(
+        type="function_call", id="tool", call_id="call", name="test", arguments="{}"
+    )
+    added = "response.output_item.added"
+    done = "response.output_item.done"
+    arguments_done = "response.function_call_arguments.done"
+    arguments_delta = "response.function_call_arguments.delta"
+    if case == "duplicate-start":
+        frames = [event(added, output_index=0, item=message)] * 2
+    elif case == "late-delta":
+        frames = [
+            event(done, output_index=0, item=message),
+            event("response.output_text.delta", output_index=0, delta="late"),
+        ]
+    elif case == "changed-signature":
+        frames = [
+            event(added, output_index=0, item=tool),
+            event(
+                done,
+                output_index=0,
+                item=SimpleNamespace(**{**vars(tool), "name": "other"}),
+            ),
+        ]
+    elif case == "message-arguments":
+        frames = [
+            event(added, output_index=0, item=message),
+            event(arguments_done, output_index=0, arguments="{}"),
+        ]
+    elif case == "late-argument-delta":
+        frames = [
+            event(added, output_index=0, item=tool),
+            event(arguments_done, output_index=0, arguments="{}"),
+            event(arguments_delta, output_index=0, delta=" "),
+        ]
+    elif case == "orphan-arguments":
+        frames = [
+            event(arguments_done, item_id="orphan", arguments="{}"),
+            event("response.completed"),
+        ]
+    elif case == "terminal-conflict":
+        frames = [
+            event(done, output_index=0, item=tool),
+            event("response.completed", response=SimpleNamespace(output=[message])),
+        ]
+    else:
+        frames = [event(done, item=tool)] * 2
+    with pytest.raises(ProviderStreamError, match=reason):
+        _ = [frame async for frame in ordered_output_events(stream(frames))]
+
+
+async def test_terminal_only_output_replays_text_but_never_local_tools():
+    message = SimpleNamespace(
+        type="message",
+        id="message",
+        role="assistant",
+        content=[SimpleNamespace(type="output_text", text="Recovered answer")],
+    )
+    terminal = event("response.completed", response=SimpleNamespace(output=[message]))
+    parsed = [frame async for frame in ordered_output_events(stream([terminal]))]
+    assert [frame.type for frame in parsed] == [
+        "response.output_item.added",
+        "response.output_text.delta",
+        "response.output_item.done",
+        "response.completed",
+    ]
+    assert parsed[1].delta == "Recovered answer"
+    assert parsed[-1] is terminal
+
+    for output, reason in [
+        ([message, message], "duplicate terminal output item id"),
+        (
+            [
+                message,
+                SimpleNamespace(
+                    type="function_call",
+                    id="tool",
+                    name="test",
+                    call_id="call",
+                    arguments="{}",
+                ),
+            ],
+            "ambiguous terminal-only output",
+        ),
+    ]:
+        bad = event("response.completed", response=SimpleNamespace(output=output))
+        with pytest.raises(ProviderStreamError, match=reason):
+            _ = [frame async for frame in ordered_output_events(stream([bad]))]
+
+
+async def test_mixed_index_arguments_share_one_accumulation_limit(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import (
+        provider_output_budget,
+        responses_stream_order,
+    )
+
+    monkeypatch.setattr(provider_output_budget, "MAX_ARGUMENT_CHARACTERS", 4)
+    monkeypatch.setattr(responses_stream_order, "MAX_ARGUMENT_CHARACTERS", 4)
+    item = SimpleNamespace(
+        type="function_call", id="tool", name="test", call_id="call", arguments=""
+    )
+    frames = [
+        event("response.output_item.added", output_index=0, item=item),
+        event("response.function_call_arguments.delta", output_index=0, delta="abc"),
+        event("response.function_call_arguments.delta", item_id="tool", delta="def"),
+    ]
+    with pytest.raises(ProviderStreamError, match="local safety limits"):
+        _ = [frame async for frame in ordered_output_events(stream(frames))]
+
+
+async def test_late_legacy_argument_snapshot_without_id_uses_completed_call():
+    item = SimpleNamespace(
+        type="function_call", id="tool", name="test", call_id="call", arguments="{}"
+    )
+    frames = [
+        event("response.output_item.done", item=item),
+        event("response.function_call_arguments.done", arguments="{}"),
+        event("response.completed", response=SimpleNamespace(output=[item])),
+    ]
+    assert [frame async for frame in ordered_output_events(stream(frames))] == frames
+    frames[1].arguments = '{"other":1}'
+    with pytest.raises(ProviderStreamError, match="conflicting tool arguments"):
+        _ = [frame async for frame in ordered_output_events(stream(frames))]
+
+
+async def test_late_indexed_refusal_snapshot_is_not_presented_again():
+    frames = [
+        event("response.output_item.added", output_index=0),
+        event("response.output_item.done", output_index=0),
+        event("response.refusal.done", output_index=0, refusal="Already complete"),
+        event("response.completed"),
+    ]
+    assert [frame async for frame in ordered_output_events(stream(frames))] == [
+        frames[0],
+        frames[1],
+        frames[3],
+    ]
+
+
+async def test_terminal_output_count_is_bounded_before_replay(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import (
+        responses_stream_order,
+    )
+
+    monkeypatch.setattr(responses_stream_order, "MAX_OUTPUT_ITEMS", 1)
+    items = [
+        SimpleNamespace(type="message", id=str(index), role="assistant", content=[])
+        for index in range(2)
+    ]
+    frame = event("response.completed", response=SimpleNamespace(output=items))
+    with pytest.raises(ProviderStreamError, match="local safety limits"):
+        _ = [value async for value in ordered_output_events(stream([frame]))]
