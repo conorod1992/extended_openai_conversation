@@ -4,7 +4,9 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
+import regex
 
+from custom_components.extended_openai_conversation_responses import skill_availability
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
     merge_agent_config,
@@ -185,7 +187,9 @@ def test_selected_installed_skills_are_a_stable_deduplicated_primitive() -> None
     ) == ("two", "one")
 
 
-def test_effective_loader_requires_at_least_one_selected_installed_skill() -> None:
+def test_effective_loader_requires_at_least_one_selected_installed_skill(
+    monkeypatch,
+) -> None:
     zero = effective_skill_loader_status(
         ["calendar"], ["weather"], [_loader()], [], max_function_calls=1
     )
@@ -239,10 +243,44 @@ def test_effective_loader_requires_at_least_one_selected_installed_skill() -> No
     parameters["properties"]["name"]["pattern"] = pattern
     assert skill_loader_status(["calendar"], [loader], []).available
     assert not skill_loader_status(["weather"], [loader], []).available
+    compile_pattern = regex.compile
+    search_pattern = regex.search
+    now = 0.0
+
+    def compile_after_delay(*args, **kwargs):
+        nonlocal now
+        now += 0.02
+        return compile_pattern(*args, **kwargs)
+
+    def search_after_delay(*args, **kwargs):
+        nonlocal now
+        now += 0.02
+        return search_pattern(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(skill_availability, "monotonic", lambda: now)
+        patch.setattr(regex, "compile", compile_after_delay)
+        patch.setattr(regex, "search", search_after_delay)
+        status = effective_skill_loader_status(
+            ["weather", "calendar"], ["weather", "calendar"], [loader], []
+        )
+        assert status.available
+        assert status.loadable_skills == ("calendar",)
+        assert now == 0.02
     parameters.update({"additionalProperties": False, "minProperties": 3})
     assert skill_loader_status(["calendar"], [loader], []).available
     parameters["properties"].pop("offset")
     assert not skill_loader_status(["calendar"], [loader], []).available
+    for pattern, available in (
+        (r"^(?:name|file)(?![\s\S])", False),
+        (r"^(?:name|file)\Z", False),
+        (r"^(?:name|file)$", True),
+        (r"^(?:name|file|offset)(?![\s\S])", True),
+        (r"^extra-", True),
+    ):
+        parameters["patternProperties"] = {pattern: {"type": "string"}}
+        assert skill_loader_status(["calendar"], [loader], []).available is available
+    parameters.pop("patternProperties")
     parameters["additionalProperties"] = True
     assert skill_loader_status(["calendar"], [loader], []).available
 

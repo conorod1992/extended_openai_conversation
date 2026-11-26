@@ -718,7 +718,9 @@ async def test_group_loader_counts_but_unloaded_members_do_not(
     assert len(sent["tools"]) == min(128, extra + 2 + int(enabled))
 
 
-@pytest.mark.parametrize("loader_case", ["weather", "calendar", "closed-object"])
+@pytest.mark.parametrize(
+    "loader_case", ["weather", "calendar", "closed-object", "closed-patterns"]
+)
 async def test_prompt_save_counts_only_loadable_installed_skills(
     hass, management_agent, rules, monkeypatch, loader_case
 ):
@@ -732,9 +734,13 @@ async def test_prompt_save_counts_only_loadable_installed_skills(
     options = _options(127, azure_model="gpt-4o")
     loader = _loader()
     parameters = loader["spec"]["parameters"]
-    if loader_case == "closed-object":
+    if loader_case in {"closed-object", "closed-patterns"}:
         parameters["properties"].pop("offset")
         parameters.update({"additionalProperties": False, "minProperties": 3})
+        if loader_case == "closed-patterns":
+            parameters["patternProperties"] = {
+                r"^(?:name|file)(?![\s\S])": {"type": "string"}
+            }
     else:
         parameters["properties"]["name"]["enum"] = [loader_case]
     options["functions"] = [*yaml.safe_load(options["functions"]), loader]

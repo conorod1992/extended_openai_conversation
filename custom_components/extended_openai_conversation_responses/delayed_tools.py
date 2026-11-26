@@ -1269,21 +1269,14 @@ class DelayedToolManager:
             record = self._records.get(call_id)
             if record is None or record.status != _PENDING:
                 return False, False
-            now = dt_util.utcnow()
             due = _parse_scheduled_utc(record.due_at)
             if due is None:
                 raise ValueError("invalid due timestamp")
-            if due > now:
-                return False, True
-            updated = dict(self._records)
-            if record.expires_at is not None:
-                expiry = _parse_scheduled_utc(record.expires_at)
-                if expiry is None or now >= expiry:
-                    updated.pop(call_id)
-                    await self._async_save_records_transactionally(updated)
-                    self._log_abandoned(record, "execution grace period expired")
-                    return False, False
-            claim = updated[call_id] = replace(record, status=_EXECUTING)
+            retry = await self._async_recheck_claim_time_locked(record, due)
+            if retry is not None:
+                return False, retry
+            claim = replace(record, status=_EXECUTING)
+            updated = {**self._records, call_id: claim}
             try:
                 await self._async_save_records_transactionally(updated, claim=claim)
             except Exception:
@@ -1292,10 +1285,41 @@ class DelayedToolManager:
                 # Readback confirms visibility, but the original rename may
                 # have failed its directory sync. Require an acknowledged
                 # write of the reconciled claim before dispatching.
+                retry = await self._async_recheck_claim_time_locked(
+                    record, due, claimed=True
+                )
+                if retry is not None:
+                    return False, retry
                 await self._async_save_records_transactionally(
                     dict(self._records), claim=claim
                 )
+            retry = await self._async_recheck_claim_time_locked(
+                record, due, claimed=True
+            )
+            if retry is not None:
+                return False, retry
             return True, False
+
+    async def _async_recheck_claim_time_locked(
+        self, record: DelayedToolCall, due: datetime, *, claimed: bool = False
+    ) -> bool | None:
+        """Return whether untimely work should retry, or None while it is due."""
+        now = dt_util.utcnow()
+        if due > now:
+            if claimed:
+                # This waiter holds the claim lock and has yet to dispatch.
+                # A backward clock correction can safely restore pending work.
+                await self._async_save_records_transactionally(
+                    {**self._records, record.call_id: record}
+                )
+            return True
+        if self._execution_grace_expired(record, now):
+            updated = dict(self._records)
+            updated.pop(record.call_id)
+            await self._async_save_records_transactionally(updated)
+            self._log_abandoned(record, "execution grace period expired")
+            return False
+        return None
 
     async def _async_retry_agent(self, record: DelayedToolCall) -> bool:
         """Retry a transient agent reload without losing the persisted call."""

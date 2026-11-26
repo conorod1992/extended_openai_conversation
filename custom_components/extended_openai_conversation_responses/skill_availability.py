@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+import re
 from time import monotonic
 from typing import Any
 
@@ -13,6 +14,8 @@ from .const import FUNCTION_GROUP_LOADING_ON_DEMAND, SKILL_FILE_NAME
 
 SKILL_LOADER_TOOL_NAME = "load_skill"
 CANONICAL_SKILL_LOADER_PATH = "{{extended_openai.skill_dir(name)}}/{{file}}"
+_LITERAL_PROPERTY_KEY = re.compile(r"[a-zA-Z0-9_-]+")
+_PROPERTY_END_ASSERTION = r"(?![\s\S])"
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,32 +70,75 @@ def function_group_enabled(group: dict[str, Any]) -> bool:
     return group.get("enabled", True) is True
 
 
-def _string_argument_allowed(
-    schema: dict[str, Any], value: str, deadline: float
-) -> bool:
+def _allowed_string_arguments(
+    schema: dict[str, Any], values: tuple[str, ...]
+) -> tuple[str, ...]:
     minimum, maximum = schema.get("minLength"), schema.get("maxLength")
     choices = schema.get("enum")
-    if not (
-        isinstance(value, str)
+    allowed = tuple(
+        value
+        for value in values
+        if isinstance(value, str)
         and (type(minimum) is not int or len(value) >= minimum)
         and (type(maximum) is not int or len(value) <= maximum)
         and ("const" not in schema or value == schema["const"])
         and (not isinstance(choices, list) or value in choices)
-    ):
-        return False
+    )
     if (pattern := schema.get("pattern")) is None:
-        return True
-    remaining = deadline - monotonic()
-    if not isinstance(pattern, str) or remaining <= 0:
-        return False
+        return allowed
+    if not allowed or not isinstance(pattern, str):
+        return ()
     try:
-        # Availability also runs in synchronous HA projections. Bound matching
-        # without running administrator-supplied patterns through stdlib re.
-        return (
-            regex.search(pattern, value, regex.VERSION0, timeout=remaining) is not None
+        compiled = regex.compile(pattern, regex.VERSION0)
+    except regex.error:
+        return ()
+    # Bound matching in synchronous HA projections. Start the budget after
+    # compilation so an empty cache cannot consume time for later names.
+    deadline = monotonic() + 0.01
+    matches = []
+    for value in allowed:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        try:
+            if compiled.search(value, timeout=remaining) is not None:
+                matches.append(value)
+        except TimeoutError:
+            break
+    return tuple(matches)
+
+
+def _closed_property_count(properties: dict[str, Any], patterns: Any) -> int | None:
+    """Count possible keys when all patterns are anchored literal alternatives."""
+    if not isinstance(patterns, dict):
+        return None
+    keys = set(properties)
+    for pattern in patterns:
+        if not isinstance(pattern, str) or not pattern.startswith("^"):
+            return None
+        final_newline = False
+        body = pattern[1:]
+        if body.endswith(_PROPERTY_END_ASSERTION):
+            body = body.removesuffix(_PROPERTY_END_ASSERTION).removesuffix("$")
+        elif body.endswith((r"\Z", r"\z")):
+            body = body[:-2]
+        elif body.endswith("$"):
+            body = body[:-1]
+            # Python's runtime validator also accepts a terminal newline.
+            final_newline = True
+        else:
+            return None
+        alternatives = (
+            body[3:-1].split("|")
+            if body.startswith("(?:") and body.endswith(")")
+            else [body]
         )
-    except regex.error, TimeoutError:
-        return False
+        if not all(_LITERAL_PROPERTY_KEY.fullmatch(key) for key in alternatives):
+            return None
+        keys.update(alternatives)
+        if final_newline:
+            keys.update(f"{key}\n" for key in alternatives)
+    return len(keys)
 
 
 def _loader_allowed_names(
@@ -116,12 +162,14 @@ def _loader_allowed_names(
     minimum = parameters.get("minProperties")
     if (
         type(minimum) is int
-        and parameters.get("additionalProperties") is False
-        and not parameters.get("patternProperties")
         and minimum > len(properties)
+        and parameters.get("additionalProperties") is False
     ):
-        return None
-    deadline = monotonic() + 0.01
+        possible = _closed_property_count(
+            properties, parameters.get("patternProperties", {})
+        )
+        if possible is not None and minimum > possible:
+            return None
     for key in ("file", "name"):
         schema = properties.get(key)
         if key not in properties:
@@ -145,12 +193,8 @@ def _loader_allowed_names(
             maximum = schema.get("maxLength")
             if type(maximum) is int and maximum == 0:
                 return None
-            selected = tuple(
-                name
-                for name in selected
-                if _string_argument_allowed(schema, name, deadline)
-            )
-        elif not _string_argument_allowed(schema, SKILL_FILE_NAME, deadline):
+            selected = _allowed_string_arguments(schema, selected)
+        elif not _allowed_string_arguments(schema, (SKILL_FILE_NAME,)):
             return None
     return selected
 

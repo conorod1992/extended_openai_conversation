@@ -430,14 +430,26 @@ async def test_due_call_uses_current_tool_and_current_exposure(
     assert manager._store.async_save.await_count == 2 + int(lost_claim_ack)
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "persistent-write-failure",
+        "expired-before-confirmation",
+        "expired-during-confirmation",
+        "expired-during-first-write",
+        "clock-reversed-before-confirmation",
+    ],
+)
 async def test_visible_claim_with_failed_directory_sync_cannot_dispatch(
-    hass, monkeypatch
+    hass, monkeypatch, fault
 ) -> None:
     manager = DelayedToolManager(hass)
     await manager.async_setup()
-    record = _record()
+    utcnow = dt_util.utcnow()
+    record = replace(_record(), expires_at=(utcnow + timedelta(seconds=1)).isoformat())
     await manager._async_save_records_transactionally({record.call_id: record})
-    original_pending = Path(manager._store.path).read_bytes()
+    path = Path(manager._store.path)
+    original_pending = path.read_bytes()
     current_tool = {
         "enabled": True,
         "spec": {"name": "control_light"},
@@ -462,29 +474,55 @@ async def test_visible_claim_with_failed_directory_sync_cannot_dispatch(
         "_resolve_agent",
         lambda *_args: SimpleNamespace(_execute_function_tool=run),
     )
-    failed_syncs = 0
+    sync_directory = atomicwrites._sync_directory
+    written_statuses = []
 
-    def fail_directory_sync(_path):
-        nonlocal failed_syncs
-        failed_syncs += 1
-        raise OSError(errno.EIO, "directory sync failed after rename")
+    def sync_with_fault(directory):
+        nonlocal utcnow
+        calls = json.loads(path.read_bytes())["data"]["calls"]
+        written_statuses.append(calls[0]["status"] if calls else None)
+        if len(written_statuses) == 1:
+            if fault == "clock-reversed-before-confirmation":
+                utcnow -= timedelta(seconds=10)
+            if fault in {"expired-before-confirmation", "expired-during-first-write"}:
+                utcnow += timedelta(seconds=2)
+            if fault != "expired-during-first-write":
+                raise OSError(errno.EIO, "directory sync failed after rename")
+        elif fault == "persistent-write-failure":
+            raise OSError(errno.EIO, "directory sync failed after rename")
+        elif fault == "expired-during-confirmation" and len(written_statuses) == 2:
+            utcnow += timedelta(seconds=2)
+        sync_directory(directory)
 
     with monkeypatch.context() as patch:
-        patch.setattr(atomicwrites, "_sync_directory", fail_directory_sync)
-        await manager._async_execute_due(record.call_id)
+        patch.setattr(dt_util, "utcnow", lambda: utcnow)
+        patch.setattr(atomicwrites, "_sync_directory", sync_with_fault)
+        retry = await manager._async_execute_due(record.call_id)
     run.assert_not_awaited()
-    assert failed_syncs == 2
-    assert (await manager._store.async_load())["calls"][0]["status"] == _EXECUTING
-
+    saved = (await manager._store.async_load())["calls"]
     restarted = DelayedToolManager(hass)
     await restarted.async_setup()
+    if fault == "clock-reversed-before-confirmation":
+        assert retry
+        assert written_statuses == [_EXECUTING, "pending"]
+        assert restarted._records[record.call_id] == record
+        return
     assert record.call_id not in restarted._records
+    if fault != "persistent-write-failure":
+        assert not retry
+        assert not saved
+        expected_claims = 2 if fault == "expired-during-confirmation" else 1
+        assert written_statuses == [_EXECUTING] * expected_claims + [None]
+        return
 
+    assert written_statuses == [_EXECUTING, _EXECUTING]
+    assert saved[0]["status"] == _EXECUTING
     # If a host crash instead restored the last synced generation, it is safe
     # to try the pending action because the unconfirmed claim never dispatched.
-    Path(manager._store.path).write_bytes(original_pending)
+    path.write_bytes(original_pending)
     recovered = DelayedToolManager(hass)
     await recovered.async_setup()
+    monkeypatch.setattr(dt_util, "utcnow", lambda: utcnow)
     assert await recovered._async_claim_due(record.call_id) == (True, False)
 
 
