@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 446,
+  "expected_total_markers": 447,
   "viewports": [
     {
       "name": "small-phone",
@@ -46,7 +46,7 @@
     "function-add-menu.js": 4,
     "function-group-collection-repair.js": 4,
     "guest-mode-ui.js": 12,
-    "guide-page-impl.js": 4,
+    "guide-page-impl.js": 5,
     "ha-llm-tools-list.js": 3,
     "ha-llm-tools.js": 9,
     "management-actions.js": 1,
