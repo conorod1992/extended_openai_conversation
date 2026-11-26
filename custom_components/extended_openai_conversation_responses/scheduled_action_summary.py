@@ -78,7 +78,7 @@ def _target_descriptions(
     has_exclusions = CONF_EXCLUDE in data
     participants = (
         resolve_action_entity_ids(hass, domain, service, data)
-        if has_exclusions or any(key != "entity_id" for key, _ in sample)
+        if has_exclusions or sample
         else None
     )
     for key, target in sample:

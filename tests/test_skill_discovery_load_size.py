@@ -145,5 +145,5 @@ async def test_discovery_skips_nonregular_metadata_and_loads_regular_neighbors(
     assert manager.get_skill("fifo") is None
     assert manager.get_skill("directory") is None
     assert manager.get_skill("healthy") is not None
-    assert manager.get_skill("linked") is not None
+    assert manager.get_skill("linked") is None
     assert "Skill 'fifo' could not be read and was skipped" in caplog.text

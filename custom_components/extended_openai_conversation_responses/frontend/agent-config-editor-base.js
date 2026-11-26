@@ -10,7 +10,7 @@ import {bindOwnedEvent} from "./management-owned-events.js";
 import {ensureCompactChoiceStyle} from "./compact-choice-styles.js";
 import {readConfigurationDraft as readConfig, readConfigurationPreview, recordReasoningChoice} from "./configuration-controls.js";
 import {bindConfigurationInputs, updateConfigurationControl} from "./configuration-inputs.js";
-import {modelFieldPresentation, modelFieldNotes, webSearchControlState, modelCapabilitiesForDraft} from "./agent-config-model-presentation.js";
+import {modelFieldPresentation, modelFieldNotes, webSearchControlState, modelCapabilitiesForDraft, resetReasoningEffort} from "./agent-config-model-presentation.js";
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
@@ -360,7 +360,20 @@ export function bindConfiguration(panel) {
   });
   root.querySelector("#prompt-preview-close")?.addEventListener("click",()=>root.querySelector("#prompt-preview-dialog").close());
   root.querySelector("#copy-prompt-preview")?.addEventListener("click",async()=>{try{const text=(panel._effectiveRequestPreview?.sections||[]).map((section)=>`## ${section.label}\n${section.content}`).join("\n\n");await copyTextToClipboard(text,undefined,undefined,captureAuthentication(panel));panel._toast("Effective request copied");}catch(err){panel._toast(`Unable to copy request: ${err.message||String(err)}`,true);}});
-  for(const selector of ["#reset-advanced","#reset-model-parameters"])root.querySelector(selector)?.addEventListener("click", () => { recordReasoningChoice(panel); ["temperature","top_p","reasoning_effort","service_tier","shorten_tool_call_id"].forEach((key) => { let value=panel._result.defaults[key]; if(key==="reasoning_effort") { const proposed={...panel._draft,reasoning_effort:value}; const efforts=modelFieldPresentation({...panel,_draft:proposed},key,value).efforts || []; const metadata=modelCapabilitiesForDraft({...panel,_draft:proposed}); const recommended=metadata?.recommended_profile?.reasoning_effort; if(efforts.length && !efforts.includes(value)) value=efforts.includes(recommended) ? recommended : efforts[0]; } panel._draft[key]=clone(value); const input=root.querySelector(`[data-config="${key}"]`); if(input) input.dataset.type==="boolean" ? input.checked=panel._draft[key] : input.value=panel._draft[key]; }); dirty(panel); });
+  for (const selector of ["#reset-advanced", "#reset-model-parameters"]) {
+    root.querySelector(selector)?.addEventListener("click", () => {
+      recordReasoningChoice(panel);
+      for (const key of ["temperature", "top_p", "reasoning_effort", "service_tier", "shorten_tool_call_id"]) {
+        const fallback = panel._result.defaults[key];
+        const value = key === "reasoning_effort" ? resetReasoningEffort(panel, fallback) : fallback;
+        panel._draft[key] = clone(value);
+        const input = root.querySelector(`[data-config="${key}"]`);
+        if (input?.dataset.type === "boolean") input.checked = value;
+        else if (input) input.value = value;
+      }
+      dirty(panel);
+    });
+  }
   root.querySelector("#add-regex")?.addEventListener("click", () => { readConfig(panel); panel._draft.speech_regex_replacements.push({pattern:"",replacement:""}); panel._setConfigDirty(true); renderRegexRules(panel,panel._draft.speech_regex_replacements.length-1); });
   root.querySelector("#preview-speech")?.addEventListener("click", async () => { const token=(panel._eocSpeechPreviewToken||0)+1;panel._eocSpeechPreviewToken=token;const agentId=panel._agentId,view=panel._viewKey?.(),output=root.querySelector("#speech-output");output.value="";const current=()=>panel._eocSpeechPreviewToken===token&&panel._agentId===agentId&&panel._viewKey?.()===view&&root.querySelector("#speech-output")===output;try { const response=await panel._call("configuration","speech_preview",{config:readConfig(panel),sample_text:root.querySelector("#speech-sample").value});if(current())output.value=response.speech_text; } catch(err){if(current())panel._toast(`Unable to preview speech: ${err.message||String(err)}`,true);} });
   bindSavedConfigurationActions(panel, root);

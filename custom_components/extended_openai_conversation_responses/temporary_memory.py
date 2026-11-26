@@ -312,37 +312,44 @@ class TemporaryMemory:
             await self._async_initialize_locked()
             await self._async_prune_locked()
             now = dt_util.utcnow().isoformat()
-            for current in self._records.values():
-                if (
-                    _matches_owner(current, scope_id, owner_scope_id)
-                    and current.content == content
-                ):
-                    # Explicitly created short-term memories are authoritative.
-                    # A later proactive model write may coalesce with them, but it
-                    # must not silently downgrade their provenance or replace the
-                    # user's chosen category/expiry.
-                    if current.source == "manual" and source == "automatic":
-                        return {
-                            "status": "unchanged",
-                            "memory": temporary_memory_as_dict(current),
-                        }
-                    updated = TemporaryMemoryRecord(
-                        current.memory_id,
-                        current.scope_id,
-                        content,
-                        category,
-                        source,
-                        expiry.isoformat(),
-                        current.created_at,
-                        now,
-                        current.owner_scope_id,
-                    )
-                    self._records[current.memory_id] = updated
-                    await self._async_save_locked()
+            matches = [
+                record
+                for record in self._records.values()
+                if _matches_owner(record, scope_id, owner_scope_id)
+                and record.content == content
+            ]
+            if len(matches) > 1:
+                raise ValueError(
+                    "Multiple matching temporary memories exist; edit the intended record"
+                )
+            if matches:
+                current = matches[0]
+                # Explicitly created short-term memories are authoritative.
+                # A later proactive model write may coalesce with them, but it
+                # must not silently downgrade their provenance or replace the
+                # user's chosen category/expiry.
+                if current.source == "manual" and source == "automatic":
                     return {
-                        "status": "updated",
-                        "memory": temporary_memory_as_dict(updated),
+                        "status": "unchanged",
+                        "memory": temporary_memory_as_dict(current),
                     }
+                updated = TemporaryMemoryRecord(
+                    current.memory_id,
+                    current.scope_id,
+                    content,
+                    category,
+                    source,
+                    expiry.isoformat(),
+                    current.created_at,
+                    now,
+                    current.owner_scope_id,
+                )
+                self._records[current.memory_id] = updated
+                await self._async_save_locked()
+                return {
+                    "status": "updated",
+                    "memory": temporary_memory_as_dict(updated),
+                }
             owned_count = sum(
                 record.owner_scope_id is not None for record in self._records.values()
             )

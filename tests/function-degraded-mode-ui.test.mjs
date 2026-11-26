@@ -62,6 +62,7 @@ test("Overview reports quarantined Function Tools without treating valid sibling
     provider_runtime: {client_loaded: true, provider: "openai", model: "gpt-5.6-luna"},
     function_tools: {
       usable_count: 30,
+      enabled_count: 24,
       invalid_count: 1,
       total_count: 31,
       isolatable: true,
@@ -78,7 +79,7 @@ test("Overview reports quarantined Function Tools without treating valid sibling
   const functions = health.checks.find((check) => check.id === "function_tools");
   assert.equal(functions.state, "warning");
   assert.equal(functions.value, "1 function needs repair");
-  assert.match(functions.detail, /30 valid Function Tools remain available/);
+  assert.match(functions.detail, /24 Function Tools are available/);
   assert.equal(health.checks.find((check) => check.id === "provider_runtime").state, "ready");
 });
 

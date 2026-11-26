@@ -1,7 +1,7 @@
 import {buildSetupHealth} from "./overview-health.js";
 
-function card(panel, title, status, detail, page, section, action, icon, tone = "neutral") {
-  return `<article class="dashboard-card dashboard-tone-${tone}"><div class="dashboard-card-main"><span class="dashboard-icon" aria-hidden="true"><ha-icon icon="${panel._e(icon)}"></ha-icon></span><div><h3>${panel._e(title)}</h3><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p></div></div><button type="button" class="secondary dashboard-action" data-page="${page}" data-subsection="${section}">${action}</button></article>`;
+function card(panel, title, status, detail, page, section, action, icon, tone = "neutral", warning = "") {
+  return `<article class="dashboard-card dashboard-tone-${tone}"><div class="dashboard-card-main"><span class="dashboard-icon" aria-hidden="true"><ha-icon icon="${panel._e(icon)}"></ha-icon></span><div><h3>${panel._e(title)}</h3><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p>${warning ? `<p role="status">${panel._e(warning)}</p>` : ""}</div></div><button type="button" class="secondary dashboard-action" data-page="${page}" data-subsection="${section}">${action}</button></article>`;
 }
 
 const HEALTH_ICONS = {
@@ -82,7 +82,10 @@ export function renderOverview(panel, agent) {
   const guest = agent.guest_mode || {};
   const warnings = [];
   if (["active", "active_indefinitely"].includes(guest.state) && guest.has_home_assistant_exclusions === false) warnings.push("Guest Mode is active without configured Home Assistant exclusions.");
-  for (const issue of new Map([...(result.load_errors || []), ...(agent.metadata_errors || [])].map((item) => [item.key, item])).values()) warnings.push(`${issue.label} could not be loaded. Other overview information is still available.`);
+  const loadErrors = result.load_errors || [];
+  const metadataErrors = (agent.metadata_errors || []).filter(issue =>
+    !["knowledge", "guest_mode"].includes(issue.key) || result.loading?.[issue.key] !== false);
+  for (const issue of new Map([...loadErrors, ...metadataErrors].map((item) => [item.key, item])).values()) warnings.push(`${issue.label} could not be loaded. Other overview information is still available.`);
   const loading = result.loading || {};
   const memoryCount = agent.memory_count == null ? "Unknown" : Number(agent.memory_count).toLocaleString();
   const sources = agent.knowledge_total_source_count ?? agent.knowledge_source_count;
@@ -119,7 +122,7 @@ export function renderOverview(panel, agent) {
       ${card(panel,"Memory & Knowledge",`${checks.memory?.value || "Memory status unavailable"} · Knowledge ${checks.knowledge?.value || "status unavailable"}`,loading.memory || loading.knowledge ? "Stored-data counts are loading." : `${result.load_errors?.some(issue => issue.key === "memory") ? "Memory count unavailable" : `${memoryCount} ${agent.memory_count === 1 ? "memory" : "memories"}`} · ${result.load_errors?.some(issue => issue.key === "knowledge") ? "Knowledge count unavailable" : `${knowledgeCount} Knowledge sources`}`,"data-memory","memories","Manage","mdi:brain")}
       ${card(panel,"Conversation history",agent.archive_enabled ? "Archive enabled" : "Archive disabled",result.load_errors?.some((issue) => issue.key === "conversations") ? "Retention unavailable" : `Retention: ${conversations.archive_retention_days || 30} days`,"data-memory","conversations","View","mdi:message-text-clock-outline",archiveTone)}
       ${card(panel,"Guest Mode",loading.guest_mode ? "Loading…" : result.load_errors?.some(issue => issue.key === "guest_mode") ? "Status unavailable" : panel._titleCase(String(guest.state || "inactive").replaceAll("_"," ")),loading.guest_mode ? "Loading current Guest Mode status." : "Integration-enforced visitor access and data restrictions.","capabilities","guest-mode","Configure","mdi:account-lock-outline",guestTone)}
-      ${card(panel,"Usage",loading.usage ? "Loading usage…" : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage unavailable" : `${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,loading.usage ? "Loading today and monthly totals." : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage summary could not be loaded." : `${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View","mdi:chart-line")}
+      ${card(panel,"Usage",loading.usage ? "Loading usage…" : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage unavailable" : `${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,loading.usage ? "Loading today and monthly totals." : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage summary could not be loaded." : `${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View","mdi:chart-line",usage.storage_warning ? "warning" : "neutral",usage.storage_warning)}
       ${card(panel,"Web Search",web?.value || "Status unavailable",web?.detail || "Web Search status could not be loaded.",web?.action?.page || "capabilities",web?.action?.subsection || "web-skills","Configure","mdi:web",web?.state === "warning" ? "warning" : web?.state === "ready" ? "positive" : "neutral")}
     </section>`)}
     ${warnings.length ? `<section class="overview-warnings" aria-label="Actionable warnings">${warnings.map((warning) => `<div class="notice warning"><strong>Review recommended</strong><p>${panel._e(warning)}</p></div>`).join("")}</section>` : ""}

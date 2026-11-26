@@ -1114,6 +1114,20 @@ async def test_legacy_memory_stays_isolated_until_original_expiry(
     assert TemporaryMemory.validate_backup_data(backup) == []
 
 
+async def test_add_does_not_overwrite_an_arbitrary_matching_record():
+    memory = TemporaryMemory(Storage())
+    owner = "user:alice"
+    await memory.async_add_owned(owner, "Same fact", future(), "first")
+    second = await memory.async_add_owned(owner, "Different fact", future(), "second")
+    await memory.async_update_owned(
+        owner, second["memory"]["memory_id"], "Same fact", None, None
+    )
+    original = await memory.async_list_owned(owner)
+    with pytest.raises(ValueError, match="Multiple matching temporary memories"):
+        await memory.async_add_owned(owner, "Same fact", future(), "third")
+    assert await memory.async_list_owned(owner) == original
+
+
 async def test_isolated_legacy_memories_leave_active_capacity_available():
     legacy = [
         stored_record(index, scope_id="conversation:session", owner_scope_id=None)

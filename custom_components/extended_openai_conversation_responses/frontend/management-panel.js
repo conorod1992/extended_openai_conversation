@@ -2825,7 +2825,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         return;
       }
       const savedScope = response?.scope_id ?? (temporary && editing ? sourceScope : null);
-      const message = temporary ? (editing ? "Memory updated" : "Memory added")
+      const message = temporary ? (editing || response?.status === "updated" ? "Memory updated" : "Memory added")
         : feature.persistentMemorySaveAcknowledgement(response, values, this._editingMemory);
       if (!temporary && !editing && response?.status === "duplicate") {
         // A confirmed no-op owns no saved edit. Preserve the Add draft and its

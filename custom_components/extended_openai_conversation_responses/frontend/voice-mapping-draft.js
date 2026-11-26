@@ -135,7 +135,7 @@ function validateRows(rows) {
     if (row.lookup) return {error:"Select an available Assist satellite before saving.", mapping:null};
     if (!row.deviceId) return {error:"Choose an Assist satellite or remove the empty assignment before saving.", mapping:null};
     if (Object.hasOwn(result, row.deviceId)) return {error:"This Assist satellite is assigned more than once.", mapping:null};
-    result[row.deviceId] = row.owner || "unretained";
+    result[row.deviceId] = row.owner ?? "unretained";
   }
   return {error:"", mapping:result};
 }

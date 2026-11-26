@@ -56,6 +56,7 @@ function policySelect(panel,key,label,value,help,fallback=false) {
 
 function normalizedOwner(owner) {
   const value = String(owner || "");
+  if (owner === "") return {type:"unmapped",stored:""};
   if (value === "shared" || value === SHARED_SCOPE) return {type:"shared",stored:SHARED_SCOPE};
   if (!value || value === UNRETAINED_SCOPE) return {type:"unretained",stored:UNRETAINED_SCOPE};
   return {type:"user",id:rawUserId(value),stored:value};
@@ -72,9 +73,10 @@ function nativeUserPicker(panel,id,value,cssClass="") {
 
 function mappingRow(panel, {id, deviceId="", owner=UNRETAINED_SCOPE, satellite="", lookup=""} = newVoiceMappingRow()) {
   const normalized = normalizedOwner(owner);
+  const fallbackOption = normalized.type === "unmapped" ? '<option value="unmapped" selected disabled>Uses the unassigned-device fallback</option>' : "";
   return `<article class="voice-mapping-row" data-voice-mapping-row data-voice-row-id="${e(panel,id)}" data-voice-lookup="${e(panel,lookup)}">
     <div><label>Assist satellite</label><ha-entity-picker class="voice-native-picker voice-satellite-picker" data-initial-device-id="${e(panel,deviceId)}" data-initial-entity="${e(panel,satellite)}"></ha-entity-picker><input type="hidden" class="voice-device-id" value="${e(panel,deviceId)}"><small class="voice-picker-warning voice-satellite-warning" hidden></small></div>
-    <div><label>Use retained data for<select class="voice-owner-type"><option value="unretained" ${normalized.type === "unretained" ? "selected" : ""}>${OWNER_TYPES.unretained}</option><option value="shared" ${normalized.type === "shared" ? "selected" : ""}>${OWNER_TYPES.shared}</option><option value="user" ${normalized.type === "user" ? "selected" : ""}>${OWNER_TYPES.user}</option></select></label><div class="voice-owner-user" ${normalized.type === "user" ? "" : "hidden"}>${nativeUserPicker(panel,"",normalized.id,"voice-owner-user-picker")}</div><input type="hidden" class="voice-mapping-owner" value="${e(panel,normalized.stored)}"><small class="voice-picker-warning voice-owner-warning" hidden></small></div>
+    <div><label>Use retained data for<select class="voice-owner-type">${fallbackOption}<option value="unretained" ${normalized.type === "unretained" ? "selected" : ""}>${OWNER_TYPES.unretained}</option><option value="shared" ${normalized.type === "shared" ? "selected" : ""}>${OWNER_TYPES.shared}</option><option value="user" ${normalized.type === "user" ? "selected" : ""}>${OWNER_TYPES.user}</option></select></label><div class="voice-owner-user" ${normalized.type === "user" ? "" : "hidden"}>${nativeUserPicker(panel,"",normalized.id,"voice-owner-user-picker")}</div><input type="hidden" class="voice-mapping-owner" value="${e(panel,normalized.stored)}"><small class="voice-picker-warning voice-owner-warning" hidden></small></div>
     <button type="button" class="danger remove-voice-mapping">Remove</button>
   </article>`;
 }
@@ -163,7 +165,7 @@ function readRows(root) {
   return [...root.querySelectorAll("[data-voice-mapping-row]")].map(row => ({
     id:row.dataset.voiceRowId,
     deviceId:row.querySelector(".voice-device-id")?.value.trim() || "",
-    owner:row.querySelector(".voice-mapping-owner")?.value || UNRETAINED_SCOPE,
+    owner:row.querySelector(".voice-mapping-owner")?.value ?? UNRETAINED_SCOPE,
     satellite:row.querySelector(".voice-satellite-picker")?.value || "",
     lookup:row.dataset.voiceLookup || "",
   }));
@@ -192,6 +194,7 @@ function updateDependencies(panel) {
     card?.classList.toggle("is-disabled",!active);
     card?.querySelectorAll("input,select,button,ha-user-picker,ha-entity-picker").forEach((control) => { control.disabled = !active; });
   }
+  root.querySelector("#config-voice_default_user_picker")?.toggleAttribute("inert", !defaultActive);
   if (mappingActive) root.querySelectorAll("[data-voice-mapping-row]").forEach((row) => updateOwnerPicker(row,true));
   const summary = root.querySelector("#voice-current-summary");
   if (summary) summary.textContent = voiceIdentitySummary(config,voiceUsers(panel));
@@ -222,7 +225,7 @@ function syncOwner(row) {
   const hidden = row.querySelector(".voice-mapping-owner");
   const picker = row.querySelector(".voice-owner-user-picker");
   const warning = row.querySelector(".voice-owner-warning");
-  if (!hidden) return;
+  if (!hidden || type === "unmapped") return;
   if (type === "shared") {
     hidden.value = SHARED_SCOPE;
     setWarning(warning);
@@ -338,6 +341,10 @@ export function bindVoiceIdentity(panel) {
   const defaultHidden = root.querySelector('[data-config="voice_default_user_id"]');
   configureUserPicker(panel,defaultPicker,defaultHidden?.value || "");
   defaultPicker?.addEventListener("value-changed",(event) => {
+    if (defaultPicker.hasAttribute("inert")) {
+      defaultPicker.value = defaultHidden?.value || "";
+      return;
+    }
     const value = rawUserId(event?.detail?.value || "");
     defaultPicker.value = value;
     if (defaultHidden) {

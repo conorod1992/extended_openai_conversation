@@ -190,16 +190,17 @@ function refreshSavedGuestPolicy(panel, scope, owner) {
     && panel._loadToken === owner.token && panel._cacheGeneration === owner.generation && panel._viewKey?.() === GUEST
     && pageCoordinator(panel).scopes.get(GUEST) === scope && scope.revision === owner.revision;
   if (!current()) return;
-  const paint = (policy) => {
+  const paint = (policy, loading = false) => {
     if (!metrics) return;
+    const fallback = loading ? "Refreshing…" : "—";
     metrics.innerHTML = [
-      panel._metric("Guest-visible entities", policy?.readable_entity_count ?? "Refreshing…"),
-      panel._metric("Guest-controllable entities", policy?.controllable_entity_count ?? "Refreshing…"),
-      panel._metric("Guest functions", policy?.configured_tool_count ?? "Refreshing…"),
+      panel._metric("Guest-visible entities", policy?.readable_entity_count ?? fallback),
+      panel._metric("Guest-controllable entities", policy?.controllable_entity_count ?? fallback),
+      panel._metric("Guest functions", policy?.configured_tool_count ?? fallback),
     ].join("");
   };
   metrics?.setAttribute("aria-busy", "true");
-  paint(null);
+  paint(null, true);
   scope.refreshPromise = panel._call("guest_mode", "policy").then((details) => {
     if (!current()) return;
     if (details?.revision && details.revision !== owner.revision) throw new Error("Policy changed; reload the latest saved metrics");

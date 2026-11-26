@@ -29,7 +29,9 @@ function knowledgeAccessState(panel) {
 }
 const statusMarkup = panel => {
   const status = knowledgeAccessState(panel);
-  return `<div class="compact-status"><small>${panel._e(status.detail)}</small><strong class="status-value ${["enabled", "available"].includes(status.state) ? "on" : ""}">${panel._e(status.label)}</strong></div>`;
+  const repair = panel._result?.stats?.knowledge_storage_repair_required
+    ? '<p class="help">Knowledge storage needs repair. Readable sources are shown, and changes to sources are unavailable until the storage is repaired.</p>' : "";
+  return `<div class="compact-status"><small>${panel._e(status.detail)}</small><strong class="status-value ${["enabled", "available"].includes(status.state) ? "on" : ""}">${panel._e(status.label)}</strong></div>${repair}`;
 };
 
 function updateAgentKnowledge(panel, status, enabled = status?.enabled) {

@@ -329,11 +329,16 @@ async def async_test_agent(
     if memory_enabled(subentry.data):
         try:
             memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
+            stats = memory.stats()
+            stored_count = stats["memory_count"]
+            needs_repair = stats.get("memory_storage_repair_required", False)
             checks.append(
                 _check(
                     "Long-term memory",
-                    "Passed",
-                    f"Available ({memory.stats()['memory_count']} stored)",
+                    "Warning" if needs_repair else "Passed",
+                    f"Read-only pending storage repair ({stored_count} readable)"
+                    if needs_repair
+                    else f"Available ({stored_count} stored)",
                 )
             )
         except Exception as err:

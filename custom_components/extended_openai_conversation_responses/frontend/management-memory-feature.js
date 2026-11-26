@@ -38,11 +38,12 @@ export function populateMemoryMetadata(panel, memory) {
   const type = root.querySelector("#memory-type");
   type.value = memory ? "persistent" : panel._memoryKind;
   type.disabled = Boolean(memory);
-  root.querySelector("#memory-advanced").hidden = !memory;
-  root.querySelector("#memory-advanced").open = false;
+  const advanced = root.querySelector("#memory-advanced");
+  advanced.open = false;
   root.querySelector("#memory-expiry").value = "";
   const updateType = () => {
     const temporary = type.value === "temporary";
+    advanced.hidden = temporary;
     const selectedOwner = owner.value;
     const available = temporary ? (panel._data?.scopes || []).filter(scope =>
       ["user", "shared"].includes(scope.scope_type) && !scope.orphaned && (panel._data?.is_admin || scope.scope_id === panel._scopeId)) : scopes;

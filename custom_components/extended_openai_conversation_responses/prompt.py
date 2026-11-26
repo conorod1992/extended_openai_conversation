@@ -199,8 +199,16 @@ def _skills_instructions(skills: list[Any]) -> str:
     lines = [
         "## Skills",
         "Use load_skill with a skill name when one of these skills is relevant:",
+        "Read SKILL.md first. If the result has has_more, pass next_offset as "
+        "offset on the next call with the same name and file.",
+        "Resolve relative script paths from the Skill directory listed below, "
+        "rather than from the current working directory.",
     ]
-    lines.extend(f"- {skill.name}: {skill.description}" for skill in skills)
+    for skill in skills:
+        location = (
+            f" (directory: {skill.path.parent})" if getattr(skill, "path", None) else ""
+        )
+        lines.append(f"- {skill.name}: {skill.description}{location}")
     return "\n".join(lines) + "\n"
 
 

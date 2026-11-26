@@ -318,8 +318,10 @@ class SkillManager:
                 )
                 break
             try:
+                if not skill_file.resolve().is_relative_to(skill_dir.resolve()):
+                    raise HomeAssistantError("SKILL.md is outside its Skill directory")
                 content = read_bounded_skill_text(skill_file)
-            except HomeAssistantError as err:
+            except (HomeAssistantError, OSError) as err:
                 log_handled_failure(
                     _LOGGER,
                     f"Skill '{skill_dir.name}' could not be read and was skipped. "

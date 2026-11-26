@@ -69,6 +69,7 @@ function functionToolsCheck(facts) {
   };
   const invalid = Number(tools.invalid_count || 0);
   const usable = Number(tools.usable_count || 0);
+  const enabled = Number(tools.enabled_count || 0);
   if (tools.validation_error && tools.isolatable === false) {
     return {
       id: "function_tools",
@@ -85,7 +86,7 @@ function functionToolsCheck(facts) {
       state: "warning",
       title: "Function Tools",
       value: `${invalid} ${invalid === 1 ? "function needs" : "functions need"} repair`,
-      detail: `${usable} valid ${usable === 1 ? "Function Tool remains" : "Function Tools remain"} available. Invalid tools remain unavailable until they are repaired.`,
+      detail: `${enabled} ${enabled === 1 ? "Function Tool is" : "Function Tools are"} available. Invalid tools remain unavailable until they are repaired.`,
       action: action("capabilities", "functions"),
     };
   }
@@ -93,7 +94,7 @@ function functionToolsCheck(facts) {
     id: "function_tools",
     state: "ready",
     title: "Function Tools",
-    value: `${usable} ${usable === 1 ? "function" : "functions"} available`,
+    value: `${enabled} ${enabled === 1 ? "function" : "functions"} available`,
     detail: usable
       ? "All configured Function Tools pass validation."
       : "No custom Function Tools are currently configured.",

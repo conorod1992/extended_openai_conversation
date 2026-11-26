@@ -2570,7 +2570,7 @@ def _describe_date_range_deletion(
 ) -> dict[str, Any]:
     targets = sorted(
         sessions,
-        key=lambda session: (session.last_message_at, session.session_id),
+        key=lambda session: (_parse_time(session.last_message_at), session.session_id),
         reverse=True,
     )
     earlier_turns = later_turns = 0

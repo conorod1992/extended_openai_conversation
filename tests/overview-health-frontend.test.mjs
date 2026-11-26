@@ -148,6 +148,24 @@ assert.match(nonAdminMarkup, /<strong>Status incomplete<\/strong><span>2 checks 
 assert.match(nonAdminMarkup, /Connection tests only run when you start one from Diagnostics\./);
 assert.doesNotMatch(nonAdminMarkup, /<button[^>]*class="[^"]*setup-health-action/);
 
+const recovered = renderOverview({
+  ...panel,
+  _result: {
+    ...panel._result,
+    usage: {...panel._result.usage, storage_warning: "Usage totals are volatile"},
+    loading: {knowledge: false, guest_mode: false},
+    load_errors: [{key: "guest_mode", label: "Guest Mode"}],
+  },
+}, {
+  ...agent,
+  metadata_errors: [{key: "knowledge", label: "Knowledge catalogue"}, {key: "memory", label: "Memory metadata"}],
+});
+assert.match(recovered, /Usage totals are volatile/);
+assert.match(recovered, /0 this month/);
+assert.doesNotMatch(recovered, /Knowledge catalogue could not be loaded/);
+assert.match(recovered, /Memory metadata could not be loaded/);
+assert.match(recovered, /Guest Mode could not be loaded/);
+
 const source = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js", import.meta.url),
   "utf8",

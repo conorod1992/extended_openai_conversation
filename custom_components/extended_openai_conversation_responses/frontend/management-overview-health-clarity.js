@@ -1,4 +1,4 @@
-import {lookupModelData} from "./model-catalog.js";
+import {lookupModelData, modelDataStatusText} from "./model-catalog.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 
 function modelDataCardState(panel) {
@@ -25,6 +25,15 @@ function modelDataCardState(panel) {
   const current = Number(data.catalog_version);
   const available = Number(data.available_catalog_version);
   const currentLabel = Number.isInteger(current) ? `v${current}` : "current version";
+  if (data.incompatible_catalog) {
+    return {
+      status: "Integration update required",
+      detail: modelDataStatusText(data),
+      tone: "warning",
+      action: "Review",
+      mode: "navigate",
+    };
+  }
   if (data.update_available) {
     const availableLabel = Number.isInteger(available) ? `v${available}` : "newer version";
     return {

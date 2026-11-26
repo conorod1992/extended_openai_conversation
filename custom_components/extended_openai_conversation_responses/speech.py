@@ -2869,7 +2869,13 @@ class StreamingSpeechSanitizer:
                 if marker == "-":
                     if end == len(text) and not final:
                         return "incomplete", 0
-                    if end < len(text) and text[end].isdigit():
+                    if text[end : end + 1] == ".":
+                        fraction = text[end + 1 : end + 2]
+                        if not fraction and not final:
+                            return "incomplete", 0
+                        if fraction.isdecimal():
+                            return "none", 0
+                    if end < len(text) and text[end].isnumeric():
                         nested_action, nested_count = (
                             StreamingSpeechSanitizer._line_prefix(text, final, end)
                         )

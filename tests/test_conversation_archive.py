@@ -952,6 +952,21 @@ def _session(
     )
 
 
+def test_date_range_preview_orders_different_offsets_by_absolute_instant():
+    older = replace(_session("older"), last_message_at="2026-10-25T01:45:00+01:00")
+    newer = replace(_session("newer"), last_message_at="2026-10-25T01:15:00+00:00")
+    preview = archive_module._describe_date_range_deletion(
+        [older, newer],
+        {},
+        _parse_time("2026-10-25T00:00:00+00:00"),
+        _parse_time("2026-10-26T00:00:00+00:00"),
+    )
+    assert [session["session_id"] for session in preview["sessions"]] == [
+        "newer",
+        "older",
+    ]
+
+
 def _turn(
     session_id: str = "session-1",
     *,

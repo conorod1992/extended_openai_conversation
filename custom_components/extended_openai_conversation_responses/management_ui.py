@@ -117,7 +117,11 @@ from .ha_llm_tools import (
     validate_reference,
 )
 from .ha_schema import websocket_command as ha_websocket_command
-from .helpers import entry_api_provider, get_exposed_entities
+from .helpers import (
+    entry_api_provider,
+    get_exposed_entities,
+    is_native_openai_connection,
+)
 from .knowledge import (
     DuplicateKnowledgeSource,
     async_get_knowledge,
@@ -1585,6 +1589,10 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "defaults": defaults,
             "options": options,
             "model_capabilities": capabilities,
+            "hosted_web_search_provider_supported": provider != "azure"
+            and is_native_openai_connection(
+                entry.data, client=getattr(entry, "runtime_data", None)
+            ),
             "function_types": sorted(FUNCTIONS),
             "_performance": timings,
         }

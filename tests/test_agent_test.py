@@ -1107,6 +1107,7 @@ async def _residual_run_agent(
     web_search: bool = False,
     probe_error: BaseException | None = None,
     memory_is_enabled: bool = False,
+    memory_needs_repair: bool = False,
 ) -> tuple[agent_test.AgentTestResult, _ResidualUsage]:
     usage = _ResidualUsage()
     create = _ResidualCreate(result=_responses_reply(), error=probe_error)
@@ -1123,13 +1124,17 @@ async def _residual_run_agent(
     )
 
     monkeypatch.setattr(agent_test, "_validate_function_schema", lambda _subentry: 0)
-    monkeypatch.setattr(agent_test, "get_api_mode", lambda *_args: agent_test.API_MODE_RESPONSES)
+    monkeypatch.setattr(
+        agent_test, "get_api_mode", lambda *_args: agent_test.API_MODE_RESPONSES
+    )
     monkeypatch.setattr(
         agent_test,
         "get_loaded_guest_mode",
         lambda *_args: SimpleNamespace(status=lambda: {"state": "active"}),
     )
-    monkeypatch.setattr(agent_test, "configured_function_tools_from_data", lambda _data: [])
+    monkeypatch.setattr(
+        agent_test, "configured_function_tools_from_data", lambda _data: []
+    )
     monkeypatch.setattr(
         agent_test,
         "resolve_guest_policy",
@@ -1147,13 +1152,23 @@ async def _residual_run_agent(
         lambda _hass: (_ for _ in ()).throw(RuntimeError("registry unavailable")),
     )
     monkeypatch.setattr(agent_test, "memory_enabled", lambda _data: memory_is_enabled)
-    monkeypatch.setattr(agent_test, "is_native_openai_connection", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(agent_test, "ensure_successful_responses_result", lambda _response: None)
+    monkeypatch.setattr(
+        agent_test, "is_native_openai_connection", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        agent_test, "ensure_successful_responses_result", lambda _response: None
+    )
     monkeypatch.setattr(agent_test, "extract_usage", lambda _usage: {})
 
     if memory_is_enabled:
+
         async def get_memory(*_args: Any) -> Any:
-            return SimpleNamespace(stats=lambda: {"memory_count": 4})
+            return SimpleNamespace(
+                stats=lambda: {
+                    "memory_count": 4,
+                    "memory_storage_repair_required": memory_needs_repair,
+                }
+            )
 
         monkeypatch.setattr(agent_test, "async_get_memory", get_memory)
 
@@ -1182,14 +1197,26 @@ async def test_guest_active_message_and_exposed_entity_lookup_failure(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("repair", "status", "message"),
+    [
+        (False, "Passed", "Available (4 stored)"),
+        (True, "Warning", "Read-only pending storage repair (4 readable)"),
+    ],
+)
 async def test_successful_memory_check_reports_stored_count(
     monkeypatch: pytest.MonkeyPatch,
+    repair: bool,
+    status: str,
+    message: str,
 ) -> None:
-    result, _usage = await _residual_run_agent(monkeypatch, memory_is_enabled=True)
+    result, _usage = await _residual_run_agent(
+        monkeypatch, memory_is_enabled=True, memory_needs_repair=repair
+    )
     memory = next(check for check in result.checks if check.name == "Long-term memory")
 
-    assert memory.status == "Passed"
-    assert memory.message == "Available (4 stored)"
+    assert memory.status == status
+    assert memory.message == message
 
 
 @pytest.mark.asyncio

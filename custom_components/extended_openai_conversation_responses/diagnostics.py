@@ -123,7 +123,9 @@ async def async_get_config_entry_diagnostics(
                 "structured_outputs": snapshot.structured_outputs,
                 "effective_response_limit": snapshot.api_kwargs.get(
                     "max_output_tokens",
-                    snapshot.api_kwargs.get("max_completion_tokens"),
+                    snapshot.api_kwargs.get(
+                        "max_completion_tokens", snapshot.api_kwargs.get("max_tokens")
+                    ),
                 ),
             }
         except Exception as err:

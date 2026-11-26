@@ -8,6 +8,14 @@ export function reasoningEffortOptionsForResult(result = {}) {
 
 export function webSearchControlState(panel) {
   const config = panel?._draft || panel?._result?.config || {};
+  const providerSupported = panel?._result?.hosted_web_search_provider_supported
+    ?? panel?._configData?.hosted_web_search_provider_supported;
+  if (providerSupported === false || (panel && modelProviderForPanel(panel) === "azure")) {
+    return {
+      disabled:!config.web_search,
+      note:"Hosted Web Search requires a direct OpenAI connection.",
+    };
+  }
   const metadata = modelCapabilitiesForDraft(panel);
   if (!metadata?.evaluations) return {disabled:false, note:""};
   const effort = config.reasoning_effort ?? metadata.recommended_profile?.reasoning_effort ?? null;
@@ -38,6 +46,18 @@ export function modelCapabilitiesForDraft(panel) {
   // Older catalogue envelopes expose metadata separately from the legacy
   // support flags. Reuse those flags only when they belong to this same model.
   return Object.keys(fallback).length ? {...fallback, ...catalog.model_metadata} : catalog.model_metadata || {};
+}
+
+export function resetReasoningEffort(panel, fallback) {
+  const config = panel._draft;
+  const metadata = modelCapabilitiesForDraft(panel);
+  const efforts = metadata.reasoning?.efforts || [];
+  if (!efforts.length) return metadata.reasoning?.supported === false ? fallback : config.reasoning_effort;
+  const compatible = efforts.filter(effort => apiPathSelectable(
+    metadata, config.api_mode, toolsRequired(config), effort, Boolean(config.web_search),
+  ));
+  return [fallback, metadata.recommended_profile?.reasoning_effort, ...compatible]
+    .find(effort => compatible.includes(effort)) ?? config.reasoning_effort;
 }
 
 // Presentation only: the catalogue and backend still own capability semantics.
