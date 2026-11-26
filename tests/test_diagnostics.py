@@ -212,8 +212,8 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
         CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
         CONF_MEMORY_RETRIEVAL_MODE: MEMORY_RETRIEVAL_HYBRID,
         CONF_MEMORY_EMBEDDING_MODEL: "text-embedding-test",
-        CONF_USAGE_REQUEST_RETENTION_DAYS: 14,
-        CONF_USAGE_RUN_RETENTION_DAYS: 45,
+        CONF_USAGE_REQUEST_RETENTION_DAYS: 7,
+        CONF_USAGE_RUN_RETENTION_DAYS: 180,
     }
     entity = _startup_entity(hass, data)
     dependencies = _patch_startup_dependencies(monkeypatch)
@@ -233,8 +233,8 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
     assert entity._archive is dependencies.archive
     assert entity._knowledge is dependencies.knowledge
     assert entity._memory is dependencies.memory
-    assert dependencies.usage.request_retention_days == 14
-    assert dependencies.usage.run_retention_days == 45
+    assert dependencies.usage.request_retention_days == 7
+    assert dependencies.usage.run_retention_days == 180
     dependencies.usage.async_prune_details.assert_awaited_once_with()
     dependencies.archive.async_prune.assert_awaited_once_with(21)
     assert dependencies.memory.set_embedding_provider.call_count == 2

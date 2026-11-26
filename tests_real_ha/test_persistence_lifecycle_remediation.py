@@ -169,9 +169,14 @@ async def test_public_entry_removal_disposes_usage_timer(hass, freezer, caplog):
             [10, 120, 200],
         ),
         (
+            {"usage_request_retention_days": 90, "usage_run_retention_days": 90},
+            [10, 60],
+            [10],
+        ),
+        (
             {"usage_request_retention_days": 15, "usage_run_retention_days": 15},
-            [10],
-            [10],
+            [10, 60, 200],
+            [10, 120, 200],
         ),
         ({}, [10], [10]),
         ({"usage_request_retention_days": 0, "usage_run_retention_days": 0}, [], []),

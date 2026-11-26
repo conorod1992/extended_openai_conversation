@@ -18,8 +18,8 @@ from tests.test_backup import _prepared
 async def _assert_application_contract(apply, active) -> None:
     """Witness ordered side effects, exact data and retention at write time."""
     prepared = _prepared()
-    prepared.config[CONF_USAGE_REQUEST_RETENTION_DAYS] = 11
-    prepared.config[CONF_USAGE_RUN_RETENTION_DAYS] = 22
+    prepared.config[CONF_USAGE_REQUEST_RETENTION_DAYS] = 7
+    prepared.config[CONF_USAGE_RUN_RETENTION_DAYS] = 180
     prepared.archive_active = active
     writes = []
     state = {}
@@ -27,8 +27,8 @@ async def _assert_application_contract(apply, active) -> None:
     def manager(name):
         async def replace(*args, **kwargs):
             writes.append(name)
-            assert managers.usage.request_retention_days == 11
-            assert managers.usage.run_retention_days == 22
+            assert managers.usage.request_retention_days == 7
+            assert managers.usage.run_retention_days == 180
             state[name] = deepcopy((args, kwargs))
 
         return SimpleNamespace(async_replace_backup=replace)

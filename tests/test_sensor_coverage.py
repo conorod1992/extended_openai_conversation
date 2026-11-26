@@ -124,8 +124,8 @@ async def test_setup_entry_adds_five_sensors_and_applies_retention_settings(
     conversation = _subentry(
         data={
             CONF_CHAT_MODEL: "gpt-test",
-            CONF_USAGE_REQUEST_RETENTION_DAYS: "17",
-            CONF_USAGE_RUN_RETENTION_DAYS: "23",
+            CONF_USAGE_REQUEST_RETENTION_DAYS: "7",
+            CONF_USAGE_RUN_RETENTION_DAYS: "180",
         }
     )
     ignored = _subentry("not-an-agent", subentry_type="other")
@@ -146,8 +146,8 @@ async def test_setup_entry_adds_five_sensors_and_applies_retention_settings(
 
     usage_getter.assert_awaited_once_with(hass, "entry-1", "agent-1")
     guest_getter.assert_awaited_once_with(hass, "entry-1", "agent-1")
-    assert usage.request_retention_days == 17
-    assert usage.run_retention_days == 23
+    assert usage.request_retention_days == 7
+    assert usage.run_retention_days == 180
     assert len(additions) == 1
     entities, subentry_id = additions[0]
     assert subentry_id == "agent-1"
