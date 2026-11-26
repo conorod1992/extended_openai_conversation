@@ -170,6 +170,7 @@ from .const import (
     SERVICE_TIER_OPTIONS,
     SHARED_MEMORY_MODES,
     TEMPORARY_MEMORY_OPTIONS,
+    USAGE_RETENTION_FIELDS,
     USAGE_RETENTION_OPTIONS,
     VOICE_POLICIES,
     WEB_SEARCH_CONTEXT_OPTIONS,
@@ -1006,10 +1007,20 @@ def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
         value = config.get(key)
         if isinstance(value, str):
             stripped = value.strip()
-            if re.fullmatch(r"[+-]?\d+(?:\.0+)?", stripped):
-                config[key] = int(stripped.split(".", maxsplit=1)[0])
+            if not re.fullmatch(r"[+-]?\d+(?:\.0+)?", stripped):
+                continue
+            try:
+                integer = int(stripped.split(".", maxsplit=1)[0])
+            except ValueError:
+                if key not in USAGE_RETENTION_FIELDS:
+                    raise
+                continue
         elif isinstance(value, float) and value.is_integer():
-            config[key] = int(value)
+            integer = int(value)
+        else:
+            continue
+        if key not in USAGE_RETENTION_FIELDS or integer in USAGE_RETENTION_OPTIONS:
+            config[key] = integer
 
     for key in (CONF_TOP_P, CONF_TEMPERATURE):
         value = config.get(key)
@@ -1175,31 +1186,42 @@ def agent_config_value_snapshot(
     return result
 
 
-_USAGE_RETENTION_FIELDS = (
-    CONF_USAGE_REQUEST_RETENTION_DAYS,
-    CONF_USAGE_RUN_RETENTION_DAYS,
-)
-
-
 def agent_retention_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
     """Project the lightweight retention view with the same numeric semantics."""
     result = {
         key: deepcopy(data.get(key, AGENT_CONFIG_DEFAULTS[key]))
-        for key in _USAGE_RETENTION_FIELDS
+        for key in USAGE_RETENTION_FIELDS
     }
     normalize_agent_numeric_values(result)
     return result
+
+
+def effective_usage_retention(data: Mapping[str, Any]) -> dict[str, int | None]:
+    """Interpret saved Usage windows. Invalid values suspend expiry and recording."""
+    result: dict[str, int | None] = {}
+    for key, days in agent_retention_snapshot(data).items():
+        result[key] = (
+            days if type(days) is int and days in USAGE_RETENTION_OPTIONS else None
+        )
+    return result
+
+
+def _validate_usage_retention(data: Mapping[str, Any]) -> None:
+    _require_type(data, USAGE_RETENTION_FIELDS, int)
+    for key in USAGE_RETENTION_FIELDS:
+        if key in data and data[key] not in USAGE_RETENTION_OPTIONS:
+            raise AgentConfigError(key, "unsupported value")
 
 
 def shortened_usage_retention(
     current: Mapping[str, Any], target: Mapping[str, Any]
 ) -> dict[str, int]:
     """Return destination detail windows that can delete existing records."""
-    previous = agent_retention_snapshot(current)
+    previous = effective_usage_retention(current)
     result = {}
-    for key, days in agent_retention_snapshot(target).items():
+    for key, days in effective_usage_retention(target).items():
         old = previous[key]
-        if type(days) is int and (type(old) is not int or days < old):
+        if days is not None and (old is None or days < old):
             result[key] = days
     return result
 
@@ -1336,8 +1358,6 @@ def normalize_agent_config(
         CONF_VOICE_SCOPE_POLICY: VOICE_POLICIES,
         CONF_VOICE_UNMAPPED_POLICY: VOICE_POLICIES,
         CONF_SHARED_MEMORY_MODE: SHARED_MEMORY_MODES,
-        CONF_USAGE_REQUEST_RETENTION_DAYS: USAGE_RETENTION_OPTIONS,
-        CONF_USAGE_RUN_RETENTION_DAYS: USAGE_RETENTION_OPTIONS,
         CONF_CONTEXT_TRUNCATE_STRATEGY: [
             item["key"] for item in CONTEXT_TRUNCATE_STRATEGIES
         ],
@@ -1365,7 +1385,7 @@ def normalize_agent_config(
     ):
         raise AgentConfigError(CONF_CONVERSATION_TIMEOUT_MINUTES, "unsupported value")
     if not allow_legacy_usage_retention:
-        _require_type(result, _USAGE_RETENTION_FIELDS, int)
+        _validate_usage_retention(result)
     for key, options in choices.items():
         if key in result and result[key] not in options:
             message = (
@@ -1510,7 +1530,7 @@ def merge_agent_config(
         # recommended profile. Retaining the prior model's effort can make a
         # perfectly valid switch to a non-reasoning model unsavable.
         known.pop(CONF_REASONING_EFFORT, None)
-    _require_type(agent_retention_snapshot(updates), _USAGE_RETENTION_FIELDS, int)
+    _validate_usage_retention(agent_retention_snapshot(updates))
     normalized = normalize_agent_config(
         {**known, **updates},
         validated_functions=validated_functions,

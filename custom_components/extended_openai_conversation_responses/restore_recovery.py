@@ -42,7 +42,9 @@ from .helpers import ProviderEndpointError
 from .live_subentry_updates import (
     configuration_supports_live_update,
     live_subentry_update,
+    persisted_configuration_matches,
     update_live_subentry,
+    write_configuration_subentry,
 )
 from .mutation_outcomes import mark_mutation_failure, mutation_failure
 from .operation_settlement import async_settle_owned_operation
@@ -911,7 +913,9 @@ def _persisted_subentry_matches(
             ):
                 return bool(
                     raw_subentry.get("title") == prepared.title
-                    and raw_subentry.get("data") == prepared.config
+                    and persisted_configuration_matches(
+                        raw_subentry.get("data"), prepared.config
+                    )
                 )
         return False
     return False
@@ -1003,7 +1007,7 @@ async def _update_configuration(
     # persisted. That exact generation must use its own context on both sides.
     current_provider = (
         destination_provider
-        if subentry.data == prepared.config
+        if persisted_configuration_matches(subentry.data, prepared.config)
         else previous_provider
         if previous_provider is not None
         else entry_api_provider(entry)
@@ -1106,8 +1110,8 @@ async def _async_publish_provider_pair(
     # Core queues both updates on the same Store. Neither setter yields, so
     # persistence observes the complete pair in one config entry snapshot.
     with live_subentry_update():
-        hass.config_entries.async_update_subentry(
-            entry, subentry, data=prepared.config, title=prepared.title
+        write_configuration_subentry(
+            hass, entry, subentry, data=prepared.config, title=prepared.title
         )
         hass.config_entries.async_update_entry(entry, data=deepcopy(provider_data))
     await async_persist_config_entries(
@@ -1720,7 +1724,8 @@ async def _async_recover_pending_restore(
             or (
                 side == "target"
                 and (
-                    subentry.data != selected.config or subentry.title != selected.title
+                    not persisted_configuration_matches(subentry.data, selected.config)
+                    or subentry.title != selected.title
                 )
             )
         ):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from .const import FUNCTION_GROUP_LOADING_ON_DEMAND, SKILL_FILE_NAME
@@ -41,6 +41,9 @@ def preserves_skill_loader_availability(
             before.blockers or (before.reason,)
         )
         and set(selected_after).issubset(selected_before)
+        and (set(before.loadable_skills) & set(selected_after)).issubset(
+            after.loadable_skills
+        )
     )
 
 
@@ -61,24 +64,38 @@ def function_group_enabled(group: dict[str, Any]) -> bool:
     return group.get("enabled", True) is True
 
 
-def _loader_arguments_allowed(tool: dict[str, Any]) -> bool:
-    """Reject schemas that explicitly prohibit the loader's string arguments."""
+def _string_argument_allowed(schema: dict[str, Any], value: str) -> bool:
+    minimum, maximum = schema.get("minLength"), schema.get("maxLength")
+    choices = schema.get("enum")
+    return (
+        isinstance(value, str)
+        and (type(minimum) is not int or len(value) >= minimum)
+        and (type(maximum) is not int or len(value) <= maximum)
+        and ("const" not in schema or value == schema["const"])
+        and (not isinstance(choices, list) or value in choices)
+    )
+
+
+def _loader_allowed_names(
+    tool: dict[str, Any], selected: tuple[str, ...]
+) -> tuple[str, ...] | None:
+    """Return names the schema allows, or None for an unusable loader shape."""
     parameters = tool.get("spec", {}).get("parameters", {})
     if not isinstance(parameters, dict):
-        return False
+        return None
     properties = parameters.get("properties", {})
     if not isinstance(properties, dict):
-        return False
+        return None
     for key in ("name", "file"):
         schema = properties.get(key)
         if key not in properties:
             additional = parameters.get("additionalProperties")
             if additional is False:
-                return False
+                return None
             if not parameters.get("patternProperties"):
                 schema = additional
         if schema is False:
-            return False
+            return None
         if not isinstance(schema, dict):
             continue
         kind = schema.get("type")
@@ -87,24 +104,17 @@ def _loader_arguments_allowed(tool: dict[str, Any]) -> bool:
             and kind != "string"
             and not (isinstance(kind, list) and "string" in kind)
         ):
-            return False
-        maximum = schema.get("maxLength")
+            return None
         if key == "name":
+            maximum = schema.get("maxLength")
             if type(maximum) is int and maximum == 0:
-                return False
-            continue
-        minimum = schema.get("minLength")
-        if (
-            (type(maximum) is int and len(SKILL_FILE_NAME) > maximum)
-            or (type(minimum) is int and len(SKILL_FILE_NAME) < minimum)
-            or ("const" in schema and schema["const"] != SKILL_FILE_NAME)
-            or (
-                isinstance(choices := schema.get("enum"), list)
-                and SKILL_FILE_NAME not in choices
+                return None
+            selected = tuple(
+                name for name in selected if _string_argument_allowed(schema, name)
             )
-        ):
-            return False
-    return True
+        elif not _string_argument_allowed(schema, SKILL_FILE_NAME):
+            return None
+    return selected
 
 
 def function_group_for_tool(
@@ -146,7 +156,10 @@ def skill_loader_status(
     if not selected_skills:
         return SkillLoaderStatus(available=True)
     return skill_loader_configuration_status(
-        tools, groups, max_function_calls=max_function_calls
+        tools,
+        groups,
+        max_function_calls=max_function_calls,
+        selected_skills=tuple(selected_skills),
     )
 
 
@@ -155,6 +168,8 @@ def skill_loader_configuration_status(
     groups: list[dict[str, Any]],
     *,
     max_function_calls: int | None = None,
+    selected_skills: tuple[str, ...] = (),
+    require_all_selected: bool = True,
 ) -> SkillLoaderStatus:
     """Check whether the configured loader can serve a Skill selection."""
     # Track all structural blockers so an edit cannot hide a new problem behind
@@ -166,6 +181,7 @@ def skill_loader_configuration_status(
         )
 
     loader = next((tool for tool in tools if is_canonical_skill_loader(tool)), None)
+    allowed: tuple[str, ...] | None = None
     if loader is None:
         blockers.append(
             "selected Skills require the built-in `load_skill` Function Tool"
@@ -173,9 +189,16 @@ def skill_loader_configuration_status(
     else:
         if loader.get("enabled", True) is not True:
             blockers.append("the built-in `load_skill` Function Tool is disabled")
-        if not _loader_arguments_allowed(loader):
+        allowed = _loader_allowed_names(loader, selected_skills)
+        if allowed is None:
             blockers.append(
                 "the `load_skill` schema must allow string name and file arguments"
+            )
+        elif selected_skills and (
+            not allowed or (require_all_selected and allowed != selected_skills)
+        ):
+            blockers.append(
+                "the `load_skill` schema excludes one or more selected Skill names"
             )
 
     group = function_group_for_tool(SKILL_LOADER_TOOL_NAME, groups) if loader else None
@@ -190,12 +213,14 @@ def skill_loader_configuration_status(
             available=False,
             reason=blockers[0],
             group_id=group_id or None,
+            loadable_skills=allowed or (),
             blockers=tuple(blockers),
         )
 
     return SkillLoaderStatus(
         available=True,
         group_id=group_id or None,
+        loadable_skills=allowed or (),
         on_demand=group is not None
         and group.get("loading_mode") == FUNCTION_GROUP_LOADING_ON_DEMAND,
     )
@@ -225,11 +250,12 @@ def effective_skill_loader_status(
             loadable_skills=usable,
         )
 
-    status = skill_loader_status(
-        usable,
+    status = skill_loader_configuration_status(
         tools,
         groups,
         max_function_calls=max_function_calls,
+        selected_skills=usable,
+        require_all_selected=False,
     )
     if not status.available:
         return status
@@ -239,6 +265,6 @@ def effective_skill_loader_status(
             reason="the Function Group loader is unavailable for this runtime",
             group_id=status.group_id,
             on_demand=True,
-            loadable_skills=usable,
+            loadable_skills=status.loadable_skills,
         )
-    return replace(status, loadable_skills=usable)
+    return status

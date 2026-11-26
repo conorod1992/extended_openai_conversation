@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-from .const import CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P
+from .const import CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P, USAGE_RETENTION_FIELDS
 
 # These values are read from subentry.data at each provider request boundary.
 # Expand only after covering any setup-owned effects for the additional fields.
@@ -38,10 +38,54 @@ def is_live_subentry_update() -> bool:
     return _LIVE_SUBENTRY_UPDATE.get()
 
 
+def _same_retention_types(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    return all(
+        type(left.get(key)) is type(right.get(key)) for key in USAGE_RETENTION_FIELDS
+    )
+
+
+def persisted_configuration_matches(
+    current: object, expected: Mapping[str, Any]
+) -> bool:
+    """Distinguish saved booleans from integer Usage windows during verification."""
+    return (
+        isinstance(current, Mapping)
+        and current == expected
+        and _same_retention_types(current, expected)
+    )
+
+
+class _UsageRetentionConfig(dict[str, Any]):
+    """Give Core a type-aware equality check for an otherwise equal config write."""
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        return _same_retention_types(self, other) and super().__eq__(dict(other))
+
+    def __ne__(self, other: object) -> bool:
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        return not self == other
+
+
+def write_configuration_subentry(
+    hass: Any, entry: Any, subentry: Any, **changes: Any
+) -> None:
+    """Write through Core, including equal-valued bool-to-int retention repairs."""
+    if (
+        (data := changes.get("data")) is not None
+        and subentry.data == data
+        and not _same_retention_types(subentry.data, data)
+    ):
+        changes["data"] = _UsageRetentionConfig(data)
+    hass.config_entries.async_update_subentry(entry, subentry, **changes)
+
+
 def update_live_subentry(hass: Any, entry: Any, subentry: Any, **changes: Any) -> None:
     """Persist one subentry change consumed by the live request boundary."""
     with live_subentry_update():
-        hass.config_entries.async_update_subentry(entry, subentry, **changes)
+        write_configuration_subentry(hass, entry, subentry, **changes)
 
 
 def configuration_supports_live_update(
@@ -54,13 +98,12 @@ def configuration_supports_live_update(
         return False
     defaults = agent_config_defaults()
     missing = object()
-    changed = {
-        key
-        for key in previous.keys() | candidate.keys()
-        if previous.get(key, defaults.get(key, missing))
-        != candidate.get(key, defaults.get(key, missing))
-    }
-    return changed <= _LIVE_REQUEST_FIELDS
+    for key in (previous.keys() | candidate.keys()) - _LIVE_REQUEST_FIELDS:
+        default = defaults.get(key, missing)
+        old, new = previous.get(key, default), candidate.get(key, default)
+        if old != new or (key in USAGE_RETENTION_FIELDS and type(old) is not type(new)):
+            return False
+    return True
 
 
 def update_configuration_subentry(
@@ -81,5 +124,5 @@ def update_configuration_subentry(
     if live:
         update_live_subentry(hass, entry, subentry, **changes)
     else:
-        hass.config_entries.async_update_subentry(entry, subentry, **changes)
+        write_configuration_subentry(hass, entry, subentry, **changes)
     return live

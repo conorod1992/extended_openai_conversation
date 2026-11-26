@@ -57,6 +57,7 @@ async def test_unselected_configuration_is_exact_during_selective_restore(
     tx = RestoreHarness(monkeypatch)
     secret = "fabricated-current-password-before\x85after"
     tx.subentry.data = valid_credential_config(tx.subentry.data, secret, quarantined)
+    tx.subentry.data["usage_request_retention_days"] = "15.0"
     before = deepcopy(tx.subentry.data)
     await tx.restore()  # Knowledge only; configuration is unselected.
     assert tx.subentry.data == before
@@ -425,15 +426,20 @@ async def test_restore_rejects_sdk_incompatible_url_before_any_writes(
     assert tx.journal.saved == tx.writes == []
 
 
+@pytest.mark.parametrize("previous", [30, False])
 async def test_selective_configuration_restore_requires_confirmation_to_prune_usage(
     monkeypatch,
+    previous,
 ):
     from tests.test_selective_restore_concurrency import RestoreHarness
 
     tx = RestoreHarness(monkeypatch)
     document = private_document()
     field = "usage_request_retention_days"
-    tx.subentry.data[field] = 30
+    tx.subentry.data[field] = previous
+    tx.subentry.data["usage_run_retention_days"] = document["agent"]["config"].get(
+        "usage_run_retention_days", 90
+    )
     document["agent"]["config"][field] = 0
     artifact = transfer.inspect_transfer(
         backup.finalize_backup_snapshot(document)["document"],
@@ -450,7 +456,7 @@ async def test_selective_configuration_restore_requires_confirmation_to_prune_us
         await transfer.async_restore_transfer(
             tx.hass, tx.entry, tx.subentry, artifact, **options
         )
-    assert tx.subentry.data[field] == 30
+    assert tx.subentry.data[field] is previous
     assert tx.writes == []
     await transfer.async_restore_transfer(
         tx.hass, tx.entry, tx.subentry, artifact, confirm_retention=True, **options

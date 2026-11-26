@@ -20,8 +20,8 @@ from homeassistant.util import dt as dt_util
 
 from . import backup
 from .agent_config import (
-    agent_retention_snapshot,
     configured_function_tools_from_data,
+    effective_usage_retention,
     normalized_agent_integer,
     preserve_unselected_archive_retention,
     shortened_usage_retention,
@@ -1765,9 +1765,9 @@ async def async_materialize_restore(
         if transfer_section in selected
     }
     # Applying different retention settings can prune stored Usage details.
-    if SECTION_CONFIGURATION in selected and agent_retention_snapshot(
+    if SECTION_CONFIGURATION in selected and effective_usage_retention(
         target.config
-    ) != agent_retention_snapshot(current.config):
+    ) != effective_usage_retention(current.config):
         data_sections.add("usage")
     if SECTION_CONFIGURATION in selected and SECTION_USAGE not in selected:
         shortened = shortened_usage_retention(current.config, target.config)

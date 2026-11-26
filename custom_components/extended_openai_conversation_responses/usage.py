@@ -34,7 +34,6 @@ from .const import (
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DOMAIN,
-    USAGE_RETENTION_OPTIONS,
 )
 from .debug import record_current_run_failure
 from .mutation_outcomes import MutationFailure, mark_mutation_failure
@@ -418,6 +417,7 @@ class UsageManager:
         agent_subentry_id: str = "",
         request_retention_days: int | None = DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
         run_retention_days: int | None = DEFAULT_USAGE_RUN_RETENTION_DAYS,
+        read_retention: Callable[[], tuple[int | None, int | None]] | None = None,
     ) -> None:
         self._storage = storage
         self._daily_storage = daily_storage
@@ -425,6 +425,7 @@ class UsageManager:
         self._agent_subentry_id = agent_subentry_id
         self.request_retention_days = request_retention_days
         self.run_retention_days = run_retention_days
+        self._read_retention = read_retention
         self.totals = UsageTotals()
         self.daily: dict[str, dict[str, Any]] = {}
         self.requests: list[UsageRequest] = []
@@ -527,21 +528,24 @@ class UsageManager:
                     if not isinstance(error.__cause__, OSError):
                         raise
                     load_failed = True
-            (
-                staged_daily,
-                invalid_days,
-                staged_requests,
-                staged_runs,
-                details_need_repair,
-                detail_records_repairable,
-                detail_retention_dirty,
-            ) = await asyncio.to_thread(
-                _prepare_usage_history,
-                daily_data,
-                loaded_details,
-                self.request_retention_days,
-                self.run_retention_days,
-            )
+            policy = self._initialization_retention()
+            while True:
+                (
+                    staged_daily,
+                    invalid_days,
+                    staged_requests,
+                    staged_runs,
+                    details_need_repair,
+                    detail_records_repairable,
+                    detail_retention_dirty,
+                ) = await asyncio.to_thread(
+                    _prepare_usage_history, daily_data, loaded_details, *policy
+                )
+                current_policy = self._initialization_retention()
+                if current_policy == policy:
+                    break
+                # Reapply the latest policy to the original, unfiltered payload.
+                policy = current_policy
             daily_needs_repair |= invalid_days
             details_need_repair |= load_failed
 
@@ -549,6 +553,7 @@ class UsageManager:
             self.daily = staged_daily
             self.requests = staged_requests
             self.runs = staged_runs
+            self.request_retention_days, self.run_retention_days = policy
             # The next normal detail write also normalizes older inline dates.
             self._detail_retention_dirty = detail_retention_dirty
             self._totals_need_repair = totals_need_repair
@@ -564,6 +569,11 @@ class UsageManager:
                     "Usage detail storage needs repair; aggregate persistence continues"
                 )
             self._initialized = True
+
+    def _initialization_retention(self) -> tuple[int | None, int | None]:
+        if self._read_retention is not None:
+            return self._read_retention()
+        return self.request_retention_days, self.run_retention_days
 
     async def async_record_conversation(self) -> None:
         """Compatibility API; new conversation code uses ``async_run``."""
@@ -2047,25 +2057,12 @@ def _saved_retention(
 
 def usage_retention_policy(options: Mapping[str, Any]) -> dict[str, int | None]:
     """Read retention consistently for durable, volatile and platform consumers."""
-    from .agent_config import AgentConfigError, normalized_agent_integer
+    from .agent_config import effective_usage_retention
 
-    def retention_days(key: str, default: int) -> int | None:
-        # Invalid persisted policy pauses detail collection and expiry until repair.
-        # Treating False as zero would permanently erase the old details.
-        try:
-            days = normalized_agent_integer(options, key, default)
-        except AgentConfigError, ValueError:
-            return None
-        return days if days in USAGE_RETENTION_OPTIONS else None
-
+    retention = effective_usage_retention(options)
     return {
-        "request_retention_days": retention_days(
-            CONF_USAGE_REQUEST_RETENTION_DAYS,
-            DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-        ),
-        "run_retention_days": retention_days(
-            CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
-        ),
+        "request_retention_days": retention[CONF_USAGE_REQUEST_RETENTION_DAYS],
+        "run_retention_days": retention[CONF_USAGE_RUN_RETENTION_DAYS],
     }
 
 
@@ -2179,12 +2176,17 @@ async def async_get_durable_usage(
             totals_store, daily_store, detail_store = _durable_usage_stores(
                 hass, entry_id, subentry_id
             )
+
+            def read_retention() -> tuple[int | None, int | None]:
+                policy = _saved_retention(hass, entry_id, subentry_id)
+                return policy["request_retention_days"], policy["run_retention_days"]
+
             manager = UsageManager(
                 totals_store,
                 daily_store,
                 detail_store,
                 agent_subentry_id=subentry_id,
-                **_saved_retention(hass, entry_id, subentry_id),
+                read_retention=read_retention,
             )
             # Publish before the first await so every concurrent caller initializes and
             # retains the same authoritative manager instance.
@@ -2214,6 +2216,7 @@ async def async_apply_usage_retention(
     policy = _saved_retention(hass, entry_id, subentry_id)
     await async_apply_volatile_usage_retention(hass, entry_id, subentry_id, policy)
     durable = await async_get_durable_usage(hass, entry_id, subentry_id)
+    policy = _saved_retention(hass, entry_id, subentry_id)
     durable.request_retention_days = policy["request_retention_days"]
     durable.run_retention_days = policy["run_retention_days"]
     await durable.async_prune_details()
@@ -2319,12 +2322,14 @@ async def async_get_usage(
                     "in this mode will be lost on Home Assistant restart; conversation remains available",
                     err,
                 )
+                retention = _saved_retention(hass, entry_id, subentry_id)
                 manager = UsageManager(
                     _VolatileUsageStorage(),
                     _VolatileUsageStorage(),
                     _VolatileUsageStorage(),
                     agent_subentry_id=subentry_id,
-                    **_saved_retention(hass, entry_id, subentry_id),
+                    request_retention_days=retention["request_retention_days"],
+                    run_retention_days=retention["run_retention_days"],
                 )
                 await manager.async_initialize()
                 fallbacks[key] = manager

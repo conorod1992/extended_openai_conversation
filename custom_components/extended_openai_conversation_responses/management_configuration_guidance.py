@@ -35,7 +35,7 @@ _FUNCTION_REPAIR_CONFIGURATION_ACTIONS = {
 def configuration_skill_loader_status(
     options: Mapping[str, Any], *, decoded_functions: bool = False
 ) -> SkillLoaderStatus:
-    """Check the configured loader independently of the Skill selection."""
+    """Check the configured loader and any saved Skill names."""
     from .agent_config import (
         configured_function_tools_from_data,
         validate_function_groups,
@@ -50,12 +50,16 @@ def configuration_skill_loader_status(
             else configured_function_tools_from_data(options)
         )
         groups = validate_function_groups(options.get(CONF_FUNCTION_GROUPS, []), tools)
+        selected = options.get(CONF_SKILLS)
         return skill_loader_configuration_status(
             tools,
             groups,
             max_function_calls=normalized_function_call_budget(
                 options, allow_unlimited=True
             ),
+            selected_skills=tuple(selected)
+            if isinstance(selected, (list, tuple))
+            else (),
         )
     except HomeAssistantError:
         return SkillLoaderStatus(

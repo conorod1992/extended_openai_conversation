@@ -128,7 +128,11 @@ from .knowledge import (
     get_loaded_knowledge,
     knowledge_source_as_dict,
 )
-from .live_subentry_updates import update_configuration_subentry, update_live_subentry
+from .live_subentry_updates import (
+    update_configuration_subentry,
+    update_live_subentry,
+    write_configuration_subentry,
+)
 from .local_intents import (
     CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
     CONF_LOCAL_INTENT_EXCLUSIONS,
@@ -1879,8 +1883,8 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                     "Confirm applying shorter Usage detail retention before overwriting configuration"
                 )
             require_current_configuration_catalogue(hass, model_generation)
-            hass.config_entries.async_update_subentry(
-                entry, subentry, data=parsed["config"], title=parsed["title"]
+            write_configuration_subentry(
+                hass, entry, subentry, data=parsed["config"], title=parsed["title"]
             )
             revision = saved_agent_config_revision(
                 subentry, parsed["config"], parsed["title"]
