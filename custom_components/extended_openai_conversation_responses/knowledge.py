@@ -907,6 +907,11 @@ class KnowledgeLibrary:
                 )
             return page
 
+    @property
+    def needs_storage_repair(self) -> bool:
+        """Return the last confirmed storage validation result."""
+        return self._repair_required
+
     def stats(self) -> dict[str, Any]:
         """Return non-sensitive diagnostics."""
         self._ensure_initialized()
@@ -1113,6 +1118,11 @@ async def async_get_knowledge(
         )
     library = managers[key]
     await library.async_initialize()
+    from .storage_repairs import set_storage_repair
+
+    set_storage_repair(
+        hass, entry_id, subentry_id, "knowledge", library.needs_storage_repair
+    )
     return library
 
 

@@ -26,6 +26,28 @@ for (const {route, field, selector, populated, cleared} of cases) {
     let control = panel.locator(selector);
     await expect(control).toBeVisible();
     await edit(control, field, populated);
+    if (field === "skills") {
+      await panel.evaluate(host => {
+        const original = host._hass.callWS.bind(host._hass);
+        host._hass.callWS = async message => {
+          if (message.section === "configuration" && message.action === "skills_catalogue") {
+            return {available: true, installed: ["weather"], loader_available: false};
+          }
+          if (message.section === "configuration" && message.action === "skills_reload") {
+            return {available: true, installed: ["weather", "calendar"], loader_available: true};
+          }
+          return original(message);
+        };
+      });
+      const catalogue = panel.locator("#skill-catalogue");
+      await catalogue.locator("summary").click();
+      await expect(catalogue.getByRole("status")).toContainText("Missing: calendar");
+      await expect(catalogue.getByRole("status")).toContainText("cannot load");
+      await catalogue.getByRole("button", {name: "Reload Skills"}).click();
+      await expect(catalogue.getByRole("status")).toContainText("Installed: weather, calendar");
+      await expect(catalogue.getByRole("status")).not.toContainText("Missing");
+      await expect(control).toHaveValue("weather\ncalendar");
+    }
     await panel.getByRole("button", {name: "Save changes", exact: true}).click();
     await expect.poll(() => page.evaluate((key) => window.browserHarness.getState().configuration.config[key], field)).toEqual(populated);
 

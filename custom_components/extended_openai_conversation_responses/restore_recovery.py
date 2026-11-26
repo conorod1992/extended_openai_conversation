@@ -1819,6 +1819,11 @@ async def _async_recovery_operation[T](
                             recovery_pending=not absent,
                         )
                 statuses = hass.data.setdefault(SUBSYSTEM_STATUS_KEY, {})
+                from .storage_repairs import set_storage_repair
+
+                set_storage_repair(
+                    hass, entry.entry_id, subentry.subentry_id, "restore", not absent
+                )
                 if not absent:
                     statuses.setdefault((entry.entry_id, subentry.subentry_id), {})[
                         "restore_recovery"

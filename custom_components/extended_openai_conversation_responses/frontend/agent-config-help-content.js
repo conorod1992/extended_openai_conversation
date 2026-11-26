@@ -3,7 +3,7 @@ const DOCS_ROOT = "https://github.com/conorod1992/extended_openai_conversation/b
 export const HELP_METADATA = Object.freeze({
   api_mode: Object.freeze({
     title: "Provider API format",
-    paragraphs: ["Auto uses Chat Completions by default and selects Responses for GPT-5.6 and later GPT-5 minor models. Override it when an OpenAI-compatible provider supports only one API style."],
+    paragraphs: ["Auto uses exact-model catalogue capabilities, reasoning settings and request requirements. Unknown text-only models default to Responses."],
     items: [
       { term: "Auto", text: "Lets the integration choose using its model compatibility rules." },
       { term: "Responses", text: "Uses the newer Responses API style." },
@@ -16,7 +16,7 @@ export const HELP_METADATA = Object.freeze({
     title: "Listen for a follow-up",
     items: [
       { term: "HA Default", text: "Uses Home Assistant's normal continuation behaviour." },
-      { term: "Always", text: "Keeps listening after every successful response." },
+      { term: "Always", text: "Keeps listening after successful responses. A recognised Nevermind command ends listening." },
       { term: "Conditional", text: "Lets the model decide whether an immediate reply is expected, using the integration's continuation tool." },
     ],
     keywords: "follow-up follow up keep listening immediate turn home assistant default conditional",
@@ -28,7 +28,7 @@ export const HELP_METADATA = Object.freeze({
     items: [
       { term: "Use Home Assistant sessions", text: "Starts or continues conversations using Home Assistant's normal session handling." },
       { term: "Remember by voice device", text: "Requests from the same Assist device can continue a recent conversation until the timeout expires." },
-      { term: "Remember by user across devices", text: "Requests assigned to the same user can continue across devices. Unidentified speech safely falls back to its device or a new conversation." },
+      { term: "Remember by user across devices", text: "Mapped voice devices for one user can share a recent conversation. Signed-in requests have separate live conversations and may access the same eligible retained data." },
     ],
     keywords: "conversation continuity resume separate Assist invocation cross-device satellite user device speaker recognition",
     href: `${DOCS_ROOT}/features/conversation-continuity.md`,
@@ -144,7 +144,7 @@ export const HELP_METADATA = Object.freeze({
   }),
   context_threshold: Object.freeze({
     title: "Conversation history token limit",
-    paragraphs: ["This is a context-size threshold based on provider-reported input tokens, not a message count. Higher values preserve more history but can use more context and tokens. What is retained depends on the truncation strategy."],
+    paragraphs: ["The threshold uses provider-reported input tokens when available and a conservative local estimate of the prepared request. The truncation strategy controls what is retained."],
     keywords: "tokens context size message count threshold history limit",
     href: `${DOCS_ROOT}/features/context-management.md`,
   }),
@@ -153,7 +153,7 @@ export const HELP_METADATA = Object.freeze({
     items: [
       { term: "Keep recent messages", text: "Drops the oldest complete turns while preserving the system prompt and newest conversation turns." },
       { term: "Clear all messages", text: "Clears prior conversation content when the threshold is exceeded." },
-      { term: "Summarize older messages", text: "Makes one bounded model request to summarize older turns, keeps recent raw turns, and falls back to Keep recent if summarization fails." },
+      { term: "Summarize older messages", text: "Summarizes older turns, keeps recent raw turns, and can retry once if it reaches the output-token limit. If summarization fails, it keeps recent turns." },
     ],
     keywords: "truncate clear summarize recent older messages context history strategy",
     href: `${DOCS_ROOT}/features/context-management.md`,

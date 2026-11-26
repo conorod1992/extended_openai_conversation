@@ -429,7 +429,7 @@ async def test_embedding_refresh_ignores_stale_record(monkeypatch) -> None:
 
 async def test_async_get_memory_caches_and_initializes_manager(monkeypatch) -> None:
     initialized = AsyncMock()
-    manager = SimpleNamespace(async_initialize=initialized)
+    manager = SimpleNamespace(async_initialize=initialized, needs_storage_repair=False)
     constructor = Mock(return_value=manager)
     monkeypatch.setattr(memory_module, "PersistentMemory", constructor)
     monkeypatch.setattr(

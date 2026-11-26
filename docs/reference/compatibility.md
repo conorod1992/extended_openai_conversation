@@ -57,7 +57,7 @@ When a provider does not work:
 
 ## Web Search
 
-The integration's hosted Web Search tool requires the OpenAI Responses API. It supports the global OpenAI endpoint and the official US and EU regional endpoints, subject to model and project availability.
+The integration's hosted Web Search tool requires the OpenAI Responses API. It supports the global OpenAI endpoint and the official AE, AU, CA, EU, GB, IN, JP, KR, SG and US regional endpoints, subject to model and project availability.
 
 ## Short tool-call IDs
 

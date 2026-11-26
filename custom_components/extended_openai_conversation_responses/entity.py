@@ -145,6 +145,7 @@ from .provider_content import RoutedReasoning, answer_text
 from .provider_errors import (
     ProviderStreamError,
     annotate_provider_request,
+    clear_provider_authentication_rejection,
     ensure_successful_responses_result,
     provider_authentication_snapshot,
     provider_stream_error,
@@ -1697,6 +1698,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                     raise
                 else:
+                    clear_provider_authentication_rejection(
+                        self.hass, self.entry, client_auth or authentication
+                    )
                     try:
                         if usage_manager is not None:
                             await usage_manager.async_record_request(

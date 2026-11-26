@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 447,
+  "expected_total_markers": 453,
   "viewports": [
     {
       "name": "small-phone",
@@ -31,10 +31,10 @@
     }
   ],
   "files": {
-    "agent-config-editor-base.js": 56,
+    "agent-config-editor-base.js": 58,
     "agent-config-help-content.js": 1,
     "agent-config-help.js": 2,
-    "agent-config-sections-capabilities.js": 1,
+    "agent-config-sections-capabilities.js": 3,
     "agent-config-sections-media.js": 13,
     "agent-config-sections-primary.js": 4,
     "agent-config-tools-base.js": 39,
@@ -53,7 +53,7 @@
     "management-decision-guidance.js": 3,
     "management-dialogs.js": 2,
     "management-feature-status-core.js": 2,
-    "management-feature-status.js": 2,
+    "management-feature-status.js": 4,
     "management-function-repair.js": 8,
     "management-guest-feature.js": 17,
     "management-history-pagination.js": 6,
@@ -193,6 +193,24 @@
         "[data-model-data=\"reset\"]"
       ],
       "browser_spec": "tests_browser/usability-polish.spec.mjs"
+    },
+    {
+      "source": "agent-config-sections-capabilities.js",
+      "scenario": "Skills catalogue reload retains the editor selection and updates availability",
+      "selectors": [
+        "#skill-catalogue > summary",
+        "#skill-catalogue button"
+      ],
+      "browser_spec": "tests_browser/configuration-edge-semantics.spec.mjs"
+    },
+    {
+      "source": "management-feature-status.js",
+      "scenario": "Failed live diagnostics provide provider and API mode recovery controls",
+      "selectors": [
+        "#test-result a",
+        "#test-result [data-recovery]"
+      ],
+      "browser_spec": "tests_browser/control-reachability.spec.mjs"
     }
   ]
 }

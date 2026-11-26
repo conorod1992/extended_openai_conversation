@@ -12,6 +12,11 @@ function providerRuntimeCheck(facts, fallback = {}) {
   const loaded = runtime.client_loaded === true;
   const provider = runtime.provider || fallback.provider || "Unknown provider";
   const model = runtime.model || fallback.model || "No model selected";
+  if (runtime.authentication_rejected) return {
+    id: "provider_runtime", state: "error", title: "Provider connection",
+    value: "Credentials rejected", detail: "Reauthenticate or replace the API key in Settings > Devices & services.",
+    action: action("usage-maintenance", "diagnostics"),
+  };
   return {
     id: "provider_runtime",
     state: loaded ? "ready" : "error",
@@ -177,6 +182,11 @@ function memoryCheck(facts) {
   const memory = facts.memory || {};
   const mode = String(memory.mode || "off");
   const off = mode === "off";
+  if (!off && (memory.failed || memory.repair_required || memory.keyword_fallback)) return {
+    id: "memory", state: "warning", title: "Long-term memory",
+    value: memory.repair_required ? "Storage needs repair" : memory.failed ? "Unavailable" : "Keyword fallback",
+    action: memory.repair_required ? action("usage-maintenance", "backup-restore") : action("data-memory", "memory-settings"),
+  };
   if (off) {
     return {
       id: "memory",
@@ -219,6 +229,11 @@ function memoryCheck(facts) {
 
 function knowledgeCheck(facts) {
   const knowledge = facts.knowledge || {};
+  if (knowledge.enabled && (knowledge.failed || knowledge.repair_required)) return {
+    id: "knowledge", state: "warning", title: "Knowledge Library",
+    value: knowledge.repair_required ? "Storage needs repair" : "Unavailable",
+    action: action("usage-maintenance", "backup-restore"),
+  };
   if (!knowledge.enabled) {
     return {
       id: "knowledge",

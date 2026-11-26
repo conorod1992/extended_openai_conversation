@@ -1351,7 +1351,7 @@ async def test_async_get_knowledge_creates_once_initializes_and_reuses(
 ) -> None:
     storage = object()
     storage_factory = Mock(return_value=storage)
-    library = SimpleNamespace(async_initialize=AsyncMock())
+    library = SimpleNamespace(async_initialize=AsyncMock(), needs_storage_repair=False)
     library_factory = Mock(return_value=library)
     monkeypatch.setattr(knowledge, "HomeAssistantKnowledgeStorage", storage_factory)
     monkeypatch.setattr(knowledge, "KnowledgeLibrary", library_factory)

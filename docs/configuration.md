@@ -125,7 +125,7 @@ See [Responses API](features/responses-api.md).
 Always also applies to successful local intents and consumed Request Rules inside ExtendedOpenAI. Failed local handling does not request follow-up listening. These local responses keep listening disabled in HA Default and Conditional modes; Conditional requires an actual model continuation decision.
 
 - **HA Default** — preserve Home Assistant's normal follow-up behavior.
-- **Always** — request another utterance after every successful response.
+- **Always** — request another utterance after a successful response except when a recognised Home Assistant `HassNevermind` command ends listening.
 - **Conditional** — allow the model to signal when its answer expects an immediate reply.
 
 The voice client must support Home Assistant's `continue_conversation` signal. See [Voice follow-ups](features/voice-followups.md).
@@ -238,7 +238,7 @@ AI Task agents use a smaller configuration surface focused on:
 - maximum output tokens
 - supported advanced model settings
 
-Conversation-specific features such as voice follow-ups, Web Search, memory, the Knowledge Library, skills, and custom Functions are not shown there.
+AI Task also supports optional hosted Web Search on compatible OpenAI Responses connections. Conversation-only options such as voice follow-ups, memory, the Knowledge Library, Skills and custom Functions are not shown there.
 
 See [AI Task](features/ai-task.md).
 

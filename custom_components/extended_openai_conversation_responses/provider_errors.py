@@ -23,6 +23,7 @@ from .operational_errors import failure_causes
 _MAX_MESSAGE = 1000
 _MAX_FIELD = 200
 _LOGGER = logging.getLogger(__name__)
+_AUTH_FAILURES = f"{__package__}.provider_auth_failures"
 _PARAMETER_SETTINGS = {
     "temperature": "Response creativity",
     "top_p": "Response diversity",
@@ -330,17 +331,43 @@ def request_reauthentication(hass: Any, entry: Any, error: BaseException) -> boo
     if entry is None:
         return False
     originating_auth = getattr(error, "_eoai_authentication_snapshot", None)
-    if (
-        originating_auth is not None
-        and originating_auth != provider_authentication_snapshot(entry)
-    ):
+    current_auth = provider_authentication_snapshot(entry)
+    if originating_auth is not None and originating_auth != current_auth:
         return False
+    if isinstance(getattr(hass, "data", None), dict) and getattr(
+        entry, "entry_id", None
+    ):
+        hass.data.setdefault(_AUTH_FAILURES, {})[entry.entry_id] = current_auth
     try:
         entry.async_start_reauth(hass)
     except Exception:
         _LOGGER.exception("Unable to start Extended OpenAI reauthentication flow")
         return False
     return True
+
+
+def provider_authentication_rejected(hass: Any, entry: Any) -> bool:
+    """Return whether this connection's current credentials were rejected."""
+    data = getattr(hass, "data", None)
+    if not isinstance(data, dict):
+        return False
+    failure = data.get(_AUTH_FAILURES, {}).get(getattr(entry, "entry_id", None))
+    return failure is not None and failure == provider_authentication_snapshot(entry)
+
+
+def clear_provider_authentication_rejection(
+    hass: Any, entry: Any, authentication: tuple[str, str] | None = None
+) -> None:
+    """Clear only the observation belonging to a successful connection or removed entry."""
+    data = getattr(hass, "data", None)
+    if not isinstance(data, dict):
+        return
+    failures = data.get(_AUTH_FAILURES, {})
+    entry_id = getattr(entry, "entry_id", None)
+    if entry_id in failures and (
+        authentication is None or failures[entry_id] == authentication
+    ):
+        failures.pop(entry_id)
 
 
 def provider_log_remediation(error: BaseException) -> str:

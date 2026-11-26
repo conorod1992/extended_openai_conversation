@@ -6,7 +6,7 @@ Open **Extended OpenAI > Capabilities > Request Rules**. Rules, groups, matching
 
 Request Rules only see text that Home Assistant routes to this conversation agent. If a native intent or sentence-trigger automation handles a sentence first, the rule is not involved.
 
-Rules are checked in the order shown. By default, the first matching rule handles the request. Advanced rules can choose to continue checking later rules. An AI handoff, failed action, denied Guest Mode action, or rule evaluation error stops further matching. A false **Only when** condition simply skips that rule.
+Rules are checked in the order shown. The first matching rule whose conditions pass owns the request, including when it hands off to AI or its action fails. A false **Only when** condition simply skips that rule.
 
 ## Build a rule
 

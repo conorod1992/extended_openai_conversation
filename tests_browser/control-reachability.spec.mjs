@@ -128,6 +128,12 @@ for (const viewport of reachabilityInventory.viewports) {
           return {memories:[], total:0, offset:0, returned:0, has_more:false};
         }
         if (request.section === "usage" && ["daily", "runs"].includes(request.action) && window.recoveryReachability.usageFailed) throw Error("Usage unavailable");
+        if (request.section === "diagnostics" && request.action === "test_agent") return {
+          status: "Failed", authentication_rejected: true, checks: [
+            {name: "Authentication", status: "Failed", message: "Replace the rejected credentials"},
+            {name: "API mode", status: "Warning", message: "Review the API format"},
+          ],
+        };
         return original(request);
       };
     });
@@ -153,6 +159,14 @@ for (const viewport of reachabilityInventory.viewports) {
     await page.evaluate(() => { window.recoveryReachability.usageFailed = false; });
     await panel.locator("[data-usage-retry]").first().click();
     await expect(panel.locator("[data-usage-retry]")).toHaveCount(0);
+
+    await panel.evaluate(host => host._navigate("usage-maintenance", "diagnostics"));
+    await panel.locator("#test-agent").click();
+    const diagnostic = panel.locator("#test-result");
+    await expect(diagnostic.getByRole("link", {name: "Provider settings"})).toBeVisible();
+    await auditControls(page, panel, viewport.name + "/diagnostic recovery", diagnostic);
+    await diagnostic.locator("[data-recovery]").click();
+    await expect(panel.locator("#config-api_mode")).toBeFocused();
 
     await page.goto(fixtureUrl("capabilities/request-rules"));
     const rule = panel.locator(".request-rule-card").first();

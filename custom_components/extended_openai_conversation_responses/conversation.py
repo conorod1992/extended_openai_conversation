@@ -756,6 +756,18 @@ class ExtendedOpenAIAgentEntity(
             agent[subsystem]["read_available"] = self._archive_reads_available
             if self._archive_can_write:
                 agent[subsystem]["write_available"] = True
+        if subsystem == "archive" and (
+            healthy or isinstance(error, StorageRepairRequired)
+        ):
+            from .storage_repairs import set_storage_repair
+
+            set_storage_repair(
+                self.hass,
+                self.entry.entry_id,
+                self.subentry.subentry_id,
+                "archive",
+                not healthy,
+            )
 
     @property
     def _archive_reads_available(self) -> bool:

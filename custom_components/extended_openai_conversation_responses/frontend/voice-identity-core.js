@@ -62,6 +62,7 @@ export function updatePolicy(panel) {
   const defaultUser = root.querySelector('[data-config="voice_default_user_id"]')?.value || "";
   const mapping = policy === "device_mapping";
   const defaultActive = policy === "default_user" || (mapping && fallback === "default_user");
+  root.querySelector("#config-voice_default_user_picker")?.toggleAttribute("inert", !defaultActive);
   for (const [selector, active] of [["[data-voice-fallback-card]", mapping], ["[data-voice-default-card]", defaultActive]]) {
     const card = root.querySelector(selector);
     card?.classList.toggle("is-disabled", !active);

@@ -44,13 +44,16 @@
         "request_preview",
         "retention_get",
         "save",
+        "skills_catalogue",
+        "skills_reload",
         "speech_preview",
         "update",
         "validate"
       ],
       "evidence": [
         "tests_real_ha/test_live_config_mutation_semantics.py",
-        "tests_browser/real-ha-backend.spec.mjs"
+        "tests_browser/real-ha-backend.spec.mjs",
+        "tests/test_audit_operational_recovery.py"
       ],
       "semantic_classes": {
         "duplicate": "durable_mutation",
@@ -62,6 +65,8 @@
         "request_preview": "validation_or_preview",
         "retention_get": "read_only",
         "save": "durable_mutation",
+        "skills_catalogue": "read_only",
+        "skills_reload": "ephemeral_mutation",
         "speech_preview": "validation_or_preview",
         "update": "durable_mutation",
         "validate": "validation_or_preview"
@@ -76,6 +81,8 @@
         "request_preview": "admin_only",
         "retention_get": "admin_only",
         "save": "admin_only",
+        "skills_catalogue": "admin_only",
+        "skills_reload": "admin_only",
         "speech_preview": "admin_only",
         "update": "admin_only",
         "validate": "admin_only"
@@ -90,6 +97,8 @@
         "request_preview": "tests_real_ha/test_management_backend_acceptance.py::test_prompt_preview_actions_reach_real_websocket_without_mutating_config",
         "retention_get": "tests/test_management_loading_performance.py::test_retention_projection_reads_only_needed_fields",
         "save": "tests_real_ha/test_native_yaml_management_acceptance.py::test_native_yaml_validate_save_readback_atomic_rejection_and_recovery",
+        "skills_catalogue": "tests/test_audit_operational_recovery.py::test_management_skill_refresh_preserves_selection",
+        "skills_reload": "tests/test_audit_operational_recovery.py::test_management_skill_refresh_preserves_selection",
         "speech_preview": "tests_real_ha/test_management_command_contracts.py::test_configuration_speech_preview_returns_exact_success_payload",
         "update": "tests_real_ha/test_management_command_contracts.py::test_mixed_validity_function_tools_update_is_atomic_and_recovers",
         "validate": "tests/test_management_ui.py::test_configuration_transfer_and_validation_routes"

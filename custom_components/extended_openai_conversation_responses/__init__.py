@@ -502,10 +502,12 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Erase private agent data and stop global effects after the final removal."""
     from .agent_deletion import async_delete_entry_data
+    from .provider_errors import clear_provider_authentication_rejection
 
     try:
         await async_delete_entry_data(hass, entry)
     finally:
+        clear_provider_authentication_rejection(hass, entry)
         if not hass.config_entries.async_entries(DOMAIN):
             await _async_remove_global_effects(hass)
 

@@ -21,11 +21,14 @@ from .const import (
     DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
     DEFAULT_PROMPT,
+    SUBSYSTEM_STATUS_KEY,
 )
+from .knowledge import get_loaded_knowledge
 from .management_configuration_guidance import configuration_guidance_snapshot
 from .management_function_repair import management_function_tool_health
-from .memory import get_memory_mode
+from .memory import get_loaded_memory, get_memory_mode
 from .model_lifecycle import configured_lifecycle, confirmed_retirement_failure
+from .provider_errors import provider_authentication_rejected
 
 
 def _exposed_entity_count(hass: HomeAssistant) -> int:
@@ -82,10 +85,15 @@ def build_setup_health_facts(
     ] and confirmed_retirement_failure(
         hass, entry.entry_id, subentry.subentry_id, lifecycle["model"]
     )
+    key = (entry.entry_id, subentry.subentry_id)
+    statuses = hass.data.get(SUBSYSTEM_STATUS_KEY, {}).get(key, {})
+    memory = get_loaded_memory(hass, *key)
+    knowledge = get_loaded_knowledge(hass, *key)
     return {
         "model_lifecycle": lifecycle,
         "provider_runtime": {
             "client_loaded": getattr(entry, "runtime_data", None) is not None,
+            "authentication_rejected": provider_authentication_rejected(hass, entry),
             "provider": str(entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER)),
             "model": str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip(),
             "configured_api_mode": str(
@@ -104,6 +112,11 @@ def build_setup_health_facts(
         "memory": {
             "mode": get_memory_mode(options),
             "available": memory_available,
+            "failed": bool(statuses.get("persistent_memory", {}).get("error_type")),
+            "repair_required": bool(memory and memory.needs_storage_repair),
+            "keyword_fallback": bool(
+                memory and memory.hybrid_status().get("status") == "lexical_fallback"
+            ),
         },
         "knowledge": {
             "enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
@@ -114,6 +127,8 @@ def build_setup_health_facts(
                 else {}
             ),
             "available": knowledge_available,
+            "failed": bool(statuses.get("knowledge", {}).get("error_type")),
+            "repair_required": bool(knowledge and knowledge.needs_storage_repair),
         },
         "web_search": {
             "enabled": bool(options.get(CONF_WEB_SEARCH, False)),

@@ -24,7 +24,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 - **Request Rules & local handling** — build conditional local shortcuts, chain native Home Assistant actions and Function Tools, and route selected AI requests with a fixed model or reasoning choice. Use native Home Assistant response variables to branch on Function results and **Set conversation response** to speak templated replies. Stop and false conditions follow Home Assistant script flow. Continue to AI runs only after normal local completion. New rules start enabled. Restoring Request Rules from a private backup replaces the destination rule set and preserves the saved enabled states, subject to validation. See the [Request Rules guide](https://conorod1992.github.io/extended_openai_conversation/features/request-rules/) for response and variable semantics.
 - **Function Tools & Function Groups** — add custom capabilities and load large tool collections only when needed. When the model requests a batch of Function Tools, Extended OpenAI runs the calls one at a time and returns their results together.
 - **Delayed Function Tools** — persist eligible delayed work, review and cancel pending actions, and re-check current authorization before execution.
-- **Voice Identity** — map Assist devices/satellites to Home Assistant users so retained data can follow the person speaking.
+- **Voice Identity** — map Assist devices/satellites to Home Assistant users so requests from those devices use the assigned Home Assistant user's eligible retained data. The mapping does not identify the speaker.
 - **Voice follow-ups, speech cleanup & Quiet Hours** — improve spoken conversations and manage satellite behaviour overnight.
 - **Broadcast** — send one-way spoken announcements to selected Assist satellites or the whole home.
 - **Guest Mode** — apply a backend-enforced visitor policy that can only narrow normal access.
@@ -104,7 +104,7 @@ Provider connection details are managed through Home Assistant's integration con
 The management interface is organised around:
 
 - **Assistant** — models, API behaviour, prompt/context, conversation, voice and speech
-- **Capabilities** — Home Assistant access/local handling, Web search & Skills, Request Rules, Function Tools/Groups, Quiet Hours and Guest Mode
+- **Capabilities** — Home Assistant access/local handling, Web search & Skills, Request Rules, Scheduled Actions, Function Tools/Groups, Quiet Hours and Guest Mode
 - **Data & Memory** — memory settings, memories, Knowledge Library and conversation history
 - **Usage & Maintenance** — usage, request debugging, backups, diagnostics and retention
 

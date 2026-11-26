@@ -22,7 +22,7 @@ Explicit search and automatic context can discount recognized standalone reminde
 
 Hybrid uses embeddings, not another LLM, classifier, or reranker call. No vector database is used and raw embeddings are excluded from normal results, diagnostics, prompts, and backups. If the configured provider or embedding model does not support embeddings, retrieval logs the failure and falls back to lexical without breaking the conversation. After a failed remote preparation, subsequent searches immediately use lexical fallback during a monotonic cooldown: 30 seconds initially, doubling to a five-minute maximum. A successful attempt resets it. Credentials, runtime-client, model or endpoint changes permit an immediate retry; equivalent provider-wrapper synchronization does not. Valid vectors are retained. Local cache-write failures are reported separately and do not start remote backoff. The transient `retry_after_seconds` diagnostic reports remaining cooldown without exposing retry identities.
 
-Cold-cache preparation still completes all missing records in the searched scopes before semantic scoring. Large stores can therefore delay that search; background refill is deferred pending lifecycle ownership work. No partial-cache scoring or one-batch-per-search limit is introduced.
+A cold search prepares up to two batches for automatic recall or four for interactive search, with up to 64 records per batch. If matching vectors are still missing, the search uses keyword ranking while preparation continues on subsequent searches.
 
 Semantic matching remains probabilistic and should not be treated as perfect. Choose lightweight lexical matching if you want memory ranking to remain entirely local.
 

@@ -54,7 +54,9 @@ from .provider_content import answer_text
 from .provider_credentials import require_provider_restore_complete
 from .provider_errors import (
     classify_config_provider_error,
+    clear_provider_authentication_rejection,
     ensure_successful_responses_result,
+    provider_authentication_snapshot,
     provider_user_message,
     request_reauthentication,
 )
@@ -147,6 +149,9 @@ async def async_test_agent(
     if client is None:
         checks.append(_check("Authentication", "Failed", "API client is unavailable"))
         return AgentTestResult(_overall(checks), checks)
+    authentication = getattr(client, "_eoai_authentication_snapshot", None) or (
+        provider_authentication_snapshot(entry)
+    )
     checks.append(_check("Authentication", "Passed", "API client is available"))
 
     model = subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
@@ -550,6 +555,7 @@ async def async_test_agent(
         if web_search and web_search_compatible:
             checks.append(_check("Web Search", "Failed", str(err)))
     else:
+        clear_provider_authentication_rejection(hass, entry, authentication)
         await usage_manager.async_record_request(
             successful=True,
             usage=probe_usage,

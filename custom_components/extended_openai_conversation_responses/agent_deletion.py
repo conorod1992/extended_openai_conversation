@@ -212,6 +212,9 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
             if owners.get(entry_id) == subentry_id:
                 owners.pop(entry_id)
             remove_retirement_issue(hass, entry_id=entry_id, subentry_id=subentry_id)
+            from .storage_repairs import remove_storage_repairs
+
+            remove_storage_repairs(hass, entry_id, subentry_id)
             gate.deleted = True
 
     await _async_run_exclusive_operation(gate, remove)

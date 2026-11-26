@@ -19,13 +19,13 @@ This avoids treating two identifiers for the same physical voice source as diffe
 The Voice & identity page lets you configure:
 
 - **Unidentified voice requests** — what retained-data scope is used when Home Assistant cannot identify the speaker/source sufficiently.
-- **Unmapped-device fallback** — what happens when device assignment is enabled but the source device has no assignment.
+- **When a voice device is not assigned** — what happens when device assignment is enabled but the source device has no assignment.
 - **Default voice user** — the Home Assistant user whose retained data is used when a policy explicitly selects the default-user scope.
 - **Voice device assignments** — map a source voice device to a Home Assistant user, shared-household data, or no retained personal data.
 
 A device mapped to a user can use that user's eligible personal memories, temporary context and retained conversation scope according to the agent's other settings. Shared-household and no-personal-data scopes keep personal information from being attached merely because a request came from a voice device.
 
-An explicit no-retained-data assignment overrides the unmapped-device fallback. It cannot retrieve saved memories or conversations or retain new ones. Missing assignments and stale/inactive user assignments follow the configured fallback; they do not select the unavailable user.
+An explicit no-retained-data assignment overrides the configured fallback for unassigned devices. It cannot retrieve saved memories or conversations or retain new ones. Missing assignments and stale/inactive user assignments follow the configured fallback; they do not select the unavailable user.
 
 ## Shared devices
 
@@ -35,7 +35,7 @@ For shared devices, use shared-household data or no retained personal data unles
 
 ## New, renamed, or replaced satellites
 
-After changing voice hardware or Home Assistant device registrations, review **Voice device assignments** and the **Unmapped-device fallback**. A source that no longer matches its old assignment should not silently inherit somebody's personal data through an overly broad fallback.
+After changing voice hardware or Home Assistant device registrations, review **Voice device assignments** and the **When a voice device is not assigned**. A source that no longer matches its old assignment should not silently inherit somebody's personal data through an overly broad fallback.
 
 ## Relationship to archive and continuity
 

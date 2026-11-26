@@ -317,7 +317,7 @@ for (const intent of ["default", "select", "reset"]) test(`late original model l
           await new Promise(resolve => {window.releaseOriginalModelLookup = resolve;});
         }
         if (original) window.originalModelLookupReturned = true;
-        const metadata = {supports_reasoning_effort:true, reasoning:{supported:true, efforts:["low","high"]}, recommended_profile:{reasoning_effort:"low"}};
+        const metadata = {supports_reasoning_effort:true, reasoning:{supported:true, efforts:["low","high"]}, recommended_profile:{reasoning_effort:"low"}, api:{responses:true}, function_calling:{responses:true}};
         return {...result, model_capabilities:metadata, model_metadata:metadata};
       }
       if (message.section === "configuration" && message.action === "validate") window.deferredModelValidations++;
@@ -331,10 +331,13 @@ for (const intent of ["default", "select", "reset"]) test(`late original model l
   const effort = panel.locator('[data-config="reasoning_effort"]');
   await expect(effort).toBeVisible();
   await expect(effort).toBeEnabled();
-  await expect.poll(() => page.evaluate(() => window.deferredModelLookups)).toBe(2);
+  await expect.poll(() => panel.evaluate(host => host._modelCatalogData?.requested_model)).toBe("gpt-5-mini");
+  expect(await page.evaluate(() => window.deferredModelLookups)).toBe(2);
   if (intent !== "default") {
-    if (intent === "reset") await panel.locator("#reset-model-parameters").click();
-    else await effort.selectOption("high");
+    if (intent === "reset") {
+      await panel.evaluate(host => { host._result.defaults = {...host._result.defaults, reasoning_effort:"high"}; });
+      await panel.locator("#reset-model-parameters").click();
+    } else await effort.selectOption("high");
     expect(await panel.evaluate(host => host._draft.reasoning_effort)).toBe("high");
   }
   await page.evaluate(() => window.releaseOriginalModelLookup());

@@ -60,7 +60,7 @@ It is not available through Chat Completions, custom Base URLs, or Azure OpenAI 
 
 ## Voice follow-ups do not happen
 
-Check the **Continue conversation** option and the voice client.
+Check the **Listen for a follow-up** option and the voice client.
 
 Set the mode temporarily to **Always**:
 
@@ -155,3 +155,14 @@ Use **Settings → Devices & services → Extended OpenAI Conversation → Enabl
 This captures operational logs. EOAI's separate **Request debugging** feature captures deeper per-request details; neither switch enables the other. See [Logging](reference/logging.md) for details and privacy precautions.
 
 When reporting an issue, include the smallest relevant log excerpt and redact credentials, private URLs, entity data, and conversation text as necessary.
+
+## What to check when a warning appears
+
+| Log or status | Where to investigate |
+| --- | --- |
+| Provider authentication, model, or API format | Check the provider connection, then **Assistant > Model & responses**. Use **Diagnostics** to test the connection. |
+| Provider response limit or rejected parameter | Review **Model parameters** and **Maximum response length** for the effective model. |
+| Function Tool or Request Rule failure | Open its editor. Check the Home Assistant trace and verify the actual outcome before repeating an action that may have taken effect. |
+| Speech regex worker or replacement failure | Use **Speech Preview** to check the replacement. The worker preserves the original spoken text on failure. |
+| Store needs repair or restore recovery is pending | Preserve the files and consult [Backup & Restore](features/backup-restore.md). Restart Home Assistant if the warning says it can resume a saved transaction. |
+| Scheduled Action abandoned | Check the assistant, Function Tool and due time in the warning before rescheduling. |

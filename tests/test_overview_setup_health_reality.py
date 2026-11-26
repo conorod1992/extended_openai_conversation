@@ -81,7 +81,7 @@ def test_setup_health_recomputes_live_state_instead_of_reusing_stale_facts(
     )
 
     first = management_setup_health.build_setup_health_facts(
-        object(),
+        SimpleNamespace(data={}),
         entry,
         subentry,
         memory_available=True,
@@ -107,7 +107,7 @@ def test_setup_health_recomputes_live_state_instead_of_reusing_stale_facts(
     }
 
     second = management_setup_health.build_setup_health_facts(
-        object(),
+        SimpleNamespace(data={}),
         entry,
         subentry,
         memory_available=False,
@@ -119,11 +119,19 @@ def test_setup_health_recomputes_live_state_instead_of_reusing_stale_facts(
     assert second["provider_runtime"]["configured_api_mode"] == "responses"
     assert second["prompt_state"] == "custom"
     assert second["exposed_entity_count"] == 3
-    assert second["memory"] == {"mode": MEMORY_MODE_MANUAL, "available": False}
+    assert second["memory"] == {
+        "mode": MEMORY_MODE_MANUAL,
+        "available": False,
+        "failed": False,
+        "repair_required": False,
+        "keyword_fallback": False,
+    }
     assert second["knowledge"] == {
         "enabled": True,
         "source_count": 4,
         "available": True,
+        "failed": False,
+        "repair_required": False,
     }
     assert second["web_search"]["enabled"] is True
     assert second["web_search"]["effective_api_mode"] == "responses"

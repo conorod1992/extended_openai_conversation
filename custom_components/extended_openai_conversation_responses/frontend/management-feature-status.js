@@ -14,7 +14,20 @@ export function diagnosticResultMarkup(panel, result) {
   const checks = Array.isArray(result?.checks) ? result.checks : [];
   const rows = checks.map((check) => {
     const status = diagnosticStatusMeta(check?.status);
-    return `<div class="diagnostic-check ${status.className}"><span class="diagnostic-icon" aria-hidden="true">${panel._e(status.icon)}</span><span class="diagnostic-copy"><strong>${panel._e(check?.name || "Check")}</strong><small>${panel._e(check?.message || "")}</small></span><span class="diagnostic-status">${panel._e(status.label)}</span></div>`;
+    const route = {
+      "API mode":"assistant/basics/config-api_mode",
+      "Model access":"assistant/basics/config-chat_model",
+      "Saved request settings":"assistant/model-responses",
+      "Configuration":"capabilities/functions",
+      "Function calling":"capabilities/functions",
+      "Long-term memory":"data-memory/memory-settings",
+      "Skills":"capabilities/web-skills",
+    }[check?.name];
+    const recovery = !["warning","failed"].includes(status.className) ? ""
+      : check?.name === "Authentication" || (check?.name === "Model access" && result.authentication_rejected)
+        ? '<a href="/config/integrations/integration/extended_openai_conversation_responses">Provider settings</a>'
+        : route ? `<button type="button" class="secondary" data-recovery="${route}">Review settings</button>` : "";
+    return `<div class="diagnostic-check ${status.className}"><span class="diagnostic-icon" aria-hidden="true">${panel._e(status.icon)}</span><span class="diagnostic-copy"><strong>${panel._e(check?.name || "Check")}</strong><small>${panel._e(check?.message || "")}</small>${recovery}</span><span class="diagnostic-status">${panel._e(status.label)}</span></div>`;
   }).join("");
   const raw = panel._e(JSON.stringify(result || {}, null, 2));
   return `<div class="diagnostic-summary ${overall.className}" role="status"><span class="diagnostic-icon" aria-hidden="true">${panel._e(overall.icon)}</span><span><strong>${panel._e(overall.label)}</strong><small>${overall.className === "passed" ? "All diagnostic checks passed." : overall.className === "warning" ? "The assistant is working, but one or more checks need attention." : overall.className === "failed" ? "One or more diagnostic checks failed." : "Diagnostic test completed."}</small></span></div><div class="diagnostic-checks">${rows || '<p class="meta">No individual checks were returned.</p>'}</div><details class="diagnostic-raw eoc-details-base"><summary>Show raw diagnostic data</summary><pre>${raw}</pre></details>`;
@@ -58,6 +71,13 @@ export async function testAgent(panel) {
     const result = await panel._call("diagnostics", "test_agent");
     if (!ownsControls() || !ownsPage()) return;
     output.innerHTML = diagnosticResultMarkup(panel, result);
+    output.querySelectorAll?.("[data-recovery]").forEach(button => {
+      button.addEventListener("click", () => {
+        const [page, section, target = ""] = button.dataset.recovery.split("/");
+        panel._pendingSettingFocus = target;
+        void panel._navigate(page, section);
+      });
+    });
     publish(result);
   } catch (err) {
     if (!ownsControls() || !ownsPage()) return;
