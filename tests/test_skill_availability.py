@@ -93,6 +93,20 @@ def test_selected_skills_require_canonical_enabled_loader() -> None:
     available = skill_loader_status(["calendar"], [_loader()], [], max_function_calls=1)
     assert available.available is True
 
+    loader = _loader()
+    parameters = loader["spec"]["parameters"]
+    parameters["properties"]["file"]["type"] = "integer"
+    bad_type = skill_loader_status(["calendar"], [loader], [], max_function_calls=1)
+    assert bad_type.available is False
+    assert "schema" in str(bad_type.reason)
+
+    parameters["properties"]["file"]["type"] = ["null", "string"]
+    assert skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+
+    del parameters["properties"]["file"]
+    parameters["additionalProperties"] = False
+    assert not skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+
 
 def test_selected_skills_require_reachable_enabled_group_and_tool_budget() -> None:
     disabled_group = skill_loader_status(

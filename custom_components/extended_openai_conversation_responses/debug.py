@@ -224,6 +224,44 @@ def _event_has_action(event: Any) -> bool:
     }
 
 
+def _completed_output_signals(data: dict[str, Any]) -> tuple[bool, bool]:
+    """Identify visible text and tool activity when a whole reply arrives."""
+    choices = data.get("choices")
+    if isinstance(choices, list):
+        messages = [
+            message
+            for choice in choices
+            if isinstance(choice, dict)
+            and isinstance(message := choice.get("message"), dict)
+        ]
+        return (
+            any(
+                message.get("content") or message.get("refusal") for message in messages
+            ),
+            any(message.get("tool_calls") for message in messages),
+        )
+    output = data.get("output")
+    if not isinstance(output, list):
+        return False, False
+    text = action = False
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") in ("function_call", "web_search_call"):
+            action = True
+        parts = item.get("content")
+        if item.get("type") == "message" and isinstance(parts, list):
+            text |= any(
+                isinstance(part, dict)
+                and (
+                    (part.get("type") == "output_text" and part.get("text"))
+                    or (part.get("type") == "refusal" and part.get("refusal"))
+                )
+                for part in parts
+            )
+    return text, action
+
+
 @dataclass(slots=True)
 class DebugProviderRequest:
     """One exact provider invocation made during a debug run."""
@@ -248,16 +286,23 @@ class DebugProviderRequest:
     _started_monotonic: float = field(default=0.0, repr=False)
     _event_bytes: int = field(default=0, repr=False)
 
-    def add_event(self, event: Any) -> None:
+    def add_event(self, event: Any, *, completed: bool = False) -> None:
         """Retain provider events up to a hard per-request byte ceiling."""
         now_ms = int((time.monotonic() - self._started_monotonic) * 1000)
         if self.first_event_ms is None:
             self.first_event_ms = now_ms
         serialized = _jsonable(event)
-        if self.first_text_ms is None and _event_has_text(serialized):
-            self.first_text_ms = now_ms
-        if self.first_action_ms is None and _event_has_action(serialized):
-            self.first_action_ms = now_ms
+        if completed and isinstance(serialized, dict):
+            text, action = _completed_output_signals(serialized)
+            if text and self.first_text_ms is None:
+                self.first_text_ms = now_ms
+            if action and self.first_action_ms is None:
+                self.first_action_ms = now_ms
+        else:
+            if self.first_text_ms is None and _event_has_text(serialized):
+                self.first_text_ms = now_ms
+            if self.first_action_ms is None and _event_has_action(serialized):
+                self.first_action_ms = now_ms
         if usage := _extract_usage(serialized):
             self.usage = usage
         if self.api_surface == "responses" and isinstance(serialized, dict):
@@ -629,7 +674,7 @@ class _DebugEndpointProxy:
             request.stream_open_ms = int((time.monotonic() - started) * 1000)
             if hasattr(result, "__aiter__"):
                 return _DebugAsyncStream(result, request)
-            request.add_event(result)
+            request.add_event(result, completed=True)
             request.finish(successful=True)
         return result
 

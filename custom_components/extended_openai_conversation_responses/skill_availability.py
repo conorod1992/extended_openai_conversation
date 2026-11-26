@@ -61,6 +61,30 @@ def function_group_enabled(group: dict[str, Any]) -> bool:
     return group.get("enabled", True) is True
 
 
+def _loader_arguments_allowed(tool: dict[str, Any]) -> bool:
+    """Reject schemas that explicitly prohibit the loader's string arguments."""
+    parameters = tool.get("spec", {}).get("parameters", {})
+    if not isinstance(parameters, dict):
+        return False
+    properties = parameters.get("properties", {})
+    if not isinstance(properties, dict):
+        return False
+    for key in ("name", "file"):
+        if key not in properties and parameters.get("additionalProperties") is False:
+            return False
+        schema = properties.get(key)
+        if schema is False:
+            return False
+        if (
+            isinstance(schema, dict)
+            and (kind := schema.get("type")) is not None
+            and kind != "string"
+            and not (isinstance(kind, list) and "string" in kind)
+        ):
+            return False
+    return True
+
+
 def function_group_for_tool(
     tool_name: str, groups: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
@@ -112,8 +136,13 @@ def skill_loader_status(
         blockers.append(
             "selected Skills require the built-in `load_skill` Function Tool"
         )
-    elif loader.get("enabled", True) is not True:
-        blockers.append("the built-in `load_skill` Function Tool is disabled")
+    else:
+        if loader.get("enabled", True) is not True:
+            blockers.append("the built-in `load_skill` Function Tool is disabled")
+        if not _loader_arguments_allowed(loader):
+            blockers.append(
+                "the `load_skill` schema must allow string name and file arguments"
+            )
 
     group = function_group_for_tool(SKILL_LOADER_TOOL_NAME, groups) if loader else None
     group_id = str(group.get("id", "")) if group else None

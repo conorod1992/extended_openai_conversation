@@ -390,3 +390,30 @@ def test_first_action_timing_covers_both_provider_formats(monkeypatch, surface, 
     request.add_event(event)
     assert request.first_action_ms==125
     assert request.response_events[-1]==event
+
+
+@pytest.mark.parametrize(
+    ("surface", "payload"),
+    [
+        ("responses", {"output": [
+            {"type": "reasoning"},
+            {"type": "message", "content": [{"type": "output_text", "text": "Done"}]},
+            {"type": "function_call"},
+        ]}),
+        ("chat_completions", {"choices": [{"message": {
+            "content": "Done",
+            "tool_calls": [{"type": "function"}],
+        }}]}),
+    ],
+)
+def test_completed_reply_uses_arrival_for_text_and_action_timings(monkeypatch, surface, payload):
+    from custom_components.extended_openai_conversation_responses import debug
+
+    request = DebugProviderRequest(
+        request_id="timing", api_surface=surface, started_at="now",
+        started_offset_ms=0, request={}, metrics={},
+    )
+    request._started_monotonic = 10.0
+    monkeypatch.setattr(debug.time, "monotonic", lambda: 10.125)
+    request.add_event(payload, completed=True)
+    assert request.first_event_ms == request.first_text_ms == request.first_action_ms == 125
