@@ -83,7 +83,7 @@ nav:
       - Discover and install: skills/discover-skills.md
       - Create a Skill: skills/creating-skills.md
   - Reference:
-      - 7.0.0 release notes: release-notes.md
+      - Upcoming 7.0.0 release notes: release-notes.md
       - Compatibility: reference/compatibility.md
       - Credentials and privacy: features/credential-security.md
       - Request context ownership: development/request-context-ownership.md

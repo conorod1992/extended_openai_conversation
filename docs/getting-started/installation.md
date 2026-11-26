@@ -1,5 +1,8 @@
 # Installation
 
+!!! note "Choose the documentation for your version"
+    The requirements and setup below describe the development branch for the upcoming 7.0.0 release. Normal HACS release installation currently provides [6.8.3](https://github.com/conorod1992/extended_openai_conversation/releases/tag/6.8.3); follow the [6.8.3 README](https://github.com/conorod1992/extended_openai_conversation/blob/6.8.3/README.md) for its setup and features. A manual installation from `develop` includes the unreleased changes covered by this site.
+
 This guide gets the integration installed and visible in Home Assistant. Configuration comes next in [First setup](setup.md).
 
 ## Before you begin
@@ -15,7 +18,7 @@ You need:
 
 ## Install with HACS
 
-HACS is the recommended option because it makes installation and updates easier.
+HACS is the recommended option for published releases because it makes installation and updates easier. Check the selected version before downloading.
 
 1. Open **HACS** in Home Assistant.
 2. Open the integrations section.
@@ -31,7 +34,7 @@ HACS is the recommended option because it makes installation and updates easier.
 
 ## Manual installation
 
-1. Download the repository.
+1. Download the version you intend to install: a [published release](https://github.com/conorod1992/extended_openai_conversation/releases), or the [`develop` branch](https://github.com/conorod1992/extended_openai_conversation/tree/develop) for the upcoming 7.0.0 behaviour described here.
 2. Copy:
 
    ```text
@@ -88,4 +91,4 @@ When installed through HACS, update the integration through HACS in the normal w
 
 For a manual installation, replace the integration folder with the new version while preserving your Home Assistant configuration, then restart Home Assistant.
 
-For 7.0.0, read [Upgrading this fork](../migration.md#upgrading-this-fork-to-700) before updating. Use a complete Home Assistant backup for rollback. An agent backup does not replace a backup of the integration installation and its external dependencies.
+Before installing the upcoming 7.0.0 version or its development build, read [Upgrading this fork](../migration.md#upgrading-this-fork-to-700). Use a complete Home Assistant backup for rollback. An agent backup does not replace a backup of the integration installation and its external dependencies.

@@ -20,7 +20,7 @@ Conversation-only features are not shown for AI Task agents.
 
 AI Task agents can optionally use OpenAI's native Web Search tool. Enable **Web search** in the AI Task agent's normal Home Assistant configuration dialog.
 
-Web Search uses the same provider path as conversation agents and remains disabled by default. It requires the direct OpenAI Responses API; Azure, custom base URLs, and Chat Completions do not support the hosted tool.
+Web Search uses the same provider path as conversation agents and remains disabled by default. It requires the direct OpenAI Responses API, including the recognised regional endpoints listed in [Compatibility](../reference/compatibility.md#web-search). Azure, third-party endpoints or proxies, and Chat Completions do not support the hosted tool in this integration.
 
 This works with both free-text and structured AI Task output, so an automation can ask for current information and still receive its normal requested result shape.
 

@@ -97,7 +97,6 @@ function blockSearchText(block) {
 }
 
 function topicSearchText(topic) {
-  if (topic.searchTermsOnly) return topic.terms;
   return [
     topic.title,
     topic.summary,
@@ -143,6 +142,7 @@ function renderGuideBlock(panel, block) {
   if (typeof block === "string") return `<p>${panel._e(block)}</p>`;
   if (!block || typeof block !== "object") return "";
 
+  if (block.type === "docs-link") return `<p><a href="https://conorod1992.github.io/extended_openai_conversation/${panel._e(block.path)}" target="_blank" rel="noopener noreferrer">${panel._e(block.text)}</a></p>`;
   if (block.type === "code") return `<pre><code>${panel._e(block.text || "")}</code></pre>`;
   if (block.type === "heading") {
     return `<h3>${panel._e(block.text || "")}</h3>`;
@@ -164,7 +164,13 @@ function renderGuideTopic(panel, topic) {
 function openGuideTopic(panel, topicId) {
   const root = panel.shadowRoot;
   const target = root.querySelector(`#guide-${CSS.escape(topicId)}`);
-  if (!target || target.hidden) return;
+  if (!target) return;
+  if (target.hidden) {
+    panel._guideQuery = "";
+    const search = root.querySelector("#guide-search");
+    if (search) search.value = "";
+    applyGuideSearch(panel);
+  }
   const previous = panel._openGuideTopicElement;
   if (previous && previous !== target) previous.open = false;
   target.open = true;

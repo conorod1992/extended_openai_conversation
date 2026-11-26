@@ -10,9 +10,10 @@ unchanged. Remaining Batch 3/4 suggestions are still proposals.
 **Historical scope:** this document records the Batch 1/2 baseline and provisional
 decisions, not the final PR policy. Follow-up changes permit direct conversational
 correction/deletion of explicit records and requested household writes, and remove
-the approximate model-proposal veto. See [Batch 3](memory-refactor-batch3.md) and
-the [current Memory feature guide](../features/persistent-memory.md) for the
-implemented behaviour. [Batch 4](memory-refactor-batch4.md) records the decision
+the approximate model-proposal veto. [Batch 3](memory-refactor-batch3.md) records
+that intermediate policy; it is also historical. See the
+[current Memory feature guide](../features/persistent-memory.md) for implemented
+behaviour. [Batch 4](memory-refactor-batch4.md) records the decision
 to keep the production stemmer.
 
 ## Purpose and ownership boundaries

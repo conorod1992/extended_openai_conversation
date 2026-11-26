@@ -61,7 +61,7 @@ All source lives under `custom_components/extended_openai_conversation_responses
 ### Entry Point & Platforms
 `__init__.py` sets up the OpenAI API clients and registers three platforms:
 - **conversation** (`conversation.py`, `entity.py`) — `ExtendedOpenAIAgentEntity` handles user messages via `async_process()`: builds the prompt with exposed entities + skills, calls the provider with configured tools, executes permitted tool calls and iterates until completion.
-- **sensor** — integration-wide Quiet Hours status exposed to Home Assistant.
+- **sensor** (`sensor.py`) — per-conversation-agent Usage and Guest Mode sensors. Quiet Hours publishes a separate integration-wide binary sensor.
 - **ai_task** (`ai_task.py`) — `ExtendedOpenAITaskEntity` handles AI tasks, including structured output, and can use caller-supplied Home Assistant LLM tools. Conversation custom Function Tools are not automatically available to AI Task.
 
 ### Functions (`functions/`)

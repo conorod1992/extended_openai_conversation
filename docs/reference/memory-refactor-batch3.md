@@ -1,4 +1,7 @@
-# Memory refactor — Batch 3: conversation-model semantic resolution
+# Memory refactor — Batch 3: conversation-model semantic resolution (historical)
+
+!!! note "Historical policy — superseded"
+    This page records an earlier refactor stage. The English command gate and provenance-based mutation restrictions described below are no longer used. Current Memory uses the conversation LLM's `intent` interpretation, with backend checks for scope, configured modes, revisions and storage preconditions. See [Personal and household privacy](../features/persistent-memory.md#personal-and-household-privacy) and [Records and reliable updates](../features/persistent-memory.md#records-and-reliable-updates) for the current contract.
 
 ## Trust and action boundaries
 
