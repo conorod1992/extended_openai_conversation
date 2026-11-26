@@ -20,25 +20,25 @@ Native Function Tools are implemented by Extended OpenAI. Open **Extended OpenAI
 `execute_service` accepts a list. Each item has `domain`, `service`, and `service_data`:
 
 ```yaml
-- spec:
-    name: execute_service
-    description: Execute Home Assistant services on exposed targets.
-    parameters:
-      type: object
-      properties:
-        list:
-          type: array
-          items:
-            type: object
-            properties:
-              domain: {type: string}
-              service: {type: string}
-              service_data: {type: object}
-            required: [domain, service, service_data]
-      required: [list]
-  function:
-    type: native
-    name: execute_service
+spec:
+  name: execute_service
+  description: Execute Home Assistant services on exposed targets.
+  parameters:
+    type: object
+    properties:
+      list:
+        type: array
+        items:
+          type: object
+          properties:
+            domain: {type: string}
+            service: {type: string}
+            service_data: {type: object}
+          required: [domain, service, service_data]
+    required: [list]
+function:
+  type: native
+  name: execute_service
 ```
 
 Include an authorized target such as `entity_id`, `device_id`, `area_id`, `floor_id`, or `label_id` in `service_data`, together with fields required by the selected Home Assistant service. The schema allows service-specific keys because valid data varies by service. Home Assistant exposure and permission checks still apply. Do not assume the model may control every entity or call every service.

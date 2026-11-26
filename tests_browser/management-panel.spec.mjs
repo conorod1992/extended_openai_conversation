@@ -18,6 +18,33 @@ test("renders the shipped Guide and responds to real browser interactions", asyn
   await expect(panel.getByText("Broadcast spoken messages around the home", {exact: false}).first()).toBeVisible();
   await expect(panel.getByText("No Guide topics match your search.", {exact: true})).toBeHidden();
 
+  await search.fill("Backup & Restore");
+  await expect(panel.locator("#guide-backup-restore")).toBeVisible();
+  await search.fill("Shareable Setup");
+  await expect(panel.locator("#guide-backup-restore")).toBeVisible();
+  await search.fill("captures");
+  await expect(panel.locator("#guide-request-debugging")).toBeVisible();
+
+  await search.fill("memory");
+  await expect(panel.locator("#guide-broadcast")).toBeHidden();
+  await panel.locator('.guide-quick-card[data-guide-topic="broadcast"]').click();
+  await expect(search).toHaveValue("");
+  await expect(panel.locator("#guide-broadcast")).toBeVisible();
+  await expect(panel.locator("#guide-broadcast")).toHaveJSProperty("open", true);
+  await expect(panel.locator("#guide-continuity")).toHaveJSProperty("open", false);
+  await expect(panel.locator(".guide-topic[open]")).toHaveCount(1);
+
+  await panel.locator('.guide-quick-card[data-guide-topic="quiet-hours"]').click();
+  await expect(panel.locator("#guide-quiet-hours")).toHaveJSProperty("open", true);
+  await expect(panel.locator(".guide-topic[open]")).toHaveCount(1);
+  const recoveryLink = panel.locator("#guide-quiet-hours").getByRole("link", {
+    name: "Legacy ownership recovery", exact: true,
+  });
+  await expect(recoveryLink).toBeVisible();
+  await expect(recoveryLink).toHaveAttribute("href", "https://conorod1992.github.io/extended_openai_conversation/features/quiet-hours/#legacy-ownership-recovery");
+  await expect(recoveryLink).toHaveAttribute("target", "_blank");
+  await expect(recoveryLink).toHaveAttribute("rel", "noopener noreferrer");
+
   await expectHarnessClean(page, pageErrors);
 });
 

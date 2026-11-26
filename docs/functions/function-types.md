@@ -4,6 +4,8 @@ This page is a reference for the custom-function implementations supported by th
 
 For an introduction, start with [Custom functions](index.md).
 
+Complete examples use the single-object format accepted by the Function Tool editor. Fragments containing only `function:` show the implementation block to combine with your tool's `spec:`.
+
 ## `native`
 
 Native functions are implemented by the integration itself.
@@ -34,23 +36,23 @@ Assistant script entity and invoke that entity from the Function.
 Example: add an item to Home Assistant's shopping list.
 
 ```yaml
-- spec:
-    name: add_shopping_item
-    description: Add an item to the Home Assistant shopping list.
-    parameters:
-      type: object
-      properties:
-        item:
-          type: string
-          description: Item to add.
-      required:
-        - item
-  function:
-    type: script
-    sequence:
-      - service: shopping_list.add_item
-        data:
-          name: "{{ item }}"
+spec:
+  name: add_shopping_item
+  description: Add an item to the Home Assistant shopping list.
+  parameters:
+    type: object
+    properties:
+      item:
+        type: string
+        description: Item to add.
+    required:
+      - item
+function:
+  type: script
+  sequence:
+    - service: shopping_list.add_item
+      data:
+        name: "{{ item }}"
 ```
 
 This is a good pattern when Home Assistant already exposes the underlying action and the model only needs a friendly tool interface.
@@ -66,16 +68,16 @@ For example, a calendar function can call `calendar.get_events`, put the service
 Template functions return a value produced by a Home Assistant template.
 
 ```yaml
-- spec:
-    name: get_house_mode
-    description: Get the current household mode.
-    parameters:
-      type: object
-      properties: {}
-  function:
-    type: template
-    value_template: >-
-      The house mode is {{ states('input_select.house_mode') }}.
+spec:
+  name: get_house_mode
+  description: Get the current household mode.
+  parameters:
+    type: object
+    properties: {}
+function:
+  type: template
+  value_template: >-
+    The house mode is {{ states('input_select.house_mode') }}.
 ```
 
 Template functions are useful for small calculated or combined values that do not require executing an action.
@@ -87,16 +89,16 @@ REST functions request an HTTP endpoint and can process the response with templa
 Use this when the assistant needs data from an API that Home Assistant does not already expose cleanly.
 
 ```yaml
-- spec:
-    name: get_example_data
-    description: Get data from an example API.
-    parameters:
-      type: object
-      properties: {}
-  function:
-    type: rest
-    resource: https://example.com/api/status
-    value_template: "{{ value_json }}"
+spec:
+  name: get_example_data
+  description: Get data from an example API.
+  parameters:
+    type: object
+    properties: {}
+function:
+  type: rest
+  resource: https://example.com/api/status
+  value_template: "{{ value_json }}"
 ```
 
 ### Security considerations
@@ -110,19 +112,19 @@ Scrape functions retrieve a web page and extract selected elements.
 They are appropriate for stable pages that do not provide a usable API, but they are inherently more fragile than an API because page markup can change.
 
 ```yaml
-- spec:
-    name: get_site_status
-    description: Read the public status displayed on a website.
-    parameters:
-      type: object
-      properties: {}
-  function:
-    type: scrape
-    resource: https://example.com/status
-    sensor:
-      - name: status
-        select: ".status"
-    value_template: "{{ status }}"
+spec:
+  name: get_site_status
+  description: Read the public status displayed on a website.
+  parameters:
+    type: object
+    properties: {}
+function:
+  type: scrape
+  resource: https://example.com/status
+  sensor:
+    - name: status
+      select: ".status"
+  value_template: "{{ status }}"
 ```
 
 Do not use scraping for private pages that require credentials unless you fully understand how those credentials and responses are handled.
@@ -154,28 +156,28 @@ The safest pattern is a query that you define yourself, with the model supplying
 Conceptually:
 
 ```yaml
-- spec:
-    name: get_last_recorded_update
-    description: Get the most recent stored update for an exposed entity.
-    parameters:
-      type: object
-      properties:
-        entity_id:
-          type: string
-      required:
-        - entity_id
-  function:
-    type: sqlite
-    query: >-
-      SELECT datetime(s.last_updated_ts, 'unixepoch', 'localtime') AS last_updated
-      FROM states s
-      INNER JOIN states_meta sm ON s.metadata_id = sm.metadata_id
-      WHERE sm.entity_id = :entity_id
-      ORDER BY s.last_updated_ts DESC
-      LIMIT 1
-    parameters:
-      entity_id: "{{ entity_id if is_exposed(entity_id) else raise('Entity must be exposed') }}"
-    string_parameters: [entity_id]
+spec:
+  name: get_last_recorded_update
+  description: Get the most recent stored update for an exposed entity.
+  parameters:
+    type: object
+    properties:
+      entity_id:
+        type: string
+    required:
+      - entity_id
+function:
+  type: sqlite
+  query: >-
+    SELECT datetime(s.last_updated_ts, 'unixepoch', 'localtime') AS last_updated
+    FROM states s
+    INNER JOIN states_meta sm ON s.metadata_id = sm.metadata_id
+    WHERE sm.entity_id = :entity_id
+    ORDER BY s.last_updated_ts DESC
+    LIMIT 1
+  parameters:
+    entity_id: "{{ entity_id if is_exposed(entity_id) else raise('Entity must be exposed') }}"
+  string_parameters: [entity_id]
 ```
 
 The value is bound separately from SQL rather than inserted into the query text. The exact Recorder schema can change between Home Assistant versions, so database queries should be tested against your installation. This example reads the most recent stored update, which is not necessarily the last time the state value changed.

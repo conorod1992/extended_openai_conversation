@@ -24,24 +24,26 @@ A function entry has two main parts:
 1. **`spec`** — the tool schema given to the model: its name, description, parameters, and required fields.
 2. **`function`** — how Home Assistant should implement the tool call.
 
+In **Extended OpenAI → Capabilities → Functions → + Add → Function Tool**, paste one object with `spec:` and `function:` at the top level. The single-tool editor does not accept a surrounding YAML list.
+
 A minimal template example:
 
 ```yaml
-- spec:
-    name: describe_room
-    description: Get a short description of a room from Home Assistant data.
-    parameters:
-      type: object
-      properties:
-        room:
-          type: string
-          description: The Home Assistant area name.
-      required:
-        - room
-  function:
-    type: template
-    value_template: >-
-      The requested room is {{ room }}.
+spec:
+  name: describe_room
+  description: Get a short description of a room from Home Assistant data.
+  parameters:
+    type: object
+    properties:
+      room:
+        type: string
+        description: The Home Assistant area name.
+    required:
+      - room
+function:
+  type: template
+  value_template: >-
+    The requested room is {{ room }}.
 ```
 
 The schema should describe only inputs the model genuinely needs to choose.

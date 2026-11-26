@@ -1,5 +1,8 @@
 # Extended OpenAI Conversation (Responses)
 
+!!! note "Development documentation — 7.0.0 is in preparation"
+    This site describes the `develop` branch, including its requirements and unreleased changes. The latest published release is [6.8.3](https://github.com/conorod1992/extended_openai_conversation/releases/tag/6.8.3). For that version, start with the [6.8.3 README](https://github.com/conorod1992/extended_openai_conversation/blob/6.8.3/README.md). A normal HACS release installation does not include all development features described here.
+
 Bring a more capable AI conversation agent to Home Assistant.
 
 Extended OpenAI Conversation connects Home Assistant Assist to the OpenAI API, or a compatible provider, and adds richer Home Assistant control, memory, web search, local request handling, custom tools, voice features, privacy controls, diagnostics and more.
@@ -34,7 +37,7 @@ You do **not** need to configure all of these features. For most users, the best
 - [Get an OpenAI API key](getting-started/api-key.md)
 - [First setup](getting-started/setup.md)
 - [Configuration](configuration.md)
-- [7.0.0 release notes and upgrade considerations](release-notes.md)
+- [Upcoming 7.0.0 release notes and upgrade considerations](release-notes.md)
 - [Troubleshooting](troubleshooting.md)
 
 ## Find the right guide

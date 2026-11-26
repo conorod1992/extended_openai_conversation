@@ -13,7 +13,7 @@ Web Search in this integration requires:
 - a model that supports the hosted Web Search tool
 - **Web search** enabled under **Extended OpenAI → Capabilities → Web search & Skills** for the selected agent
 
-It is not supported through Chat Completions, custom Base URLs, or Azure OpenAI in the integration's current implementation.
+Direct OpenAI includes the recognised regional endpoints listed in [Compatibility](../reference/compatibility.md#web-search). Hosted Web Search is not supported through Chat Completions, third-party endpoints or proxies, or Azure OpenAI in the integration's current implementation.
 
 ## How it behaves
 

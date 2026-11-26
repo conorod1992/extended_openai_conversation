@@ -50,7 +50,6 @@ data:
   prompt: "Describe this camera image."
   images:
     - url: /config/www/camera.jpg
-  max_tokens: 300
 response_variable: image_result
 ```
 
