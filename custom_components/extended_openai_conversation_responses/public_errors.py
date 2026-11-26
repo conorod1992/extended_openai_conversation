@@ -9,6 +9,8 @@ from .exceptions import (
     EffectReplayBlocked,
     EntityNotExposed,
     FunctionResponseParseError,
+    SQLiteDeadlineExceeded,
+    SQLiteResultLimitExceeded,
     TokenLengthExceededError,
 )
 
@@ -94,6 +96,16 @@ def safe_operational_explanation(error: BaseException) -> str | None:
         return str(InvalidIndirectTarget())
     if type(error) is InvalidScrapeSelector:
         return str(InvalidScrapeSelector())
+    if type(error) is FunctionResponseParseError:
+        return (
+            "The REST response could not be parsed. Check the endpoint response format."
+        )
+    if type(error) is SQLiteDeadlineExceeded:
+        return "The SQLite query reached its deadline. Check for database contention or reduce the work performed by the query."
+    if type(error) is SQLiteResultLimitExceeded:
+        return "The SQLite result exceeded its configured limits. Reduce the rows or columns returned."
+    if isinstance(error, TemplateError):
+        return str(SanitizedTemplateError())
     if type(error) is SanitizedTemplateError:
         return str(SanitizedTemplateError())
     if type(error) is StorageRepairRequired:

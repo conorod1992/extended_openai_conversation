@@ -14,6 +14,7 @@ from pathlib import Path
 import traceback
 from typing import Any
 
+from aiohttp import ClientConnectionError, ClientPayloadError
 import yaml
 
 _LOGGER_NAMESPACE = "custom_components.extended_openai_conversation_responses"
@@ -138,13 +139,16 @@ def failure_diagnostic(error: BaseException) -> FailureDiagnostic:
             explanation = safe_operational_explanation(cause)
         if type(cause) is StorageSerializationFailure:
             category = "storage"
-        if (
-            category == "backend"
-            and isinstance(cause, OSError)
-            and type(cause.errno) is int
-        ):
-            category = "storage" if cause.errno in _STORAGE_REASONS else "os_error"
-            number = cause.errno
+        if category == "backend":
+            if isinstance(cause, TimeoutError):
+                category = "timeout"
+            elif isinstance(cause, ClientConnectionError):
+                category = "network_connection"
+            elif isinstance(cause, ClientPayloadError):
+                category = "response_payload"
+            elif isinstance(cause, OSError) and type(cause.errno) is int:
+                category = "storage" if cause.errno in _STORAGE_REASONS else "os_error"
+                number = cause.errno
     return FailureDiagnostic(
         category, type(error).__name__, line, column, number, explanation
     )

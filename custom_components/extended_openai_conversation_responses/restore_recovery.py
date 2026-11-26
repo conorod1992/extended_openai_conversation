@@ -1608,6 +1608,11 @@ async def _async_restore_backup_recoverably(
         try:
             committed = await _async_write_journal_verified(store, committed_journal)
         except _JournalVerificationUnavailable as err:
+            log_handled_failure(
+                _LOGGER,
+                f"Restore outcome is uncertain entry={entry.entry_id} assistant={subentry.subentry_id}. Restart Home Assistant to resolve the saved transaction before retrying",
+                err,
+            )
             raise mark_mutation_failure(
                 backup.BackupError(
                     "Restore data was written, but its commit decision could not be "

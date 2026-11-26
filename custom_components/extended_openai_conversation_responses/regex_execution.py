@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from functools import partial
 from itertools import pairwise
@@ -448,7 +448,7 @@ async def _async_apply_speech_replacements(
     if len(value) > _speech_output_limit(len(text)):
         report("Speech regex worker exceeded the output limit")
         return text
-    return _speech_replacement_text(text, value, result)
+    return _speech_replacement_text(text, value, result, report=report)
 
 
 def _speech_span_payload(text: str) -> list[tuple[int, int, str]]:
@@ -459,7 +459,13 @@ def _speech_span_payload(text: str) -> list[tuple[int, int, str]]:
     )
 
 
-def _speech_replacement_text(original: str, value: str, result: dict[str, Any]) -> str:
+def _speech_replacement_text(
+    original: str,
+    value: str,
+    result: dict[str, Any],
+    *,
+    report: Callable[[str], None] | None = None,
+) -> str:
     """Validate the worker's mapping of literal speech ranges to the new text."""
     if not isinstance(original, _SpeechText):
         return value
@@ -485,7 +491,12 @@ def _speech_replacement_text(original: str, value: str, result: dict[str, Any]) 
         and all(left[1] <= right[0] for left, right in pairwise(spans))
     ):
         return _SpeechText(value, tuple(_LiteralSpan(*span) for span in spans))
-    _LOGGER.warning("Speech regex worker lost literal spans; preserving spoken text")
+    if report is not None:
+        report("Speech regex worker lost literal spans")
+    else:
+        _LOGGER.warning(
+            "Speech regex worker lost literal spans; preserving spoken text"
+        )
     return original
 
 

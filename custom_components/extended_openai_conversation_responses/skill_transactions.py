@@ -104,6 +104,8 @@ def recover_transaction(journal: Path, installed: Path) -> None:
         raise HomeAssistantError("Skill recovery record is unsafe or oversized")
     match = _TRANSACTION.fullmatch(journal.name)
     document = json.loads(journal.read_text())
+    if not isinstance(document, dict):
+        raise HomeAssistantError("Skill recovery journal must contain an object")
     root = journal.parent.resolve()
     name, kind = document.get("name"), document.get("kind")
     if (
@@ -181,11 +183,21 @@ def recover_transactions(root: Path, installed: Path) -> None:
     if root.is_symlink():
         raise HomeAssistantError("Skill staging root must not be a symbolic link")
     for journal in sorted(root.glob("transaction-*.json")):
-        if journal.is_symlink():
-            raise HomeAssistantError(
-                "Skill recovery journal must not be a symbolic link"
+        try:
+            if journal.is_symlink():
+                raise HomeAssistantError(
+                    "Skill recovery journal must not be a symbolic link"
+                )
+            recover_transaction(journal, installed)
+        except (OSError, ValueError, RecursionError, HomeAssistantError) as err:
+            match = _TRANSACTION.fullmatch(journal.name)
+            log_handled_failure(
+                _LOGGER,
+                f"Could not recover legacy Skill transaction journal={match[0] if match else 'unrecognized'}. "
+                "Review the journal and its ownership before changing the recovery files.",
+                err,
             )
-        recover_transaction(journal, installed)
+            raise
     for record in root.glob("download-*.json"):
         _recover_abandoned_download(record)
     for pattern in ("*.backup-*", "*.remove-*"):
