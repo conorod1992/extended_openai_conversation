@@ -840,6 +840,10 @@ class ConversationArchive:
             # Persist legacy private-title cleanup before publishing normalized state.
             self._repair_required = repair_required
             if repair_required:
+                _LOGGER.warning(
+                    "Conversation Archive needs repair; %d validated sessions remain readable. Writes and backup export are blocked pending repair",
+                    len(staged_sessions),
+                )
                 # Privacy purges are independent of repair: remove only content
                 # bound to validated private sessions, retaining all other raw data.
                 private_ids = {

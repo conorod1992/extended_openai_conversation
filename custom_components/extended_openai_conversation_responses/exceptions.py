@@ -132,6 +132,10 @@ class FunctionResponseParseError(HomeAssistantError):
     """A backend response cannot be safely interpreted as a Function result."""
 
 
+class StructuredOutputsUnavailable(HomeAssistantError):
+    """The effective provider model cannot accept a native output schema."""
+
+
 class FunctionValidationInfrastructureError(HomeAssistantError):
     """When local Function Tool validation cannot complete safely."""
 

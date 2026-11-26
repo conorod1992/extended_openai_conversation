@@ -7,7 +7,9 @@ from homeassistant.exceptions import HomeAssistantError, TemplateError
 from .exceptions import (
     EffectOutcomeUnknown,
     EffectReplayBlocked,
+    EntityNotExposed,
     FunctionResponseParseError,
+    TokenLengthExceededError,
 )
 
 
@@ -68,6 +70,53 @@ class InvalidScrapeSelector(HomeAssistantError):
         super().__init__(
             "Invalid Scrape CSS selector. Check the selector in Functions."
         )
+
+
+def safe_operational_explanation(error: BaseException) -> str | None:
+    """Project only known error contracts, never arbitrary exception messages."""
+    from .operational_errors import StorageSerializationFailure
+    from .persistence_hardening import StorageRepairRequired
+    from .skill_resource_limits import MAX_SKILL_METADATA_BYTES, SkillMetadataError
+
+    if type(error) is StorageSerializationFailure:
+        return "Home Assistant could not encode the storage snapshot. Check the affected configuration before retrying."
+    if type(error) is TokenLengthExceededError:
+        return str(
+            TokenLengthExceededError(error.token if type(error.token) is int else None)
+        )
+    if type(error) is EntityNotExposed and error.reason in {
+        "invalid_target",
+        "permission",
+        "policy",
+    }:
+        return str(EntityNotExposed("", error.reason))
+    if type(error) is InvalidIndirectTarget:
+        return str(InvalidIndirectTarget())
+    if type(error) is InvalidScrapeSelector:
+        return str(InvalidScrapeSelector())
+    if type(error) is SanitizedTemplateError:
+        return str(SanitizedTemplateError())
+    if type(error) is StorageRepairRequired:
+        return "The store is quarantined. Have an administrator repair it or recover a validated backup into a clean assistant."
+    if type(error) is EffectOutcomeUnknown:
+        return "An action may already have taken effect. Check the actual result before retrying."
+    if type(error) is EffectReplayBlocked:
+        return "A previous effect is unacknowledged. Check the actual result before retrying."
+    if (
+        type(error) is SkillMetadataError
+        and error.args
+        and isinstance(error.args[0], str)
+        and error.args[0]
+        in {
+            "Skill metadata is not a regular file",
+            "Unable to read Skill metadata; check the file and its permissions",
+            f"Skill metadata exceeds the {MAX_SKILL_METADATA_BYTES}-byte limit",
+            "Skill metadata is not valid UTF-8",
+            "SKILL.md is outside its Skill directory",
+        }
+    ):
+        return str(error.args[0])
+    return None
 
 
 def sanitize_backend_error(error: BaseException) -> BaseException:

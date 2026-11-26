@@ -17,10 +17,22 @@ from typing import Any
 import yaml
 
 _LOGGER_NAMESPACE = "custom_components.extended_openai_conversation_responses"
+_STORAGE_REASONS = {
+    errno.ENOSPC: "storage is full; free disk space",
+    errno.EDQUOT: "storage quota exceeded; free space or increase the quota",
+    errno.EACCES: "permission denied; check Home Assistant storage permissions",
+    errno.EPERM: "permission denied; check Home Assistant storage permissions",
+    errno.EROFS: "filesystem is read-only; restore writable Home Assistant storage",
+    errno.ENOENT: "storage path is missing; check that Home Assistant storage is mounted",
+}
 
 _FUNCTION_TOOL_NAME: ContextVar[str] = ContextVar(
     "eoai_diagnostic_tool", default="unknown"
 )
+
+
+class StorageSerializationFailure(OSError):
+    """A Home Assistant Store rejected an EOAI snapshot before writing it."""
 
 
 @contextmanager
@@ -40,14 +52,23 @@ def current_function_tool_name() -> str:
 
 def storage_failure_reason(number: int | None) -> str:
     """Describe an OS failure without a private filename or stored value."""
-    if number is None:
-        return "storage operation failed"
-    return {
-        errno.ENOSPC: "storage is full; free disk space",
-        errno.EACCES: "permission denied; check Home Assistant storage permissions",
-        errno.EPERM: "permission denied; check Home Assistant storage permissions",
-        errno.EROFS: "filesystem is read-only; restore writable Home Assistant storage",
-    }.get(number, "storage operation failed")
+    return (
+        _STORAGE_REASONS.get(number, "storage operation failed")
+        if number is not None
+        else "storage operation failed"
+    )
+
+
+def failure_causes(error: BaseException) -> Iterator[BaseException]:
+    """Walk the displayed cause chain with bounded work and cycle protection."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen and len(seen) < 8:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +86,7 @@ class FailureDiagnostic:
     line: int | None = None
     column: int | None = None
     number: int | None = None
+    explanation: str | None = None
 
     def context(self) -> str:
         position = (
@@ -72,12 +94,14 @@ class FailureDiagnostic:
             if self.line is not None and self.column is not None
             else ""
         )
+        number = f" errno={self.number}" if self.number is not None else ""
         storage = (
             f" ({storage_failure_reason(self.number)})"
-            if self.number is not None
+            if self.number is not None and self.category == "storage"
             else ""
         )
-        return f"category={self.category} errno={self.number}{storage}{position}"
+        explanation = f". {self.explanation}" if self.explanation else ""
+        return f"category={self.category}{number}{storage}{position}{explanation}"
 
     def summary(self) -> str:
         return f"error_type={self.error_type} {self.context()}"
@@ -106,19 +130,30 @@ def failure_diagnostic(error: BaseException) -> FailureDiagnostic:
             if type(error.colno) is int and 0 < error.colno <= 10**9
             else None
         )
-    elif isinstance(error, OSError):
-        category = "storage"
-        number = error.errno if type(error.errno) is int else None
-    return FailureDiagnostic(category, type(error).__name__, line, column, number)
+    from .public_errors import safe_operational_explanation
+
+    explanation = None
+    for cause in failure_causes(error):
+        if explanation is None:
+            explanation = safe_operational_explanation(cause)
+        if type(cause) is StorageSerializationFailure:
+            category = "storage"
+        if (
+            category == "backend"
+            and isinstance(cause, OSError)
+            and type(cause.errno) is int
+        ):
+            category = "storage" if cause.errno in _STORAGE_REASONS else "os_error"
+            number = cause.errno
+    return FailureDiagnostic(
+        category, type(error).__name__, line, column, number, explanation
+    )
 
 
 def _stack_locations(error: BaseException) -> str:
     """Keep causal types and code locations, excluding lines, locals and prose."""
     locations = []
-    seen: set[int] = set()
-    current: BaseException | None = error
-    while current is not None and id(current) not in seen and len(seen) < 8:
-        seen.add(id(current))
+    for current in failure_causes(error):
         frames = traceback.extract_tb(current.__traceback__, limit=16)
         locations.append(
             type(current).__name__
@@ -130,9 +165,6 @@ def _stack_locations(error: BaseException) -> str:
                 )
                 or "<no stack>"
             )
-        )
-        current = current.__cause__ or (
-            None if current.__suppress_context__ else current.__context__
         )
     return " | ".join(locations)
 
@@ -222,10 +254,7 @@ def log_handled_failure(
     )
     if not logger.isEnabledFor(logging.DEBUG):
         return
-    seen: set[int] = set()
-    current: BaseException | None = error
-    while current is not None and id(current) not in seen and len(seen) < 8:
-        seen.add(id(current))
+    for current in failure_causes(error):
         frames = traceback.extract_tb(current.__traceback__, limit=16)
         logger.debug(
             "%s; cause_type=%s traceback=%s",
@@ -236,9 +265,6 @@ def log_handled_failure(
                 for frame in frames
             )
             or "<no stack>",
-        )
-        current = current.__cause__ or (
-            None if current.__suppress_context__ else current.__context__
         )
 
 

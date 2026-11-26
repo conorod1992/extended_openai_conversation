@@ -1143,7 +1143,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         try:
             seed_persisted_config_projection(entry, subentry, snapshot, revision)
         except Exception:
-            _LOGGER.warning("Committed Guest policy could not seed its optional cache")
+            _LOGGER.debug("Committed Guest policy could not seed its optional cache")
         return {"revision": revision, "config": policy_config}
     if action == "update":
         return {
@@ -1428,7 +1428,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         try:
             seed_persisted_config_projection(entry, subentry, snapshot, revision)
         except Exception:
-            _LOGGER.warning("Committed configuration could not seed its optional cache")
+            _LOGGER.debug("Committed configuration could not seed its optional cache")
         timings["projection_seed_ms"] = _elapsed_ms(phase)
         timings["total_ms"] = _elapsed_ms(started)
     finally:
@@ -1733,7 +1733,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                     entry, subentry, snapshot, result["revision"]
                 )
             except Exception:
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Committed configuration update could not seed its optional cache"
                 )
         finally:
@@ -1875,7 +1875,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 )
                 seed_persisted_config_projection(entry, subentry, snapshot, revision)
             except Exception:
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Committed configuration import could not seed its optional cache"
                 )
             await _finish_saved_usage_retention(request, None)
@@ -1901,8 +1901,16 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         if not isinstance(sample, str) or not isinstance(updates, dict):
             raise HomeAssistantError("sample_text and config are invalid")
         normalized = merge_agent_config(subentry.data, updates, provider=provider)
+        warnings: list[str] = []
         return {
-            "speech_text": await async_process_speech_text(hass, sample, normalized)
+            "speech_text": await async_process_speech_text(
+                hass,
+                sample,
+                normalized,
+                warnings=warnings,
+                assistant=subentry.subentry_id,
+            ),
+            **({"warning": warnings[0]} if warnings else {}),
         }
     if action in {"prompt_preview", "request_preview"}:
         updates = message.get("config", {})
@@ -2748,7 +2756,7 @@ def _temporary_memory_mutation_result(
     try:
         result["memory_order"] = manager.management_memory_order(owner)
     except Exception:
-        _LOGGER.warning("Committed Temporary Memory mutation omitted optional ordering")
+        _LOGGER.debug("Committed Temporary Memory mutation omitted optional ordering")
     return result
 
 
@@ -3042,7 +3050,7 @@ def _knowledge_mutation_result(
         try:
             result[name] = build()
         except Exception:
-            _LOGGER.warning("Committed Knowledge mutation omitted optional %s", name)
+            _LOGGER.debug("Committed Knowledge mutation omitted optional %s", name)
     return result
 
 
@@ -3121,7 +3129,7 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
                 request.entry, request.subentry, snapshot, revision
             )
         except Exception:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Committed Knowledge setting could not seed its optional cache"
             )
         return result

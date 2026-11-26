@@ -244,6 +244,7 @@ from .request_context import (
     _ACTIVE_TURN,
     ConversationTurnContext,
     conversation_invocation,
+    set_invocation_routing_rule,
     set_temporary_memory_prefetch,
 )
 from .request_diagnostics import (
@@ -1317,6 +1318,12 @@ class ExtendedOpenAIAgentEntity(
                             if self._request_rule_runtime is not None
                             else dict(self.subentry.data)
                         )
+                        if (
+                            evaluation is not None
+                            and evaluation.match.rule.get("action_type")
+                            == "model_routing"
+                        ):
+                            set_invocation_routing_rule(evaluation.match.rule["id"])
                         if self._usage is None:
                             result = await self._async_dispatch_message(
                                 model_input,
@@ -1552,7 +1559,11 @@ class ExtendedOpenAIAgentEntity(
                 )
             if deferred_speech:
                 result.response.async_set_speech(
-                    await async_process_speech_text(self.hass, *deferred_speech[0])
+                    await async_process_speech_text(
+                        self.hass,
+                        *deferred_speech[0],
+                        assistant=getattr(self, "entity_id", None),
+                    )
                 )
             return result
         except (OpenAIError, HomeAssistantError, httpx.RequestError) as err:
@@ -1916,7 +1927,10 @@ class ExtendedOpenAIAgentEntity(
                 speech_config = self.subentry.data
                 if needs_async_speech_cleanup(response, speech_config):
                     spoken = await async_process_speech_text(
-                        self.hass, response, speech_config
+                        self.hass,
+                        response,
+                        speech_config,
+                        assistant=getattr(self, "entity_id", None),
                     )
                 else:
                     spoken = process_speech_text(response, speech_config)

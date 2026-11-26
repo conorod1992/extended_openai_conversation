@@ -2823,9 +2823,14 @@ class QuietHoursManager:
         *,
         ownership: str = "released",
     ) -> None:
+        recovery = (
+            "Saved control ownership remains unresolved; Quiet Hours can retry reconciliation."
+            if ownership == "retained"
+            else "Quiet Hours released this control. The failed operation was not confirmed."
+        )
         log_handled_failure(
             logging.getLogger(__name__),
-            f"Quiet Hours operation={operation} control={kind} entity={entity_id}; outcome=failed ownership={ownership}",
+            f"Quiet Hours operation={operation} control={kind} entity={entity_id}; outcome=failed ownership={ownership}. {recovery}",
             error,
         )
 

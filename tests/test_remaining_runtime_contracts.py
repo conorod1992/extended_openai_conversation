@@ -114,7 +114,9 @@ async def test_completed_message_applies_deferred_speech_cleanup(hass, monkeypat
         is result
     )
     assert response.speech["plain"]["speech"] == "clean speech"
-    cleanup.assert_awaited_once_with(hass, "raw speech", {"speech_cleanup": "custom"})
+    cleanup.assert_awaited_once_with(
+        hass, "raw speech", {"speech_cleanup": "custom"}, assistant=entity.entity_id
+    )
 
 
 @pytest.mark.parametrize("mode", [None, SimpleNamespace(is_active=lambda: False)])

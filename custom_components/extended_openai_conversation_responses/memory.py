@@ -401,6 +401,12 @@ class PersistentMemory:
                     _prepare_stored_memories, data
                 )
                 self._repair_required = repair_required
+                if repair_required:
+                    _LOGGER.warning(
+                        "Persistent Memory store=%s needs repair; %d records remain readable. Writes and backup export are blocked; the original data was kept",
+                        getattr(self._storage, "key", "unknown"),
+                        len(memories),
+                    )
                 if payload is not None:
                     await self._storage.async_save(payload)
                 self._memories = memories
@@ -2427,6 +2433,7 @@ def _rank_memory_snapshot(
                 document_frequency[token] += 1
     average_length = max(1.0, total_length / len(corpus))
     normalized_query = _normalize(query)
+    prepared_query = _prepare_cosine_query(query_embedding) if hybrid else None
     ranked: list[tuple[float, str, MemoryRecord]] = []
     for memory in corpus:
         terms, token_set = document_data[memory.memory_id]
@@ -2511,18 +2518,21 @@ def _rank_memory_snapshot(
             if topic_lexical >= MIN_LEXICAL_RELEVANCE_SCORE:
                 lexical = topic_lexical
         genuine_lexical = lexical
-        if lexical <= 0:
-            lexical = _fuzzy_relevance(query_tokens, token_set)
         semantic = (
-            _cosine_similarity(
-                query_embedding,
+            _prepared_cosine_similarity(
+                prepared_query,
                 _snapshot_embedding(
                     memory, embedding_cache, embedding_model, embedding_space_id
                 ),
             )
-            if hybrid
+            if prepared_query is not None
             else None
         )
+        if lexical <= 0 and (
+            allow_fuzzy_only
+            or (semantic is not None and semantic >= MIN_SEMANTIC_SIMILARITY)
+        ):
+            lexical = _fuzzy_relevance(query_tokens, token_set)
         relevance = lexical
         if semantic is not None:
             semantic = max(0.0, semantic)
@@ -2703,23 +2713,41 @@ def _cosine_similarity(
 ) -> float | None:
     if not left or not right or len(left) != len(right):
         return None
-    # Scaling each vector independently keeps all products bounded even for
-    # finite vectors close to the limits of the float representation.
-    left_scale = max(map(abs, left))
-    right_scale = max(map(abs, right))
-    if (
-        not left_scale
-        or not right_scale
-        or not math.isfinite(left_scale)
-        or not math.isfinite(right_scale)
-    ):
+    return _prepared_cosine_similarity(_prepare_cosine_query(left), right)
+
+
+def _prepare_cosine_query(
+    left: Sequence[float] | None,
+) -> tuple[tuple[float, ...], float] | None:
+    if not left:
         return None
-    dot = left_squared = right_squared = 0.0
+    left_scale = max(map(abs, left))
+    if not left_scale or not math.isfinite(left_scale):
+        return None
+    scaled = tuple(value / left_scale for value in left)
+    squared = 0.0
+    for value in scaled:
+        squared += value * value
+    return scaled, squared
+
+
+def _prepared_cosine_similarity(
+    prepared: tuple[tuple[float, ...], float] | None,
+    right: Sequence[float] | None,
+) -> float | None:
+    if prepared is None or not right:
+        return None
+    left, left_squared = prepared
+    if len(left) != len(right):
+        return None
+    # Scale each vector independently to bound products for extreme floats.
+    right_scale = max(map(abs, right))
+    if not right_scale or not math.isfinite(right_scale):
+        return None
+    dot = right_squared = 0.0
     for a, b in zip(left, right, strict=True):
-        a /= left_scale
         b /= right_scale
         dot += a * b
-        left_squared += a * a
         right_squared += b * b
     if not math.isfinite(dot):
         return None

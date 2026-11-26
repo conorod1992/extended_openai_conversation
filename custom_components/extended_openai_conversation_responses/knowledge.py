@@ -348,6 +348,13 @@ class KnowledgeLibrary:
                 raw_sources = _stored_sources(data)
                 sources, index = await asyncio.to_thread(_load_index, raw_sources)
                 self._repair_required = len(sources) != len(raw_sources)
+                if self._repair_required:
+                    _LOGGER.warning(
+                        "Knowledge Library store=%s needs repair; %d of %d records remain readable. Writes and backup export are blocked; the original data was kept",
+                        getattr(self._storage, "key", "unknown"),
+                        len(sources),
+                        len(raw_sources),
+                    )
                 self._sources = sources
                 self._publish_index(index)
                 self._remember_committed_state()
@@ -712,29 +719,47 @@ class KnowledgeLibrary:
             candidates.update(self._token_index.get(token, set()))
 
         best_by_source: dict[str, tuple[bool, float, _Chunk]] = {}
+        exact_terms = raw_query_tokens - _SEARCH_FILLER_TERMS
+        salient_terms = query_tokens - _SEARCH_FILLER_TERMS
+        source_scores: dict[str, tuple[bool, bool, float, float, bool, bool]] = {}
         for chunk_key in candidates:
             chunk = self._chunks[chunk_key]
             if allowed is not None and chunk.source_id not in allowed:
                 continue
-            features = self._source_features[chunk.source_id]
-            title_tokens = features.title_tokens
-            description_tokens = features.description_tokens
-            normalized_title = features.normalized_title
-            normalized_description = features.normalized_description
-            all_tokens = chunk.tokens | title_tokens | description_tokens
-            exact_salient = bool((raw_query_tokens - _SEARCH_FILLER_TERMS) & all_tokens)
-            if has_salient_terms and not (
-                (query_tokens - _SEARCH_FILLER_TERMS) & all_tokens
+            source_score = source_scores.get(chunk.source_id)
+            if source_score is None:
+                features = self._source_features[chunk.source_id]
+                title_tokens = features.title_tokens
+                description_tokens = features.description_tokens
+                source_score = source_scores[chunk.source_id] = (
+                    not exact_terms.isdisjoint(title_tokens)
+                    or not exact_terms.isdisjoint(description_tokens),
+                    not salient_terms.isdisjoint(title_tokens)
+                    or not salient_terms.isdisjoint(description_tokens),
+                    weighted_overlap(title_tokens) * 8,
+                    weighted_overlap(description_tokens) * 4,
+                    bounded_phrase(normalized_query, features.normalized_title),
+                    bounded_phrase(normalized_query, features.normalized_description),
+                )
+            (
+                exact,
+                salient,
+                title_score,
+                description_score,
+                title_phrase,
+                description_phrase,
+            ) = source_score
+            exact_salient = exact or not exact_terms.isdisjoint(chunk.tokens)
+            if (
+                has_salient_terms
+                and not salient
+                and salient_terms.isdisjoint(chunk.tokens)
             ):
                 continue
-            score = (
-                weighted_overlap(chunk.tokens)
-                + weighted_overlap(title_tokens) * 8
-                + weighted_overlap(description_tokens) * 4
-            )
-            if bounded_phrase(normalized_query, normalized_title):
+            score = weighted_overlap(chunk.tokens) + title_score + description_score
+            if title_phrase:
                 score += 8
-            if bounded_phrase(normalized_query, normalized_description):
+            if description_phrase:
                 score += 5
             if bounded_phrase(normalized_query, chunk.normalized_text):
                 score += 4

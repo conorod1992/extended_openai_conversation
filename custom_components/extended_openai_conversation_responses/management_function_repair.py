@@ -547,7 +547,7 @@ def persist_valid_function_configuration(
     try:
         seed_persisted_config_projection(entry, subentry, snapshot, revision)
     except Exception:
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Committed Function configuration could not seed its optional cache"
         )
     projection_ms += (perf_counter() - phase) * 1000

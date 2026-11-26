@@ -21,6 +21,7 @@ from .operational_errors import log_handled_failure
 from .skill_resource_limits import (
     MAX_DISCOVERED_SKILLS,
     MAX_SKILL_DISCOVERY_ENTRIES,
+    SkillMetadataError,
     read_bounded_skill_text,
 )
 from .skill_transactions import recover_transactions
@@ -319,13 +320,13 @@ class SkillManager:
                 break
             try:
                 if not skill_file.resolve().is_relative_to(skill_dir.resolve()):
-                    raise HomeAssistantError("SKILL.md is outside its Skill directory")
+                    raise SkillMetadataError("SKILL.md is outside its Skill directory")
                 content = read_bounded_skill_text(skill_file)
             except (HomeAssistantError, OSError) as err:
                 log_handled_failure(
                     _LOGGER,
                     f"Skill '{skill_dir.name}' could not be read and was skipped. "
-                    f"Check the installed file and reload Skills. File: {skill_file}",
+                    "Check the installed file and reload Skills.",
                     err,
                 )
             else:

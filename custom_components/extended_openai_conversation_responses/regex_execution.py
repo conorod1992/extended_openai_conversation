@@ -376,20 +376,30 @@ def _speech_output_limit(input_chars: int) -> int:
     )
 
 
-async def _async_apply_speech_replacements(text: str, rules: object) -> str:
+async def _async_apply_speech_replacements(
+    text: str,
+    rules: object,
+    *,
+    warnings: list[str] | None = None,
+    assistant: str | None = None,
+) -> str:
     """Apply all custom substitutions atomically or fail open to the input text."""
+
+    def report(reason: str) -> None:
+        message = f"{reason}, preserving spoken text. Use Speech Preview to review the replacements."
+        if warnings is not None:
+            warnings.append(message)
+        _LOGGER.warning("%s%s", f"assistant={assistant} " if assistant else "", message)
+
     items = _speech_replacement_items(rules)
     if items == []:
         return text
     if items is None:
-        _LOGGER.warning(
-            "Ignoring malformed speech regex replacements and preserving spoken text"
-        )
+        report("Speech regex replacements have invalid settings")
         return text
     if len(text) > MAX_SPEECH_REPLACEMENT_INPUT_CHARS:
-        _LOGGER.warning(
-            ("Skipping speech regex replacements because input exceeds %d characters"),
-            MAX_SPEECH_REPLACEMENT_INPUT_CHARS,
+        report(
+            f"Speech regex input exceeds {MAX_SPEECH_REPLACEMENT_INPUT_CHARS} characters"
         )
         return text
     try:
@@ -403,47 +413,40 @@ async def _async_apply_speech_replacements(text: str, rules: object) -> str:
             }
         )
     except HomeAssistantError as err:
-        _LOGGER.warning(
-            "Speech regex replacement failed; preserving spoken text: %s", err
+        report(
+            "Speech regex replacements exceeded the execution time limit"
+            if isinstance(err.__cause__, TimeoutError)
+            else "Speech regex worker failed"
         )
         return text
-    except Exception as err:
+    except Exception:
         # Cancellation is a BaseException in supported Python versions and therefore
         # still propagates. Ordinary worker/serialization failures remain fail-open.
-        _LOGGER.warning(
-            "Speech regex worker failed; preserving spoken text: %s", type(err).__name__
-        )
+        report("Speech regex worker failed")
         return text
 
     invalid = result.get("invalid")
     if not isinstance(invalid, list):
-        _LOGGER.warning(
-            "Speech regex worker returned invalid diagnostics; preserving spoken text"
-        )
+        report("Speech regex worker returned invalid diagnostics")
         return text
     if invalid:
         first = invalid[0]
-        invalid_index = first[0] if isinstance(first, list) and first else "unknown"
-        _LOGGER.warning(
-            "Speech regex replacement %s is invalid; preserving spoken text",
-            invalid_index,
+        index = first[0] if isinstance(first, list) and first else None
+        report(
+            f"Speech regex replacement {index} is invalid"
+            if type(index) is int and 1 <= index <= len(items)
+            else "A speech regex replacement is invalid"
         )
         return text
     if result.get("overflow") is True:
-        _LOGGER.warning(
-            "Speech regex replacements exceeded the output growth limit; preserving spoken text"
-        )
+        report("Speech regex replacements exceeded the output growth limit")
         return text
     value = result.get("text")
     if not isinstance(value, str):
-        _LOGGER.warning(
-            "Speech regex worker returned invalid text; preserving spoken text"
-        )
+        report("Speech regex worker returned invalid text")
         return text
     if len(value) > _speech_output_limit(len(text)):
-        _LOGGER.warning(
-            "Speech regex worker exceeded the output limit; preserving spoken text"
-        )
+        report("Speech regex worker exceeded the output limit")
         return text
     return _speech_replacement_text(text, value, result)
 
@@ -490,6 +493,9 @@ async def async_process_speech_text(
     hass: HomeAssistant,
     original_text: str,
     agent_config: Mapping[str, Any],
+    *,
+    warnings: list[str] | None = None,
+    assistant: str | None = None,
 ) -> str:
     """Run the bounded completed-response speech pipeline used by live and Preview."""
     text = await hass.async_add_executor_job(
@@ -507,6 +513,8 @@ async def async_process_speech_text(
         agent_config.get(
             CONF_SPEECH_REGEX_REPLACEMENTS, DEFAULT_SPEECH_REGEX_REPLACEMENTS
         ),
+        warnings=warnings,
+        assistant=assistant,
     )
     return await hass.async_add_executor_job(_final_whitespace_cleanup, text)
 

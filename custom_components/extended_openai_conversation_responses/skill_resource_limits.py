@@ -18,23 +18,27 @@ MAX_DISCOVERED_SKILLS = 512
 MAX_SKILL_METADATA_BYTES = FILE_READ_SIZE_LIMIT
 
 
+class SkillMetadataError(HomeAssistantError):
+    """A fixed, source-free Skill metadata failure."""
+
+
 def read_bounded_skill_text(path: Path) -> str:
     """Read one local SKILL.md without permitting an unbounded allocation."""
     try:
         if not S_ISREG(path.stat().st_mode):
-            raise HomeAssistantError(f"Skill metadata `{path}` is not a regular file")
+            raise SkillMetadataError("Skill metadata is not a regular file")
         with path.open("rb") as handle:
             content = handle.read(MAX_SKILL_METADATA_BYTES + 1)
     except OSError as err:
-        raise HomeAssistantError(
-            f"Unable to read Skill metadata `{path}`: {err}"
+        raise SkillMetadataError(
+            "Unable to read Skill metadata; check the file and its permissions"
         ) from err
 
     if len(content) > MAX_SKILL_METADATA_BYTES:
-        raise HomeAssistantError(
-            f"Skill metadata `{path}` exceeds the {MAX_SKILL_METADATA_BYTES}-byte limit"
+        raise SkillMetadataError(
+            f"Skill metadata exceeds the {MAX_SKILL_METADATA_BYTES}-byte limit"
         )
     try:
         return content.decode("utf-8")
     except UnicodeDecodeError as err:
-        raise HomeAssistantError(f"Skill metadata `{path}` is not valid UTF-8") from err
+        raise SkillMetadataError("Skill metadata is not valid UTF-8") from err

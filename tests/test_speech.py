@@ -1519,6 +1519,7 @@ async def test_local_rule_speech_uses_async_regex_and_keeps_action_success(hass)
     response = intent.IntentResponse(language="en")
     response.async_set_speech(original)
     agent = SimpleNamespace(
+        entity_id="conversation.test",
         _usage=None,
         _continuity=SimpleNamespace(async_record_success=AsyncMock()),
         _async_archive_turn=AsyncMock(),
@@ -1539,7 +1540,9 @@ async def test_local_rule_speech_uses_async_regex_and_keeps_action_success(hass)
             original, None, "continuity", "claim", None,
         )
     assert result.response.speech["plain"]["speech"] == "Home Assistant is ready"
-    cleanup.assert_awaited_once_with(hass, original, agent.subentry.data)
+    cleanup.assert_awaited_once_with(
+        hass, original, agent.subentry.data, assistant=agent.entity_id
+    )
 
 
 async def test_local_rule_speech_failure_does_not_turn_executed_action_into_failure(hass):

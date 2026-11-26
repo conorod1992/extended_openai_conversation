@@ -393,6 +393,13 @@ def test_log_provider_failure_serializes_only_safe_metadata() -> None:
     logger = Mock(spec=logging.Logger)
     error = Exception("api-key: super-secret")
     error.status_code = 500
+    from custom_components.extended_openai_conversation_responses.provider_errors import (
+        annotate_provider_request,
+    )
+
+    annotate_provider_request(
+        error, "routed-model", "responses", "initial", "private-run", routing_rule="rule-1"
+    )
 
     log_provider_failure(logger, "request failed", error)
 
@@ -406,3 +413,7 @@ def test_log_provider_failure_serializes_only_safe_metadata() -> None:
     assert "message" not in payload
     assert "super-secret" not in str(payload)
     assert payload["classification"] == "provider_unavailable"
+    assert payload["effective_request"]["model"] == "routed-model"
+    assert payload["effective_request"]["routing_rule"] == "rule-1"
+    assert len(payload["effective_request"]["operation"]) == 12
+    assert "private-run" not in str(payload)

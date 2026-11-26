@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextvars import ContextVar
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 import hashlib
 import json
 from types import SimpleNamespace
@@ -108,7 +108,10 @@ async def test_schedule_rejects_overflow_before_save_or_waiter(
 
     with pytest.raises(HomeAssistantError, match=error):
         await manager.async_schedule(
-            _entity(hass), "control_light", {"delay": delay}, None,
+            _entity(hass),
+            "control_light",
+            {"delay": delay},
+            None,
             function_tool={**_valid_tool(), "delay_catch_up": catch_up},
         )
 
@@ -129,7 +132,7 @@ def test_delay_normalization_wraps_core_conversion_overflow(monkeypatch) -> None
 async def test_schedule_expiry_overflow_depends_on_catch_up(
     hass, monkeypatch, catch_up
 ) -> None:
-    now = datetime(9999, 12, 31, 23, 45, tzinfo=timezone.utc)
+    now = datetime(9999, 12, 31, 23, 45, tzinfo=UTC)
     monkeypatch.setattr(dt_util, "utcnow", lambda: now)
     manager = DelayedToolManager(hass)
     manager._started = manager._setup_complete = True
@@ -146,7 +149,9 @@ async def test_schedule_expiry_overflow_depends_on_catch_up(
         manager._store.async_save.assert_awaited_once()
         arm.assert_called_once_with(record.call_id)
     else:
-        with pytest.raises(HomeAssistantError, match="exceeds the supported scheduling range"):
+        with pytest.raises(
+            HomeAssistantError, match="exceeds the supported scheduling range"
+        ):
             await manager.async_schedule(*arguments, function_tool=function_tool)
         manager._store.async_save.assert_not_awaited()
         arm.assert_not_called()
@@ -334,11 +339,16 @@ async def test_due_call_uses_current_tool_and_current_exposure(
 
     async def save(payload):
         persisted.update(payload)
-        if lost_claim_ack and payload["calls"] and payload["calls"][0]["status"] == _EXECUTING:
+        if (
+            lost_claim_ack
+            and payload["calls"]
+            and payload["calls"][0]["status"] == _EXECUTING
+        ):
             raise OSError("claim acknowledgement failed after replace")
 
     manager._store = SimpleNamespace(
-        async_save=AsyncMock(side_effect=save), async_load=AsyncMock(return_value=persisted)
+        async_save=AsyncMock(side_effect=save),
+        async_load=AsyncMock(return_value=persisted),
     )
 
     latest_subentry = SimpleNamespace(subentry_type="conversation", data={})
@@ -732,13 +742,16 @@ async def test_delayed_definition_changes_fail_closed_after_storage_roundtrip(
     legacy = hashlib.sha256(
         json.dumps(authored, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    assert legacy == hashlib.sha256(
-        json.dumps(
-            {key: current[key] for key in ("spec", "function")},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
+    assert (
+        legacy
+        == hashlib.sha256(
+            json.dumps(
+                {key: current[key] for key in ("spec", "function")},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+    )
     record = replace(
         _coverage_record(user_id=None),
         definition_fingerprint=legacy
@@ -1180,7 +1193,7 @@ async def test_due_call_discards_when_live_tool_resolution_fails(
 
     assert await manager._async_execute_due(record.call_id) is False
     discard.assert_awaited_once_with(
-        record.call_id, "Function Tool is unavailable: gone"
+        record.call_id, "Function Tool is no longer available for execution"
     )
 
 

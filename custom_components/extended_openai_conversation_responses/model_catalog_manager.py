@@ -301,14 +301,20 @@ class ModelCatalogManager:
         )
 
     async def _record_failed_check(
-        self, checked: float, *, transient: bool, error: Exception
+        self,
+        checked: float,
+        *,
+        transient: bool,
+        error: Exception,
+        stage: str = "validation",
     ) -> None:
         """Retain active/pending data while remembering when a check failed."""
         self.last_checked = checked
         self.last_error = "Model data check failed; the current catalogue was kept."
+        active = "downloaded" if self.catalog is not None else "bundled"
         log_handled_failure(
             _LOGGER,
-            f"{self.last_error} operation=refresh category={'transient' if transient else 'validation_or_internal'}"
+            f"{self.last_error} operation=refresh category={'transient' if transient else 'validation_or_internal'} stage={stage} active={active}"
             + (
                 f" http_status={error.status_code}"
                 if isinstance(error, _CatalogHTTPError)
@@ -694,6 +700,7 @@ class ModelCatalogManager:
                 and 0 <= now - self.last_checked < UPDATE_INTERVAL
             ):
                 return self.status()
+            stage = "download"
             try:
                 headers = {"If-None-Match": self.etag} if self.etag else {}
                 async with asyncio.timeout(15):
@@ -705,6 +712,7 @@ class ModelCatalogManager:
                         if response.status == 304:
                             if not self.etag:
                                 raise ValueError("Unsolicited not-modified response")
+                            stage = "persistence"
                             await self._save(
                                 self.catalog,
                                 self.available_catalog,
@@ -724,6 +732,7 @@ class ModelCatalogManager:
                             raw.extend(chunk)
                             if len(raw) > MAX_CATALOG_BYTES:
                                 raise ValueError("Catalogue download too large")
+                        stage = "validation"
                         candidate = parse_catalog(bytes(raw))
                         etag = response.headers.get("ETag")
                         if etag and (len(etag) > 256 or "\n" in etag or "\r" in etag):
@@ -745,6 +754,7 @@ class ModelCatalogManager:
                         raise ValueError("Catalogue update invalidates saved requests")
                     available = candidate
 
+                stage = "persistence"
                 await self._save(self.catalog, available, etag, now)
                 self.available_catalog = available
                 self.etag = etag
@@ -752,6 +762,9 @@ class ModelCatalogManager:
                 self.last_error = None
                 self.incompatible_catalog = None
             except IncompatibleCatalogError as exc:
+                _LOGGER.info(
+                    "New model catalogue requires a newer integration version; the current catalogue remains active"
+                )
                 incompatible = {
                     "schema_version": exc.schema_version,
                     "catalog_version": exc.catalog_version,
@@ -770,9 +783,13 @@ class ModelCatalogManager:
                 self.last_error = None
                 self.incompatible_catalog = incompatible
             except (ClientError, TimeoutError, _TransientCatalogUpdateError) as err:
-                await self._record_failed_check(now, transient=True, error=err)
+                await self._record_failed_check(
+                    now, transient=True, error=err, stage=stage
+                )
             except Exception as err:
-                await self._record_failed_check(now, transient=False, error=err)
+                await self._record_failed_check(
+                    now, transient=False, error=err, stage=stage
+                )
             return self.status()
 
     async def async_update(self, *, force: bool = False) -> dict[str, Any]:

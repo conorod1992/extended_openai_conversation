@@ -1250,7 +1250,11 @@ async def _recover_failed_apply(
     try:
         await _rollback_transaction(hass, entry, subentry, managers, store, rollback)
     except Exception:
-        _LOGGER.exception("Agent backup restore rollback remains pending")
+        _LOGGER.exception(
+            "Restore rollback did not finish; entry=%s assistant=%s. Restart Home Assistant to resume recovery before editing this assistant",
+            entry.entry_id,
+            subentry.subentry_id,
+        )
         raise mark_mutation_failure(
             backup.BackupError(
                 "Restore failed and recovery is still pending; restart Home Assistant "
@@ -1647,7 +1651,11 @@ async def _async_restore_backup_recoverably(
             )
             await store.async_remove()
         except Exception as err:
-            _LOGGER.exception("Agent restore committed but completion remains pending")
+            _LOGGER.exception(
+                "Restore committed but completion remains pending; entry=%s assistant=%s. Restart Home Assistant to finish the committed restore",
+                entry.entry_id,
+                subentry.subentry_id,
+            )
             raise mark_mutation_failure(
                 backup.BackupError(
                     "Restore committed successfully, but completion is pending; restart "

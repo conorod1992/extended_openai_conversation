@@ -88,7 +88,13 @@ def _recover_abandoned_download(record: Path) -> None:
     except FileNotFoundError:
         return
     except (OSError, ValueError, RecursionError, HomeAssistantError) as err:
-        log_handled_failure(_LOGGER, "Could not recover Skill download", err)
+        match = _DOWNLOAD.fullmatch(record.name)
+        log_handled_failure(
+            _LOGGER,
+            f"Could not recover Skill download journal={match[0] if match else 'unrecognized'}. "
+            "Check the journal and download directory permissions and ownership.",
+            err,
+        )
 
 
 def recover_transaction(journal: Path, installed: Path) -> None:

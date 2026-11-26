@@ -564,10 +564,20 @@ class RequestRules:
                         self._rules.append(validated)
                         migrated = migrated or validated != raw
                     except ValueError as err:
-                        _LOGGER.warning("Ignoring invalid stored Request Rule: %s", err)
+                        log_handled_failure(
+                            _LOGGER,
+                            f"Ignoring invalid stored Request Rule in store={getattr(self._store, 'key', 'unknown')}",
+                            err,
+                        )
                         migrated = True
                         self._repair_required = True
                 migrated = self._sort_and_compile() or migrated
+                if self._repair_required:
+                    _LOGGER.warning(
+                        "Request Rules store=%s needs repair; %d validated rules kept in memory. Automatic rewrites are suspended",
+                        getattr(self._store, "key", "unknown"),
+                        len(self._rules),
+                    )
                 if persist_migrations and migrated and not self._repair_required:
                     await self._async_save_locked(reconcile_failure=False)
                 self._require_current_owner()
@@ -3519,12 +3529,11 @@ async def _async_evaluate_matched_rule(
         except Exception as err:
             if require_matching_revision is not None:
                 require_matching_revision()
-            _LOGGER.error(
-                "Request Rule '%s' failed while running its local Home Assistant "
-                "action. Review the rule's actions and referenced entities/services "
-                "in Extended OpenAI > Request Rules (%s)",
-                rule.get("name") or rule["id"],
-                type(err).__name__,
+            log_handled_failure(
+                _LOGGER,
+                f"Request Rule {rule['id']} failed while running local actions. Review the action sequence in Extended OpenAI > Request Rules and the Home Assistant script trace",
+                err,
+                level=logging.ERROR,
             )
             return RuleEvaluation(
                 match,

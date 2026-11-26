@@ -36,7 +36,7 @@ from .const import (
 )
 from .helpers import effective_api_provider
 from .memory import EmbeddingResult, PersistentMemory, memory_enabled
-from .operational_errors import log_handled_failure
+from .operational_errors import failure_diagnostic, log_handled_failure
 from .speech import has_custom_speech_replacements
 from .usage import usage_retention_policy
 
@@ -186,6 +186,9 @@ async def async_ensure_optional_manager(
     retain its retry-on-next-request behavior. Cancellation is intentionally not
     swallowed.
     """
+    from time import monotonic
+
+    diagnostics = getattr(entity, "_eoai_optional_failure_logs", None)
     if getattr(entity, attribute, None) is None or _manager_needs_recovery(
         entity, attribute
     ):
@@ -197,9 +200,31 @@ async def async_ensure_optional_manager(
             )
         except Exception as err:
             _set_subsystem_status(entity, subsystem, True, err)
-            _LOGGER.exception(failure_message)
+            if diagnostics is None:
+                diagnostics = entity._eoai_optional_failure_logs = {}
+            diagnostic = failure_diagnostic(err)
+            now = monotonic()
+            previous = diagnostics.get(subsystem)
+            if (
+                previous is None
+                or previous[0] != diagnostic
+                or now >= previous[1] + 300
+            ):
+                diagnostics[subsystem] = (diagnostic, now)
+                log_handled_failure(
+                    _LOGGER,
+                    f"{failure_message} entry={entity.entry.entry_id} assistant={entity.subentry.subentry_id}",
+                    err,
+                )
             return False
         setattr(entity, attribute, manager)
+        if diagnostics is not None and diagnostics.pop(subsystem, None) is not None:
+            _LOGGER.info(
+                "%s recovered; entry=%s assistant=%s",
+                subsystem,
+                entity.entry.entry_id,
+                entity.subentry.subentry_id,
+            )
     _set_subsystem_status(entity, subsystem, True, healthy=True)
     return True
 

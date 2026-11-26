@@ -253,6 +253,16 @@ class UsageRun:
     accounting_date: str | None = None
 
 
+_REQUEST_SCALARS = tuple(
+    item.name for item in fields(UsageRequest) if item.name != "details"
+)
+_RUN_SCALARS = tuple(
+    item.name
+    for item in fields(UsageRun)
+    if item.name not in {"models", "providers", "api_modes"}
+)
+
+
 def is_usage_count(value: object) -> TypeGuard[int]:
     """Accept integers that can round-trip through HA's JSON encoder."""
     return (
@@ -497,8 +507,6 @@ class UsageManager:
                         staged_totals, revision, mirror
                     )
 
-            staged_daily, invalid_days = _load_stored_usage_days(daily_data)
-            daily_needs_repair |= invalid_days
             load_failed = False
             loaded_details = None
             if self._detail_storage is not None:
@@ -519,27 +527,29 @@ class UsageManager:
                         raise
                     load_failed = True
             (
+                staged_daily,
+                invalid_days,
                 staged_requests,
                 staged_runs,
                 details_need_repair,
                 detail_records_repairable,
-                inline_run_dates,
-            ) = _decode_usage_detail_store(loaded_details)
-            details_need_repair |= load_failed
-
-            staged_requests, staged_runs, expired = retained_usage_details(
-                staged_requests,
-                staged_runs,
-                request_days=self.request_retention_days,
-                run_days=self.run_retention_days,
+                detail_retention_dirty,
+            ) = await asyncio.to_thread(
+                _prepare_usage_history,
+                daily_data,
+                loaded_details,
+                self.request_retention_days,
+                self.run_retention_days,
             )
+            daily_needs_repair |= invalid_days
+            details_need_repair |= load_failed
 
             self.totals = staged_totals
             self.daily = staged_daily
             self.requests = staged_requests
             self.runs = staged_runs
             # The next normal detail write also normalizes older inline dates.
-            self._detail_retention_dirty = inline_run_dates or any(expired.values())
+            self._detail_retention_dirty = detail_retention_dirty
             self._totals_need_repair = totals_need_repair
             self._daily_needs_repair = daily_needs_repair
             self._details_need_repair = details_need_repair
@@ -1439,6 +1449,42 @@ def _validate_counter_mapping(data: dict[str, Any], keys: set[str]) -> None:
             raise ValueError(f"usage counter {key} is invalid")
 
 
+def _prepare_usage_history(
+    daily: dict[str, Any],
+    details: Any,
+    request_days: int | None,
+    run_days: int | None,
+) -> tuple[
+    dict[str, dict[str, Any]],
+    bool,
+    list[UsageRequest],
+    list[UsageRun],
+    bool,
+    bool,
+    bool,
+]:
+    """Decode and prune history without publishing or modifying live state."""
+    days, invalid_days = _load_stored_usage_days(daily)
+    requests, runs, needs_repair, repairable, inline_dates = _decode_usage_detail_store(
+        details
+    )
+    requests, runs, expired = retained_usage_details(
+        requests,
+        runs,
+        request_days=request_days,
+        run_days=run_days,
+    )
+    return (
+        days,
+        invalid_days,
+        requests,
+        runs,
+        needs_repair,
+        repairable,
+        inline_dates or any(expired.values()),
+    )
+
+
 def _validate_breakdown(value: Any, label: str) -> dict[str, int]:
     if not isinstance(value, dict) or not all(
         isinstance(key, str) and is_usage_count(amount) for key, amount in value.items()
@@ -1673,8 +1719,9 @@ def _usage_request_from_record(raw: Any) -> UsageRequest:
         or _parse_time(request.timestamp) == datetime.min.replace(tzinfo=dt_util.UTC)
     ):
         raise ValueError("usage request metadata is invalid")
-    values = asdict(request)
-    _validate_counter_mapping(values, counter_keys)
+    _validate_counter_mapping(
+        {key: getattr(request, key) for key in counter_keys}, counter_keys
+    )
     request.details = _validate_breakdown(request.details, "usage request details")
     return request
 
@@ -1741,7 +1788,9 @@ def _usage_run_from_record(raw: Any) -> UsageRun:
         raise ValueError("usage run metadata is invalid")
     if run.accounting_date is not None:
         _validate_run_accounting_date(run.accounting_date, run.completed_at)
-    _validate_counter_mapping(asdict(run), counter_keys)
+    _validate_counter_mapping(
+        {key: getattr(run, key) for key in counter_keys}, counter_keys
+    )
     return run
 
 
@@ -2297,7 +2346,9 @@ def _serialize_usage_aggregate_snapshots(
     days = {}
     attribution = {}
     for date, daily_record in daily.items():
-        day = deepcopy(daily_record)
+        day = dict(daily_record)
+        for key in ("provider_breakdown", "model_breakdown", "api_mode_breakdown"):
+            day[key] = dict(daily_record[key])
         counters = {key: day.pop(key) for key in _RUN_ATTRIBUTION_COUNTERS}
         if day["run_count"] or any(counters.values()):
             attribution[date] = counters
@@ -2322,8 +2373,22 @@ def _serialize_usage_details(
 ) -> dict[str, Any]:
     """Convert stable completed records without occupying the HA event loop."""
     return {
-        "requests": [asdict(request) for request in requests],
-        "runs": [asdict(run) for run in runs],
+        "requests": [
+            {
+                **{key: getattr(request, key) for key in _REQUEST_SCALARS},
+                "details": dict(request.details),
+            }
+            for request in requests
+        ],
+        "runs": [
+            {
+                **{key: getattr(run, key) for key in _RUN_SCALARS},
+                "models": list(run.models),
+                "providers": list(run.providers),
+                "api_modes": list(run.api_modes),
+            }
+            for run in runs
+        ],
     }
 
 

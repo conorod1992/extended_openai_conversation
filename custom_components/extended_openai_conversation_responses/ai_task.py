@@ -27,8 +27,10 @@ from .entity import (
     _make_schema_nullable,
     _serialize_structured_output,
 )
+from .exceptions import StructuredOutputsUnavailable
 from .ha_llm_tools import ToolSnapshot, caller_api_tools, tool_snapshot_scope
 from .ha_schema import SchemaValidator
+from .operational_errors import log_handled_failure
 from .provider_errors import (
     log_provider_failure,
     provider_user_message,
@@ -449,13 +451,24 @@ class ExtendedOpenAITaskEntity(
                     structure_schema=original_schema,
                 )
             continuation_accepted = True
+        except StructuredOutputsUnavailable:
+            _LOGGER.warning(
+                "AI Task entity=%s requires a model with native Structured Outputs. "
+                "Review the Home Assistant automation trace.",
+                self.entity_id,
+            )
+            raise
         except OpenAIError as err:
             from .model_lifecycle import record_entity_retirement_failure
 
             record_entity_retirement_failure(self, err, logger=_LOGGER)
             request_reauthentication(self.hass, getattr(self, "entry", None), err)
             record_current_provider_failure(err)
-            log_provider_failure(_LOGGER, "OpenAI AI Task request failed", err)
+            log_provider_failure(
+                _LOGGER,
+                f"OpenAI AI Task request failed entity={self.entity_id}. Review the Home Assistant automation trace",
+                err,
+            )
             raise HomeAssistantError(
                 f"AI Task provider request failed: {provider_user_message(err)}"
             ) from err
@@ -490,13 +503,24 @@ class ExtendedOpenAITaskEntity(
 
         # JSON parsing and schema branch matching touch only this response and
         # its schema snapshot. Large arrays must not stall HA's event loop.
-        data = await asyncio.to_thread(
-            parse_ai_task_structured_response,
-            text,
-            original_schema=original_schema,
-        )
-        data = _validate_with_caller_cleanup(data, task.structure)
-        await asyncio.to_thread(_require_serializable_response, data)
+        phase = "decode model JSON"
+        try:
+            data = await asyncio.to_thread(
+                parse_ai_task_structured_response,
+                text,
+                original_schema=original_schema,
+            )
+            phase = "validate the requested structure"
+            data = _validate_with_caller_cleanup(data, task.structure)
+            phase = "encode the validated result"
+            await asyncio.to_thread(_require_serializable_response, data)
+        except HomeAssistantError as err:
+            log_handled_failure(
+                _LOGGER,
+                f"AI Task entity={self.entity_id} could not {phase}. Review the Home Assistant automation trace",
+                err,
+            )
+            raise
 
         return ai_task.GenDataTaskResult(
             conversation_id=chat_log.conversation_id,

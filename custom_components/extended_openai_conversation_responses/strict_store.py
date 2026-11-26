@@ -19,7 +19,7 @@ from homeassistant.util.json import SerializationError
 
 from .agent_maintenance import AgentMaintenanceGate, get_agent_maintenance_gate
 from .operation_settlement import async_settle_owned_operation as _async_settle_store_io
-from .operational_errors import storage_failure_reason
+from .operational_errors import StorageSerializationFailure, storage_failure_reason
 from .persistence_hardening import StorageRepairRequired
 
 STORE_ENVELOPE_ERRORS = (
@@ -128,7 +128,7 @@ class AcknowledgedWriteStore(RecoveryGuardedStore):
             # HA's outer handler would log the offending private value and return
             # normally. Use a different exception type so transactions reconcile
             # instead of publishing an unpersisted candidate as committed.
-            raise OSError(
+            raise StorageSerializationFailure(
                 "Private storage serialization failed; "
                 "the EOAI state change could not be persisted"
             ) from None

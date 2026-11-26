@@ -17,7 +17,7 @@ import time
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
-from openai import AsyncClient, AsyncStream
+from openai import AsyncClient, AsyncStream, OpenAIError
 from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
     ChatCompletionChunk,
@@ -101,6 +101,7 @@ from .exceptions import (
     EffectReplayBlocked,
     FunctionResponseParseError,
     ParseArgumentsFailed,
+    StructuredOutputsUnavailable,
     TokenLengthExceededError,
 )
 from .execution_outcomes import with_execution_receipt
@@ -143,6 +144,7 @@ from .operational_errors import log_handled_failure
 from .provider_content import RoutedReasoning, answer_text
 from .provider_errors import (
     ProviderStreamError,
+    annotate_provider_request,
     ensure_successful_responses_result,
     provider_authentication_snapshot,
     provider_stream_error,
@@ -161,6 +163,7 @@ from .request import (
     request_function_tools as provider_request_function_tools,
     validate_provider_tool_count,
 )
+from .request_context import _ACTIVE_INVOCATION
 from .request_static_cache import cached_format_tools
 from .resource_limits import (
     MAX_ATTACHMENT_COUNT,
@@ -1266,7 +1269,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             if structure is not None:
                 if not provider_snapshot.structured_outputs:
-                    raise HomeAssistantError(
+                    raise StructuredOutputsUnavailable(
                         f"{model} does not support native Structured Outputs."
                     )
                 preserve_date_formats = (
@@ -1630,6 +1633,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 self.hass, chat_log
                             )
                 except BaseException as err:
+                    stage = "initial" if n_requests == 0 else "after_tool"
+                    current_run = getattr(usage_manager, "current_run", None)
+                    usage_run = current_run() if callable(current_run) else None
+                    run_id = getattr(usage_run, "run_id", None)
+                    routing_rule = _ACTIVE_INVOCATION.get().routing_rule
                     append_unresolved_tool_results(
                         chat_log,
                         self.entity_id,
@@ -1647,21 +1655,46 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             duration_ms=int(
                                 (time.monotonic() - request_started) * 1000
                             ),
-                            request_stage="initial"
-                            if n_requests == 0
-                            else "after_tool",
+                            request_stage=stage,
                             error_type=type(err).__name__,
                             web_search_used=web_search_used,
                         )
                     if isinstance(
                         err, (TimeoutError, ConnectionError, httpx.RequestError)
                     ):
-                        raise provider_transport_error(err) from err
+                        transport = provider_transport_error(err)
+                        annotate_provider_request(
+                            transport,
+                            model,
+                            api_mode,
+                            stage,
+                            run_id,
+                            routing_rule=routing_rule,
+                        )
+                        raise transport from err
                     if isinstance(err, ValueError):
-                        raise ProviderStreamError(
+                        malformed = ProviderStreamError(
                             "Provider returned malformed data or an invalid event sequence",
                             error_type=type(err).__name__,
-                        ) from err
+                        )
+                        annotate_provider_request(
+                            malformed,
+                            model,
+                            api_mode,
+                            stage,
+                            run_id,
+                            routing_rule=routing_rule,
+                        )
+                        raise malformed from err
+                    if isinstance(err, OpenAIError):
+                        annotate_provider_request(
+                            err,
+                            model,
+                            api_mode,
+                            stage,
+                            run_id,
+                            routing_rule=routing_rule,
+                        )
                     raise
                 else:
                     try:

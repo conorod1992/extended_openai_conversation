@@ -1141,9 +1141,9 @@ class DelayedToolManager:
 
             try:
                 current_tool = latest_function_tool_for_execution(agent, current_tool)
-            except HomeAssistantError as err:
+            except HomeAssistantError:
                 return not await self._async_discard(
-                    call_id, f"Function Tool is unavailable: {err}"
+                    call_id, "Function Tool is no longer available for execution"
                 )
 
             try:
@@ -1244,10 +1244,7 @@ class DelayedToolManager:
                 if expiry is None or now >= expiry:
                     updated.pop(call_id)
                     await self._async_save_records_transactionally(updated)
-                    _LOGGER.info(
-                        "Cancelled delayed Function Tool `%s`: execution grace period expired",
-                        record.tool_name,
-                    )
+                    self._log_abandoned(record, "execution grace period expired")
                     return False, False
             claim = updated[call_id] = replace(record, status=_EXECUTING)
             try:
@@ -1317,6 +1314,10 @@ class DelayedToolManager:
             return True
         try:
             async with self._lock:
+                current = self._records.get(call_id)
+                if current is None or current.status != _PENDING:
+                    return True
+                record = current
                 updated = dict(self._records)
                 updated.pop(call_id, None)
                 await self._async_save_records_transactionally(updated)
@@ -1326,10 +1327,23 @@ class DelayedToolManager:
                 record.tool_name,
             )
             return self._setup_complete and call_id not in self._records
-        _LOGGER.info(
-            "Cancelled delayed Function Tool `%s`: %s", record.tool_name, reason
-        )
+        self._log_abandoned(record, reason)
         return True
+
+    @staticmethod
+    def _log_abandoned(record: DelayedToolCall, reason: str) -> None:
+        due = _parse_scheduled_utc(record.due_at)
+        _LOGGER.warning(
+            "Scheduled Action %s did not execute; entry=%s assistant=%s tool=%s scheduled_utc=%s reason=%s",
+            hashlib.sha256(record.call_id.encode(errors="surrogatepass")).hexdigest()[
+                :12
+            ],
+            record.entry_id,
+            record.subentry_id,
+            record.tool_name,
+            due.isoformat() if due is not None else "unavailable",
+            reason,
+        )
 
     async def _async_finalize(self, call_id: str) -> None:
         """Remove an executed call without ever making it eligible for replay again."""
