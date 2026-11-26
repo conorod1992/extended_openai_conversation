@@ -1186,20 +1186,23 @@ def agent_config_value_snapshot(
     return result
 
 
-def agent_retention_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
-    """Project the lightweight retention view with the same numeric semantics."""
+def _usage_retention_values(data: Mapping[str, Any]) -> dict[str, Any]:
     result = {
-        key: deepcopy(data.get(key, AGENT_CONFIG_DEFAULTS[key]))
-        for key in USAGE_RETENTION_FIELDS
+        key: data.get(key, AGENT_CONFIG_DEFAULTS[key]) for key in USAGE_RETENTION_FIELDS
     }
     normalize_agent_numeric_values(result)
     return result
 
 
+def agent_retention_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the lightweight retention view without sharing invalid raw values."""
+    return deepcopy(_usage_retention_values(data))
+
+
 def effective_usage_retention(data: Mapping[str, Any]) -> dict[str, int | None]:
     """Interpret saved Usage windows. Invalid values suspend expiry and recording."""
     result: dict[str, int | None] = {}
-    for key, days in agent_retention_snapshot(data).items():
+    for key, days in _usage_retention_values(data).items():
         result[key] = (
             days if type(days) is int and days in USAGE_RETENTION_OPTIONS else None
         )
