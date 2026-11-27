@@ -1,5 +1,7 @@
 
 import {ownAuthenticationRead} from "./authentication-presentation.js";
+import {configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {writeSectionCache} from "./management-cache.js";
 
 let implementation = null;
 let loadPromise = null;
@@ -7,6 +9,7 @@ let healthClarityModule = null;
 let healthClarityPromise = null;
 let onboardingModule = null;
 let onboardingPromise = null;
+const boundBroadcastCards = new WeakSet();
 
 const WS_MANAGEMENT = "extended_openai_conversation_responses/management";
 const WS_BROADCAST = "extended_openai_conversation_responses/broadcast";
@@ -122,8 +125,8 @@ export function renderOverview(panel, agent) {
   return renderOverviewSnapshot(panel, agent);
 }
 
-export function reconcileOverviewAssistant(panel) {
-  if (panel._viewKey() !== "overview" || panel._busy) return;
+export function reconcileOverviewAssistant(panel, submission) {
+  if (panel._viewKey?.() !== "overview" || panel._busy) return;
   const agent = panel._selectedAgent();
   if (!agent) return;
   const root = panel.shadowRoot;
@@ -134,17 +137,40 @@ export function reconcileOverviewAssistant(panel) {
   const subtitle = `${agent.provider} · ${agent.model}`;
   if (model && model.textContent !== subtitle) model.textContent = subtitle;
 
-  const runtime = panel._result?.setup_health?.provider_runtime;
-  const config = panel._configDataStale ? null : panel._configData?.config;
-  if (!runtime || !config) return;
-  const modelName = String(config.chat_model ?? agent.model ?? "").trim();
-  const apiMode = String(config.api_mode ?? runtime.configured_api_mode ?? "").trim();
-  if (runtime.model === modelName && (runtime.configured_api_mode || "") === apiMode) return;
-  runtime.model = modelName;
-  runtime.configured_api_mode = apiMode;
-  const providerCheck = root.querySelector('[data-health-check="provider_runtime"] strong');
-  if (providerCheck) providerCheck.textContent = `${runtime.provider || "Unknown provider"} · ${modelName || "No model selected"}`;
-  onboardingModule?.bindGettingStarted(panel);
+  if (submission.fields.length) void refreshOverviewConfiguration(panel, submission);
+}
+
+async function refreshOverviewConfiguration(panel, submission) {
+  const token = panel._loadToken;
+  const generation = panel._cacheGeneration;
+  const current = () => panel.isConnected !== false && panel._viewKey?.() === "overview" && panel._loadToken === token
+    && panel._cacheGeneration === generation && configurationSubmissionIsCurrent(panel, submission);
+  try {
+    const primary = await panel._call("overview", "primary");
+    if (!current() || !primary?.setup_health || !panel._result) return;
+    const previous = panel._result.setup_health || {};
+    const fresh = primary.setup_health;
+    // The primary projection contains the saved configuration, but represents
+    // stores and counts as pending. Keep the details already resolved for this visit.
+    const setup_health = {
+      ...fresh,
+      function_tools: previous.function_tools ?? fresh.function_tools,
+      exposed_entity_count: previous.exposed_entity_count ?? fresh.exposed_entity_count,
+      exposed_entity_count_loading: previous.exposed_entity_count_loading ?? fresh.exposed_entity_count_loading,
+      memory: {...fresh.memory, ...previous.memory, mode: fresh.memory?.mode},
+      knowledge: {...fresh.knowledge, ...previous.knowledge, enabled: fresh.knowledge?.enabled},
+    };
+    const result = {...panel._result, setup_health, conversations: primary.conversations};
+    panel._result = result;
+    const details = panel._eocOverviewDetailState;
+    if (details?.token === token && details.generation === generation) details.result = result;
+    if (!Object.values(result.loading || {}).some(Boolean)) {
+      writeSectionCache(panel, panel._sectionCacheKey?.("overview"), result);
+    }
+    panel._render();
+  } catch (error) {
+    if (current()) panel._toast?.(`Changes saved. Unable to refresh Overview: ${error.message || String(error)}`, true);
+  }
 }
 
 export function bindOverview(panel) {
@@ -156,9 +182,11 @@ export function bindOverview(panel) {
   // starts after the summary is mounted so its request cannot contend for it.
   const detailsPending = Object.values(panel._result?.loading || {}).some(Boolean);
   const agent = panel._selectedAgent?.();
-  const broadcast = (!agent || panel._result) && !detailsPending
+  const card = panel.shadowRoot?.querySelector?.("#broadcast-card");
+  const broadcast = card && !boundBroadcastCards.has(card) && (!agent || panel._result) && !detailsPending
     ? panel._eocOverviewBroadcastPromise || startOverviewBroadcastSnapshot(panel)
     : null;
+  if (broadcast) boundBroadcastCards.add(card);
   implementation.bindOverview(panel, broadcast);
   if (!agent) return;
   void ensureOnboardingModule()

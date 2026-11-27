@@ -38,6 +38,21 @@ export function currentPageScope(panel) {
   return pageCoordinator(panel).scopes.get(panel._viewKey?.());
 }
 
+export function acknowledgeGuestConfigurationRevision(panel, submission, revision) {
+  const scope = panel._unsavedState?.scopes.get(GUEST);
+  if (!scope?.isCurrent() || scope.pending || scope.uncertainSubmission || scope.acknowledgedSave?.owns()
+      || !revision || panel._configData?.revision !== revision
+      || scope.revision !== submission.revision || scope.result?.revision !== submission.revision
+      || submission.fields.some(key => Object.hasOwn(scope.baseline, key))) return;
+  // Both editors CAS against the same configuration. The accepted Assistant
+  // write proves this Guest baseline is still current and did not change it.
+  scope.revision = revision;
+  scope.result = {...scope.result, revision};
+  if (panel._viewKey?.() === GUEST && panel._result?.revision === submission.revision) {
+    panel._result = scope.result;
+  }
+}
+
 export function initializePageDraft(panel) {
   const state = pageCoordinator(panel), view = panel._viewKey?.(), result = panel._result;
   if (![GUEST, QUIET, RULES].includes(view) || !result || panel._busy || panel._error) return;

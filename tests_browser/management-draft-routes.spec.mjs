@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 for (const action of ["save-config", "revert-config"]) {
   test(`shared Assistant draft can ${action} from Memories without replacing its view`, async ({page}) => {
@@ -57,7 +57,50 @@ test("shared and page drafts expose distinct actions and remain independent", as
   await expectHarnessClean(page, errors);
 });
 
-test("a shared save updates the Overview name and model without replacing Broadcast", async ({page}) => {
+for (const stale of [false, true]) test(`shared Assistant save ${stale ? "keeps a genuine Guest policy conflict" : "advances the matching Guest policy revision"}`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator('[data-config="__title"]').fill("Renamed Guest assistant");
+  await panel.evaluate((host, staleRevision) => {
+    const call = host.hass.callWS.bind(host.hass);
+    let revision = browserHarness.getState().configuration.revision;
+    host.hass.callWS = async request => {
+      if (request.section === "guest_mode" && request.action === "save_policy") {
+        if (request.revision !== revision) throw {code:"eoai_mutation_rejected", message:"Configuration changed in another tab"};
+        return call({...request, revision:browserHarness.getState().guest.revision});
+      }
+      const response = await call(request);
+      if (request.section === "guest_mode" && request.action === "get") {
+        return {...response, revision:staleRevision ? "older-guest-revision" : revision};
+      }
+      if (request.section === "configuration" && request.action === "save") revision = response.revision;
+      return response;
+    };
+    return host._navigate("capabilities", "guest-mode");
+  }, stale);
+  const web = panel.locator("#guest-web-search");
+  await web.evaluate(input => {
+    for (let parent = input.parentElement; parent; parent = parent.parentElement) if (parent.tagName === "DETAILS") parent.open = true;
+  });
+  await web.check();
+  await panel.getByRole("button", {name:"Save Assistant settings", exact:true}).click();
+  await expect(panel.locator("#agent option:checked")).toHaveText("Renamed Guest assistant");
+  await expect(web).toBeChecked();
+  await panel.locator("#save-page").click();
+  if (stale) {
+    await expect(panel.locator("#toast")).toContainText("Configuration changed in another tab");
+    await expect(panel.locator("#save-page")).toBeEnabled();
+    await expect(web).toBeChecked();
+    expect(await page.evaluate(() => browserHarness.getState().guest.config.guest_web_search)).toBe(false);
+  } else {
+    await expect(panel.locator("#save-page")).toHaveCount(0);
+    expect(await page.evaluate(() => browserHarness.getState().guest.config.guest_web_search)).toBe(true);
+  }
+  await expectHarnessClean(page, errors);
+});
+
+test("a shared save refreshes authoritative Overview health without replacing Broadcast", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
   const panel = page.locator("extended-openai-management-panel");
@@ -65,18 +108,109 @@ test("a shared save updates the Overview name and model without replacing Broadc
   const model = panel.locator('[data-config="chat_model"]');
   await model.fill("gpt-4o");
   await model.press("Tab");
-  await panel.evaluate(host => host._navigate("overview"));
+  await panel.evaluate(host => {
+    const call = host.hass.callWS.bind(host.hass);
+    Object.assign(host._draft, {prompt:"", memory_mode:"off", archive_retention_days:7, web_search:true});
+    host._syncConfigDirty();
+    host.hass.callWS = async request => {
+      const response = await call(request);
+      if (request.section !== "overview" || request.action !== "primary") return response;
+      const config = browserHarness.getState().configuration.config;
+      if (config.chat_model === "gpt-4o") await new Promise(resolve => { window.releaseOverviewPrimary = resolve; });
+      return {...response, conversations:{...response.conversations, archive_retention_days:config.archive_retention_days || 30},
+        setup_health:{...response.setup_health,
+          model_lifecycle:config.chat_model === "gpt-5-mini" ? {status:"deprecated", model:"gpt-5-mini"} : {},
+          prompt_state:config.prompt === "" ? "empty" : "custom",
+          memory:{...response.setup_health.memory, mode:config.memory_mode || "manual"},
+          web_search:{enabled:config.web_search === true, available:true, effective_api_mode:"responses"},
+        },
+      };
+    };
+    return host._navigate("overview");
+  });
+  await expect(panel.locator('[data-health-check="model_lifecycle"]')).toHaveCount(1);
   await expect(panel.locator("#broadcast-enabled")).toBeVisible();
-  const broadcast = await panel.locator("#broadcast-enabled").elementHandle();
+  await panel.locator("#broadcast-enabled").check();
+  const composer = panel.locator("#broadcast-message");
+  await composer.fill("Keep this unsent announcement");
+  const broadcast = await composer.elementHandle();
   await panel.locator("#save-config").click();
+  await expect(panel.locator("#toast")).toContainText("Changes saved");
+  await expect.poll(() => page.evaluate(() => Boolean(window.releaseOverviewPrimary))).toBe(true);
   await expect(panel.locator("main h1")).toHaveText("Renamed overview assistant");
   await expect(panel.locator("#agent option:checked")).toHaveText("Renamed overview assistant");
   await expect(panel.locator(".agent-picker small")).toContainText("gpt-4o");
+  await composer.evaluate(node => { node.focus(); node.setSelectionRange(4, 4); });
+  await page.evaluate(() => window.releaseOverviewPrimary());
   await expect(panel.locator(".dashboard-card").filter({has:page.getByRole("heading", {name:"Assistant", exact:true})}).locator("strong"))
     .toContainText("gpt-4o");
   await expect(panel.locator("#eoc-getting-started")).toContainText("gpt-4o");
   await expect(panel.locator('[data-health-check="provider_runtime"] strong')).toContainText("gpt-4o");
+  await expect(panel.locator('[data-health-check="model_lifecycle"]')).toHaveCount(0);
+  await expect(panel.locator('[data-health-check="instructions"] strong')).toHaveText("Empty");
+  await expect(panel.locator('[data-health-check="memory"] strong')).toHaveText("Off by choice");
+  await expect(panel.locator('[data-health-check="web_search"] strong')).toHaveText("Available");
+  await expect(panel.getByText("Retention: 7 days", {exact:true})).toBeVisible();
+  await expect(composer).toHaveValue("Keep this unsent announcement");
+  await expect(composer).toBeFocused();
+  expect(await composer.evaluate(node => node.selectionStart)).toBe(4);
   expect(await broadcast.evaluate(node => node.isConnected)).toBe(true);
+  expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "overview" && call.action === "primary").length)).toBe(2);
+  await expectHarnessClean(page, errors);
+});
+
+test("saving reduced retention refreshes settled Usage and evicts other cached windows", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/retention", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator('[data-config="usage_run_retention_days"]').selectOption("0");
+  await panel.evaluate(host => {
+    const call = host.hass.callWS.bind(host.hass);
+    host.hass.callWS = async request => {
+      const response = await call(request);
+      if (request.section !== "usage") return response;
+      const retention = browserHarness.getState().configuration.config.usage_run_retention_days;
+      const run = {run_id:"retained-before-save", total_tokens:42, completed_at:new Date().toISOString(), request_count:1, successful:false, error_type:"Outside retention"};
+      if (request.action === "runs") return {runs:retention ? [run] : []};
+      if (request.action === "summary") {
+        if (!retention) await new Promise(resolve => { window.releaseUsageSummary = resolve; });
+        return {...response, latest:retention ? run : null};
+      }
+      if (request.action === "daily") return {...response, local_run_summary:{count:retention ? 1 : 0, start_date:request.start_date, end_date:request.end_date}};
+      if (request.action === "retention") return {usage_run_retention_days:retention};
+      return response;
+    };
+    const staleKey = `${host._agentId}|usage-maintenance/usage|all-days`;
+    host._sectionCache.set(staleKey, {summary:{stale:true}});
+    host._eocSectionCacheTimes.set(staleKey, Date.now());
+    host._usageHistoryWindow = "90";
+    return host._navigate("usage-maintenance", "usage");
+  });
+  const recent = panel.locator("[data-eoc-usage-runs]");
+  const retained = panel.locator(".usage-fact").filter({hasText:"Retained runs without provider requests"}).locator("strong");
+  await expect(recent).toContainText("Outside retention");
+  await expect(retained).toHaveText("1");
+  await expect.poll(() => panel.evaluate(host => host._result?.loading?.retention)).toBe(false);
+  await panel.evaluate(host => {
+    const key = `${host._agentId}|usage-maintenance/usage|year`;
+    host._sectionCache.set(key, {stale:true});
+    host._eocSectionCacheTimes.set(key, Date.now());
+  });
+  await panel.getByRole("button", {name:"Save Assistant settings", exact:true}).click();
+  await acceptConfirmation(panel);
+  await expect(panel.locator("#toast")).toContainText("Changes saved");
+  await expect.poll(() => page.evaluate(() => Boolean(window.releaseUsageSummary))).toBe(true);
+  const windowSelector = panel.getByLabel("History window");
+  await expect(windowSelector).toHaveValue("90");
+  await windowSelector.selectOption("all");
+  await expect(retained).toHaveText("0");
+  await page.evaluate(() => window.releaseUsageSummary());
+  await expect(recent).toContainText("No saved recent runs.");
+  await expect(retained).toHaveText("0");
+  await expect(windowSelector).toHaveValue("all");
+  await expect.poll(() => panel.evaluate(host => [host._result?.summary?.latest, host._result?.retention?.usage_run_retention_days])).toEqual([null, 0]);
+  expect(await panel.evaluate(host => host._result?.days?.requested_window)).toBe("all");
+  expect(await panel.evaluate(host => host._sectionCache.has(`${host._agentId}|usage-maintenance/usage|year`))).toBe(false);
   await expectHarnessClean(page, errors);
 });
 

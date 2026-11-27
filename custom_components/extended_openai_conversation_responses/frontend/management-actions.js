@@ -10,6 +10,7 @@ import {pendingRetentionFields} from "./management-state-safety.js";
 import {resumeSecondaryReads} from "./management-secondary-reads.js";
 import {updateAgentPicker} from "./management-renderer.js";
 import {reconcileOverviewAssistant, resumeOverviewDetails} from "./overview-page.js";
+import {acknowledgeGuestConfigurationRevision} from "./management-page-drafts.js";
 
 function fieldErrorKey(key) {
   return key === "title" ? "__title" : key;
@@ -264,6 +265,7 @@ async function saveConfiguration(panel, button) {
     await completeConfigurationAcknowledgement(panel, result, submission, {
       message:mappingError ? "Changes saved. The unfinished Voice assignment remains a draft." : "Changes saved",
       refresh:() => {
+        acknowledgeGuestConfigurationRevision(panel, submission, result.revision);
         showErrors(panel, result.errors || {});
         if (!shared) {
           if (panel._viewKey?.() === submission.view && panel._eocRenderedRoute === owner.route) panel._result = panel._configData;
@@ -272,7 +274,11 @@ async function saveConfiguration(panel, button) {
         } else {
           updateAgentPicker(panel);
           if (panel.shadowRoot.querySelector("main #save-config")) panel._render();
-          else reconcileOverviewAssistant(panel);
+          else reconcileOverviewAssistant(panel, submission);
+        }
+        if (panel._viewKey?.() === "usage-maintenance/usage" && submission.fields.some(key => USAGE_RETENTION_FIELDS.includes(key))) {
+          panel.shadowRoot.querySelector("#usage-request-dialog")?.close();
+          void panel._loadSectionData(true);
         }
       },
     });

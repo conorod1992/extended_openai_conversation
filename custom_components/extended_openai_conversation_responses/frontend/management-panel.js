@@ -22,7 +22,7 @@ import {cacheTimestampIsFresh, readSectionCache, writeSectionCache, pruneCacheTi
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, renderManagementRoute, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors, syncSharedConfigurationBar} from "./management-actions.js";
-import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, USAGE_RETENTION_FIELDS} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent, catalogMayPublish} from "./management-catalog-ownership.js";
 import {capturePageRead, acceptPageRead, hasPendingPageSaveRead, retryPageSaveReadsOnTransport} from "./page-save-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, syncConversationSearchOwner, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
@@ -1092,7 +1092,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       const invalidationStarted = performanceNow();
       const process = () => {
-        this._invalidateAfterMutation(agent?.subentry_id, section, action);
+        const usageRetentionWrite = result?.valid === true
+          && ((section === "configuration" && action === "save") || (section === "function_repair" && action === "configuration_save"))
+          && USAGE_RETENTION_FIELDS.some(key => Object.hasOwn(extra.config || {}, key));
+        this._invalidateAfterMutation(agent?.subentry_id, section, action, usageRetentionWrite);
         pruneCacheTimes(this);
       };
       if (mutationEffects(section, action)) processMutationResponse(result, process);
@@ -1124,13 +1127,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     trace.ui = {...detail, completedAt: performanceNow()};
   }
 
-  _invalidateAfterMutation(agentId, section, action) {
+  _invalidateAfterMutation(agentId, section, action, usageRetentionWrite = false) {
     const effects = mutationEffects(section, action);
     const currentAgent = agentId === this._agentId || effects?.global === true;
     if (agentId && effects?.configuration) {
       this._invalidateCleanConfiguration(agentId);
     }
-    if (agentId && effects?.usageWindows) {
+    if (agentId && (effects?.usageWindows || usageRetentionWrite)) {
       if (agentId === this._agentId) this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
       for (const key of this._sectionCache.keys()) {
         if (!key.startsWith(`${agentId}|usage-maintenance/usage`)) continue;
@@ -1427,6 +1430,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           ? {...overview, usage: {...(cache.result.usage || {}), ...(overview.usage || {})}}
           : overview;
       } else if (view === "usage-maintenance/usage") {
+        const usageWindow = this._usageHistoryWindow;
         const summaryPromise = cache.fresh && cache.result?.summary
           ? Promise.resolve(cache.result.summary) : this._call("usage", "summary");
         const daysPromise = cache.fresh && cache.result?.days
@@ -1437,7 +1441,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         const retentionPromise = settleSecondaryRead(retention());
         const primary = await Promise.allSettled([summaryPromise, daysPromise]);
         const settledPrimary = settledSectionResult([["summary", "Usage summary"], ["days", "Daily usage"]], primary);
-        usagePrimaryComplete = settledPrimary.load_errors.length === 0;
+        const windowChanged = this._usageHistoryWindow !== usageWindow;
+        if (windowChanged) {
+          settledPrimary.days = this._result?.days;
+          settledPrimary.load_errors = settledPrimary.load_errors.filter(issue => issue.key !== "days");
+        }
+        usagePrimaryComplete = !windowChanged && settledPrimary.load_errors.length === 0;
         result = {
           ...(showCached ? cache.result : {}),
           ...settledPrimary,
