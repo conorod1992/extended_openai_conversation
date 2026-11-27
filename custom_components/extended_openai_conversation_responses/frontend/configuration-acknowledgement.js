@@ -291,10 +291,13 @@ export function reconcileConfigurationAcknowledgement(panel, saved, submission, 
   }
   if (agent) {
     const selected = panel._selectedAgent?.() || {};
+    // Configuration acknowledgements have placeholder counters. Keep the
+    // values owned by the runtime reads that are already on screen.
+    const {memory_count: _memoryCount, tokens_today: _tokensToday, ...settings} = agent;
     // Full agent snapshots omit this optional field after the last repair.
     // Partial metadata projections do not certify configuration health.
     if (agent.subentry_id && !Object.hasOwn(agent, "configuration_issue")) delete selected.configuration_issue;
-    Object.assign(selected, agent);
+    Object.assign(selected, settings);
   }
   panel._syncConfigDirty?.();
   return true;

@@ -60,7 +60,7 @@ export function renderRetentionSettings(panel) {
 
 function refreshSaveBar(panel) {
   const root = panel.shadowRoot;
-  const existing = root?.querySelector?.(".save-bar");
+  const existing = root?.querySelector?.("main #save-config")?.closest(".save-bar");
   if (!panel._configDirty) {
     existing?.remove?.();
     return;

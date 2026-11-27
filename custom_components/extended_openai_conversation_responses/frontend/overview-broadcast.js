@@ -3,6 +3,7 @@ import {acknowledgeBroadcast} from "./broadcast-acknowledgement.js";
 import {broadcastAttempt, sameBroadcastPayload, retireBroadcastAttempt} from "./broadcast-retry.js";
 import {watchLiveStatus, stopLiveStatus} from "./management-live-status.js";
 import {captureAuthentication, authenticationReadIsCurrent} from "./authentication-presentation.js";
+import {same} from "./unsaved-state.js";
 const ROUTE_STYLE = `/* Overview Broadcast */
 #broadcast-card{background:color-mix(in srgb,var(--secondary-background-color) 20%,var(--card-background-color));border-color:color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color))}
 .broadcast-toggle-row{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:16px 0;border-bottom:1px solid var(--divider-color)}
@@ -37,6 +38,8 @@ function ensureRouteStyle(panel) {
 }
 
 const WS_BROADCAST = "extended_openai_conversation_responses/broadcast";
+const renderedBroadcastControls = new WeakMap();
+const broadcastControls = ({enabled, can_manage, builtin_voice_command, catalog}) => [enabled, can_manage, builtin_voice_command, catalog];
 
 export function hasPendingBroadcast(snapshot) {
   const pending = new Set(["pending", "queued", "queued_idle", "queued_busy", "waiting_idle", "delivering"]);
@@ -149,8 +152,7 @@ function bindBroadcastControls(panel, snapshot) {
     panel._broadcastDraftRevision = (panel._broadcastDraftRevision || 0) + 1;
     const host = root.querySelector("#broadcast-card");
     const latest = panel._eocBroadcastSnapshot || snapshot;
-    if (host) host.innerHTML = broadcastMarkup(panel, latest);
-    bindBroadcastControls(panel, latest);
+    if (host) renderBroadcastControls(panel, host, latest);
   }));
   root.querySelectorAll("[data-broadcast-entity]").forEach((box) => box.addEventListener("change", (event) => {
     panel._broadcastSelected ||= new Set();
@@ -215,9 +217,10 @@ function bindBroadcastControls(panel, snapshot) {
       // confirmation coupled to it rather than silently rearming that message.
       if (authenticated()) retireBroadcastAttempt(panel, attempt);
       else attempt.blocked = true;
-      await presentAcknowledgedMutation(panel, submission, "Broadcast queued", async () => {
-        if (!await loadBroadcast(panel)) throw Error("Broadcast history could not be refreshed.");
-      }, result);
+      await presentAcknowledgedMutation(panel, submission, "Broadcast queued", null, result);
+      if (authenticated() && panel._viewKey() === "overview" && panel.isConnected !== false) {
+        void loadBroadcast(panel, () => panel._viewKey() === "overview", {afterSend:true});
+      }
     } catch (err) {
       if (attempt && dispatched) {
         if (["invalid_request", "broadcast_retry_capacity"].includes(err.code) || err.mutationOutcome === "rejected") {
@@ -237,16 +240,46 @@ function bindBroadcastControls(panel, snapshot) {
   });
 }
 
-function applyBroadcastSnapshot(panel, snapshot) {
+function updateBroadcastHistory(panel, host, snapshot) {
+  const history = host?.querySelector?.(".broadcast-history");
+  if (!history) return false;
+  const template = host.ownerDocument.createElement("template");
+  template.innerHTML = broadcastMarkup(panel, snapshot);
+  history.replaceWith(template.content.querySelector(".broadcast-history"));
+  return true;
+}
+
+function renderBroadcastControls(panel, host, snapshot) {
+  host.innerHTML = broadcastMarkup(panel, snapshot);
+  renderedBroadcastControls.set(host, broadcastControls(snapshot));
+  bindBroadcastControls(panel, snapshot);
+}
+
+function applyBroadcastSnapshot(panel, snapshot, {preserveComposerFocus = false, preserveControls = false} = {}) {
   if (panel._viewKey?.() !== "overview") return;
   const host = panel.shadowRoot.querySelector("#broadcast-card");
   if (!host) return;
-  const available = new Set((snapshot.catalog?.satellites || []).map((satellite) => satellite.id));
-  panel._broadcastSelected = new Set([...(panel._broadcastSelected || new Set())].filter((entityId) => available.has(entityId)));
-  host.innerHTML = broadcastMarkup(panel, snapshot);
-  bindBroadcastControls(panel, snapshot);
+  const preserve = preserveControls && same(renderedBroadcastControls.get(host), broadcastControls(snapshot))
+    && updateBroadcastHistory(panel, host, snapshot);
+  if (!preserve) {
+    const composer = panel.shadowRoot.activeElement;
+    const selection = preserveComposerFocus && composer?.id === "broadcast-message"
+      ? [composer.selectionStart, composer.selectionEnd, composer.selectionDirection] : null;
+    const available = new Set((snapshot.catalog?.satellites || []).map((satellite) => satellite.id));
+    panel._broadcastSelected = new Set([...(panel._broadcastSelected || new Set())].filter((entityId) => available.has(entityId)));
+    renderBroadcastControls(panel, host, snapshot);
+    if (selection) {
+      const next = host.querySelector("#broadcast-message");
+      next?.focus({preventScroll:true});
+      next?.setSelectionRange(...selection);
+    }
+  }
   panel._eocBroadcastEpoch = (panel._eocBroadcastEpoch || 0) + 1;
   panel._eocBroadcastSnapshot = snapshot;
+  syncBroadcastWatch(panel, snapshot);
+}
+
+function syncBroadcastWatch(panel, snapshot) {
   if (hasPendingBroadcast(snapshot)) {
     const started = Date.now();
     watchLiveStatus(panel, "broadcast", {
@@ -260,12 +293,7 @@ function applyBroadcastSnapshot(panel, snapshot) {
         if (!current() || panel._eocBroadcastEpoch !== epoch || panel._eocBroadcastReadToken !== token) return;
         panel._eocBroadcastSnapshot = result;
         // Preserve the message draft, selection and focus while status settles.
-        const currentHost = panel.shadowRoot.querySelector("#broadcast-card");
-        if (!currentHost) return;
-        const history = currentHost.querySelector(".broadcast-history");
-        const template = currentHost.ownerDocument.createElement("template");
-        template.innerHTML = broadcastMarkup(panel, result);
-        history?.replaceWith(template.content.querySelector(".broadcast-history"));
+        updateBroadcastHistory(panel, panel.shadowRoot.querySelector("#broadcast-card"), result);
         if (!hasPendingBroadcast(result)) stopLiveStatus(panel, "broadcast");
       },
     });
@@ -279,28 +307,34 @@ function applyBroadcastError(panel, err) {
   host.innerHTML = `<div class="error" role="alert">Unable to load Broadcast: ${panel._e(err.message || String(err))}</div>`;
 }
 
-async function loadBroadcast(panel, owns = () => true) {
+async function loadBroadcast(panel, owns = () => true, {afterSend = false} = {}) {
   const current = captureAuthentication(panel);
   const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
   try {
     const snapshot = await panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
-    if (current() && owns() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot);
+    if (current() && owns() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot, {preserveComposerFocus:afterSend});
     return true;
   } catch (err) {
-    if (current() && owns() && panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err);
+    if (current() && owns() && panel._eocBroadcastReadToken === token) {
+      if (afterSend) panel._toast("Broadcast queued, but history could not be refreshed.", true);
+      else applyBroadcastError(panel, err);
+    }
     return false;
   }
 }
 
-export function bindBroadcast(panel, broadcastPromise) {
+export function bindBroadcast(panel, broadcastPromise, owns = () => true) {
   const authCurrent = captureAuthentication(panel);
-  const current = () => authCurrent() && authenticationReadIsCurrent(broadcastPromise);
   ensureRouteStyle(panel);
+  stopLiveStatus(panel, "broadcast");
   const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
+  const current = () => owns() && authCurrent() && authenticationReadIsCurrent(broadcastPromise) && panel._eocBroadcastReadToken === token;
   return Promise.resolve(broadcastPromise)
-    .then((snapshot) => { if (current() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot); })
-    .catch((err) => { if (current() && panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err); })
-    .finally(() => {
-      if (panel._eocOverviewBroadcastPromise === broadcastPromise) panel._eocOverviewBroadcastPromise = null;
+    .then((snapshot) => { if (current()) applyBroadcastSnapshot(panel, snapshot, {preserveControls:true, preserveComposerFocus:true}); })
+    .catch((err) => {
+      if (!current()) return;
+      const host = panel.shadowRoot.querySelector("#broadcast-card");
+      if (host?.querySelector?.(".broadcast-history")) syncBroadcastWatch(panel, panel._eocBroadcastSnapshot);
+      else applyBroadcastError(panel, err);
     });
 }

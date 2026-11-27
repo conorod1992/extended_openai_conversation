@@ -1,6 +1,31 @@
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+test("Guest activation completes while capability details are pending", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/guest-mode", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#guest-indefinite").check();
+  await panel.evaluate(host => {
+    const call = host._call.bind(host);
+    host._call = async (section, action, args) => {
+      const result = await call(section, action, args);
+      if (section === "guest_mode" && action === "details") {
+        await new Promise(resolve => { window.releaseGuestDetails = resolve; });
+      }
+      return result;
+    };
+  });
+  await panel.locator("#guest-now").click();
+  await expect.poll(() => page.evaluate(() => Boolean(window.releaseGuestDetails))).toBe(true);
+  await expect(panel.locator("#toast")).toContainText("Guest Mode updated");
+  await expect.poll(() => panel.evaluate(host => Boolean(host._guestOperation))).toBe(false);
+  await expect.poll(() => panel.evaluate(host => host._result.status.state)).toBe("active");
+  await page.evaluate(() => window.releaseGuestDetails());
+  await expect.poll(() => panel.evaluate(host => host._result.loading.details)).toBe(false);
+  await expectHarnessClean(page, errors);
+});
+
 for (const fail of [false, true]) {
   test(`Guest Save completes while policy metrics are pending (${fail ? "failure" : "success"})`, async ({page}) => {
     const errors = trackPageErrors(page);

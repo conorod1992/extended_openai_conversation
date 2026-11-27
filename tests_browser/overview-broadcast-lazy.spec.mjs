@@ -94,3 +94,67 @@ test("leaving Overview while Broadcast loads prevents stale hydration", async ({
   await expect(panel.locator("#broadcast-card")).toHaveCount(0);
   await expectHarnessClean(page, errors);
 });
+
+test("reloading Overview restarts Broadcast polling without replacing the composer", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+  await panel.evaluate(host => {
+    const call = host.hass.callWS.bind(host.hass);
+    window.broadcastReloadReads = 0;
+    host.hass.callWS = async request => {
+      if (!request.type.endsWith("/broadcast") || request.action !== "snapshot") return call(request);
+      const delivered = window.broadcastReloading && ++window.broadcastReloadReads > 1;
+      const item = {id:"pending-delivery", message:"Waiting announcement", created_at:new Date().toISOString(),
+        deliveries:{"assist_satellite.kitchen":{status:delivered ? "delivered" : "waiting_idle"}}};
+      return {enabled:true, can_manage:true, catalog:{satellites:[{id:"assist_satellite.kitchen", name:"Kitchen"}]},
+        pending:delivered ? [] : [item], history:delivered ? [item] : []};
+    };
+    return host._navigate("overview");
+  });
+  const composer = panel.locator("#broadcast-message");
+  await composer.fill("An unsent draft");
+  const original = await composer.elementHandle();
+  const history = panel.locator(".broadcast-history");
+  await expect(history).toContainText("Waiting for idle");
+  await panel.evaluate(host => {
+    host._eocSectionCacheTimes.set(host._sectionCacheKey("overview"), Date.now() - 60000);
+    window.broadcastReloading = true;
+  });
+  await panel.locator('.top-nav button[data-page="overview"]').click();
+  await composer.evaluate(node => { node.focus(); node.setSelectionRange(5, 5); });
+  await expect(history).toContainText("Delivered");
+  expect(await page.evaluate(() => window.broadcastReloadReads)).toBeGreaterThanOrEqual(2);
+  expect(await original.evaluate(node => node.isConnected)).toBe(true);
+  await expect(composer).toHaveValue("An unsent draft");
+  await expect(composer).toBeFocused();
+  expect(await composer.evaluate(node => node.selectionStart)).toBe(5);
+  await expectHarnessClean(page, errors);
+});
+
+test("revisiting cached Overview retries a failed initial Broadcast snapshot", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+  await panel.evaluate(host => {
+    const call = host.hass.callWS.bind(host.hass);
+    window.broadcastRecoveryReads = 0;
+    host.hass.callWS = async request => {
+      if (request.type.endsWith("/broadcast") && request.action === "snapshot" && ++window.broadcastRecoveryReads === 1) {
+        throw new Error("Snapshot temporarily unavailable");
+      }
+      return call(request);
+    };
+    return host._navigate("overview");
+  });
+  const card = panel.locator("#broadcast-card");
+  await expect(card).toContainText("Snapshot temporarily unavailable");
+  const original = await card.elementHandle();
+  await panel.locator('.top-nav button[data-page="overview"]').click();
+  await expect(panel.locator("#broadcast-enabled")).toBeVisible();
+  expect(await page.evaluate(() => window.broadcastRecoveryReads)).toBe(2);
+  expect(await original.evaluate(node => node.isConnected)).toBe(true);
+  await expectHarnessClean(page, errors);
+});
