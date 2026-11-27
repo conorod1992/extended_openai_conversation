@@ -20,7 +20,7 @@ This is the safest starting point if you want the integration to behave like ano
 
 ### Always
 
-Requests another utterance after every successful response.
+Requests another utterance after successful responses, except for the recognised `HassNevermind` intent described above.
 
 This can create a more conversational experience, but it also means the satellite will keep listening even after responses that clearly complete the interaction.
 
@@ -40,7 +40,7 @@ Current ESPHome Assist satellites support this behavior. Older or custom voice c
 
 Use **HA Default** when you want the least surprising behavior.
 
-Use **Always** when you intentionally want every interaction to remain open for another utterance.
+Use **Always** when you generally want successful interactions to remain open for another utterance, while still allowing Home Assistant's recognised never-mind command to end listening.
 
 Use **Conditional** when you want the assistant to behave conversationally without reopening the microphone after every completed request.
 

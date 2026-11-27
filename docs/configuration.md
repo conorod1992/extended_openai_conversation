@@ -13,7 +13,7 @@ On desktop, section buttons appear above each grouped page. On smaller screens,
 Page and section dropdowns provide the same navigation. **Search all settings**
 can jump to settings across sections; collections such as Functions, Memories,
 and Knowledge also have their own search. Configuration duplication and transfer
-are grouped under **Agent actions**. Save and Revert appear only when the
+are grouped under **Assistant actions**. Save and Revert appear only when the
 settings draft is dirty. Changing agent behaviour requires an administrator.
 
 The editor writes the existing Home Assistant config subentry; there is no separate frontend store. Changes remain a local draft until Save is pressed. Voice ownership is separate from spoken-response cleanup, dependent options stay visible but disabled, and Custom replacements remain directly visible while speech processing is enabled.
@@ -34,7 +34,7 @@ Function Groups are optional metadata around that unchanged YAML. Existing ungro
 
 Settings subsections share one local draft, so moving among them preserves unsaved changes. Immediate Knowledge availability saves preserve unrelated edits in that draft. Resetting model parameters preserves Memory settings and selects reasoning effort supported by the current model. The Save/Revert bar is shown only while that draft is dirty. Functions and Function Groups save independently against the latest persisted configuration, while their saved fields are synchronized into the browser draft so unrelated unsaved settings remain intact. Duplicate agent is disabled until settings changes are saved or reverted. **Import configuration** accepts existing configuration export files. Import can create a new agent without discarding the current draft, or overwrite the current agent after validation and explicit confirmation that any dirty draft will be discarded.
 
-The **Home Assistant access** page distinguishes Assist entity exposure from automatic prompt context. Home Assistant decides which exposed entities the assistant may use. The integration's separate **Include exposed entity states in the prompt** setting controls whether exposed names and current states are added automatically; turning it off does not necessarily prevent access through Home Assistant tools.
+The **Home Assistant access** page distinguishes Assist entity exposure from automatic prompt context. Home Assistant decides which exposed entities the assistant may use. The integration's separate **Include exposed devices** setting controls whether exposed names and current states are added automatically; turning it off does not necessarily prevent access through Home Assistant tools.
 
 Legacy panel routes such as `/configuration`, `/tools`, `/guest`, `/memories`, `/knowledge`, `/conversations`, `/usage`, and `/diagnostics` continue to resolve to their corresponding new subsection.
 
@@ -77,7 +77,7 @@ Conversation-agent settings are available in the **Extended OpenAI** sidebar pan
 | **Web search detail** | Low | Controls Web Search retrieval breadth. |
 | **Long-term memory** | Off | Enables Manual or Automatic persistent memory. |
 | **Allow the assistant to use Knowledge** | Off | Enables on-demand model search and retrieval of maintained per-agent Knowledge sources. |
-| **Automatically include memories** | 3 | Maximum memories selected from the opening message and reused for that conversation. |
+| **Automatically include memories** | 3 | Maximum memories selected using the effective AI input of the first eligible model-handled turn and reused for that conversation. |
 | **Maximum response length (tokens)** | 500 | Limits model output tokens, including reasoning tokens where the provider counts them against output. |
 | **Tool-call limit per request** | 10 | Limits model-requested Function Tool executions within one turn; resets for the next turn. |
 | **Skills** | None on initial setup; available Skills selected when adding an agent | Lists installed instruction sets the agent may load, one installed directory name per line. |
@@ -122,10 +122,10 @@ See [Responses API](features/responses-api.md).
 
 **Listen for a follow-up** only controls responses handled by ExtendedOpenAI. Home Assistant sentence triggers and native local handling may intercept a request before ExtendedOpenAI is invoked; their follow-up behavior remains controlled by Home Assistant.
 
-Always also applies to successful local intents and consumed Request Rules inside ExtendedOpenAI. Failed local handling does not request follow-up listening. These local responses keep listening disabled in HA Default and Conditional modes; Conditional requires an actual model continuation decision.
+Always also applies to successful local intents and consumed Request Rules inside ExtendedOpenAI, except the recognised Home Assistant `HassNevermind` intent, which ends listening. Failed local handling does not request follow-up listening. These local responses keep listening disabled in HA Default and Conditional modes; Conditional requires an actual model continuation decision.
 
 - **HA Default** — preserve Home Assistant's normal follow-up behavior.
-- **Always** — request another utterance after every successful response.
+- **Always** — request another utterance after successful responses, except the recognised Home Assistant never-mind command.
 - **Conditional** — allow the model to signal when its answer expects an immediate reply.
 
 The voice client must support Home Assistant's `continue_conversation` signal. See [Voice follow-ups](features/voice-followups.md).
@@ -148,7 +148,7 @@ See [Web Search](features/web-search.md).
 
 See [Persistent memory](features/persistent-memory.md).
 
-The selected bundle is reused for the conversation (`0` is tool-only). **How memories are matched** defaults to local Keyword matching. Optional **Keyword + meaning** sends memory content/metadata and memory search queries, including the opening message and later memory-tool searches, to the configured provider's embeddings endpoint, which can incur API charges; it falls back to keyword matching when unsupported. The adjacent Embedding model setting applies only to Keyword + meaning.
+The selected bundle is reused for the conversation (`0` is tool-only). **How memories are matched** defaults to local Keyword matching. Optional **Keyword + meaning** sends memory content/metadata and memory search queries, including the initial automatic query and later memory-tool searches, to the configured provider's embeddings endpoint, which can incur API charges; it falls back to keyword matching when unsupported. The adjacent Embedding model setting applies only to Keyword + meaning.
 
 ## Knowledge Library
 

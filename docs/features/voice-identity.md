@@ -19,7 +19,7 @@ This avoids treating two identifiers for the same physical voice source as diffe
 The Voice & identity page lets you configure:
 
 - **Unidentified voice requests** — what retained-data scope is used when Home Assistant cannot identify the speaker/source sufficiently.
-- **Unmapped-device fallback** — what happens when device assignment is enabled but the source device has no assignment.
+- **When a voice device is not assigned** (shown as **If the device is not assigned** in the relevant settings) — what happens when device assignment is enabled but the source device has no assignment.
 - **Default voice user** — the Home Assistant user whose retained data is used when a policy explicitly selects the default-user scope.
 - **Voice device assignments** — map a source voice device to a Home Assistant user, shared-household data, or no retained personal data.
 
@@ -35,7 +35,7 @@ For shared devices, use shared-household data or no retained personal data unles
 
 ## New, renamed, or replaced satellites
 
-After changing voice hardware or Home Assistant device registrations, review **Voice device assignments** and the **Unmapped-device fallback**. A source that no longer matches its old assignment should not silently inherit somebody's personal data through an overly broad fallback.
+After changing voice hardware or Home Assistant device registrations, review **Voice device assignments** and the **When a voice device is not assigned** / **If the device is not assigned** setting. A source that no longer matches its old assignment should not silently inherit somebody's personal data through an overly broad fallback.
 
 ## Relationship to archive and continuity
 

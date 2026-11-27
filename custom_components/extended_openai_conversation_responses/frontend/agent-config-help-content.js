@@ -3,7 +3,7 @@ const DOCS_ROOT = "https://github.com/conorod1992/extended_openai_conversation/b
 export const HELP_METADATA = Object.freeze({
   api_mode: Object.freeze({
     title: "Provider API format",
-    paragraphs: ["Auto uses Chat Completions by default and selects Responses for GPT-5.6 and later GPT-5 minor models. Override it when an OpenAI-compatible provider supports only one API style."],
+    paragraphs: ["Auto uses model capabilities, tools and reasoning settings. Unknown models default to Responses for text-only requests. Select the API explicitly for providers supporting only one style."],
     items: [
       { term: "Auto", text: "Lets the integration choose using its model compatibility rules." },
       { term: "Responses", text: "Uses the newer Responses API style." },
@@ -16,7 +16,7 @@ export const HELP_METADATA = Object.freeze({
     title: "Listen for a follow-up",
     items: [
       { term: "HA Default", text: "Uses Home Assistant's normal continuation behaviour." },
-      { term: "Always", text: "Keeps listening after every successful response." },
+      { term: "Always", text: "Keeps listening after success, except recognised never-mind commands." },
       { term: "Conditional", text: "Lets the model decide whether an immediate reply is expected, using the integration's continuation tool." },
     ],
     keywords: "follow-up follow up keep listening immediate turn home assistant default conditional",
@@ -93,7 +93,7 @@ export const HELP_METADATA = Object.freeze({
   }),
   archive_session_timeout: Object.freeze({
     title: "Archive session timeout",
-    paragraphs: ["After this many minutes without activity, the next turn starts a new archive session instead of continuing the previous retained session."],
+    paragraphs: ["After this much inactivity, the next turn normally starts a new archive session. Private mode persists while the live conversation continues."],
     keywords: "inactivity new conversation archive session minutes split",
     href: `${DOCS_ROOT}/features/conversation-archive.md`,
   }),
@@ -103,14 +103,14 @@ export const HELP_METADATA = Object.freeze({
       { term: "Don’t use saved personal data", text: "Uses no personal owner, so long-term memory and conversation archiving are unavailable for the request." },
       { term: "Use shared household data", text: "Uses memories and history shared by the household." },
       { term: "Use the default user", text: "Uses the configured Home Assistant user's memories and history." },
-      { term: "Use a device-to-user mapping", text: "Looks up the source satellite or device. If it has no assignment, the unmapped-device setting is used." },
+      { term: "Use a device-to-user mapping", text: "Uses the source device ID, or satellite ID if unavailable. An unusable assignment uses the fallback." },
     ],
     keywords: "speaker unidentified owner unretained shared default user device mapping satellite scope",
     href: `${DOCS_ROOT}/features/persistent-memory.md`,
   }),
   voice_unmapped_policy: Object.freeze({
     title: "When a device has no mapping",
-    paragraphs: ["This setting is used when device-to-user mapping is selected but the request comes from a device with no assignment."],
+    paragraphs: ["Used when device mapping is selected but the assignment is missing, malformed, or refers to a deleted or inactive user. Explicit no-retained-data assignments override it."],
     items: [
       { term: "Don’t use saved personal data", text: "Uses no personal memories or archived conversation history." },
       { term: "Use shared household data", text: "Uses memories and history shared by the household." },
@@ -144,7 +144,7 @@ export const HELP_METADATA = Object.freeze({
   }),
   context_threshold: Object.freeze({
     title: "Conversation history token limit",
-    paragraphs: ["This is a context-size threshold based on provider-reported input tokens, not a message count. Higher values preserve more history but can use more context and tokens. What is retained depends on the truncation strategy."],
+    paragraphs: ["This threshold uses provider input tokens or a local estimate when unavailable, not a message count. Higher values preserve more history but can use more context and tokens. What is retained depends on the truncation strategy."],
     keywords: "tokens context size message count threshold history limit",
     href: `${DOCS_ROOT}/features/context-management.md`,
   }),
@@ -153,7 +153,7 @@ export const HELP_METADATA = Object.freeze({
     items: [
       { term: "Keep recent messages", text: "Drops the oldest complete turns while preserving the system prompt and newest conversation turns." },
       { term: "Clear all messages", text: "Clears prior conversation content when the threshold is exceeded." },
-      { term: "Summarize older messages", text: "Makes one bounded model request to summarize older turns, keeps recent raw turns, and falls back to Keep recent if summarization fails." },
+      { term: "Summarize older messages", text: "Summarizes older turns with a bounded request and keeps recent raw turns. Output-token exhaustion allows one bounded retry; failure falls back to Keep recent." },
     ],
     keywords: "truncate clear summarize recent older messages context history strategy",
     href: `${DOCS_ROOT}/features/context-management.md`,

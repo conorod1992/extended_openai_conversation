@@ -5,12 +5,12 @@ If you are using the normal **OpenAI** option in Extended OpenAI, you need an Op
 An API key is simply a private code that lets Home Assistant send requests to OpenAI on your behalf. You create it once, copy it into the integration, and normally do not need to think about it again.
 
 !!! important "ChatGPT and the API are billed separately"
-    Paying for ChatGPT Plus, Pro, Business, or another ChatGPT plan does **not** automatically pay for API usage. OpenAI treats ChatGPT and the API as separate products.
+    ChatGPT and the API are separate products. Eligible Pro and Business subscribers may [claim API credits](https://developers.openai.com/api/docs/guides/chatgpt-api-credits) by linking an eligible subscription to an API organisation. Credits are not automatically activated, and API usage outside the credit allowance may be billed separately.
 
 ## The short version
 
 1. Open [OpenAI's API platform](https://platform.openai.com/) and sign in.
-2. Make sure API billing is set up for your account.
+2. Make sure your API organisation has usable credits or API billing set up. A payment method is not required while eligible activated free credits are available.
 3. Open the [API keys page](https://platform.openai.com/api-keys).
 4. Select **Create new secret key**.
 5. Give it a simple name such as **Home Assistant**.
@@ -36,7 +36,7 @@ You can use more restrictive permissions later if you know exactly which API fea
 The most common things to check are:
 
 - Make sure you copied the **API key**, not your ChatGPT password.
-- Make sure API billing is enabled. ChatGPT subscription billing does not cover API usage.
+- Check that the API organisation has active credits or billing enabled. A ChatGPT subscription alone does not grant API access.
 - If you created a new key because the old one was lost, paste the **new** key into Home Assistant.
 - Do not add spaces before or after the key when pasting it.
 
