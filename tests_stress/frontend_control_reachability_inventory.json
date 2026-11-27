@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 456,
+  "expected_total_markers": 457,
   "viewports": [
     {
       "name": "small-phone",
@@ -80,7 +80,7 @@
     "unsaved-state.js": 2,
     "usage-chart.js": 12,
     "voice-identity-core.js": 4,
-    "voice-identity-ui.js": 8
+    "voice-identity-ui.js": 9
   },
   "conditional_controls": [
     {
@@ -202,6 +202,15 @@
         "#skill-catalogue button"
       ],
       "browser_spec": "tests_browser/configuration-edge-semantics.spec.mjs"
+    },
+    {
+      "source": "voice-identity-ui.js",
+      "scenario": "A legacy satellite and registry device share one assignment; the administrator can select either owner or remove both.",
+      "selectors": [
+        ".keep-voice-mapping",
+        ".remove-voice-mapping"
+      ],
+      "browser_spec": "tests_browser/control-reachability.spec.mjs"
     },
     {
       "source": "management-feature-status.js",

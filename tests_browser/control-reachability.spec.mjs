@@ -183,6 +183,35 @@ for (const viewport of reachabilityInventory.viewports) {
     const confirm = repair.locator("#rule-matching-repair-confirm");
     await confirm.check();
     await expect(confirm).toBeChecked();
+
+    await page.goto(fixtureUrl("assistant/basics"));
+    await expect(panel.locator("#config-max_tokens")).toBeVisible();
+    await panel.evaluate(async host => {
+      const saved = browserHarness.getState().configuration;
+      const callWS = host.hass.callWS.bind(host.hass);
+      await callWS({
+        type:"extended_openai_conversation_responses/management",
+        section:"configuration", action:"save", entry_id:"entry-1", subentry_id:"agent-1",
+        revision:saved.revision, title:saved.title,
+        config:{...saved.config, voice_scope_policy:"device_mapping",
+          voice_device_mappings:{"assist_satellite.kitchen":"user:test-user", "device-kitchen":"unretained"}},
+      });
+      host.hass.callWS = request => request.type === "config/entity_registry/list"
+        ? Promise.resolve([{entity_id:"assist_satellite.kitchen", device_id:"device-kitchen"}])
+        : callWS(request);
+      host._invalidateAfterMutation(host._agentId, "configuration", "save");
+      host._clearConfigDraft();
+      await host._navigate("assistant", "voice");
+    });
+    const assignments = panel.locator("#voice-mappings");
+    const keep = assignments.locator(".keep-voice-mapping:visible");
+    await expect(keep).toHaveCount(2);
+    await expect(assignments.getByRole("button", {name:"Remove all assignments for this satellite"})).toBeVisible();
+    await auditControls(page, panel, viewport.name + "/Voice alias reconciliation", assignments);
+    await keep.first().click();
+    await expect(assignments.locator("[data-voice-mapping-row]")).toHaveCount(1);
+    expect(await panel.evaluate(host => host._draft.voice_device_mappings))
+      .toEqual({"device-kitchen":"user:test-user"});
   });
 }
 
