@@ -628,30 +628,44 @@ async def test_late_legacy_argument_snapshot_without_id_uses_completed_call():
         _ = [frame async for frame in ordered_output_events(stream(frames))]
 
 
-@pytest.mark.parametrize(
-    "snapshot",
-    [
-        event("response.refusal.done", output_index=0, refusal="Already complete"),
-        event(
-            "response.content_part.done",
-            output_index=0,
-            content_index=0,
-            part=SimpleNamespace(type="output_text", text="Already complete"),
-        ),
-    ],
-)
-async def test_late_indexed_part_snapshot_is_not_presented_again(snapshot):
-    frames = [
-        event("response.output_item.added", output_index=0),
-        event("response.output_item.done", output_index=0),
-        snapshot,
-        event("response.completed"),
-    ]
-    assert [frame async for frame in ordered_output_events(stream(frames))] == [
-        frames[0],
-        frames[1],
-        frames[3],
-    ]
+@pytest.mark.parametrize("owner", ["index", "id", "anonymous"])
+@pytest.mark.parametrize("part_kind", ["output_text", "refusal", "content_part"])
+@pytest.mark.parametrize("buffered", [False, True])
+async def test_late_indexed_part_snapshot_is_not_presented_again(
+    owner, part_kind, buffered
+):
+    index = int(buffered)
+    field = "refusal" if part_kind == "refusal" else "text"
+    part = SimpleNamespace(
+        type="refusal" if field == "refusal" else "output_text",
+        **{field: "Already complete"},
+    )
+    item = SimpleNamespace(type="message", id="message", role="assistant", content=[part])
+    identity = {"index": {"output_index": index}, "id": {"item_id": item.id}}.get(
+        owner, {}
+    )
+    opener = event("response.output_item.added", output_index=index, item=item)
+    done = event("response.output_item.done", output_index=index, item=item)
+    snapshot = event(
+        f"response.{part_kind}.done",
+        content_index=0,
+        **identity,
+        **({"part": part} if part_kind == "content_part" else {field: "Already complete"}),
+    )
+    output = [item]
+    wire = [opener, done]
+    presentation = wire.copy()
+    if buffered:
+        earlier = SimpleNamespace(type="reasoning", id="reasoning")
+        earlier_open = event("response.output_item.added", output_index=0, item=earlier)
+        earlier_done = event("response.output_item.done", output_index=0, item=earlier)
+        wire.extend([earlier_open, earlier_done])
+        presentation[:0] = [earlier_open, earlier_done]
+        output.insert(0, earlier)
+    terminal = event("response.completed", response=SimpleNamespace(output=output))
+    assert [
+        frame async for frame in ordered_output_events(stream([*wire, snapshot, terminal]))
+    ] == [*presentation, terminal]
 
 
 async def test_terminal_output_count_is_bounded_before_replay(monkeypatch):
@@ -738,6 +752,9 @@ async def test_legacy_introduced_message_requires_completion(
     ],
 )
 async def test_anonymous_numbered_part_can_complete_its_open_indexed_message(part_frame):
+    previous = SimpleNamespace(
+        type="message", id="previous", role="assistant", content=[]
+    )
     item = SimpleNamespace(
         type="message",
         id="message",
@@ -745,10 +762,12 @@ async def test_anonymous_numbered_part_can_complete_its_open_indexed_message(par
         content=[SimpleNamespace(type="output_text", text="Light is on")],
     )
     frames = [
-        event("response.output_item.added", output_index=0, item=item),
+        event("response.output_item.added", output_index=0, item=previous),
+        event("response.output_item.done", output_index=0, item=previous),
+        event("response.output_item.added", output_index=1, item=item),
         part_frame,
-        event("response.output_item.done", output_index=0, item=item),
-        event("response.completed", response=SimpleNamespace(output=[item])),
+        event("response.output_item.done", output_index=1, item=item),
+        event("response.completed", response=SimpleNamespace(output=[previous, item])),
     ]
     assert [frame async for frame in ordered_output_events(stream(frames))] == frames
 

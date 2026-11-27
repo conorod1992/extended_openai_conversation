@@ -340,7 +340,8 @@ async def ordered_output_events(
     legacy_start = False
     legacy_message_active = False
     implicit_legacy_text = False
-    legacy_message_finished = False
+    # Tracks the last presented item, including completions released from buffers.
+    message_finished = False
     legacy_completions: dict[str, _OutputItem] = {}
     last_legacy_completed: _OutputItem | None = None
     legacy_items: list[tuple[Any, ...]] = []
@@ -352,7 +353,7 @@ async def ordered_output_events(
                 raise _malformed("invalid output index")
             kind = getattr(event, "type", "")
             anonymous_output_index = None
-            late_legacy_snapshot = False
+            late_snapshot = False
             if index is None and kind in _CONTENT_EVENTS:
                 content_owner = getattr(event, "item_id", None)
                 if isinstance(content_owner, str) and content_owner in owners:
@@ -366,7 +367,7 @@ async def ordered_output_events(
                     ):
                         # The visible indexed message already owns anonymous parts.
                         anonymous_output_index = next_index
-                late_legacy_snapshot = (
+                late_snapshot = (
                     index is None
                     and kind in _PART_SNAPSHOTS
                     and (
@@ -374,17 +375,21 @@ async def ordered_output_events(
                             isinstance(content_owner, str)
                             and content_owner in legacy_completions
                         )
-                        or (not content_owner and legacy_message_finished)
+                        or (
+                            not content_owner
+                            and anonymous_output_index is None
+                            and message_finished
+                        )
                     )
                 )
             budget.responses_event(
                 event,
                 anonymous_output_index=anonymous_output_index,
-                discard_snapshot=late_legacy_snapshot,
+                discard_snapshot=late_snapshot,
             )
             if terminal_seen and kind.startswith("response.") and kind not in _USAGE:
                 raise _malformed("event after terminal response")
-            if late_legacy_snapshot:
+            if late_snapshot:
                 continue
 
             if kind == "response.completed":
@@ -533,7 +538,7 @@ async def ordered_output_events(
                     legacy.observe(event, kind, item_id)
                     legacy_start = True
                     implicit_legacy_text = False
-                    legacy_message_finished = False
+                    message_finished = False
                 elif kind == _DONE:
                     if legacy.signature and legacy.signature[0] != getattr(
                         event.item, "type", None
@@ -551,9 +556,7 @@ async def ordered_output_events(
                     ):
                         record_web_search()
                     last_legacy_completed = legacy
-                    legacy_message_finished = (
-                        getattr(event.item, "type", None) == "message"
-                    )
+                    message_finished = getattr(event.item, "type", None) == "message"
                     legacy_items.append(_item_identity(event.item))
                     legacy = _OutputItem()
                     legacy_start = legacy_message_active = implicit_legacy_text = False
@@ -564,7 +567,7 @@ async def ordered_output_events(
                     elif kind in _TEXT_EVENTS or kind.startswith(
                         "response.content_part."
                     ):
-                        legacy_message_finished = False
+                        message_finished = False
                         if anonymous_output_index is None:
                             if item_id or (
                                 kind.startswith("response.content_part.")
@@ -627,17 +630,21 @@ async def ordered_output_events(
                 continue
 
             is_opening = event is item.opening
+            if not item.presented:
+                message_finished = False
             if not item.presented or item.pending:
                 for frame in item.release(budget):
                     yield frame
             if not is_opening:
                 yield event
-            while item.done:
+            while item.completion is not None:
+                message_finished = item.completion[0] == "message"
                 next_index += 1
                 following = items.get(next_index)
                 if following is None or not following.ready:
                     break
                 item = following
+                message_finished = False
                 for frame in item.release(budget):
                     yield frame
     except ProviderStreamError:

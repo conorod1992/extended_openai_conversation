@@ -130,11 +130,12 @@ async function entityRegistry(panel) {
   // Native HA pickers can stay mounted across entity/device registry changes.
   if (!panel.__voiceEntityRegistryPromise) {
     const hass = panelHass(panel);
+    const before = new Map(voiceMappingDraft(panel).aliases);
     const request = hass?.callWS
       ? Promise.resolve().then(() => hass.callWS({type:"config/entity_registry/list"}))
           .then(entries => Array.isArray(entries) ? entries : []).catch(() => [])
       : Promise.resolve([]);
-    const tracked = request.finally(() => {
+    const tracked = request.then(entries => ({entries, before})).finally(() => {
       if (panel.__voiceEntityRegistryPromise === tracked) panel.__voiceEntityRegistryPromise = null;
     });
     panel.__voiceEntityRegistryPromise = tracked;
@@ -211,11 +212,22 @@ function updateDependencies(panel) {
   }
 }
 
+function mappingRows(root, state) {
+  return [...root.querySelectorAll("[data-voice-mapping-row]")].map(row => {
+    const id = row.querySelector(".voice-device-id")?.value;
+    return {row, id, key:voiceMappingDeviceKey(state, id)};
+  });
+}
+
 function mappingGroup(root, state, row) {
-  const id = row.querySelector(".voice-device-id")?.value;
-  const key = voiceMappingDeviceKey(state, id);
-  return {id, key, rows:key ? [...root.querySelectorAll("[data-voice-mapping-row]")]
-    .filter(item => voiceMappingDeviceKey(state, item.querySelector(".voice-device-id")?.value) === key) : []};
+  const rows = mappingRows(root, state);
+  const selected = rows.find(item => item.row === row);
+  return {selected, group:rows.filter(item => item.key && item.key === selected?.key)};
+}
+
+function removesLegacyAssignments({id, key}, group, baseline) {
+  return id === key && group.length > 1 && group.filter(item => item.id === id).length === 1
+    && baseline.some(saved => saved.deviceId === id);
 }
 
 function updateMappingConflicts(panel) {
@@ -223,19 +235,21 @@ function updateMappingConflicts(panel) {
   const state = voiceMappingDraft(panel);
   const error = root.querySelector('[data-error="voice_device_mappings"]');
   if (error) error.textContent = voiceMappingDraftError(panel);
-  const rows = [...root.querySelectorAll("[data-voice-mapping-row]")].map(row => {
-    const id = row.querySelector(".voice-device-id")?.value;
-    return {row, id, key:voiceMappingDeviceKey(state, id)};
-  });
-  const counts = new Map();
+  const rows = mappingRows(root, state);
+  const groups = new Map();
+  for (const item of rows) {
+    if (!groups.has(item.key)) groups.set(item.key, []);
+    groups.get(item.key).push(item);
+  }
   const savedIds = new Set(state.baseline.map(saved => saved.deviceId));
-  for (const {key} of rows) if (key) counts.set(key, (counts.get(key) || 0) + 1);
-  for (const {row, id, key} of rows) {
-    const conflict = counts.get(key) > 1;
+  for (const item of rows) {
+    const {row, id, key} = item;
+    const group = groups.get(key);
+    const conflict = key && group.length > 1;
     const keep = row.querySelector(".keep-voice-mapping");
     if (keep) keep.hidden = !(conflict || (key !== id && savedIds.has(key)));
     const remove = row.querySelector(".remove-voice-mapping");
-    if (remove) remove.textContent = conflict && key === id ? "Remove all assignments for this satellite" : "Remove";
+    if (remove) remove.textContent = conflict && removesLegacyAssignments(item, group, state.baseline) ? "Remove all assignments for this satellite" : "Remove";
   }
 }
 
@@ -333,14 +347,14 @@ async function bindSatellitePicker(panel,row) {
     return;
   }
   const owner = captureConfigurationOwner(panel);
-  const entries = await entityRegistry(panel);
+  const {entries, before} = await entityRegistry(panel);
   if (!rowCurrent() || !configurationSubmissionIsCurrent(panel,owner) || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
-  // A newer per-entity selection can have a fresher association than this list.
-  rememberVoiceDeviceAliases(panel, entries.filter(entry => entry?.entity_id !== picker.__voiceSelection?.entityId));
+  // All rows share the list request. Use associations resolved since it began.
+  const currentEntries = rememberVoiceDeviceAliases(panel, entries, before);
   if (voiceMappingDraftDirty(panel)) syncMappings(panel);
   else updateMappingConflicts(panel);
   if (picker.__voiceSelection) return;
-  const entityId = satelliteForDeviceId(entries,storedDeviceId)
+  const entityId = satelliteForDeviceId(currentEntries,storedDeviceId)
     || (storedDeviceId.startsWith("assist_satellite.") && panel.hass?.states?.[storedDeviceId] ? storedDeviceId : "");
   if (entityId) {
     picker.value = entityId;
@@ -379,16 +393,19 @@ function bindRows(panel) {
     });
     row.querySelector(".keep-voice-mapping")?.addEventListener("click",() => {
       if (!row.isConnected || !voiceMappingRowIsCurrent(panel,row.dataset.voiceRowId)) return;
-      const {key, rows} = mappingGroup(root, voiceMappingDraft(panel), row);
-      if (!key) return;
-      for (const other of rows) if (other !== row) other.remove();
-      row.querySelector(".voice-device-id").value = key;
+      const {selected, group} = mappingGroup(root, voiceMappingDraft(panel), row);
+      if (!selected?.key) return;
+      for (const other of group) if (other.row !== row) other.row.remove();
+      row.querySelector(".voice-device-id").value = selected.key;
       syncMappings(panel);
     });
     row.querySelector(".remove-voice-mapping")?.addEventListener("click",() => {
       if (!row.isConnected || !voiceMappingRowIsCurrent(panel,row.dataset.voiceRowId)) return;
-      const {id, key, rows} = mappingGroup(root, voiceMappingDraft(panel), row);
-      for (const removed of key === id && rows.length > 1 ? rows : [row]) removed.remove();
+      const state = voiceMappingDraft(panel);
+      const {selected, group} = mappingGroup(root, state, row);
+      if (selected && removesLegacyAssignments(selected, group, state.baseline)) {
+        for (const removed of group) removed.row.remove();
+      } else row.remove();
       if (!root.querySelector("[data-voice-mapping-row]")) root.querySelector("#voice-mapping-list").innerHTML = '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the setting for unassigned voice devices will be used.</div>';
       syncMappings(panel);
     });

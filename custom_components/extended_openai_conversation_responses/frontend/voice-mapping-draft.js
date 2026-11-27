@@ -128,16 +128,20 @@ export function newVoiceMappingRow() {
   return {id:`voice-row-${++rowSequence}`, deviceId:"", owner:"unretained", satellite:"", lookup:""};
 }
 
-export function rememberVoiceDeviceAliases(panel, entries) {
+export function rememberVoiceDeviceAliases(panel, entries, before) {
   const {aliases} = voiceMappingDraft(panel);
-  for (const entry of entries) {
-    if (!entry?.entity_id?.startsWith("assist_satellite.")) continue;
-    aliases.set(entry.entity_id, entry.device_id || entry.entity_id);
-  }
+  return entries.map(entry => {
+    const id = entry?.entity_id;
+    if (!id?.startsWith("assist_satellite.")) return entry;
+    const latest = aliases.get(id);
+    if (before && latest && latest !== before.get(id)) return latest;
+    aliases.set(id, entry);
+    return entry;
+  });
 }
 
 export function voiceMappingDeviceKey(state, id) {
-  return state?.aliases.get(id) || id;
+  return state?.aliases.get(id)?.device_id || id;
 }
 
 function validateRows(rows, state) {

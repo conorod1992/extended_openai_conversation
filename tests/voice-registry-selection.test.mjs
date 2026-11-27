@@ -156,17 +156,32 @@ for (const changeOwner of [h => {h.panel._agentId = "other-agent";},
   await selected;
   assert.equal(h.hidden.value, "device-office");
 }
-for (const action of ["keep-legacy-owner", "remove-effective"]) {
+for (const action of [
+  "keep-legacy-owner", "remove-effective", "fresh-alias", "remove-duplicate",
+  "remove-duplicate-with-legacy", "remove-unsaved-canonical",
+]) {
   const legacy = "assist_satellite.kitchen", device = "registry-kitchen";
-  const mapping = {[legacy]:"user:person", [device]:"unretained"};
+  const mapping = action === "remove-duplicate" ? {[device]:"user:person"} :
+    action === "remove-unsaved-canonical" ? {[legacy]:"user:person"} :
+    {[legacy]:"user:person", [device]:"unretained"};
+  const removeNew = action.startsWith("remove-duplicate") || action === "remove-unsaved-canonical";
   const card = new TestEventTarget(), error = {};
+  const hydration = deferred();
   const panel = {
     _agentId:"voice-agent", _viewKey:()=>"assistant/voice",
     _draft:{voice_device_mappings:{...mapping}},
     _configData:{config:{voice_device_mappings:{...mapping}}},
-    hass:{callWS:async () => [{entity_id:legacy, device_id:device}]},
+    hass:{callWS:async message => {
+      if (message.type === "config/entity_registry/get") return {entity_id:legacy, device_id:device};
+      if (action === "fresh-alias") return hydration.promise;
+      return [{entity_id:legacy, device_id:device}];
+    }},
   };
-  const rows = voiceMappingDraft(panel).rows.map(saved => {
+  const draft = voiceMappingDraft(panel);
+  if (removeNew) {
+    draft.rows.push({id:"duplicate-row", deviceId:device, owner:"unretained"});
+  }
+  const rows = draft.rows.map(saved => {
     const picker = new TestEventTarget(); picker.dataset={};
     const remove = new TestEventTarget(), keep = new TestEventTarget();
     const nodes = {".voice-satellite-picker":picker, ".voice-device-id":{value:saved.deviceId},
@@ -188,19 +203,34 @@ for (const action of ["keep-legacy-owner", "remove-effective"]) {
     querySelectorAll: selector => selector === "[data-voice-mapping-row]" ? visible() : [],
   };
   bindVoiceMappings(panel);
+  if (action === "fresh-alias") {
+    await Promise.all([...rows[1].picker.listeners.get("value-changed")]
+      .map(listener => listener({detail:{value:legacy}})));
+    assert.match(error.textContent, /assigned more than once/);
+    hydration.resolve([{entity_id:legacy, device_id:"outdated-device"}]);
+  }
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(rows.map(row => row.picker.value), [legacy, legacy]);
+  assert.ok(rows.every(row => row.picker.value === legacy));
   assert.match(error.textContent, /assigned more than once/);
   if (action === "keep-legacy-owner") {
     assert.equal(rows[0].keep.hidden, false);
     rows[0].keep.dispatchEvent(new Event("click"));
     assert.deepEqual(panel._draft.voice_device_mappings, {[device]:"user:person"});
-  } else {
+  } else if (removeNew) {
+    const extra = rows.at(-1);
+    assert.equal(extra.removeButton.textContent, "Remove");
+    extra.removeButton.dispatchEvent(new Event("click"));
+    assert.deepEqual(panel._draft.voice_device_mappings, mapping);
+    assert.deepEqual(visible(), rows.slice(0,-1));
+  } else if (action === "remove-effective") {
     assert.match(rows[1].removeButton.textContent, /Remove all assignments/);
     rows[1].removeButton.dispatchEvent(new Event("click"));
     assert.deepEqual(panel._draft.voice_device_mappings, {});
   }
-  assert.equal(error.textContent, "");
+  if (action === "remove-duplicate-with-legacy") {
+    assert.match(error.textContent, /assigned more than once/);
+    assert.match(rows[1].removeButton.textContent, /Remove all assignments/);
+  } else if (action !== "fresh-alias") assert.equal(error.textContent, "");
 }
 
 console.log("Voice registry freshness, retry and selection ownership tests passed");

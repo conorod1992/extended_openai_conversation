@@ -908,8 +908,8 @@ class UsageManager:
             live_runs = {record.run_id: record for record in self.runs}
             candidate_requests = {record.request_id for record in requests}
             candidate_runs = {record.run_id for record in runs}
-            # A missing file, or a previous generation containing a record this
-            # operation removes, proves the atomic replacement did not apply.
+            # A missing file or an earlier generation with inline dates or
+            # removed records proves the atomic replacement did not apply.
             # Keep recent records still waiting for a checkpoint when the disk
             # generation is otherwise a subset of the current live state.
             # Startup already filters expired disk records out of live history.
@@ -924,7 +924,8 @@ class UsageManager:
                         live_runs.get(item.run_id) == item for item in retained_runs
                     )
                     and (
-                        any(
+                        inline_dates
+                        or any(
                             item.request_id not in candidate_requests
                             for item in restored
                         )
