@@ -122,10 +122,10 @@ See [Responses API](features/responses-api.md).
 
 **Listen for a follow-up** only controls responses handled by ExtendedOpenAI. Home Assistant sentence triggers and native local handling may intercept a request before ExtendedOpenAI is invoked; their follow-up behavior remains controlled by Home Assistant.
 
-Always also applies to successful local intents and consumed Request Rules inside ExtendedOpenAI. Failed local handling does not request follow-up listening. These local responses keep listening disabled in HA Default and Conditional modes; Conditional requires an actual model continuation decision.
+Always also applies to successful local intents and consumed Request Rules inside ExtendedOpenAI, except the recognised Home Assistant `HassNevermind` intent, which ends listening. Failed local handling does not request follow-up listening. These local responses keep listening disabled in HA Default and Conditional modes; Conditional requires an actual model continuation decision.
 
 - **HA Default** — preserve Home Assistant's normal follow-up behavior.
-- **Always** — request another utterance after every successful response.
+- **Always** — request another utterance after successful responses, except the recognised Home Assistant never-mind command.
 - **Conditional** — allow the model to signal when its answer expects an immediate reply.
 
 The voice client must support Home Assistant's `continue_conversation` signal. See [Voice follow-ups](features/voice-followups.md).

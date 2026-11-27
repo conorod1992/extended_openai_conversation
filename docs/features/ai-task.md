@@ -30,6 +30,11 @@ Structured output requires objects with named fields. A free-form object selecto
 
 Strict output also requires an object at the root, without root-level `anyOf`, and does not support `allOf` intersections. These caller schemas are rejected before contacting the provider; nested `anyOf` alternatives inside named fields remain supported. See [OpenAI’s Structured Outputs schema contract](https://developers.openai.com/api/docs/guides/structured-outputs).
 
+Strict structured outputs normalize nested `oneOf` only when alternatives have
+disjoint types or a required discriminator with disjoint values. Ambiguous
+alternatives are rejected before submission. Caller validation remains
+authoritative when removing optional null placeholders from a task result.
+
 ## Features not available in AI Task options
 
 The AI Task configuration does not expose conversation-specific controls such as:
@@ -56,10 +61,6 @@ and enter its actual model ID in **Azure underlying model**. For example, use
 use the underlying model. This setting is also available in the assistant's
 **Assistant → Basics → Advanced request settings**. Other providers do not use the Azure binding.
 
-Strict structured outputs normalize nested `oneOf` only when alternatives have
-disjoint types or a required discriminator with disjoint values. Ambiguous
-alternatives are rejected before submission. Caller validation remains
-authoritative when removing optional null placeholders from a task result.
 
 Azure's strict schema subset does not accept numeric bounds or several string
 and array constraints. Those constraints are omitted from the schema sent to

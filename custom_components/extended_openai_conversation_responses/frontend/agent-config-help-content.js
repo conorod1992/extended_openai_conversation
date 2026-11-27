@@ -93,7 +93,7 @@ export const HELP_METADATA = Object.freeze({
   }),
   archive_session_timeout: Object.freeze({
     title: "Archive session timeout",
-    paragraphs: ["After this many minutes without activity, the next turn starts a new archive session instead of continuing the previous retained session."],
+    paragraphs: ["After this much inactivity, the next turn normally starts a new archive session. Private mode persists while the live conversation continues."],
     keywords: "inactivity new conversation archive session minutes split",
     href: `${DOCS_ROOT}/features/conversation-archive.md`,
   }),
@@ -103,14 +103,14 @@ export const HELP_METADATA = Object.freeze({
       { term: "Don’t use saved personal data", text: "Uses no personal owner, so long-term memory and conversation archiving are unavailable for the request." },
       { term: "Use shared household data", text: "Uses memories and history shared by the household." },
       { term: "Use the default user", text: "Uses the configured Home Assistant user's memories and history." },
-      { term: "Use a device-to-user mapping", text: "Looks up the source satellite or device. If it has no assignment, the unmapped-device setting is used." },
+      { term: "Use a device-to-user mapping", text: "Uses the source device ID, or satellite ID if unavailable. An unusable assignment uses the fallback." },
     ],
     keywords: "speaker unidentified owner unretained shared default user device mapping satellite scope",
     href: `${DOCS_ROOT}/features/persistent-memory.md`,
   }),
   voice_unmapped_policy: Object.freeze({
     title: "When a device has no mapping",
-    paragraphs: ["This setting is used when device-to-user mapping is selected but the request comes from a device with no assignment."],
+    paragraphs: ["Used when device mapping is selected but the assignment is missing, malformed, or refers to a deleted or inactive user. Explicit no-retained-data assignments override it."],
     items: [
       { term: "Don’t use saved personal data", text: "Uses no personal memories or archived conversation history." },
       { term: "Use shared household data", text: "Uses memories and history shared by the household." },
