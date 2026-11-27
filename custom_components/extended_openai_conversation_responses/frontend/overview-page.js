@@ -9,7 +9,7 @@ let healthClarityModule = null;
 let healthClarityPromise = null;
 let onboardingModule = null;
 let onboardingPromise = null;
-const boundBroadcastCards = new WeakSet();
+const broadcastVisits = new WeakMap();
 
 const WS_MANAGEMENT = "extended_openai_conversation_responses/management";
 const WS_BROADCAST = "extended_openai_conversation_responses/broadcast";
@@ -28,10 +28,7 @@ export async function ensureOverviewModule() {
 }
 
 export function startOverviewBroadcastSnapshot(panel) {
-  if (panel._eocOverviewBroadcastPromise) return panel._eocOverviewBroadcastPromise;
-  const promise = ownAuthenticationRead(panel, panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"}));
-  panel._eocOverviewBroadcastPromise = promise;
-  return promise;
+  return ownAuthenticationRead(panel, panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"}));
 }
 
 if (typeof document === "undefined") await ensureOverviewModule();
@@ -173,22 +170,28 @@ async function refreshOverviewConfiguration(panel, submission) {
   }
 }
 
+export function bindOverviewBroadcast(panel) {
+  if (!implementation || panel._busy || panel._error) return;
+  // The agent snapshot and summary are the first useful Overview. Broadcast
+  // starts after the summary is mounted so its request cannot contend for it.
+  const detailsPending = Object.values(panel._result?.loading || {}).some(Boolean);
+  const card = panel.shadowRoot?.querySelector?.("#broadcast-card");
+  if (!card || detailsPending || (panel._selectedAgent?.() && !panel._result)) return;
+  const token = panel._loadToken;
+  if (broadcastVisits.has(card) && broadcastVisits.get(card) === token) return;
+  broadcastVisits.set(card, token);
+  const current = () => panel.isConnected !== false && panel._viewKey?.() === "overview" && panel._loadToken === token
+    && panel.shadowRoot.querySelector("#broadcast-card") === card;
+  implementation.bindOverviewBroadcast(panel, startOverviewBroadcastSnapshot(panel), current);
+}
+
 export function bindOverview(panel) {
   if (!implementation) {
     bindSnapshotOverview(panel);
     return;
   }
-  // The agent snapshot and summary are the first useful Overview. Broadcast
-  // starts after the summary is mounted so its request cannot contend for it.
-  const detailsPending = Object.values(panel._result?.loading || {}).some(Boolean);
-  const agent = panel._selectedAgent?.();
-  const card = panel.shadowRoot?.querySelector?.("#broadcast-card");
-  const broadcast = card && !boundBroadcastCards.has(card) && (!agent || panel._result) && !detailsPending
-    ? panel._eocOverviewBroadcastPromise || startOverviewBroadcastSnapshot(panel)
-    : null;
-  if (broadcast) boundBroadcastCards.add(card);
-  implementation.bindOverview(panel, broadcast);
-  if (!agent) return;
+  implementation.bindOverview(panel);
+  if (!panel._selectedAgent?.()) return;
   void ensureOnboardingModule()
     .then((module) => {
       if (panel?._viewKey?.() === "overview") module.bindGettingStarted(panel);

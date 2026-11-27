@@ -49,7 +49,11 @@ export function acknowledgeGuestConfigurationRevision(panel, submission, revisio
   scope.revision = revision;
   scope.result = {...scope.result, revision};
   if (panel._viewKey?.() === GUEST && panel._result?.revision === submission.revision) {
-    panel._result = scope.result;
+    panel._result = {...panel._result, revision};
+    const refresh = panel._eocGuestPolicyRefresh;
+    if (refresh?.scope === scope && refresh.token === panel._loadToken && refresh.revision === submission.revision) {
+      refreshSavedGuestPolicy(panel, scope, {submission, token:refresh.token, generation:panel._cacheGeneration, revision});
+    }
   }
 }
 
@@ -197,39 +201,49 @@ function retainUncertainPolicyDraft(panel, scope, view) {
 }
 
 function refreshSavedGuestPolicy(panel, scope, owner) {
-  const state = {};
-  panel._eocGuestPolicyRefresh = state;
-  const metrics = panel.shadowRoot?.querySelector(".metric-grid");
+  const state = {scope, token:owner.token, revision:owner.revision};
+  const metrics = () => panel.shadowRoot?.querySelector(".metric-grid");
+  const ownsVisit = () => configurationSubmissionIsCurrent(panel, owner.submission)
+    && panel._loadToken === owner.token && panel._viewKey?.() === GUEST
+    && panel._unsavedState?.scopes.get(GUEST) === scope;
   const current = () => panel._eocGuestPolicyRefresh === state
-    && configurationSubmissionIsCurrent(panel, owner.submission)
-    && panel._loadToken === owner.token && panel._cacheGeneration === owner.generation && panel._viewKey?.() === GUEST
-    && pageCoordinator(panel).scopes.get(GUEST) === scope && scope.revision === owner.revision;
-  if (!current()) return;
+    && ownsVisit() && panel._cacheGeneration === owner.generation && scope.revision === owner.revision;
+  if (!ownsVisit() || panel._cacheGeneration !== owner.generation || scope.revision !== owner.revision) return;
+  panel._eocGuestPolicyRefresh = state;
   const paint = (policy) => {
-    if (!metrics) return;
-    metrics.innerHTML = [
+    const grid = metrics();
+    if (!grid) return;
+    grid.innerHTML = [
       panel._metric("Guest-visible entities", policy?.readable_entity_count ?? "Refreshing…"),
       panel._metric("Guest-controllable entities", policy?.controllable_entity_count ?? "Refreshing…"),
       panel._metric("Guest functions", policy?.configured_tool_count ?? "Refreshing…"),
     ].join("");
   };
-  metrics?.setAttribute("aria-busy", "true");
+  metrics()?.setAttribute("aria-busy", "true");
   paint(null);
   scope.refreshPromise = panel._call("guest_mode", "policy").then((details) => {
     if (!current()) return;
     if (details?.revision && details.revision !== owner.revision) throw new Error("Policy changed; reload the latest saved metrics");
     panel._result = {...panel._result, policy:details.policy};
+    scope.result = panel._result;
     paint(details.policy);
   }).catch((err) => {
     if (!current()) return;
     scope.refreshWarning = `Saved policy metrics could not be refreshed: ${err.message || String(err)}`;
-    if (metrics) metrics.innerHTML = panel._metric("Saved policy metrics", "Unavailable");
+    const grid = metrics();
+    if (grid) grid.innerHTML = panel._metric("Saved policy metrics", "Unavailable");
     panel._toast?.(`Changes saved. ${scope.refreshWarning}`, true);
   }).finally(() => {
-    if (panel._eocGuestPolicyRefresh !== state || panel.shadowRoot?.querySelector(".metric-grid") !== metrics
-        || !configurationSubmissionIsCurrent(panel, owner.submission) || panel._viewKey?.() !== GUEST) return;
-    metrics?.removeAttribute("aria-busy");
-    if (!current() && metrics) metrics.innerHTML = panel._metric("Saved policy metrics", "Needs refresh");
+    if (panel._eocGuestPolicyRefresh !== state) return;
+    const mounted = ownsVisit();
+    const invalidated = mounted && scope.revision === owner.revision && panel._cacheGeneration !== owner.generation;
+    // Invalidation can reach this callback before the Assistant acknowledgement
+    // advances the revision. Leave its refresh eligible to restart in that gap.
+    if (!invalidated) panel._eocGuestPolicyRefresh = null;
+    if (!mounted) return;
+    const grid = metrics();
+    grid?.removeAttribute("aria-busy");
+    if (invalidated && grid) grid.innerHTML = panel._metric("Saved policy metrics", "Needs refresh");
   });
 }
 

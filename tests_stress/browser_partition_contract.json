@@ -203,6 +203,8 @@
       "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::Overview is usable while Broadcast implementation is still loading",
       "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::Overview snapshot is usable while the full implementation is still loading",
       "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::leaving Overview while Broadcast loads prevents stale hydration",
+      "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::reloading Overview restarts Broadcast polling without replacing the composer",
+      "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::revisiting cached Overview retries a failed initial Broadcast snapshot",
       "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours retries a failed save and protects agent selection while saving",
       "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours satellite overrides clear to pending automatic resolution and preserve other drafts",
       "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours schedule controls round-trip through save, route reopen, and fresh load",

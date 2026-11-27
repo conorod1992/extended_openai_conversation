@@ -127,7 +127,7 @@ export function renderOverview(panel, agent) {
     ${broadcastCard}`;
 }
 
-export function bindOverview(panel, broadcastPromise) {
+export function bindOverview(panel) {
   const details = panel.shadowRoot.querySelector("#overview-health-details");
   if (details) {
     details.open = panel._overviewHealthExpanded === panel._agentId;
@@ -138,11 +138,13 @@ export function bindOverview(panel, broadcastPromise) {
     panel._pendingSettingFocus = button.dataset.target || "";
     await panel._navigate(button.dataset.page, button.dataset.subsection || null);
   }));
-  if (!broadcastPromise) return;
+}
+
+export function bindOverviewBroadcast(panel, broadcastPromise, current) {
   void import("./overview-broadcast.js")
-    .then((module) => module.bindBroadcast(panel, broadcastPromise))
+    .then((module) => { if (current()) return module.bindBroadcast(panel, broadcastPromise, current); })
     .catch((err) => {
-      if (panel._viewKey?.() !== "overview") return;
+      if (!current()) return;
       const host = panel.shadowRoot.querySelector("#broadcast-card");
       if (host) host.innerHTML = `<div class="error" role="alert">Unable to load Broadcast: ${panel._e(err.message || String(err))}</div>`;
     });

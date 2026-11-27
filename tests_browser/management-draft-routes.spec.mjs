@@ -100,6 +100,68 @@ for (const stale of [false, true]) test(`shared Assistant save ${stale ? "keeps 
   await expectHarnessClean(page, errors);
 });
 
+for (const pending of [false, true]) test(`Guest metrics ${pending ? "restart" : "stay loaded"} when Assistant settings are saved after Guest policy`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator('[data-config="__title"]').fill("Renamed after Guest policy");
+  await panel.evaluate(host => {
+    const call = host.hass.callWS.bind(host.hass);
+    let revision = browserHarness.getState().configuration.revision;
+    window.guestMetricReads = [];
+    host.hass.callWS = async request => {
+      if ((request.section === "guest_mode" && request.action === "save_policy") || (request.section === "configuration" && request.action === "save")) {
+        if (request.revision !== revision) throw {code:"eoai_mutation_rejected", message:"Configuration changed in another tab"};
+        const state = browserHarness.getState();
+        const saved = await call({...request, revision:request.section === "guest_mode" ? state.guest.revision : state.configuration.revision});
+        revision = saved.revision;
+        return saved;
+      }
+      const response = await call(request);
+      if (request.section !== "guest_mode") return response;
+      if (request.action === "get") return {...response, revision};
+      if (request.action !== "policy") return response;
+      const readRevision = revision;
+      return new Promise(resolve => window.guestMetricReads.push(count => resolve({revision:readRevision, policy:{
+        ...response.policy, readable_entity_count:count,
+      }})));
+    };
+    return host._navigate("capabilities", "guest-mode");
+  });
+  await expect(panel.locator(".metric-grid")).toContainText("Guest-visible entities");
+  const web = panel.locator("#guest-web-search");
+  await web.evaluate(input => {
+    for (let parent = input.parentElement; parent; parent = parent.parentElement) if (parent.tagName === "DETAILS") parent.open = true;
+  });
+  await web.check();
+  await panel.locator("#save-page").click();
+  await expect(panel.locator("#save-page")).toHaveCount(0);
+  const reads = () => page.evaluate(() => window.guestMetricReads.length);
+  const metric = panel.locator(".metric").filter({hasText:"Guest-visible entities"});
+  await expect.poll(reads).toBe(1);
+  if (!pending) {
+    await page.evaluate(() => window.guestMetricReads[0](37));
+    await expect(metric).toContainText("37");
+  }
+  await panel.getByRole("button", {name:"Save Assistant settings", exact:true}).click();
+  await expect(panel.locator("#agent option:checked")).toHaveText("Renamed after Guest policy");
+  if (pending) {
+    await expect.poll(reads).toBe(2);
+    await page.evaluate(() => window.guestMetricReads[1](37));
+    await expect(metric).toContainText("37");
+    await page.evaluate(async () => {
+      window.guestMetricReads[0](91);
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    });
+  }
+  await panel.evaluate(host => host._render());
+  await expect(metric).toContainText("37");
+  await expect(panel.locator(".metric-grid")).not.toHaveAttribute("aria-busy", "true");
+  expect(await reads()).toBe(pending ? 2 : 1);
+  expect(await page.evaluate(() => browserHarness.getState().guest.config.guest_web_search)).toBe(true);
+  await expectHarnessClean(page, errors);
+});
+
 test("a shared save refreshes authoritative Overview health without replacing Broadcast", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
@@ -114,6 +176,12 @@ test("a shared save refreshes authoritative Overview health without replacing Br
     host._syncConfigDirty();
     host.hass.callWS = async request => {
       const response = await call(request);
+      if (request.section === "configuration" && request.action === "save") {
+        return {...response, agent:{...response.agent, memory_count:0, tokens_today:0}};
+      }
+      if (request.section === "overview" && request.action === "detail" && request.kind === "memory") {
+        return {...response, agent:{...response.agent, memory_count:50}};
+      }
       if (request.section !== "overview" || request.action !== "primary") return response;
       const config = browserHarness.getState().configuration.config;
       if (config.chat_model === "gpt-4o") await new Promise(resolve => { window.releaseOverviewPrimary = resolve; });
@@ -129,6 +197,7 @@ test("a shared save refreshes authoritative Overview health without replacing Br
     return host._navigate("overview");
   });
   await expect(panel.locator('[data-health-check="model_lifecycle"]')).toHaveCount(1);
+  await expect(panel.getByText(/50 memories/)).toBeVisible();
   await expect(panel.locator("#broadcast-enabled")).toBeVisible();
   await panel.locator("#broadcast-enabled").check();
   const composer = panel.locator("#broadcast-message");
@@ -151,11 +220,13 @@ test("a shared save refreshes authoritative Overview health without replacing Br
   await expect(panel.locator('[data-health-check="memory"] strong')).toHaveText("Off by choice");
   await expect(panel.locator('[data-health-check="web_search"] strong')).toHaveText("Available");
   await expect(panel.getByText("Retention: 7 days", {exact:true})).toBeVisible();
+  await expect(panel.getByText(/50 memories/)).toBeVisible();
   await expect(composer).toHaveValue("Keep this unsent announcement");
   await expect(composer).toBeFocused();
   expect(await composer.evaluate(node => node.selectionStart)).toBe(4);
   expect(await broadcast.evaluate(node => node.isConnected)).toBe(true);
   expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "overview" && call.action === "primary").length)).toBe(2);
+  expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "overview" && call.action === "detail" && call.kind === "memory").length)).toBe(1);
   await expectHarnessClean(page, errors);
 });
 

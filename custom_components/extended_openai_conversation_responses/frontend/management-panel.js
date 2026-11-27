@@ -31,7 +31,7 @@ import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetti
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 import {retainPanelDrafts, restorePanelDrafts, stopDraftRecovery} from "./management-draft-lifecycle.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
-import {bindOverview, renderOverview, enhanceOverviewHealthClarity, startOverviewDetailReads} from "./overview-page.js";
+import {bindOverview, bindOverviewBroadcast, renderOverview, enhanceOverviewHealthClarity, startOverviewDetailReads} from "./overview-page.js";
 import {formatUsageNumber} from "./usage-format.js";
 import {
   bindStateSafety,
@@ -354,7 +354,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._eocModelChangeToken = (this._eocModelChangeToken || 0) + 1;
       this._eocViewAssetToken = (this._eocViewAssetToken || 0) + 1;
       this._eocBroadcastReadToken = (this._eocBroadcastReadToken || 0) + 1;
-      this._eocOverviewBroadcastPromise = null;
       pauseLiveStatus(this);
       stopDraftRecovery(this);
       getRouteFeature("status")?.retireDiagnostics(this);
@@ -1965,7 +1964,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (ownsConfigurationGuidance) {
       getRouteFeature("configuration")?.enhanceConfigurationGuidance(this);
     }
-    if (this._page === "overview") queueMicrotask(() => enhanceOverviewHealthClarity(this));
+    if (this._page === "overview") {
+      bindOverviewBroadcast(this);
+      queueMicrotask(() => enhanceOverviewHealthClarity(this));
+    }
   }
 
   _renderShell() {
