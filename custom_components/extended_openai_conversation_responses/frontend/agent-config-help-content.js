@@ -3,7 +3,7 @@ const DOCS_ROOT = "https://github.com/conorod1992/extended_openai_conversation/b
 export const HELP_METADATA = Object.freeze({
   api_mode: Object.freeze({
     title: "Provider API format",
-    paragraphs: ["Auto uses model capabilities, tools and reasoning settings. Unknown text-only models default to Responses. Select the API explicitly for providers supporting only one style."],
+    paragraphs: ["Auto uses model capabilities, tools and reasoning settings. Unknown models default to Responses for text-only requests. Select the API explicitly for providers supporting only one style."],
     items: [
       { term: "Auto", text: "Lets the integration choose using its model compatibility rules." },
       { term: "Responses", text: "Uses the newer Responses API style." },
