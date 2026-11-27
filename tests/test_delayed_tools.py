@@ -167,6 +167,10 @@ async def test_schedule_expiry_overflow_depends_on_catch_up(
     monkeypatch.setattr(manager, "_arm", arm)
     arguments = (_entity(hass), "control_light", {"delay": {"seconds": 5}}, None)
     function_tool = {**_valid_tool(), "delay_catch_up": catch_up}
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.functions.native.NativeFunction.async_authorize_scheduled_services",
+        AsyncMock(),
+    )
 
     if catch_up:
         record = await manager.async_schedule(*arguments, function_tool=function_tool)
@@ -248,6 +252,10 @@ async def test_scheduled_waiter_drops_request_context_after_edit_and_revert(
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.delayed_tools.asyncio.sleep",
         wait_until_due,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.functions.native.NativeFunction.async_authorize_scheduled_services",
+        AsyncMock(),
     )
     arbitrary_request_state = ContextVar("request_only_test_state", default=None)
     observed = []
@@ -1554,6 +1562,7 @@ async def test_owned_executor_schedules_background_call_and_returns_receipt(
         context,
         function_tool=tool,
         execution_delay=timedelta(seconds=10),
+        exposed_entities=[],
     )
     assert tool_result_data(result) == {
         "result": "Scheduled",

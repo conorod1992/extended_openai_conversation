@@ -227,7 +227,7 @@ VOLUME_RETARGET_HISTORIES = {
         Step("lose_ack"),
         Step("retarget", "retargeted", "retargeted", ("retargeted",)),
         check(0.1, "retargeted"),
-        check(10, "retargeted"),
+        check(10, "baseline", "baseline"),
     ),
 }
 

@@ -177,6 +177,7 @@ async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> No
         None,
         function_tool=_tool(_legacy_delay_schema()),
         execution_delay=timedelta(seconds=5),
+        exposed_entities=[],
     )
     assert tool_result_data(result) == {
         "result": "Scheduled", "action_id": "a" * 32, "scheduled_at": "2026-11-25T14:00:00+00:00",

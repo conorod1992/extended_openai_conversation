@@ -356,6 +356,10 @@ async def test_summary_failures_are_local_and_fingerprints_are_reused(
 ):
     tool = deepcopy(_valid_tool())
     tool["function"] = {"type": "native", "name": "execute_service_single"}
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.functions.native.NativeFunction.async_authorize_scheduled_services",
+        AsyncMock(),
+    )
     other = deepcopy(tool)
     other["spec"]["name"] = "other_lights"
     agent.subentry.data = {"functions": yaml.safe_dump([tool, other], sort_keys=False)}

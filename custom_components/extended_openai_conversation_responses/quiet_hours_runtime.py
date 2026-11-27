@@ -2452,7 +2452,29 @@ class QuietHoursManager:
             ) == "awaiting_feedback" and not self._observe_initial_application(
                 entity_id, control
             ):
-                if self._initial_application_pending(entity_id, control):
+                current, _attributed, manual = self._initial_control_observation(
+                    entity_id, control
+                )
+                returned_to_baseline = (
+                    (
+                        kind == "switch"
+                        or (pending_only and control.get("restore_before_apply"))
+                    )
+                    and self._control_values_equal(
+                        kind, current, control["original_value"]
+                    )
+                    and (state_context := self._control_context_id(entity_id))
+                    is not None
+                    and state_context != control.get("baseline_context_id")
+                )
+                if returned_to_baseline:
+                    self._settle_control_restoration(
+                        entity_id,
+                        control,
+                        restored=(period_ended or (kind == "volume" and pending_only))
+                        and not manual,
+                    )
+                elif self._initial_application_pending(entity_id, control):
                     control["restoration_pending"] = True
                     if period_ended:
                         control["restore_before_apply"] = True

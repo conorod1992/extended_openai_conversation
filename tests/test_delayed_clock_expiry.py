@@ -75,6 +75,10 @@ async def test_new_policy_round_trips_and_does_not_change_fingerprint(
     first = delayed_tools.DelayedToolManager(hass)
     first._setup_complete = True
     first._store = Store()
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.functions.native.NativeFunction.async_authorize_scheduled_services",
+        AsyncMock(),
+    )
     record = await first.async_schedule(
         _entity(hass),
         "control_light",

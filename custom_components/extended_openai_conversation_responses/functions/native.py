@@ -678,8 +678,12 @@ class NativeFunction(Function):
         from ..execution_arguments import prepare_service_arguments
 
         service_argument = prepare_service_arguments(service_argument)
-        domain = service_argument["domain"]
-        service = service_argument["service"]
+        domain = service_argument.get("domain")
+        service = service_argument.get("service")
+        if not isinstance(domain, str) or not isinstance(service, str):
+            raise HomeAssistantError(
+                "Native service execution requires a domain and service"
+            )
         service_data = dict(service_argument["service_data"])
         validate_indirect_targets(service_data)
         if not any(

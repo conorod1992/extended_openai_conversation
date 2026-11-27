@@ -588,22 +588,6 @@ class DelayedToolManager:
             )
         if not self._setup_complete:
             raise HomeAssistantError("Delayed Function Tool scheduler is unavailable")
-        implementation = (function_tool or {}).get("function", {})
-        context = getattr(llm_context, "context", None)
-        native_name = implementation.get("name")
-        if implementation.get("type") == "native" and native_name in (
-            "execute_service",
-            "execute_service_single",
-        ):
-            from .functions.native import NativeFunction
-
-            await NativeFunction().async_authorize_scheduled_services(
-                self.hass,
-                arguments,
-                context,
-                exposed_entities,
-                single=native_name == "execute_service_single",
-            )
         delay = _delay_as_timedelta(
             execution_delay if execution_delay is not None else arguments.get("delay")
         )
@@ -642,6 +626,22 @@ class DelayedToolManager:
                 raise HomeAssistantError(
                     "Function Tool delay exceeds the supported scheduling range"
                 ) from err
+            implementation = (function_tool or {}).get("function", {})
+            context = getattr(llm_context, "context", None)
+            native_name = implementation.get("name")
+            if implementation.get("type") == "native" and native_name in (
+                "execute_service",
+                "execute_service_single",
+            ):
+                from .functions.native import NativeFunction
+
+                await NativeFunction().async_authorize_scheduled_services(
+                    self.hass,
+                    arguments,
+                    context,
+                    exposed_entities,
+                    single=native_name == "execute_service_single",
+                )
             satellite_id = get_request_satellite()
             record = DelayedToolCall(
                 call_id=uuid4().hex,
