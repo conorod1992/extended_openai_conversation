@@ -125,34 +125,63 @@ function setWarning(element,message="") {
   element.hidden = !message;
 }
 
-async function entityRegistry(panel) {
-  // Share concurrent hydration requests, never a completed snapshot.
-  // Native HA pickers can stay mounted across entity/device registry changes.
-  if (!panel.__voiceEntityRegistryPromise) {
-    const hass = panelHass(panel);
-    const before = new Map(voiceMappingDraft(panel).aliases);
-    const request = hass?.callWS
-      ? Promise.resolve().then(() => hass.callWS({type:"config/entity_registry/list"}))
-          .then(entries => Array.isArray(entries) && entries.every(entry => typeof entry?.entity_id === "string")
-            ? entries : null).catch(() => null)
-      : Promise.resolve(null);
-    const tracked = request.then(entries => ({entries, before})).finally(() => {
-      if (panel.__voiceEntityRegistryPromise === tracked) panel.__voiceEntityRegistryPromise = null;
-    });
-    panel.__voiceEntityRegistryPromise = tracked;
-  }
-  return panel.__voiceEntityRegistryPromise;
+const registryReadScopes = new WeakMap();
+let registryReadOrder = 0;
+const registryCard = panel => panel.shadowRoot.querySelector("#voice-mappings");
+
+function registryReadIsCurrent(panel, scope) {
+  return registryReadScopes.get(panel) === scope && registryCard(panel) === scope.card
+    && configurationSubmissionIsCurrent(panel, scope.owner);
 }
 
-async function selectedEntityRegistryEntry(panel, entityId) {
-  // Resolve the current association after each selection, independently of
-  // hydration, without transferring the entire entity registry again.
-  const hass = panelHass(panel);
-  try {
-    return await hass?.callWS?.({type:"config/entity_registry/get", entity_id:entityId});
-  } catch {
-    return null;
+function registryReadScope(panel) {
+  let scope = registryReadScopes.get(panel);
+  if (!scope || !registryReadIsCurrent(panel, scope)) {
+    scope = {card:registryCard(panel), owner:captureConfigurationOwner(panel), lookups:new Map()};
+    registryReadScopes.set(panel, scope);
   }
+  return scope;
+}
+
+function entityRegistry(panel, scope) {
+  // Share pending reads only within the mounted editor and configuration owner.
+  if (!scope.list) {
+    const order = ++registryReadOrder;
+    const hass = panelHass(panel);
+    const result = Promise.resolve().then(() => hass?.callWS?.({type:"config/entity_registry/list"}))
+      .then(entries => Array.isArray(entries) && entries.every(entry => typeof entry?.entity_id === "string")
+        ? entries : null).catch(() => null)
+      .then(entries => {
+        const snapshot = {entries:entries?.filter(entry => entry.entity_id.startsWith("assist_satellite.")), order};
+        if (entries) scope.snapshot = snapshot;
+        return snapshot;
+      }).finally(() => { scope.list = null; });
+    scope.list = {order, result};
+  }
+  return scope.list.result;
+}
+
+function selectedEntityRegistryEntry(panel, scope, entityId) {
+  if (!scope.lookups.has(entityId)) {
+    const order = ++registryReadOrder;
+    const hass = panelHass(panel);
+    const result = (async () => {
+      let entry;
+      try {
+        entry = await hass?.callWS?.({type:"config/entity_registry/get", entity_id:entityId});
+      } catch {
+        entry = null;
+      }
+      if (scope.list?.order > order) await scope.list.result;
+      const snapshot = scope.snapshot;
+      // A listing started after this lookup is newer evidence, even if it returned first.
+      return snapshot?.order > order
+        ? {entry:snapshot.entries.find(item => item.entity_id === entityId), order:snapshot.order}
+        : {entry, order};
+    })().finally(() => scope.lookups.delete(entityId));
+    scope.lookups.set(entityId, result);
+  }
+  return scope.lookups.get(entityId);
 }
 
 function configureUserPicker(panel,picker,value) {
@@ -305,13 +334,11 @@ async function bindSatellitePicker(panel,row) {
   configureEntityPicker(panel,picker,picker.dataset.initialEntity || "");
   const rowCurrent = () => row.isConnected && voiceMappingRowIsCurrent(panel,row.dataset.voiceRowId);
   const storedDeviceId = hidden.value.trim();
-  const agentId = panel._agentId;
   picker.addEventListener("value-changed",async (event) => {
     if (!rowCurrent()) return;
-    const selection = {owner:captureConfigurationOwner(panel)};
+    const scope = registryReadScope(panel), selection = {};
     picker.__voiceSelection = selection;
     const selectedEntity = String(event?.detail?.value ?? picker.value ?? "");
-    selection.entityId = selectedEntity;
     picker.value = selectedEntity;
     // Do not let a pending or failed lookup save the previous device under a
     // newly selected satellite. Preserve all other rows.
@@ -323,8 +350,8 @@ async function bindSatellitePicker(panel,row) {
       syncMappings(panel);
       return;
     }
-    const entry = await selectedEntityRegistryEntry(panel,selectedEntity);
-    if (!rowCurrent() || !configurationSubmissionIsCurrent(panel,selection.owner) || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice"
+    const {entry, order} = await selectedEntityRegistryEntry(panel, scope, selectedEntity);
+    if (!rowCurrent() || !registryReadIsCurrent(panel, scope) || panel._viewKey?.() !== "assistant/voice"
         || picker.__voiceSelection !== selection) return;
     const registered = entry?.entity_id === selectedEntity;
     const liveSatellite = !entry && panelHass(panel)?.states?.[selectedEntity];
@@ -336,7 +363,7 @@ async function bindSatellitePicker(panel,row) {
       syncMappings(panel);
       return;
     }
-    if (registered) rememberVoiceDeviceAliases(panel, [entry]);
+    if (registered) rememberVoiceDeviceAliases(panel, [entry], {order});
     hidden.value = deviceId;
     row.dataset.voiceLookup = "";
     setWarning(warning);
@@ -347,11 +374,10 @@ async function bindSatellitePicker(panel,row) {
     else setWarning(warning,"Select an available Assist satellite before saving.");
     return;
   }
-  const owner = captureConfigurationOwner(panel);
-  const {entries, before} = await entityRegistry(panel);
-  if (!rowCurrent() || !configurationSubmissionIsCurrent(panel,owner) || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
-  // All rows share the list request. Use associations resolved since it began.
-  const currentEntries = rememberVoiceDeviceAliases(panel, entries, before);
+  const scope = registryReadScope(panel);
+  const {entries, order} = await entityRegistry(panel, scope);
+  if (!rowCurrent() || !registryReadIsCurrent(panel, scope) || panel._viewKey?.() !== "assistant/voice") return;
+  const currentEntries = rememberVoiceDeviceAliases(panel, entries, {listing:true, order});
   if (voiceMappingDraftDirty(panel)) syncMappings(panel);
   else updateMappingConflicts(panel);
   if (picker.__voiceSelection) return;

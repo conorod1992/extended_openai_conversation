@@ -160,21 +160,35 @@ for (const action of [
   "keep-legacy-owner", "remove-effective", "fresh-alias", "remove-duplicate",
   "remove-duplicate-with-legacy", "remove-unsaved-canonical",
   "removed-alias", "failed-refresh", "invalid-refresh", "fresh-alias-omitted",
+  "remounted-list", "retired-list", "overlapping-selection",
+  "selection-before-refresh", "selection-before-pending-refresh",
 ]) {
   const legacy = "assist_satellite.kitchen", device = "registry-kitchen";
   const mapping = action === "remove-duplicate" ? {[device]:"user:person"} :
     action === "remove-unsaved-canonical" ? {[legacy]:"user:person"} :
     {[legacy]:"user:person", [device]:"unretained"};
   const removeNew = action.startsWith("remove-duplicate") || action === "remove-unsaved-canonical";
-  const card = new TestEventTarget(), error = {};
-  const hydration = deferred();
+  let card = new TestEventTarget();
+  const error = {}, hydration = deferred(), selection = deferred();
   const fresh = action.startsWith("fresh-alias");
+  const reopen = action.endsWith("-list");
+  const selectionBeforeRefresh = action.startsWith("selection-before-");
+  const pendingRefresh = action === "selection-before-pending-refresh";
+  const refreshed = [{entity_id:legacy, device_id:"refreshed-device"}];
+  let listings = 0, lookups = 0;
   const panel = {
     _agentId:"voice-agent", _viewKey:()=>"assistant/voice",
     _draft:{voice_device_mappings:{...mapping}},
     _configData:{config:{voice_device_mappings:{...mapping}}},
     hass:{callWS:async message => {
-      if (message.type === "config/entity_registry/get") return {entity_id:legacy, device_id:device};
+      if (message.type === "config/entity_registry/get") {
+        lookups++;
+        return action === "overlapping-selection" || selectionBeforeRefresh
+          ? selection.promise : {entity_id:legacy, device_id:device};
+      }
+      listings++;
+      if (reopen) return listings === 1 ? hydration.promise : [];
+      if (selectionBeforeRefresh && listings > 1) return pendingRefresh ? hydration.promise : refreshed;
       if (fresh) return hydration.promise;
       if (action === "removed-alias") return [];
       if (action === "failed-refresh") throw new Error("Registry offline");
@@ -189,7 +203,7 @@ for (const action of [
   if (removeNew) {
     draft.rows.push({id:"duplicate-row", deviceId:device, owner:"unretained"});
   }
-  const rows = draft.rows.map(saved => {
+  const makeRows = () => draft.rows.map(saved => {
     const picker = new TestEventTarget(); picker.dataset={};
     const remove = new TestEventTarget(), keep = new TestEventTarget();
     const nodes = {".voice-satellite-picker":picker, ".voice-device-id":{value:saved.deviceId},
@@ -201,7 +215,10 @@ for (const action of [
       remove() { this.isConnected = false; },
     };
   });
+  let rows = makeRows();
   const visible = () => rows.filter(row => row.isConnected);
+  const select = row => Promise.all([...row.picker.listeners.get("value-changed")]
+    .map(listener => listener({detail:{value:legacy}})));
   panel.shadowRoot = {
     querySelector: selector => ({
       "#voice-mappings":card, "#voice-mapping-list":{},
@@ -211,9 +228,52 @@ for (const action of [
     querySelectorAll: selector => selector === "[data-voice-mapping-row]" ? visible() : [],
   };
   bindVoiceMappings(panel);
+  if (reopen) {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(listings, 1);
+    for (const row of rows) row.isConnected = false;
+    rows = makeRows();
+    if (action === "remounted-list") card = new TestEventTarget();
+    else panel._eocAuthenticationGeneration = 1;
+    bindVoiceMappings(panel);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(listings, 2, "a new editor or authentication must read its own list");
+    hydration.resolve([{entity_id:legacy, device_id:device}]);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(error.textContent, "");
+    assert.equal(rows[0].keep.hidden, true);
+    continue;
+  }
+  if (action === "overlapping-selection") {
+    const pending = rows.map(select);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(lookups, 1, "simultaneous selections use one registry association");
+    selection.resolve({entity_id:legacy, device_id:device});
+    await Promise.all(pending);
+    assert.match(error.textContent, /assigned more than once/);
+    continue;
+  }
+  if (selectionBeforeRefresh) {
+    await new Promise(resolve => setImmediate(resolve));
+    const pending = select(rows[1]);
+    rows[0].isConnected = false;
+    rows[0] = makeRows()[0];
+    bindVoiceMappings(panel);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(listings, 2);
+    selection.resolve({entity_id:legacy, device_id:device});
+    if (pendingRefresh) {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.match(error.textContent, /Wait/);
+      hydration.resolve(refreshed);
+    }
+    await pending;
+    assert.equal(rows[1].querySelector(".voice-device-id").value, "refreshed-device");
+    assert.match(error.textContent, /assigned more than once/);
+    continue;
+  }
   if (fresh) {
-    await Promise.all([...rows[1].picker.listeners.get("value-changed")]
-      .map(listener => listener({detail:{value:legacy}})));
+    await select(rows[1]);
     assert.match(error.textContent, /assigned more than once/);
     hydration.resolve(action === "fresh-alias-omitted" ? [] :
       [{entity_id:legacy, device_id:"outdated-device"}]);

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 import re
+from re import _constants as re_ops, _parser as re_parser  # type: ignore[attr-defined]
 from time import monotonic
 from typing import Any
 
@@ -16,12 +17,17 @@ SKILL_LOADER_TOOL_NAME = "load_skill"
 CANONICAL_SKILL_LOADER_PATH = "{{extended_openai.skill_dir(name)}}/{{file}}"
 _LITERAL_PROPERTY_KEY = re.compile(r"[a-zA-Z0-9_-]+")
 _PROPERTY_END_ASSERTION = r"(?![\s\S])"
-# Accept only short sequences of single-character atoms, with at most one
-# quantifier. stdlib re can match these without combinatorial backtracking.
-_PROPERTY_ATOM = r"(?:[\w.-]|\[\^?[\w.-]+\])"
-_SIMPLE_PROPERTY_PATTERN = re.compile(
-    rf"(?:\(\?[aimsu]+\))?\^?{_PROPERTY_ATOM}*(?:{_PROPERTY_ATOM}[*+?]{_PROPERTY_ATOM}*)?\$?"
-)
+_PROPERTY_ATOMS = {
+    re_ops.ANY,
+    re_ops.AT,
+    re_ops.CATEGORY,
+    re_ops.IN,
+    re_ops.LITERAL,
+    re_ops.NOT_LITERAL,
+}
+_PROPERTY_REPEATS = {re_ops.MAX_REPEAT, re_ops.MIN_REPEAT, re_ops.POSSESSIVE_REPEAT}
+_MAX_PROPERTY_PATTERN_CHOICES = 128
+_MAX_PROPERTY_PATTERN_WORK = 262_144
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +153,52 @@ def _closed_property_keys(properties: dict[str, Any], patterns: Any) -> set[str]
     return keys
 
 
+def _property_pattern_choices(
+    tokens: Iterable[tuple[Any, Any]], key_length: int, *, fixed: bool = False
+) -> int | None:
+    """Bound the alternatives stdlib re can try on the required property keys."""
+    # Inspect the CPython parser's operators. Execute only the original stdlib
+    # pattern after bounding the paths it can explore on these keys.
+    choices = 1
+    for op, argument in tokens:
+        if op in _PROPERTY_ATOMS:
+            continue
+        if op == re_ops.SUBPATTERN:
+            alternatives = _property_pattern_choices(
+                argument[-1], key_length, fixed=fixed
+            )
+            if alternatives is None:
+                return None
+        elif fixed:
+            return None
+        elif op == re_ops.BRANCH:
+            branches = argument[1]
+            if any(
+                _property_pattern_choices(branch, key_length, fixed=True) is None
+                for branch in branches
+            ):
+                return None
+            alternatives = len(branches)
+        elif op in _PROPERTY_REPEATS:
+            minimum, maximum, body = argument
+            width, _ = body.getwidth()
+            # Repetition must make progress and have no internal choices.
+            if (
+                not width
+                or _property_pattern_choices(body, key_length, fixed=True) is None
+            ):
+                return None
+            alternatives = max(1, min(maximum, key_length // width) - minimum + 1)
+        else:
+            # Backreferences and assertions beyond ordinary anchors are left to
+            # the isolated runtime worker.
+            return None
+        choices *= alternatives
+        if choices > _MAX_PROPERTY_PATTERN_CHOICES:
+            return None
+    return choices
+
+
 def _patterned_loader_keys(keys: set[str], patterns: Any) -> set[str] | None:
     """Prove additional-property membership with bounded stdlib re searches."""
     if not keys or not patterns:
@@ -170,12 +222,19 @@ def _patterned_loader_keys(keys: set[str], patterns: Any) -> set[str] | None:
             if (literal_keys := _closed_property_keys({}, {pattern: None})) is not None:
                 matches.update(keys & literal_keys)
                 continue
-            if not _SIMPLE_PROPERTY_PATTERN.fullmatch(pattern):
-                # An unknown match can change which additionalProperties
-                # constraint applies. The synchronous check cannot certify it.
-                return None
+            # The runtime compiles every pattern, then short-circuits per key.
             compiled = re.compile(pattern)
-            for key in keys - matches:
+            remaining = keys - matches
+            if not remaining:
+                continue
+            longest = max(map(len, remaining))
+            choices = _property_pattern_choices(re_parser.parse(pattern, 0), longest)
+            if (
+                choices is None
+                or choices * (longest + 1) * len(pattern) > _MAX_PROPERTY_PATTERN_WORK
+            ):
+                return None
+            for key in remaining:
                 if monotonic() >= deadline:
                     return None
                 if compiled.search(key) is not None:

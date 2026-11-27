@@ -96,8 +96,7 @@ for (const registry of ["unknown", "changed", "removed"]) {
   if (registry === "changed") {
     rememberVoiceDeviceAliases(replacement,[{entity_id:legacy, device_id:"different-device"}]);
   } else if (registry === "removed") {
-    const before=new Map(voiceMappingDraft(replacement).aliases);
-    rememberVoiceDeviceAliases(replacement,[],before);
+    rememberVoiceDeviceAliases(replacement,[],{listing:true});
   }
   restorePanelDrafts(replacement);
   if (registry !== "unknown") {

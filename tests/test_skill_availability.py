@@ -163,12 +163,26 @@ def test_skill_loader_pattern_membership_matches_runtime(pattern, matches, addit
     assert ("file" in patterned_object_keys({"file": "SKILL.md"}, parameters)) is matches
     assert skill_loader_status(["calendar"], [loader], []).available is matches
 
+    for patterns, available in (
+        ([r"^(?:fi)+le$"], True),
+        ([r"^f.*l.*e$"], True),
+        (["(?i)^f(?:i|\u0131)le$"], True),
+        ([r"^other(?:key)+$"], False),
+        ([r"^file$", r"^(?:x*)+$"], True),
+    ):
+        parameters["patternProperties"] = dict.fromkeys(patterns, {"type": "string"})
+        assert ("file" in patterned_object_keys({"file": "SKILL.md"}, parameters)) is available
+        assert skill_loader_status(["calendar"], [loader], []).available is available, patterns
+
+    parameters["patternProperties"][r"("] = {"type": "string"}
+    assert not skill_loader_status(["calendar"], [loader], []).available
+
 
 def test_skill_loader_leaves_complex_pattern_membership_uncertified():
     loader = _loader()
     parameters = loader["spec"]["parameters"]
     del parameters["properties"]["file"]
-    parameters["patternProperties"] = {r"^(?:fi)+le$": {"type": "string"}}
+    parameters["patternProperties"] = {r"^(?:x*)+$": {"type": "string"}}
     parameters["additionalProperties"] = False
 
     assert not skill_loader_status(["calendar"], [loader], []).available
