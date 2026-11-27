@@ -93,6 +93,10 @@ HA-owned tools use Home Assistant's validation and permission checks.
 
 Whitespace-only queries to the Knowledge Library, Persistent Memory, and Conversation Archive search tools also qualify for correction before a search runs.
 
+## Model tool-result budget
+
+Model-facing tool results have a separate **32,000-character serialized result limit**, including JSON escaping and metadata. A tool can successfully produce data within its own file, database or HTTP limits but exceed the model-delivery budget. Oversized structured results that cannot be projected into that budget return `output_overflow` rather than the full data. Keep results small, select only relevant fields, or use explicit pagination where supported. See [File Function Tools](file-tools.md#reading-large-files-in-pages) and [SQLite Function Tool](sqlite.md).
+
 ## Function types
 
 The integration supports several implementation types:

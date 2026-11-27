@@ -10,9 +10,9 @@ Extended OpenAI Conversation connects Home Assistant Assist to the OpenAI API, o
 It is designed to work well with a simple setup first, while keeping advanced features available when you need them.
 
 > [!IMPORTANT]
-> **A ChatGPT subscription does not include OpenAI API usage.**
+> **ChatGPT and API usage are accounted for separately.**
 >
-> This integration uses the OpenAI API or another configured provider. API usage may be billed separately by that provider.
+> This integration requires an API key for OpenAI or another configured provider. Eligible ChatGPT subscriptions may offer [claimable OpenAI API credits](https://developers.openai.com/api/docs/guides/chatgpt-api-credits); these must be activated. Other API usage may be billed separately.
 
 This project began as a fork of [jekalmin/extended_openai_conversation](https://github.com/jekalmin/extended_openai_conversation), but has since diverged substantially in features, architecture, configuration, testing, and user interface.
 

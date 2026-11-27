@@ -35,7 +35,7 @@ Confirm that:
 - the account/project has the required API access
 - **Base URL** is correct
 
-A ChatGPT subscription does not itself provide an OpenAI API key or API credit.
+A ChatGPT subscription does not itself provide an API key. Eligible subscriptions may offer [claimable API credits](https://developers.openai.com/api/docs/guides/chatgpt-api-credits); check the linked API organisation's credits or billing.
 
 ## A model works in Chat Completions but not Responses
 
@@ -104,7 +104,7 @@ If the conversation exceeded the threshold, older turns may have been removed, s
 
 Persistent memory is separate from conversation history: a remembered fact can survive context truncation, but ordinary chat history does not become persistent memory automatically unless Automatic memory chooses to store an appropriate fact.
 
-Automatic persistent-memory ranking runs only when a logical conversation starts. If the topic changes, ask the assistant to use `memory_search`; the initial bundle is intentionally stable. In hybrid semantic mode, an unsupported embedding endpoint/model or request failure is logged and retrieval continues lexically. Verify the configured OpenAI-compatible provider supports the selected embedding model. Hybrid mode adds no LLM/classifier call, exports no raw embeddings, and does not guarantee perfect semantic matches.
+Automatic persistent-memory ranking selects a bundle on the first eligible model-handled turn of a logical conversation, using its effective AI input. Local-only commands do not select it. If the topic changes, ask the assistant to use `memory_search`; the initial bundle is intentionally stable. In hybrid semantic mode, an unsupported embedding endpoint/model or request failure is logged and retrieval continues lexically. Verify the configured OpenAI-compatible provider supports the selected embedding model. Hybrid mode adds no LLM/classifier call, exports no raw embeddings, and does not guarantee perfect semantic matches.
 
 ## The assistant does not use a Knowledge source
 
@@ -124,7 +124,7 @@ Do not compare the Usage sensor directly with a monetary bill; it intentionally 
 
 ## Use Test agent
 
-Select the conversation agent under **Extended OpenAI → Usage & Maintenance → Diagnostics** and use **Test agent**. Conversation-agent reconfiguration in **Settings → Devices & services** directs you to this panel.
+Select the conversation agent under **Extended OpenAI → Usage & Maintenance → Diagnostics**, then choose **Run diagnostics** in **Test assistant**. Conversation-agent reconfiguration in **Settings → Devices & services** directs you to this panel.
 
 The test checks local configuration plus at most one minimal model request. It does not execute Home Assistant device or service actions.
 

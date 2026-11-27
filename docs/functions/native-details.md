@@ -23,17 +23,19 @@ Native Function Tools are implemented by Extended OpenAI. Open **Extended OpenAI
 spec:
   name: execute_service
   description: Execute Home Assistant services on exposed targets.
+  strict: false
   parameters:
     type: object
     properties:
       list:
         type: array
+        maxItems: 20
         items:
           type: object
           properties:
             domain: {type: string}
             service: {type: string}
-            service_data: {type: object}
+            service_data: {type: object, additionalProperties: true}
           required: [domain, service, service_data]
     required: [list]
 function:
@@ -41,7 +43,7 @@ function:
   name: execute_service
 ```
 
-Include an authorized target such as `entity_id`, `device_id`, `area_id`, `floor_id`, or `label_id` in `service_data`, together with fields required by the selected Home Assistant service. The schema allows service-specific keys because valid data varies by service. Home Assistant exposure and permission checks still apply. Do not assume the model may control every entity or call every service.
+Include an authorized target such as `entity_id`, `device_id`, `area_id`, `floor_id`, or `label_id` in `service_data`, together with fields required by the selected Home Assistant service. The schema explicitly allows service-specific keys because valid data varies by service. Keep `strict: false` to preserve this open-ended object with Responses. Each invocation accepts at most 20 actions. Home Assistant exposure and permission checks still apply. Do not assume the model may control every entity or call every service.
 
 `execute_service_single` uses the same Home Assistant checks with one call:
 

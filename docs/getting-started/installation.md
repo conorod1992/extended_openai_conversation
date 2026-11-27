@@ -14,7 +14,7 @@ You need:
 - HACS if you want the recommended installation method
 
 !!! note "ChatGPT and the OpenAI API are separate"
-    A ChatGPT Plus, Pro, or other ChatGPT subscription does not include OpenAI API usage. API requests made by this integration are billed according to the configured provider's account and pricing.
+    API usage is accounted for separately from ChatGPT subscriptions, and an API key is required. Eligible subscriptions may offer [claimable OpenAI API credits](https://developers.openai.com/api/docs/guides/chatgpt-api-credits); activate them before use. Other API requests are billed according to the configured provider's account and pricing.
 
 ## Install with HACS
 

@@ -303,7 +303,7 @@ export const GUIDE_TOPICS = [
     summary: "Speech processing removes text that is useful on screen but awkward when spoken, while keeping the original assistant response for logs and conversation history.",
     terms: "speech tts markdown urls links citations formatting regex replacements progressive streaming cleanup spoken output",
     body: [
-      {type: "p", text: "Speech processing creates a speech-safe version of the assistant response for TTS. It can remove Markdown links, formatting, citations and bare URLs so they are not read aloud, while the original provider response remains available to ChatLog, conversation history and archives."},
+      {type: "p", text: "Speech cleanup can remove Markdown formatting, link destinations and bare URLs, suppress empty or address-only citation labels, and keep readable labels and citation numbers. The original response remains in ChatLog and retained history, subject to Archive limits."},
       {type: "p", text: "The built-in cleanup can work progressively while a response is streaming, including when Markdown or URLs are split across provider chunks. This allows spoken output to start before the full answer has finished."},
       {type: "note", title: "Custom replacements wait for the completed response", text: "Custom regular-expression replacements run only after the response is complete, so enabling any custom replacement disables progressive TTS for that response. If a replacement fails or takes too long, Extended OpenAI simply uses the speech text from before the custom replacements instead of speaking a partly modified result."},
     ],
@@ -382,7 +382,7 @@ export const GUIDE_TOPICS = [
 export const MEMORY_COMPARISON = [
   ["Conversation context","Natural follow-up questions during an ongoing discussion","Until the session ends, continuity expires, a fresh conversation is requested or Home Assistant restarts","Carried into the relevant follow-up conversation"],
   ["Temporary memory","Facts that are useful only for a limited time","Until the memory's expiry time","Available while it is still active when relevant to the request"],
-  ["Persistent memory","Stable facts and preferences that are worth reusing later","Until you change or delete them","Relevant memories can be selected when a conversation starts or retrieved when needed"],
+  ["Persistent memory","Stable facts and preferences that are worth reusing later","Until you change or delete them","Selected on the first eligible AI turn or retrieved when needed"],
   ["Conversation archive","Reviewing or searching previous discussions","For the archive retention period you have configured","Previous conversations are searched only when archive access or archive search is used"],
   ["Knowledge Library","Larger reference material such as manuals, policies or project notes","Until you delete the source","Searched when needed, with only the relevant source content retrieved"],
 ];

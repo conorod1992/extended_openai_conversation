@@ -45,7 +45,7 @@ The integration's Usage sensor reports provider-supplied token/request metadata.
 
 ## Citations
 
-OpenAI can return structured `url_citation` annotations with Web Search results. The integration retains them on native Responses output items for context/replay, but Home Assistant voice responses do not currently expose them as clickable sources. When spoken-response cleanup is enabled, the stateful provider-neutral fallback also removes textual Markdown citations from progressive TTS, including citations split across arbitrary stream boundaries.
+OpenAI can return structured `url_citation` annotations with Web Search results. The integration retains them on native Responses output items for context/replay, but Home Assistant voice responses do not currently expose them as clickable sources. When the relevant spoken-response cleanup options are enabled, the provider-neutral fallback removes Markdown formatting and link destinations, suppresses empty or address-only citation labels, and preserves readable labels, including citation numbers. This works across stream boundaries; standalone textual citation markers are not necessarily removed.
 
 ## Web Search versus Home Assistant data
 

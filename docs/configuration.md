@@ -77,7 +77,7 @@ Conversation-agent settings are available in the **Extended OpenAI** sidebar pan
 | **Web search detail** | Low | Controls Web Search retrieval breadth. |
 | **Long-term memory** | Off | Enables Manual or Automatic persistent memory. |
 | **Allow the assistant to use Knowledge** | Off | Enables on-demand model search and retrieval of maintained per-agent Knowledge sources. |
-| **Automatically include memories** | 3 | Maximum memories selected from the opening message and reused for that conversation. |
+| **Automatically include memories** | 3 | Maximum memories selected using the effective AI input of the first eligible model-handled turn and reused for that conversation. |
 | **Maximum response length (tokens)** | 500 | Limits model output tokens, including reasoning tokens where the provider counts them against output. |
 | **Tool-call limit per request** | 10 | Limits model-requested Function Tool executions within one turn; resets for the next turn. |
 | **Skills** | None on initial setup; available Skills selected when adding an agent | Lists installed instruction sets the agent may load, one installed directory name per line. |
@@ -148,7 +148,7 @@ See [Web Search](features/web-search.md).
 
 See [Persistent memory](features/persistent-memory.md).
 
-The selected bundle is reused for the conversation (`0` is tool-only). **How memories are matched** defaults to local Keyword matching. Optional **Keyword + meaning** sends memory content/metadata and memory search queries, including the opening message and later memory-tool searches, to the configured provider's embeddings endpoint, which can incur API charges; it falls back to keyword matching when unsupported. The adjacent Embedding model setting applies only to Keyword + meaning.
+The selected bundle is reused for the conversation (`0` is tool-only). **How memories are matched** defaults to local Keyword matching. Optional **Keyword + meaning** sends memory content/metadata and memory search queries, including the initial automatic query and later memory-tool searches, to the configured provider's embeddings endpoint, which can incur API charges; it falls back to keyword matching when unsupported. The adjacent Embedding model setting applies only to Keyword + meaning.
 
 ## Knowledge Library
 
