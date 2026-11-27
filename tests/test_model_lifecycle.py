@@ -257,6 +257,7 @@ def test_retirement_reconciles_each_effective_model(monkeypatch):
     assert model_lifecycle._failure_records(
         {"failures": list(records.values())}
     ) == records
+    assert model_lifecycle._failure_records({"failures": "{invalid"}) == {}
     model_lifecycle.clear_retirement_failure(
         hass,
         entry_id="entry",
