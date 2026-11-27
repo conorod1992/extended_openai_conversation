@@ -2,7 +2,7 @@
 
 Conversation continuity keeps recent turns as active model context when one Assist
 run ends and a later wake-word or Assist request begins. It is different from
-**Continue conversation**, which only controls whether Home Assistant keeps listening
+**Listen for a follow-up**, which only controls whether Home Assistant keeps listening
 immediately after an answer.
 
 - **Home Assistant default** uses the caller-supplied or returned conversation ID,

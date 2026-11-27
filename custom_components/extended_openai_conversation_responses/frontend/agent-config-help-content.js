@@ -3,7 +3,7 @@ const DOCS_ROOT = "https://github.com/conorod1992/extended_openai_conversation/b
 export const HELP_METADATA = Object.freeze({
   api_mode: Object.freeze({
     title: "Provider API format",
-    paragraphs: ["Auto uses Chat Completions by default and selects Responses for GPT-5.6 and later GPT-5 minor models. Override it when an OpenAI-compatible provider supports only one API style."],
+    paragraphs: ["Auto uses model capabilities, tools and reasoning settings. Unknown text-only models default to Responses. Select the API explicitly for providers supporting only one style."],
     items: [
       { term: "Auto", text: "Lets the integration choose using its model compatibility rules." },
       { term: "Responses", text: "Uses the newer Responses API style." },
@@ -144,7 +144,7 @@ export const HELP_METADATA = Object.freeze({
   }),
   context_threshold: Object.freeze({
     title: "Conversation history token limit",
-    paragraphs: ["This is a context-size threshold based on provider-reported input tokens, not a message count. Higher values preserve more history but can use more context and tokens. What is retained depends on the truncation strategy."],
+    paragraphs: ["This threshold uses provider input tokens or a local estimate when unavailable, not a message count. Higher values preserve more history but can use more context and tokens. What is retained depends on the truncation strategy."],
     keywords: "tokens context size message count threshold history limit",
     href: `${DOCS_ROOT}/features/context-management.md`,
   }),
@@ -153,7 +153,7 @@ export const HELP_METADATA = Object.freeze({
     items: [
       { term: "Keep recent messages", text: "Drops the oldest complete turns while preserving the system prompt and newest conversation turns." },
       { term: "Clear all messages", text: "Clears prior conversation content when the threshold is exceeded." },
-      { term: "Summarize older messages", text: "Makes one bounded model request to summarize older turns, keeps recent raw turns, and falls back to Keep recent if summarization fails." },
+      { term: "Summarize older messages", text: "Summarizes older turns with a bounded request and keeps recent raw turns. Output-token exhaustion allows one bounded retry; failure falls back to Keep recent." },
     ],
     keywords: "truncate clear summarize recent older messages context history strategy",
     href: `${DOCS_ROOT}/features/context-management.md`,

@@ -13,7 +13,7 @@ On desktop, section buttons appear above each grouped page. On smaller screens,
 Page and section dropdowns provide the same navigation. **Search all settings**
 can jump to settings across sections; collections such as Functions, Memories,
 and Knowledge also have their own search. Configuration duplication and transfer
-are grouped under **Agent actions**. Save and Revert appear only when the
+are grouped under **Assistant actions**. Save and Revert appear only when the
 settings draft is dirty. Changing agent behaviour requires an administrator.
 
 The editor writes the existing Home Assistant config subentry; there is no separate frontend store. Changes remain a local draft until Save is pressed. Voice ownership is separate from spoken-response cleanup, dependent options stay visible but disabled, and Custom replacements remain directly visible while speech processing is enabled.

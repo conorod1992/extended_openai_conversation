@@ -21,14 +21,14 @@ You need:
 HACS is the recommended option for published releases because it makes installation and updates easier. Check the selected version before downloading.
 
 1. Open **HACS** in Home Assistant.
-2. Open the integrations section.
-3. Add this repository as a custom repository:
+2. In the top-right three-dot menu, select **Custom repositories**.
+3. Enter this repository URL:
 
    ```text
    https://github.com/conorod1992/extended_openai_conversation
    ```
 
-4. Choose **Integration** as the repository type.
+4. Choose **Integration** as the repository type and add the repository.
 5. Find **Extended OpenAI Conversation (Responses)** and download it.
 6. Restart Home Assistant when prompted.
 

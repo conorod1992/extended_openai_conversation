@@ -12,6 +12,34 @@ function:
 
 `path` is required and templated. `allow_dir` adds allowed directories; `restrict_to_allow_dir: true` disables the default allowed directories so only the explicit list is used. Read results include the content and size. The built-in `load_skill` tool uses this implementation with a Skill-specific path boundary.
 
+### Reading large files in pages
+
+The 1 MiB file limit is separate from the **32,000-character serialized model tool-result limit** (including JSON escaping and metadata). A successful unpaged read can exceed the latter and return an `output_overflow` result to the model. Custom file readers can opt into bounded pages with a `page_offset` template. For example, paste this complete definition into the single-tool YAML editor:
+
+```yaml
+spec:
+  name: read_workspace_file
+  description: Read a workspace text file. Start at offset 0; if has_more is true, call again using next_offset. Stop when has_more is false or absent.
+  parameters:
+    type: object
+    properties:
+      filename:
+        type: string
+        description: Relative file path in the workspace
+      offset:
+        type: integer
+        minimum: 0
+        description: Character offset (omit for the first page)
+    required:
+      - filename
+function:
+  type: read_file
+  path: "{{ filename }}"
+  page_offset: "{{ offset | default(0) }}"
+```
+
+Offsets count Unicode characters, not UTF-8 bytes. `content` contains the returned text and `size` reports the file size. For paged results, `next_offset` is the next character position and `has_more` indicates whether to continue. A small file returned in full on the first read can omit the paging fields entirely. Each page uses one ordinary tool call, so the assistant may need several calls to read a large file. The 1 MiB limit and path checks still apply to every read. Use narrow allowed paths for tools exposed to the model.
+
 ## Write a file
 
 ```yaml

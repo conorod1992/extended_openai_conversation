@@ -61,11 +61,14 @@ Use a provider and model that support vision, and replace the example entry ID a
 
 ## Reload skills
 
-Run the action after adding, editing, moving, or removing Skill files.
+Run the action after adding, editing, moving, or removing Skill files. It returns a response, so scripts and automations must supply a response variable:
 
 ```yaml
 action: extended_openai_conversation_responses.reload_skills
+response_variable: skills_result
 ```
+
+In Developer Tools → Actions, select **Reload skills** to run it interactively and view the returned response.
 
 ## Administrative actions
 
