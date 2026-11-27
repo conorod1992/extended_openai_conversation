@@ -100,18 +100,23 @@ for (const stale of [false, true]) test(`shared Assistant save ${stale ? "keeps 
   await expectHarnessClean(page, errors);
 });
 
-for (const pending of [false, true]) test(`Guest metrics ${pending ? "restart" : "stay loaded"} when Assistant settings are saved after Guest policy`, async ({page}) => {
+for (const [scenario, title] of [
+  ["settled", "Guest metrics stay loaded when Assistant settings are saved after Guest policy"],
+  ["pending", "Guest metrics restart when Assistant settings are saved after Guest policy"],
+  ["rejected", "Guest metrics finish after a rejected Assistant save and discard"],
+]) test(title, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
   const panel = page.locator("extended-openai-management-panel");
   await panel.locator('[data-config="__title"]').fill("Renamed after Guest policy");
-  await panel.evaluate(host => {
+  await panel.evaluate((host, rejectAssistant) => {
     const call = host.hass.callWS.bind(host.hass);
     let revision = browserHarness.getState().configuration.revision;
     window.guestMetricReads = [];
     host.hass.callWS = async request => {
       if ((request.section === "guest_mode" && request.action === "save_policy") || (request.section === "configuration" && request.action === "save")) {
         if (request.revision !== revision) throw {code:"eoai_mutation_rejected", message:"Configuration changed in another tab"};
+        if (request.section === "configuration" && rejectAssistant) return {valid:false, errors:{title:"Choose a different title"}};
         const state = browserHarness.getState();
         const saved = await call({...request, revision:request.section === "guest_mode" ? state.guest.revision : state.configuration.revision});
         revision = saved.revision;
@@ -127,7 +132,7 @@ for (const pending of [false, true]) test(`Guest metrics ${pending ? "restart" :
       }})));
     };
     return host._navigate("capabilities", "guest-mode");
-  });
+  }, scenario === "rejected");
   await expect(panel.locator(".metric-grid")).toContainText("Guest-visible entities");
   const web = panel.locator("#guest-web-search");
   await web.evaluate(input => {
@@ -139,13 +144,20 @@ for (const pending of [false, true]) test(`Guest metrics ${pending ? "restart" :
   const reads = () => page.evaluate(() => window.guestMetricReads.length);
   const metric = panel.locator(".metric").filter({hasText:"Guest-visible entities"});
   await expect.poll(reads).toBe(1);
-  if (!pending) {
+  if (scenario === "settled") {
     await page.evaluate(() => window.guestMetricReads[0](37));
     await expect(metric).toContainText("37");
   }
   await panel.getByRole("button", {name:"Save Assistant settings", exact:true}).click();
-  await expect(panel.locator("#agent option:checked")).toHaveText("Renamed after Guest policy");
-  if (pending) {
+  if (scenario === "rejected") {
+    await expect(panel.locator("#configuration-errors")).toContainText("Choose a different title");
+    await panel.getByRole("button", {name:"Discard Assistant settings", exact:true}).click();
+    await expect(panel.locator("#save-config")).toHaveCount(0);
+    await page.evaluate(() => window.guestMetricReads[0](37));
+    await expect(metric).toContainText("37");
+  }
+  await expect(panel.locator("#agent option:checked")).toHaveText(scenario === "rejected" ? "Jarvis" : "Renamed after Guest policy");
+  if (scenario === "pending") {
     await expect.poll(reads).toBe(2);
     await page.evaluate(() => window.guestMetricReads[1](37));
     await expect(metric).toContainText("37");
@@ -157,7 +169,7 @@ for (const pending of [false, true]) test(`Guest metrics ${pending ? "restart" :
   await panel.evaluate(host => host._render());
   await expect(metric).toContainText("37");
   await expect(panel.locator(".metric-grid")).not.toHaveAttribute("aria-busy", "true");
-  expect(await reads()).toBe(pending ? 2 : 1);
+  expect(await reads()).toBe(scenario === "pending" ? 2 : 1);
   expect(await page.evaluate(() => browserHarness.getState().guest.config.guest_web_search)).toBe(true);
   await expectHarnessClean(page, errors);
 });

@@ -1091,8 +1091,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       const invalidationStarted = performanceNow();
       const process = () => {
-        const usageRetentionWrite = result?.valid === true
-          && ((section === "configuration" && action === "save") || (section === "function_repair" && action === "configuration_save"))
+        const configurationSave = (section === "configuration" && action === "save")
+          || (section === "function_repair" && action === "configuration_save");
+        // These endpoints return validation errors before writing. A rejected
+        // save must leave reads of the committed configuration current.
+        if (configurationSave && result?.valid === false) return;
+        const usageRetentionWrite = configurationSave && result?.valid === true
           && USAGE_RETENTION_FIELDS.some(key => Object.hasOwn(extra.config || {}, key));
         this._invalidateAfterMutation(agent?.subentry_id, section, action, usageRetentionWrite);
         pruneCacheTimes(this);
