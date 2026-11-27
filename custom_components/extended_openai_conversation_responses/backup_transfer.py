@@ -192,15 +192,15 @@ def _snapshot_revision(
 ) -> str:
     """Hash selected destination data and conservative review dependencies off-loop."""
     selected = set(transfer.SECTION_ORDER if sections is None else sections)
-    # Raw setup and rules affect secret preservation, routing and Function
-    # dependencies even when they are not selected for replacement. Never expose
-    # this private projection (including provider credentials) in diagnostics.
+    # Keep the destination setup and provider in the private preview revision.
+    # Hash Request Rules when setup validation depends on them.
     snapshot = {
         "title": value.title,
         "config": value.config,
-        "request_rules": value.request_rules,
         "provider": provider_data,
     }
+    if "request_rules" in transfer._restore_snapshot_sections(selected):
+        snapshot["request_rules"] = value.request_rules
     category_fields = {
         transfer.SECTION_PERSISTENT_MEMORY: ("memories",),
         transfer.SECTION_TEMPORARY_MEMORY: ("temporary_memories",),
@@ -1548,6 +1548,9 @@ async def _inspect_import_admitted(
                 subentry,
                 include_usage=transfer.SECTION_USAGE in selected,
                 capture_usage_revision=True,
+                sections=transfer._restore_snapshot_sections(
+                    selected, restore_provider=restore_provider
+                ),
             )
         )
         archive_retention_at = None
@@ -1745,13 +1748,16 @@ async def _restore_import_admitted(
             hass,
             entry,
             subentry,
-            include_usage=transfer.SECTION_USAGE in (session.preview_sections or ()),
+            include_usage=transfer.SECTION_USAGE in selected_sections,
             capture_usage_revision=True,
+            sections=transfer._restore_snapshot_sections(
+                selected_sections, restore_provider=session.preview_restore_provider
+            ),
         )
         revision = await asyncio.to_thread(
             _snapshot_revision,
             current,
-            session.preview_sections,
+            selected_sections,
             dict(getattr(entry, "data", {})),
         )
         if revision != session.preview_revision:

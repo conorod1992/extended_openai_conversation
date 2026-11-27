@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
@@ -1562,6 +1562,33 @@ def _prepared_restore_from_selection(
     return target, tuple(preserved), tuple(missing)
 
 
+def _restore_data_sections(selected: Collection[str]) -> set[str]:
+    """Map selected transfer sections to their durable participants."""
+    return {
+        key
+        for key, section in (
+            ("memories", SECTION_PERSISTENT_MEMORY),
+            ("temporary_memories", SECTION_TEMPORARY_MEMORY),
+            ("knowledge", SECTION_KNOWLEDGE),
+            ("archive", SECTION_CONVERSATION_ARCHIVE),
+            ("usage", SECTION_USAGE),
+            ("guest_mode", SECTION_GUEST_MODE),
+            ("request_rules", SECTION_REQUEST_RULES),
+        )
+        if section in selected
+    }
+
+
+def _restore_snapshot_sections(
+    selected: Collection[str], *, restore_provider: bool = False
+) -> frozenset[str]:
+    """Include current rules when validating setup or a provider change."""
+    sections = _restore_data_sections(selected)
+    if restore_provider or not SETUP_SECTIONS.isdisjoint(selected):
+        sections.add("request_rules")
+    return frozenset(sections)
+
+
 async def _current_snapshot(
     hass: HomeAssistant,
     entry: Any,
@@ -1586,6 +1613,8 @@ async def _current_snapshot(
             **section_options,
         )
     except ImportError:
+        if sections is not None:
+            raise
         managers = await backup._managers(hass, entry.entry_id, subentry.subentry_id)
     from .helpers import entry_api_provider
 
@@ -1630,25 +1659,11 @@ async def async_materialize_restore(
         except HomeAssistantError as err:
             raise backup.BackupError(str(err)) from err
 
-    data_sections = {
-        key
-        for key, transfer_section in (
-            ("memories", SECTION_PERSISTENT_MEMORY),
-            ("temporary_memories", SECTION_TEMPORARY_MEMORY),
-            ("knowledge", SECTION_KNOWLEDGE),
-            ("archive", SECTION_CONVERSATION_ARCHIVE),
-            ("usage", SECTION_USAGE),
-            ("guest_mode", SECTION_GUEST_MODE),
-            ("request_rules", SECTION_REQUEST_RULES),
-        )
-        if transfer_section in selected
-    }
-    validates_routes = (
-        bool(selected & SETUP_SECTIONS) or provider_connection is not None
+    data_sections = _restore_data_sections(selected)
+    snapshot_sections = _restore_snapshot_sections(
+        selected, restore_provider=provider_connection is not None
     )
-    snapshot_sections = data_sections | (
-        {"request_rules"} if validates_routes else set()
-    )
+    validates_routes = "request_rules" in snapshot_sections
     current = (
         current_snapshot
         if current_snapshot is not None
@@ -1657,7 +1672,7 @@ async def async_materialize_restore(
             entry,
             subentry,
             include_usage=SECTION_USAGE in selected,
-            sections=frozenset(snapshot_sections),
+            sections=snapshot_sections,
         )
     )
     prepared = await asyncio.to_thread(_copy_transfer_categories, prepared)

@@ -19,14 +19,17 @@ _DONE = "response.output_item.done"
 _ARGUMENT_DELTA = "response.function_call_arguments.delta"
 _ARGUMENT_DONE = "response.function_call_arguments.done"
 _ARGUMENT_EVENTS = {_ARGUMENT_DELTA, _ARGUMENT_DONE}
-_PART_SNAPSHOTS = {"response.output_text.done", "response.refusal.done"}
+_PART_SNAPSHOTS = {
+    "response.output_text.done",
+    "response.refusal.done",
+    "response.content_part.done",
+}
 _CONTENT_EVENTS = {
     *_PART_SNAPSHOTS,
     "response.output_text.delta",
     "response.refusal.delta",
     "response.output_text.annotation.added",
     "response.content_part.added",
-    "response.content_part.done",
 }
 _USAGE = {"response.usage", "response.usage.updated"}
 _RESPONSE_EVENTS = {

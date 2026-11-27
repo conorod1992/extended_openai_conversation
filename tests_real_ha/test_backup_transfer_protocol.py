@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from pytest_homeassistant_custom_component.common import (
@@ -585,11 +586,26 @@ async def test_backup_transfer_rejects_non_admin_through_registered_websocket(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("storage_fails_before", ["preview", "restore"])
 async def test_custom_backup_selection_round_trip_through_registered_websocket(
     hass: HomeAssistant,
     hass_ws_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    storage_fails_before: str,
 ) -> None:
-    """A custom backup restores only selected sections and preserves configuration."""
+    """An unavailable unselected store does not prevent a Memory restore."""
+    from custom_components.extended_openai_conversation_responses import (
+        knowledge,
+        request_rules,
+    )
+
+    unavailable_knowledge = AsyncMock(side_effect=OSError("Knowledge storage failed"))
+    unavailable_rules = AsyncMock(side_effect=OSError("Request Rules storage failed"))
+
+    def fail_unselected_storage() -> None:
+        monkeypatch.setattr(knowledge, "async_get_knowledge", unavailable_knowledge)
+        monkeypatch.setattr(request_rules, "async_get_request_rules", unavailable_rules)
+
     entry = _entry()
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
@@ -633,6 +649,8 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
         filename=metadata["filename"],
     )
     try:
+        if storage_fails_before == "preview":
+            fail_unselected_storage()
         inspected = await _transfer_call(
             admin_client,
             entry=entry,
@@ -646,6 +664,8 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
         assert inspection["preview"]["selected_sections"] == [SECTION_PERSISTENT_MEMORY]
         assert inspection["can_create_new_agent"] is False
 
+        if storage_fails_before == "restore":
+            fail_unselected_storage()
         restored = await _transfer_call(
             admin_client,
             entry=entry,
@@ -679,6 +699,8 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
 
     assert dict(subentry.data) == original_raw_config
     assert agent_config_snapshot(subentry.data) == original_config
+    unavailable_knowledge.assert_not_awaited()
+    unavailable_rules.assert_not_awaited()
 
 
 @pytest.mark.parametrize("route_owner", ["target", "sibling"])

@@ -279,9 +279,13 @@ async def test_null_completed_message_content_raises_structured_provider_error(
 
 @pytest.mark.parametrize("identified", [False, True])
 @pytest.mark.parametrize("completion_has_id", [False, True])
+@pytest.mark.parametrize(
+    "snapshot_kind", ["response.refusal.done", "response.content_part.done"]
+)
 async def test_late_unindexed_refusal_snapshot_cannot_repeat_a_finalized_message(
     identified,
     completion_has_id,
+    snapshot_kind,
 ):
     from custom_components.extended_openai_conversation_responses.entity import (
         ExtendedOpenAIBaseLLMEntity,
@@ -311,7 +315,14 @@ async def test_late_unindexed_refusal_snapshot_cannot_repeat_a_finalized_message
                 ),
                 event("response.output_item.done", item=completed),
                 event(
-                    "response.refusal.done", refusal=full, content_index=0, **identity
+                    snapshot_kind,
+                    content_index=0,
+                    **identity,
+                    **(
+                        {"part": item.content[0]}
+                        if snapshot_kind == "response.content_part.done"
+                        else {"refusal": full}
+                    ),
                 ),
             ]
         )
@@ -617,11 +628,23 @@ async def test_late_legacy_argument_snapshot_without_id_uses_completed_call():
         _ = [frame async for frame in ordered_output_events(stream(frames))]
 
 
-async def test_late_indexed_refusal_snapshot_is_not_presented_again():
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        event("response.refusal.done", output_index=0, refusal="Already complete"),
+        event(
+            "response.content_part.done",
+            output_index=0,
+            content_index=0,
+            part=SimpleNamespace(type="output_text", text="Already complete"),
+        ),
+    ],
+)
+async def test_late_indexed_part_snapshot_is_not_presented_again(snapshot):
     frames = [
         event("response.output_item.added", output_index=0),
         event("response.output_item.done", output_index=0),
-        event("response.refusal.done", output_index=0, refusal="Already complete"),
+        snapshot,
         event("response.completed"),
     ]
     assert [frame async for frame in ordered_output_events(stream(frames))] == [

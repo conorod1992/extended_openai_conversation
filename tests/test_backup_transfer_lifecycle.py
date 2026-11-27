@@ -123,7 +123,7 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
             },
         )
 
-    prepared = SimpleNamespace(available_sections=frozenset({"memory"}))
+    prepared = SimpleNamespace(available_sections=frozenset({transfer.SECTION_PERSISTENT_MEMORY}))
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(subentry_id="agent-1")
     load_calls = 0
@@ -136,9 +136,10 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert target_subentry_id == "agent-1"
         return prepared
 
-    async def current_snapshot(*_args, include_usage=True, capture_usage_revision=False):
+    async def current_snapshot(*_args, include_usage, capture_usage_revision, sections):
         assert not include_usage
         assert capture_usage_revision
+        assert sections == frozenset({"memories"})
         return object()
 
     async def materialize(
@@ -154,10 +155,10 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert actual_entry is entry
         assert actual_subentry is subentry
         assert actual_prepared is prepared
-        assert sections == frozenset({"memory"})
+        assert sections == frozenset({transfer.SECTION_PERSISTENT_MEMORY})
         assert current_snapshot is not None
         assert archive_retention_at is None
-        return object(), {"changes": 1, "selected_sections": ["memory"]}
+        return object(), {"changes": 1, "selected_sections": [transfer.SECTION_PERSISTENT_MEMORY]}
 
     async def restore(
         _hass, actual_entry, actual_subentry, actual_prepared, *, sections, precondition,
@@ -166,7 +167,7 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert actual_entry is entry
         assert actual_subentry is subentry
         assert actual_prepared is prepared
-        assert sections == ["memory"]
+        assert sections == [transfer.SECTION_PERSISTENT_MEMORY]
         assert not confirm_retention
         assert provider_connection is expected_provider_data is None
         assert archive_retention_at is None
@@ -210,11 +211,11 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         hass,
         "entry-1",
         "agent-1",
-        {"session_id": session_id, "sections": ["memory"]},
+        {"session_id": session_id, "sections": [transfer.SECTION_PERSISTENT_MEMORY]},
     )
     assert inspection["prepared"] is True
     assert inspection["preview"]["changes"] == 1
-    assert inspection["preview"]["selected_sections"] == ["memory"]
+    assert inspection["preview"]["selected_sections"] == [transfer.SECTION_PERSISTENT_MEMORY]
     assert inspection["preview"]["user_scope_mapping"]["missing_source_user_ids"] == []
     assert isinstance(inspection["preview_token"], str)
     assert session_id in backup_transfer._imports(hass)
@@ -226,7 +227,7 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         subentry,
         {
             "session_id": session_id,
-            "sections": ["memory"],
+            "sections": [transfer.SECTION_PERSISTENT_MEMORY],
             "preview_token": inspection["preview_token"],
         },
     )
