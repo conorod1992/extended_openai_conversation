@@ -528,7 +528,24 @@ async def ordered_output_events(
                         "response.content_part."
                     ):
                         legacy_message_finished = False
-                        if item_id or kind.startswith("response.content_part."):
+                        active = items.get(next_index)
+                        # Some providers omit item identity even on numbered
+                        # parts. A visible indexed message already owns these
+                        # deltas; otherwise a numbered part opens a legacy item.
+                        indexed_message = (
+                            active is not None
+                            and active.presented
+                            and active.signature is not None
+                            and active.signature[0] == "message"
+                        )
+                        if (
+                            item_id
+                            or kind.startswith("response.content_part.")
+                            or (
+                                not indexed_message
+                                and getattr(event, "content_index", None) is not None
+                            )
+                        ):
                             legacy.bind_identity(item_id, kind)
                             legacy_message_active = True
                 yield event

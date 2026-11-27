@@ -647,7 +647,10 @@ async def test_terminal_output_count_is_bounded_before_replay(monkeypatch):
 
 
 @pytest.mark.parametrize("terminal_has_snapshot", [False, True])
-async def test_legacy_introduced_message_requires_completion(terminal_has_snapshot):
+@pytest.mark.parametrize("introduction", ["opener", "item-id", "part-index"])
+async def test_legacy_introduced_message_requires_completion(
+    terminal_has_snapshot, introduction
+):
     from custom_components.extended_openai_conversation_responses.entity import (
         ExtendedOpenAIBaseLLMEntity,
     )
@@ -660,17 +663,26 @@ async def test_legacy_introduced_message_requires_completion(terminal_has_snapsh
         role="assistant",
         content=[SimpleNamespace(type="output_text", text="Light is on")],
     )
-    frames = [
-        event("response.output_item.added", item=opening),
-        event("response.output_text.delta", item_id="message", delta="Light is "),
-        event(
-            "response.completed",
-            response=SimpleNamespace(
-                usage=None,
-                output=[complete] if terminal_has_snapshot else [],
+    frames = []
+    if introduction == "opener":
+        frames.append(event("response.output_item.added", item=opening))
+    metadata = {
+        "opener": {},
+        "item-id": {"item_id": "message"},
+        "part-index": {"content_index": 0},
+    }[introduction]
+    frames.extend(
+        [
+            event("response.output_text.delta", delta="Light is ", **metadata),
+            event(
+                "response.completed",
+                response=SimpleNamespace(
+                    usage=None,
+                    output=[complete] if terminal_has_snapshot else [],
+                ),
             ),
-        ),
-    ]
+        ]
+    )
     entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
     seen = []
     parser = entity._transform_responses_stream(
@@ -686,22 +698,39 @@ async def test_legacy_introduced_message_requires_completion(terminal_has_snapsh
         assert not any(seen)
 
 
+async def test_anonymous_numbered_part_can_complete_its_open_indexed_message():
+    item = SimpleNamespace(
+        type="message",
+        id="message",
+        role="assistant",
+        content=[SimpleNamespace(type="output_text", text="Light is on")],
+    )
+    frames = [
+        event("response.output_item.added", output_index=0, item=item),
+        event("response.output_text.delta", content_index=0, delta="Light is "),
+        event("response.output_item.done", output_index=0, item=item),
+        event("response.completed", response=SimpleNamespace(output=[item])),
+    ]
+    assert [frame async for frame in ordered_output_events(stream(frames))] == frames
+
+
 @pytest.mark.parametrize("completion", ["part", "item"])
-async def test_conflicting_text_snapshot_cannot_supply_a_suffix(completion):
+@pytest.mark.parametrize("part_kind", ["output_text", "refusal"])
+async def test_conflicting_text_snapshot_cannot_supply_a_suffix(completion, part_kind):
     from custom_components.extended_openai_conversation_responses.entity import (
         ExtendedOpenAIBaseLLMEntity,
     )
 
+    field = "text" if part_kind == "output_text" else "refusal"
+    snapshot = {field: "Light is off"}
     item = SimpleNamespace(
         type="message",
-        content=[
-            SimpleNamespace(type="output_text", text="Light is off"),
-        ],
+        content=[SimpleNamespace(type=part_kind, **snapshot)],
     )
     frames = [
         event("response.output_item.added", output_index=0, item=item),
         event(
-            "response.output_text.delta",
+            f"response.{part_kind}.delta",
             output_index=0,
             content_index=0,
             delta="Light is on",
@@ -710,10 +739,10 @@ async def test_conflicting_text_snapshot_cannot_supply_a_suffix(completion):
     if completion == "part":
         frames.append(
             event(
-                "response.output_text.done",
+                f"response.{part_kind}.done",
                 output_index=0,
                 content_index=0,
-                text="Light is off",
+                **snapshot,
             )
         )
     frames.extend(
