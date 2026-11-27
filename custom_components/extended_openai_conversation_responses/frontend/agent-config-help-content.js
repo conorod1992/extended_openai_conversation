@@ -16,7 +16,7 @@ export const HELP_METADATA = Object.freeze({
     title: "Listen for a follow-up",
     items: [
       { term: "HA Default", text: "Uses Home Assistant's normal continuation behaviour." },
-      { term: "Always", text: "Keeps listening after every successful response." },
+      { term: "Always", text: "Keeps listening after success, except recognised never-mind commands." },
       { term: "Conditional", text: "Lets the model decide whether an immediate reply is expected, using the integration's continuation tool." },
     ],
     keywords: "follow-up follow up keep listening immediate turn home assistant default conditional",
