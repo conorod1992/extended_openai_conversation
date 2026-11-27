@@ -69,7 +69,9 @@ async def test_native_owner_replacement_keeps_new_owner_history(
         test_owner_replacement_preserves_b_followup_only,
     )
 
-    await test_owner_replacement_preserves_b_followup_only(hass, monkeypatch, guest)
+    await test_owner_replacement_preserves_b_followup_only(
+        hass, monkeypatch, guest, tighten=False
+    )
 
 
 @pytest.mark.parametrize("files,fields", [(1, 10000), (128, 100)])

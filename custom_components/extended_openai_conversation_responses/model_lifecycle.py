@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
+import json
 import logging
 from typing import Any
 
@@ -88,6 +89,11 @@ def _failure_records(data: Any) -> dict[str, dict[str, Any]]:
     if isinstance(data.get("model"), str):
         return {data["model"]: data}  # Original singleton format.
     failures = data.get("failures")
+    if isinstance(failures, str):
+        try:
+            failures = json.loads(failures)
+        except ValueError, RecursionError:
+            return {}
     if not isinstance(failures, list):
         return {}
     return {
@@ -106,7 +112,10 @@ def _publish_retirement_failures(
     title: str,
 ) -> None:
     ordered = [records[model] for model in sorted(records)]
-    data = ordered[0] if len(ordered) == 1 else {"failures": ordered}
+    # Home Assistant's issue registry only accepts scalar data values.
+    data: dict[str, str | int | float | None] = (
+        ordered[0] if len(ordered) == 1 else {"failures": json.dumps(ordered)}
+    )
     hass.data.setdefault(_DATA_FAILURES, {})[_failure_key(entry_id, subentry_id)] = data
     ir.async_create_issue(
         hass,

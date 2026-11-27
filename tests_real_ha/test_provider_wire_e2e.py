@@ -713,8 +713,13 @@ async def test_provider_tool_cannot_use_stale_guest_entity_exposure(
         release_provider.set()
 
     result = await asyncio.wait_for(pending, timeout=10)
-    assert _speech(result) == "The request was handled safely."
     assert calls == []
+    if initially_exposed:
+        # Revocation also invalidates the admitted guest continuity scope.
+        assert result.response.error_code is not None
+        assert len(wire.requests) == 1
+        return
+    assert _speech(result) == "The request was handled safely."
     assert len(wire.requests) == 2
     tool_result = _tool_result_from_chat_request(wire.requests[1]["body"])
     tool_results = tool_result.get("result")

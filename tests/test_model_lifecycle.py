@@ -250,7 +250,13 @@ def test_retirement_reconciles_each_effective_model(monkeypatch):
             configured_model="retired-default",
             error=error,
         )
-    assert len(create.call_args.kwargs["data"]["failures"]) == 2
+    issue_data = create.call_args.kwargs["data"]
+    assert isinstance(issue_data["failures"], str)
+    records = model_lifecycle._failure_records(issue_data)
+    assert set(records) == {"retired-default", "retired-override"}
+    assert model_lifecycle._failure_records(
+        {"failures": list(records.values())}
+    ) == records
     model_lifecycle.clear_retirement_failure(
         hass,
         entry_id="entry",

@@ -352,6 +352,11 @@ async def _first_boot(config_dir: Path) -> None:
     finally:
         await hass.async_stop()
 
+    assert hass.states.get(_QH_MEDIA_PLAYER_ID).attributes[
+        "volume_level"
+    ] == pytest.approx(0.55)
+    assert hass.states.get(_QH_WAKE_SOUND_ID).state == "on"
+
 
 async def _second_boot(config_dir: Path) -> None:
     from homeassistant import bootstrap, runner
@@ -380,9 +385,8 @@ async def _second_boot(config_dir: Path) -> None:
 
         await _exercise_conversation(hass, entry.entry_id, "Cold restart is healthy.")
 
-        # Recreate the physical controls in the quiet state a real satellite would
-        # report after HA restarts. The manager was reconstructed from disk during
-        # integration setup and must retain 0.55/on as the owned originals.
+        # A graceful stop restored the physical controls to their baselines.
+        # Restart inside the same period and verify the saved policy applies again.
         from homeassistant.util import dt as dt_util
 
         quiet_hours = importlib.import_module(
@@ -391,8 +395,8 @@ async def _second_boot(config_dir: Path) -> None:
         control_calls: list[tuple[str, str]] = []
         _install_quiet_hours_controls(
             hass,
-            volume=0.20,
-            wake="off",
+            volume=0.55,
+            wake="on",
             calls=control_calls,
         )
         manager = await quiet_hours.async_get_quiet_hours(hass)
@@ -407,7 +411,11 @@ async def _second_boot(config_dir: Path) -> None:
             "volume_level"
         ] == pytest.approx(0.20)
         assert hass.states.get(_QH_WAKE_SOUND_ID).state == "off"
-        assert control_calls == []
+        assert control_calls == [
+            ("volume_set", _QH_MEDIA_PLAYER_ID),
+            ("turn_off", _QH_WAKE_SOUND_ID),
+        ]
+        control_calls.clear()
 
         period_end = dt_util.parse_datetime(manager.active["period_ends_at"])
         assert period_end is not None

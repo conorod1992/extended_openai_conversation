@@ -419,7 +419,8 @@ async def test_dependency_value_error_is_translated_to_websocket_error(
         entry_id=entry.entry_id,
         subentry_id=subentry.subentry_id,
         section="knowledge",
-        action="list",
+        action="get",
+        source_id="source",
     )
 
     assert response["success"] is False
