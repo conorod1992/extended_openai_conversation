@@ -319,9 +319,13 @@ export async function changeConfigurationModel(panel, control, {preserveReasonin
     // rejects another draft field. The catalogue itself already applies.
     if (protectedModelFocus(panel.shadowRoot) && panel.shadowRoot.activeElement !== control) deferModelRender(panel, current);
     applyTargetedConfigDirty(panel, [field, "reasoning_effort"], control, false);
+    const generation = panel._eocCatalogGeneration;
     const validation = await panel._call("configuration", "validate", {config: panel._draft});
-    if (!current() || !validation.valid) return;
-    if (panel._result) panel._result.model_capabilities = validation.model_capabilities;
+    if (!current() || panel._eocCatalogGeneration !== generation || !validation.valid) return;
+    panel._eocDraftModelCapabilities = {
+      draft, model:capabilityModelForPanel(panel, draft), provider:modelProviderForPanel(panel),
+      capabilities:validation.model_capabilities,
+    };
     refreshApiModePresentation(panel);
     // A model change finishes after blur. Do not replace the next control or
     // move focus back while the user is already editing another field.

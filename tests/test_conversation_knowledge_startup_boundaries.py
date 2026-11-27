@@ -30,7 +30,7 @@ def _knowledge_agent(
     )
     return SimpleNamespace(
         _knowledge=knowledge,
-        _knowledge_available=True,
+        subentry=SimpleNamespace(data={CONF_KNOWLEDGE_ENABLED: True}),
         _effective_guest_policy=lambda: policy,
     )
 

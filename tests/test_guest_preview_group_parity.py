@@ -99,3 +99,44 @@ async def test_group_preview_equals_live_assembly(
         else "load_function_groups" in actual
     ) is permitted
     assert result["function_group_savings"]["grouped_characters"] >= 2
+
+
+async def test_preview_does_not_advertise_skills_when_provider_drops_group_loader(hass, monkeypatch):
+    from dataclasses import replace
+
+    from tests.test_skill_availability import _group, _installed_manager, _loader
+
+    options = agent_config_snapshot({
+        "chat_model": "gpt-4.1", "api_mode": "responses",
+        "functions": [_tool("other"), _loader()], "function_groups": [_group()],
+        "skills": ["calendar"], "memory_mode": "off", "temporary_memory": "off",
+    })
+    manager = SimpleNamespace(is_active=lambda: False, status=lambda: {"currently_active": False})
+    monkeypatch.setattr(preview, "async_get_guest_mode", AsyncMock(return_value=manager))
+    monkeypatch.setattr(preview, "get_exposed_entities", lambda *_: [])
+    monkeypatch.setattr(preview.SkillManager, "get_loaded_instance", lambda: _installed_manager("calendar"))
+    rendered = []
+    monkeypatch.setattr(
+        preview, "render_effective_prompt",
+        lambda *_a, **kwargs: rendered.append(kwargs["skills"])
+        or SimpleNamespace(text="Instructions", sections=[]),
+    )
+    entry = SimpleNamespace(entry_id="entry", data={})
+    agent = SimpleNamespace(subentry_id="assistant")
+    baseline = await preview.async_preview_effective_request(hass, entry, agent, options, None)
+    tool_sections = {"function_tools", "function_group_loader", "integration_tools", "provider_tools"}
+    full_count = sum(
+        len(json.loads(section["content"]))
+        for section in baseline["sections"] if section["key"] in tool_sections
+    )
+    assert len(rendered[0]) == 1
+    build = preview.build_provider_request_snapshot
+    monkeypatch.setattr(
+        preview, "build_provider_request_snapshot",
+        lambda *args, **kwargs: replace(build(*args, **kwargs), tool_limit=full_count - 1),
+    )
+    constrained = await preview.async_preview_effective_request(hass, entry, agent, options, None)
+    assert rendered[-1] == []
+    assert next(
+        section for section in constrained["sections"] if section["key"] == "function_group_loader"
+    )["content"] == "[]"

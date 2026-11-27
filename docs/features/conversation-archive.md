@@ -4,7 +4,7 @@ The optional conversation archive stores what was actually discussed. It is sepa
 
 The archive is **off by default**. When enabled, the default retention is 30 days; model archive search, unidentified voice retention, and the shared-household archive are off until explicitly enabled.
 
-Once a transcript passes the configured retention cutoff, it disappears from Archive history, search, and portable backups. Scheduled maintenance removes the expired storage records.
+Once a transcript passes the configured retention cutoff, it disappears from Archive history, search, and portable backups. Scheduled maintenance removes the expired storage records. If every Extended OpenAI provider entry is disabled when Home Assistant starts, Home Assistant may skip loading the integration. Scheduled retention and cleanup of removed assistants then resume the next time the integration loads.
 
 ## What is stored
 

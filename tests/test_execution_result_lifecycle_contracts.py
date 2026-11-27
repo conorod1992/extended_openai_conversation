@@ -385,7 +385,10 @@ async def test_successful_restore_reports_cleanup_pending_without_repeating(
 def test_staging_owner_remains_retryable_after_failed_close(tmp_path, monkeypatch):
     directory = tmp_path / "owner"
     directory.mkdir()
-    (directory / "private").write_text("private")
+    (directory / "owner.lock").touch()
+    private = directory / "private"
+    private.mkdir()
+    (private / "payload").write_text("private")
     owner = staging.TransferStagingOwner(directory, BytesIO())
     original = staging.shutil.rmtree
     monkeypatch.setattr(
@@ -394,6 +397,7 @@ def test_staging_owner_remains_retryable_after_failed_close(tmp_path, monkeypatc
     with pytest.raises(OSError):
         owner.close()
     assert not owner.lock_handle.closed
+    assert (directory / "owner.lock").exists()
     monkeypatch.setattr(staging.shutil, "rmtree", original)
     owner.close()
     assert owner.lock_handle.closed and not directory.exists()

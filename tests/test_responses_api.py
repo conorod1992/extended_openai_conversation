@@ -116,7 +116,7 @@ class FakeCitedMessageItem:
 
     def __init__(self) -> None:
         self.id = "msg_1"
-        self.content = [SimpleNamespace(type="output_text")]
+        self.content = [SimpleNamespace(type="output_text", text="It is mild today.")]
 
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:
         """Return the message and its structured citation annotation."""
@@ -299,6 +299,7 @@ def test_responses_history_and_tools_mapping() -> None:
     assert _format_tools(function_tools, API_MODE_RESPONSES)[0] == {
         "type": "function",
         **function_tools[0]["spec"],
+        "strict": False,
     }
     assert (
         _format_tools(function_tools, API_MODE_CHAT_COMPLETIONS)[0]["function"]

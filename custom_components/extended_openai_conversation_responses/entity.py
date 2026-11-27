@@ -35,6 +35,7 @@ from homeassistant.util import slugify
 from .agent_config import normalized_function_call_budget
 from .assistant_response import (
     classify_provider_output,
+    final_assistant_answer,
     provider_output_presentation,
     responses_answer_text,
     responses_leave_tool_results_unanswered,
@@ -90,6 +91,7 @@ from .context_usage_hardening import (
     normalized_chat_stream,
     normalized_responses_stream,
 )
+from .debug import DebugProviderAttempt
 from .delayed_tools import (
     _DELAYED_EXECUTION_MARKER,
     DATA_DELAYED_TOOL_MANAGER,
@@ -171,7 +173,7 @@ from .resource_limits import (
     bounded_local_file_size,
     read_bounded_local_file,
 )
-from .responses_stream_order import ordered_output_events
+from .responses_stream_order import ResponseMessageText, ordered_output_events
 from .schema_normalization import normalize_exclusive_bounds
 from .speech import async_streaming_speech_cleanup
 from .strict_json import strict_json_loads
@@ -1032,6 +1034,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             [list[dict[str, Any]], FunctionToolAdmission], str
         ]
         | None = None,
+        before_provider_request: Callable[[], None] | None = None,
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
         from .provider_credentials import require_provider_restore_complete
@@ -1559,9 +1562,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 provider_stream: AsyncStream[Any] | None = None
                 transformed_stream: AsyncGenerator[Any] | None = None
                 streaming = api_kwargs.get("stream", True)
+                debug_attempt = DebugProviderAttempt()
+                missing_answer: HomeAssistantError | None = None
+                if before_provider_request is not None:
+                    before_provider_request()
                 try:
                     if api_mode == API_MODE_RESPONSES:
-                        response = await provider_client.responses.create(
+                        response = await debug_attempt.create(
+                            provider_client.responses,
                             input=messages,
                             **api_kwargs,
                             **tool_kwargs,
@@ -1581,7 +1589,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             reasoning_route=reasoning_route,
                         )
                     else:
-                        response = await provider_client.chat.completions.create(
+                        response = await debug_attempt.create(
+                            provider_client.chat.completions,
                             messages=messages,
                             **api_kwargs,
                             **tool_kwargs,
@@ -1625,6 +1634,36 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                         pending_tool_calls.extend(content.tool_calls)
                         finally:
                             chat_log.delta_listener = listener
+                        if api_mode == API_MODE_RESPONSES and not pending_tool_calls:
+                            new_output = [
+                                item
+                                for item in chat_log.content
+                                if id(item) not in existing_content_ids
+                            ]
+                            if final_assistant_answer(new_output) is None:
+                                suffix = (
+                                    " after tool results"
+                                    if responses_leave_tool_results_unanswered(
+                                        chat_log.content
+                                    )
+                                    else ""
+                                )
+                                missing_answer = HomeAssistantError(
+                                    "OpenAI Responses completed without assistant output"
+                                    + suffix
+                                )
+                                draft_answer = final_assistant_answer(
+                                    [
+                                        item
+                                        for item in chat_log.content
+                                        if id(item) in draft_content_ids
+                                    ]
+                                )
+                                if not conditional_continue or (
+                                    finalization_retry_attempted
+                                    and draft_answer is None
+                                ):
+                                    raise missing_answer
                         if speech_presentation is not None and not streaming:
                             # Completed Chat and Responses adapters emit synthetic
                             # text deltas. Join each known-complete answer and run
@@ -1633,6 +1672,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 self.hass, chat_log
                             )
                 except BaseException as err:
+                    debug_attempt.finish(err)
                     stage = "initial" if n_requests == 0 else "after_tool"
                     current_run = getattr(usage_manager, "current_run", None)
                     usage_run = current_run() if callable(current_run) else None
@@ -1700,13 +1740,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                     raise
                 else:
+                    debug_attempt.finish(missing_answer)
                     clear_provider_authentication_rejection(
                         self.hass, self.entry, client_auth or authentication
                     )
                     try:
                         if usage_manager is not None:
                             await usage_manager.async_record_request(
-                                successful=True,
+                                successful=missing_answer is None,
                                 usage=request_usage.reported,
                                 provider=provider,
                                 model=model,
@@ -1718,6 +1759,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                     "initial" if n_requests == 0 else "after_tool"
                                 ),
                                 tool_calls_requested=len(pending_tool_calls),
+                                error_type=type(missing_answer).__name__
+                                if missing_answer
+                                else None,
                                 web_search_used=request_usage.web_search_used,
                             )
                     except BaseException as err:
@@ -2540,6 +2584,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             tool_call_delta.arguments
                         )
 
+            if finish_reason == "tool_calls" and not current_tool_calls:
+                await async_recover_trailing_usage(result, request_usage)
+                raise ProviderStreamError(
+                    "Provider returned a tool-call finish without any tool calls",
+                    error_type="invalid_event_sequence",
+                )
             if current_tool_calls and finish_reason in {
                 "tool_calls",
                 "stop",
@@ -2675,13 +2725,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         """Transform a Responses API event stream to Home Assistant format."""
         request_usage = request_usage or RequestTokenMeasurements()
         recovery_state = current_tool_recovery_state()
-        response_text_lengths: dict[int | None, dict[int | None, int]] = {}
-        response_refusal_lengths: dict[int | None, dict[int | None, int]] = {}
-        url_citations: dict[tuple[int | None, int | None], list[dict[str, Any]]] = {}
+        message = ResponseMessageText()
         terminal_event_seen = False
         completed_calls: list[llm.ToolInput] = []
-        started_messages: set[int | None] = set()
-        streamed_messages: set[int | None] = set()
         event_count = 0
         async with (
             provider_output_presentation(chat_log) as select_output,
@@ -2698,13 +2744,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             async for event in events:
                 event_count += 1
                 event_type = getattr(event, "type", "")
-                output_index = getattr(event, "output_index", None)
                 if event_type == "response.output_item.added":
                     select_output(event.item)
                     item_type = getattr(event.item, "type", "")
                     if item_type == "message":
-                        started_messages.add(output_index)
-                        streamed_messages.discard(None)
+                        message.start(event.item)
                     if item_type in {
                         "message",
                         "function_call",
@@ -2714,88 +2758,29 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         yield {"role": "assistant"}
                     continue
 
-                if event_type == "response.output_text.delta":
-                    if event.delta:
-                        streamed_messages.add(output_index)
-                        part = getattr(event, "content_index", None)
-                        lengths = response_text_lengths.setdefault(output_index, {})
-                        lengths[part] = lengths.get(part, 0) + len(event.delta)
-                        yield {"content": event.delta}
-                    continue
-
-                if event_type == "response.output_text.done":
-                    part = getattr(event, "content_index", None)
-                    # Before an item is introduced its final phase is unknown.
-                    # The completed item below supplies the fallback in that case.
-                    if output_index in started_messages and (text := event.text):
-                        lengths = response_text_lengths.setdefault(output_index, {})
-                        already_streamed = lengths.get(part, 0)
-                        if len(text) > already_streamed:
-                            streamed_messages.add(output_index)
-                            lengths[part] = len(text)
-                            yield {"content": text[already_streamed:]}
-                    continue
-
-                if event_type == "response.refusal.delta":
-                    refusal_delta = getattr(event, "delta", None)
-                    if refusal_delta:
-                        streamed_messages.add(output_index)
-                        if not isinstance(refusal_delta, str):
-                            refusal_delta = str(refusal_delta)
-                        part = getattr(event, "content_index", None)
-                        lengths = response_refusal_lengths.setdefault(output_index, {})
-                        lengths[part] = lengths.get(part, 0) + len(refusal_delta)
-                        yield {"content": refusal_delta}
-                    continue
-
-                if event_type == "response.refusal.done":
-                    refusal = getattr(event, "refusal", None)
-                    if refusal:
-                        part = getattr(event, "content_index", None)
-                        lengths = response_refusal_lengths.get(output_index, {})
-                        # Defer an indexed refusal with no open message to the
-                        # completed item, which can establish its own role and phase.
-                        if (
-                            output_index is not None
-                            and output_index not in started_messages
-                            and None not in started_messages
-                            and part not in lengths
-                        ):
-                            continue
-                        streamed_messages.add(output_index)
-                        if not isinstance(refusal, str):
-                            refusal = str(refusal)
-                        already_streamed = lengths.get(part, 0)
-                        if len(refusal) > already_streamed:
-                            yield {"content": refusal[already_streamed:]}
-                        response_refusal_lengths.setdefault(output_index, {})[part] = (
-                            max(already_streamed, len(refusal))
-                        )
+                if event_type in {
+                    "response.output_text.delta",
+                    "response.output_text.done",
+                    "response.refusal.delta",
+                    "response.refusal.done",
+                    "response.content_part.done",
+                }:
+                    if text := message.observe(event):
+                        yield {"content": text}
                     continue
 
                 if event_type == "response.output_text.annotation.added":
-                    citation = _normalize_url_citation(
+                    if citation := _normalize_url_citation(
                         getattr(event, "annotation", None)
-                    )
-                    if citation is not None:
-                        part_key = (
-                            getattr(event, "output_index", None),
-                            getattr(event, "content_index", None),
-                        )
-                        url_citations.setdefault(part_key, []).append(citation)
-                        current_length = response_text_lengths.get(part_key[0], {}).get(
-                            part_key[1], 0
-                        )
+                    ):
+                        part_index = getattr(event, "content_index", None)
                         timing = (
                             "after cited text"
-                            if citation["end_index"] <= current_length
+                            if citation["end_index"]
+                            <= message.received_length(part_index)
                             else "before cited text completed"
                         )
-                        _LOGGER.debug(
-                            "Observed structured URL citation %s (%d total for content part)",
-                            timing,
-                            len(url_citations[part_key]),
-                        )
+                        _LOGGER.debug("Observed structured URL citation %s", timing)
                     continue
 
                 if event_type == "response.output_item.done":
@@ -2809,56 +2794,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             if item_type == "reasoning" and reasoning_route is not None
                             else item
                         }
-                    elif (
-                        item_type == "message"
-                        and getattr(item, "content", None) is not None
-                    ):
-                        if output_index not in started_messages:
-                            select_output(item)
-                            if (
-                                output_index not in streamed_messages
-                                and None not in streamed_messages
-                            ):
-                                yield {"role": "assistant"}
-                        text_lengths = response_text_lengths.pop(output_index, {})
-                        refusal_lengths = response_refusal_lengths.pop(output_index, {})
-                        # A provider that switches to indexed output mid-item can
-                        # leave deltas whose part ownership cannot be established.
-                        if output_index is None or None not in streamed_messages:
-                            for content_index, part in enumerate(item.content):
-                                part_type = getattr(part, "type", None)
-                                if part_type == "output_text":
-                                    lengths, text = (
-                                        text_lengths,
-                                        getattr(part, "text", None),
-                                    )
-                                elif part_type == "refusal":
-                                    lengths, text = (
-                                        refusal_lengths,
-                                        getattr(part, "refusal", None),
-                                    )
-                                else:
-                                    continue
-                                # Without a content index, a single part is the
-                                # only completion we can associate unambiguously.
-                                if None in lengths and len(item.content) != 1:
-                                    continue
-                                missing = (text or "")[
-                                    lengths.get(content_index, lengths.get(None, 0)) :
-                                ]
-                                if missing:
-                                    yield {"content": missing}
-                        if None in streamed_messages:
-                            response_text_lengths.pop(None, None)
-                            response_refusal_lengths.pop(None, None)
-                        streamed_messages.discard(None)
-                        streamed_messages.discard(output_index)
-                        started_messages.discard(output_index)
-                        # Keep URL citation annotations internally. Home Assistant's
-                        # native field is not exposed to the streaming listener, so the
-                        # original message and structured metadata remain available for
-                        # stateless replay while speech receives sanitized text deltas.
-                        yield {"native": item}
+                    elif item_type == "message":
+                        if getattr(item, "status", None) not in (None, "completed"):
+                            raise ProviderStreamError(
+                                "Provider returned an unfinished assistant message",
+                                error_type="invalid_event_sequence",
+                            )
+                        if not message.opened:
+                            yield {"role": "assistant"}
+                        select_output(item)
+                        for text in message.complete(item):
+                            yield {"content": text}
+                        # Preserve native replay only when the provider supplied
+                        # the message body. Legacy markers often carry no body.
+                        if getattr(item, "content", None) is not None:
+                            yield {"native": item}
+                        message = ResponseMessageText()
                     elif item_type == "function_call":
                         try:
                             raw_args = item.arguments
@@ -2911,6 +2862,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if event_type in {"response.completed", "response.incomplete"}:
                     if event_type == "response.completed":
                         terminal_event_seen = True
+                        if message.parts:
+                            # Some legacy streams provide a single implicit plain
+                            # text answer and a response-level terminal frame.
+                            yield {"role": "assistant"}
+                            select_output(None)
+                            for text in message.remaining():
+                                yield {"content": text}
                     response = event.response
                     if response.usage is not None:
                         _trace_provider_usage(chat_log, extract_usage(response.usage))
@@ -3299,6 +3257,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         request_usage = RequestUsage()
         request_started = time.monotonic()
         exhausted = False
+        debug_attempt = DebugProviderAttempt()
         try:
             settings = context_summary_request_settings(
                 model, api_mode, options, {}, model_capabilities=binding.capabilities
@@ -3316,7 +3275,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     return None, False
                 settings = expanded
             if api_mode == API_MODE_RESPONSES:
-                response = await binding.client.responses.create(
+                response = await debug_attempt.create(
+                    binding.client.responses,
                     model=model,
                     input=[{"role": "user", "content": prompt}],
                     **settings,
@@ -3339,7 +3299,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     "stream": False,
                     **settings,
                 }
-                response = await binding.client.chat.completions.create(**kwargs)
+                response = await debug_attempt.create(
+                    binding.client.chat.completions, **kwargs
+                )
                 choices = getattr(response, "choices", [])
                 text = (
                     getattr(getattr(choices[0], "message", None), "content", None)
@@ -3358,7 +3320,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     "Context summary did not complete normally",
                     error_type="summary_finish_reason",
                 )
+            if not isinstance(text, str) or not text.strip():
+                raise ProviderStreamError(
+                    "Context summary completed without usable text",
+                    error_type="missing_assistant_output",
+                )
         except BaseException as err:
+            debug_attempt.finish(err)
             if binding.usage is not None:
                 await binding.usage.async_record_request(
                     successful=False,
@@ -3377,6 +3345,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 raise
             return None, exhausted
 
+        debug_attempt.finish()
         if binding.usage is not None:
             await binding.usage.async_record_request(
                 successful=True,
@@ -3387,4 +3356,4 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 duration_ms=int((time.monotonic() - request_started) * 1000),
                 request_stage="context_summary",
             )
-        return (text.strip() if isinstance(text, str) and text.strip() else None), False
+        return text.strip(), False

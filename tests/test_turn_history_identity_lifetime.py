@@ -127,6 +127,7 @@ async def test_originals_live_through_pruning_and_failure_then_retry_once(
         return False
 
     entity._async_handle_chat_log = provider
+    entity._require_guest_continuity_access = lambda: None
     entity.subentry = SimpleNamespace(data={})
     entity._get_exposed_entities = MagicMock(return_value=[])
     entity._async_retrieve_memories = AsyncMock(return_value=[])

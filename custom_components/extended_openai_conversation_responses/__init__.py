@@ -6,6 +6,7 @@ import asyncio
 from contextlib import suppress
 import logging
 from types import MappingProxyType
+from typing import Any
 
 from openai import AsyncClient
 from openai._exceptions import AuthenticationError, OpenAIError
@@ -226,6 +227,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         async_start_archive_retention(hass)
     await async_setup_ha_permissions(hass)
+    from .guest_mode import async_setup_guest_entity_renames
+
+    async_setup_guest_entity_renames(hass)
     await async_setup_services(hass, config)
     await async_setup_intercom_services(hass)
     # Register narrow admin-only commands separately from the broad management
@@ -630,48 +634,15 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 entry, data={**entry.data, CONF_API_PROVIDER: provider}
             )
 
-    # Schema migration is intentionally independent of config-entry version. It is
-    # idempotent and exact-match only, so current entries created by an older release
-    # can be corrected without inventing another provider-only representation.
     for entry in entries:
-        if entry.version < CONFIG_ENTRY_VERSION:
-            continue
-        for subentry in tuple(entry.subentries.values()):
-            if subentry.subentry_type not in {"conversation", "ai_task_data"}:
-                continue
-            source = subentry.data
-            data = dict(source)
-            changed = await asyncio.to_thread(
-                _migrate_saved_agent_defaults,
-                data,
-                subentry.subentry_type,
-                entry_api_provider(entry),
+        legacy = entry.version < CONFIG_ENTRY_VERSION
+        if legacy:
+            _LOGGER.warning(
+                "Migrating Extended OpenAI Conversation (Responses) config entry %s from version %s to version %s",
+                entry.entry_id,
+                entry.version,
+                CONFIG_ENTRY_VERSION,
             )
-            # Preparation yields: preserve any newer save or agent/entry removal.
-            if (
-                subentry.data is not source
-                or not any(current is subentry for current in entry.subentries.values())
-                or not any(
-                    current is entry
-                    for current in hass.config_entries.async_entries(DOMAIN)
-                )
-            ):
-                continue
-            if changed:
-                hass.config_entries.async_update_subentry(entry, subentry, data=data)
-
-    if not any(entry.version < CONFIG_ENTRY_VERSION for entry in entries):
-        return
-
-    for entry in entries:
-        if entry.version >= CONFIG_ENTRY_VERSION:
-            continue
-        _LOGGER.warning(
-            "Migrating Extended OpenAI Conversation (Responses) config entry %s from version %s to version %s",
-            entry.entry_id,
-            entry.version,
-            CONFIG_ENTRY_VERSION,
-        )
         if entry.version == 1:
             existing_types = {
                 subentry.subentry_type for subentry in entry.subentries.values()
@@ -696,97 +667,122 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 entry, title=entry.title, options={}, version=2
             )
 
+        complete = True
         for subentry in tuple(entry.subentries.values()):
             if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                 continue
-            source = subentry.data
-            data = dict(source)
-            changed = await asyncio.to_thread(
-                _migrate_saved_agent_defaults,
-                data,
-                subentry.subentry_type,
-                entry_api_provider(entry),
-            )
-            # Preparation yields: preserve any newer save or agent/entry removal.
-            if (
-                subentry.data is not source
-                or not any(current is subentry for current in entry.subentries.values())
-                or not any(
-                    current is entry
-                    for current in hass.config_entries.async_entries(DOMAIN)
-                )
-            ):
-                continue
-            if subentry.subentry_type == "ai_task_data":
-                if changed:
-                    hass.config_entries.async_update_subentry(
-                        entry, subentry, data=data
+            try:
+                complete = (
+                    await _async_migrate_saved_assistant(
+                        hass, entry, subentry, legacy=legacy
                     )
-                continue
-            mode = get_memory_mode(data)
-            data[CONF_MEMORY_MODE] = mode
-            data[CONF_MEMORY_ENABLED] = mode != MEMORY_MODE_OFF
-            data[CONF_MEMORY_AUTO_CREATE] = mode == MEMORY_MODE_AUTOMATIC
-            data.setdefault(
-                CONF_CONTEXT_TRUNCATE_STRATEGY,
-                LEGACY_CONTEXT_TRUNCATE_STRATEGY,
+                    and complete
+                )
+            except Exception as err:
+                complete = False
+                log_handled_failure(
+                    _LOGGER,
+                    f"Assistant configuration migration deferred entry={entry.entry_id} assistant={subentry.subentry_id}",
+                    err,
+                )
+        if (
+            legacy
+            and complete
+            and any(
+                current is entry
+                for current in hass.config_entries.async_entries(DOMAIN)
             )
-            data.setdefault(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
-            data.setdefault(CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS)
-            data.setdefault(
-                CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
-                DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
-            )
-            data.setdefault(CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED)
-            data.setdefault(
-                CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-                DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-            )
-            data.setdefault(CONF_VOICE_SCOPE_POLICY, DEFAULT_VOICE_SCOPE_POLICY)
-            data.setdefault(CONF_VOICE_UNMAPPED_POLICY, DEFAULT_VOICE_UNMAPPED_POLICY)
-            data.setdefault(CONF_VOICE_DEVICE_MAPPINGS, {})
-            data.setdefault(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
-            data.setdefault(
-                CONF_USAGE_REQUEST_RETENTION_DAYS,
-                DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-            )
-            data.setdefault(
-                CONF_USAGE_RUN_RETENTION_DAYS,
-                DEFAULT_USAGE_RUN_RETENTION_DAYS,
-            )
-            data.setdefault(
-                CONF_SPEECH_PROCESSING_ENABLED,
-                DEFAULT_SPEECH_PROCESSING_ENABLED,
-            )
-            data.setdefault(CONF_SPEECH_STRIP_MARKDOWN, DEFAULT_SPEECH_STRIP_MARKDOWN)
-            data.setdefault(CONF_SPEECH_STRIP_URLS, DEFAULT_SPEECH_STRIP_URLS)
-            data.setdefault(
-                CONF_SPEECH_REGEX_REPLACEMENTS,
-                list(DEFAULT_SPEECH_REGEX_REPLACEMENTS),
-            )
-            data.setdefault(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
-            data.setdefault(CONF_GUEST_MODE_ENABLED, False)
-            data.setdefault(CONF_GUEST_SHARED_MEMORY_READ, False)
-            data.setdefault(CONF_GUEST_SHARED_MEMORY_WRITE, False)
-            data.setdefault(CONF_GUEST_KNOWLEDGE_ENABLED, False)
-            for guest_selector in (
-                CONF_GUEST_READABLE_ENTITIES,
-                CONF_GUEST_CONTROLLABLE_ENTITIES,
-                CONF_GUEST_READABLE_DOMAINS,
-                CONF_GUEST_CONTROLLABLE_DOMAINS,
-                CONF_GUEST_READABLE_AREAS,
-                CONF_GUEST_CONTROLLABLE_AREAS,
-                CONF_GUEST_READABLE_LABELS,
-                CONF_GUEST_CONTROLLABLE_LABELS,
-            ):
-                data.setdefault(guest_selector, [])
-            data.setdefault(CONF_CURRENT_DATETIME_ENABLED, False)
-            data.setdefault(
-                CONF_CURRENT_DATETIME_TEMPLATE, DEFAULT_CURRENT_DATETIME_TEMPLATE
-            )
-            data.setdefault(CONF_EXPOSED_ENTITIES_ENABLED, False)
-            data.setdefault(
-                CONF_EXPOSED_ENTITIES_TEMPLATE, DEFAULT_EXPOSED_ENTITIES_TEMPLATE
-            )
-            hass.config_entries.async_update_subentry(entry, subentry, data=data)
-        hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)
+        ):
+            hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)
+
+
+async def _async_migrate_saved_assistant(
+    hass: HomeAssistant, entry: ConfigEntry, subentry: ConfigSubentry, *, legacy: bool
+) -> bool:
+    """Migrate one assistant and preserve any concurrent edit."""
+    source = subentry.data
+    data = dict(source)
+    changed = await asyncio.to_thread(
+        _migrate_saved_agent_defaults,
+        data,
+        subentry.subentry_type,
+        entry_api_provider(entry),
+    )
+    if (
+        subentry.data is not source
+        or not any(current is subentry for current in entry.subentries.values())
+        or not any(
+            current is entry for current in hass.config_entries.async_entries(DOMAIN)
+        )
+    ):
+        return False
+    if legacy and subentry.subentry_type == "conversation":
+        _migrate_legacy_conversation_fields(data)
+        changed = True
+    if changed:
+        hass.config_entries.async_update_subentry(entry, subentry, data=data)
+    return True
+
+
+def _migrate_legacy_conversation_fields(data: dict[str, Any]) -> None:
+    mode = get_memory_mode(data)
+    data[CONF_MEMORY_MODE] = mode
+    data[CONF_MEMORY_ENABLED] = mode != MEMORY_MODE_OFF
+    data[CONF_MEMORY_AUTO_CREATE] = mode == MEMORY_MODE_AUTOMATIC
+    data.setdefault(
+        CONF_CONTEXT_TRUNCATE_STRATEGY,
+        LEGACY_CONTEXT_TRUNCATE_STRATEGY,
+    )
+    data.setdefault(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+    data.setdefault(CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS)
+    data.setdefault(
+        CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+        DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+    )
+    data.setdefault(CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED)
+    data.setdefault(
+        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+        DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    )
+    data.setdefault(CONF_VOICE_SCOPE_POLICY, DEFAULT_VOICE_SCOPE_POLICY)
+    data.setdefault(CONF_VOICE_UNMAPPED_POLICY, DEFAULT_VOICE_UNMAPPED_POLICY)
+    data.setdefault(CONF_VOICE_DEVICE_MAPPINGS, {})
+    data.setdefault(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
+    data.setdefault(
+        CONF_USAGE_REQUEST_RETENTION_DAYS,
+        DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+    )
+    data.setdefault(
+        CONF_USAGE_RUN_RETENTION_DAYS,
+        DEFAULT_USAGE_RUN_RETENTION_DAYS,
+    )
+    data.setdefault(
+        CONF_SPEECH_PROCESSING_ENABLED,
+        DEFAULT_SPEECH_PROCESSING_ENABLED,
+    )
+    data.setdefault(CONF_SPEECH_STRIP_MARKDOWN, DEFAULT_SPEECH_STRIP_MARKDOWN)
+    data.setdefault(CONF_SPEECH_STRIP_URLS, DEFAULT_SPEECH_STRIP_URLS)
+    data.setdefault(
+        CONF_SPEECH_REGEX_REPLACEMENTS,
+        list(DEFAULT_SPEECH_REGEX_REPLACEMENTS),
+    )
+    data.setdefault(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
+    data.setdefault(CONF_GUEST_MODE_ENABLED, False)
+    data.setdefault(CONF_GUEST_SHARED_MEMORY_READ, False)
+    data.setdefault(CONF_GUEST_SHARED_MEMORY_WRITE, False)
+    data.setdefault(CONF_GUEST_KNOWLEDGE_ENABLED, False)
+    for guest_selector in (
+        CONF_GUEST_READABLE_ENTITIES,
+        CONF_GUEST_CONTROLLABLE_ENTITIES,
+        CONF_GUEST_READABLE_DOMAINS,
+        CONF_GUEST_CONTROLLABLE_DOMAINS,
+        CONF_GUEST_READABLE_AREAS,
+        CONF_GUEST_CONTROLLABLE_AREAS,
+        CONF_GUEST_READABLE_LABELS,
+        CONF_GUEST_CONTROLLABLE_LABELS,
+    ):
+        data.setdefault(guest_selector, [])
+    data.setdefault(CONF_CURRENT_DATETIME_ENABLED, False)
+    data.setdefault(CONF_CURRENT_DATETIME_TEMPLATE, DEFAULT_CURRENT_DATETIME_TEMPLATE)
+    data.setdefault(CONF_EXPOSED_ENTITIES_ENABLED, False)
+    data.setdefault(CONF_EXPOSED_ENTITIES_TEMPLATE, DEFAULT_EXPOSED_ENTITIES_TEMPLATE)

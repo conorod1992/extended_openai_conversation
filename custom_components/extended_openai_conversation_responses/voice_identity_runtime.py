@@ -32,6 +32,20 @@ def voice_source_device_id(user_input: Any) -> str | None:
     )
 
 
+def voice_mapping_source_id(user_input: Any, options: Mapping[str, Any]) -> str | None:
+    """Use a saved satellite assignment when no registry-device mapping exists."""
+    source = voice_source_device_id(user_input)
+    satellite = getattr(user_input, "satellite_id", None)
+    mappings = options.get(CONF_VOICE_DEVICE_MAPPINGS)
+    if (
+        isinstance(mappings, Mapping)
+        and source not in mappings
+        and satellite in mappings
+    ):
+        return satellite
+    return source
+
+
 async def _user_is_active(agent: Any, user_id: str) -> bool:
     """Return whether one configured HA user still exists and is active."""
     user = await agent.hass.auth.async_get_user(user_id)
@@ -47,7 +61,7 @@ async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str
 
     options = getattr(agent.subentry, "data", {})
     policy = str(options.get(CONF_VOICE_SCOPE_POLICY, DEFAULT_VOICE_SCOPE_POLICY))
-    device_id = voice_source_device_id(user_input)
+    device_id = voice_mapping_source_id(user_input, options)
 
     if policy == VOICE_POLICY_DEVICE_MAPPING:
         mappings = options.get(CONF_VOICE_DEVICE_MAPPINGS, {})

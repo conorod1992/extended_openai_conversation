@@ -17,7 +17,7 @@ test(`saved sampling booleans remain visible until explicitly repaired (${suppor
       if (message.section === "configuration" && ["save", "update"].includes(message.action)) {
         window.samplingSubmissions.push(JSON.parse(JSON.stringify(message)));
         const candidate = {...sampling, ...window.samplingSubmissions.at(-1).config};
-        if (typeof candidate.top_p !== "number") return {valid:false, errors:{top_p:"must be a int or float"}};
+        if (candidate.top_p !== null && typeof candidate.top_p !== "number") return {valid:false, errors:{top_p:"must be a int or float"}};
         Object.assign(sampling, message.config);
       }
       const result = await original(message);
@@ -57,16 +57,16 @@ test(`saved sampling booleans remain visible until explicitly repaired (${suppor
 
   await topP.fill("");
   await panel.locator("#save-config").click();
-  await expect(panel.locator('[data-error="top_p"]')).toHaveText("Enter a number.");
-  await expect(topP).toBeFocused();
-  expect(await page.evaluate(() => window.samplingSubmissions.length)).toBe(2);
-  await expect(panel.locator("#save-config")).toBeEnabled();
-  await topP.fill("0.75");
-  await panel.locator("#save-config").click();
   await expect.poll(() => page.evaluate(() => window.samplingSubmissions.length)).toBe(3);
-  expect(await page.evaluate(() => window.samplingSubmissions[2].config)).toEqual({temperature:0.25, top_p:0.75});
+  expect(await page.evaluate(() => window.samplingSubmissions[2].config)).toEqual({temperature:0.25, top_p:null});
   await expect(panel.locator("#save-config")).toHaveCount(0);
-  expect(await page.evaluate(() => browserHarness.getState().configuration.config.top_p)).toBe(0.75);
+  expect(await page.evaluate(() => browserHarness.getState().configuration.config.top_p)).toBeNull();
+  if (supported) {
+    await topP.fill("0.75");
+    await panel.locator("#save-config").click();
+    await expect(panel.locator("#save-config")).toHaveCount(0);
+    expect(await page.evaluate(() => browserHarness.getState().configuration.config.top_p)).toBe(0.75);
+  }
   await expectHarnessClean(page, errors);
 });
 }

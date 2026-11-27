@@ -73,7 +73,12 @@ try {
   assert.ok(tierSelect, "models without optional tiers must still offer the default tier");
   assert.doesNotMatch(tierSelect, /disabled/, "a retained unsupported tier must remain correctable");
   assert.match(unsupportedHtml, /value="default"/);
-  for (const key of ["temperature","top_p","reasoning_effort"]) {
+  const reasoningSelect = unsupportedHtml.match(/<select id="config-reasoning_effort"[^>]*>[\s\S]*?<\/select>/)?.[0];
+  assert.ok(reasoningSelect, "the inactive reasoning effort must remain visible");
+  assert.doesNotMatch(reasoningSelect.split(">")[0], /disabled/);
+  assert.match(reasoningSelect, /value=""[^>]*>Model default</);
+  assert.match(reasoningSelect, /value="high"[^>]*selected[^>]*>high \(inactive\)</);
+  for (const key of ["temperature","top_p"]) {
     assert.match(
       unsupportedHtml,
       new RegExp(`class="setting is-disabled eoc-unavailable-model-setting"[^>]*data-field="${key}"`),

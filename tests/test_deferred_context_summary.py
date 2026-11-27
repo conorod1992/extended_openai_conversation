@@ -607,3 +607,34 @@ async def test_summary_failure_hides_chained_private_exception(caplog):
     assert "Unable to summarize" in formatted
     assert "Deferred conversation summarization failed" in formatted
     assert "PRIVATE_SUMMARY" not in formatted
+
+
+async def test_background_summary_cannot_modify_the_parent_debug_trace():
+    from custom_components.extended_openai_conversation_responses import debug
+    from custom_components.extended_openai_conversation_responses.context_summary_performance import (
+        _summarize_detached,
+    )
+
+    trace = debug.DebugManager().begin(
+        entry_id="entry",
+        subentry_id="agent",
+        user_input={},
+        incoming_conversation_id="conversation",
+    )
+
+    async def summarize(*_args, **_kwargs):
+        assert debug.current_debug_trace() is None
+        debug.record_current_run_failure("child-only")
+        return "summary"
+
+    token = debug._ACTIVE_DEBUG_TRACE.set(trace)
+    try:
+        entity = SimpleNamespace(_async_summarize_history=summarize)
+        assert (
+            await _summarize_detached(entity, [], "gpt-5.6", API_MODE_RESPONSES)
+            == "summary"
+        )
+        assert debug.current_debug_trace() is trace
+    finally:
+        debug._ACTIVE_DEBUG_TRACE.reset(token)
+    assert trace.error_type is None

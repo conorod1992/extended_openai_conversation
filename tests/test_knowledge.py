@@ -1581,3 +1581,15 @@ async def test_chunk_overlap_preserves_real_matches_cjk_and_source_offsets():
     source = await library.async_create("Boundary", "", content)
     assert (await library.async_search("temperature sensor"))[0].source_id == source.source_id
     assert (await library.async_search("温度制御"))[0].source_id == source.source_id
+
+
+def test_line_boundary_keeps_overlap_when_newline_ends_previous_chunk():
+    phrase = "overlapping context"
+    prefix = "x" * (knowledge.CHUNK_SIZE - len(phrase) - 3)
+    content = f"{prefix} {phrase}\n" + "next line with the answer " * 10
+    chunks = knowledge._split_chunks(content)
+    assert len(chunks) == 2
+    assert phrase in chunks[0][1] and phrase in chunks[1][1]
+    assert (
+        0 < chunks[0][0] + len(chunks[0][1]) - chunks[1][0] <= knowledge.CHUNK_OVERLAP
+    )

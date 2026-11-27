@@ -87,9 +87,13 @@ async def test_history_is_trimmed_before_provider_request(hass):
     from custom_components.extended_openai_conversation_responses.entity import ExtendedOpenAIBaseLLMEntity
     from homeassistant.components import conversation
 
+    marker = SimpleNamespace(type="message")
     create = AsyncMock(return_value=FakeStream([
-        _event("response.output_item.added", item=SimpleNamespace(type="message")),
-        _event("response.output_text.delta", delta="Done"), _completed_event()]))
+        _event("response.output_item.added", item=marker),
+        _event("response.output_text.delta", delta="Done"),
+        _event("response.output_item.done", item=marker),
+        _completed_event(),
+    ]))
     entity = object.__new__(ExtendedOpenAIBaseLLMEntity)
     entity.entry = SimpleNamespace(runtime_data=SimpleNamespace(responses=SimpleNamespace(create=create)))
     entity.subentry = SimpleNamespace(data={"chat_model":"gpt-5.6-luna", "api_mode":"responses", "context_threshold":150, "context_truncate_strategy":"keep_recent"})

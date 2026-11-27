@@ -220,3 +220,22 @@ async def test_manager_stop_listener_disposes_cached_checkers(hass, monkeypatch)
     assert checker._unloaded
     assert not rules._condition_checkers
     assert rules._unsubscribe_stop is None
+
+
+async def test_corrupt_defaults_stop_live_and_preview_routing(hass):
+    rules = rr.RequestRules(
+        MemoryStore(
+            {
+                "defaults": {"fuzzy_threshold": 1000},
+                "rules": [local_rule()],
+            }
+        )
+    )
+    await rules.async_initialize()
+    assert not rules.routing_available
+    with pytest.raises(HomeAssistantError, match="Request Rules"):
+        await async_request_rule_match_preview(hass, rules, "good night")
+    with pytest.raises(HomeAssistantError, match="Request Rules"):
+        await rr.async_evaluate_rule(
+            hass, rules, rr.RequestRuleRuntime(), "good night", "session"
+        )

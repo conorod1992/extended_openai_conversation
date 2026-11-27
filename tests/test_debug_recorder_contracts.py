@@ -471,7 +471,7 @@ def test_debug_manager_is_scoped_per_agent() -> None:
     assert debug.get_debug_manager(hass, "entry", "two") is not first
 
 
-def test_record_current_provider_failure_is_optional_and_finishes_latest_request(
+def test_record_current_provider_failure_leaves_unrelated_request_outcome_alone(
     monkeypatch,
 ) -> None:
     error = RuntimeError("boom")
@@ -483,6 +483,7 @@ def test_record_current_provider_failure_is_optional_and_finishes_latest_request
 
     trace = _trace()
     request = trace.start_provider_request("responses", (), {})
+    request.finish(successful=True)
     token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
         debug.record_current_provider_failure(error)
@@ -491,8 +492,8 @@ def test_record_current_provider_failure_is_optional_and_finishes_latest_request
 
     assert trace.error_type == "RuntimeError"
     assert trace.error == {"message": "boom"}
-    assert request.successful is False
-    assert request.error_type == "RuntimeError"
+    assert request.successful is True
+    assert request.error_type is None
 
 
 class _Stream:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from array import array
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
@@ -10,6 +11,7 @@ import hashlib
 import json
 import logging
 import math
+from pathlib import Path
 import re
 from time import monotonic
 from types import MappingProxyType
@@ -40,6 +42,7 @@ from .function_tool_policy import (
     runtime_function_tool_names,
 )
 from .memory_tool_arguments import nullable_memory_tool_arguments
+from .model_search_hardening import MAX_MEMORY_SEARCH_QUERY_CHARACTERS
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .persistence_hardening import (
@@ -63,6 +66,8 @@ STORAGE_VERSION = 2
 
 EMBEDDING_CACHE_VERSION = 1
 EMBEDDING_CACHE_BATCH_SIZE = 64
+MAX_CACHED_EMBEDDING_VALUES = 512 * 1024
+MAX_EMBEDDING_CACHE_FILE_BYTES = 32 * 1024 * 1024
 AUTO_RECALL_EMBEDDING_BATCHES = 2
 INTERACTIVE_SEARCH_EMBEDDING_BATCHES = 4
 HYBRID_RETRY_INITIAL_SECONDS = 30.0
@@ -75,6 +80,8 @@ MAX_CATEGORY_LENGTH = 64
 MAX_SUBJECT_LENGTH = 128
 MAX_KEY_LENGTH = 160
 MAX_SEARCH_LIMIT = 50
+MAX_MEMORY_SEARCH_QUERY_TERMS = 64
+MAX_MEMORY_FUZZY_TERM_PAIRS = 500_000
 MAX_LIST_LIMIT = 100
 MEMORY_TOOL_NAMES = runtime_function_tool_names("memory")
 MIN_LEXICAL_RELEVANCE_SCORE = 0.08
@@ -230,8 +237,9 @@ class EmbeddingCacheEntry:
     provider_model: str | None = None
 
     def __post_init__(self) -> None:
-        # Frozen entries own immutable vectors; snapshots can safely share them.
-        object.__setattr__(self, "vector", tuple(self.vector))
+        # Store doubles contiguously while keeping snapshots immutable and shared.
+        vector = memoryview(array("d", self.vector).tobytes()).cast("d")
+        object.__setattr__(self, "vector", vector)
 
 
 @dataclass(slots=True)
@@ -270,10 +278,14 @@ class EmbeddingCacheStorage(Protocol):
 class MemoryStore(PropagatingWriteStore):
     """Versioned Home Assistant Store backend."""
 
+    _null_payload_label = "Persistent Memory"
+
     async def _async_migrate_func(
         self, old_major_version: int, old_minor_version: int, old_data: Any
     ) -> dict[str, Any]:
         """Migrate older memory payloads."""
+        if old_data is None:
+            self._raise_null_payload_repair()
         if old_major_version == 0 and isinstance(old_data, list):
             old_data = {"memories": old_data}
         if old_major_version in {0, 1} and isinstance(old_data, dict):
@@ -308,13 +320,28 @@ class HomeAssistantMemoryStorage:
 
 
 class _EmbeddingCacheStore(AcknowledgedWriteStore):
-    """Allow an explicit removal to discard any deferred cache generation."""
+    """Keep derived cache disk reads bounded and allow an explicit reset."""
+
+    async def _async_load_data(self) -> Any:
+        if not self._load_empty and await self.hass.async_add_executor_job(
+            _embedding_cache_is_oversized, self.path
+        ):
+            # The manager treats invalid cache payloads as empty and rewrites them.
+            return {"embeddings": None}
+        return await super()._async_load_data()
 
     async def async_remove(self) -> None:
         await super().async_remove()
         # Store removes the file and its scheduled callbacks, but retains queued
         # data in memory. A subsequent load must not revive that generation.
         self._data = None
+
+
+def _embedding_cache_is_oversized(path: str) -> bool:
+    try:
+        return Path(path).stat().st_size > MAX_EMBEDDING_CACHE_FILE_BYTES
+    except FileNotFoundError:
+        return False
 
 
 class HomeAssistantEmbeddingCacheStorage:
@@ -875,7 +902,9 @@ class PersistentMemory:
                     "embedding_preparation_failed",
                 )
                 return None
-            batch = _embedding_batch(await attempt_provider([query]))
+            batch = _embedding_batch(
+                await attempt_provider([query[:MAX_MEMORY_SEARCH_QUERY_CHARACTERS]])
+            )
             if binding_changed():
                 return None
             if len(batch.vectors) != 1:
@@ -1677,12 +1706,16 @@ class PersistentMemory:
         allowed_scopes = set(scope_ids)
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
-            missing = [
-                memory
+            eligible = {
+                memory.memory_id: memory
                 for memory in self._memories.values()
                 if memory.user_id in allowed_scopes
                 and (category_filter is None or memory.category == category_filter)
-                and self._cached_embedding(
+            }
+            missing = [
+                memory
+                for memory in eligible.values()
+                if self._cached_embedding(
                     memory, dimensions=dimensions, provider_model=provider_model
                 )
                 is None
@@ -1696,14 +1729,33 @@ class PersistentMemory:
                 and self._embedding_retry_identity == retry_identity
             )
 
+        def scoped_cache_sizes() -> dict[str, int]:
+            return {
+                memory_id: len(entry.vector)
+                for memory_id, entry in self._embedding_cache.items()
+                if memory_id in eligible
+                and entry.model == model
+                and entry.space_id == space_id
+                and (dimensions is None or len(entry.vector) == dimensions)
+                and (provider_model is None or entry.provider_model == provider_model)
+            }
+
         try:
             batch_model = provider_model
-            for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
+            offset = 0
+            while offset < len(missing):
                 if not provider_is_current():
                     return False
+                sizes = scoped_cache_sizes()
+                room = MAX_CACHED_EMBEDDING_VALUES - sum(sizes.values())
+                width = dimensions or max(sizes.values(), default=1)
+                count = min(EMBEDDING_CACHE_BATCH_SIZE, room // width)
+                if count <= 0:
+                    # Keep this scope's cached subset stable across searches.
+                    break
                 if batch_budget is not None and next(batch_budget, None) is None:
                     raise _EmbeddingPreparationBudgetExhausted
-                batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
+                batch = missing[offset : offset + count]
                 result = _embedding_batch(
                     await provider([_embedding_text(memory) for memory in batch])
                 )
@@ -1729,6 +1781,8 @@ class PersistentMemory:
                 async with async_storage_lock(self._storage, self._lock):
                     if not provider_is_current():
                         return False
+                    sizes = scoped_cache_sizes()
+                    room = MAX_CACHED_EMBEDDING_VALUES - sum(sizes.values())
                     for memory, cleaned in zip(batch, cleaned_vectors, strict=True):
                         current = self._memories.get(memory.memory_id)
                         if (
@@ -1745,6 +1799,11 @@ class PersistentMemory:
                             is not None
                         ):
                             continue
+                        if len(cleaned) > room:
+                            break
+                        room -= len(cleaned)
+                        sizes[memory.memory_id] = len(cleaned)
+                        self._embedding_cache.pop(memory.memory_id, None)
                         self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
                             model=model,
                             space_id=space_id,
@@ -1753,6 +1812,30 @@ class PersistentMemory:
                             vector=cleaned,
                         )
                         self._embedding_cache_dirty = True
+                    excess = (
+                        sum(
+                            len(entry.vector)
+                            for entry in self._embedding_cache.values()
+                        )
+                        - MAX_CACHED_EMBEDDING_VALUES
+                    )
+                    if excess > 0:
+                        # Each requested scope may reclaim space from other scopes.
+                        for memory_id in tuple(self._embedding_cache):
+                            if memory_id not in sizes:
+                                excess -= len(self._embedding_cache[memory_id].vector)
+                                self._invalidate_cached_embedding(memory_id)
+                                if excess <= 0:
+                                    break
+                offset += len(batch)
+            if dimensions is not None or provider_model is not None:
+                async with async_storage_lock(self._storage, self._lock):
+                    if not provider_is_current():
+                        return False
+                    # A capacity-limited refill can leave stale vectors that
+                    # would otherwise look compatible to the ranking snapshot.
+                    for memory_id in eligible.keys() - scoped_cache_sizes().keys():
+                        self._invalidate_cached_embedding(memory_id)
         finally:
             # Save once per refill, including progress before a failed batch.
             # A warm scope still retries a previous failed save after cooldown.
@@ -2412,7 +2495,8 @@ def _rank_memory_snapshot(
     automatic_recall: bool = False,
 ) -> list[MemoryRecord]:
     """Rank an immutable generation without holding the live store lock."""
-    query_terms = _token_list(query)
+    query = query[:MAX_MEMORY_SEARCH_QUERY_CHARACTERS]
+    query_terms = _token_list(query)[:MAX_MEMORY_SEARCH_QUERY_TERMS]
     query_tokens = set(query_terms)
     query_weights = _automatic_query_weights(query_terms) if automatic_recall else None
     previous_weights = (
@@ -2428,7 +2512,9 @@ def _rank_memory_snapshot(
     if not corpus or (not query_tokens and not (hybrid and query_embedding)):
         return []
     topic = _RECALL_REQUEST_FRAMING.sub("", query)
-    topic_terms = _token_list(topic) if topic != query else []
+    topic_terms = (
+        _token_list(topic)[:MAX_MEMORY_SEARCH_QUERY_TERMS] if topic != query else []
+    )
     topic_weights = _bm25_term_weights(topic_terms)
     document_data: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
     document_frequency = dict.fromkeys(query_tokens | topic_weights.keys(), 0)
@@ -2438,10 +2524,21 @@ def _rank_memory_snapshot(
         token_set = _cached_memory_record_token_set(memory)
         document_data[memory.memory_id] = (terms, token_set)
         total_length += len(terms)
-        for token in document_frequency:
-            if token in token_set:
-                document_frequency[token] += 1
+        for token in token_set & document_frequency.keys():
+            document_frequency[token] += 1
     average_length = max(1.0, total_length / len(corpus))
+    document_count = len(corpus)
+    base_bm25 = _prepare_bm25_query(
+        _bm25_term_weights(query_terms), document_frequency, document_count
+    )
+    automatic_bm25 = _prepare_bm25_query(
+        query_weights or {}, document_frequency, document_count
+    )
+    previous_bm25 = _prepare_bm25_query(
+        previous_weights or {}, document_frequency, document_count
+    )
+    topic_bm25 = _prepare_bm25_query(topic_weights, document_frequency, document_count)
+    fuzzy_pairs_remaining = MAX_MEMORY_FUZZY_TERM_PAIRS
     normalized_query = _normalize(query)
     prepared_query = _prepare_cosine_query(query_embedding) if hybrid else None
     ranked: list[tuple[float, str, MemoryRecord]] = []
@@ -2460,6 +2557,7 @@ def _rank_memory_snapshot(
             >= 2.5
         )
         candidate_weights = query_weights
+        candidate_bm25 = automatic_bm25 if query_weights is not None else base_bm25
         if query_weights is not None and (
             sum(query_weights[term] for term in anchor_terms & token_set) < 2.5
         ):
@@ -2468,24 +2566,13 @@ def _rank_memory_snapshot(
             # the previous weights only if that same gate admitted them;
             # never give the stronger discounts to a two-anchor candidate.
             candidate_weights = previous_weights if previously_eligible else None
-        lexical = _bm25_score(
-            query_terms,
-            terms,
-            document_frequency,
-            len(corpus),
-            average_length,
-            query_weights=candidate_weights,
-        )
+            candidate_bm25 = previous_bm25 if previously_eligible else base_bm25
+        lexical = _score_prepared_bm25(candidate_bm25, terms, average_length)
         lexical += _metadata_bonus(query_tokens, memory, candidate_weights)
         previous_lexical = None
         if previously_eligible and candidate_weights != previous_weights:
-            previous_lexical = _bm25_score(
-                query_terms,
-                terms,
-                document_frequency,
-                len(corpus),
-                average_length,
-                query_weights=previous_weights,
+            previous_lexical = _score_prepared_bm25(
+                previous_bm25, terms, average_length
             ) + _metadata_bonus(query_tokens, memory, previous_weights)
         normalized_content = _normalize(memory.content)
         phrase_bonus = 0.0
@@ -2517,14 +2604,7 @@ def _rank_memory_snapshot(
             )
             >= 2.5
         ):
-            topic_lexical = _bm25_score(
-                topic_terms,
-                terms,
-                document_frequency,
-                len(corpus),
-                average_length,
-                query_weights=topic_weights,
-            )
+            topic_lexical = _score_prepared_bm25(topic_bm25, terms, average_length)
             if topic_lexical >= MIN_LEXICAL_RELEVANCE_SCORE:
                 lexical = topic_lexical
         genuine_lexical = lexical
@@ -2538,10 +2618,16 @@ def _rank_memory_snapshot(
             if prepared_query is not None
             else None
         )
-        if lexical <= 0 and (
-            allow_fuzzy_only
-            or (semantic is not None and semantic >= MIN_SEMANTIC_SIMILARITY)
+        fuzzy_pairs = len(query_tokens) * len(token_set)
+        if (
+            lexical <= 0
+            and 0 < fuzzy_pairs <= fuzzy_pairs_remaining
+            and (
+                allow_fuzzy_only
+                or (semantic is not None and semantic >= MIN_SEMANTIC_SIMILARITY)
+            )
         ):
+            fuzzy_pairs_remaining -= fuzzy_pairs
             lexical = _fuzzy_relevance(query_tokens, token_set)
         relevance = lexical
         if semantic is not None:
@@ -2644,25 +2730,48 @@ def _bm25_score(
     query_weights: Mapping[str, float] | None = None,
 ) -> float:
     """Score BM25 with matching weighted numerator and normalization."""
+    weights = (
+        query_weights if query_weights is not None else _bm25_term_weights(query_terms)
+    )
+    prepared = _prepare_bm25_query(weights, document_frequency, document_count)
+    return _score_prepared_bm25(prepared, document_terms, average_length)
+
+
+def _prepare_bm25_query(
+    weights: Mapping[str, float],
+    document_frequency: Mapping[str, int],
+    document_count: int,
+) -> tuple[dict[str, float], float]:
+    """Calculate corpus-dependent query weights once for all candidates."""
+    weighted_idfs = {}
+    max_score = 0.0
+    for term, weight in weights.items():
+        df = document_frequency.get(term, 0)
+        weighted_idf = weight * math.log(1 + (document_count - df + 0.5) / (df + 0.5))
+        weighted_idfs[term] = weighted_idf
+        max_score += weighted_idf * (1.2 + 1) / (1 + 1.2 * (1 - 0.75))
+    return weighted_idfs, max_score
+
+
+def _score_prepared_bm25(
+    prepared: tuple[dict[str, float], float],
+    document_terms: Sequence[str],
+    average_length: float,
+) -> float:
+    weighted_idfs, max_score = prepared
+    if not max_score:
+        return 0.0
     cached_terms = (
         document_terms if isinstance(document_terms, tuple) else tuple(document_terms)
     )
     frequencies = _cached_memory_term_frequencies(cached_terms)
     k1, b = 1.2, 0.75
+    length_penalty = k1 * (1 - b + b * len(document_terms) / average_length)
     score = 0.0
-    max_score = 0.0
-    weights = (
-        query_weights if query_weights is not None else _bm25_term_weights(query_terms)
-    )
-    for term, weight in weights.items():
-        df = document_frequency.get(term, 0)
-        idf = math.log(1 + (document_count - df + 0.5) / (df + 0.5))
-        tf = frequencies.get(term, 0)
-        denominator = tf + k1 * (1 - b + b * len(document_terms) / average_length)
-        if tf:
-            score += weight * idf * (tf * (k1 + 1) / denominator)
-        max_score += weight * idf * (k1 + 1) / (1 + k1 * (1 - b))
-    return score / max_score if max_score else 0.0
+    for term, weight in weighted_idfs.items():
+        if tf := frequencies.get(term, 0):
+            score += weight * (tf * (k1 + 1) / (tf + length_penalty))
+    return score / max_score
 
 
 def _metadata_bonus(
@@ -2693,7 +2802,13 @@ def _edit_distance_one(left: str, right: str) -> bool:
     if abs(len(left) - len(right)) > 1 or min(len(left), len(right)) < 4:
         return False
     if len(left) == len(right):
-        return sum(a != b for a, b in zip(left, right, strict=True)) <= 1
+        different = False
+        for a, b in zip(left, right, strict=True):
+            if a != b:
+                if different:
+                    return False
+                different = True
+        return True
     shorter, longer = (left, right) if len(left) < len(right) else (right, left)
     index = 0
     while index < len(shorter) and shorter[index] == longer[index]:
@@ -2869,6 +2984,7 @@ def _prepare_stored_embedding_cache(
     raw_entries = data.get("embeddings", {})
     if not isinstance(raw_entries, Mapping):
         return entries, True
+    remaining = MAX_CACHED_EMBEDDING_VALUES
     for memory_id, raw in raw_entries.items():
         if not isinstance(memory_id, str) or not isinstance(raw, Mapping):
             continue
@@ -2884,9 +3000,15 @@ def _prepare_stored_embedding_cache(
         try:
             if fingerprint != _embedding_fingerprint(memory):
                 continue
-            vector = _clean_embedding(raw.get("vector"))
+            raw_vector = raw.get("vector")
+            if isinstance(raw_vector, (list, tuple)) and len(raw_vector) > remaining:
+                continue
+            vector = _clean_embedding(raw_vector)
         except TypeError, ValueError, OverflowError:
             continue
+        if len(vector) > remaining:
+            continue
+        remaining -= len(vector)
         entries[memory_id] = EmbeddingCacheEntry(
             model=model,
             fingerprint=fingerprint,
@@ -2898,6 +3020,8 @@ def _prepare_stored_embedding_cache(
             else None,
             vector=vector,
         )
+        if remaining == 0:
+            break
     return entries, len(entries) != len(raw_entries)
 
 
@@ -3087,17 +3211,28 @@ def _cached_memory_term_frequencies(
 def _embedding_cache_payload(
     entries: Mapping[str, EmbeddingCacheEntry], memory_ids: frozenset[str]
 ) -> dict[str, Any]:
-    """Convert immutable cache snapshots away from the event loop."""
-    return {
-        "embeddings": {
-            memory_id: {
-                "model": entry.model,
-                "fingerprint": entry.fingerprint,
-                "space_id": entry.space_id,
-                "provider_model": entry.provider_model,
-                "vector": list(entry.vector),
-            }
-            for memory_id, entry in entries.items()
-            if memory_id in memory_ids
+    """Serialize bounded cache snapshots away from the event loop."""
+    records: dict[str, Any] = {}
+    remaining_values = MAX_CACHED_EMBEDDING_VALUES
+    # Leave room for the HA storage envelope. Allow for worst-case JSON double
+    # widths and object punctuation before allocating lists of Python floats.
+    remaining_bytes = MAX_EMBEDDING_CACHE_FILE_BYTES - 1024
+    for memory_id, entry in entries.items():
+        width = len(entry.vector)
+        if memory_id not in memory_ids or width > remaining_values:
+            continue
+        metadata = {
+            "model": entry.model,
+            "fingerprint": entry.fingerprint,
+            "space_id": entry.space_id,
+            "provider_model": entry.provider_model,
         }
-    }
+        estimated_bytes = (
+            len(json.dumps({memory_id: metadata}).encode()) + 32 * width + 32
+        )
+        if estimated_bytes > remaining_bytes:
+            continue
+        remaining_values -= width
+        remaining_bytes -= estimated_bytes
+        records[memory_id] = {**metadata, "vector": list(entry.vector)}
+    return {"embeddings": records}

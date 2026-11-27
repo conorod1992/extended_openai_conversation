@@ -329,6 +329,7 @@ async def test_responses_tool_prompt_is_inserted_and_removed_without_losing_user
                         item=SimpleNamespace(type="message"),
                     ),
                     SimpleNamespace(type="response.output_text.delta", delta="Done"),
+                    SimpleNamespace(type="response.output_item.done", item=SimpleNamespace(type="message")),
                     completed,
                 ]
             ),
@@ -404,6 +405,7 @@ async def test_supplied_structured_schema_is_copied_and_sent_for_both_transport_
                     item=SimpleNamespace(type="message"),
                 ),
                 SimpleNamespace(type="response.output_text.delta", delta=text),
+                SimpleNamespace(type="response.output_item.done", item=SimpleNamespace(type="message")),
                 completed,
             ]
         )

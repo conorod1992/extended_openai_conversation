@@ -144,13 +144,13 @@ class AgentDataParticipants:
     when its transaction includes Usage.
     """
 
-    memory: PersistentMemory
-    temporary: TemporaryMemory
-    knowledge: KnowledgeLibrary
-    archive: ConversationArchive
-    usage: UsageManager | None
-    guest_mode: GuestModeManager
-    request_rules: RequestRules
+    memory: PersistentMemory | None = None
+    temporary: TemporaryMemory | None = None
+    knowledge: KnowledgeLibrary | None = None
+    archive: ConversationArchive | None = None
+    usage: UsageManager | None = None
+    guest_mode: GuestModeManager | None = None
+    request_rules: RequestRules | None = None
 
 
 @dataclass(slots=True)
@@ -345,6 +345,12 @@ async def async_collect_backup_snapshot(
 
     participants = await _managers(hass, entry.entry_id, subentry.subentry_id)
     assert participants.usage is not None
+    assert participants.memory is not None
+    assert participants.temporary is not None
+    assert participants.knowledge is not None
+    assert participants.archive is not None
+    assert participants.guest_mode is not None
+    assert participants.request_rules is not None
     config_snapshot = deepcopy(dict(subentry.data))
     return DecodedPrivateDocument(
         {
@@ -834,7 +840,6 @@ async def _snapshot_for_restore(
     usage = participants.usage
     if include_usage and usage is None:
         raise RuntimeError("Usage rollback requires a durable manager")
-    archive = await participants.archive.async_recovery_data()
     usage_revision = None
     if include_usage and usage is not None:
         if capture_usage_revision:
@@ -848,26 +853,35 @@ async def _snapshot_for_restore(
             "requests": [],
             "runs": [],
         }
-    raw_categories = {
-        "archive": archive,
-        "usage": usage_data,
-        "memories": await participants.memory.async_backup_data(),
-        "temporary_memories": await participants.temporary.async_backup_data(),
-        "knowledge": await participants.knowledge.async_backup_data(),
-    }
+    raw_categories = {"usage": usage_data}
+    if participants.archive is not None:
+        raw_categories["archive"] = await participants.archive.async_recovery_data()
+    for key, manager in (
+        ("memories", participants.memory),
+        ("temporary_memories", participants.temporary),
+        ("knowledge", participants.knowledge),
+    ):
+        if manager is not None:
+            raw_categories[key] = await manager.async_backup_data()
     categories = await asyncio.to_thread(
         _validate_data_categories,
         raw_categories,
         subentry.subentry_id,
         private_journal=True,
     )
-    archive_sessions, archive_turns, archive_active = categories["archive"]
-    usage_totals, usage_daily, usage_requests, usage_runs = categories["usage"]
-    guest_mode_schedule = GuestModeManager.validate_backup_data(
-        await participants.guest_mode.async_backup_data()
+    archive_sessions, archive_turns, archive_active = categories.get(
+        "archive", ([], [], None)
     )
+    usage_totals, usage_daily, usage_requests, usage_runs = categories["usage"]
+    guest_mode_schedule = None
+    if participants.guest_mode is not None:
+        guest_mode_schedule = GuestModeManager.validate_backup_data(
+            await participants.guest_mode.async_backup_data()
+        )
     request_rule_backup = RequestRules.validate_backup_data(
         await participants.request_rules.async_backup_data()
+        if participants.request_rules is not None
+        else {}
     )
     private_configuration_snapshot(subentry.data, provider=provider)
     return PreparedRestore(
@@ -875,9 +889,9 @@ async def _snapshot_for_restore(
         # Recovery applies this mapping directly, including during same-process
         # rollback. A frontend [] must not become a legacy persisted default.
         deepcopy(dict(subentry.data)),
-        categories["memories"],
-        categories["temporary_memories"],
-        categories["knowledge"],
+        categories.get("memories", []),
+        categories.get("temporary_memories", []),
+        categories.get("knowledge", []),
         archive_sessions,
         archive_turns,
         usage_totals,

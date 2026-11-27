@@ -337,11 +337,10 @@ async def async_prune_orphaned_delayed_calls(hass: HomeAssistant) -> None:
 
     async with _delayed_store_lock(hass):
         manager = delayed_tool_manager(hass)
-        if manager is not None and manager._quarantined:
-            return  # An opportunistic scan cannot repair a quarantined queue.
-        if manager is not None and manager._setup_complete:
+        if manager is not None and manager._setup_complete and not manager._quarantined:
             await manager._async_remove_calls_locked(deleted)
         else:
+            # A repaired disk generation may be cleaned without rearming its jobs.
             await _async_remove_stored_agent_calls_locked(hass, deleted)
 
 
@@ -370,6 +369,17 @@ class _ScheduledActionStore(PropagatingWriteStore):
     _null_payload_label = "Scheduled Actions"
 
 
+def _require_unique_saved_call_ids(raw_calls: list[Any]) -> None:
+    """Reject an ambiguous generation before dropping any invalid records."""
+    seen: set[str] = set()
+    for raw in raw_calls:
+        call_id = raw.get("call_id") if isinstance(raw, dict) else None
+        if isinstance(call_id, str) and call_id:
+            if call_id in seen:
+                raise ValueError("Persisted Scheduled Action IDs are not unique")
+            seen.add(call_id)
+
+
 async def _async_remove_stored_agent_calls_locked(
     hass: HomeAssistant, remove: Callable[[str, str], bool]
 ) -> None:
@@ -386,6 +396,7 @@ async def _async_remove_stored_agent_calls_locked(
         return
     if not isinstance(data, dict) or not isinstance(data.get("calls"), list):
         raise ValueError("persisted delayed Function Tools are malformed")
+    _require_unique_saved_call_ids(data["calls"])
     survivors = [
         raw
         for raw in data["calls"]
@@ -489,6 +500,7 @@ class DelayedToolManager:
         else:
             raw_calls = raw_data["calls"]
         dirty = False
+        _require_unique_saved_call_ids(raw_calls)
         recovered: dict[str, DelayedToolCall] = {}
         for raw in raw_calls:
             try:
@@ -576,8 +588,13 @@ class DelayedToolManager:
                 raise HomeAssistantError(
                     "Delayed Function Tool scheduler is unavailable"
                 )
+            available_records = {
+                call_id: record
+                for call_id, record in self._records.items()
+                if record.status != _EXECUTING or call_id in self._tasks
+            }
             _validate_call_capacity(
-                self._records, entity.entry.entry_id, entity.subentry.subentry_id
+                available_records, entity.entry.entry_id, entity.subentry.subentry_id
             )
             _validate_argument_budget(arguments)
             try:
@@ -607,7 +624,7 @@ class DelayedToolManager:
                 if function_tool is not None
                 else None,
             )
-            updated = {**self._records, record.call_id: record}
+            updated = {**available_records, record.call_id: record}
             with execution_operation(
                 "delayed_job",
                 {
@@ -915,6 +932,7 @@ class DelayedToolManager:
             raise ValueError("persisted delayed Function Tools are malformed")
         else:
             raw_calls = raw_data["calls"]
+        _require_unique_saved_call_ids(raw_calls)
         records: dict[str, DelayedToolCall] = {}
         for raw in raw_calls:
             record = DelayedToolCall.from_dict(raw)

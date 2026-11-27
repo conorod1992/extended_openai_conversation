@@ -277,6 +277,19 @@ class ProviderOutputBudget:
                 else _text_weight(getattr(event, "refusal", None)),
                 complete=True,
             )
+        elif kind == "response.content_part.done":
+            part = getattr(event, "part", None)
+            part_type = getattr(part, "type", None)
+            if part_type in {"output_text", "refusal"}:
+                value = getattr(
+                    part, "text" if part_type == "output_text" else "refusal", None
+                )
+                self._text(
+                    key,
+                    (key, content_index, f"response.{part_type}"),
+                    _responses_string_length(value, "message text"),
+                    complete=True,
+                )
         elif kind == "response.output_text.annotation.added":
             self._account(
                 key, content=output_weight(event.annotation, MAX_OUTPUT_CHARACTERS)

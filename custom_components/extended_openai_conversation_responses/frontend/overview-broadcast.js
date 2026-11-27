@@ -70,8 +70,16 @@ function broadcastMarkup(panel, snapshot) {
   const builtinVoiceCommand = snapshot.builtin_voice_command !== false;
   const active = snapshot.pending || [];
   const activeIds = new Set(active.map(item => item.id));
-  const history = [...active, ...(snapshot.history || []).filter(item => !activeIds.has(item.id))];
+  const history = (snapshot.history || []).filter(item => !activeIds.has(item.id));
+  const renderItems = (items) => items.map((item) => {
+    const deliveries = Object.entries(item.deliveries || {}).map(([entityId, delivery]) => {
+      const satellite = satellitesById.get(entityId);
+      return `<li><span>${panel._e(satellite?.name || entityId)}</span><strong>${panel._e(statusLabel(delivery.status))}</strong></li>`;
+    }).join("");
+    return `<article class="broadcast-history-item"><div><strong>${panel._e(item.message)}</strong><small>${panel._e(new Date(item.created_at).toLocaleString())}</small></div><ul>${deliveries}</ul></article>`;
+  }).join("");
   return `
+    <div data-broadcast-load-error class="error" role="alert" hidden></div>
     <div class="section-heading broadcast-heading"><div><span class="section-kicker"><ha-icon icon="mdi:bullhorn-outline"></ha-icon> Home messaging</span><h2>Broadcast</h2><p>Send a spoken message to selected Assist satellites or the whole home. Busy satellites wait until they are free.</p></div></div>
     <div class="broadcast-toggle-row">
       <div><strong>Enable Broadcast</strong>${enabled ? "" : "<p>Broadcast is currently off.</p>"}</div>
@@ -100,16 +108,12 @@ function broadcastMarkup(panel, snapshot) {
         </fieldset>
         <p id="broadcast-retry-status" role="status" ${panel._broadcastAttempt?.uncertain || panel._broadcastAttempt?.blocked ? "" : "hidden"}>An earlier send may already have been queued. Retry unchanged while its original ten-minute window is available. Sending as new can repeat an announcement. Recent history is cleared on restart, and the earlier announcement may already have played.</p>
         <div class="actions broadcast-actions"><button id="broadcast-refresh" type="button" class="secondary compact-button">Refresh devices</button><button id="broadcast-send" type="button" ${!satellites.length || panel._broadcastSending ? "disabled" : ""}>Send broadcast</button></div>
-      </div>` : ""}
+      </div>` : '<button id="broadcast-refresh" type="button" class="secondary compact-button">Refresh Broadcast</button>'}
     <div class="broadcast-history">
-      <h3>Recent broadcasts</h3>
-      ${history.length ? history.slice(0, 10).map((item) => {
-        const deliveries = Object.entries(item.deliveries || {}).map(([entityId, delivery]) => {
-          const satellite = satellitesById.get(entityId);
-          return `<li><span>${panel._e(satellite?.name || entityId)}</span><strong>${panel._e(statusLabel(delivery.status))}</strong></li>`;
-        }).join("");
-        return `<article class="broadcast-history-item"><div><strong>${panel._e(item.message)}</strong><small>${panel._e(new Date(item.created_at).toLocaleString())}</small></div><ul>${deliveries}</ul></article>`;
-      }).join("") : `<p class="empty">No broadcasts sent yet.</p>`}
+      ${active.length ? `<section aria-label="Pending broadcasts"><h3>Pending broadcasts</h3>${renderItems(active)}</section>` : ""}
+      <section aria-label="Recent broadcasts"><h3>Recent broadcasts</h3>
+        ${history.length ? renderItems(history.slice(0, 10)) : `<p class="empty">No completed broadcasts yet.</p>`}
+      </section>
     </div>`;
 }
 
@@ -149,7 +153,11 @@ function bindBroadcastControls(panel, snapshot) {
     panel._broadcastDraftRevision = (panel._broadcastDraftRevision || 0) + 1;
     const host = root.querySelector("#broadcast-card");
     const latest = panel._eocBroadcastSnapshot || snapshot;
-    if (host) host.innerHTML = broadcastMarkup(panel, latest);
+    if (host) {
+      const loadError = root.querySelector("[data-broadcast-load-error]");
+      host.innerHTML = broadcastMarkup(panel, latest);
+      if (loadError && !loadError.hidden) root.querySelector("[data-broadcast-load-error]")?.replaceWith(loadError);
+    }
     bindBroadcastControls(panel, latest);
   }));
   root.querySelectorAll("[data-broadcast-entity]").forEach((box) => box.addEventListener("change", (event) => {
@@ -247,6 +255,7 @@ function applyBroadcastSnapshot(panel, snapshot) {
   bindBroadcastControls(panel, snapshot);
   panel._eocBroadcastEpoch = (panel._eocBroadcastEpoch || 0) + 1;
   panel._eocBroadcastSnapshot = snapshot;
+  panel._eocBroadcastSnapshotIsCurrent = captureAuthentication(panel);
   if (hasPendingBroadcast(snapshot)) {
     const started = Date.now();
     watchLiveStatus(panel, "broadcast", {
@@ -276,7 +285,19 @@ function applyBroadcastError(panel, err) {
   if (panel._viewKey?.() !== "overview") return;
   const host = panel.shadowRoot.querySelector("#broadcast-card");
   if (!host) return;
-  host.innerHTML = `<div class="error" role="alert">Unable to load Broadcast: ${panel._e(err.message || String(err))}</div>`;
+  const snapshot = panel._eocBroadcastSnapshotIsCurrent?.() && panel._eocBroadcastSnapshot;
+  if (!host.querySelector("[data-broadcast-load-error]") && snapshot) {
+    host.innerHTML = broadcastMarkup(panel, snapshot);
+    bindBroadcastControls(panel, snapshot);
+  }
+  let notice = host.querySelector("[data-broadcast-load-error]");
+  if (!notice) {
+    host.innerHTML = '<div data-broadcast-load-error class="error" role="alert"></div><button id="broadcast-refresh" class="secondary" type="button">Refresh Broadcast</button>';
+    notice = host.querySelector("[data-broadcast-load-error]");
+    host.querySelector("#broadcast-refresh").addEventListener("click", () => loadBroadcast(panel));
+  }
+  notice.textContent = `Unable to load Broadcast: ${err.message || String(err)}`;
+  notice.hidden = false;
 }
 
 async function loadBroadcast(panel, owns = () => true) {

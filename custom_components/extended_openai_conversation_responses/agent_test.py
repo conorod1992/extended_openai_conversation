@@ -35,7 +35,11 @@ from .const import (
     DEFAULT_WEB_SEARCH,
 )
 from .functions import get_function
-from .guest_mode import get_loaded_guest_mode, resolve_guest_policy
+from .guest_mode import (
+    async_get_guest_mode,
+    get_loaded_guest_mode,
+    resolve_guest_policy,
+)
 from .ha_llm_tools import is_ha_tool, validate_reference
 from .helpers import (
     effective_api_provider,
@@ -258,30 +262,37 @@ async def async_test_agent(
     checks.append(
         _check("Configuration", "Passed", f"{function_count} tool schemas valid")
     )
-    guest_mode = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
-    guest_status = (
-        guest_mode.status() if guest_mode is not None else {"state": "inactive"}
-    )
-    guest_policy = resolve_guest_policy(
-        hass,
-        subentry.data,
-        guest_mode,
-        configured_tools,
-    )
-    policy = guest_policy.as_diagnostics()
-    checks.append(
-        _check(
-            "Guest Mode",
-            "Passed",
-            (
-                f"{str(guest_status['state']).replace('_', ' ').title()}; "
-                f"{policy['readable_entity_count'] or 0} visible entities; "
-                f"{policy['configured_tool_count'] or 0} custom tools"
-                if guest_policy.guest_active
-                else "Inactive"
-            ),
+    try:
+        guest_mode = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
+        if guest_mode is None:
+            guest_mode = await async_get_guest_mode(
+                hass, entry.entry_id, subentry.subentry_id
+            )
+        guest_status = guest_mode.status()
+        guest_policy = resolve_guest_policy(
+            hass,
+            subentry.data,
+            guest_mode,
+            configured_tools,
         )
-    )
+        policy = guest_policy.as_diagnostics()
+        checks.append(
+            _check(
+                "Guest Mode",
+                "Passed",
+                (
+                    f"{str(guest_status['state']).replace('_', ' ').title()}; "
+                    f"{policy['readable_entity_count'] or 0} visible entities; "
+                    f"{policy['configured_tool_count'] or 0} custom tools"
+                    if guest_policy.guest_active
+                    else "Inactive"
+                ),
+            )
+        )
+    except Exception:
+        checks.append(
+            _check("Guest Mode", "Failed", "Guest Mode policy is unavailable")
+        )
 
     try:
         entity_count = len(get_exposed_entities(hass))

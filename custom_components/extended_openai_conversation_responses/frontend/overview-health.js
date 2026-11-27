@@ -180,9 +180,9 @@ function exposureCheck(facts) {
 
 function memoryCheck(facts) {
   const memory = facts.memory || {};
-  const mode = String(memory.mode || "off");
+  const mode = memory.mode;
   const off = mode === "off";
-  if (!off && (memory.failed || memory.repair_required || memory.keyword_fallback)) return {
+  if (memory.repair_required || !off && (memory.failed || memory.keyword_fallback)) return {
     id: "memory", state: "warning", title: "Long-term memory",
     value: memory.repair_required ? "Storage needs repair" : memory.failed ? "Unavailable" : "Keyword fallback",
     action: memory.repair_required ? action("usage-maintenance", "backup-restore") : action("data-memory", "memory-settings"),
@@ -213,7 +213,7 @@ function memoryCheck(facts) {
       state: "unknown",
       title: "Long-term memory",
       value: "Unable to determine",
-      detail: "Long-term memory is enabled, but Overview could not load its current status.",
+      detail: "Overview could not load the current long-term memory status.",
       action: action("data-memory", "memory-settings"),
     };
   }
@@ -229,12 +229,12 @@ function memoryCheck(facts) {
 
 function knowledgeCheck(facts) {
   const knowledge = facts.knowledge || {};
-  if (knowledge.enabled && (knowledge.failed || knowledge.repair_required)) return {
+  if (knowledge.repair_required || knowledge.enabled && knowledge.failed) return {
     id: "knowledge", state: "warning", title: "Knowledge Library",
     value: knowledge.repair_required ? "Storage needs repair" : "Unavailable",
     action: action("usage-maintenance", "backup-restore"),
   };
-  if (!knowledge.enabled) {
+  if (knowledge.enabled === false) {
     return {
       id: "knowledge",
       state: "neutral",
@@ -260,7 +260,7 @@ function knowledgeCheck(facts) {
       state: "unknown",
       title: "Knowledge Library",
       value: "Unable to determine",
-      detail: "Knowledge Library is enabled, but Overview could not load the stored-source count.",
+      detail: "Overview could not load the current stored-source count.",
       action: action("data-memory", "knowledge"),
     };
   }
@@ -331,33 +331,27 @@ function webSearchCheck(facts) {
 }
 
 export function buildSetupHealth(facts = {}, fallback = {}) {
-  if (facts.unavailable === true) {
-    return {
-      state: "warning",
-      summary: "Review recommended",
-      error_count: 0,
-      warning_count: 0,
-      unknown_count: 1,
-      can_manage: facts.can_manage === true,
-      live_provider_tested: false,
-      checks: [{
-        id: "setup_health",
-        state: "unknown",
-        title: "Setup health",
-        value: "Unable to determine",
-        detail: "Overview could not complete the setup checks. Other Overview information is still available.",
-      }],
-    };
-  }
+  const unavailable = facts.unavailable === true;
+  const loading = !Object.keys(facts).length;
+  const primaryCheck = unavailable || loading ? {
+    id: "setup_health",
+    state: "unknown",
+    title: "Setup health",
+    value: loading ? "Loading…" : "Unable to determine",
+    detail: loading
+      ? "Loading the current setup checks."
+      : "Overview could not complete all setup checks. Available checks are shown below.",
+  } : null;
   const checks = [
-    providerRuntimeCheck(facts, fallback),
-    modelLifecycleCheck(facts),
-    functionToolsCheck(facts),
-    instructionsCheck(facts),
-    exposureCheck(facts),
-    memoryCheck(facts),
-    knowledgeCheck(facts),
-    webSearchCheck(facts),
+    primaryCheck,
+    !unavailable && facts.provider_runtime && providerRuntimeCheck(facts, fallback),
+    !unavailable && modelLifecycleCheck(facts),
+    facts.function_tools && functionToolsCheck(facts),
+    !unavailable && facts.prompt_state && instructionsCheck(facts),
+    ("exposed_entity_count" in facts || facts.exposed_entity_count_loading) && exposureCheck(facts),
+    facts.memory && (facts.memory.mode != null || facts.memory.available === false) && memoryCheck(facts),
+    facts.knowledge && (typeof facts.knowledge.enabled === "boolean" || facts.knowledge.available === false) && knowledgeCheck(facts),
+    !unavailable && facts.web_search && webSearchCheck(facts),
   ].filter(Boolean);
   const errorCount = checks.filter((check) => check.state === "error").length;
   const warningCount = checks.filter((check) => check.state === "warning").length;

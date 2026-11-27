@@ -131,7 +131,7 @@ async def test_provider_erasure_failure_is_rediscovered_without_provider_or_trac
 
 @pytest.mark.parametrize("parent_removed", [False, True])
 @pytest.mark.parametrize("corrupt_envelope", [False, True])
-async def test_malformed_delayed_queue_defers_orphan_cleanup_without_blocking_startup(
+async def test_malformed_delayed_queue_allows_other_orphan_cleanup(
     hass, real_store_io, monkeypatch, parent_removed, corrupt_envelope
 ):
     entry = _entry()
@@ -169,10 +169,10 @@ async def test_malformed_delayed_queue_defers_orphan_cleanup_without_blocking_st
     assert hass.services.has_service(DOMAIN, "broadcast")
     scheduler = hass.data[DOMAIN][delayed_tools.DATA_DELAYED_TOOL_MANAGER]
     assert scheduler._quarantined and not scheduler._tasks
-    assert Path(orphan.path).exists()
+    assert not Path(orphan.path).exists()
     assert retry_callbacks
     await retry_callbacks[-1](None)
-    assert Path(orphan.path).exists()
+    assert not Path(orphan.path).exists()
     assert await hass.async_add_executor_job(queue_file.read_bytes) == original
 
     # A later repaired queue can be cleaned using the retry without rearming it.

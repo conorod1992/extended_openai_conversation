@@ -18,7 +18,10 @@ for (const host of ["_result", "_configData"]) {
   assert.deepEqual(field.efforts, ["low", "medium", "high"]);
   panel[host].api_provider = "openai";
   panel._result = {api_provider:"openai", config:panel._draft, model_capabilities:{reasoning:{supported:false}}};
-  assert.equal(modelFieldPresentation(panel, "reasoning_effort", "high").visible, false);
+  const inactive = modelFieldPresentation(panel, "reasoning_effort", "high");
+  assert.deepEqual(inactive.efforts, []);
+  assert.equal(inactive.repairable, true);
+  assert.deepEqual(inactive.options.map(option => option.value), ["", "high"]);
   await lookupModelData(panel, "o3-pro");
   assert.equal(calls[1].provider, undefined);
 }

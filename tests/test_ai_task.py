@@ -294,9 +294,68 @@ async def test_generate_rejects_non_assistant_final_content(
 
     with pytest.raises(
         HomeAssistantError,
-        match="Last content in chat log is not an AssistantContent",
+        match="AI Task completed without assistant output",
     ):
         await entity._async_generate_data(
             cast(Any, SimpleNamespace(name="plain", structure=None)),
             cast(Any, chat_log),
         )
+
+
+@pytest.mark.parametrize("debug_enabled", [False, True])
+async def test_nested_ai_task_owns_debug_trace_and_invocation(
+    hass, monkeypatch, debug_enabled
+):
+    from custom_components.extended_openai_conversation_responses import debug
+    from custom_components.extended_openai_conversation_responses.request_context import (
+        _ACTIVE_INVOCATION,
+        RequestInvocation,
+    )
+
+    entity = _entity()
+    entity.entry.entry_id = "entry"
+    entity.hass = hass
+    child = debug.get_debug_manager(hass, "entry", "task-1")
+    child.configure(enabled=debug_enabled)
+    parent = debug.DebugManager().begin(
+        entry_id="entry",
+        subentry_id="assistant",
+        user_input={},
+        incoming_conversation_id="parent",
+    )
+    inherited = RequestInvocation(routing_rule="parent-rule")
+
+    async def fake_handle(log, **kwargs):
+        assert _ACTIVE_INVOCATION.get().routing_rule is None
+        trace = debug.current_debug_trace()
+        if debug_enabled:
+            assert trace is not None and trace is not parent
+            trace.start_provider_request("responses", (), {"input": "child-private"})
+        else:
+            assert trace is None
+        log.content.append(
+            conversation.AssistantContent(agent_id="task", content="Task answer")
+        )
+        log.content.append(
+            conversation.AssistantContent(
+                agent_id="task",
+                native=SimpleNamespace(type="reasoning"),
+            )
+        )
+
+    monkeypatch.setattr(entity, "_async_handle_chat_log", fake_handle)
+    trace_token = debug._ACTIVE_DEBUG_TRACE.set(parent)
+    invocation_token = _ACTIVE_INVOCATION.set(inherited)
+    try:
+        log = SimpleNamespace(llm_api=None, content=[], conversation_id="child")
+        result = await entity._async_generate_data(
+            SimpleNamespace(name="test", structure=None), log
+        )
+        assert result.data == "Task answer"
+        assert debug.current_debug_trace() is parent
+        assert _ACTIVE_INVOCATION.get() is inherited
+    finally:
+        _ACTIVE_INVOCATION.reset(invocation_token)
+        debug._ACTIVE_DEBUG_TRACE.reset(trace_token)
+    assert parent.provider_requests == []
+    assert child.status()["count"] == int(debug_enabled)

@@ -395,7 +395,7 @@ async def test_periodic_discovery_adds_new_satellite_but_not_manual_change(
 
 
 @pytest.mark.asyncio
-async def test_failed_mutation_releases_ownership_for_retry(monkeypatch, hass) -> None:
+async def test_failed_mutation_keeps_the_initial_receipt(monkeypatch, hass) -> None:
     _install_registry(monkeypatch, "bedroom")
     _seed_room(hass, "bedroom")
     manager = _stateful_public_manager(hass)
@@ -404,8 +404,9 @@ async def test_failed_mutation_releases_ownership_for_retry(monkeypatch, hass) -
 
     await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=UTC))
 
-    assert "media_player.bedroom" not in manager.active["controls"]
-    assert "media_player.bedroom" not in manager.active["observed_controls"]
+    assert manager.active["controls"]["media_player.bedroom"]["application_state"] == "awaiting_feedback"
+    await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 1, tzinfo=UTC))
+    manager._async_set_volume.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -825,7 +826,7 @@ async def test_volume_apply_covers_skip_noop_success_and_rollback(
     )
     manager._async_save_locked.assert_not_awaited()
 
-    values = iter((0.1, 0.8, 0.8, 0.9, 0.9, 0.9))
+    values = iter((0.1, 0.8, 0.8, 0.8, 0.9, 0.9, 0.9))
     monkeypatch.setattr(runtime, "_current_volume", lambda *_args: next(values))
     await manager._async_apply_volume_locked(
         "assist_satellite.test", "media_player.quiet", controls
@@ -842,8 +843,8 @@ async def test_volume_apply_covers_skip_noop_success_and_rollback(
     await manager._async_apply_volume_locked(
         "assist_satellite.test", "media_player.failed", controls
     )
-    assert "media_player.failed" not in controls
-    assert "media_player.failed" not in manager._active["observed_controls"]
+    assert controls["media_player.failed"]["application_state"] == "awaiting_feedback"
+    assert "media_player.failed" in manager._active["observed_controls"]
 
 
 async def test_switch_apply_covers_skip_noop_success_and_rollback(
@@ -871,7 +872,7 @@ async def test_switch_apply_covers_skip_noop_success_and_rollback(
     )
     manager._async_save_locked.assert_not_awaited()
 
-    values = iter((False, True, True, True, True, True))
+    values = iter((False, True, True, True, True, True, True))
     monkeypatch.setattr(runtime, "_current_switch", lambda *_args: next(values))
     await manager._async_apply_switch_locked(
         "assist_satellite.test", "switch.already_off", False, controls
@@ -888,8 +889,8 @@ async def test_switch_apply_covers_skip_noop_success_and_rollback(
     await manager._async_apply_switch_locked(
         "assist_satellite.test", "switch.failed", False, controls
     )
-    assert "switch.failed" not in controls
-    assert "switch.failed" not in manager._active["observed_controls"]
+    assert controls["switch.failed"]["application_state"] == "awaiting_feedback"
+    assert "switch.failed" in manager._active["observed_controls"]
 
 
 def test_normalize_active_merges_observed_and_owned_controls() -> None:
@@ -1298,7 +1299,7 @@ async def test_reconcile_covers_disabled_new_and_stale_periods(monkeypatch) -> N
     assert manager._active["period_started_at"].startswith("2026-09-13T22:00")
 
 
-async def test_apply_controls_claim_only_needed_values_and_release_on_failure(
+async def test_apply_controls_claim_only_needed_values_and_keep_uncertain_receipts(
     monkeypatch,
 ) -> None:
     _install_registered_controls(
@@ -1346,7 +1347,7 @@ async def test_apply_controls_claim_only_needed_values_and_release_on_failure(
     await manager._async_apply_volume_locked(
         "assist_satellite.bedroom", "media_player.failed", controls
     )
-    assert controls == {}
+    assert controls["media_player.failed"]["application_state"] == "awaiting_feedback"
 
 
 async def test_restore_respects_manual_changes_and_retains_failed_ownership() -> None:
@@ -1759,7 +1760,7 @@ async def test_apply_control_skips_already_owned_entity(kind: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_switch_failure_releases_ownership(
+async def test_apply_switch_failure_retains_ownership_receipt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_registered_controls(monkeypatch, "switch.test")
@@ -1774,9 +1775,9 @@ async def test_apply_switch_failure_releases_ownership(
         "assist_satellite.test", "switch.test", False, controls
     )
 
-    assert "switch.test" not in controls
+    assert controls["switch.test"]["application_state"] == "awaiting_feedback"
     assert manager._active["pending_controls"] == {}
-    assert manager._active["observed_controls"] == []
+    assert manager._active["observed_controls"] == ["switch.test"]
     assert manager._async_save_locked.await_count == 3
 
 

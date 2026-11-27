@@ -137,7 +137,7 @@ async def test_shared_manager_is_reused_and_loaded_lookup_matches(hass, monkeypa
     assert init.await_count == 2
 
 
-def test_custom_function_policy_expands_selected_groups_and_filters_unknowns(
+def test_custom_function_policy_quarantines_malformed_selected_group(
     hass, monkeypatch
 ) -> None:
     monkeypatch.setattr(
@@ -161,14 +161,14 @@ def test_custom_function_policy_expands_selected_groups_and_filters_unknowns(
         guest_mode.CONF_GUEST_FUNCTION_POLICY: "custom",
         guest_mode.CONF_GUEST_ALLOWED_FUNCTION_NAMES: ["direct", "missing"],
         guest_mode.CONF_GUEST_ALLOWED_GROUP_IDS: ["safe"],
-        guest_mode.CONF_FUNCTION_GROUPS: [
+        "function_groups": [
             {"id": "safe", "functions": ["from_group", 123]},
             {"id": "other", "functions": ["ignored"]},
         ],
     }
 
     policy = guest_mode.resolve_guest_policy(hass, options, manager, tools)
-    assert policy.configured_tool_names == frozenset({"direct", "from_group"})
+    assert policy.configured_tool_names == frozenset({"direct"})
 
 
 def test_legacy_editor_snapshot_translates_without_broadening(hass, monkeypatch) -> None:

@@ -364,12 +364,13 @@ async def test_native_empty_scalar_flood_is_not_zero_cost(hass, monkeypatch):
         )
 
 
-@pytest.mark.parametrize("identity", [None, "reused"])
-async def test_unindexed_starts_cannot_bypass_item_ceiling(monkeypatch, identity):
+@pytest.mark.parametrize("has_identity", [False, True])
+async def test_unindexed_starts_cannot_bypass_item_ceiling(monkeypatch, has_identity):
     monkeypatch.setattr(limits, "MAX_OUTPUT_ITEMS", 4)
     values = [
-        NS(type="response.output_item.added", item=NS(type="message", id=identity))
-        for _ in range(5)
+        NS(type=kind, item=NS(type="message", id=str(index) if has_identity else None))
+        for index in range(5)
+        for kind in ("response.output_item.added", "response.output_item.done")
     ]
     with pytest.raises(ProviderStreamError, match="local safety limits"):
         _ = [event async for event in ordered_output_events(source(values))]

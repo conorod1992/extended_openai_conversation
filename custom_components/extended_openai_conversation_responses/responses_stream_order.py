@@ -49,9 +49,24 @@ def _malformed(reason: str) -> ProviderStreamError:
 
 
 def _item_identity(item: Any) -> tuple[Any, ...]:
-    return tuple(
+    identity = tuple(
         getattr(item, field, None)
         for field in ("type", "id", "call_id", "name", "arguments")
+    )
+    if identity[0] != "message":
+        return identity
+    return (
+        *identity,
+        getattr(item, "role", None),
+        getattr(item, "phase", None),
+        tuple(
+            (
+                getattr(part, "type", None),
+                getattr(part, "text", None),
+                getattr(part, "refusal", None),
+            )
+            for part in responses_array(getattr(item, "content", ()), "message content")
+        ),
     )
 
 
@@ -173,6 +188,139 @@ class _OutputItem:
                 yield event
 
 
+@dataclass(slots=True)
+class _MessagePart:
+    kind: str
+    chunks: list[str] = field(default_factory=list)
+    snapshot: str | None = None
+    emitted: int = 0
+    received: int = 0
+
+    def complete(self, text: str) -> None:
+        valid = (
+            text == self.snapshot
+            if self.snapshot is not None
+            else text.startswith("".join(self.chunks))
+        )
+        if not valid:
+            raise _malformed("completed message text conflicts with streamed text")
+        self.snapshot = text
+
+    def remaining(self) -> Iterator[str]:
+        if not self.emitted:
+            yield from self.chunks
+        if self.snapshot is not None and (tail := self.snapshot[self.received :]):
+            yield tail
+
+
+class ResponseMessageText:
+    """Assemble one ordered assistant item before publishing ambiguous text."""
+
+    def __init__(self) -> None:
+        self.opened = False
+        self.phase: str | None = None
+        self.parts: dict[int, _MessagePart] = {}
+        self.unindexed = False
+
+    def start(self, item: Any) -> None:
+        if self.opened or self.parts:
+            raise _malformed("message started before previous text completed")
+        self.opened = True
+        self.phase = getattr(item, "phase", None)
+
+    def observe(self, event: Any) -> str:
+        """Stream the first part only when its phase is already established."""
+        kind = event.type
+        if kind == "response.content_part.done":
+            part = getattr(event, "part", None)
+            part_type = getattr(part, "type", None)
+            if part_type not in {"output_text", "refusal"}:
+                return ""
+            value = getattr(
+                part, "text" if part_type == "output_text" else "refusal", None
+            )
+        elif kind in _TEXT_EVENTS:
+            part_type = "refusal" if ".refusal." in kind else "output_text"
+            attr = (
+                "delta"
+                if kind.endswith(".delta")
+                else ("refusal" if part_type == "refusal" else "text")
+            )
+            value = getattr(event, attr, None)
+        else:
+            return ""
+        if not isinstance(value, str):
+            if part_type == "refusal" and value is not None:
+                value = str(value)  # Legacy compatible providers use refusal objects.
+            else:
+                raise _malformed("invalid message text")
+        index = getattr(event, "content_index", None)
+        if index is None:
+            self.unindexed = True
+            index = 0
+        part_state = self.parts.setdefault(index, _MessagePart(part_type))
+        if part_state.kind != part_type:
+            raise _malformed("conflicting message content part type")
+        if kind.endswith(".delta"):
+            if part_state.snapshot is not None:
+                raise _malformed("text delta after completed content part")
+            if value:
+                part_state.chunks.append(value)
+                part_state.received += len(value)
+            if index == 0 and self.phase in {"commentary", "final_answer"}:
+                part_state.emitted += len(value)
+                return value
+        else:
+            part_state.complete(value)
+        return ""
+
+    def complete(self, item: Any) -> Iterator[str]:
+        """Reconcile snapshots before emitting the remaining parts in order."""
+        phase = getattr(item, "phase", None)
+        if (self.phase == "commentary" and phase != "commentary") or (
+            self.phase == "final_answer" and phase not in {None, "final_answer"}
+        ):
+            raise _malformed("conflicting assistant message phase")
+        content = getattr(item, "content", None)
+        if content is not None:
+            if self.unindexed and len(content) > 1:
+                raise _malformed("unindexed text belongs to an ambiguous message part")
+            if self.parts.keys() - range(len(content)):
+                raise _malformed("completed message is missing a streamed part")
+            for index, native in enumerate(content):
+                part_type = getattr(native, "type", None)
+                if part_type not in {"output_text", "refusal"}:
+                    if index in self.parts:
+                        raise _malformed("conflicting completed message content part")
+                    continue
+                text = getattr(
+                    native, "text" if part_type == "output_text" else "refusal", ""
+                )
+                part = self.parts.setdefault(index, _MessagePart(part_type))
+                if part.kind != part_type:
+                    raise _malformed("conflicting completed message content part")
+                part.complete(text)
+        yield from self.remaining()
+
+    def received_length(self, index: int | None) -> int:
+        part = self.parts.get(index or 0)
+        if part is None:
+            return 0
+        return len(part.snapshot) if part.snapshot is not None else part.received
+
+    def remaining(self) -> Iterator[str]:
+        for _, part in sorted(self.parts.items()):
+            yield from part.remaining()
+
+
+_TEXT_EVENTS = {
+    "response.output_text.delta",
+    "response.output_text.done",
+    "response.refusal.delta",
+    "response.refusal.done",
+}
+
+
 async def ordered_output_events(
     events: AsyncIterator[Any],
     *,
@@ -187,6 +335,7 @@ async def ordered_output_events(
     terminal_seen = False
     legacy = _OutputItem()
     legacy_start = False
+    legacy_message_active = False
     legacy_message_finished = False
     legacy_completions: dict[str, _OutputItem] = {}
     last_legacy_completed: _OutputItem | None = None
@@ -217,6 +366,20 @@ async def ordered_output_events(
                 output = responses_array(
                     getattr(response, "output", ()), "response output"
                 )
+                recovered = None
+                if legacy_start or legacy_message_active:
+                    completed_count = next_index + len(legacy_items)
+                    final = output[-1] if len(output) == completed_count + 1 else None
+                    if (
+                        final is None
+                        or getattr(final, "type", None) != "message"
+                        or (legacy.signature and legacy.signature[0] != "message")
+                    ):
+                        raise _malformed("unfinished legacy output item")
+                    legacy.bind_identity(getattr(final, "id", None), _DONE)
+                    legacy_items.append(_item_identity(final))
+                    recovered = SimpleNamespace(type=_DONE, item=final)
+                    budget.responses_event(recovered)
                 if output:
                     if len(output) > MAX_OUTPUT_ITEMS:
                         raise ProviderStreamError(
@@ -273,6 +436,8 @@ async def ordered_output_events(
                         for frame in completed_responses_output_events(response):
                             budget.responses_event(frame)
                             yield frame
+                if recovered is not None:
+                    yield recovered
                 terminal_seen = True
 
             if kind in _RESPONSE_EVENTS or not kind.startswith("response."):
@@ -327,10 +492,16 @@ async def ordered_output_events(
                     continue
                 legacy_output_seen = True
                 if kind == _ADDED:
-                    legacy.bind_identity(item_id, kind)
+                    if legacy_start:
+                        raise _malformed("unfinished legacy output item")
+                    legacy.observe(event, kind, item_id)
                     legacy_start = True
                     legacy_message_finished = False
                 elif kind == _DONE:
+                    if legacy.signature and legacy.signature[0] != getattr(
+                        event.item, "type", None
+                    ):
+                        raise _malformed("conflicting legacy output item")
                     legacy.bind_identity(item_id, kind)
                     legacy.complete(event.item)
                     if completed_id := legacy.item_id:
@@ -348,17 +519,18 @@ async def ordered_output_events(
                     )
                     legacy_items.append(_item_identity(event.item))
                     legacy = _OutputItem()
-                    legacy_start = False
+                    legacy_start = legacy_message_active = False
                 else:
                     if kind in _ARGUMENT_EVENTS:
                         legacy.bind_identity(item_id, kind)
                         legacy.observe_arguments(event, kind)
-                    elif kind in {
-                        "response.output_text.delta",
-                        "response.refusal.delta",
-                        "response.content_part.added",
-                    }:
+                    elif kind in _TEXT_EVENTS or kind.startswith(
+                        "response.content_part."
+                    ):
                         legacy_message_finished = False
+                        if item_id or kind.startswith("response.content_part."):
+                            legacy.bind_identity(item_id, kind)
+                            legacy_message_active = True
                 yield event
                 continue
 
@@ -391,7 +563,7 @@ async def ordered_output_events(
                     item.arguments = legacy.arguments
                     item.arguments_done = legacy.arguments_done
                 legacy = _OutputItem()
-                legacy_start = False
+                legacy_start = legacy_message_active = False
 
             was_done = item.done
             item.observe(event, kind, item_id)

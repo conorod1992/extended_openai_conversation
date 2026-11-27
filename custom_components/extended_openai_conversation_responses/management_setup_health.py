@@ -25,10 +25,10 @@ from .const import (
     MEMORY_RETRIEVAL_HYBRID,
     SUBSYSTEM_STATUS_KEY,
 )
-from .knowledge import get_loaded_knowledge
+from .knowledge import KnowledgeLibrary, get_loaded_knowledge
 from .management_configuration_guidance import configuration_guidance_snapshot
 from .management_function_repair import management_function_tool_health
-from .memory import get_loaded_memory, get_memory_mode
+from .memory import PersistentMemory, get_loaded_memory, get_memory_mode
 from .model_lifecycle import configured_lifecycle, confirmed_retirement_failure
 from .provider_errors import provider_authentication_rejected
 
@@ -44,6 +44,51 @@ def _exposed_entity_count(hass: HomeAssistant) -> int:
 def _function_health(options: dict[str, Any]) -> dict[str, Any]:
     """Summarize Function Tool state through the metadata-only Management path."""
     return management_function_tool_health(options)
+
+
+def memory_health_facts(
+    options: dict[str, Any],
+    memory: PersistentMemory | None,
+    *,
+    available: bool,
+    failed: bool = False,
+) -> dict[str, Any]:
+    """Project Memory configuration and the observed storage state."""
+    return {
+        "mode": get_memory_mode(options),
+        "available": available,
+        "failed": failed,
+        "repair_required": bool(memory and memory.needs_storage_repair),
+        "keyword_fallback": bool(
+            options.get(CONF_MEMORY_RETRIEVAL_MODE) == MEMORY_RETRIEVAL_HYBRID
+            and memory
+            and memory.hybrid_status().get("status") == "lexical_fallback"
+        ),
+    }
+
+
+def knowledge_health_facts(
+    options: dict[str, Any],
+    library: KnowledgeLibrary | None,
+    *,
+    available: bool,
+    source_count: int,
+    total_source_count: int | None,
+    failed: bool = False,
+) -> dict[str, Any]:
+    """Project Knowledge configuration and the observed storage state."""
+    return {
+        "enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
+        "source_count": source_count,
+        **(
+            {"total_source_count": total_source_count}
+            if total_source_count is not None
+            else {}
+        ),
+        "available": available,
+        "failed": failed,
+        "repair_required": bool(library and library.needs_storage_repair),
+    }
 
 
 def build_setup_health_facts(
@@ -111,29 +156,20 @@ def build_setup_health_facts(
         ),
         "prompt_state": prompt_state,
         "exposed_entity_count": exposed_entity_count,
-        "memory": {
-            "mode": get_memory_mode(options),
-            "available": memory_available,
-            "failed": bool(statuses.get("persistent_memory", {}).get("error_type")),
-            "repair_required": bool(memory and memory.needs_storage_repair),
-            "keyword_fallback": bool(
-                options.get(CONF_MEMORY_RETRIEVAL_MODE) == MEMORY_RETRIEVAL_HYBRID
-                and memory
-                and memory.hybrid_status().get("status") == "lexical_fallback"
-            ),
-        },
-        "knowledge": {
-            "enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
-            "source_count": knowledge_source_count,
-            **(
-                {"total_source_count": knowledge_total_source_count}
-                if knowledge_total_source_count is not None
-                else {}
-            ),
-            "available": knowledge_available,
-            "failed": bool(statuses.get("knowledge", {}).get("error_type")),
-            "repair_required": bool(knowledge and knowledge.needs_storage_repair),
-        },
+        "memory": memory_health_facts(
+            options,
+            memory,
+            available=memory_available,
+            failed=bool(statuses.get("persistent_memory", {}).get("error_type")),
+        ),
+        "knowledge": knowledge_health_facts(
+            options,
+            knowledge,
+            available=knowledge_available,
+            source_count=knowledge_source_count,
+            total_source_count=knowledge_total_source_count,
+            failed=bool(statuses.get("knowledge", {}).get("error_type")),
+        ),
         "web_search": {
             "enabled": bool(options.get(CONF_WEB_SEARCH, False)),
             "effective_api_mode": guidance.get("effective_api_mode"),

@@ -1,4 +1,5 @@
 import {captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {decodeCollectionId, encodeCollectionId} from "./collection-identifiers.js";
 import {memoryLocalDateTime, memoryExpiryISO} from "./memory-datetime.js";
 import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
 import {ensureTemporaryScope, memoryCollectionIdentity} from "./management-data-state.js";
@@ -27,12 +28,13 @@ function temporaryScopeOptions(panel) {
 const collections = new WeakMap();
 
 function temporaryMemoryCard(panel, memory) {
-  return `<article class="list-card" data-memory-id="${panel._e(memory.memory_id)}">
-    <div class="card-main clickable edit-temporary-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}">
+  const id = panel._e(encodeCollectionId(memory.memory_id));
+  return `<article class="list-card" data-memory-id="${id}">
+    <div class="card-main clickable edit-temporary-memory" tabindex="0" role="button" data-id="${id}">
       <p class="primary-copy">${panel._e(memory.content)}</p>
       <p class="meta">${panel._e(memory.category)} · ${panel._e(ownerLabel(panel, memory.owner_scope_id))} · Expires ${panel._e(memory.expires_at_local === null ? memory.expires_at : (memory.expires_at_local?.replace("T", " ") || panel._formatDate(memory.expires_at)))}</p>
     </div>
-    <div class="actions"><button type="button" class="secondary edit-temporary-memory" data-id="${panel._e(memory.memory_id)}">Edit</button><button type="button" class="danger delete-temporary" data-id="${panel._e(memory.memory_id)}">Delete</button></div>
+    <div class="actions"><button type="button" class="secondary edit-temporary-memory" data-id="${id}">Edit</button><button type="button" class="danger delete-temporary" data-id="${id}">Delete</button></div>
   </article>`;
 }
 
@@ -77,7 +79,7 @@ export function filterTemporaryMemories(panel) {
   const query = panel._query.trim().toLocaleLowerCase();
   let visible = 0;
   for (const memory of panel._result?.memories || []) {
-    const node = state.cards.get(String(memory.memory_id))?.node;
+    const node = state.cards.get(encodeCollectionId(memory.memory_id))?.node;
     if (!node) continue;
     const show = `${memory.content || ""} ${memory.category || ""} ${memory.owner_scope_id || ""}`.toLocaleLowerCase().includes(query);
     if (node.hidden === show) node.hidden = !show;
@@ -97,7 +99,7 @@ export function hasTemporaryMemoryCollection(panel) {
 export function reconcileTemporaryMemories(panel) {
   const state = collections.get(panel);
   if (!state || state.host !== panel.shadowRoot.querySelector("[data-temporary-memories]") || state.identity !== memoryCollectionIdentity(panel)) return false;
-  reconcileKeyedChildren(state.list, state.cards, panel._result?.memories || [], memory => memory.memory_id,
+  reconcileKeyedChildren(state.list, state.cards, panel._result?.memories || [], memory => encodeCollectionId(memory.memory_id),
     memory => JSON.stringify([memory.content, memory.category, memory.expires_at, memory.expires_at_local, ownerLabel(panel, memory.owner_scope_id)]),
     memory => temporaryMemoryCard(panel, memory), [state.empty]);
   const diagnostics = temporaryDiagnostics(panel);
@@ -315,12 +317,12 @@ export function bindTemporaryMemory(panel) {
   delegateCollectionActions(host, ".edit-temporary-memory,.delete-temporary,.memory-kind,#clear-temporary,#add-memory", control => {
     if (control.matches("#add-memory")) { void panel._openMemory(); return; }
     if (control.matches("#clear-temporary")) { void clearTemporaryMemories(panel, control); return; }
-    if (control.matches(".delete-temporary")) void deleteTemporaryMemory(panel, control.dataset.id, control);
+    if (control.matches(".delete-temporary")) void deleteTemporaryMemory(panel, decodeCollectionId(control.dataset.id), control);
     else if (control.matches(".memory-kind")) {
       if (control.dataset.kind === panel._memoryKind) return;
       panel._memoryKind = control.dataset.kind; panel._query = "";
       void panel._loadSection();
-    } else openTemporaryMemory(panel, control.dataset.id);
+    } else openTemporaryMemory(panel, decodeCollectionId(control.dataset.id));
   });
   const form = panel.shadowRoot.querySelector("#temporary-memory-form");
   if (!form || form.__eocTemporaryBound) return;

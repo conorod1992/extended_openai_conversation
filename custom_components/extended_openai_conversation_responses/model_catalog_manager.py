@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 import logging
 import math
+from pathlib import Path
 import time
 from types import MappingProxyType
 from typing import Any
@@ -27,8 +28,11 @@ from homeassistant.helpers.storage import Store
 
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
+    API_MODE_AUTO,
+    CONF_API_MODE,
     CONF_CHAT_MODEL as CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
+    DEFAULT_API_MODE,
     DEFAULT_CHAT_MODEL as DEFAULT_CHAT_MODEL,
     DOMAIN,
 )
@@ -62,6 +66,7 @@ from .request_rules import (
     async_get_request_rules,
     request_rule_repair,
 )
+from .restore_disk import write_verified_store
 from .strict_store import PropagatingWriteStore
 
 CATALOG_URL = (
@@ -71,6 +76,21 @@ CATALOG_URL = (
 UPDATE_INTERVAL = 24 * 60 * 60
 DATA_MANAGER = f"{DOMAIN}.model_catalog"
 _DATA_REFRESH = f"{DOMAIN}.model_catalog_refresh"
+_DATA_SETUP_LOCK = f"{DOMAIN}.model_catalog_setup_lock"
+_INVALID_CACHE = (
+    AttributeError,
+    KeyError,
+    OverflowError,
+    RecursionError,
+    TypeError,
+    ValueError,
+)
+_CHECK_MESSAGES = {
+    "download": "Unable to reach the model data source. Try checking again later.",
+    "validation": "The published model data was rejected. The current catalogue was kept.",
+    "saved_requests": "The published model data conflicts with saved settings or Request Rules.",
+    "persistence": "Unable to save the result of the model data check. Check Home Assistant storage and retry.",
+}
 _DATA_PUBLICATION = f"{DOMAIN}.model_catalog_publication"
 WS_CATALOG = f"{DOMAIN}/model_catalog"
 _LOGGER = logging.getLogger(__name__)
@@ -168,13 +188,16 @@ class ModelCatalogManager:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
         self.store: Store[dict[str, Any]] = PropagatingWriteStore(
-            hass, 1, f"{DOMAIN}.model_catalog"
+            hass, 1, f"{DOMAIN}.model_catalog", atomic_writes=True
         )
         self.catalog: dict[str, Any] | None = None
         self.available_catalog: dict[str, Any] | None = None
         self.etag: str | None = None
         self.last_checked = 0.0
         self.last_error: str | None = None
+        self.check_outcome = "unchecked"
+        self._affected_route: tuple[str, str | None] | None = None
+        self._last_check_route: tuple[str, str | None] | None = None
         self.incompatible_catalog: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
 
@@ -182,6 +205,8 @@ class ModelCatalogManager:
         """Load/migrate stored data without making startup depend on the network."""
         self.catalog = self.available_catalog = self.incompatible_catalog = None
         self.etag = self.last_error = None
+        self.check_outcome = "unchecked"
+        self._affected_route = self._last_check_route = None
         self.last_checked = 0.0
         try:
             saved = await self.store.async_load()
@@ -208,7 +233,7 @@ class ModelCatalogManager:
                 if not stale:
                     validate_catalog_transition(None, candidate)
                     self.catalog = candidate
-            except (KeyError, TypeError, ValueError) as err:
+            except _INVALID_CACHE as err:
                 invalid_active = True
                 self.last_error = (
                     "Stored model data could not be loaded; using bundled data."
@@ -223,7 +248,7 @@ class ModelCatalogManager:
                 ):
                     validate_catalog_transition(self.catalog, available)
                     self.available_catalog = available
-            except (KeyError, TypeError, ValueError) as err:
+            except _INVALID_CACHE as err:
                 invalid_pending = True
                 message = "Stored model update could not be loaded; the active catalogue is still available."
                 self.last_error = self.last_error or message
@@ -232,7 +257,7 @@ class ModelCatalogManager:
             self.etag, self.last_checked, self.incompatible_catalog = (
                 _stored_refresh_metadata(saved)
             )
-        except ValueError as err:
+        except _INVALID_CACHE as err:
             message = "Stored model catalogue refresh metadata was invalid."
             self.last_error = self.last_error or (
                 message
@@ -240,6 +265,20 @@ class ModelCatalogManager:
                 else "Stored model data could not be loaded; using bundled data."
             )
             log_handled_failure(_LOGGER, message + " operation=load", err)
+        outcome = saved.get("check_outcome")
+        if isinstance(outcome, str) and (
+            outcome in _CHECK_MESSAGES or outcome in {"success", "incompatible"}
+        ):
+            self.check_outcome = outcome
+        affected = saved.get("affected_route")
+        if (
+            isinstance(affected, list)
+            and len(affected) == 2
+            and isinstance(affected[0], str)
+            and (affected[1] is None or isinstance(affected[1], str))
+            and all(len(item or "") <= 128 for item in affected)
+        ):
+            self._last_check_route = (affected[0], affected[1])
         if invalid_active or invalid_pending:
             self.last_checked = 0.0
         if (
@@ -249,7 +288,7 @@ class ModelCatalogManager:
             or self.incompatible_catalog is not None
         ):
             self.etag = None
-        if migrated and not invalid_active:
+        if migrated and not (invalid_active or invalid_pending):
             try:
                 await self._save(
                     self.catalog,
@@ -279,8 +318,31 @@ class ModelCatalogManager:
             ),
             "last_checked": self.last_checked,
             "last_error": self.last_error,
+            "check_outcome": self.check_outcome,
+            "last_check_error": self._check_failure_message(),
             "incompatible_catalog": self.incompatible_catalog,
         }
+
+    def _check_failure_message(self) -> str | None:
+        message = _CHECK_MESSAGES.get(self.check_outcome)
+        if message is not None and self.check_outcome == "saved_requests":
+            return message + self._route_description(self._last_check_route)
+        return message
+
+    @staticmethod
+    def _route_description(route: tuple[str, str | None] | None) -> str:
+        if route is None:
+            return ""
+        assistant, rule = route
+        return f" Assistant ID {assistant}." + (
+            f" Request Rule ID {rule}." if rule else ""
+        )
+
+    def _write_repaired_store(self, payload: dict[str, Any]) -> None:
+        # A native read has already quarantined the unreadable generation.
+        if Path(self.store.path).exists():
+            raise OSError("Model catalogue storage changed before reset")
+        write_verified_store(self.store, payload, max_bytes=4 * MAX_CATALOG_BYTES)
 
     async def _save(
         self,
@@ -289,16 +351,31 @@ class ModelCatalogManager:
         etag: str | None,
         checked: float,
         incompatible_catalog: dict[str, Any] | None = None,
+        *,
+        outcome: str | None = None,
+        repair: bool = False,
     ) -> None:
-        await self.store.async_save(
-            {
-                "catalog": catalog,
-                "available_catalog": available_catalog,
-                "etag": etag,
-                "last_checked": checked,
-                "incompatible_catalog": incompatible_catalog,
-            }
-        )
+        outcome = outcome or self.check_outcome
+        payload = {
+            "catalog": catalog,
+            "available_catalog": available_catalog,
+            "etag": etag,
+            "last_checked": checked,
+            "incompatible_catalog": incompatible_catalog,
+            "check_outcome": outcome,
+            "affected_route": list(self._last_check_route)
+            if outcome == "saved_requests" and self._last_check_route
+            else None,
+        }
+        if (
+            repair
+            and isinstance(self.store, PropagatingWriteStore)
+            and self.store.corruption_unavailable
+        ):
+            await self.hass.async_add_executor_job(self._write_repaired_store, payload)
+            await self.store.async_load()
+        else:
+            await self.store.async_save(payload)
 
     async def _record_failed_check(
         self,
@@ -310,6 +387,10 @@ class ModelCatalogManager:
     ) -> None:
         """Retain active/pending data while remembering when a check failed."""
         self.last_checked = checked
+        self.check_outcome = stage
+        self._last_check_route = (
+            self._affected_route if stage == "saved_requests" else None
+        )
         self.last_error = "Model data check failed; the current catalogue was kept."
         active = "downloaded" if self.catalog is not None else "bundled"
         log_handled_failure(
@@ -372,7 +453,11 @@ class ModelCatalogManager:
             for assistant in connection.assistants:
                 if assistant.subentry.subentry_type == "conversation":
                     key = (connection.entry.entry_id, assistant.subentry.subentry_id)
-                    owner = await async_get_request_rules(self.hass, *key)
+                    try:
+                        owner = await async_get_request_rules(self.hass, *key)
+                    except Exception:
+                        self._affected_route = (key[1], None)
+                        raise
                     # A save can start as discovery gives up its maintenance lease.
                     # Use the Rule lock only to take a settled snapshot, with no
                     # lease or other manager lock acquired while holding it.
@@ -466,6 +551,26 @@ class ModelCatalogManager:
             client=connection.client,
             previous_model_capabilities=current,
         )
+        if options.get(CONF_API_MODE, DEFAULT_API_MODE) != API_MODE_AUTO:
+            return
+        try:
+            validate_runtime_readiness(
+                options,
+                connection.entry_data,
+                model_capabilities=current,
+                client=connection.client,
+                responses_required=True,
+            )
+        except HomeAssistantError:
+            return  # There was no usable PDF-forced route to preserve.
+        validate_runtime_readiness(
+            options,
+            connection.entry_data,
+            model_capabilities=metadata,
+            client=connection.client,
+            previous_model_capabilities=current,
+            responses_required=True,
+        )
 
     def _candidate_preserves_saved_defaults(
         self, candidate: dict[str, Any], inventory: _SavedInventory
@@ -486,8 +591,10 @@ class ModelCatalogManager:
                     elif not self._candidate_preserves_task_capabilities(
                         options, connection, model, metadata
                     ):
+                        self._affected_route = (assistant.subentry.subentry_id, None)
                         return False
                 except Exception:
+                    self._affected_route = (assistant.subentry.subentry_id, None)
                     return False
         return True
 
@@ -669,7 +776,9 @@ class ModelCatalogManager:
                                     or inherited_effort
                                     not in routed_metadata["reasoning"]["efforts"]
                                 ):
-                                    return False
+                                    raise ValueError(
+                                        "Saved routed reasoning effort is unsupported"
+                                    )
                                 self._validate_candidate_request(
                                     inherited_options, connection, routed_metadata
                                 )
@@ -682,11 +791,17 @@ class ModelCatalogManager:
                             or routed_effort
                             not in routed_metadata["reasoning"]["efforts"]
                         ):
-                            return False
+                            raise ValueError(
+                                "Saved routed reasoning effort is unsupported"
+                            )
                         self._validate_candidate_request(
                             effective, connection, routed_metadata
                         )
                     except Exception:
+                        self._affected_route = (
+                            assistant.subentry.subentry_id,
+                            rule.get("id"),
+                        )
                         return False
         return True
 
@@ -701,6 +816,7 @@ class ModelCatalogManager:
             ):
                 return self.status()
             stage = "download"
+            self._affected_route = None
             try:
                 headers = {"If-None-Match": self.etag} if self.etag else {}
                 async with asyncio.timeout(15):
@@ -719,7 +835,10 @@ class ModelCatalogManager:
                                 self.etag,
                                 now,
                                 self.incompatible_catalog,
+                                outcome="success",
                             )
+                            self.check_outcome = "success"
+                            self._last_check_route = None
                             self.last_checked = now
                             self.last_error = None
                             return self.status()
@@ -731,6 +850,7 @@ class ModelCatalogManager:
                         async for chunk in response.content.iter_chunked(16384):
                             raw.extend(chunk)
                             if len(raw) > MAX_CATALOG_BYTES:
+                                stage = "validation"
                                 raise ValueError("Catalogue download too large")
                         stage = "validation"
                         candidate = parse_catalog(bytes(raw))
@@ -739,23 +859,28 @@ class ModelCatalogManager:
                             raise ValueError("Invalid catalogue ETag")
 
                 active = self.catalog or BUNDLED_CATALOG
-                current_version = active["catalog_version"]
-                if candidate["catalog_version"] < current_version:
-                    raise ValueError("Catalogue version is older than current data")
-                if candidate["catalog_version"] == current_version:
-                    if candidate != active:
-                        raise ValueError(
-                            "Changed catalogue must increment catalog_version"
-                        )
-                    available = None
-                else:
+                newest = self.available_catalog or active
+                if candidate["catalog_version"] < newest["catalog_version"]:
+                    raise ValueError(
+                        "Catalogue version is older than active or staged data"
+                    )
+                if (
+                    candidate["catalog_version"] == newest["catalog_version"]
+                    and candidate != newest
+                ):
+                    raise ValueError("Changed catalogue must increment catalog_version")
+                available = None
+                if candidate["catalog_version"] > active["catalog_version"]:
                     validate_catalog_transition(self.catalog, candidate)
+                    stage = "saved_requests"
                     if not await self._candidate_preserves_saved_requests(candidate):
                         raise ValueError("Catalogue update invalidates saved requests")
                     available = candidate
 
                 stage = "persistence"
-                await self._save(self.catalog, available, etag, now)
+                await self._save(self.catalog, available, etag, now, outcome="success")
+                self.check_outcome = "success"
+                self._last_check_route = None
                 self.available_catalog = available
                 self.etag = etag
                 self.last_checked = now
@@ -772,7 +897,12 @@ class ModelCatalogManager:
                 }
                 try:
                     await self._save(
-                        self.catalog, self.available_catalog, None, now, incompatible
+                        self.catalog,
+                        self.available_catalog,
+                        None,
+                        now,
+                        incompatible,
+                        outcome="incompatible",
                     )
                 except Exception as err:
                     log_handled_failure(
@@ -782,6 +912,8 @@ class ModelCatalogManager:
                 self.last_checked = now
                 self.last_error = None
                 self.incompatible_catalog = incompatible
+                self.check_outcome = "incompatible"
+                self._last_check_route = None
             except (ClientError, TimeoutError, _TransientCatalogUpdateError) as err:
                 await self._record_failed_check(
                     now, transient=True, error=err, stage=stage
@@ -801,17 +933,20 @@ class ModelCatalogManager:
         catalog: dict[str, Any] | None,
         available: dict[str, Any] | None,
         etag: str | None,
-        inventory: _SavedInventory,
+        inventory: _SavedInventory | None,
+        *,
+        repair: bool = False,
     ) -> None:
         """Complete the durable save and live publication under the caller's lock."""
 
         async def publish() -> None:
-            # Task creation can yield between validation and this last check.
-            if not self._inventory_is_current(inventory):
+            # Repairing an already active bundled generation changes storage only.
+            # Otherwise task creation can yield between validation and admission.
+            if inventory is not None and not self._inventory_is_current(inventory):
                 raise ValueError(
                     "Saved configuration changed during catalogue validation"
                 )
-            for connection in inventory:
+            for connection in inventory or ():
                 require_provider_restore_complete(self.hass, connection.entry.entry_id)
                 for assistant in connection.assistants:
                     get_agent_maintenance_gate(
@@ -827,6 +962,7 @@ class ModelCatalogManager:
                     etag,
                     self.last_checked,
                     self.incompatible_catalog,
+                    repair=repair,
                 )
                 activate_catalog(catalog)
                 self.catalog = catalog
@@ -860,6 +996,7 @@ class ModelCatalogManager:
     async def async_apply_update(self) -> dict[str, Any]:
         """Activate the most recently checked newer catalogue."""
         async with self._lock:
+            self._affected_route = None
             candidate = self.available_catalog
             if candidate is None:
                 self.last_error = "No model data update is available."
@@ -873,7 +1010,11 @@ class ModelCatalogManager:
                         candidate, inventory
                     )
                 ):
-                    raise ValueError("Catalogue update invalidates saved requests")
+                    self.last_error = (
+                        "Model data update conflicts with saved settings or Request Rules."
+                        + self._route_description(self._affected_route)
+                    )
+                    return self.status()
                 await self._async_publish(candidate, None, self.etag, inventory)
             except Exception as err:
                 self.last_error = "Model data update could not be applied; the current catalogue was kept."
@@ -915,6 +1056,7 @@ class ModelCatalogManager:
                         or configured_effort not in bundled_config_efforts
                     )
                 ):
+                    self._affected_route = (assistant.subentry.subentry_id, None)
                     return True
         return False
 
@@ -954,8 +1096,10 @@ class ModelCatalogManager:
                         continue
                     model = action.get("model")
                     binding = action.get("azure_model")
+                    affected = (assistant.subentry.subentry_id, rule.get("id"))
                     if not (model or binding):
                         if effort not in bundled_efforts:
+                            self._affected_route = affected
                             return True
                         continue
                     try:
@@ -978,6 +1122,7 @@ class ModelCatalogManager:
                             CONF_REASONING_EFFORT: effort,
                         }
                     except HomeAssistantError:
+                        self._affected_route = affected
                         return True
                     metadata = catalog_model_metadata(
                         None,
@@ -988,13 +1133,28 @@ class ModelCatalogManager:
                         not metadata["reasoning"]["supported"]
                         or effort not in metadata["reasoning"]["efforts"]
                     ):
+                        self._affected_route = affected
                         return True
         return False
 
     async def async_reset(self) -> dict[str, Any]:
         """Return to bundled data until a checked update is explicitly applied."""
         async with self._lock:
+            self._affected_route = None
             try:
+                if (
+                    self.catalog is None
+                    and isinstance(self.store, PropagatingWriteStore)
+                    and self.store.corruption_unavailable
+                ):
+                    await self._async_publish(
+                        None,
+                        self.available_catalog,
+                        self.etag if self.available_catalog is not None else None,
+                        None,
+                        repair=True,
+                    )
+                    return self.status()
                 inventory = await self._candidate_inventory(BUNDLED_CATALOG, reset=True)
                 if (
                     inventory is None
@@ -1008,6 +1168,7 @@ class ModelCatalogManager:
                     self.last_error = (
                         "Model data reset was blocked because saved configuration or "
                         "Request Rules are incompatible with bundled data."
+                        + self._route_description(self._affected_route)
                     )
                     return self.status()
 
@@ -1060,7 +1221,9 @@ async def websocket_catalog(
         status = await manager.async_check(force=True)
         if status["last_error"]:
             connection.send_error(
-                msg["id"], "model_catalog_check_failed", status["last_error"]
+                msg["id"],
+                "model_catalog_check_failed",
+                status.get("last_check_error") or status["last_error"],
             )
             return
     elif msg["action"] == "apply":
@@ -1098,18 +1261,30 @@ async def async_setup_model_catalog(hass: HomeAssistant) -> None:
     """One manager and timer per HA installation, shared by all agent entries."""
     if DATA_MANAGER in hass.data:
         return
-    manager = ModelCatalogManager(hass)
-    hass.data[DATA_MANAGER] = manager
-    await manager.async_load()
-    websocket_api.async_register_command(hass, websocket_catalog)
-    async_start_model_catalog_refresh(hass)
+    async with hass.data.setdefault(_DATA_SETUP_LOCK, asyncio.Lock()):
+        if DATA_MANAGER in hass.data:
+            return
+        manager = ModelCatalogManager(hass)
 
-    @callback
-    def stop(_event: Any) -> None:
-        async_stop_model_catalog_refresh(hass)
-        activate_catalog(None)
+        @callback
+        def stop(_event: Any) -> None:
+            async_stop_model_catalog_refresh(hass)
+            activate_catalog(None)
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
+        cancel_stop = None
+        try:
+            await manager.async_load()
+            cancel_stop = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
+            hass.data[DATA_MANAGER] = manager
+            async_start_model_catalog_refresh(hass)
+            websocket_api.async_register_command(hass, websocket_catalog)
+        except BaseException:
+            hass.data.pop(DATA_MANAGER, None)
+            async_stop_model_catalog_refresh(hass)
+            if cancel_stop is not None:
+                cancel_stop()
+            activate_catalog(None)
+            raise
 
 
 @callback

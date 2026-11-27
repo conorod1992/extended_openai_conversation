@@ -206,11 +206,11 @@ async def test_live_policy_replacement_retargets_without_restoring_retained_cont
 
 
 @pytest.mark.asyncio
-async def test_control_failure_isolated_to_one_satellite_and_retried_cleanly(
+async def test_control_failure_isolated_to_one_satellite_with_late_feedback(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """One failed control must not block siblings and must be retryable next reconcile."""
+    """A sibling may succeed while the failed call awaits its device feedback."""
     monkeypatch.setattr(
         quiet_hours,
         "discover_satellite_capabilities",
@@ -244,9 +244,21 @@ async def test_control_failure_isolated_to_one_satellite_and_retried_cleanly(
     assert _state(hass, "media_player.kitchen").attributes["volume_level"] == 0.20
     active = manager.active
     assert active is not None
-    assert set(active["controls"]) == {"media_player.kitchen"}
+    bedroom = active["controls"]["media_player.bedroom"]
+    assert bedroom["application_state"] == "awaiting_feedback"
+    assert active["controls"]["media_player.kitchen"]["application_state"] == "applied"
 
-    await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 5, tzinfo=local_tz))
+    later = datetime(2026, 9, 11, 22, 5, tzinfo=local_tz)
+    await manager.async_reconcile(now=later)
+    assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.60
+    bedroom_entity = _state(hass, "media_player.bedroom")
+    hass.states.async_set(
+        bedroom_entity.entity_id,
+        bedroom_entity.state,
+        {**bedroom_entity.attributes, "volume_level": 0.20},
+        context=Context(id=bedroom["application_context_id"]),
+    )
+    await manager.async_reconcile(now=later)
 
     assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.20
     assert _state(hass, "media_player.kitchen").attributes["volume_level"] == 0.20
@@ -256,10 +268,9 @@ async def test_control_failure_isolated_to_one_satellite_and_retried_cleanly(
         "media_player.bedroom",
         "media_player.kitchen",
     }
-    assert volume_calls[:3] == [
+    assert volume_calls == [
         ("media_player.bedroom", 0.20),
         ("media_player.kitchen", 0.20),
-        ("media_player.bedroom", 0.20),
     ]
 
     await manager.async_reconcile(now=datetime(2026, 9, 12, 7, 0, tzinfo=local_tz))

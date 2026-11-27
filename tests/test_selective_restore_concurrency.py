@@ -639,3 +639,34 @@ async def test_archive_restore_only_extends_privacy_for_verified_destination_ses
     assert bool(prepared.archive_active) is still_live
     if still_live:
         assert prepared.archive_sessions[0].retention_state == "private"
+
+
+async def test_knowledge_restore_and_journal_replay_skip_unselected_stores(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import knowledge, memory
+
+    real_managers = restore_recovery._durable_managers
+    real_snapshot = backup._snapshot_for_restore
+    tx = RestoreHarness(monkeypatch)
+    monkeypatch.setattr(restore_recovery, "_durable_managers", real_managers)
+    monkeypatch.setattr(backup, "_snapshot_for_restore", real_snapshot)
+    library = tx.managers.knowledge
+    library.async_backup_data = AsyncMock(return_value={"sources": []})
+    monkeypatch.setattr(knowledge, "async_get_knowledge", AsyncMock(return_value=library))
+    unavailable = AsyncMock(side_effect=OSError("unselected storage unavailable"))
+    monkeypatch.setattr(memory, "async_get_memory", unavailable)
+
+    await tx.restore()
+    assert tx.writes == [("knowledge",)]
+
+    selected = replace(tx.state, journaled_sections=frozenset({"knowledge"}))
+
+    async def recover():
+        with tx.gate.recovery_work():
+            managers = await restore_recovery._recovery_managers(
+                tx.hass, tx.entry.entry_id, tx.subentry.subentry_id, selected
+            )
+            assert managers.knowledge is library
+            assert managers.memory is None
+
+    await agent_maintenance._async_run_exclusive_operation(tx.gate, recover)
+    unavailable.assert_not_awaited()

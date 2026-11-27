@@ -261,7 +261,10 @@ async def test_unified_management_preserves_knowledge_availability() -> None:
         assert defaulted["source"]["enabled"] is True
 
 
-async def test_management_set_enabled_updates_only_knowledge_config() -> None:
+@pytest.mark.parametrize("initialized", [True, False])
+async def test_management_set_enabled_updates_only_knowledge_config(
+    initialized,
+) -> None:
     subentry = SimpleNamespace(
         subentry_id="agent-1",
         subentry_type="conversation",
@@ -281,18 +284,19 @@ async def test_management_set_enabled_updates_only_knowledge_config() -> None:
     hass.config_entries.async_update_subentry.side_effect = lambda *_args, **_kwargs: (
         live_update_contexts.append(is_live_subentry_update())
     )
-    library = await _library()
-    await library.async_create("Reference", "", "Content", enabled=True)
+    library = KnowledgeLibrary(FakeStorage())
+    if initialized:
+        await library.async_initialize()
+        await library.async_create("Reference", "", "Content", enabled=True)
     base = {
         "section": "knowledge",
         "entry_id": "entry-1",
         "subentry_id": "agent-1",
     }
 
-    with patch.object(
-        management_ui,
-        "async_get_knowledge",
-        AsyncMock(return_value=library),
+    with (
+        patch.object(management_ui, "get_loaded_knowledge", return_value=library),
+        patch.object(management_ui, "async_get_knowledge", AsyncMock()) as initialize,
     ):
         result = await management_ui.async_management_command(
             hass,
@@ -300,13 +304,18 @@ async def test_management_set_enabled_updates_only_knowledge_config() -> None:
             True,
             {**base, "action": "set_enabled", "enabled": False},
         )
+        initialize.assert_not_awaited()
 
     assert result["knowledge_enabled"] is False
     assert result["feature_status"]["enabled"] is False
-    assert result["feature_status"]["total_source_count"] == 1
-    assert result["feature_status"]["source_count"] == 1
+    assert result["feature_status"]["total_source_count"] == (
+        1 if initialized else None
+    )
+    assert result["feature_status"]["source_count"] == (1 if initialized else None)
     assert not result["feature_status"]["available"]
-    assert "1 stored source" in result["feature_status"]["summary"]
+    assert ("1 stored source" if initialized else "count is unavailable") in result[
+        "feature_status"
+    ]["summary"]
     assert isinstance(result["revision"], str)
     hass.config_entries.async_update_subentry.assert_called_once()
     args = hass.config_entries.async_update_subentry.call_args

@@ -221,6 +221,7 @@ async def test_conversation_runtime_401_starts_reauth_and_returns_error() -> Non
         _async_retrieve_memories=AsyncMock(return_value=[]),
         _async_retrieve_temporary_memories=AsyncMock(return_value=[]),
         _build_system_prompt=lambda *_args: "system",
+        _require_guest_continuity_access=lambda: None,
         _async_handle_chat_log=AsyncMock(side_effect=auth_error),
         _fire_conversation_finished=MagicMock(),
     )

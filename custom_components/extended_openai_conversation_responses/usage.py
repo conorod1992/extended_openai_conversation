@@ -13,6 +13,7 @@ from functools import partial, wraps
 from hashlib import sha256
 import json
 import logging
+from math import isfinite
 import time
 from typing import Any, Protocol, TypeGuard
 from uuid import uuid4
@@ -1605,6 +1606,7 @@ def _validate_usage_day(
             not isinstance(amount, int | float)
             or isinstance(amount, bool)
             or amount < 0
+            or (isinstance(amount, float) and not isfinite(amount))
             or (isinstance(amount, int) and not is_usage_count(amount))
         ):
             raise ValueError(f"daily usage value {key} is invalid")
@@ -1970,6 +1972,10 @@ def _calculate_averages(day: dict[str, Any]) -> None:
         day["average_duration_ms_per_completed_run"] = round(
             day["total_run_duration_ms"] / count, 2
         )
+    else:
+        day["average_tokens_per_completed_run"] = 0
+        day["average_requests_per_completed_run"] = 0.0
+        day["average_duration_ms_per_completed_run"] = 0.0
 
 
 def _local_day_key(timestamp: datetime) -> str:

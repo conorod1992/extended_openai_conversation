@@ -548,8 +548,8 @@ async def test_conversation_missing_usable_output(hass, monkeypatch) -> None:
     result = await invoke()
 
     assert client.responses.create.await_count == 1
-    assert result.response.error_code is None
-    assert result.response.speech["plain"]["speech"] == ""
+    assert result.response.error_code is not None
+    assert "completed without assistant output" in result.response.speech["plain"]["speech"]
     entity._execute_function_tool.assert_not_awaited()
     continuity.async_record_success.assert_not_awaited()
     continuity.async_release.assert_awaited_once()
@@ -808,3 +808,68 @@ async def test_malformed_response_is_terminal_with_recovery_disabled(hass, monke
     assert "effect completed" in json.dumps(
         client.responses.create.await_args_list[1].kwargs["input"], default=str
     )
+
+
+@pytest.mark.parametrize(
+    "visible,hidden,continues",
+    [
+        ("Would you like another?", "Private progress.", True),
+        ("Done.", "Private question?", False),
+    ],
+)
+async def test_ha_default_continuation_uses_visible_answer(
+    hass, monkeypatch, visible, hidden, continues
+):
+    from tests.test_responses_history_coherence import events, message, reasoning
+
+    stream = events(
+        [
+            message("visible", visible, phase="final_answer"),
+            reasoning("hidden-reasoning"),
+            message("hidden", hidden, phase="commentary"),
+        ]
+    )
+    _, _, _, _, invoke = _provider_fixture(hass, monkeypatch, [stream])
+    result = await invoke()
+    assert result.response.speech["plain"]["speech"] == visible
+    assert result.continue_conversation is continues
+
+
+async def test_usage_and_debug_agree_on_validated_provider_attempts(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import debug
+    from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+        make_tool_result_content,
+    )
+
+    usage = _UsageHarness()
+    call = _function_call("lookup", "{}", "lookup-call")
+    entity, client, _, _, invoke = _provider_fixture(
+        hass,
+        monkeypatch,
+        [_tool_stream(call), FakeStream([_completed_event()])],
+        tools=[_tool("lookup")],
+        usage=usage,
+    )
+    client.chat = SimpleNamespace(completions=SimpleNamespace())
+    client.embeddings = SimpleNamespace()
+    entity.entry.runtime_data = debug.DebugOpenAIClientProxy(client)
+    debug_manager = debug.get_debug_manager(hass, "entry", "agent")
+    debug_manager.configure(enabled=True)
+    entity._execute_function_tool.return_value = make_tool_result_content(
+        agent_id=entity.entity_id,
+        tool_call_id="lookup-call",
+        tool_name="lookup",
+        tool_result={"result": "one call"},
+    )
+
+    result = await invoke()
+    assert result.response.error_code is not None
+    entity._execute_function_tool.assert_awaited_once()
+    recorded = [
+        call.kwargs["successful"] for call in usage.async_record_request.await_args_list
+    ]
+    assert recorded == [True, False]
+    detail = debug_manager.get(debug_manager.summaries()[0]["debug_id"])
+    assert [
+        attempt["successful"] for attempt in detail["provider_requests"]
+    ] == recorded

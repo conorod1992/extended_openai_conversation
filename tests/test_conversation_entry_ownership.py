@@ -230,6 +230,7 @@ async def test_continuity_stage_restores_guest_and_prompt_state(
         subentry=SimpleNamespace(data={}),
         _continuity=continuity,
         _resolve_live_guest_policy=lambda: policy,
+        _guest_continuity_access=lambda _policy: None,
         _async_process_claimed=AsyncMock(return_value="result"),
     )
     request = SimpleNamespace(
@@ -275,6 +276,7 @@ async def test_invalid_timeout_before_claim_resets_guest_policy(monkeypatch) -> 
         ),
         _continuity=SimpleNamespace(async_resolve=AsyncMock()),
         _resolve_live_guest_policy=lambda: SimpleNamespace(guest_active=False),
+        _guest_continuity_access=lambda _policy: None,
     )
     request = SimpleNamespace(
         as_llm_context=lambda _: SimpleNamespace(context=Context()),

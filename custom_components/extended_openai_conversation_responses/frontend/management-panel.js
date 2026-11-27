@@ -8,7 +8,7 @@ import {beginOperation} from "./operation-ownership.js";
 import {updateAuthenticationPresentation} from "./authentication-presentation.js";
 import {stopLiveStatus, pauseLiveStatus, resumeLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
 import {bindConfigurationClarity, enhanceConfigurationClarity} from "./management-draft-navigation.js";
-import {formatManagementTimestamp, prepareMemoryBrowser, ensureTemporaryScope, storeRuntimeGuidance} from "./management-data-state.js";
+import {formatManagementTimestamp, prepareMemoryBrowser, ensureTemporaryScope, storeRuntimeGuidance, unavailableOverview} from "./management-data-state.js";
 import {enhanceConfirmationScope} from "./management-confirmation-scope.js";
 import {configurationDestinations} from "./management-config-destinations.js";
 import {
@@ -21,7 +21,7 @@ import {cacheTimestampIsFresh, readSectionCache, writeSectionCache, pruneCacheTi
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, renderManagementRoute, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors} from "./management-actions.js";
-import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, uncertainConfigurationSave, settleConfigurationSaveRecovery} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent, catalogMayPublish} from "./management-catalog-ownership.js";
 import {capturePageRead, acceptPageRead, hasPendingPageSaveRead, retryPageSaveReadsOnTransport} from "./page-save-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, syncConversationSearchOwner, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
@@ -1412,7 +1412,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (view === "overview") {
         const overviewAgentId = this._agentId;
         this._markColdLifecycle("overview-summary-start");
-        const primary = await consumeIntentRead(this, view, "overview", "primary");
+        const primary = await consumeIntentRead(this, view, "overview", "primary")
+          .catch(reason => unavailableOverview(reason, this._data?.is_admin));
         this._markColdLifecycle("overview-summary-complete");
         if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
             || overviewAgentId !== this._agentId) return;
@@ -1762,9 +1763,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     full ||= Boolean(this._eocAcknowledgedConfiguration || this._eocRestoredConfiguration);
     const previousConfig = this._configData, previousResult = this._result;
     const readOwner = captureConfigurationOwner(this);
+    const uncertainSave = uncertainConfigurationSave(this, readOwner);
     const uncertainFunction = functionUncertainty(this, readOwner);
     const functionEpoch = this._eocFunctionMutationEpoch || 0;
-    if (uncertainFunction) {
+    if (uncertainSave || uncertainFunction) {
       full = true; this._configDataStale = true;
       this._invalidateCleanConfiguration?.(this._agentId);
       discardStoredConfigurationPrefetch(this, "function-recovery");
@@ -1788,7 +1790,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const action = projection === "retention" ? "retention_get" : "get";
       const trace = (event, detail) => markConfigurationRead(event, {view, action, ...detail});
       const key = this._configurationSnapshotKey(agentId, projection);
-      const cached = this._freshCleanConfiguration(agentId, projection);
+      const cached = uncertainSave ? null : this._freshCleanConfiguration(agentId, projection);
       let configData = cached;
       let healthReadOwner, healthReadIssue, healthReadTitle, certifiesHealth = false;
       if (cached) {
@@ -1796,7 +1798,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         diagnostics.draft = {source: "clean-snapshot", action, sentAction: null};
         trace("draft-source", {source: "clean-snapshot"});
       } else {
-        const prefetched = consumeStoredConfigurationPrefetch(this, action);
+        const prefetched = uncertainSave ? null : consumeStoredConfigurationPrefetch(this, action);
         if (prefetched) {
           const settled = await prefetched;
           const staleReason = agentId !== this._agentId ? "agent-changed"
@@ -1862,6 +1864,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (this._configDirty && this._draftAgentId === agentId && !retainedDraft) return;
       const prior = key ? this._cleanConfigSnapshots.get(key)?.result : null;
       if (prior && prior.revision !== configData.revision) this._invalidateCleanConfiguration(agentId);
+      if (uncertainSave && (configData.projection === "retention" || typeof configData.revision !== "string" || !configData.revision)) {
+        throw new Error("The server response did not identify the saved configuration revision.");
+      }
       if (uncertainFunction) requireFunctionAcknowledgement({revision:configData.revision,
         functions:configData.config.functions, function_groups:configData.config.function_groups});
       observeCatalogGeneration(this, configData);
@@ -1879,6 +1884,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._draft = nextDraft;
       this._draftTitle = merged.title;
       settleFunctionRead(this, readOwner, uncertainFunction, functionEpoch, configData);
+      settleConfigurationSaveRecovery(this, readOwner, uncertainSave);
       if (configData.projection !== "retention") {
         this._eocAcknowledgedConfiguration = null;
         this._eocRestoredConfiguration = null;
@@ -2871,7 +2877,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (ownsList) this._patchScopeCount(owner.scope, "memory_count", 0);
         if (ownsList && !temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
         this._render();
-        if (returnFocus && !dialog.open) getRouteFeature("data-memory/memories")?.restoreCollectionFocus(this.shadowRoot, `.memory-edit-button[data-id="${CSS.escape(response.memory.memory_id)}"]`, "#add-memory");
+        if (returnFocus && !dialog.open) getRouteFeature("data-memory/memories")?.restoreMemoryFocus(this.shadowRoot, response.memory.memory_id);
         if (needsRefresh || !this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {

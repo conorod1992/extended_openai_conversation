@@ -107,9 +107,19 @@ for (const fails of [false, true]) {
   assert.deepEqual(JSON.parse(h.card.value), {"retried-device":"user:office-owner"});
 }
 
-// Missing or mismatched entries must block saving the previously committed device.
-for (const entry of [null, {}, {entity_id:"assist_satellite.kitchen", device_id:null},
-    {entity_id:"assist_satellite.office", device_id:"wrong-device"}]) {
+// A registered satellite with no associated device is saved by entity ID.
+{
+  const h = harness(); await h.ready;
+  const selected = h.picker.select("assist_satellite.kitchen");
+  await Promise.resolve(); await Promise.resolve();
+  h.responses[0].resolve({entity_id:"assist_satellite.kitchen", device_id:null});
+  await selected;
+  assert.deepEqual(JSON.parse(h.card.value), {"assist_satellite.kitchen":"user:office-owner"});
+  assert.equal(voiceMappingDraftError(h.panel), "");
+}
+
+// A missing or mismatched entry without a live satellite remains unresolved.
+for (const entry of [null, {}, {entity_id:"assist_satellite.office", device_id:"wrong-device"}]) {
   const h = harness(); await h.ready;
   const selected = h.picker.select("assist_satellite.kitchen");
   await Promise.resolve(); await Promise.resolve();

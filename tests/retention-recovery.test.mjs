@@ -116,6 +116,10 @@ test("a failed refresh can be retried while newer edits survive the eventual rea
     await first;
     assert.equal(panel._configDataStale, true);
     await saveConfiguration(panel, null);
+    assert.equal(state.writes.length, 1, "recovery refresh does not replay the deletion");
+    assert.equal(panel._configData.revision, "r1");
+    assert.equal(panel._draft.temperature, 0.8);
+    await saveConfiguration(panel, null);
     assert.equal(state.writes[1].revision, "r1");
     assert.deepEqual(state.writes[1].config, {temperature:0.8, usage_request_retention_days:0});
     assert.equal(panel._draft.temperature, 0.8);

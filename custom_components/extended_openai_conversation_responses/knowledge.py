@@ -400,6 +400,23 @@ class KnowledgeLibrary:
         self._ensure_initialized()
         return sum(source.enabled for source in self._published_sources().values())
 
+    def has_enabled_sources(self, allowed: frozenset[str] | None = None) -> bool:
+        """Whether the current published library has an enabled permitted source."""
+        return any(
+            source.enabled and (allowed is None or source.source_id in allowed)
+            for source in self._published_sources().values()
+        )
+
+    def enabled_source_ids(
+        self, allowed: frozenset[str] | None = None
+    ) -> frozenset[str]:
+        """Return the IDs available to one Guest policy."""
+        return frozenset(
+            source.source_id
+            for source in self._published_sources().values()
+            if source.enabled and (allowed is None or source.source_id in allowed)
+        )
+
     @property
     def total_source_count(self) -> int:
         """Return all stored sources, including disabled sources."""
@@ -1508,6 +1525,7 @@ def _split_chunks(content: str) -> list[tuple[int, str]]:
         if end >= length:
             break
         next_start = max(start + 1, end - CHUNK_OVERLAP)
-        line_after_overlap = content.find("\n", next_start, end)
+        # Align near the overlap start while retaining most of the context.
+        line_after_overlap = content.find("\n", next_start, end - CHUNK_OVERLAP // 2)
         start = line_after_overlap + 1 if line_after_overlap != -1 else next_start
     return chunks

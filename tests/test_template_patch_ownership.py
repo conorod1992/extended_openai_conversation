@@ -216,7 +216,12 @@ async def test_failure_after_acquisition_preserves_other_consumer(hass, lifecycl
 async def test_stop_releases_patch_and_restart_can_acquire(hass, lifecycle):
     consumer = entry("consumer")
     await integration.async_setup_entry(hass, consumer)
-    stop_event, stop = hass.bus.async_listen_once.call_args.args
+    manager = hass.data[DOMAIN][template.DATA_TEMPLATE_MANAGER]
+    stop_event, stop = next(
+        call.args
+        for call in hass.bus.async_listen_once.call_args_list
+        if getattr(call.args[1], "__self__", None) is manager
+    )
     assert stop_event == EVENT_HOMEASSISTANT_STOP
     await stop(None)
     assert TemplateEnvironment.__init__ is lifecycle

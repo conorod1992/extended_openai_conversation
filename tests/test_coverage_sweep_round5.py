@@ -298,7 +298,7 @@ def test_guest_mode_policy_custom_groups_ignores_malformed_groups(hass) -> None:
         guest_mode.CONF_GUEST_POLICY_VERSION: guest_mode.GUEST_POLICY_VERSION,
         guest_mode.CONF_GUEST_FUNCTION_POLICY: "custom",
         guest_mode.CONF_GUEST_ALLOWED_GROUP_IDS: ["allowed"],
-        guest_mode.CONF_FUNCTION_GROUPS: [
+        "function_groups": [
             "invalid",
             {"id": "other", "functions": ["safe"]},
             {"id": "allowed", "functions": [123]},

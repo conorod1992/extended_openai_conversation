@@ -57,7 +57,7 @@ def effective_tool_runtime_scope(
         manager.get_all_skills() if manager is not None and selected_names else []
     )
     max_function_calls = normalized_function_call_budget(options, allow_unlimited=True)
-    function_tools_supported = max_function_calls > 0
+    function_tools_supported = max_function_calls != 0
     group_loader_supported = function_tools_supported
     skill_status = effective_skill_loader_status(
         selected_names,

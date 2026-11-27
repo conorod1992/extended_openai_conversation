@@ -38,7 +38,8 @@ export function deviceIdForSatellite(entries,entityId) {
 export function satelliteForDeviceId(entries,deviceId) {
   if (!deviceId) return "";
   const entry = (Array.isArray(entries) ? entries : []).find((item) =>
-    item?.device_id === deviceId && String(item?.entity_id || "").startsWith("assist_satellite."));
+    (item?.device_id === deviceId || item?.entity_id === deviceId)
+    && String(item?.entity_id || "").startsWith("assist_satellite."));
   return String(entry?.entity_id || "");
 }
 
@@ -282,10 +283,13 @@ async function bindSatellitePicker(panel,row) {
     const entry = await selectedEntityRegistryEntry(panel,selectedEntity);
     if (!rowCurrent() || !configurationSubmissionIsCurrent(panel,selection.owner) || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice"
         || picker.__voiceSelection !== selection) return;
-    const deviceId = entry?.entity_id === selectedEntity ? String(entry.device_id || "") : "";
+    const registered = entry?.entity_id === selectedEntity;
+    const liveSatellite = !entry && panelHass(panel)?.states?.[selectedEntity];
+    const deviceId = selectedEntity.startsWith("assist_satellite.") && (registered || liveSatellite)
+      ? String(entry?.device_id || selectedEntity) : "";
     if (!deviceId) {
       row.dataset.voiceLookup = "unresolved";
-      setWarning(warning,"That Assist satellite is not linked to a Home Assistant device, so it cannot be used for a device assignment.");
+      setWarning(warning,"Select an available Assist satellite before saving.");
       syncMappings(panel);
       return;
     }
@@ -301,7 +305,8 @@ async function bindSatellitePicker(panel,row) {
   }
   const entries = await entityRegistry(panel);
   if (picker.__voiceSelection || !rowCurrent() || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
-  const entityId = satelliteForDeviceId(entries,storedDeviceId);
+  const entityId = satelliteForDeviceId(entries,storedDeviceId)
+    || (storedDeviceId.startsWith("assist_satellite.") && panel.hass?.states?.[storedDeviceId] ? storedDeviceId : "");
   if (entityId) {
     picker.value = entityId;
     setWarning(warning);

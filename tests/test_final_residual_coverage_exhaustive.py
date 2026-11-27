@@ -103,7 +103,7 @@ def test_zstd_concatenated_frames_decode_fully() -> None:
     assert web._decode_zstd(encoded, 1000) == b"firstsecond"
 
 
-def test_guest_custom_policy_ignores_nonsequence_groups(hass) -> None:
+def test_guest_custom_policy_blocks_ambiguous_group_membership(hass) -> None:
     from custom_components.extended_openai_conversation_responses import guest_mode
 
     tools = [
@@ -116,14 +116,14 @@ def test_guest_custom_policy_ignores_nonsequence_groups(hass) -> None:
         guest_mode.CONF_GUEST_FUNCTION_POLICY: "custom",
         guest_mode.CONF_GUEST_ALLOWED_FUNCTION_NAMES: ["safe"],
         guest_mode.CONF_GUEST_ALLOWED_GROUP_IDS: ["group"],
-        guest_mode.CONF_FUNCTION_GROUPS: "not-a-sequence-of-groups",
+        "function_groups": "not-a-sequence-of-groups",
     }
 
     policy = guest_mode._resolve_exclusion_policy(
         hass, options, tools, exposed_entities=[]
     )
 
-    assert "safe" in policy.configured_tool_names
+    assert policy.configured_tool_names == frozenset()
 
 
 def test_knowledge_chunk_overlap_without_newline_uses_exact_overlap() -> None:

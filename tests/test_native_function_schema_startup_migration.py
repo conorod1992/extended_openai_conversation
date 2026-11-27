@@ -150,3 +150,30 @@ async def test_invalid_calendar_scalar_keeps_saved_functions_and_migrates_siblin
     update_subentry.assert_called_once()
     assert update_subentry.call_args.args[:2] == (good_entry, good_agent)
     assert bad_agent.data[CONF_FUNCTION_TOOLS] == malformed
+
+
+async def test_oversized_legacy_schema_leaves_assistant_pending_and_migrates_sibling(hass):
+    nested = {}
+    for _ in range(1000):
+        nested = {"nested": nested}
+    damaged = [{**_historical_execute_service_preset(), "extra": nested}]
+    invalid = MagicMock(subentry_type="conversation", data={CONF_FUNCTION_TOOLS: damaged})
+    healthy = MagicMock(
+        subentry_type="conversation",
+        data={CONF_FUNCTION_TOOLS: [_historical_execute_service_preset()]},
+    )
+    entry = MagicMock(
+        data={}, disabled_by="user", version=2,
+        subentries={"damaged": invalid, "healthy": healthy},
+    )
+    with (
+        patch.object(hass.config_entries, "async_entries", return_value=[entry]),
+        patch.object(hass.config_entries, "async_update_subentry") as update_subentry,
+        patch.object(hass.config_entries, "async_update_entry") as update_entry,
+    ):
+        await async_migrate_integration(hass)
+
+    assert invalid.data[CONF_FUNCTION_TOOLS] is damaged
+    update_subentry.assert_called_once()
+    assert update_subentry.call_args.args[:2] == (entry, healthy)
+    update_entry.assert_not_called()

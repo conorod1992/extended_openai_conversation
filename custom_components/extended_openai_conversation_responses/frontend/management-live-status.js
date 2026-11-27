@@ -107,9 +107,27 @@ export function watchTimedFeatureStatus(panel, feature) {
       const previous = panel._result, read = capturePageRead(panel, view);
       const pending = () => panel._guestOperation || panel._unsavedState?.scopes.get(view)?.pending;
       if (pending()) return;
-      const fresh = await panel._call(guest ? "guest_mode" : "quiet_hours", "get");
+      const publishGuestUnavailable = () => {
+        if (!current() || pending() || panel._result !== previous) return;
+        const status = {state:"unavailable", currently_active:null};
+        panel._result = {...previous, status, policy:null};
+        const agent = panel._selectedAgent?.();
+        if (agent) agent.guest_mode = status;
+        feature?.refreshTimedStatus(panel);
+      };
+      let fresh;
+      try {
+        fresh = await panel._call(guest ? "guest_mode" : "quiet_hours", "get");
+      } catch (error) {
+        if (!guest) throw error;
+        publishGuestUnavailable();
+        return;
+      }
       if (!current() || pending() || panel._result !== previous) return;
-      if (guest && !completePolicyResponse(fresh, true)) return;
+      if (guest && (!completePolicyResponse(fresh, true) || !fresh?.status || typeof fresh.status !== "object")) {
+        publishGuestUnavailable();
+        return;
+      }
       let policy = previous?.policy;
       if (guest && (fresh.status?.currently_active || fresh.status?.state?.startsWith("active"))) {
         const details = await panel._call("guest_mode", "policy").catch(() => null);

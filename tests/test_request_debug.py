@@ -536,3 +536,64 @@ def test_debug_capture_budgets_and_original_hashes(monkeypatch):
     assert first.metrics["request_characters"] > first.metrics["captured_request_characters"]
     assert first.request["kwargs"]["api_key"] == "<redacted credential>"
     assert len(manager.summaries()) < 3
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_debug_request_waits_for_consumer_validation(streaming):
+    from custom_components.extended_openai_conversation_responses.debug import (
+        DebugProviderAttempt,
+    )
+
+    trace = _trace(DebugManager())
+    proxy = DebugOpenAIClientProxy(_FakeClient([{"type": "response.completed"}]))
+    attempt = DebugProviderAttempt()
+    token = _ACTIVE_DEBUG_TRACE.set(trace)
+    try:
+        if streaming:
+            stream = await attempt.create(
+                proxy.responses, model="gpt-test", stream=True
+            )
+            _ = [event async for event in stream]
+            await stream.close()
+        else:
+            result = SimpleNamespace(status="completed", output=[])
+            endpoint = proxy.responses._delegate
+
+            async def completed(**_kwargs):
+                return result
+
+            endpoint.create = completed
+            assert (
+                await attempt.create(proxy.responses, model="gpt-test", stream=False)
+                is result
+            )
+        request = trace.provider_requests[0]
+        assert request.successful is None
+        attempt.finish(ValueError("consumer rejected output"))
+        assert request.successful is False
+    finally:
+        _ACTIVE_DEBUG_TRACE.reset(token)
+
+
+def test_missing_tool_digests_and_captured_breakdown_are_marked_partial(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import debug
+
+    trace = _trace(DebugManager())
+    tools = [{"type": "function", "name": "lookup"}]
+    original_metrics = debug._original_payload_metrics
+
+    monkeypatch.setattr(
+        debug,
+        "_original_payload_metrics",
+        lambda value: (None, None) if value is tools else original_metrics(value),
+    )
+    payload = {
+        "tools": tools,
+        "input": [
+            {"role": "user", "content": "x" * (debug.DEBUG_MAX_STRING_CHARACTERS + 10)}
+        ],
+    }
+    for _ in range(2):
+        request = trace.start_provider_request("responses", (), payload)
+        assert request.metrics["payload_breakdown_partial"] is True
+        assert request.metrics["tools_same_as_previous_request"] is None

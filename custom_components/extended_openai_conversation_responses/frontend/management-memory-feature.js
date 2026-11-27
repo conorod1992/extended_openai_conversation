@@ -1,5 +1,10 @@
 export * from "./guest-mode-ui.js";
-export {restoreCollectionFocus} from "./keyed-collection.js";
+import {restoreCollectionFocus} from "./keyed-collection.js";
+import {encodeCollectionId} from "./collection-identifiers.js";
+
+export function restoreMemoryFocus(root, id) {
+  restoreCollectionFocus(root, `.memory-edit-button[data-id="${CSS.escape(encodeCollectionId(id))}"]`, "#add-memory");
+}
 export * from "./management-temporary-memory.js";
 import {reconcilePersistentMemories, hasPersistentMemoryCollection} from "./guest-mode-ui.js";
 import {reconcileTemporaryMemories, hasTemporaryMemoryCollection} from "./management-temporary-memory.js";

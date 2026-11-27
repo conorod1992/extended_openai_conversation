@@ -306,22 +306,23 @@ def knowledge_search_payload(
 ) -> dict[str, Any]:
     """Keep descriptive filter metadata within the model result budget."""
     source_filter = result.get("source_filter")
-    if policy_filter_applied and isinstance(source_filter, dict):
+    if isinstance(source_filter, dict):
         from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 
-        applied = source_filter.get("applied_source_ids", [])
-        remaining = MAX_MODEL_TOOL_RESULT_CHARACTERS // 8
-        for index, source_id in enumerate(applied):
-            remaining -= len(compact_tool_json(source_id)) + 1
-            if remaining < 0:
-                return {
-                    **result,
-                    "source_filter": {
-                        **source_filter,
-                        "applied_source_ids": applied[:index],
-                        "applied_source_count": len(applied),
-                    },
-                }
+        bounded_filter = source_filter.copy()
+        for label in ("applied", "ignored"):
+            key = f"{label}_source_ids"
+            source_ids = source_filter.get(key, [])
+            remaining = MAX_MODEL_TOOL_RESULT_CHARACTERS // 16
+            for index, source_id in enumerate(source_ids):
+                remaining -= len(compact_tool_json(source_id)) + 1
+                if remaining < 0:
+                    bounded_filter[key] = source_ids[:index]
+                    bounded_filter[f"{label}_source_count"] = len(source_ids)
+                    bounded_filter[f"{key}_truncated"] = True
+                    break
+        if bounded_filter != source_filter:
+            result = {**result, "source_filter": bounded_filter}
     if filter_requested or policy_filter_applied:
         return result
     if source_filter == {

@@ -257,13 +257,16 @@ async def test_chat_allows_empty_post_terminal_accounting_choices(
         prompt_tokens=11, completion_tokens=7, total_tokens=18
     )
     usage = RequestTokenMeasurements()
+    calls = [
+        SimpleNamespace(index=0, id="call", function=SimpleNamespace(name="test", arguments="{}"))
+    ] if finish_reason == "tool_calls" else None
     deltas = [
         delta
         async for delta in _entity()._transform_chat_stream(
             SimpleNamespace(async_trace=lambda _data: None),
             FakeStream(
                 [
-                    _chat_chunk(content="Done"),
+                    _chat_chunk(content="Done", tool_calls=calls),
                     _chat_chunk(finish_reason=finish_reason),
                     trailing,
                 ]
@@ -271,7 +274,11 @@ async def test_chat_allows_empty_post_terminal_accounting_choices(
             usage,
         )
     ]
-    assert deltas == [{"role": "assistant"}, {"content": "Done"}]
+    assert deltas[:2] == [{"role": "assistant"}, {"content": "Done"}]
+    if calls:
+        assert [call.id for call in deltas[2]["tool_calls"]] == ["call"]
+    else:
+        assert len(deltas) == 2
     assert (
         usage.reported.input_tokens,
         usage.reported.output_tokens,
@@ -584,7 +591,10 @@ async def test_responses_premature_eof_is_error() -> None:
             ),
             _event(
                 "response.output_item.done",
-                item=SimpleNamespace(type="message", content=[]),
+                item=SimpleNamespace(
+                    type="message",
+                    content=[SimpleNamespace(type="output_text", text="Partial answer")],
+                ),
             ),
         ]
     )
@@ -851,7 +861,17 @@ async def test_chat_accepts_documented_openrouter_sdk_usage_frame(finish_reason)
             "object": "chat.completion.chunk",
             "created": 1,
             "model": "test-model",
-            "choices": [{"index": 0, "delta": {"content": "Done"}, "finish_reason": None}],
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "content": "Done",
+                    **({"tool_calls": [{
+                        "index": 0, "id": "call", "type": "function",
+                        "function": {"name": "test", "arguments": "{}"},
+                    }]} if finish_reason == "tool_calls" else {}),
+                },
+                "finish_reason": None,
+            }],
         }
     )
     terminal = sdk_chunk()
@@ -882,7 +902,11 @@ async def test_chat_accepts_documented_openrouter_sdk_usage_frame(finish_reason)
                 usage,
             )
         ]
-        assert deltas == [{"role": "assistant"}, {"content": "Done"}]
+        assert deltas[:2] == [{"role": "assistant"}, {"content": "Done"}]
+        if finish_reason == "tool_calls":
+            assert [call.id for call in deltas[2]["tool_calls"]] == ["call"]
+        else:
+            assert len(deltas) == 2
     assert (
         usage.reported.input_tokens,
         usage.reported.output_tokens,
@@ -1006,3 +1030,16 @@ async def test_chat_openrouter_accounting_tail_never_republishes_tool_calls():
         usage.reported.output_tokens,
         usage.reported.total_tokens,
     ) == (11, 7, 18)
+
+
+async def test_chat_tool_call_finish_requires_an_actual_call():
+    with pytest.raises(
+        ProviderStreamError, match="tool-call finish without any tool calls"
+    ):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([_chat_chunk(finish_reason="tool_calls")]),
+            )
+        ]

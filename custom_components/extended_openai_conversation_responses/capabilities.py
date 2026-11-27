@@ -51,8 +51,11 @@ def resolve_effective_capabilities(
         and memory_scope_available
         and (
             not policy.guest_active
-            or policy.shared_memory_read
-            or policy.shared_memory_write
+            or (
+                options.get(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
+                != SHARED_MEMORY_DISABLED
+                and (policy.shared_memory_read or policy.shared_memory_write)
+            )
         )
     )
     return EffectiveCapabilities(

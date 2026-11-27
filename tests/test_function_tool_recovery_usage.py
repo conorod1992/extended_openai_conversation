@@ -81,13 +81,12 @@ def _invalid_tool_stream(arguments: str) -> FakeStream:
 
 
 def _final_stream() -> FakeStream:
+    marker = SimpleNamespace(type="message")
     return FakeStream(
         [
-            _event(
-                "response.output_item.added",
-                item=SimpleNamespace(type="message"),
-            ),
+            _event("response.output_item.added", item=marker),
             _event("response.output_text.delta", delta="Done"),
+            _event("response.output_item.done", item=marker),
             _completed_event(17, 4),
         ]
     )

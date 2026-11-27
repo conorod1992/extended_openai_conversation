@@ -44,11 +44,12 @@ from .retrieval_text import (
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .scope import UNRETAINED_SCOPE_ID, ResolvedDataScope
 from .storage_namespaces import ARCHIVE_PREFIX as STORAGE_KEY_PREFIX
-from .strict_store import PropagatingWriteStore
+from .strict_store import STORE_ENVELOPE_ERRORS, PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 2
 _PARTITION_STORAGE_VERSION = 1
+_SEQUENCE_LIMIT = 2**64
 
 MAX_SEARCH_LIMIT = 50
 MAX_SEARCH_OFFSET = 10_000
@@ -503,7 +504,7 @@ class HomeAssistantArchiveStorage:
             result: dict[str, list[ArchiveTurn]] = defaultdict(list)
             for session_turns in turns.values():
                 for turn in session_turns:
-                    if turn.sequence is not None and turn.sequence >= 2**64:
+                    if turn.sequence is not None and turn.sequence >= _SEQUENCE_LIMIT:
                         # HA's native JSON reader would turn this integer into a float.
                         raise ValueError(
                             "Archive turn sequence exceeds the storage limit"
@@ -793,7 +794,14 @@ class ConversationArchive:
                 repair_required |= await inspect_unindexed(staged_partitions)
             raw_payloads: dict[str, Any] = {}
             for partition in sorted(staged_partitions):
-                payload = await self._storage.async_load_partition(partition)
+                try:
+                    payload = await self._storage.async_load_partition(partition)
+                except (*STORE_ENVELOPE_ERRORS, OSError, ValueError):
+                    repair_required = True
+                    _LOGGER.warning(
+                        "Conversation Archive partition %s could not be read", partition
+                    )
+                    continue
                 raw_payloads[partition] = payload
                 turns = payload.get("turns") if isinstance(payload, dict) else None
                 repair_required |= not isinstance(turns, list)
@@ -1169,6 +1177,8 @@ class ConversationArchive:
                 )
                 + 1
             )
+            if next_sequence >= _SEQUENCE_LIMIT:
+                raise ValueError("archive turn sequence exceeds storage capacity")
             turn = ArchiveTurn(
                 turn_id=uuid4().hex,
                 session_id=session_id,
@@ -2830,7 +2840,7 @@ def _validated_turn(raw: Any) -> ArchiveTurn:
             and (
                 not isinstance(turn.sequence, int)
                 or isinstance(turn.sequence, bool)
-                or turn.sequence < 0
+                or not 0 <= turn.sequence < _SEQUENCE_LIMIT
             )
         )
         or not turn.turn_id

@@ -518,6 +518,7 @@ async def test_catalog_check_rejects_invalid_saved_rule_then_recovers(
         {"action_type": "model_routing", "action": {"reset": True}},
         {"action_type": "model_routing", "action": {"model": "{model}"}},
         {
+            "id": "route",
             "action_type": "model_routing",
             "action": {"model": "gpt-5.6", "reasoning_effort": "not-an-effort"},
         },
@@ -536,6 +537,8 @@ async def test_catalog_check_rejects_invalid_saved_rule_then_recovers(
     )
     assert manager.store.saved["available_catalog"] is None
     get_rules.assert_awaited_once_with(manager.hass, "entry", "agent")
+    assert rejected["check_outcome"] == "saved_requests"
+    assert "Assistant ID agent. Request Rule ID route." in rejected["last_check_error"]
 
     rules[-1]["action"]["reasoning_effort"] = "medium"
     accepted = await manager.async_check(force=True)
@@ -965,3 +968,52 @@ async def test_catalogue_change_cannot_remove_a_task_callers_existing_capabiliti
             name: {"support": "never"} for name in ("responses", "chat_completions")
         }
     assert not await manager._candidate_preserves_saved_requests(candidate)
+
+
+@pytest.mark.parametrize("use_rule", [False, True])
+@pytest.mark.parametrize("operation", ["apply", "reset"])
+async def test_catalogue_publication_preserves_pdf_forced_responses(
+    manager, monkeypatch, operation, use_rule
+):
+    narrowed = _downloaded_candidate()
+    model = next(item for item in narrowed["models"] if item["id"] == "gpt-5")
+    model["reasoning"]["by_api"]["responses"]["efforts"].remove("high")
+    model["tools"]["web_search"]["responses"]["requires"]["reasoning_effort"].remove(
+        "high"
+    )
+    candidate = data.validate_catalog(narrowed)
+    subentry = _subentry(model="gpt-4.1" if use_rule else "gpt-5")
+    subentry.data.update(api_mode="auto", max_function_calls_per_conversation=0)
+    if not use_rule:
+        subentry.data["reasoning_effort"] = "high"
+    rules = (
+        [
+            {
+                "id": "pdf-route",
+                "action_type": "model_routing",
+                "action": {"model": "gpt-5", "reasoning_effort": "high"},
+            }
+        ]
+        if use_rule
+        else []
+    )
+    manager.hass.config_entries.async_entries.return_value = [_entry(subentry)]
+    monkeypatch.setattr(
+        runtime,
+        "async_get_request_rules",
+        AsyncMock(return_value=SimpleNamespace(snapshot=lambda: {"rules": rules})),
+    )
+    if operation == "apply":
+        manager.available_catalog = candidate
+        result = await manager.async_apply_update()
+        assert manager.available_catalog is candidate
+    else:
+        manager.catalog = _downloaded_candidate()
+        manager.catalog["catalog_version"] += 1
+        monkeypatch.setattr(runtime, "BUNDLED_CATALOG", candidate)
+        result = await manager.async_reset()
+        assert manager.catalog is not None
+    error = result["last_error"]
+    assert "Assistant ID agent." in error
+    if use_rule:
+        assert "Request Rule ID pdf-route." in error

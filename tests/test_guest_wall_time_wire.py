@@ -186,3 +186,16 @@ async def test_activation_uses_server_clock_and_preserves_rejected_schedule(
         )
     assert await manager.async_backup_data() == saved
     assert manager._store.async_save.await_count == writes
+
+
+@pytest.mark.parametrize("method", ["async_restrict", "async_update_trusted"])
+@pytest.mark.parametrize(
+    ("wall", "reason"),
+    [("2027-03-14T02:30", "does not exist"), ("2027-11-07T01:30", "occurs twice")],
+)
+async def test_guest_authoring_rejects_dst_gap_and_fold(hass, method, wall, reason):
+    hass.config.time_zone = "America/New_York"
+    manager = _manager(hass)
+    with pytest.raises(ValueError, match=reason):
+        await getattr(manager, method)(active_from=wall)
+    assert manager._schedule is None

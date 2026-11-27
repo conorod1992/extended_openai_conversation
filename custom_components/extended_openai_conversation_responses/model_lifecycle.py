@@ -79,7 +79,57 @@ def confirmed_retirement_failure(
 ) -> bool:
     """Return whether this exact configured model has a confirmed retirement failure."""
     failure = hass.data.get(_DATA_FAILURES, {}).get(_failure_key(entry_id, subentry_id))
-    return isinstance(failure, dict) and failure.get("model") == model
+    return model in _failure_records(failure)
+
+
+def _failure_records(data: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(data, dict):
+        return {}
+    if isinstance(data.get("model"), str):
+        return {data["model"]: data}  # Original singleton format.
+    failures = data.get("failures")
+    if not isinstance(failures, list):
+        return {}
+    return {
+        failure["model"]: failure
+        for failure in failures
+        if isinstance(failure, dict) and isinstance(failure.get("model"), str)
+    }
+
+
+def _publish_retirement_failures(
+    hass: Any,
+    entry_id: str,
+    subentry_id: str,
+    records: dict[str, dict[str, Any]],
+    *,
+    title: str,
+) -> None:
+    ordered = [records[model] for model in sorted(records)]
+    data = ordered[0] if len(ordered) == 1 else {"failures": ordered}
+    hass.data.setdefault(_DATA_FAILURES, {})[_failure_key(entry_id, subentry_id)] = data
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _issue_id(entry_id, subentry_id),
+        is_fixable=False,
+        is_persistent=True,
+        data=data,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="retired_model",
+        translation_placeholders={
+            "assistant": title or subentry_id,
+            "model": ", ".join(sorted(records)),
+            "shutdown_at": ", ".join(
+                sorted(
+                    {
+                        str(record.get("shutdown_at") or "the announced shutdown date")
+                        for record in ordered
+                    }
+                )
+            ),
+        },
+    )
 
 
 def retirement_provider_error(error: BaseException) -> bool:
@@ -156,31 +206,16 @@ def record_retirement_failure(
 
     failures = hass.data.setdefault(_DATA_FAILURES, {})
     key = _failure_key(entry_id, subentry_id)
+    records = _failure_records(failures.get(key))
     failure = {
         "model": model,
         "shutdown_at": lifecycle.get("shutdown_at"),
         "configured_model": configured_model or model,
+        "assistant": title,
     }
-    first = failures.get(key) != failure
-    failures[key] = failure
-
-    ir.async_create_issue(
-        hass,
-        DOMAIN,
-        _issue_id(entry_id, subentry_id),
-        is_fixable=False,
-        is_persistent=True,
-        data=failure,
-        severity=ir.IssueSeverity.ERROR,
-        translation_key="retired_model",
-        translation_placeholders={
-            "assistant": title or subentry_id,
-            "model": model,
-            "shutdown_at": str(
-                lifecycle.get("shutdown_at") or "the announced shutdown date"
-            ),
-        },
-    )
+    first = records.get(model) != failure
+    records[model] = failure
+    _publish_retirement_failures(hass, entry_id, subentry_id, records, title=title)
 
     message = retirement_message(lifecycle)
     if configured_model is not None and configured_model != model:
@@ -198,18 +233,21 @@ def clear_retirement_failure(
     hass: Any, *, entry_id: str, subentry_id: str, model: str | None = None
 ) -> None:
     """Resolve a retirement Repair after success or a model configuration change."""
-    failures = hass.data.setdefault(_DATA_FAILURES, {})
-    key = _failure_key(entry_id, subentry_id)
-    failure = failures.get(key)
-    if failure is None:
+    failures = hass.data.get(_DATA_FAILURES, {})
+    records = _failure_records(failures.get(_failure_key(entry_id, subentry_id)))
+    if model is None:
+        if records:
+            remove_retirement_issue(hass, entry_id=entry_id, subentry_id=subentry_id)
         return
-    if (
-        model is not None
-        and isinstance(failure, dict)
-        and failure.get("model") != model
-    ):
+    removed = records.pop(model, None)
+    if removed is None:
         return
-    remove_retirement_issue(hass, entry_id=entry_id, subentry_id=subentry_id)
+    if not records:
+        remove_retirement_issue(hass, entry_id=entry_id, subentry_id=subentry_id)
+    else:
+        _publish_retirement_failures(
+            hass, entry_id, subentry_id, records, title=removed.get("assistant", "")
+        )
 
 
 def remove_retirement_issue(hass: Any, *, entry_id: str, subentry_id: str) -> None:
@@ -256,15 +294,18 @@ def _override_model_is_still_configured(
     from .request_rules import _MANAGERS, request_rule_repair
 
     manager = hass.data.get(_MANAGERS, {}).get((entry.entry_id, subentry.subentry_id))
-    if manager is None or not manager._initialized:
+    if manager is None or not getattr(
+        manager, "routing_available", getattr(manager, "_initialized", False)
+    ):
         return True  # Reconcile after rules have been loaded, never guess from absence.
+    committed = getattr(manager, "_committed_state", None) or manager.snapshot()
     return any(
         rule.get("enabled", True)
         and rule.get("action_type") == "model_routing"
         and not rule["action"].get("reset")
         and not request_rule_repair(rule)
         and rule["action"].get("model") == model
-        for rule in manager.snapshot()["rules"]
+        for rule in committed["rules"]
     )
 
 
@@ -305,32 +346,38 @@ def sync_entry_model_lifecycle(hass: Any, entry: Any) -> None:
             if stored_issue is not None and isinstance(stored_issue.data, dict):
                 failure = dict(stored_issue.data)
                 failures[key] = failure
-        if isinstance(failure, dict) and (
-            failure.get("configured_model", failure.get("model")) != lifecycle["model"]
-            or (
-                failure.get("model") != lifecycle["model"]
-                and not _override_model_is_still_configured(
-                    hass, entry, subentry, str(failure.get("model", ""))
+        records = _failure_records(failure)
+        remaining = {}
+        for model, record in records.items():
+            retired = lifecycle_snapshot(model)
+            if (
+                retired["status"] == "deprecated"
+                and retired["shutdown_reached"]
+                and (
+                    model == lifecycle["model"]
+                    or (
+                        subentry.subentry_type == "conversation"
+                        and _override_model_is_still_configured(
+                            hass, entry, subentry, model
+                        )
+                    )
                 )
-            )
-            or lifecycle_snapshot(str(failure.get("model", "")))["status"]
-            != "deprecated"
-            or not lifecycle_snapshot(str(failure.get("model", "")))["shutdown_reached"]
-        ):
+            ):
+                remaining[model] = record
+        if records and not remaining:
             clear_retirement_failure(
                 hass, entry_id=entry.entry_id, subentry_id=subentry.subentry_id
             )
-        elif stored_issue is not None and not stored_issue.active:
-            ir.async_create_issue(
+        elif remaining and (
+            remaining != records
+            or (stored_issue is not None and not stored_issue.active)
+        ):
+            _publish_retirement_failures(
                 hass,
-                DOMAIN,
-                stored_issue.issue_id,
-                is_fixable=False,
-                is_persistent=True,
-                data=stored_issue.data,
-                severity=ir.IssueSeverity.ERROR,
-                translation_key="retired_model",
-                translation_placeholders=stored_issue.translation_placeholders,
+                entry.entry_id,
+                subentry.subentry_id,
+                remaining,
+                title=subentry.title,
             )
 
     failures = hass.data.setdefault(_DATA_FAILURES, {})

@@ -2125,7 +2125,9 @@ async def test_overview_selected_agent_resolves_health_once(monkeypatch) -> None
 async def test_overview_detail_loads_only_requested_manager(monkeypatch) -> None:
     hass, entry, subentry = _hass_with_agent()
     usage = AsyncMock(side_effect=AssertionError("usage should stay cold"))
-    memory = AsyncMock(return_value=SimpleNamespace(memory_count=3))
+    memory = AsyncMock(
+        return_value=SimpleNamespace(memory_count=3, needs_storage_repair=True)
+    )
     knowledge = AsyncMock(side_effect=AssertionError("knowledge should stay cold"))
     guest = AsyncMock(side_effect=AssertionError("guest should stay cold"))
     monkeypatch.setattr(loading, "async_get_usage", usage)
@@ -2138,6 +2140,7 @@ async def test_overview_detail_loads_only_requested_manager(monkeypatch) -> None
     )
 
     assert result["agent"]["memory_count"] == 3
+    assert result["setup_health"]["memory"]["repair_required"] is True
     memory.assert_awaited_once_with(hass, "entry-1", "agent-1")
     usage.assert_not_awaited()
     knowledge.assert_not_awaited()
@@ -2510,3 +2513,47 @@ def test_sparse_memory_snapshot_matches_cold_configuration(memory, validated):
     keys = ("memory_mode", "memory_enabled", "memory_auto_create")
     assert {key: warm[key] for key in keys} == {key: cold[key] for key in keys}
     assert raw == before
+
+
+async def test_overview_storage_details_replace_uncertain_primary_facts(monkeypatch):
+    hass, entry, subentry = _hass_with_agent()
+    subentry.data = {**subentry.data, "memory_retrieval_mode": "hybrid", "knowledge_enabled": True}
+    memory = SimpleNamespace(
+        memory_count=4, needs_storage_repair=False,
+        hybrid_status=lambda: {"status": "lexical_fallback"},
+    )
+    knowledge = SimpleNamespace(
+        source_count=0, total_source_count=0, needs_storage_repair=True,
+    )
+    monkeypatch.setattr(loading, "async_get_memory", AsyncMock(return_value=memory))
+    monkeypatch.setattr(loading, "async_get_knowledge", AsyncMock(return_value=knowledge))
+
+    memory_detail = await loading.async_overview_detail(
+        hass, entry, subentry, is_admin=True, kind="memory"
+    )
+    knowledge_detail = await loading.async_overview_detail(
+        hass, entry, subentry, is_admin=True, kind="knowledge"
+    )
+
+    memory_health = memory_detail["setup_health"]["memory"]
+    assert memory_health["keyword_fallback"] is True
+    assert memory_health["failed"] is False
+    assert memory_health["loading"] is False
+    knowledge_health = knowledge_detail["setup_health"]["knowledge"]
+    assert knowledge_health["repair_required"] is True
+    assert knowledge_health["enabled"] is True
+    assert knowledge_health["source_count"] == 0
+
+
+async def test_malformed_knowledge_list_returns_unavailable(monkeypatch):
+    hass, entry, subentry = _hass_with_agent()
+    monkeypatch.setattr(
+        management_ui, "async_get_knowledge",
+        AsyncMock(side_effect=ValueError("invalid persisted catalogue")),
+    )
+    result = await management_ui.async_management_command(
+        hass, "admin", True,
+        {"section": "knowledge", "action": "list",
+         "entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
+    )
+    assert result == {"sources_unavailable": True}

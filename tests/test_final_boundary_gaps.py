@@ -118,7 +118,11 @@ async def test_catalog_checks_single_field_routing_without_losing_other_options(
     effective = {**options, key: value}
     # An inherited effort is tested against both the old and proposed capabilities.
     routed = [effective, effective] if field == "reasoning_effort" else [effective]
-    assert [call.args[0] for call in build.call_args_list] == [options, *routed]
+    plain = [
+        call.args[0] for call in build.call_args_list
+        if not call.kwargs["responses_required"]
+    ]
+    assert plain == [options, *routed]
     assert options == {
         models.CONF_CHAT_MODEL: "gpt-5",
         models.CONF_REASONING_EFFORT: "medium",

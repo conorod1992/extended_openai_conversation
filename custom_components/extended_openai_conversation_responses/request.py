@@ -228,7 +228,7 @@ def canonical_json(value: Any) -> str:
     )
 
 
-def _has_optional_properties(schema: Any) -> bool:
+def _has_optional_or_open_properties(schema: Any) -> bool:
     """Inspect reachable schema positions, following bounded local pointers.
 
     Responses' default normalization also changes optional nested properties.
@@ -281,9 +281,21 @@ def _has_optional_properties(schema: Any) -> bool:
             except KeyError, IndexError, TypeError, ValueError, UnicodeError:
                 return True
         properties = node.get("properties")
+        types = node.get("type")
+        is_object = types == "object" or (isinstance(types, list) and "object" in types)
+        additional = node.get("additionalProperties")
+        if (
+            additional is True
+            or isinstance(additional, dict)
+            or node.get("patternProperties")
+            or (is_object and not properties and "additionalProperties" not in node)
+        ):
+            return True
         if isinstance(properties, dict):
             required = node.get("required", [])
-            if isinstance(required, list) and properties.keys() - set(required):
+            if isinstance(required, list) and properties.keys() - {
+                item for item in required if isinstance(item, str)
+            }:
                 return True
         for key in (
             "properties",
@@ -334,7 +346,7 @@ def format_function_tools(
             api_mode == API_MODE_RESPONSES
             and "strict" not in spec
             and (
-                _has_optional_properties(spec.get("parameters"))
+                _has_optional_or_open_properties(spec.get("parameters"))
                 or (
                     isinstance(function, dict)
                     and function.get("type")
@@ -404,7 +416,7 @@ def function_call_budget_available(options: Mapping[str, Any]) -> bool:
     """Share the ordinary Function/Group-loader exposure rule with runtime."""
     from .agent_config import normalized_function_call_budget
 
-    return normalized_function_call_budget(options, allow_unlimited=True) > 0
+    return normalized_function_call_budget(options, allow_unlimited=True) != 0
 
 
 def ha_tool_discovery_references(
@@ -435,7 +447,7 @@ def conversation_tools_required(options: Mapping[str, Any]) -> bool:
     """Bound saved Conversation validation to the tools its fresh requests expose."""
     from .const import CONF_CONTINUE_CONVERSATION, CONTINUE_CONVERSATION_CONDITIONAL
 
-    # A positive budget exposes the lifecycle Function and ordinary/Group tools.
+    # A nonzero budget exposes the lifecycle Function and ordinary/Group tools.
     # Conditional continuation independently requires its finalizer at zero.
     return (
         function_call_budget_available(options)
@@ -974,6 +986,7 @@ def validate_runtime_readiness(
     ha_snapshot: ToolSnapshot | None = None,
     previous_model_capabilities: Mapping[str, Any] | None = None,
     reserve_ha_tools: bool = False,
+    responses_required: bool = False,
 ) -> ProviderRequestSnapshot:
     """Validate the initial Conversation catalogue for supported request scopes.
 
@@ -1006,6 +1019,7 @@ def validate_runtime_readiness(
         options,
         entry_data,
         tools_required=tools_required,
+        responses_required=responses_required,
         model_capabilities=model_capabilities,
         client=client,
     )
@@ -1037,6 +1051,7 @@ def validate_runtime_readiness(
                 tools_required=tools_required,
                 model_capabilities=previous_model_capabilities,
                 client=client,
+                responses_required=responses_required,
             )
         except HomeAssistantError:
             pass

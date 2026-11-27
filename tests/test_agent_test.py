@@ -29,6 +29,18 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.usage import RequestUsage
 
 
+@pytest.fixture(autouse=True)
+def _load_guest_storage(monkeypatch):
+    """Give synthetic diagnostic connections a healthy Guest schedule by default."""
+    monkeypatch.setattr(
+        agent_test,
+        "async_get_guest_mode",
+        AsyncMock(return_value=SimpleNamespace(
+            status=lambda: {"state": "inactive"}, is_active=lambda: False,
+        )),
+    )
+
+
 def _chat_reply(usage: Any = None) -> SimpleNamespace:
     return SimpleNamespace(
         choices=[
@@ -1321,3 +1333,17 @@ def test_diagnostic_parser_retains_runtime_empty_and_default_semantics(value):
     from custom_components.extended_openai_conversation_responses.const import DEFAULT_CONF_FUNCTION_TOOLS
     assert parse_configured_function_tools({CONF_FUNCTION_TOOLS: value}) == ([] if value == "[]" else DEFAULT_CONF_FUNCTION_TOOLS)
     assert parse_configured_function_tools({}) == DEFAULT_CONF_FUNCTION_TOOLS
+
+
+async def test_guest_storage_failure_is_reported_and_model_probe_still_runs(monkeypatch):
+    hass, entry, subentry, client, usage = _objects()
+    monkeypatch.setattr(agent_test, "get_loaded_guest_mode", lambda *_: None)
+    monkeypatch.setattr(
+        agent_test, "async_get_guest_mode", AsyncMock(side_effect=OSError("unreadable"))
+    )
+    monkeypatch.setattr(agent_test, "async_get_usage", AsyncMock(return_value=usage))
+    result = await async_test_agent(hass, entry, subentry)
+    checks = {check.name: check for check in result.checks}
+    assert checks["Guest Mode"].status == "Failed"
+    assert checks["Model access"].status == "Passed"
+    client.chat.completions.create.assert_awaited()

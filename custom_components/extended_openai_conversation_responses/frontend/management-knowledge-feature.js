@@ -18,6 +18,14 @@ const countText = sources => `${formatUsageNumber(sources.length)} source${sourc
 function knowledgeAccessState(panel) {
   const current = selectedFeatureStatus(panel, "knowledge") || {};
   const enabled = typeof current.enabled === "boolean" ? current.enabled : panel._selectedAgent?.()?.knowledge_enabled !== false;
+  if (panel._result?.sources_unavailable) {
+    return {
+      enabled,
+      state: enabled ? "unavailable" : "disabled",
+      label: enabled ? "Unavailable" : "Off",
+      detail: "The stored source count is unavailable.",
+    };
+  }
   const sources = panel._result?.sources || [];
   const usable = sources.some((source) => source.enabled !== false);
   const exceptional = ["unknown", "unavailable", "error"].includes(current.state);

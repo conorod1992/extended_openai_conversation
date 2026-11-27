@@ -461,3 +461,22 @@ def test_config_allows_on_demand_skill_loader_but_rejects_disabled_group() -> No
                 "max_function_calls_per_conversation": 1,
             }
         )
+
+
+def test_closed_loader_rejects_a_required_key_it_cannot_accept():
+    tool = _loader()
+    parameters = tool["spec"]["parameters"]
+    parameters["additionalProperties"] = False
+    parameters["required"] = ["name", "file", "required_key"]
+    assert not skill_loader_status(["calendar"], [tool], []).available
+    parameters["patternProperties"] = {"^required_key$": {}}
+    assert skill_loader_status(["calendar"], [tool], []).available
+
+
+def test_legacy_unlimited_budget_preserves_skill_access():
+    assert skill_loader_status(
+        ["calendar"], [_loader()], [], max_function_calls=-1
+    ).available
+    assert not skill_loader_status(
+        ["calendar"], [_loader()], [], max_function_calls=0
+    ).available

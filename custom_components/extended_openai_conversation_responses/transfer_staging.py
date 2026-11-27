@@ -26,6 +26,20 @@ def _lock_file(path: Path) -> int:
     return os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
 
 
+def _remove_owner_directory(directory: Path) -> None:
+    """Keep the locked ownership marker until all private payloads are gone."""
+    marker = directory / "owner.lock"
+    for child in directory.iterdir():
+        if child == marker:
+            continue
+        if not child.is_symlink() and child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    marker.unlink()
+    directory.rmdir()
+
+
 @dataclass
 class TransferStagingOwner:
     """Keep a native owner lock for the entire HA transfer registry lifetime."""
@@ -38,7 +52,7 @@ class TransferStagingOwner:
         if self.lock_handle.closed:
             return
         with suppress(FileNotFoundError):
-            shutil.rmtree(self.directory)
+            _remove_owner_directory(self.directory)
         self.lock_handle.close()
 
 
@@ -70,7 +84,7 @@ def _initialize_owner(root: Path) -> TransferStagingOwner:
                     fcntl.flock(owner_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     continue  # Never reclaim another live process/HA instance.
-                shutil.rmtree(directory)
+                _remove_owner_directory(directory)
             finally:
                 os.close(owner_fd)
         directory = root / f"owner-{uuid4().hex}"

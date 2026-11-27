@@ -3,6 +3,7 @@ import {voiceMappingDraftDirty} from "./voice-mapping-draft.js";
 import {configurationDraftBaseline} from "./configuration-acknowledgement.js";
 
 export const CONFIGURATION_CONTROLS = "[data-config],[data-memory-config],#voice-mappings,[data-local-intent-exclusion],.regex-pattern,.regex-replacement";
+export const isOptionalSamplingKey = (key) => key === "temperature" || key === "top_p";
 export const isTimeoutKey = (key) => /^(archive_session|conversation)_timeout_minutes$/.test(key);
 export const validTimeout = (value) => Number.isInteger(value) && value >= 1 && value <= 1440;
 export const skillNamesFromText = (value) => String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -37,13 +38,15 @@ export function configurationControlValue(control) {
   }
   if (control.dataset?.type === "boolean" || control.type === "checkbox") return Boolean(control.checked);
   if (control.dataset?.type === "number") {
-    if (control.validity?.badInput || (typeof value === "string" && !value.trim())) return value;
+    if (control.validity?.badInput) return value;
+    if (typeof value === "string" && !value.trim()) return isOptionalSamplingKey(key) && value === "" ? null : value;
     if (value === "true" || value === "false") return value === "true";
     const number = Number(value);
     // Keep malformed recovery text for validation. JSON converts NaN and
     // Infinity to null, and empty recovery text does not specify zero.
     return Number.isFinite(number) ? number : value;
   }
+  if (key === "reasoning_effort" && value === "") return null;
   if (key === "skills") return skillNamesFromText(value);
   if (key?.startsWith("guest_readable_") || key?.startsWith("guest_controllable_")) {
     return String(value).split(",").map((item) => item.trim()).filter(Boolean);

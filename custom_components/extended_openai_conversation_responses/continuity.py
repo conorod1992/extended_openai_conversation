@@ -98,8 +98,11 @@ def chat_log_admission_scope(
     if (
         source is None
         or source.conversation_id != conversation_id
-        or not getattr(source, "turn_active", False)
-        or getattr(source, "turn_start", None) != len(source.content) - 1
+        or getattr(source, "turn_active", None) is False
+        or (
+            getattr(source, "turn_active", None) is True
+            and getattr(source, "turn_start", None) != len(source.content) - 1
+        )
         or not source.content
         or not isinstance(source.content[-1], conversation.UserContent)
         or source.content[-1].content != request_text
@@ -184,6 +187,14 @@ def forward_chat_log_deltas(
     if (
         source is None
         or source is target
+        or (
+            bool(admissions)
+            and (
+                admission is None
+                or not admission.active
+                or admission.source is not source
+            )
+        )
         or not source.content
         or not isinstance(source.content[-1], conversation.UserContent)
         or source.content[-1].content != request_text
@@ -273,6 +284,19 @@ class ConversationContinuity:
         self._lock = asyncio.Lock()
         self.resume_count = 0
         self.new_session_count = 0
+        self._guest_access: object = None
+        self._guest_namespace: str | None = None
+
+    def guest_namespace(self, access: object) -> str | None:
+        """Rotate Guest continuity as a unit whenever its effective access changes."""
+        if access != self._guest_access:
+            self._guest_access = access
+            self._guest_namespace = (
+                f"{GUEST_CONTINUITY_NAMESPACE}-{uuid4().hex}"
+                if access is not None
+                else None
+            )
+        return self._guest_namespace
 
     def reset_all(
         self,
@@ -280,6 +304,7 @@ class ConversationContinuity:
         private_bindings: dict[str, str] | None = None,
         retained_bindings: dict[str, str] | None = None,
         retained_ha_default_ids: frozenset[str] = frozenset(),
+        preserve_unverified_bindings: bool = False,
     ) -> frozenset[tuple[str | None, str]]:
         """Discard transient context under the caller's exclusive restore lease.
 
@@ -303,8 +328,13 @@ class ConversationContinuity:
                 discard_history=True,
             )
             for key, active in self._sessions.items()
-            if private_bindings is not None
-            and private_bindings.get(key) == active.conversation_id
+            if (
+                preserve_unverified_bindings
+                or (
+                    private_bindings is not None
+                    and private_bindings.get(key) == active.conversation_id
+                )
+            )
             and key not in self._pending_ends
         }
         self._sessions.update(retained)

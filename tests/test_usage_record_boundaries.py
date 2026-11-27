@@ -346,3 +346,19 @@ async def test_bad_stored_run_date_metadata_preserves_readable_run(metadata):
     with pytest.raises(ValueError, match="needs repair"):
         await manager.async_backup_data()
     assert await details.async_load() == payload
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_backup_averages_require_finite_numbers(value):
+    date = "2026-11-26"
+    day = usage._empty_day(date)
+    day["average_requests_per_completed_run"] = value
+    with pytest.raises(ValueError, match="average_requests_per_completed_run"):
+        usage._validate_usage_day(date, day)
+
+
+def test_backup_zero_run_averages_are_recalculated():
+    date = "2026-11-26"
+    day = usage._empty_day(date)
+    day["average_duration_ms_per_completed_run"] = 12.0
+    assert usage._validate_usage_day(date, day) == usage._empty_day(date)

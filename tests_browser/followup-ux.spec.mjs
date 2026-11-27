@@ -140,7 +140,8 @@ test("disabled Model and Speech explanations remain readable while their control
   expect(temperatureState.disabled).toBe(true);
   expect(temperatureState.controlOpacity).toBe("0.55");
   expect(temperatureState.fieldOpacity).toBe("1");
-  expect(temperatureState.help).toContain("Higher values make responses more varied");
+  expect(temperatureState.help).toContain("Higher values increase variety");
+  expect(temperatureState.help).toContain("Leave blank to use the provider default.");
   expect(temperatureState.helpOpacity).toBe("1");
   expect(temperatureState.helpColor).toBe("rgb(196, 196, 196)");
 

@@ -99,13 +99,14 @@ def test_unsupported_sampling_keeps_existing_omission(model, effort, value, api)
 @pytest.mark.parametrize("api", ["chat_completions", "responses"])
 @pytest.mark.parametrize("sampling", [{}, {"temperature": None, "top_p": None}])
 def test_unset_sampling_stays_omitted(api, sampling):
-    snapshot = build_provider_request_snapshot(
-        {"chat_model": "gpt-4.1", "api_mode": api, **sampling},
-        {},
-        tools_required=False,
-    )
-    assert "temperature" not in snapshot.api_kwargs
-    assert "top_p" not in snapshot.api_kwargs
+    stored = {"chat_model": "gpt-4.1", "api_mode": api, **sampling}
+    editor = agent_config.agent_config_snapshot(stored)
+    assert editor["temperature"] is None
+    assert editor["top_p"] is None
+    for options in (stored, editor):
+        snapshot = build_provider_request_snapshot(options, {}, tools_required=False)
+        assert "temperature" not in snapshot.api_kwargs
+        assert "top_p" not in snapshot.api_kwargs
 
 
 @pytest.mark.parametrize("expected", [int, (int, float), (float, int)])

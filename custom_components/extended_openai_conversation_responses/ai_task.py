@@ -20,8 +20,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.json import json_bytes
 
-from .assistant_response import final_assistant_text
-from .debug import record_current_provider_failure
+from .assistant_response import final_assistant_answer
+from .debug import record_current_provider_failure, request_debug_trace
 from .entity import (
     ExtendedOpenAIBaseLLMEntity,
     _make_schema_nullable,
@@ -36,6 +36,7 @@ from .provider_errors import (
     provider_user_message,
     request_reauthentication,
 )
+from .request_context import conversation_invocation
 from .schema_errors import SCHEMA_ERRORS
 from .schema_normalization import normalize_exclusive_bounds
 from .strict_json import strict_json_loads
@@ -410,7 +411,21 @@ class ExtendedOpenAITaskEntity(
         task: ai_task.GenDataTask,
         chat_log: conversation.ChatLog,
     ) -> ai_task.GenDataTaskResult:
-        """Handle a generate data task."""
+        """Own the invocation and opt-in diagnostics for one AI Task."""
+        async with conversation_invocation():
+            with request_debug_trace(self, task, chat_log.conversation_id) as trace:
+                result = await ExtendedOpenAITaskEntity._async_generate_task_data(
+                    self, task, chat_log
+                )
+                if trace is not None:
+                    trace.result = result
+                return result
+
+    async def _async_generate_task_data(
+        self,
+        task: ai_task.GenDataTask,
+        chat_log: conversation.ChatLog,
+    ) -> ai_task.GenDataTaskResult:
         # Core has already assembled a caller-supplied API with the task context.
         # Reuse our exchange/budget; never import this agent's custom Functions.
         snapshot, tools = (
@@ -484,15 +499,11 @@ class ExtendedOpenAITaskEntity(
 
         clear_entity_retirement_failure(self)
 
-        # Extract response
-        if not isinstance(chat_log.content[-1], conversation.AssistantContent):
-            raise HomeAssistantError(
-                "Last content in chat log is not an AssistantContent"
-            )
-
-        text = final_assistant_text(
+        text = final_assistant_answer(
             chat_log.content, separator="" if task.structure else "\n\n"
         )
+        if text is None:
+            raise HomeAssistantError("AI Task completed without assistant output")
 
         # Handle structured output
         if not task.structure:

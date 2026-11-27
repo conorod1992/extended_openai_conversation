@@ -87,10 +87,6 @@ def _stored_provider_ids(hass: Any) -> set[str]:
     return result
 
 
-class _DelayedQueueCleanupDeferred(Exception):
-    """The shared queue could not confirm that it erased a removed agent."""
-
-
 class _ProviderCleanupDeferred(Exception):
     """Shared provider recovery must finish before the owner's journal is erased."""
 
@@ -182,9 +178,10 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                 else:
                     await async_remove_stored_agent_calls(hass, entry_id, subentry_id)
             except (HomeAssistantError, OSError, ValueError, TypeError) as err:
-                # Keep the private files for orphan discovery on retry or restart.
-                # The queue's loader owns quarantine, including the saved jobs.
-                raise _DelayedQueueCleanupDeferred(type(err).__name__) from err
+                # The full queue sweep finds deleted owners directly from saved
+                # records and current config entries, even after a restart.
+                log_handled_failure(_LOGGER, "Scheduled Actions cleanup deferred", err)
+                _schedule_cleanup_retry(hass)
             await async_remove_agent_transfers(hass, entry_id, subentry_id)
             key = (entry_id, subentry_id)
             for suffix in _MANAGER_KEYS:
@@ -225,12 +222,6 @@ async def _async_delete_discovered_agent(
 ) -> bool:
     try:
         await async_delete_agent_data(hass, entry_id, subentry_id)
-    except _DelayedQueueCleanupDeferred as err:
-        _LOGGER.warning(
-            "Private agent data cleanup deferred until the delayed tool queue "
-            "can be read and updated (%s)",
-            err,
-        )
     except _ProviderCleanupDeferred as err:
         _LOGGER.warning(
             "Private agent data cleanup deferred until shared provider recovery completes (%s)",

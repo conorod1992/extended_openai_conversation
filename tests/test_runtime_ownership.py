@@ -482,7 +482,7 @@ async def test_prefetch_uses_resolved_owner_and_records_each_retrieval_once(
         async_active=AsyncMock(side_effect=active)
     )
     agent._async_select_memories = select
-    trace = SimpleNamespace(phases_ms={}, memory={})
+    trace = SimpleNamespace(phases_ms={}, memory={}, completed_at=None)
     token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
         assert await agent._async_retrieve_memories(None, "query") == []

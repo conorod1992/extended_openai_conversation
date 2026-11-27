@@ -151,8 +151,8 @@ async def test_model_catalog_candidate_skips_retired_dynamic_routes(
         )
         is True
     )
-    build.assert_called_once()
-    assert build.call_args.args[0] == options
+    assert build.call_count == 3
+    assert all(call.args[0] == options for call in build.call_args_list)
 
 
 @pytest.mark.asyncio

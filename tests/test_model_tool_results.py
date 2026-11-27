@@ -149,3 +149,30 @@ def test_oversized_non_result_envelope_reaches_the_provider_as_a_bounded_notice(
     assert wire["execution_completed"] is True
     assert "details" not in wire and oversized not in wire["message"]
     assert content.tool_result == {"details": oversized}
+
+
+@pytest.mark.parametrize("guest", [False, True])
+def test_knowledge_search_bounds_both_filter_lists_after_search(guest):
+    applied = [f"applied-{i}-" + '"' * 150 for i in range(200)]
+    ignored = [f"ignored-{i}-" + "\\" * 150 for i in range(200)]
+    original = {
+        "results": [{"source_id": applied[-1], "snippet": "Matching evidence"}],
+        "source_filter": {
+            "applied_source_ids": applied,
+            "ignored_source_ids": ignored,
+            "fell_back_to_all_sources": False,
+        },
+    }
+    result = model_tool_results.knowledge_search_payload(
+        original, filter_requested=True, policy_filter_applied=guest
+    )
+    metadata = result["source_filter"]
+    for name, ids in [("applied", applied), ("ignored", ignored)]:
+        assert metadata[f"{name}_source_ids_truncated"] is True
+        assert metadata[f"{name}_source_count"] == len(ids)
+        retained = metadata[f"{name}_source_ids"]
+        assert 0 < len(retained) < len(ids)
+        assert retained == ids[: len(retained)]
+    assert len(model_tool_results.compact_tool_json(metadata)) < 4300
+    assert result["results"] == original["results"]
+    assert original["source_filter"]["applied_source_ids"] == applied

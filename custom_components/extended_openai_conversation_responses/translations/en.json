@@ -652,8 +652,8 @@
       "description": "**{store}** for **{assistant}** needs recovery. Preserve the existing files and backups. If a restore is pending, restart Home Assistant to resume it. Otherwise review Backup & Restore and recover into a clean assistant when needed."
     },
     "retired_model": {
-            "title": "Extended OpenAI assistant uses a retired model",
-            "description": "The assistant **{assistant}** requested **{model}**. OpenAI scheduled this model for shutdown on **{shutdown_at}**, and the provider has now rejected it as unavailable. Review Model & responses and Request Rule model overrides in Extended OpenAI Conversation."
+            "title": "Retired model choices for an Extended OpenAI assistant",
+            "description": "OpenAI rejected the model choices **{model}** for **{assistant}** after their scheduled shutdown dates (**{shutdown_at}**). Review Model & responses and Request Rule model overrides in Extended OpenAI Conversation."
         }
     }
 }

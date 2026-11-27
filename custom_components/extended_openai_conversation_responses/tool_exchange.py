@@ -37,7 +37,10 @@ from .ha_tool_result_compat import (
     is_tool_result_content,
     make_tool_result_content,
 )
-from .model_search_hardening import _require_nonblank_query
+from .model_search_hardening import (
+    MAX_MEMORY_SEARCH_QUERY_CHARACTERS,
+    _require_nonblank_query,
+)
 from .public_errors import sanitize_backend_error
 from .tool_replay_guard import (
     async_was_unacknowledged_equivalent,
@@ -418,7 +421,12 @@ async def _async_validate_recoverable_call(
         and tool_input.tool_name == runtime_function_tool_name(family, "search")
     ):
         try:
-            _require_nonblank_query(arguments)
+            _require_nonblank_query(
+                arguments,
+                max_length=MAX_MEMORY_SEARCH_QUERY_CHARACTERS
+                if family == "memory"
+                else None,
+            )
         except ValueError as err:
             return correctable_validation_failure(HomeAssistantError(str(err)))
 

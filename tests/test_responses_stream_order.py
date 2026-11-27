@@ -644,3 +644,145 @@ async def test_terminal_output_count_is_bounded_before_replay(monkeypatch):
     frame = event("response.completed", response=SimpleNamespace(output=items))
     with pytest.raises(ProviderStreamError, match="local safety limits"):
         _ = [value async for value in ordered_output_events(stream([frame]))]
+
+
+@pytest.mark.parametrize("terminal_has_snapshot", [False, True])
+async def test_legacy_introduced_message_requires_completion(terminal_has_snapshot):
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+
+    opening = SimpleNamespace(type="message", id="message")
+    complete = SimpleNamespace(
+        type="message",
+        id="message",
+        status="completed",
+        role="assistant",
+        content=[SimpleNamespace(type="output_text", text="Light is on")],
+    )
+    frames = [
+        event("response.output_item.added", item=opening),
+        event("response.output_text.delta", item_id="message", delta="Light is "),
+        event(
+            "response.completed",
+            response=SimpleNamespace(
+                usage=None,
+                output=[complete] if terminal_has_snapshot else [],
+            ),
+        ),
+    ]
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    seen = []
+    parser = entity._transform_responses_stream(
+        SimpleNamespace(content=[]), stream(frames)
+    )
+    if terminal_has_snapshot:
+        seen = [delta.get("content", "") async for delta in parser]
+        assert "".join(seen) == "Light is on"
+    else:
+        with pytest.raises(ProviderStreamError, match="unfinished legacy output item"):
+            async for delta in parser:
+                seen.append(delta.get("content", ""))
+        assert not any(seen)
+
+
+@pytest.mark.parametrize("completion", ["part", "item"])
+async def test_conflicting_text_snapshot_cannot_supply_a_suffix(completion):
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+
+    item = SimpleNamespace(
+        type="message",
+        content=[
+            SimpleNamespace(type="output_text", text="Light is off"),
+        ],
+    )
+    frames = [
+        event("response.output_item.added", output_index=0, item=item),
+        event(
+            "response.output_text.delta",
+            output_index=0,
+            content_index=0,
+            delta="Light is on",
+        ),
+    ]
+    if completion == "part":
+        frames.append(
+            event(
+                "response.output_text.done",
+                output_index=0,
+                content_index=0,
+                text="Light is off",
+            )
+        )
+    frames.extend(
+        [
+            event("response.output_item.done", output_index=0, item=item),
+            event("response.completed", response=SimpleNamespace(usage=None)),
+        ]
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    seen = []
+    with pytest.raises(ProviderStreamError, match="completed message text conflicts"):
+        async for delta in entity._transform_responses_stream(
+            SimpleNamespace(content=[]), stream(frames)
+        ):
+            seen.append(delta.get("content", ""))
+    assert not any(seen)
+
+
+async def test_later_part_waits_for_completed_earlier_text():
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+
+    item = SimpleNamespace(
+        type="message",
+        phase="final_answer",
+        content=[
+            SimpleNamespace(type="output_text", text="Status: "),
+            SimpleNamespace(type="output_text", text="Off."),
+        ],
+    )
+    frames = [
+        event("response.output_item.added", output_index=0, item=item),
+        event(
+            "response.output_text.delta", output_index=0, content_index=0, delta="St"
+        ),
+        event(
+            "response.output_text.delta", output_index=0, content_index=1, delta="Off"
+        ),
+        event(
+            "response.output_text.done", output_index=0, content_index=1, text="Off."
+        ),
+        event("response.output_item.done", output_index=0, item=item),
+        event("response.completed", response=SimpleNamespace(usage=None)),
+    ]
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    deltas = [
+        delta.get("content", "")
+        async for delta in entity._transform_responses_stream(
+            SimpleNamespace(content=[]),
+            stream(frames),
+        )
+    ]
+    assert "".join(deltas) == "Status: Off."
+
+
+async def test_terminal_snapshot_conflicting_with_completed_message_is_rejected():
+    completed = SimpleNamespace(
+        id="message",
+        type="message",
+        role="assistant",
+        content=[SimpleNamespace(type="output_text", text="Light is on")],
+    )
+    conflicting = SimpleNamespace(
+        **{**vars(completed), "content": [SimpleNamespace(type="output_text", text="Light is off")]},
+    )
+    frames = [
+        event("response.output_item.done", output_index=0, item=completed),
+        event("response.completed", response=SimpleNamespace(output=[conflicting])),
+    ]
+    with pytest.raises(ProviderStreamError, match="terminal output conflicts"):
+        _ = [frame async for frame in ordered_output_events(stream(frames))]

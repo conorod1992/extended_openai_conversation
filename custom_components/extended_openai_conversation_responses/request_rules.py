@@ -13,7 +13,7 @@ from collections.abc import (
 )
 from contextlib import suppress
 from contextvars import ContextVar
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from functools import lru_cache
 from hashlib import sha256
@@ -60,6 +60,7 @@ from .helpers import (
     get_reasoning_effort_options,
 )
 from .model_catalog import all_reasoning_efforts
+from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .persistence_hardening import (
     StorageRepairRequired,
@@ -284,6 +285,8 @@ class _MatchCursor:
 class RequestRuleStore(PropagatingWriteStore):
     """Versioned private Home Assistant storage."""
 
+    _null_payload_label = "Request Rules"
+
     def __init__(self, hass: HomeAssistant, version: int, key: str) -> None:
         """Initialize private, atomic Request Rule storage."""
         super().__init__(hass, version, key, private=True, atomic_writes=True)
@@ -292,6 +295,8 @@ class RequestRuleStore(PropagatingWriteStore):
         self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
     ) -> dict[str, Any]:
         """Migrate additive Request Rule storage changes."""
+        if old_data is None:
+            self._raise_null_payload_repair()
         if old_major_version == 1:
             return {
                 "wording_groups": _copy_wording_groups(DEFAULT_WORDING_GROUPS),
@@ -396,6 +401,8 @@ class RequestRules:
         self._unsubscribe_stop: Callable[[], None] | None = None
         self._diagnostics: dict[str, str] = {}
         self._wording_diagnostics: dict[str, int] = {}
+        self._committed_diagnostics = self._diagnostics
+        self._committed_wording_diagnostics = self._wording_diagnostics
         self._lock = asyncio.Lock()
         self._initialized = False
         self._retired = False
@@ -489,9 +496,9 @@ class RequestRules:
                             "defaults", DEFAULT_MATCHING
                         )
                     except ValueError:
-                        _LOGGER.warning("Ignoring invalid stored Request Rule defaults")
+                        _LOGGER.warning("Stored Request Rule defaults require repair")
                         migrated = True
-                        self._repair_required = True
+                        self._repair_required = self._routing_repair_required = True
                     try:
                         self._wording_groups = validate_wording_groups(
                             stored.get("wording_groups", DEFAULT_WORDING_GROUPS),
@@ -571,7 +578,7 @@ class RequestRules:
                         )
                         migrated = True
                         self._repair_required = True
-                migrated = self._sort_and_compile() or migrated
+                migrated = await self._async_sort_and_compile() or migrated
                 if self._repair_required:
                     _LOGGER.warning(
                         "Request Rules store=%s needs repair; %d validated rules kept in memory. Automatic rewrites are suspended",
@@ -783,7 +790,7 @@ class RequestRules:
                 for rule in prepared["rules"]
             ]
             self._discard_condition_checkers()
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked(replacing=True)
 
     async def async_set_defaults(
@@ -794,7 +801,7 @@ class RequestRules:
         async with self._lock:
             self._require_revision_locked(expected_revision)
             self._defaults = defaults
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked()
         return dict(defaults)
 
@@ -806,7 +813,7 @@ class RequestRules:
         async with self._lock:
             self._require_revision_locked(expected_revision)
             self._wording_groups = groups
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked()
         return _copy_wording_groups(groups)
 
@@ -824,7 +831,7 @@ class RequestRules:
             self._require_revision_locked(expected_revision)
             self._defaults = defaults
             self._wording_groups = groups
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked()
             revision = self.revision()
         return {
@@ -856,13 +863,17 @@ class RequestRules:
             self._require_group(rule)
             if any(item["id"] == rule["id"] for item in self._rules):
                 raise ValueError("rule id already exists")
-            _validate_total_pattern_states(
-                [*self._rules, rule], inactive_rule_ids=self._inactive_diagnostic_ids()
+            await asyncio.to_thread(
+                _validate_total_pattern_states,
+                [*self._rules, rule],
+                inactive_rule_ids=self._inactive_diagnostic_ids(),
             )
+            if check_configuration is not None:
+                check_configuration()
             self._rules.append(rule)
-            self._sort_and_compile()
+            await self._async_sort_and_compile(check_configuration)
             await self._async_save_locked()
-        return dict(rule)
+        return self.rule_snapshot(rule["id"])
 
     def preserves_inactive_pattern(
         self, rule_id: str, value: Mapping[str, Any]
@@ -970,10 +981,13 @@ class RequestRules:
             self._require_group(rule)
             prospective = deepcopy(self._rules)
             prospective[index] = rule
-            _validate_total_pattern_states(
+            await asyncio.to_thread(
+                _validate_total_pattern_states,
                 prospective,
                 inactive_rule_ids=self._inactive_diagnostic_ids() - {rule_id},
             )
+            if check_configuration is not None:
+                check_configuration()
             self._rules[index] = rule
             self._discard_condition_checkers(rule_id)
             match_fields = (
@@ -989,9 +1003,9 @@ class RequestRules:
             ):
                 self._refresh_snapshot_rule(rule_id, rule)
             else:
-                self._sort_and_compile()
+                await self._async_sort_and_compile(check_configuration)
             await self._async_save_locked()
-        return dict(rule)
+        return self.rule_snapshot(rule_id)
 
     async def async_delete(
         self, rule_id: str, *, expected_revision: str | None = None
@@ -1002,7 +1016,7 @@ class RequestRules:
             index = self._index(rule_id)
             del self._rules[index]
             self._discard_condition_checkers(rule_id)
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked()
         return True
 
@@ -1028,13 +1042,15 @@ class RequestRules:
             prospective.insert(source_index + 1, rule)
             for order, item in enumerate(prospective):
                 item["order"] = order
-            _validate_total_pattern_states(
-                prospective, inactive_rule_ids=self._inactive_diagnostic_ids()
+            await asyncio.to_thread(
+                _validate_total_pattern_states,
+                prospective,
+                inactive_rule_ids=self._inactive_diagnostic_ids(),
             )
             self._rules = prospective
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked()
-        return dict(rule)
+        return self.rule_snapshot(rule["id"])
 
     async def async_move(
         self,
@@ -1080,7 +1096,7 @@ class RequestRules:
             # previously admitted subset. Healthy collections keep the
             # zero-recompile fast path and compiled pattern identities.
             if self._diagnostics:
-                self._sort_and_compile()
+                await self._async_sort_and_compile()
             else:
                 self._reorder_matching_snapshot()
             await self._async_save_locked()
@@ -1325,7 +1341,46 @@ class RequestRules:
                 return index
         raise ValueError("Request Rule not found")
 
-    def _sort_and_compile(self) -> bool:
+    async def _async_sort_and_compile(
+        self, check_configuration: Callable[[], None] | None = None
+    ) -> bool:
+        """Compile an owned candidate without touching HA state from the worker."""
+        candidate = copy(self)
+        # Sorting writes order into each rule. Compilation independently copies
+        # authored action and match data before building the immutable snapshot.
+        candidate._rules = [dict(rule) for rule in self._rules]
+        loop = asyncio.get_running_loop()
+
+        def validate_local_action(
+            action: Mapping[str, Any], captures: set[str]
+        ) -> None:
+            async def validate() -> None:
+                _validate_action("local_action", action, capture_names=captures)
+
+            # HA template schema validators require the event-loop thread.
+            asyncio.run_coroutine_threadsafe(validate(), loop).result()
+
+        try:
+            changed = await async_settle_owned_operation(
+                asyncio.to_thread(candidate._sort_and_compile, validate_local_action)
+            )
+            self._require_current_owner()
+            if check_configuration is not None:
+                check_configuration()
+        except BaseException:
+            self._restore_committed_state()
+            raise
+        self._rules = candidate._rules
+        self._matching_snapshot = candidate._matching_snapshot
+        self._diagnostics = candidate._diagnostics
+        self._wording_diagnostics = candidate._wording_diagnostics
+        return changed
+
+    def _sort_and_compile(
+        self,
+        validate_local_action: Callable[[Mapping[str, Any], set[str]], None]
+        | None = None,
+    ) -> bool:
         """Sort, reindex, compile safe rules, and retain diagnostics for unsafe ones."""
         raw_wording = tuple(
             (g["canonical"], tuple(g["alternatives"])) for g in self._wording_groups
@@ -1424,13 +1479,20 @@ class RequestRules:
                 rule[MATCH_REPAIR] = repair_issue
             else:
                 try:
-                    _validate_action(
-                        rule["action_type"],
-                        rule["action"],
-                        capture_names=phrase_slots[0]
+                    captures = (
+                        phrase_slots[0]
                         if rule["match_type"] == "sentence_pattern"
-                        else set(),
+                        else set()
                     )
+                    if (
+                        validate_local_action is not None
+                        and rule["action_type"] == "local_action"
+                    ):
+                        validate_local_action(rule["action"], captures)
+                    else:
+                        _validate_action(
+                            rule["action_type"], rule["action"], capture_names=captures
+                        )
                 except ValueError as err:
                     diagnostics[rule["id"]] = f"Action is inactive: {err}"
                     continue
@@ -1482,6 +1544,9 @@ class RequestRules:
             self._async_reconcile_failed_save if reconcile_failure else None,
             self._invalidate_after_unreadable_store,
         )
+        self._notify_change()
+
+    def _notify_change(self) -> None:
         if self._on_change is not None:
             try:
                 self._on_change()
@@ -1522,7 +1587,9 @@ class RequestRules:
         self._groups = deepcopy(disk_state._groups)
         self._rules = deepcopy(disk_state._rules)
         self._revision_generation = disk_state._revision_generation
-        self._sort_and_compile()
+        self._matching_snapshot = disk_state._matching_snapshot
+        self._diagnostics = disk_state._diagnostics
+        self._wording_diagnostics = disk_state._wording_diagnostics
         if matches_committed and not matches_candidate:
             # The failed mutation did not reach disk. Keep its revision unchanged.
             self._committed_state = deepcopy(disk_snapshot)
@@ -1533,6 +1600,8 @@ class RequestRules:
             # manager's committed baseline, including its durable revision.
             self._remember_committed_state()
         self._initialized = not self._retired
+        if self._initialized and not matches_committed:
+            self._notify_change()
 
     def _invalidate_after_unreadable_store(self) -> None:
         """Fail closed when the authoritative Request Rules file cannot be read."""
@@ -1565,6 +1634,8 @@ class RequestRules:
         # Assist reads one immutable committed generation without waiting behind
         # management I/O. Candidate compilation never grants execution authority.
         self._committed_matching_snapshot = self._matching_snapshot
+        self._committed_diagnostics = self._diagnostics
+        self._committed_wording_diagnostics = self._wording_diagnostics
 
     def _restore_committed_state(self) -> None:
         snapshot = self._committed_state
@@ -1577,7 +1648,9 @@ class RequestRules:
         self._groups = deepcopy(snapshot["groups"])
         self._rules = deepcopy(snapshot["rules"])
         self._revision_generation = self._committed_revision_generation
-        self._sort_and_compile()
+        self._matching_snapshot = self._committed_matching_snapshot
+        self._diagnostics = self._committed_diagnostics
+        self._wording_diagnostics = self._committed_wording_diagnostics
 
 
 class _ConversationRoute(NamedTuple):

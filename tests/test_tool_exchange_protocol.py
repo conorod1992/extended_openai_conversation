@@ -150,13 +150,12 @@ def _malformed_tool_stream() -> FakeStream:
 
 
 def _final_stream(text: str = "Done") -> FakeStream:
+    marker = SimpleNamespace(type="message")
     return FakeStream(
         [
-            _event(
-                "response.output_item.added",
-                item=SimpleNamespace(type="message"),
-            ),
+            _event("response.output_item.added", item=marker),
             _event("response.output_text.delta", delta=text),
+            _event("response.output_item.done", item=marker),
             _completed_event(),
         ]
     )

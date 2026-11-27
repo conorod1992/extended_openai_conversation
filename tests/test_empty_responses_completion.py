@@ -130,8 +130,10 @@ async def exercise_empty_responses_completion(
         "failed": "response failed",
         "in_progress": "before a terminal event",
     }.get(status)
-    if status == "completed" and shape in {"empty", "reasoning", "commentary"} and action_first:
-        expected_error = "completed without assistant output after tool results"
+    if status == "completed" and shape in {"empty", "reasoning", "commentary"}:
+        expected_error = "completed without assistant output"
+        if action_first:
+            expected_error += " after tool results"
     async with completion_event_scope():
         try:
             if expected_error:
@@ -164,25 +166,21 @@ async def exercise_empty_responses_completion(
         elif shape == "commentary":
             assert log.content[-1].native == items[0]
         else:
-            assert log.content[-1].role == "tool_result"
+            assert log.content[-1].role == ("tool_result" if action_first else "user")
         results = [
             item
             for item in log.content
             if is_tool_result_content(item) and item.tool_call_id == "action"
         ]
-        assert len(results) == 1 and tool_result_data(results[0]) == {
-            "result": "executed once"
-        }
+        assert len(results) == int(action_first)
+        if action_first:
+            assert tool_result_data(results[0]) == {"result": "executed once"}
         assert not any(
             isinstance(item, conversation.AssistantContent)
             and item.content == ""
             and not item.tool_calls
             for item in log.content
         )
-        return
-    if shape == "empty":
-        assert log.content[-1].role == "user"
-        assert not log.unresponded_tool_results
         return
     assert isinstance(log.content[-1], conversation.AssistantContent)
     assert not log.unresponded_tool_results
@@ -215,7 +213,7 @@ async def exercise_empty_responses_completion(
 
 @pytest.mark.parametrize("streaming", [True, False], ids=["streamed", "completed"])
 @pytest.mark.parametrize("action_first", [False, True], ids=["direct", "after-action"])
-@pytest.mark.parametrize("shape", ["empty", "message", "reasoning", "spoken"])
+@pytest.mark.parametrize("shape", ["empty", "message", "reasoning", "commentary", "spoken"])
 async def test_responses_completed_output_terminates(
     hass, monkeypatch, streaming, action_first, shape
 ):

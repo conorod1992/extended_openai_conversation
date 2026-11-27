@@ -106,7 +106,6 @@ from .context import (
     trim_local_turn_history,
 )
 from .continuity import (
-    GUEST_CONTINUITY_NAMESPACE,
     ConversationContinuity,
     async_get_continuity,
     chat_log_admission_scope,
@@ -223,7 +222,10 @@ from .memory import (
 )
 from .memory_tool_arguments import normalise_memory_tool_arguments
 from .model_lifecycle import clear_entity_retirement_failure
-from .model_search_hardening import _require_nonblank_query
+from .model_search_hardening import (
+    MAX_MEMORY_SEARCH_QUERY_CHARACTERS,
+    _require_nonblank_query,
+)
 from .model_tool_results import (
     _compact_memory_result,
     bounded_record_page,
@@ -301,7 +303,11 @@ from .tool_replay_guard import (
     remember_unacknowledged_calls,
 )
 from .usage import async_get_usage, extract_usage, usage_retention_policy
-from .voice_identity_runtime import voice_identity_scope, voice_source_device_id
+from .voice_identity_runtime import (
+    voice_identity_scope,
+    voice_mapping_source_id,
+    voice_source_device_id,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -309,6 +315,9 @@ _LOGGER = logging.getLogger(__name__)
 # Live changes may tighten this policy; nested requests resolve their own policy.
 _ACTIVE_GUEST_POLICY: ContextVar[GuestCapabilityPolicy | None] = ContextVar(
     "extended_openai_active_guest_policy", default=None
+)
+_ACTIVE_GUEST_CONTINUITY_ACCESS: ContextVar[object] = ContextVar(
+    "extended_openai_guest_continuity_access", default=None
 )
 _ACTIVE_FUNCTION_CONFIG: ContextVar[
     tuple[list[dict[str, Any]], list[dict[str, Any]] | None] | None
@@ -941,13 +950,17 @@ class ExtendedOpenAIAgentEntity(
             llm_context = user_input.as_llm_context(DOMAIN)
             llm_context_token = _ACTIVE_LLM_CONTEXT.set(llm_context)
             request_policy = self._resolve_live_guest_policy()
+            guest_access = self._guest_continuity_access(request_policy)
             guest_policy_token = _ACTIVE_GUEST_POLICY.set(request_policy)
+            guest_access_token = _ACTIVE_GUEST_CONTINUITY_ACCESS.set(guest_access)
             try:
                 source_device_id = voice_source_device_id(user_input)
                 scope = resolve_data_scope(
                     SimpleNamespace(
                         context=llm_context.context,
-                        device_id=source_device_id,
+                        device_id=voice_mapping_source_id(
+                            user_input, self.subentry.data
+                        ),
                     ),
                     self.subentry.data,
                 )
@@ -962,6 +975,11 @@ class ExtendedOpenAIAgentEntity(
                 source_device_id = source_device_id or scope.device_id
                 if self._continuity is None:
                     return self._agent_not_ready_result(user_input)
+                guest_namespace = (
+                    self._continuity.guest_namespace(guest_access)
+                    if guest_access is not None
+                    else None
+                )
                 resolution = await self._continuity.async_resolve(
                     continuity_mode,
                     scope,
@@ -975,11 +993,7 @@ class ExtendedOpenAIAgentEntity(
                         context=user_input.context,
                     ),
                     timeout_minutes,
-                    namespace=(
-                        GUEST_CONTINUITY_NAMESPACE
-                        if request_policy.guest_active
-                        else None
-                    ),
+                    namespace=guest_namespace,
                     native_user_id=user_input.context.user_id,
                 )
                 provisional_claim = ProvisionalConversationIDClaim(
@@ -995,6 +1009,7 @@ class ExtendedOpenAIAgentEntity(
                         scope,
                         resolved_conversation_id,
                         guest_active=request_policy.guest_active,
+                        guest_namespace=guest_namespace,
                         provisional_claim=provisional_claim,
                     )
                     if claimed_conversation_id != resolved_conversation_id:
@@ -1020,6 +1035,7 @@ class ExtendedOpenAIAgentEntity(
                         )
                     )
             finally:
+                _ACTIVE_GUEST_CONTINUITY_ACCESS.reset(guest_access_token)
                 _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
         finally:
             if llm_context_token is not None:
@@ -1675,6 +1691,7 @@ class ExtendedOpenAIAgentEntity(
                     continue_mode == CONTINUE_CONVERSATION_CONDITIONAL
                 ),
                 function_tools_factory=self._get_function_tools,
+                before_provider_request=self._require_guest_continuity_access,
                 function_group_loader=(
                     self._load_function_groups if group_session_active else None
                 ),
@@ -1742,7 +1759,7 @@ class ExtendedOpenAIAgentEntity(
             ),
             continue_conversation=_resolve_continue_conversation(
                 continue_mode,
-                chat_log.continue_conversation,
+                original_text.strip().endswith(("?", ";", "ï¼Ÿ")),
                 conditional_decision,
             ),
         )
@@ -2374,38 +2391,20 @@ class ExtendedOpenAIAgentEntity(
     def _skill_loader_reachable(
         self, admitted: list[dict[str, Any]], admission: FunctionToolAdmission
     ) -> bool:
-        from .function_groups import is_function_group_loader
-        from .skill_availability import (
-            SKILL_LOADER_TOOL_NAME,
-            function_group_for_tool,
-            is_canonical_skill_loader,
-        )
+        from .function_groups import skill_loader_reachable
 
-        if not admission.function_calls_available:
-            return False
-        if any(map(is_canonical_skill_loader, admitted)):
-            return True
-        loader = next(
-            (tool for tool in admitted if is_function_group_loader(tool)), None
-        )
-        if loader is None:
-            return False
-        configured = self._get_configured_function_tools()
-        group = function_group_for_tool(
-            SKILL_LOADER_TOOL_NAME, _request_function_groups(self, configured)
-        )
-        if (
-            group is None
-            or group["id"]
-            not in loader["spec"]["parameters"]["properties"]["groups"]["items"]["enum"]
-        ):
-            return False
-        return (
-            admission.max_tools is None
-            or self._load_function_groups([group["id"]], admission, preview=True).get(
-                "status"
-            )
-            == "success"
+        return skill_loader_reachable(
+            admitted,
+            admission,
+            lambda: _request_function_groups(
+                self, self._get_configured_function_tools()
+            ),
+            lambda group_id: (
+                self._load_function_groups([group_id], admission, preview=True).get(
+                    "status"
+                )
+                == "success"
+            ),
         )
 
     def _get_exposed_entities(self) -> list[dict[str, Any]]:
@@ -2423,6 +2422,30 @@ class ExtendedOpenAIAgentEntity(
         return resolve_guest_policy(
             self.hass, self.subentry.data, self._guest_mode, configured
         )
+
+    def _require_guest_continuity_access(self) -> None:
+        admitted = _ACTIVE_GUEST_CONTINUITY_ACCESS.get()
+        if admitted is not None and admitted != self._guest_continuity_access(
+            self._effective_guest_policy()
+        ):
+            raise HomeAssistantError(
+                "Guest access changed during this request; please start a new turn"
+            )
+
+    def _guest_continuity_access(self, policy: GuestCapabilityPolicy) -> object:
+        if not policy.guest_active:
+            return None
+        # Source IDs cover the otherwise unbounded "all sources" policy.
+        knowledge = getattr(self, "_knowledge", None)
+        options = self.subentry.data
+        allowed_sources = (
+            knowledge.enabled_source_ids(policy.knowledge_source_ids)
+            if policy.knowledge_access
+            and options.get(CONF_KNOWLEDGE_ENABLED)
+            and optional_manager_ready(knowledge)
+            else frozenset()
+        )
+        return policy, allowed_sources, options.get(CONF_SHARED_MEMORY_MODE)
 
     def _effective_guest_policy(self) -> GuestCapabilityPolicy:
         """Hold request permissions stable while allowing mid-request tightening."""
@@ -3059,11 +3082,16 @@ class ExtendedOpenAIAgentEntity(
     @property
     def _knowledge_available(self) -> bool:
         """Return whether an enabled, populated library is ready."""
+        policy = self._effective_guest_policy()
         return bool(
-            self._effective_guest_policy().knowledge_access
+            policy.knowledge_access
             and self.subentry.data.get(CONF_KNOWLEDGE_ENABLED, False)
             and optional_manager_ready(self._knowledge)
-            and self._knowledge.source_count > 0
+            and (
+                self._knowledge.source_count > 0
+                if policy.knowledge_source_ids is None
+                else self._knowledge.has_enabled_sources(policy.knowledge_source_ids)
+            )
         )
 
     async def _async_execute_knowledge_tool(
@@ -3072,7 +3100,12 @@ class ExtendedOpenAIAgentEntity(
         """Execute a read-only Knowledge Library operation."""
         if operation == "search":
             _require_nonblank_query(arguments)
-        if not self._knowledge_available or self._knowledge is None:
+        policy = self._effective_guest_policy()
+        if (
+            not policy.knowledge_access
+            or not self.subentry.data.get(CONF_KNOWLEDGE_ENABLED, False)
+            or not optional_manager_ready(self._knowledge)
+        ):
             raise RuntimeError("Knowledge Library is unavailable")
         if operation == "search":
             query = arguments.get("query")
@@ -3096,7 +3129,7 @@ class ExtendedOpenAIAgentEntity(
             if source_ids == []:
                 source_ids = None
             allowed_ids, ignored_ids = self._knowledge.resolve_source_filter(source_ids)
-            policy_ids = self._effective_guest_policy().knowledge_source_ids
+            policy_ids = policy.knowledge_source_ids
             if policy_ids is not None:
                 valid_policy_ids, _private_ignored = (
                     self._knowledge.resolve_source_filter(list(policy_ids))
@@ -3167,7 +3200,7 @@ class ExtendedOpenAIAgentEntity(
                 query,
                 limit,
                 offset,
-                self._effective_guest_policy().knowledge_source_ids,
+                policy.knowledge_source_ids,
             )
             return omit_null_paging_cursor(
                 bounded_record_page(page, "sources"), "next_offset"
@@ -3186,7 +3219,7 @@ class ExtendedOpenAIAgentEntity(
                 raise ValueError(
                     "source_id, start_character, or max_characters has an invalid type"
                 )
-            allowed_sources = self._effective_guest_policy().knowledge_source_ids
+            allowed_sources = policy.knowledge_source_ids
             if allowed_sources is not None and source_id not in allowed_sources:
                 raise RuntimeError(GUEST_MODE_UNAVAILABLE)
             return omit_null_paging_cursor(
@@ -3206,7 +3239,9 @@ class ExtendedOpenAIAgentEntity(
             arguments, MEMORY_OPTIONAL_ARGUMENTS.get(operation, frozenset())
         )
         if operation == "search":
-            _require_nonblank_query(arguments)
+            _require_nonblank_query(
+                arguments, max_length=MAX_MEMORY_SEARCH_QUERY_CHARACTERS
+            )
         if not memory_enabled(self.subentry.data):
             raise RuntimeError("persistent memory is disabled")
         if not optional_manager_ready(self._memory):

@@ -426,3 +426,31 @@ def test_custom_statistics_period_contract_is_not_migrated() -> None:
     assert changed is False
     assert migrated == [original]
     assert prepared == original
+
+
+def test_responses_keeps_nested_open_object_non_strict():
+    tool = _preset_tool("execute_service_single")
+    tool["spec"].pop("strict", None)
+    tool["spec"]["parameters"] = {
+        "type": "object", "properties": {
+            "service_data": {"type": "object", "additionalProperties": {"type": "string"}},
+        },
+        "required": ["service_data"], "additionalProperties": False,
+    }
+    formatted = format_function_tools([tool], API_MODE_RESPONSES)
+    assert formatted[0]["strict"] is False
+    assert formatted[0]["parameters"]["properties"]["service_data"]["additionalProperties"] == {"type": "string"}
+
+
+def test_strict_schema_rejects_unknown_types_in_nested_definitions():
+    from custom_components.extended_openai_conversation_responses.function_execution import (
+        validate_strict_function_schema,
+    )
+
+    schema = {
+        "type": "object", "properties": {"field": {"$ref": "#/$defs/value"}},
+        "required": ["field"], "additionalProperties": False,
+        "$defs": {"value": {"anyOf": [{"type": "string"}, {"type": "str"}]}},
+    }
+    with pytest.raises(Exception, match="must name valid JSON types"):
+        validate_strict_function_schema(schema)

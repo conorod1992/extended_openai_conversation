@@ -246,7 +246,7 @@ def validate_strict_function_schema(schema: Mapping[str, Any]) -> None:
         types = node.get("type", [])
         types = [types] if isinstance(types, str) else types
         if not isinstance(types, list) or not all(
-            isinstance(item, str) for item in types
+            isinstance(item, str) and item in _JSON_TYPES for item in types
         ):
             raise _schema_error(f"strict `{path}.type` must name valid JSON types")
         if "object" in types or "properties" in node:

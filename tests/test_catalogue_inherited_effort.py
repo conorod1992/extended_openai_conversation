@@ -196,8 +196,9 @@ async def test_apply_checks_inherited_effort_without_overriding_explicit_route_e
         rule["action"]["reasoning_effort"] = "low"
     target = next(item for item in candidate["models"] if item["id"] == "gpt-5")
     target["reasoning"]["by_api"][api]["efforts"].remove("high")
-    for tool in target["tools"].values():
-        tool[api] = {"support": "always"}
+    target["tools"]["function"][api] = {"support": "always"}
+    if api == "responses":
+        target["tools"]["web_search"][api] = {"support": "always"}
     data.validate_catalog(candidate)
     original = deepcopy(options), deepcopy(rule)
     before = data.catalog_generation()

@@ -805,3 +805,133 @@ async def test_malformed_catalogue_store_falls_back_without_overwriting(
     assert "using bundled data" in check_manager.last_error
     assert check_manager.store.saved == raw
     assert check_manager.store.save_calls == 0
+
+
+@pytest.mark.parametrize("malformed", ["v3", "deep"])
+async def test_malformed_active_generation_preserves_independent_staged_update(
+    hass, malformed
+):
+    if malformed == "v3":
+        damaged = {
+            "schema_version": 3,
+            "catalog_version": 3,
+            "defaults": {},
+            "models": [None],
+        }
+    else:
+        nested = []
+        for _ in range(1200):
+            nested = [nested]
+        damaged = {
+            "schema_version": data.BUNDLED_CATALOG["schema_version"],
+            "extra": nested,
+        }
+    staged = _versioned_candidate()
+    manager = runtime.ModelCatalogManager(hass)
+    # Return the decoded Store payload, without adding a recursive copy in the test.
+    manager.store = SimpleNamespace(
+        async_load=AsyncMock(
+            return_value={"catalog": damaged, "available_catalog": staged}
+        ),
+        async_save=AsyncMock(),
+    )
+    await manager.async_load()
+    assert manager.catalog is None
+    assert manager.available_catalog == staged
+    assert manager.status()["last_error"]
+    manager.store.async_save.assert_not_awaited()
+
+
+@pytest.mark.parametrize("increment", [0, 1, 2])
+async def test_staged_integrity_and_failed_check_status_survive_restart(
+    check_manager, monkeypatch, increment
+):
+    staged = _versioned_candidate(increment=2)
+    _chunked_transport(monkeypatch, json.dumps(staged).encode())
+    assert (await check_manager.async_check(force=True))["check_outcome"] == "success"
+
+    replacement = _versioned_candidate(increment=increment)
+    replacement["models"][0]["display_name"] = "Different release"
+    _chunked_transport(monkeypatch, json.dumps(replacement).encode())
+    rejected = await check_manager.async_check(force=True)
+    assert rejected["check_outcome"] == "validation"
+    assert rejected["last_check_error"]
+    assert check_manager.available_catalog == staged
+
+    restarted = runtime.ModelCatalogManager(check_manager.hass)
+    restarted.store = check_manager.store
+    await restarted.async_load()
+    assert restarted.available_catalog == staged
+    assert (await restarted.async_check())["last_check_error"] == rejected[
+        "last_check_error"
+    ]
+
+    newer = _versioned_candidate(increment=3)
+    _chunked_transport(monkeypatch, json.dumps(newer).encode())
+    assert (await restarted.async_check(force=True))["last_check_error"] is None
+    assert restarted.available_catalog == newer
+
+
+async def test_explicit_bundled_reset_repairs_native_store_and_keeps_evidence(
+    hass, monkeypatch
+):
+    from pathlib import Path
+
+    manager = runtime.ModelCatalogManager(hass)
+    path = Path(manager.store.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    evidence = path.with_name(path.name + ".corrupt.test")
+    evidence.write_bytes(b"quarantined catalogue bytes")
+    await manager.async_load()
+    assert manager.store.corruption_unavailable
+    assert manager.status()["source"] == "bundled"
+    assert manager.status()["check_outcome"] == "unchecked"
+    assert not path.exists()
+    inventory = AsyncMock(side_effect=ValueError("Unavailable assistant"))
+    monkeypatch.setattr(manager, "_candidate_inventory", inventory)
+
+    result = await manager.async_reset()
+    assert result["last_error"] is None
+    inventory.assert_not_awaited()
+    assert evidence.read_bytes() == b"quarantined catalogue bytes"
+    assert not manager.store.corruption_unavailable
+    restarted = runtime.ModelCatalogManager(hass)
+    await restarted.async_load()
+    assert restarted.status()["last_error"] is None
+    assert restarted.catalog is None
+    staged = _versioned_candidate()
+    _chunked_transport(monkeypatch, json.dumps(staged).encode())
+    assert (await restarted.async_check(force=True))["update_available"]
+    assert evidence.read_bytes() == b"quarantined catalogue bytes"
+
+
+async def test_catalogue_setup_retry_cleans_up_partial_registration(hass, monkeypatch):
+    cancelled = Mock()
+    register = Mock(side_effect=[RuntimeError("registration failed"), None])
+    monkeypatch.setattr(
+        runtime, "async_track_time_interval", Mock(return_value=cancelled)
+    )
+    monkeypatch.setattr(runtime.websocket_api, "async_register_command", register)
+    monkeypatch.setattr(runtime.ModelCatalogManager, "async_load", AsyncMock())
+    with pytest.raises(RuntimeError, match="registration failed"):
+        await runtime.async_setup_model_catalog(hass)
+    assert runtime.DATA_MANAGER not in hass.data
+    assert runtime._DATA_REFRESH not in hass.data
+    cancelled.assert_called_once()
+
+    await runtime.async_setup_model_catalog(hass)
+    manager = hass.data[runtime.DATA_MANAGER]
+    await runtime.async_setup_model_catalog(hass)
+    assert hass.data[runtime.DATA_MANAGER] is manager
+    assert register.call_count == 2
+    runtime.async_stop_model_catalog_refresh(hass)
+
+
+def test_catalogue_rejects_hosted_web_search_on_chat_completions():
+    candidate = _versioned_candidate()
+    model = next(item for item in candidate["models"] if item["id"] == "gpt-4.1")
+    model["tools"]["web_search"]["chat_completions"] = {"support": "always"}
+    with pytest.raises(
+        ValueError, match="Hosted web search requires the Responses API"
+    ):
+        data.validate_catalog(candidate)

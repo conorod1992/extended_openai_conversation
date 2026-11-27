@@ -172,3 +172,104 @@ async def test_configuration_write_rechecks_revision_after_each_validation(
         dependencies.assert_not_awaited()
     else:
         dependencies.assert_awaited_once()
+
+
+async def test_unavailable_rules_allow_title_and_speech_but_block_route_changes(
+    routed_agent, monkeypatch
+):
+    hass, entry, subentry, _rules = routed_agent
+    subentry.data = repair.safe_function_configuration(subentry.data)
+    load = AsyncMock(
+        return_value=type("UnavailableRules", (), {"routing_available": False})()
+    )
+    monkeypatch.setattr(ui, "async_get_request_rules", load)
+    saved = await ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "configuration",
+            "action": "save",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+            "revision": repair.repair_revision(subentry),
+            "title": "Renamed agent",
+            "config": {"speech_strip_urls": True},
+        },
+    )
+    assert saved["valid"] is True
+    assert saved["title"] == "Renamed agent"
+    assert subentry.data["speech_strip_urls"] is True
+    load.assert_not_awaited()
+    with pytest.raises(HomeAssistantError, match="Request Rules"):
+        await _command(routed_agent, "configuration", "save", {"api_mode": "responses"})
+    load.assert_awaited_once()
+
+
+async def test_configuration_get_orders_after_in_progress_save(
+    routed_agent, monkeypatch
+):
+    hass, entry, subentry, _rules = routed_agent
+    subentry.data = repair.safe_function_configuration(subentry.data)
+    admitted, release = asyncio.Event(), asyncio.Event()
+    original = ui._async_save_configuration
+
+    async def hold(request):
+        admitted.set()
+        await release.wait()
+        return await original(request)
+
+    monkeypatch.setattr(ui, "_async_save_configuration", hold)
+    save = asyncio.create_task(
+        _command(routed_agent, "configuration", "save", {"speech_strip_urls": True})
+    )
+    await admitted.wait()
+    read = asyncio.create_task(
+        ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            {
+                "section": "configuration",
+                "action": "get",
+                "entry_id": entry.entry_id,
+                "subentry_id": subentry.subentry_id,
+            },
+        )
+    )
+    try:
+        await asyncio.sleep(0)
+        assert not read.done()
+    finally:
+        release.set()
+    saved, snapshot = await asyncio.gather(save, read)
+    assert snapshot["revision"] == saved["revision"]
+    assert snapshot["config"]["speech_strip_urls"] is True
+
+
+async def test_unsupported_reasoning_effort_is_editable(routed_agent):
+    hass, entry, subentry, rules = routed_agent
+    retained = rules.snapshot()["rules"][0]
+    await rules.async_update(retained["id"], {**retained, "enabled": False})
+    subentry.data = {
+        **repair.safe_function_configuration(subentry.data),
+        "chat_model": "gpt-5.6",
+        "reasoning_effort": "retired-effort",
+    }
+    read = await ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "configuration",
+            "action": "get",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+        },
+    )
+    assert read["config"]["reasoning_effort"] == "retired-effort"
+    result = await _command(
+        routed_agent, "configuration", "save", {"reasoning_effort": "medium"}
+    )
+    assert result["valid"]
+    assert subentry.data["reasoning_effort"] == "medium"

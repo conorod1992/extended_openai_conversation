@@ -199,3 +199,71 @@ def test_independent_endpoints_clear_persisted_openai_retirement_repairs(monkeyp
         delete.assert_called_once_with(hass, model_lifecycle.DOMAIN, issue_id)
         assert not model_lifecycle.confirmed_retirement_failure(hass, "entry", "agent", "gpt-5.1")
         delete.reset_mock()
+
+
+def test_retirement_reconciles_each_effective_model(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    hass = _hass()
+    create, delete = Mock(), Mock()
+    monkeypatch.setattr(model_lifecycle.ir, "async_create_issue", create)
+    monkeypatch.setattr(model_lifecycle.ir, "async_delete_issue", delete)
+    monkeypatch.setattr(
+        model_lifecycle,
+        "lifecycle_snapshot",
+        lambda model, **_kwargs: {
+            "model": model,
+            "status": "deprecated",
+            "shutdown_reached": True,
+            "shutdown_at": "2027-04-01",
+        },
+    )
+    monkeypatch.setattr(model_lifecycle, "log_deprecation_once", Mock())
+    subentry = SimpleNamespace(
+        subentry_id="agent",
+        subentry_type="conversation",
+        title="Kitchen",
+        data={"chat_model": "retired-default"},
+    )
+    entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry}, data={})
+    saved_rules = [
+        {
+            "enabled": True,
+            "action_type": "model_routing",
+            "action": {"model": "retired-override"},
+        }
+    ]
+    hass.data[request_rules._MANAGERS] = {
+        ("entry", "agent"): SimpleNamespace(
+            routing_available=True,
+            snapshot=lambda: {"rules": saved_rules},
+        ),
+    }
+    error = ProviderStreamError("missing", code="model_not_found", status_code=404)
+    for model in ("retired-default", "retired-override"):
+        model_lifecycle.record_retirement_failure(
+            hass,
+            entry_id="entry",
+            subentry_id="agent",
+            title="Kitchen",
+            model=model,
+            configured_model="retired-default",
+            error=error,
+        )
+    assert len(create.call_args.kwargs["data"]["failures"]) == 2
+    model_lifecycle.clear_retirement_failure(
+        hass,
+        entry_id="entry",
+        subentry_id="agent",
+        model="retired-default",
+    )
+    assert create.call_args.kwargs["data"]["model"] == "retired-override"
+    subentry.data = {"chat_model": "replacement"}
+    model_lifecycle.sync_entry_model_lifecycle(hass, entry)
+    assert model_lifecycle.confirmed_retirement_failure(
+        hass, "entry", "agent", "retired-override"
+    )
+    delete.assert_not_called()
+    saved_rules[0]["enabled"] = False
+    model_lifecycle.sync_entry_model_lifecycle(hass, entry)
+    delete.assert_called_once()

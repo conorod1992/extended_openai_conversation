@@ -152,6 +152,8 @@ async def async_request_rule_match_preview(
     text: Any,
 ) -> dict[str, Any]:
     """Test a match without executing actions or making a provider request."""
+    if not getattr(rules, "routing_available", True):
+        raise HomeAssistantError(request_rules.REQUEST_RULES_UNAVAILABLE)
     try:
         if hasattr(rules, "async_match_with_skipped"):
             match, skipped = await rules.async_match_with_skipped(hass, text)

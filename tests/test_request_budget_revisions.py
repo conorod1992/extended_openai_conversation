@@ -39,6 +39,7 @@ async def test_final_maintenance_does_not_reapply_earlier_round_usage(hass):
                         item=SimpleNamespace(type="message"),
                     ),
                     _event("response.output_text.delta", delta="Done"),
+                    _event("response.output_item.done", item=SimpleNamespace(type="message")),
                     second,
                 ]
             ),

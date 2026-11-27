@@ -1569,16 +1569,21 @@ async def _current_snapshot(
     *,
     include_usage: bool = True,
     capture_usage_revision: bool = False,
+    sections: frozenset[str] | None = None,
 ) -> backup.PreparedRestore:
     """Read durable current state for selective planning without mutating it."""
     try:
         from .restore_recovery import _durable_managers
 
+        section_options: dict[str, Any] = (
+            {"sections": sections} if sections is not None else {}
+        )
         managers = await _durable_managers(
             hass,
             entry.entry_id,
             subentry.subentry_id,
             include_usage=include_usage,
+            **section_options,
         )
     except ImportError:
         managers = await backup._managers(hass, entry.entry_id, subentry.subentry_id)
@@ -1625,11 +1630,34 @@ async def async_materialize_restore(
         except HomeAssistantError as err:
             raise backup.BackupError(str(err)) from err
 
+    data_sections = {
+        key
+        for key, transfer_section in (
+            ("memories", SECTION_PERSISTENT_MEMORY),
+            ("temporary_memories", SECTION_TEMPORARY_MEMORY),
+            ("knowledge", SECTION_KNOWLEDGE),
+            ("archive", SECTION_CONVERSATION_ARCHIVE),
+            ("usage", SECTION_USAGE),
+            ("guest_mode", SECTION_GUEST_MODE),
+            ("request_rules", SECTION_REQUEST_RULES),
+        )
+        if transfer_section in selected
+    }
+    validates_routes = (
+        bool(selected & SETUP_SECTIONS) or provider_connection is not None
+    )
+    snapshot_sections = data_sections | (
+        {"request_rules"} if validates_routes else set()
+    )
     current = (
         current_snapshot
         if current_snapshot is not None
         else await _current_snapshot(
-            hass, entry, subentry, include_usage=SECTION_USAGE in selected
+            hass,
+            entry,
+            subentry,
+            include_usage=SECTION_USAGE in selected,
+            sections=frozenset(snapshot_sections),
         )
     )
     prepared = await asyncio.to_thread(_copy_transfer_categories, prepared)
@@ -1668,22 +1696,23 @@ async def async_materialize_restore(
     previous_provider_data = (
         getattr(entry, "data", {}) if provider_connection is not None else None
     )
-    try:
-        await async_validate_agent_provider_request(
-            hass,
-            "conversation",
-            target.config,
-            provider_data,
-            rules=target.request_rules.get("rules", []),
-            user_id=user_id,
-            discover_ha_tools=bool(selected & SETUP_SECTIONS)
-            or provider_connection is not None,
-            previous_provider_data=previous_provider_data,
-        )
-    except HomeAssistantError as err:
-        raise backup.BackupError(
-            f"Restored request is incompatible with the destination provider: {str(err)[:400]}"
-        ) from err
+    if validates_routes:
+        try:
+            await async_validate_agent_provider_request(
+                hass,
+                "conversation",
+                target.config,
+                provider_data,
+                rules=target.request_rules.get("rules", []),
+                user_id=user_id,
+                discover_ha_tools=bool(selected & SETUP_SECTIONS)
+                or provider_connection is not None,
+                previous_provider_data=previous_provider_data,
+            )
+        except HomeAssistantError as err:
+            raise backup.BackupError(
+                f"Restored request is incompatible with the destination provider: {str(err)[:400]}"
+            ) from err
     if provider_connection is not None:
         for child_id, child in tuple(entry.subentries.items()):
             if child_id == subentry.subentry_id or child.subentry_type not in {
@@ -1712,20 +1741,23 @@ async def async_materialize_restore(
                 raise backup.BackupError(
                     str(incompatible_provider_agent(child.title, err))
                 ) from err
-    from .function_dependency_integrity import async_validate_disappearing_identifiers
+    if validates_routes:
+        from .function_dependency_integrity import (
+            async_validate_disappearing_identifiers,
+        )
 
-    await async_validate_disappearing_identifiers(
-        hass,
-        entry,
-        subentry,
-        current.config,
-        target.config,
-        get_rules=async_get_request_rules,
-        retained_document=target.request_rules,
-    )
-    await _async_validate_request_rule_function_dependencies(
-        hass, target.request_rules, target.config
-    )
+        await async_validate_disappearing_identifiers(
+            hass,
+            entry,
+            subentry,
+            current.config,
+            target.config,
+            get_rules=async_get_request_rules,
+            retained_document=target.request_rules,
+        )
+        await _async_validate_request_rule_function_dependencies(
+            hass, target.request_rules, target.config
+        )
     preview = prepared.summary()
     preview.update(
         {
@@ -1751,19 +1783,6 @@ async def async_materialize_restore(
         and provider_connection is None
     )
     target.replaces_usage = SECTION_USAGE in selected
-    data_sections = {
-        key
-        for key, transfer_section in (
-            ("memories", SECTION_PERSISTENT_MEMORY),
-            ("temporary_memories", SECTION_TEMPORARY_MEMORY),
-            ("knowledge", SECTION_KNOWLEDGE),
-            ("archive", SECTION_CONVERSATION_ARCHIVE),
-            ("usage", SECTION_USAGE),
-            ("guest_mode", SECTION_GUEST_MODE),
-            ("request_rules", SECTION_REQUEST_RULES),
-        )
-        if transfer_section in selected
-    }
     # Applying different retention settings can prune stored Usage details.
     if SECTION_CONFIGURATION in selected and effective_usage_retention(
         target.config

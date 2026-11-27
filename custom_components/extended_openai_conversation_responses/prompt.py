@@ -11,7 +11,6 @@ from typing import Any
 from homeassistant.helpers import template
 from homeassistant.helpers.template.helpers import resolve_area_id
 
-from .agent_config import normalized_function_call_budget
 from .capabilities import (
     persistent_memory_scope_available,
     resolve_effective_capabilities,
@@ -62,10 +61,11 @@ from .model_payload import (
     RETRIEVED_DATA_SAFETY,
     temporary_memory_guidance,
 )
+from .request import function_call_budget_available
 from .scope import resolve_data_scope
 from .template_diagnostics import private_rendering_diagnostics
 from .temporary_memory import TemporaryMemoryRecord
-from .voice_identity_runtime import voice_source_device_id
+from .voice_identity_runtime import voice_mapping_source_id
 
 _DEFAULT_CURRENT_DATETIME_CONTEXT = """## Current date and time
 {{ now().isoformat(timespec='seconds') }}
@@ -300,7 +300,7 @@ def _prompt_memory_scope_available(options: Any, user_input: Any) -> bool:
     # capability decision below.
     if user_input is None or not hasattr(user_input, "context"):
         return True
-    source_device_id = voice_source_device_id(user_input)
+    source_device_id = voice_mapping_source_id(user_input, options)
     scope = resolve_data_scope(
         SimpleNamespace(
             context=getattr(user_input, "context", None),
@@ -369,9 +369,7 @@ def render_effective_prompt(
         guest_policy=policy,
     )
     retrieval_safety_added = False
-    function_tools_available = (
-        normalized_function_call_budget(options, allow_unlimited=True) > 0
-    )
+    function_tools_available = function_call_budget_available(options)
 
     if policy.guest_active:
         sections.append(

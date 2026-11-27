@@ -185,6 +185,7 @@ async def test_conversation_returns_retryable_provider_error_for_timeout() -> No
         _async_retrieve_memories=AsyncMock(return_value=[]),
         _async_retrieve_temporary_memories=AsyncMock(return_value=[]),
         _build_system_prompt=lambda *_args: "system",
+        _require_guest_continuity_access=lambda: None,
         _async_handle_chat_log=AsyncMock(side_effect=error),
         _fire_conversation_finished=MagicMock(),
     )

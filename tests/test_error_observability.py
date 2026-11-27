@@ -350,7 +350,7 @@ async def test_quiet_hours_apply_and_restore_failures_retain_context(
             "assist_satellite.room", "switch.wake", False, controls
         )
         entity_id, original, quiet = "switch.wake", False, True
-    assert controls == {}
+    assert controls[entity_id]["application_state"] == "awaiting_feedback"
     manager._active = {
         "controls": {
             entity_id: {"kind": kind, "original_value": original, "quiet_value": quiet}

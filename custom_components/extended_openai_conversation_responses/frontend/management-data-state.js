@@ -1,11 +1,27 @@
+// The backend interprets legacy timestamps without an offset as UTC.
+export function normalizeManagementTimestamp(value) {
+  const timestamp = String(value).replace(",", ".");
+  if (!/^\d{4}-\d{2}-\d{2}[T ]/.test(timestamp)) return timestamp;
+  const iso = timestamp.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00");
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`;
+}
+
 export function formatManagementTimestamp(value, timeZone, timeZoneName = undefined) {
   if (!value) return "Unknown date";
-  const date = new Date(value);
+  const date = new Date(typeof value === "string" ? normalizeManagementTimestamp(value) : value);
   if (Number.isNaN(date.getTime())) return String(value);
   try { return date.toLocaleString(undefined, {timeZone, timeZoneName}); }
   catch (_) { return date.toLocaleString(); }
 }
 
+
+export function unavailableOverview(reason, canManage) {
+  return {
+    setup_health: {unavailable:true, can_manage:canManage === true},
+    loading: {usage:true, memory:true, knowledge:true, guest_mode:true, setup_health:true},
+    load_errors: [{key:"primary", label:"Overview summary", message:reason?.message || String(reason)}],
+  };
+}
 
 export function browserState(panel) {
   if (!panel._managementBrowserState) {

@@ -502,7 +502,8 @@ class DebugTrace:
             "request_sha256": request_hash,
             "captured_request_characters": captured_chars,
             "request_capture_truncated": capture_budget.remaining < 128
-            or (request_chars is not None and request_chars != captured_chars),
+            or request_chars is None
+            or request_chars != captured_chars,
             "input_characters": input_chars,
             "input_sha256": input_hash,
             "tool_count": len(tools) if isinstance(tools, list) else 0,
@@ -691,7 +692,17 @@ def get_debug_manager(hass: Any, entry_id: str, subentry_id: str) -> DebugManage
 
 
 def current_debug_trace() -> DebugTrace | None:
-    return _ACTIVE_DEBUG_TRACE.get()
+    trace = _ACTIVE_DEBUG_TRACE.get()
+    return trace if trace is None or trace.completed_at is None else None
+
+
+@contextmanager
+def detached_debug_trace() -> Iterator[None]:
+    token = _ACTIVE_DEBUG_TRACE.set(None)
+    try:
+        yield
+    finally:
+        _ACTIVE_DEBUG_TRACE.reset(token)
 
 
 def record_current_run_failure(error_type: str) -> None:
@@ -708,15 +719,43 @@ def record_current_provider_failure(error: BaseException) -> None:
         return
     trace.error_type = type(error).__name__
     trace.error = provider_error_metadata(error)
-    if trace.provider_requests:
-        trace.provider_requests[-1].finish(successful=False, error=error)
+
+
+class DebugProviderAttempt:
+    """Bind the provider request to the consumer that validates its response."""
+
+    def __init__(self) -> None:
+        self.request: DebugProviderRequest | None = None
+
+    async def create(self, endpoint: Any, **kwargs: Any) -> Any:
+        token = _ACTIVE_DEBUG_ATTEMPT.set(self)
+        try:
+            return await endpoint.create(**kwargs)
+        finally:
+            _ACTIVE_DEBUG_ATTEMPT.reset(token)
+
+    def finish(self, error: BaseException | None = None) -> None:
+        if self.request is not None:
+            self.request.finish(successful=error is None, error=error)
+
+
+_ACTIVE_DEBUG_ATTEMPT: ContextVar[DebugProviderAttempt | None] = ContextVar(
+    "extended_openai_debug_provider_attempt", default=None
+)
 
 
 class _DebugAsyncStream:
     """Transparent async-stream wrapper that records provider timing/events."""
 
-    def __init__(self, delegate: Any, request: DebugProviderRequest) -> None:
+    def __init__(
+        self,
+        delegate: Any,
+        request: DebugProviderRequest,
+        *,
+        validated_by_caller: bool = False,
+    ) -> None:
         self._delegate = delegate
+        self._validated_by_caller = validated_by_caller
         self._iterator: AsyncIterator[Any] = delegate.__aiter__()
         self._request = request
         self._finished = False
@@ -760,7 +799,8 @@ class _DebugAsyncStream:
         if self._finished:
             return
         self._finished = True
-        self._request.finish(successful=successful, error=error)
+        if not successful or not self._validated_by_caller:
+            self._request.finish(successful=successful, error=error)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._delegate, name)
@@ -784,6 +824,9 @@ class _DebugEndpointProxy:
             if trace is not None
             else None
         )
+        attempt = _ACTIVE_DEBUG_ATTEMPT.get()
+        if attempt is not None:
+            attempt.request = request
         started = time.monotonic()
         try:
             result = await self._delegate.create(*args, **kwargs)
@@ -803,9 +846,12 @@ class _DebugEndpointProxy:
         if request is not None:
             request.stream_open_ms = int((time.monotonic() - started) * 1000)
             if hasattr(result, "__aiter__"):
-                return _DebugAsyncStream(result, request)
+                return _DebugAsyncStream(
+                    result, request, validated_by_caller=attempt is not None
+                )
             request.add_event(result, completed=True)
-            request.finish(successful=True)
+            if attempt is None:
+                request.finish(successful=True)
         return result
 
     def __getattr__(self, name: str) -> Any:
@@ -854,25 +900,32 @@ def conversation_debug_trace(
     The conversation owner assigns the completed result to the yielded trace.
     Finalization happens after the inner request scopes have been restored.
     """
-    manager = get_debug_manager(
-        agent.hass, agent.entry.entry_id, agent.subentry.subentry_id
-    )
-    if not manager.enabled:
-        # Nested agents inherit ContextVars from the caller. A disabled child
-        # must establish an explicit no-capture boundary so its timings,
-        # continuity, memory, provider requests and failures cannot leak into
-        # the caller's trace.
-        token = _ACTIVE_DEBUG_TRACE.set(None)
-        try:
+    with request_debug_trace(agent, user_input, user_input.conversation_id) as trace:
+        yield trace
+
+
+@contextmanager
+def request_debug_trace(
+    agent: Any, user_input: Any, conversation_id: str | None
+) -> Iterator[DebugTrace | None]:
+    """Bind diagnostics to the current invocation, including disabled children."""
+    hass = getattr(agent, "hass", None)
+    entry = getattr(agent, "entry", None)
+    subentry = getattr(agent, "subentry", None)
+    if hass is None or entry is None or subentry is None:
+        with detached_debug_trace():
             yield None
-        finally:
-            _ACTIVE_DEBUG_TRACE.reset(token)
+        return
+    manager = get_debug_manager(hass, entry.entry_id, subentry.subentry_id)
+    if not manager.enabled:
+        with detached_debug_trace():
+            yield None
         return
     trace = manager.begin(
-        entry_id=agent.entry.entry_id,
-        subentry_id=agent.subentry.subentry_id,
+        entry_id=entry.entry_id,
+        subentry_id=subentry.subentry_id,
         user_input=user_input,
-        incoming_conversation_id=user_input.conversation_id,
+        incoming_conversation_id=conversation_id,
     )
     token = _ACTIVE_DEBUG_TRACE.set(trace)
     try:

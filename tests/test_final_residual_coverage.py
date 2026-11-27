@@ -160,7 +160,7 @@ def test_debug_model_timing_without_active_usage_run_records_duration(
 ) -> None:
     from custom_components.extended_openai_conversation_responses import debug
 
-    trace = SimpleNamespace(phases_ms={}, usage_run_id=None)
+    trace = SimpleNamespace(phases_ms={}, usage_run_id=None, completed_at=None)
     token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     entity = SimpleNamespace(
         _usage=SimpleNamespace(current_run=Mock(return_value=None))
@@ -597,7 +597,7 @@ def test_guest_custom_group_policy_ignores_non_string_function_members(hass) -> 
     options = {
         guest_mode.CONF_GUEST_FUNCTION_POLICY: "custom",
         guest_mode.CONF_GUEST_ALLOWED_GROUP_IDS: ["group"],
-        guest_mode.CONF_FUNCTION_GROUPS: [
+        "function_groups": [
             {"id": "group", "functions": ["safe", 123, None]},
         ],
     }

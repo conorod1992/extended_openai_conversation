@@ -70,7 +70,8 @@ export function fixture() {
         if (gate) {
           state.writeGate = null; gate.entered = true;
           await gate.release.promise;
-          if (gate.outcome !== "success") throw Object.assign(new Error(gate.outcome === "conflict" ? "Configuration changed in another tab" : "Controlled write failure"), {name:gate.outcome === "cancel" ? "AbortError" : "Error"});
+          if (gate.outcome === "conflict") throw Object.assign(new Error("Configuration changed in another tab"), {code:"invalid_request"});
+          if (gate.outcome !== "success") throw Object.assign(new Error("Controlled write failure"), {name:gate.outcome === "cancel" ? "AbortError" : "Error"});
         }
         assert.equal(request.revision, current.revision, "adapter rejects an obsolete write revision");
         current.config = {...current.config, ...copy(request.config)};

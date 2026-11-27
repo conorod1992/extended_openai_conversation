@@ -40,9 +40,13 @@ test("removed saved-unexposed preference disappears from pending displayed state
     };
   });
   await panel.locator("#save-config").click();
-  await expect.poll(() => panel.evaluate(host => host._configBusy)).toBeFalsy();
+  await expect.poll(() => panel.evaluate(host => host._configDataStale)).toBe(true);
   expect(await panel.evaluate(host => host._configDirty)).toBe(true);
   await expect(card).toHaveCount(0);
+  expect(await page.evaluate(() => browserHarness.getState().configuration.config.exposed_entity_attributes)).toEqual({"registry:audit-hidden":["brightness"]});
+  await panel.locator("#save-config").click();
+  await expect.poll(() => panel.evaluate(host => host._configDataStale)).toBe(false);
+  expect(await panel.evaluate(host => host._configDirty)).toBe(true);
   expect(await page.evaluate(() => browserHarness.getState().configuration.config.exposed_entity_attributes)).toEqual({"registry:audit-hidden":["brightness"]});
   await panel.locator("#save-config").click();
   await expect.poll(() => panel.evaluate(host => host._configDirty)).toBe(false);

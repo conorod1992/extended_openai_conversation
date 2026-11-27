@@ -461,10 +461,10 @@ async def test_model_catalog_manager_apply_rejects_incompatible_saved_requests(
 
     status = await manager.async_apply_update()
 
-    assert "could not be applied" in status["last_error"]
+    assert "conflicts with saved settings or Request Rules" in status["last_error"]
     assert manager.catalog is None
     assert manager.available_catalog is candidate
-    log.assert_called_once()
+    log.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1230,7 +1230,8 @@ def test_request_rules_restore_committed_state_restores_all_fields(monkeypatch) 
     assert manager._groups == [{"id": "g", "name": "Group"}]
     assert manager._rules == []
     assert manager._opaque_fields == {"opaque": True}
-    compile_mock.assert_called_once()
+    compile_mock.assert_not_called()
+    assert manager._matching_snapshot is manager._committed_matching_snapshot
 
 
 def test_request_rules_invalidate_after_unreadable_store_fails_closed(monkeypatch) -> None:

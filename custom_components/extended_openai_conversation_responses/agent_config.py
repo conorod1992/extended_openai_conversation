@@ -353,6 +353,8 @@ PERSISTED_AGENT_DEFAULT_OVERRIDES = MappingProxyType(
         CONF_CURRENT_DATETIME_ENABLED: False,
         CONF_EXPOSED_ENTITIES_ENABLED: False,
         CONF_GUEST_MODE_ENABLED: DEFAULT_PERSISTED_GUEST_MODE_ENABLED,
+        CONF_TEMPERATURE: None,
+        CONF_TOP_P: None,
     }
 )
 GUEST_V2_FIELDS = frozenset(
@@ -986,8 +988,10 @@ def _require_type(
 
 
 def validate_agent_sampling_values(config: Mapping[str, Any]) -> None:
-    """Require numeric types for present sampling settings, excluding booleans."""
-    _require_type(config, (CONF_TOP_P, CONF_TEMPERATURE), (int, float))
+    """Require numeric types for configured sampling overrides, excluding booleans."""
+    for key in (CONF_TOP_P, CONF_TEMPERATURE):
+        if config.get(key) is not None:
+            _require_type(config, (key,), (int, float))
 
 
 def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
@@ -1418,10 +1422,9 @@ def normalize_agent_config(
             CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
             f"must be 0 to {MAX_MEMORY_AUTO_RETRIEVE_LIMIT}",
         )
-    if not 0 <= float(result[CONF_TOP_P]) <= 1:
-        raise AgentConfigError(CONF_TOP_P, "must be 0 to 1")
-    if not 0 <= float(result[CONF_TEMPERATURE]) <= 2:
-        raise AgentConfigError(CONF_TEMPERATURE, "must be 0 to 2")
+    for key, maximum in ((CONF_TOP_P, 1), (CONF_TEMPERATURE, 2)):
+        if (sampling := result.get(key)) is not None and not 0 <= sampling <= maximum:
+            raise AgentConfigError(key, f"must be 0 to {maximum}")
     for key in (
         CONF_PROMPT,
         CONF_CURRENT_DATETIME_TEMPLATE,
@@ -1668,19 +1671,26 @@ def agent_config_model_repair_snapshot(
     """
     damaged = {
         key: data[key]
-        for key in (CONF_TEMPERATURE, CONF_TOP_P)
+        for key in (CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P)
         if isinstance(data.get(key), bool)
     }
+    model, effective_provider, efforts = _configuration_reasoning_context(
+        data, provider
+    )
+    effort = data.get(CONF_REASONING_EFFORT)
+    if efforts and isinstance(effort, str) and effort not in efforts:
+        damaged[CONF_REASONING_EFFORT] = effort
     tier = data.get(CONF_SERVICE_TIER)
     if isinstance(tier, str):
-        model, effective_provider, _ = _configuration_reasoning_context(data, provider)
         tiers = get_model_config(model, provider=effective_provider).get(
             "service_tier_options", []
         )
         if tier != DEFAULT_SERVICE_TIER and tier not in tiers:
             damaged[CONF_SERVICE_TIER] = tier
     defaults = agent_config_defaults()
-    source = {**data, **{key: defaults[key] for key in damaged}}
+    source = {**data, **{key: defaults[key] for key in damaged if key in defaults}}
+    if CONF_REASONING_EFFORT in damaged:
+        source.pop(CONF_REASONING_EFFORT, None)
     return {**agent_config_snapshot(source, provider=provider), **damaged}
 
 

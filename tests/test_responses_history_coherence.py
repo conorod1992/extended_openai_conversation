@@ -186,7 +186,7 @@ async def exercise_interrupted_response_history(
         [
             events(completed),
             events(failed, complete=False, unfinished=True),
-            events([message("msg_answer", "Recovered")]),
+            events([message("msg_answer", "Recovered", phase="final_answer")]),
         ],
     )
     obj._execute_function_tool = AsyncMock(
@@ -408,12 +408,12 @@ async def test_o3_pro_replays_reasoning_without_adjustable_effort(hass, model, a
                 usage=None,
                 output=[message("msg_answer", "Done", phase="final_answer")],
             ),
-            events([message("msg_next", "Next")]),
+            events([message("msg_next", "Next", phase="final_answer")]),
             Response.model_construct(
                 id="again",
                 status="completed",
                 usage=None,
-                output=[message("msg_again", "Again")],
+                output=[message("msg_again", "Again", phase="final_answer")],
             ),
         ],
     )

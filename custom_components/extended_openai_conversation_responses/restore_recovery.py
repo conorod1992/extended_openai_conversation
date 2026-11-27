@@ -486,6 +486,7 @@ async def _durable_managers(
     *,
     include_usage: bool = True,
     recover_archive: bool = False,
+    sections: frozenset[str] | None = None,
 ) -> backup.AgentDataParticipants:
     """Load the actual durable managers; restore must never target Usage fallback RAM."""
     from .conversation_archive import archive_manager, async_get_archive
@@ -496,22 +497,33 @@ async def _durable_managers(
     from .temporary_memory import async_get_temporary_memory
     from .usage import async_get_durable_usage
 
+    selected = _DATA_SECTIONS if sections is None else sections
     return backup.AgentDataParticipants(
-        memory=await async_get_memory(hass, entry_id, subentry_id),
-        temporary=await async_get_temporary_memory(hass, entry_id, subentry_id),
-        knowledge=await async_get_knowledge(hass, entry_id, subentry_id),
+        memory=await async_get_memory(hass, entry_id, subentry_id)
+        if "memories" in selected
+        else None,
+        temporary=await async_get_temporary_memory(hass, entry_id, subentry_id)
+        if "temporary_memories" in selected
+        else None,
+        knowledge=await async_get_knowledge(hass, entry_id, subentry_id)
+        if "knowledge" in selected
+        else None,
         archive=(
             archive_manager(hass, entry_id, subentry_id)
             if recover_archive
             else await async_get_archive(hass, entry_id, subentry_id)
-        ),
-        usage=(
-            await async_get_durable_usage(hass, entry_id, subentry_id)
-            if include_usage
-            else None
-        ),
-        guest_mode=await async_get_guest_mode(hass, entry_id, subentry_id),
-        request_rules=await async_get_request_rules(hass, entry_id, subentry_id),
+        )
+        if "archive" in selected
+        else None,
+        usage=await async_get_durable_usage(hass, entry_id, subentry_id)
+        if include_usage and "usage" in selected
+        else None,
+        guest_mode=await async_get_guest_mode(hass, entry_id, subentry_id)
+        if "guest_mode" in selected
+        else None,
+        request_rules=await async_get_request_rules(hass, entry_id, subentry_id)
+        if "request_rules" in selected
+        else None,
     )
 
 
@@ -529,12 +541,16 @@ async def _apply_prepared(
         managers.usage.run_retention_days = retention["run_retention_days"]
 
     if prepared.restores("memories"):
+        assert managers.memory is not None
         await managers.memory.async_replace_backup(prepared.memories)
     if prepared.restores("temporary_memories"):
+        assert managers.temporary is not None
         await managers.temporary.async_replace_backup(prepared.temporary_memories)
     if prepared.restores("knowledge"):
+        assert managers.knowledge is not None
         await managers.knowledge.async_replace_backup(prepared.knowledge)
     if prepared.restores("archive"):
+        assert managers.archive is not None
         archive_args = (prepared.archive_sessions, prepared.archive_turns)
         if prepared.archive_disk_backed:
             await managers.archive.async_replace_backup(
@@ -557,8 +573,10 @@ async def _apply_prepared(
             prepared.usage_runs,
         )
     if prepared.restores("guest_mode"):
+        assert managers.guest_mode is not None
         await managers.guest_mode.async_replace_backup(prepared.guest_mode_schedule)
     if prepared.restores("request_rules"):
+        assert managers.request_rules is not None
         await managers.request_rules.async_replace_backup(prepared.request_rules)
 
 
@@ -580,7 +598,11 @@ async def _recovery_managers(
     from .usage import async_verify_rejected_usage_stores
 
     include_usage = selected.restores("usage")
-    archive_options = {"recover_archive": True} if selected.archive_disk_backed else {}
+    archive_options: dict[str, Any] = (
+        {"recover_archive": True} if selected.archive_disk_backed else {}
+    )
+    if selected.journaled_sections is not None:
+        archive_options["sections"] = selected.journaled_sections
     try:
         managers = await _durable_managers(
             hass, entry_id, subentry_id, include_usage=include_usage, **archive_options
@@ -620,10 +642,9 @@ async def _recovery_managers(
 
         repaired = False
         try:
-            await async_get_memory(hass, entry_id, subentry_id)
+            if selected.restores("memories"):
+                await async_get_memory(hass, entry_id, subentry_id)
         except StorageRepairRequired:
-            if not selected.restores("memories"):
-                raise
 
             def memory_payload() -> dict[str, Any]:
                 payload = {
@@ -656,11 +677,11 @@ async def _recovery_managers(
                 selected.knowledge,
             ),
         ):
+            if not selected.restores(section):
+                continue
             try:
                 await getter(hass, entry_id, subentry_id)
             except ValueError:
-                if not selected.restores(section):
-                    raise
 
                 def serialize(
                     field: str = field, records: list[Any] = records
@@ -670,12 +691,10 @@ async def _recovery_managers(
                 payload = await asyncio.to_thread(serialize)
                 await storage_factory(hass, entry_id, subentry_id).async_save(payload)
                 repaired = True
-        if not selected.archive_disk_backed:
+        if selected.restores("archive") and not selected.archive_disk_backed:
             try:
                 await async_get_archive(hass, entry_id, subentry_id)
             except ValueError:
-                if not selected.restores("archive"):
-                    raise
                 await HomeAssistantArchiveStorage(
                     hass, entry_id, subentry_id
                 ).async_stage_journal_recovery(
@@ -713,13 +732,11 @@ async def _recovery_managers(
                 ),
             ),
         ):
-            if section == "usage" and not include_usage:
+            if not selected.restores(section):
                 continue
             try:
                 await recovery_getter(hass, entry_id, subentry_id)
             except StorageRepairRequired:
-                if not selected.restores(section):
-                    raise
                 await stage()
                 repaired = True
         if not repaired:
@@ -781,6 +798,16 @@ def reset_restored_runtime(
     # A portable restore can retain destination privacy bindings. Retained
     # continuity is kept only for a restore that leaves the live history intact.
     archive = managers.archive if managers is not None else None
+    archive_unselected = managers is not None and archive is None
+    if archive_unselected:
+        from .conversation_archive import _ARCHIVE_MANAGERS
+
+        cached_archive = hass.data.get(_ARCHIVE_MANAGERS, {}).get(key)
+        if (
+            isinstance(cached_archive, backup.ConversationArchive)
+            and cached_archive.initialized
+        ):
+            archive = cached_archive
     private_bindings = (
         archive.private_continuity_bindings()
         if isinstance(archive, backup.ConversationArchive)
@@ -826,7 +853,10 @@ def reset_restored_runtime(
                     for continuity_key, conversation_id in retained
                 )
         else:
-            current.reset_all(private_bindings=private_bindings)
+            if archive_unselected and archive is None:
+                current.reset_all(preserve_unverified_bindings=True)
+            else:
+                current.reset_all(private_bindings=private_bindings)
     if agent_continuity is not None:
         continuity_managers[key] = agent_continuity
 
@@ -865,7 +895,7 @@ def reset_restored_runtime(
     # durable manager rather than merely deleting the fallback registry entry.
     fallback = (
         hass.data.get(usage._VOLATILE_USAGE_MANAGERS, {}).pop(key, None)
-        if replace_usage and managers is not None
+        if replace_usage and managers is not None and managers.usage is not None
         else None
     )
     if fallback is not None and managers is not None:
@@ -1461,8 +1491,13 @@ async def _async_restore_backup_recoverably(
             )
 
         include_usage = prepared.restores("usage")
+        section_options: dict[str, Any] = (
+            {"sections": prepared.journaled_sections}
+            if prepared.journaled_sections is not None
+            else {}
+        )
         managers = await _durable_managers(
-            hass, entry_id, subentry_id, include_usage=include_usage
+            hass, entry_id, subentry_id, include_usage=include_usage, **section_options
         )
         from .helpers import effective_api_provider, entry_api_provider
 

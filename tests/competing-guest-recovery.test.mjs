@@ -519,3 +519,34 @@ for(const reply of ["success","malformed","lost"]) for(const competing of [false
   }
   assert.equal(writes,1);
 });
+
+test("Guest polling marks a failed read unavailable and recovers while retaining drafts", async t => {
+  const panel=fixture().create();
+  panel._page="capabilities";panel._subsection="guest-mode";
+  await routeAssetPromise(view,panel);
+  dialogs(panel);
+  const config={guest_web_search:false};
+  const status={state:"active",currently_active:true,active_from:"2027-06-04T12:00:00Z",active_until:null,indefinite:true};
+  panel._result={status,config,revision:"r1"};
+  initializePageDraft(panel);
+  panel._guestDraft.guest_web_search=true;
+  const draft=copy(panel._guestDraft), seen=[];
+  let fail=true;
+  panel._hass.callWS=async request => {
+    if (fail) throw new Error("Guest storage unavailable");
+    if (request.action === "policy") return {revision:"r1",policy:{configured_tool_count:1}};
+    return {status,config,revision:"r1"};
+  };
+  const timers=[],realSet=globalThis.setTimeout,realClear=globalThis.clearTimeout;
+  globalThis.setTimeout=callback => {timers.push(callback);return timers.length;};
+  globalThis.clearTimeout=() => {};
+  t.after(() => {stopLiveStatus(panel);globalThis.setTimeout=realSet;globalThis.clearTimeout=realClear;cleanup([panel],() => {});});
+  watchTimedFeatureStatus(panel,{refreshTimedStatus:() => seen.push(panel._result.status.state)});
+  await timers.shift()();
+  assert.equal(panel._result.status.currently_active,null);
+  assert.deepEqual(panel._guestDraft,draft);
+  fail=false;
+  await timers.shift()();
+  assert.deepEqual(seen,["unavailable","active"]);
+  assert.deepEqual(panel._guestDraft,draft);
+});

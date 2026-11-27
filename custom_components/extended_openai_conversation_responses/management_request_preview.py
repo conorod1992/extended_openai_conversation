@@ -31,9 +31,12 @@ from .const import (
     TEMPORARY_MEMORY_OFF,
 )
 from .function_groups import (
+    FunctionGroupSession,
     FunctionToolAdmission,
     assemble_function_tools,
     is_function_group_loader,
+    load_function_groups,
+    skill_loader_reachable,
 )
 from .guest_function_tools import filter_guest_tools_and_groups
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
@@ -167,7 +170,11 @@ async def async_preview_effective_request(
         guest_policy.knowledge_access
         and options.get(CONF_KNOWLEDGE_ENABLED)
         and optional_manager_ready(knowledge)
-        and knowledge.source_count > 0
+        and (
+            knowledge.source_count > 0
+            if guest_policy.knowledge_source_ids is None
+            else knowledge.has_enabled_sources(guest_policy.knowledge_source_ids)
+        )
     )
     if (
         guest_policy.knowledge_access
@@ -218,22 +225,6 @@ async def async_preview_effective_request(
                 if grouped.available_on_demand_groups
                 else grouped.tools
             )
-        preview = render_effective_prompt(
-            hass,
-            options,
-            exposed_entities=exposed_entities,
-            current_device_id=None,
-            user_input=None,
-            skills=skills if guest_policy.skills else [],
-            memories=None,
-            temporary_memories=temporary_memories,
-            knowledge_available=knowledge_available,
-            guest_policy=guest_policy,
-            memory_scope_available=memory_available,
-            temporary_scope_available=temporary_available,
-            archive_available=archive_available,
-            archive_session_available=archive_session_available,
-        )
         configured_names = {
             tool.get("spec", {}).get("name")
             for tool in configured_tools
@@ -276,6 +267,47 @@ async def async_preview_effective_request(
             function_calls_available=budget_available,
         )
         admitted_tools = admission.admit([*grouped.tools, *integration_tools])
+
+        def can_load_skill_group(group_id: str) -> bool:
+            with effective_tool_runtime_scope(
+                options, availability_tools, skill_manager, availability_groups
+            ):
+                result = load_function_groups(
+                    FunctionGroupSession("preview", 0),
+                    [group_id],
+                    groups,
+                    configured_tools,
+                    admission=admission,
+                    integration_tools=integration_tools,
+                )
+            return result.get("status") == "success"
+
+        reachable = bool(
+            skills
+            and guest_policy.skills
+            and skill_loader_reachable(
+                admitted_tools,
+                admission,
+                lambda: groups,
+                can_load_skill_group,
+            )
+        )
+        preview = render_effective_prompt(
+            hass,
+            options,
+            exposed_entities=exposed_entities,
+            current_device_id=None,
+            user_input=None,
+            skills=skills if reachable else [],
+            memories=None,
+            temporary_memories=temporary_memories,
+            knowledge_available=knowledge_available,
+            guest_policy=guest_policy,
+            memory_scope_available=memory_available,
+            temporary_scope_available=temporary_available,
+            archive_available=archive_available,
+            archive_session_available=archive_session_available,
+        )
         admitted_ids = {id(tool) for tool in admitted_tools}
         if any(id(tool) not in admitted_ids for tool in integration_tools):
             notes.append(

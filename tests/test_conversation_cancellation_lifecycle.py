@@ -75,6 +75,7 @@ def _agent(continuity: Any, process_claimed: Any) -> Any:
         subentry=SimpleNamespace(data={}),
         _continuity=continuity,
         _resolve_live_guest_policy=lambda: SimpleNamespace(guest_active=False),
+        _guest_continuity_access=lambda _policy: None,
         _async_process_claimed=process_claimed,
     )
 

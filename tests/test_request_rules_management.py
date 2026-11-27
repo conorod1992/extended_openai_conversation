@@ -1078,3 +1078,90 @@ async def test_function_reference_rename_rejects_stale_revision() -> None:
     ]
     assert manager.function_references("new_tool") == []
     store.async_save.assert_not_awaited()
+
+
+async def test_management_uses_normalized_conditions_and_can_disable_missing_dependency(
+    hass,
+    monkeypatch,
+):
+    from homeassistant.helpers import condition
+    from custom_components.extended_openai_conversation_responses import management_ui
+
+    rules = RequestRules(MemoryStore())
+    await rules.async_initialize()
+    subentry = SimpleNamespace(
+        subentry_id="agent", subentry_type="conversation", data={}
+    )
+    entry = SimpleNamespace(domain=DOMAIN, subentries={"agent": subentry})
+    hass.config_entries.async_get_entry.return_value = entry
+    monkeypatch.setattr(
+        management_ui, "async_get_request_rules", AsyncMock(return_value=rules)
+    )
+    validate = AsyncMock()
+    monkeypatch.setattr(condition, "async_validate_condition_config", validate)
+    raw = local_rule()
+    raw["conditions"] = ["{{ true }}"]
+
+    async def command(action, **payload):
+        return await async_management_command(
+            hass,
+            "admin",
+            True,
+            {
+                "section": "request_rules",
+                "action": action,
+                "entry_id": "entry",
+                "subentry_id": "agent",
+                **payload,
+            },
+        )
+
+    created = (await command("create", rule=raw))["rule"]
+    assert created["conditions"] == raw["conditions"]
+    assert validate.await_args.args[1]["condition"] == "template"
+    validate.side_effect = HomeAssistantError("Referenced entity was removed")
+    with pytest.raises(HomeAssistantError, match="Referenced entity was removed"):
+        await command(
+            "update", rule_id=created["id"], rule={**created, "name": "Changed"}
+        )
+    disabled = await command(
+        "update", rule_id=created["id"], rule={**created, "enabled": False}
+    )
+    assert not disabled["rule"]["enabled"]
+    assert disabled["rule"]["conditions"] == raw["conditions"]
+
+
+async def test_group_acknowledgement_retains_sensitive_matching_warning(
+    hass, monkeypatch
+):
+    from custom_components.extended_openai_conversation_responses import management_ui
+
+    rules = RequestRules(MemoryStore())
+    await rules.async_initialize()
+    rule = local_rule()
+    rule["action"]["actions"] = [
+        {"action": "lock.unlock", "target": {"entity_id": "lock.front"}}
+    ]
+    await rules.async_create(rule)
+    subentry = SimpleNamespace(
+        subentry_id="agent", subentry_type="conversation", data={}
+    )
+    entry = SimpleNamespace(domain=DOMAIN, subentries={"agent": subentry})
+    hass.config_entries.async_get_entry.return_value = entry
+    monkeypatch.setattr(
+        management_ui, "async_get_request_rules", AsyncMock(return_value=rules)
+    )
+
+    result = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "request_rules",
+            "action": "groups",
+            "entry_id": "entry",
+            "subentry_id": "agent",
+            "groups": [{"name": "Locks"}],
+        },
+    )
+    assert result["rules"][0]["sensitive_matching_warning"] is True

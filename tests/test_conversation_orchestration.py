@@ -730,7 +730,9 @@ async def test_assist_passes_configured_continuity_scope_timeout_and_guest_names
     assert args[1].device_id == "kitchen"
     assert args[2:] == ("kitchen", "incoming-ha-id", 37)
     assert resolve.await_args.kwargs == {
-        "namespace": "guest" if guest else None,
+        "namespace": entity._continuity.guest_namespace(
+            entity._guest_continuity_access(GuestCapabilityPolicy(guest))
+        ),
         "native_user_id": "alice",
     }
 
@@ -771,20 +773,21 @@ async def test_assist_continue_mode_reaches_final_conversation_result(
 ):
     entity, invoke, _, _ = _assist_fixture(monkeypatch)
     entity.subentry.data[CONF_CONTINUE_CONVERSATION] = mode
+    reply = "Reply?" if ha_default else "Reply"
 
     async def model(log, **kwargs):
         assert kwargs["conditional_continue"] is (
             mode == CONTINUE_CONVERSATION_CONDITIONAL
         )
-        log.continue_conversation = ha_default
+        log.continue_conversation = not ha_default
         log.content.append(
-            conversation.AssistantContent(agent_id=entity.entity_id, content="Reply")
+            conversation.AssistantContent(agent_id=entity.entity_id, content=reply)
         )
         return decision
 
     entity._async_handle_chat_log.side_effect = model
     result = await invoke()
-    assert result.response.speech["plain"]["speech"] == "Reply"
+    assert result.response.speech["plain"]["speech"] == reply
     assert result.continue_conversation is expected
 
 

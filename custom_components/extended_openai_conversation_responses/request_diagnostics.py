@@ -129,9 +129,13 @@ def record_provider_metrics(trace: Any, request: Any, api_surface: str) -> Any:
         input_value = safe_kwargs.get("input", safe_kwargs.get("messages"))
         tools = safe_kwargs.get("tools")
         request.metrics.update(provider_payload_metrics(input_value, tools))
+        request.metrics["payload_breakdown_partial"] = bool(
+            request.metrics.get("request_capture_truncated")
+        )
         request.metrics["request_index"] = len(trace.provider_requests)
-        request.metrics["approx_request_tokens"] = approximate_tokens(
-            int(request.metrics.get("request_characters") or 0)
+        characters = request.metrics.get("request_characters")
+        request.metrics["approx_request_tokens"] = (
+            approximate_tokens(characters) if isinstance(characters, int) else None
         )
         is_model = api_surface in _MODEL_API_SURFACES
         request.metrics["model_request"] = is_model
@@ -146,9 +150,13 @@ def record_provider_metrics(trace: Any, request: Any, api_surface: str) -> Any:
             ),
             None,
         )
+        current_digest = request.metrics.get("tools_sha256")
+        previous_digest = (
+            previous.metrics.get("tools_sha256") if previous is not None else None
+        )
         request.metrics["tools_same_as_previous_request"] = (
-            request.metrics.get("tools_sha256") == previous.metrics.get("tools_sha256")
-            if previous is not None and is_model
+            current_digest == previous_digest
+            if is_model and current_digest is not None and previous_digest is not None
             else None
         )
         request.metrics["model_request_index"] = (
@@ -214,6 +222,9 @@ def trace_diagnostics(trace: Any, data: dict[str, Any]) -> dict[str, Any]:
             "preparation": deepcopy(preparation),
             "function_tool_calls": deepcopy(tool_calls),
             "slowest_phases": _slowest_phases(data.get("phases_ms", {})),
+            "first_model_request_breakdown_partial": bool(
+                first_metrics.get("payload_breakdown_partial")
+            ),
             "largest_first_model_request_contributors": largest_contributors(
                 prompt_sections=[
                     item

@@ -514,7 +514,7 @@ async def test_knowledge_tool_validation(
     operation: str, arguments: dict, message: str
 ) -> None:
     agent = _agent()
-    agent._knowledge_available = True
+    agent.subentry.data["knowledge_enabled"] = True
     agent._knowledge = SimpleNamespace()
     with pytest.raises(ValueError, match=message):
         await Agent._async_execute_knowledge_tool(agent, operation, arguments)

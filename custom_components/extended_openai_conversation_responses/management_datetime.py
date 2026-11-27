@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
+from .local_time import wall_time_instants
 from .record_timestamps import parse_datetime
 
 
@@ -43,12 +44,8 @@ def resolve_local_time(
     zone = dt_util.get_time_zone(hass.config.time_zone)
     if zone is None:
         raise HomeAssistantError("Home Assistant timezone is unavailable")
-    candidates = set()
     try:
-        for fold in (0, 1):
-            instant = wall.replace(tzinfo=zone, fold=fold).astimezone(UTC)
-            if instant.astimezone(zone).replace(tzinfo=None) == wall:
-                candidates.add(instant)
+        candidates = wall_time_instants(wall, zone)
     except (OverflowError, ValueError) as err:
         raise HomeAssistantError("Choose a valid local date and time.") from err
     if not candidates:

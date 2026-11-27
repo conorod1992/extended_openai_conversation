@@ -39,6 +39,8 @@ const controls = modelDataControls();
 assert.match(controls, /Check for updates/);
 assert.match(controls, /Apply update/);
 assert.match(controls, /Restore bundled data/);
+assert.match(modelDataStatusText({...result, check_outcome:"unchecked"}), /No update check has completed/);
+assert.equal(modelDataStatusText({...result, last_check_error:"Published model data rejected."}), "Published model data rejected.");
 assert.equal(modelDataStatusText(result), "Up to date — model data v2");
 assert.equal(
   modelDataStatusText({...result, incompatible_catalog:{schema_version:99,catalog_version:3}}),
@@ -69,7 +71,8 @@ assert.equal(applyButton.disabled, false);
 assert.equal(applyButton.textContent, "Apply v3 update");
 assert.match(status.textContent, /Update available: v2 → v3/);
 assert.match(status.textContent, /will not be used until you apply it/);
-assert.deepEqual(panel._result.model_capabilities.reasoning_effort_options, ["minimal","high"]);
+assert.deepEqual(panel._modelCatalogData.model_capabilities.reasoning_effort_options, ["minimal","high"]);
+assert.equal(panel._result.model_capabilities, undefined);
 
 // Applying switches the status to the downloaded catalogue and clears pending UI.
 result = {
@@ -199,7 +202,8 @@ for (const change of ["agent", "model", "route", "load", "generation", "draft"])
   releaseOld({catalog_version:2, model_capabilities:{marker:"older"}});
   await old;
   assert.equal(host._modelCatalogData.catalog_version, 3);
-  assert.deepEqual(host._result.model_capabilities, {marker:"newer"});
+  assert.deepEqual(host._modelCatalogData.model_capabilities, {marker:"newer"});
+  assert.deepEqual(host._result.model_capabilities, {marker:"current"});
   assert.equal(state.refreshes, 1);
 }
 

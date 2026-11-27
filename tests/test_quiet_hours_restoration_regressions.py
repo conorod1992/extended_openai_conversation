@@ -217,3 +217,54 @@ async def test_old_period_pending_baseline_survives_next_period(hass, monkeypatc
     control = manager.active["controls"]["media_player.bedroom"]
     assert control["original_value"] == 0.8
     assert control["restoration_pending"]
+
+
+@pytest.mark.parametrize("kind", ["volume", "switch"])
+@pytest.mark.parametrize("failed_ack", [False, True])
+async def test_initial_application_keeps_baseline_until_delayed_feedback(
+    hass, kind, failed_ack
+):
+    manager = _runtime_manager(hass)
+    entity_id = "media_player.bedroom" if kind == "volume" else "switch.wake_sound"
+    state = SimpleNamespace(
+        state="idle" if kind == "volume" else "on",
+        attributes={"volume_level": 0.8},
+        context=SimpleNamespace(id="baseline", user_id=None),
+    )
+    hass.states.get.side_effect = lambda _: state
+    manager._active = _active(entity_id, kind)
+    controls = manager._active["controls"]
+    control = controls[entity_id]
+    control.update(
+        application_state="prepared",
+        baseline_context_id="baseline",
+        application_context_id="dispatch",
+    )
+    error = OSError("missing acknowledgement") if failed_ack else None
+    manager._async_set_volume = AsyncMock(side_effect=error if kind == "volume" else None)
+    manager._async_set_switch = AsyncMock(side_effect=error if kind == "switch" else None)
+    await manager._async_dispatch_initial_control_locked(entity_id, controls, control)
+    assert control["application_state"] == "awaiting_feedback"
+    await manager._async_restore_locked(period_ended=True)
+    assert manager.active["controls"][entity_id]["restoration_pending"]
+    persisted = deepcopy(manager._store.async_save.call_args.args[0]["active"])
+    manager._active = manager._normalize_active(persisted)
+
+    state.state = "idle" if kind == "volume" else "off"
+    state.attributes = {"volume_level": 0.2}
+    state.context.id = "delayed"
+    manager._async_set_volume.side_effect = None
+    manager._async_set_switch.side_effect = None
+    await manager._async_restore_locked(period_ended=True)
+    method = manager._async_set_volume if kind == "volume" else manager._async_set_switch
+    assert method.await_count == 2
+    assert method.await_args.args[:2] == (entity_id, 0.8 if kind == "volume" else True)
+
+
+async def test_recovering_generation_publishes_unavailable_without_revision(hass):
+    manager = _runtime_manager(hass)
+    manager._invalidate_generation()
+    assert manager.snapshot()["recovery_pending"]
+    assert "revision" not in manager.snapshot()
+    assert "config" not in manager.snapshot()
+    assert hass.states.async_set.call_args.args[1] == "unavailable"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -12,7 +12,9 @@ from typing import Any, cast
 
 from .agent_config import function_tool_enabled
 from .const import (
+    CONF_FUNCTION_GROUPS,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+    DEFAULT_FUNCTION_GROUPS,
     FUNCTION_GROUP_LOADER_TOOL_NAME,
     FUNCTION_GROUP_LOADING_ALWAYS,
     FUNCTION_GROUP_LOADING_ON_DEMAND,
@@ -202,7 +204,52 @@ def function_tool_runtime_available(tool: dict[str, Any]) -> bool:
     function_config = tool.get("function", {})
     if function_config.get("type") == "bash":
         return function_config.get("allow_unsafe_shell") is True
+    if function_config.get("type") == "composite":
+        from .functions.composite import composite_backends_available
+
+        return composite_backends_available(function_config)
     return True
+
+
+def safe_function_groups(
+    options: Mapping[str, Any], tools: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Use the runtime quarantine projection for malformed saved group data."""
+    from .function_tool_quarantine import _runtime_validate_function_groups
+
+    return _runtime_validate_function_groups(
+        options.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)), tools
+    )
+
+
+def effective_configured_function_names(
+    options: Mapping[str, Any],
+    tools: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+    *,
+    assume_ha_available: bool = False,
+) -> set[str]:
+    """List executable configured members across enabled groups."""
+    from .request import function_call_budget_available
+
+    if not function_call_budget_available(options):
+        return set()
+    disabled = {
+        name
+        for group in groups
+        if not function_group_enabled(group)
+        for name in group["functions"]
+    }
+    return {
+        tool["spec"]["name"]
+        for tool in tools
+        if tool["spec"]["name"] not in disabled
+        and function_tool_runtime_available(
+            {**tool, "ha_available": True}
+            if assume_ha_available and "ha_available" not in tool
+            else tool
+        )
+    }
 
 
 def _effective_runtime(
@@ -460,6 +507,35 @@ class FunctionToolAdmission:
             or count_model_function_tools(tools) + self.extra_tool_count
             <= self.max_tools
         )
+
+
+def skill_loader_reachable(
+    admitted: list[dict[str, Any]],
+    admission: FunctionToolAdmission,
+    groups: Callable[[], list[dict[str, Any]]],
+    can_load_group: Callable[[str], bool],
+) -> bool:
+    """Resolve reachability after the provider's tool slots have been allocated."""
+    from .skill_availability import (
+        SKILL_LOADER_TOOL_NAME,
+        function_group_for_tool,
+        is_canonical_skill_loader,
+    )
+
+    if not admission.function_calls_available:
+        return False
+    if any(map(is_canonical_skill_loader, admitted)):
+        return True
+    loader = next((tool for tool in admitted if is_function_group_loader(tool)), None)
+    if loader is None:
+        return False
+    group = function_group_for_tool(SKILL_LOADER_TOOL_NAME, groups())
+    return (
+        group is not None
+        and group["id"]
+        in loader["spec"]["parameters"]["properties"]["groups"]["items"]["enum"]
+        and (admission.max_tools is None or can_load_group(group["id"]))
+    )
 
 
 def load_function_groups(

@@ -88,7 +88,7 @@ async def test_overview_memory_detail_projects_count_and_health(
     monkeypatch.setattr(
         loading,
         "async_get_memory",
-        AsyncMock(return_value=SimpleNamespace(memory_count=7)),
+        AsyncMock(return_value=SimpleNamespace(memory_count=7, needs_storage_repair=False)),
     )
 
     result = await loading.async_overview_detail(
@@ -100,10 +100,9 @@ async def test_overview_memory_detail_projects_count_and_health(
     )
 
     assert result["agent"]["memory_count"] == 7
-    assert result["setup_health"]["memory"] == {
-        "available": True,
-        "loading": False,
-    }
+    health = result["setup_health"]["memory"]
+    assert health["available"] is True and health["loading"] is False
+    assert health["repair_required"] is False
 
 
 @pytest.mark.asyncio
@@ -114,7 +113,7 @@ async def test_overview_knowledge_detail_projects_feature_status(
     monkeypatch.setattr(
         loading,
         "async_get_knowledge",
-        AsyncMock(return_value=SimpleNamespace(source_count=3, total_source_count=3)),
+        AsyncMock(return_value=SimpleNamespace(source_count=3, total_source_count=3, needs_storage_repair=False)),
     )
     feature = Mock(return_value={"knowledge": "ready"})
     monkeypatch.setattr(loading, "management_feature_status", feature)

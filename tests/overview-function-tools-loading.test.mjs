@@ -72,3 +72,24 @@ for (const change of ["navigation", "new load", "agent", "entry", "generation", 
 }
 
 console.log("Overview Function Tools loading regressions passed.");
+
+
+{
+  assert.deepEqual(buildSetupHealth().checks.map(check => [check.id, check.value]), [["setup_health", "Loading…"]]);
+  const {panel, pending} = panelFor({loading:true});
+  panel._result.setup_health.unavailable = true;
+  panel._result.setup_health.memory.failed = true;
+  const reads = startOverviewDetailReads(panel);
+  pending.get("memory").resolve({setup_health:{memory:{mode:"automatic", available:true, failed:false, keyword_fallback:true, loading:false}}});
+  pending.get("knowledge").resolve({setup_health:{knowledge:{enabled:true, available:true, repair_required:true, loading:false}}});
+  pending.get("setup_health").resolve({setup_health:{function_tools:{usable_count:0, enabled_count:0, invalid_count:0}, exposed_entity_count:0}});
+  pending.get("usage").resolve({});
+  pending.get("guest_mode").resolve({});
+  await reads;
+  const checks = Object.fromEntries(buildSetupHealth(panel._result.setup_health).checks.map(check => [check.id, check]));
+  assert.equal(checks.setup_health.state, "unknown");
+  assert.equal(checks.provider_runtime, undefined);
+  assert.equal(checks.memory.value, "Keyword fallback");
+  assert.equal(checks.knowledge.value, "Storage needs repair");
+  assert.equal(checks.function_tools.value, "0 functions available");
+}

@@ -115,3 +115,10 @@ for (const editor of [false, true]) {
     if (succeeded) assert.equal(toasts[0][0], "Temporary memory deleted");
   }
 }
+
+
+const legacyId = "legacy\r\0%00";
+panel._result.memories[0].memory_id = legacyId;
+const encodedMarkup = renderTemporaryMemories(panel);
+assert.match(encodedMarkup, /data-memory-id="legacy%0D%00%2500"/);
+assert.match(encodedMarkup, /data-id="legacy%0D%00%2500"/);

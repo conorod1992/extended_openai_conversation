@@ -91,7 +91,7 @@ def test_delay_normalization_accepts_ha_time_period_shapes() -> None:
         _delay_as_timedelta("not-a-duration")
 
 
-async def test_explicit_null_queue_is_quarantined_and_preserved(hass, monkeypatch) -> None:
+async def test_explicit_null_queue_is_quarantined_and_preserved(hass) -> None:
     from custom_components.extended_openai_conversation_responses import delayed_tools
 
     manager = DelayedToolManager(hass)
@@ -108,10 +108,9 @@ async def test_explicit_null_queue_is_quarantined_and_preserved(hass, monkeypatc
     with pytest.raises(ValueError, match="Scheduled Actions storage needs repair"):
         await manager._store.async_save({"calls": []})
     hass.data.setdefault(DOMAIN, {})[DATA_DELAYED_TOOL_MANAGER] = manager
-    read_queue = AsyncMock(side_effect=AssertionError("quarantined queue was reopened"))
-    monkeypatch.setattr(delayed_tools, "_async_remove_stored_agent_calls_locked", read_queue)
-    await delayed_tools.async_prune_orphaned_delayed_calls(hass)
-    read_queue.assert_not_awaited()
+    with pytest.raises(ValueError, match="Scheduled Actions storage needs repair"):
+        await delayed_tools.async_prune_orphaned_delayed_calls(hass)
+    assert manager._quarantined and not manager._tasks
     assert path.read_bytes() == evidence
 
 
@@ -1866,3 +1865,43 @@ async def test_waiter_cancellation_propagates_and_removes_task(
         await task
 
     assert record.call_id not in manager._tasks
+
+
+@pytest.mark.parametrize("status", ["pending", _EXECUTING])
+async def test_duplicate_ids_quarantine_full_queue_before_filtering(hass, status):
+    manager = DelayedToolManager(hass)
+    payload = {"calls": [_record(status=status).as_dict(), _record().as_dict()]}
+    await manager._store.async_save(payload)
+    original = Path(manager._store.path).read_bytes()
+    await manager.async_setup()
+    assert not manager.available
+    assert manager._quarantined
+    assert not manager._tasks
+    assert Path(manager._store.path).read_bytes() == original
+
+
+async def test_scheduling_reclaims_abandoned_claim_at_capacity(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    manager = DelayedToolManager(hass)
+    manager._started = manager._setup_complete = True
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    manager._records["call-1"] = _record(status=_EXECUTING)
+    monkeypatch.setattr(delayed_tools, "MAX_DELAYED_CALLS", 1)
+    monkeypatch.setattr(manager, "_arm", MagicMock())
+    await manager.async_schedule(
+        _entity(hass), "control_light", {"delay": 5}, None
+    )
+    assert "call-1" not in manager._records
+    assert {record.status for record in manager._records.values()} == {"pending"}
+
+
+async def test_failed_write_readback_rejects_conflicting_claim_and_pending(hass):
+    manager = DelayedToolManager(hass)
+    pending = _record()
+    claim = replace(pending, status=_EXECUTING)
+    await manager._store.async_save({"calls": [claim.as_dict(), pending.as_dict()]})
+    async with manager._lock:
+        with pytest.raises(ValueError, match="IDs are not unique"):
+            await manager._async_reconcile_failed_save(claim)
+    assert manager._records == {}

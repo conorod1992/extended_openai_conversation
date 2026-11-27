@@ -95,11 +95,11 @@ async def test_apply_prepared_preserves_category_and_local_binding_contract(acti
 async def test_category_contract_detects_deliberate_regressions(mutation):
     source = inspect.getsource(restore_recovery._apply_prepared)
     if mutation == "skip_knowledge":
-        old = '    if prepared.restores("knowledge"):\n        await managers.knowledge.async_replace_backup(prepared.knowledge)\n'
+        old = '    if prepared.restores("knowledge"):\n        assert managers.knowledge is not None\n        await managers.knowledge.async_replace_backup(prepared.knowledge)\n'
         new = ""
     elif mutation == "reorder_memory":
-        memory = '    if prepared.restores("memories"):\n        await managers.memory.async_replace_backup(prepared.memories)\n'
-        temporary = '    if prepared.restores("temporary_memories"):\n        await managers.temporary.async_replace_backup(prepared.temporary_memories)\n'
+        memory = '    if prepared.restores("memories"):\n        assert managers.memory is not None\n        await managers.memory.async_replace_backup(prepared.memories)\n'
+        temporary = '    if prepared.restores("temporary_memories"):\n        assert managers.temporary is not None\n        await managers.temporary.async_replace_backup(prepared.temporary_memories)\n'
         old = memory + temporary
         new = temporary + memory
     elif mutation == "drop_empty_active":

@@ -106,3 +106,25 @@ class TestCompositeFunctionYaml:
         assert "Temperature: 20.0°C" in result
         assert "Humidity: 50%" in result
         assert "Light: off" in result
+
+
+async def test_composite_refuses_unavailable_nested_backend_before_any_child(hass):
+    from custom_components.extended_openai_conversation_responses.function_groups import (
+        function_tool_runtime_available,
+    )
+    from custom_components.extended_openai_conversation_responses.functions.composite import (
+        CompositeFunction,
+    )
+    from homeassistant.exceptions import HomeAssistantError
+
+    config = {
+        "type": "composite",
+        "sequence": [
+            {"type": "native", "name": "execute_service"},
+            {"type": "composite", "sequence": [{"type": "bash"}]},
+        ],
+    }
+    assert not function_tool_runtime_available({"function": config})
+    with pytest.raises(HomeAssistantError, match="required acknowledgement"):
+        await CompositeFunction().execute(hass, config, {}, None, [])
+    hass.services.async_call.assert_not_awaited()

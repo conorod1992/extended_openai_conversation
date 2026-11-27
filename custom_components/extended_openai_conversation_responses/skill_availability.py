@@ -108,8 +108,8 @@ def _allowed_string_arguments(
     return tuple(matches)
 
 
-def _closed_property_count(properties: dict[str, Any], patterns: Any) -> int | None:
-    """Count possible keys when all patterns are anchored literal alternatives."""
+def _closed_property_keys(properties: dict[str, Any], patterns: Any) -> set[str] | None:
+    """Find possible keys when all patterns are anchored literal alternatives."""
     if not isinstance(patterns, dict):
         return None
     keys = set(properties)
@@ -138,7 +138,7 @@ def _closed_property_count(properties: dict[str, Any], patterns: Any) -> int | N
         keys.update(alternatives)
         if final_newline:
             keys.update(f"{key}\n" for key in alternatives)
-    return len(keys)
+    return keys
 
 
 def _loader_allowed_names(
@@ -160,22 +160,19 @@ def _loader_allowed_names(
     if type(maximum) is int and maximum < len({"name", "file", *required}):
         return None
     minimum = parameters.get("minProperties")
-    if (
-        type(minimum) is int
-        and minimum > len(properties)
-        and parameters.get("additionalProperties") is False
-    ):
-        possible = _closed_property_count(
+    if parameters.get("additionalProperties") is False:
+        possible = _closed_property_keys(
             properties, parameters.get("patternProperties", {})
         )
-        if possible is not None and minimum > possible:
+        if possible is not None and (
+            bool({"name", "file", *required} - possible)
+            or (type(minimum) is int and minimum > len(possible))
+        ):
             return None
     for key in ("file", "name"):
         schema = properties.get(key)
         if key not in properties:
             additional = parameters.get("additionalProperties")
-            if additional is False:
-                return None
             if not parameters.get("patternProperties"):
                 schema = additional
         if schema is False:
@@ -257,7 +254,7 @@ def skill_loader_configuration_status(
     # Track all structural blockers so an edit cannot hide a new problem behind
     # the first diagnostic, and a partial repair can safely remove one blocker.
     blockers: list[str] = []
-    if max_function_calls is not None and max_function_calls <= 0:
+    if max_function_calls == 0:
         blockers.append(
             "selected Skills require at least one Function Tool call per request"
         )

@@ -282,3 +282,15 @@ def test_native_context_keeps_active_callers_and_retires_closed_callers(
     finally:
         current_session.reset(session_token)
         current_chat_log.reset(log_token)
+
+
+def test_nested_same_text_does_not_forward_parent_assist_listener():
+    source = _admitted_log()
+    source.delta_listener = object()
+    child = _log()
+    with chat_log_admission_scope(source, "source", "current question"):
+        with forward_chat_log_deltas(source, source, "current question"):
+            with chat_log_admission_scope(source, "child", "current question"):
+                with forward_chat_log_deltas(source, child, "current question"):
+                    assert child.delta_listener is None
+        assert source.delta_listener is not None

@@ -274,3 +274,12 @@ async def test_voice_scope_restores_satellite_when_user_validation_is_cancelled(
     assert request.satellite_id == "satellite"
 
 
+def test_legacy_satellite_mapping_falls_back_only_without_registry_mapping():
+    user_input = SimpleNamespace(
+        device_id="registry-device", satellite_id="assist_satellite.kitchen"
+    )
+    options = {CONF_VOICE_DEVICE_MAPPINGS: {"assist_satellite.kitchen": "user:legacy"}}
+    assert voice_identity_runtime.voice_mapping_source_id(user_input, options) == "assist_satellite.kitchen"
+    options[CONF_VOICE_DEVICE_MAPPINGS]["registry-device"] = "user:current"
+    assert voice_identity_runtime.voice_mapping_source_id(user_input, options) == "registry-device"
+    assert voice_identity_runtime.voice_source_device_id(user_input) == "registry-device"

@@ -187,3 +187,54 @@ test("a rejected preparation read for a confirmed new send cannot settle its pre
   assert.equal(original.uncertain, true);
   assert.equal(requests.length, 1, "preparing new intent neither sends it nor certifies the earlier admission");
 });
+
+
+test("a failed Broadcast refresh preserves the composer and leaves recovery available", async () => {
+  const {panel, click, snapshot} = await composer(async () => { throw Error("lost acknowledgement"); });
+  await click();
+  const attempt = panel._broadcastAttempt;
+  const host = panel.shadowRoot.querySelector("#broadcast-card");
+  const notice = {hidden:true};
+  host.querySelector = selector => selector === "[data-broadcast-load-error]" ? notice : null;
+  const previousMarkup = host.innerHTML;
+  await bindBroadcast(panel, Promise.reject(Error("temporarily unavailable")));
+  assert.equal(host.innerHTML, previousMarkup);
+  assert.equal(panel._broadcastMessage, "Dinner");
+  assert.equal(panel._broadcastAttempt, attempt);
+  assert.equal(notice.hidden, false);
+  assert.match(notice.textContent, /temporarily unavailable/);
+  await bindBroadcast(panel, Promise.resolve(snapshot));
+  assert.match(host.innerHTML, /id="broadcast-send"/);
+});
+
+test("pending Broadcasts do not displace completed history", async () => {
+  const {panel, snapshot} = await composer(async () => {});
+  const item = (id, message) => ({id, message, created_at:"2026-01-01T00:00:00Z", deliveries:{}});
+  snapshot.pending = Array.from({length:12}, (_, i) => item(`pending-${i}`, `Pending message ${i}`));
+  snapshot.history = [snapshot.pending[0], item("completed-1", "Completed announcement")];
+  await bindBroadcast(panel, Promise.resolve(snapshot));
+  const markup = panel.shadowRoot.querySelector("#broadcast-card").innerHTML;
+  assert.match(markup, /Pending message 11/);
+  assert.match(markup, /Recent broadcasts[\s\S]*Completed announcement/);
+  assert.equal(markup.match(/Pending message 0</g)?.length, 1);
+});
+
+
+test("the first failed Broadcast read offers a working retry", async () => {
+  const {panel, snapshot} = await composer(async () => {});
+  const host = panel.shadowRoot.querySelector("#broadcast-card");
+  delete panel._eocBroadcastSnapshotIsCurrent;
+  const notice = {};
+  const retry = {addEventListener(name, listener) { this[name] = listener; }};
+  host.querySelector = selector => {
+    if (!host.innerHTML.includes("Refresh Broadcast")) return null;
+    return selector === "#broadcast-refresh" ? retry : notice;
+  };
+  host.innerHTML = "Loading Broadcast";
+  await bindBroadcast(panel, Promise.reject(Error("connection failed")));
+  assert.match(host.innerHTML, /id="broadcast-refresh"/);
+  assert.match(notice.textContent, /connection failed/);
+  assert.equal(await retry.click(), true);
+  assert.match(host.innerHTML, /id="broadcast-message"/);
+  assert.equal(panel._eocBroadcastSnapshot, snapshot);
+});
