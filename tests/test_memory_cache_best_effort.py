@@ -299,6 +299,7 @@ async def test_capacity_limited_cache_keeps_a_stable_subset_and_all_facts(monkey
     memory.set_embedding_provider(provider, "model")
 
     assert await memory.async_prepare_hybrid(["alice"], "first") == [1.0, 0.0]
+    assert memory.hybrid_status()["partial_coverage"] is True
     cached_ids = set(cache.data["embeddings"])
     assert len(cached_ids) == 3
     provider.reset_mock()
@@ -320,6 +321,39 @@ async def test_capacity_limited_cache_keeps_a_stable_subset_and_all_facts(monkey
     assert reloaded.memory_count == 5
     assert sum(len(entry.vector) for entry in reloaded._embedding_cache.values()) == 4
     assert len(cache.data["embeddings"]) == 2
+
+
+async def test_hybrid_applies_the_same_lexical_weight_to_uncached_memories(monkeypatch):
+    monkeypatch.setattr(module, "MAX_CACHED_EMBEDDING_VALUES", 2)
+    memory, _, _ = await collection(2)
+
+    async def embeddings(texts):
+        return [
+            [0.2, 0.98] if text == "probe" else [1.0, 0.0] for text in texts
+        ]
+
+    memory.set_embedding_provider(embeddings, "model")
+    query = await memory.async_prepare_hybrid(["alice"], "probe")
+    assert set(memory._embedding_cache) == {"0"}
+    monkeypatch.setattr(
+        module,
+        "_score_prepared_bm25",
+        lambda _query, terms, _length: 0.8 if "0" in terms else 0.7,
+    )
+    results = await memory.async_search("alice", "probe", query_embedding=query, hybrid=True)
+    assert [item.memory_id for item in results] == ["0", "1"]
+
+
+async def test_detaching_old_embedding_owner_keeps_replacement_binding():
+    memory, _, _ = await collection(2)
+    first, second = object(), object()
+    first_provider, second_provider = AsyncMock(), AsyncMock()
+    memory.set_embedding_provider(first_provider, "model", owner=first)
+    memory.set_embedding_provider(second_provider, "model", owner=second)
+    memory.detach_embedding_provider(first)
+    assert memory._embedding_provider is second_provider
+    memory.detach_embedding_provider(second)
+    assert memory._embedding_provider is None
 
 
 async def test_native_oversized_cache_is_replaced_before_decoding(hass, monkeypatch):

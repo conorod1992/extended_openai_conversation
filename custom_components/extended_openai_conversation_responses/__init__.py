@@ -110,6 +110,7 @@ from .helpers import (
     entry_api_provider,
     get_authenticated_client,
     get_model_config,
+    new_agent_options,
 )
 from .intercom_services import async_setup_intercom_services
 from .live_subentry_updates import is_live_subentry_update
@@ -657,7 +658,9 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 hass.config_entries.async_add_subentry(entry, conversation_subentry)
             if "ai_task_data" not in existing_types:
                 ai_task_subentry = ConfigSubentry(
-                    data=MappingProxyType(dict(DEFAULT_AI_TASK_OPTIONS)),
+                    data=MappingProxyType(
+                        new_agent_options(DEFAULT_AI_TASK_OPTIONS, entry.data)
+                    ),
                     subentry_type="ai_task_data",
                     title=DEFAULT_AI_TASK_NAME,
                     unique_id=None,

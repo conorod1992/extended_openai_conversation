@@ -54,16 +54,18 @@ def memory_health_facts(
     failed: bool = False,
 ) -> dict[str, Any]:
     """Project Memory configuration and the observed storage state."""
+    hybrid = (
+        memory.hybrid_status()
+        if options.get(CONF_MEMORY_RETRIEVAL_MODE) == MEMORY_RETRIEVAL_HYBRID and memory
+        else {}
+    )
     return {
         "mode": get_memory_mode(options),
         "available": available,
         "failed": failed,
         "repair_required": bool(memory and memory.needs_storage_repair),
-        "keyword_fallback": bool(
-            options.get(CONF_MEMORY_RETRIEVAL_MODE) == MEMORY_RETRIEVAL_HYBRID
-            and memory
-            and memory.hybrid_status().get("status") == "lexical_fallback"
-        ),
+        "keyword_fallback": hybrid.get("status") == "lexical_fallback",
+        **({"hybrid_partial_coverage": True} if hybrid.get("partial_coverage") else {}),
     }
 
 

@@ -1531,10 +1531,13 @@ def merge_agent_config(
         # Decode before merging so legacy falsy values and YAML null stay distinct.
         known[CONF_FUNCTION_TOOLS] = parse_configured_function_tools(current) or []
     model_changed = _agent_reasoning_model_changed(current, updates, provider)
-    if model_changed and CONF_REASONING_EFFORT not in updates:
+    if CONF_REASONING_EFFORT not in updates and (
+        model_changed or known.get(CONF_REASONING_EFFORT) is None
+    ):
         # A model change with no explicit effort should use the new model's
         # recommended profile. Retaining the prior model's effort can make a
-        # perfectly valid switch to a non-reasoning model unsavable.
+        # perfectly valid switch to a non-reasoning model unsavable. Legacy
+        # saved null inherits the runtime recommendation on unrelated edits.
         known.pop(CONF_REASONING_EFFORT, None)
     _validate_usage_retention(agent_retention_snapshot(updates))
     normalized = normalize_agent_config(
@@ -1689,7 +1692,7 @@ def agent_config_model_repair_snapshot(
             damaged[CONF_SERVICE_TIER] = tier
     defaults = agent_config_defaults()
     source = {**data, **{key: defaults[key] for key in damaged if key in defaults}}
-    if CONF_REASONING_EFFORT in damaged:
+    if CONF_REASONING_EFFORT in damaged or source.get(CONF_REASONING_EFFORT) is None:
         source.pop(CONF_REASONING_EFFORT, None)
     return {**agent_config_snapshot(source, provider=provider), **damaged}
 

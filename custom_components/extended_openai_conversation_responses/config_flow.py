@@ -85,10 +85,11 @@ from .const import (
 )
 from .ha_schema import schema_for_ha
 from .helpers import (
+    DEFAULT_OPENAI_SETUP_MODEL as DEFAULT_OPENAI_SETUP_MODEL,
     ProviderEndpointError,
     effective_api_provider,
     get_authenticated_client,
-    is_native_openai_connection,
+    new_agent_options as _new_agent_options,
     resolve_provider_endpoint,
 )
 from .model_capabilities import (
@@ -293,17 +294,6 @@ DEFAULT_CONF_FUNCTION_TOOLS_STR = yaml.dump(
 )
 
 DEFAULT_OPTIONS = types.MappingProxyType(agent_config_defaults())
-DEFAULT_OPENAI_SETUP_MODEL = "gpt-6.1-terra"
-
-
-def _new_agent_options(
-    defaults: Mapping[str, Any], entry_data: Mapping[str, Any], *, client: Any = None
-) -> dict[str, Any]:
-    """Give new direct-OpenAI agents a supported model at creation time."""
-    options = dict(defaults)
-    if is_native_openai_connection(entry_data, client=client):
-        options[CONF_CHAT_MODEL] = DEFAULT_OPENAI_SETUP_MODEL
-    return options
 
 
 def _ai_task_display_reasoning_effort(

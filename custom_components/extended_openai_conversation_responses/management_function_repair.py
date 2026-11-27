@@ -37,6 +37,7 @@ from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_GUEST_ALLOWED_GROUP_IDS,
+    CONF_REASONING_EFFORT,
     CONF_SKILLS,
     DEFAULT_FUNCTION_GROUPS,
 )
@@ -342,6 +343,9 @@ def normalized_persisted_config_snapshot(
             reused_defaults = True
         else:
             source = dict(projection.data)
+            if source.get(CONF_REASONING_EFFORT) is None:
+                # The runtime inherits the model's recommendation for saved null.
+                source.pop(CONF_REASONING_EFFORT, None)
             if preparsed_function_tools is not _MISSING:
                 source[CONF_FUNCTION_TOOLS] = preparsed_function_tools
                 projection.snapshot = agent_config_snapshot(

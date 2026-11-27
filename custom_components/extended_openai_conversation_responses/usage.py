@@ -445,6 +445,7 @@ class UsageManager:
         )
         self._run_started: dict[str, float] = {}
         self._active_runs: dict[str, asyncio.Task[Any]] = {}
+        self._primary_request_models: dict[str, str] = {}
         self._stopping = False
         self._shutdown_lock = asyncio.Lock()
         self._shutdown_registered = False
@@ -625,6 +626,7 @@ class UsageManager:
                 await self._async_finalize_run(run)
             finally:
                 self._active_runs.pop(run.run_id, None)
+                self._primary_request_models.pop(run.run_id, None)
 
     async def async_prepare_for_deletion(self) -> None:
         """Drain pruning and release callbacks without flushing erased data.
@@ -690,6 +692,11 @@ class UsageManager:
     def current_run(self) -> UsageRun | None:
         return self._current_run.get()
 
+    def current_primary_request_model(self) -> str | None:
+        """Return the latest model used for the active conversation or AI Task."""
+        run = self._current_run.get()
+        return self._primary_request_models.get(run.run_id) if run is not None else None
+
     def mark_current_run_failed(self, error_type: str) -> None:
         record_current_run_failure(error_type)
         if run := self._current_run.get():
@@ -740,6 +747,8 @@ class UsageManager:
 
             run = self._current_run.get()
             if run is not None:
+                if request_stage in {"initial", "after_tool"} and model:
+                    self._primary_request_models[run.run_id] = model
                 run.request_count = add_usage_counts(run.request_count, 1)
                 run.successful_request_count = add_usage_counts(
                     run.successful_request_count, int(successful)

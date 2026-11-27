@@ -389,6 +389,7 @@ class PersistentMemory:
         self._memories: dict[str, MemoryRecord] = {}
         self._key_index: dict[tuple[str, str], str] = {}
         self._embedding_provider: EmbeddingProvider | None = None
+        self._embedding_owner: object | None = None
         self._embedding_model = "default"
         self._embedding_space_id = ""
         self._embedding_cache_storage = embedding_cache_storage
@@ -457,6 +458,7 @@ class PersistentMemory:
         *,
         space_id: str = "",
         retry_identity: object = None,
+        owner: object | None = None,
     ) -> None:
         """Configure the optional provider used only by hybrid retrieval."""
         # This runtime-only identity must never enter vectors or diagnostics.
@@ -466,6 +468,7 @@ class PersistentMemory:
             space_id,
             retry_identity if retry_identity is not None else provider,
         )
+        self._embedding_owner = owner if provider is not None else None
         if identity == self._embedding_retry_identity:
             # Equality identifies equivalent wrappers. Retain their object identity
             # so a repeated sync cannot retire a valid in-flight retrieval. A new
@@ -479,6 +482,11 @@ class PersistentMemory:
             None if provider is not None else "provider_not_configured",
         )
 
+    def detach_embedding_provider(self, owner: object) -> None:
+        """Release a retiring assistant's callback without clearing its successor."""
+        if self._embedding_owner is owner:
+            self.set_embedding_provider(None, self._embedding_model)
+
     def mark_embedding_binding_unavailable(self, model: str, error_type: str) -> bool:
         """Revoke the previous binding and report whether failure diagnostics changed."""
         changed = (
@@ -488,6 +496,7 @@ class PersistentMemory:
             or self._hybrid_status.get("error_type") != error_type
         )
         self._install_embedding_binding(None, model, "", None)
+        self._embedding_owner = None
         self._set_hybrid_status(
             "lexical_fallback", "provider_binding_failed", error_type=error_type
         )
@@ -969,11 +978,21 @@ class PersistentMemory:
             if binding_changed():
                 return None
             self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
+            partial_coverage = any(
+                memory.user_id in allowed_scopes
+                and (category_filter is None or memory.category == category_filter)
+                and self._cached_embedding(
+                    memory, dimensions=width, provider_model=batch.provider_model
+                )
+                is None
+                for memory in self._memories.values()
+            )
             self._set_hybrid_status(
                 "active",
                 "embedding_cache_not_persisted"
                 if self._embedding_cache_write_failed and self._embedding_cache_dirty
                 else None,
+                partial_coverage=partial_coverage,
             )
             return vector
         except _EmbeddingPreparationBudgetExhausted:
@@ -1996,6 +2015,7 @@ class PersistentMemory:
         reason: str | None = None,
         *,
         error_type: str | None = None,
+        partial_coverage: bool = False,
     ) -> None:
         if (
             status == "active"
@@ -2009,6 +2029,7 @@ class PersistentMemory:
             "configured": self._embedding_provider is not None,
             "status": status,
             "model": self._embedding_model,
+            **({"partial_coverage": True} if partial_coverage else {}),
             **({"reason": reason} if reason is not None else {}),
             **({"error_type": error_type} if error_type is not None else {}),
         }
@@ -2630,9 +2651,8 @@ def _rank_memory_snapshot(
             fuzzy_pairs_remaining -= fuzzy_pairs
             lexical = _fuzzy_relevance(query_tokens, token_set)
         relevance = lexical
-        if semantic is not None:
-            semantic = max(0.0, semantic)
-            relevance = 0.58 * lexical + 0.42 * semantic
+        if prepared_query is not None:
+            relevance = 0.58 * lexical + 0.42 * max(0.0, semantic or 0.0)
         if not (
             (lexical if allow_fuzzy_only else genuine_lexical)
             >= MIN_LEXICAL_RELEVANCE_SCORE

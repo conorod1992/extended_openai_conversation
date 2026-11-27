@@ -247,14 +247,15 @@ async def test_configuration_get_orders_after_in_progress_save(
     assert snapshot["config"]["speech_strip_urls"] is True
 
 
-async def test_unsupported_reasoning_effort_is_editable(routed_agent):
+@pytest.mark.parametrize("saved_effort", ["retired-effort", None])
+async def test_unsupported_reasoning_effort_is_editable(routed_agent, saved_effort):
     hass, entry, subentry, rules = routed_agent
     retained = rules.snapshot()["rules"][0]
     await rules.async_update(retained["id"], {**retained, "enabled": False})
     subentry.data = {
         **repair.safe_function_configuration(subentry.data),
         "chat_model": "gpt-5.6",
-        "reasoning_effort": "retired-effort",
+        "reasoning_effort": saved_effort,
     }
     read = await ui.async_management_command(
         hass,
@@ -267,7 +268,12 @@ async def test_unsupported_reasoning_effort_is_editable(routed_agent):
             "subentry_id": subentry.subentry_id,
         },
     )
-    assert read["config"]["reasoning_effort"] == "retired-effort"
+    if saved_effort is None:
+        assert read["config"]["reasoning_effort"] in {
+            option["value"] for option in read["options"]["reasoning_effort"]
+        }
+    else:
+        assert read["config"]["reasoning_effort"] == saved_effort
     result = await _command(
         routed_agent, "configuration", "save", {"reasoning_effort": "medium"}
     )

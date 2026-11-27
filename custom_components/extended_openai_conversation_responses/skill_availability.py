@@ -9,8 +9,6 @@ from re import _constants as re_ops, _parser as re_parser  # type: ignore[attr-d
 from time import monotonic
 from typing import Any
 
-import regex
-
 from .const import FUNCTION_GROUP_LOADING_ON_DEMAND, SKILL_FILE_NAME
 
 SKILL_LOADER_TOOL_NAME = "load_skill"
@@ -28,6 +26,7 @@ _PROPERTY_ATOMS = {
 _PROPERTY_REPEATS = {re_ops.MAX_REPEAT, re_ops.MIN_REPEAT, re_ops.POSSESSIVE_REPEAT}
 _MAX_PROPERTY_PATTERN_CHOICES = 128
 _MAX_PROPERTY_PATTERN_WORK = 262_144
+_MAX_ARGUMENT_PATTERN_WORK = 1_048_576
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,25 +97,27 @@ def _allowed_string_arguments(
     )
     if (pattern := schema.get("pattern")) is None:
         return allowed
-    if not allowed or not isinstance(pattern, str):
+    if not allowed or not isinstance(pattern, str) or len(pattern) > 4096:
         return ()
     try:
-        compiled = regex.compile(pattern, regex.VERSION0)
-    except regex.error:
+        longest = max(map(len, allowed))
+        choices = _property_pattern_choices(re_parser.parse(pattern, 0), longest)
+        if (
+            choices is None
+            or choices * (longest + 1) * len(pattern) > _MAX_ARGUMENT_PATTERN_WORK
+        ):
+            return ()
+        compiled = re.compile(pattern)
+    except re.error, RecursionError, OverflowError:
         return ()
-    # Bound matching in synchronous HA projections. Start the budget after
-    # compilation so an empty cache cannot consume time for later names.
+    # Only run provably bounded stdlib searches in synchronous projections.
     deadline = monotonic() + 0.01
     matches = []
     for value in allowed:
-        remaining = deadline - monotonic()
-        if remaining <= 0:
+        if monotonic() >= deadline:
             break
-        try:
-            if compiled.search(value, timeout=remaining) is not None:
-                matches.append(value)
-        except TimeoutError:
-            break
+        if compiled.search(value) is not None:
+            matches.append(value)
     return tuple(matches)
 
 
@@ -179,6 +180,11 @@ def _property_pattern_choices(
             ):
                 return None
             alternatives = len(branches)
+        elif op in {re_ops.ASSERT, re_ops.ASSERT_NOT, re_ops.ATOMIC_GROUP}:
+            nested = argument if op == re_ops.ATOMIC_GROUP else argument[1]
+            alternatives = _property_pattern_choices(nested, key_length)
+            if alternatives is None:
+                return None
         elif op in _PROPERTY_REPEATS:
             minimum, maximum, body = argument
             width, _ = body.getwidth()
@@ -304,6 +310,22 @@ def _loader_allowed_names(
             selected = _allowed_string_arguments(schema, selected)
         elif not _allowed_string_arguments(schema, (SKILL_FILE_NAME,)):
             return None
+    if "const" in parameters or "enum" in parameters:
+        from .function_execution import _json_equal
+
+        choices = parameters.get("enum", [parameters.get("const")])
+        if not isinstance(choices, list):
+            return None
+        allowed_names = {
+            choice["name"]
+            for choice in choices
+            if isinstance(choice, dict)
+            and isinstance(choice.get("name"), str)
+            and choice.get("file") == SKILL_FILE_NAME
+            and all(key in choice for key in required)
+            and ("const" not in parameters or _json_equal(choice, parameters["const"]))
+        }
+        selected = tuple(name for name in selected if name in allowed_names)
     return selected
 
 

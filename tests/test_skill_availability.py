@@ -1,10 +1,10 @@
 """Tests for Skill loader availability and configuration protection."""
 
 from copy import deepcopy
+import re
 from types import SimpleNamespace
 
 import pytest
-import regex
 
 from custom_components.extended_openai_conversation_responses import skill_availability
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -188,6 +188,30 @@ def test_skill_loader_leaves_complex_pattern_membership_uncertified():
     assert not skill_loader_status(["calendar"], [loader], []).available
 
 
+@pytest.mark.parametrize(
+    ("pattern", "available"),
+    [(r"(?i)^fıle$", True), (r"(?i)^f[^ı]le$", False)],
+)
+def test_skill_name_pattern_uses_function_runtime_semantics(pattern, available):
+    loader = _loader()
+    loader["spec"]["parameters"]["properties"]["name"]["pattern"] = pattern
+    assert skill_loader_status(["file"], [loader], []).available is available
+
+
+@pytest.mark.parametrize("assertion", ["const", "enum"])
+def test_loader_object_assertion_limits_available_skills(assertion):
+    loader = _loader()
+    loader["spec"]["strict"] = False
+    permitted = {"name": "weather", "file": "SKILL.md"}
+    loader["spec"]["parameters"][assertion] = (
+        permitted if assertion == "const" else [permitted]
+    )
+    status = effective_skill_loader_status(
+        ["calendar", "weather"], ["calendar", "weather"], [loader], []
+    )
+    assert status.loadable_skills == ("weather",)
+
+
 def test_selected_skills_require_reachable_enabled_group_and_tool_budget() -> None:
     disabled_group = skill_loader_status(
         ["calendar"], [_loader()], [_group(enabled=False)], max_function_calls=1
@@ -294,8 +318,7 @@ def test_effective_loader_requires_at_least_one_selected_installed_skill(
     parameters["properties"]["name"]["pattern"] = pattern
     assert skill_loader_status(["calendar"], [loader], []).available
     assert not skill_loader_status(["weather"], [loader], []).available
-    compile_pattern = regex.compile
-    search_pattern = regex.search
+    compile_pattern = re.compile
     now = 0.0
 
     def compile_after_delay(*args, **kwargs):
@@ -303,15 +326,9 @@ def test_effective_loader_requires_at_least_one_selected_installed_skill(
         now += 0.02
         return compile_pattern(*args, **kwargs)
 
-    def search_after_delay(*args, **kwargs):
-        nonlocal now
-        now += 0.02
-        return search_pattern(*args, **kwargs)
-
     with monkeypatch.context() as patch:
         patch.setattr(skill_availability, "monotonic", lambda: now)
-        patch.setattr(regex, "compile", compile_after_delay)
-        patch.setattr(regex, "search", search_after_delay)
+        patch.setattr(re, "compile", compile_after_delay)
         status = effective_skill_loader_status(
             ["weather", "calendar"], ["weather", "calendar"], [loader], []
         )

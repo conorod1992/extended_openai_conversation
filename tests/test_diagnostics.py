@@ -244,6 +244,7 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
         space_id=dependencies.memory.set_embedding_provider.call_args.kwargs[
             "space_id"
         ],
+        owner=entity,
         retry_identity=ANY,
     )
     assert (

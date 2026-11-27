@@ -187,6 +187,12 @@ function memoryCheck(facts) {
     value: memory.repair_required ? "Storage needs repair" : memory.failed ? "Unavailable" : "Keyword fallback",
     action: memory.repair_required ? action("usage-maintenance", "backup-restore") : action("data-memory", "memory-settings"),
   };
+  if (!off && memory.hybrid_partial_coverage) return {
+    id: "memory", state: "warning", title: "Long-term memory",
+    value: "Partial semantic coverage",
+    detail: "Some memories in the latest Hybrid Memory search were matched by keywords only.",
+    action: action("data-memory", "memory-settings"),
+  };
   if (off) {
     return {
       id: "memory",

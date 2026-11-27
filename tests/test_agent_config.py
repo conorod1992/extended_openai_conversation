@@ -613,6 +613,14 @@ def test_reasoning_default_and_explicit_validation(monkeypatch) -> None:
         normalize_agent_config({agent_config.CONF_REASONING_EFFORT: "medium"})
 
 
+def test_saved_null_reasoning_effort_uses_the_omitted_default() -> None:
+    data = {agent_config.CONF_CHAT_MODEL: "gpt-5-mini"}
+    expected = agent_config.agent_config_snapshot(data)
+    assert expected[agent_config.CONF_REASONING_EFFORT]
+    data[agent_config.CONF_REASONING_EFFORT] = None
+    assert agent_config.agent_config_model_repair_snapshot(data) == expected
+
+
 def test_skills_fail_when_loader_status_reports_unavailable(monkeypatch) -> None:
     monkeypatch.setattr(
         agent_config,

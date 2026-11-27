@@ -409,11 +409,10 @@ def sync_all_model_lifecycles(hass: Any) -> None:
 def _entity_request_model(entity: Any) -> str:
     """Use the recorded request model, including overrides and in-flight edits."""
     usage = getattr(entity, "_usage", None)
-    current_run = getattr(usage, "current_run", None)
-    run = current_run() if callable(current_run) else None
-    models = getattr(run, "models", ())
-    if models:
-        return str(models[-1])
+    primary_model = getattr(usage, "current_primary_request_model", None)
+    model = primary_model() if callable(primary_model) else None
+    if isinstance(model, str) and model:
+        return model
     return str(entity.subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip()
 
 

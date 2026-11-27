@@ -5,14 +5,20 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses import (
     async_migrate_integration,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONFIG_ENTRY_VERSION,
+    CONF_CHAT_MODEL,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_AI_TASK_OPTIONS,
     DOMAIN,
+)
+from custom_components.extended_openai_conversation_responses.helpers import (
+    DEFAULT_OPENAI_SETUP_MODEL,
 )
 
 
@@ -69,10 +75,14 @@ def _subentry(subentry_type: str, *, subentry_id: str):
     )
 
 
-async def test_v1_migration_adds_conversation_and_default_ai_task() -> None:
+@pytest.mark.parametrize("native", [True, False])
+async def test_v1_migration_adds_conversation_and_default_ai_task(native) -> None:
     """A genuine v1 install gains the same two default subentry types as fresh setup."""
     legacy_options = {"chat_model": "gpt-4o-mini"}
     entry = _entry(version=1, options=legacy_options)
+    entry.data = {
+        "base_url": "https://api.openai.com/v1" if native else "https://example.com/v1"
+    }
     manager = FakeConfigEntries([entry])
     hass = MagicMock()
     hass.config_entries = manager
@@ -93,7 +103,10 @@ async def test_v1_migration_adds_conversation_and_default_ai_task() -> None:
     )
     assert dict(conversation_subentry.data) == legacy_options
     assert ai_task_subentry.title == DEFAULT_AI_TASK_NAME
-    assert dict(ai_task_subentry.data) == DEFAULT_AI_TASK_OPTIONS
+    assert dict(ai_task_subentry.data) == (
+        {**DEFAULT_AI_TASK_OPTIONS, CONF_CHAT_MODEL: DEFAULT_OPENAI_SETUP_MODEL}
+        if native else DEFAULT_AI_TASK_OPTIONS
+    )
     assert ai_task_subentry.data is not DEFAULT_AI_TASK_OPTIONS
 
 

@@ -234,6 +234,22 @@ async def test_run_lifecycle_groups_multiple_requests_and_finalizes_once() -> No
     assert manager.today_summary()["total_tokens"] == 12
 
 
+async def test_primary_request_model_ignores_interleaved_embeddings() -> None:
+    manager = await _manager()
+    async with manager.async_run() as run:
+        for stage, model in (
+            ("initial", "routed-model"),
+            ("embeddings", "embedding-model"),
+            ("after_tool", "routed-model"),
+        ):
+            await manager.async_record_request(
+                successful=True, model=model, request_stage=stage
+            )
+            assert manager.current_primary_request_model() == "routed-model"
+        assert run.models == ["routed-model", "embedding-model"]
+    assert manager.current_primary_request_model() is None
+
+
 async def test_exception_run_is_finalized_without_request_metadata() -> None:
     manager = await _manager()
     try:

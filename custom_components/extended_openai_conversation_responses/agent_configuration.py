@@ -111,6 +111,7 @@ def sync_memory_embedding_provider(entity: Any) -> bool:
             MemoryEmbeddingProvider(create, model),
             model,
             space_id=space_id,
+            owner=entity,
             # A transient, nonsecret identity: wrapper recreation is irrelevant,
             # but replacing credentials or the runtime client permits retry.
             retry_identity=(

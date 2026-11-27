@@ -19,7 +19,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.template import Template
 
-from .const import DEFAULT_API_PROVIDER, DEFAULT_CONF_BASE_URL
+from .const import CONF_CHAT_MODEL, DEFAULT_API_PROVIDER, DEFAULT_CONF_BASE_URL
 from .entity_context_cache import (
     get_entity_prompt_metadata,
     normalize_entity_aliases as normalize_entity_aliases,
@@ -33,6 +33,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 AZURE_DOMAINS = ("openai.azure.com", "azure-api.net", "services.ai.azure.com")
+DEFAULT_OPENAI_SETUP_MODEL = "gpt-6.1-terra"
 _OPENAI_ENDPOINT = urlsplit(DEFAULT_CONF_BASE_URL)
 _OPENAI_HOSTED_TOOL_HOSTS = frozenset(
     {
@@ -279,6 +280,16 @@ def is_native_openai_connection(
     return supports_openai_hosted_tools(
         data.get("api_provider"), base_url, allow_query=allow_query
     )
+
+
+def new_agent_options(
+    defaults: Mapping[str, Any], entry_data: Mapping[str, Any], *, client: Any = None
+) -> dict[str, Any]:
+    """Give new direct-OpenAI agents a supported model at creation time."""
+    options = dict(defaults)
+    if is_native_openai_connection(entry_data, client=client):
+        options[CONF_CHAT_MODEL] = DEFAULT_OPENAI_SETUP_MODEL
+    return options
 
 
 def get_token_param_for_model(model: str) -> str:

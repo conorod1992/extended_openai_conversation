@@ -856,6 +856,11 @@ class ExtendedOpenAIAgentEntity(
                 # cannot resurrect the removed registration or block a reload.
                 await async_settle_owned_operation(ready.wait())
         finally:
+            detach_embeddings = getattr(
+                getattr(self, "_memory", None), "detach_embedding_provider", None
+            )
+            if callable(detach_embeddings):
+                detach_embeddings(self)
             unregister_legacy_agent(self.hass, self.entry, self)
             remove_function_group_runtime(
                 self.hass, self.entry.entry_id, self.subentry.subentry_id
