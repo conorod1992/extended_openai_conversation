@@ -81,6 +81,7 @@ from .usage import (
     retained_usage_details,
     usage_retention_policy,
 )
+from .voice_identity_runtime import eligible_configured_voice_owner
 from .yaml_serialization import InvalidSerializedUnicode
 
 TRANSFER_FORMAT = "extended_openai_conversation_transfer"
@@ -265,6 +266,17 @@ def _portable_user_id(value: Any, *, prefixed_only: bool = False) -> str | None:
     return candidate
 
 
+def _configured_voice_owner_ids(config: Mapping[str, Any]) -> set[str]:
+    """Identify the transferred owners that must be eligible for Voice Identity."""
+    mappings = config.get(CONF_VOICE_DEVICE_MAPPINGS, {})
+    values = mappings.values() if isinstance(mappings, Mapping) else ()
+    return {
+        user_id
+        for value in (config.get(CONF_VOICE_DEFAULT_USER_ID), *values)
+        if (user_id := _portable_user_id(value))
+    }
+
+
 def transfer_user_scope_ids(
     prepared: PreparedTransfer,
     selected: Iterable[str],
@@ -298,15 +310,7 @@ def transfer_user_scope_ids(
                 user_ids.add(user_id)
 
     if SECTION_CONFIGURATION in selected_set and prepared.config is not None:
-        if user_id := _portable_user_id(
-            prepared.config.get(CONF_VOICE_DEFAULT_USER_ID)
-        ):
-            user_ids.add(user_id)
-        mappings = prepared.config.get(CONF_VOICE_DEVICE_MAPPINGS, {})
-        if isinstance(mappings, Mapping):
-            for owner in mappings.values():
-                if user_id := _portable_user_id(owner):
-                    user_ids.add(user_id)
+        user_ids.update(_configured_voice_owner_ids(prepared.config))
 
     return frozenset(user_ids)
 
@@ -342,6 +346,17 @@ async def async_user_scope_mapping_plan(
         for user in users
         if getattr(user, "id", None) is not None
     }
+    voice_sources = (
+        _configured_voice_owner_ids(prepared.config)
+        if SECTION_CONFIGURATION in selected and prepared.config is not None
+        else set()
+    )
+    ineligible_voice_destinations = {
+        str(user.id)
+        for user in users
+        if getattr(user, "id", None) is not None
+        and not eligible_configured_voice_owner(user)
+    }
     supplied = {} if supplied is None else supplied
     if not isinstance(supplied, Mapping) or any(
         not isinstance(key, str) or not isinstance(value, str)
@@ -349,14 +364,24 @@ async def async_user_scope_mapping_plan(
     ):
         raise backup.BackupError("User ownership mappings must be an object")
 
-    required = sorted(source_ids - destinations.keys())
-    resolved = {user_id: user_id for user_id in source_ids if user_id in destinations}
+    required = sorted(
+        (source_ids - destinations.keys())
+        | (voice_sources & ineligible_voice_destinations)
+    )
+    resolved = {user_id: user_id for user_id in source_ids - set(required)}
     for source_id, destination_id in supplied.items():
         if source_id not in required:
             continue
         if destination_id not in destinations:
             raise backup.BackupError(
                 f"Mapped Home Assistant user does not exist: {destination_id}"
+            )
+        if (
+            source_id in voice_sources
+            and destination_id in ineligible_voice_destinations
+        ):
+            raise backup.BackupError(
+                f"Mapped Home Assistant user is unavailable for Voice Identity: {destination_id}"
             )
         resolved[source_id] = destination_id
 
@@ -371,6 +396,16 @@ async def async_user_scope_mapping_plan(
             )
         ],
         "resolved": {source_id: resolved[source_id] for source_id in sorted(resolved)},
+        **(
+            {
+                "voice_source_user_ids": sorted(voice_sources),
+                "ineligible_voice_destination_user_ids": sorted(
+                    ineligible_voice_destinations
+                ),
+            }
+            if voice_sources and ineligible_voice_destinations
+            else {}
+        ),
     }
 
 

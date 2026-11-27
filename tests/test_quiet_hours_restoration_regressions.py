@@ -124,6 +124,10 @@ async def test_unavailable_control_retains_baseline_until_return(
     method.assert_awaited_once_with(
         entity_id, 0.8 if kind == "volume" else True, context_id=ANY
     )
+    assert manager.active["controls"][entity_id]["restoration_awaiting_feedback"]
+    state.state = "idle" if kind == "volume" else "on"
+    state.attributes["volume_level"] = 0.8
+    await manager._async_restore_locked()
     assert manager.active is None
     manager._store.async_save.assert_awaited()
 

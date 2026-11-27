@@ -381,12 +381,29 @@ class _NativeConditions:
                     )
 
 
+def _has_tracked_duration(condition: Any) -> bool:
+    """Find native duration options, including inside compound conditions."""
+    if not isinstance(condition, Mapping) or condition.get("enabled") is False:
+        return False
+    options = condition.get("options")
+    children = condition.get("conditions")
+    return (isinstance(options, Mapping) and bool(options.get("for"))) or (
+        isinstance(children, list)
+        and any(_has_tracked_duration(child) for child in children)
+    )
+
+
 class RequestRules:
     """Concurrency-safe persisted rules with precomputed matcher state."""
 
     def __init__(
-        self, store: RequestRuleStore, on_change: Callable[[], None] | None = None
+        self,
+        store: RequestRuleStore,
+        on_change: Callable[[], None] | None = None,
+        *,
+        hass: HomeAssistant | None = None,
     ) -> None:
+        self._hass = hass
         self._store = store
         self._on_change = on_change
         self._rules: list[dict[str, Any]] = []
@@ -398,6 +415,8 @@ class RequestRules:
         self._matching_snapshot = _MatchingSnapshot((), ())
         self._committed_matching_snapshot = self._matching_snapshot
         self._condition_checkers: dict[str, _NativeConditions] = {}
+        self._condition_lock = asyncio.Lock()
+        self._condition_epoch = 0
         self._unsubscribe_stop: Callable[[], None] | None = None
         self._diagnostics: dict[str, str] = {}
         self._wording_diagnostics: dict[str, int] = {}
@@ -421,6 +440,7 @@ class RequestRules:
 
     def async_unload(self) -> None:
         """Release native subscriptions when this manager generation retires."""
+        self._condition_epoch += 1
         self._discard_condition_checkers()
         if self._unsubscribe_stop is not None:
             self._unsubscribe_stop()
@@ -590,7 +610,9 @@ class RequestRules:
                 self._require_current_owner()
                 self._remember_committed_state()
                 self._initialized = True
+                await self._async_sync_condition_checkers()
             except BaseException:
+                self._discard_condition_checkers()
                 self._defaults = dict(DEFAULT_MATCHING)
                 self._wording_groups = deepcopy(list(DEFAULT_WORDING_GROUPS))
                 self._groups = []
@@ -789,7 +811,6 @@ class RequestRules:
                 )
                 for rule in prepared["rules"]
             ]
-            self._discard_condition_checkers()
             await self._async_sort_and_compile()
             await self._async_save_locked(replacing=True)
 
@@ -989,7 +1010,6 @@ class RequestRules:
             if check_configuration is not None:
                 check_configuration()
             self._rules[index] = rule
-            self._discard_condition_checkers(rule_id)
             match_fields = (
                 "enabled",
                 "phrases",
@@ -1015,7 +1035,6 @@ class RequestRules:
             self._require_revision_locked(expected_revision)
             index = self._index(rule_id)
             del self._rules[index]
-            self._discard_condition_checkers(rule_id)
             await self._async_sort_and_compile()
             await self._async_save_locked()
         return True
@@ -1202,22 +1221,77 @@ class RequestRules:
         conditions = match.rule.get("conditions", [])
         if not conditions:
             return True
+        rule_id = match.rule["id"]
         try:
-            cached = self._condition_checkers.get(match.rule["id"])
-            if cached is None or cached.config != conditions:
-                self._discard_condition_checkers(match.rule["id"])
-                cached = await _NativeConditions.async_create(hass, conditions)
-                if self._retired:
-                    cached.async_unload()
-                    self._require_current_owner()
-                self._condition_checkers[match.rule["id"]] = cached
-            return cached.check(
-                hass, {"request": {"slots": match.slots}, **match.slots}
-            )
+            variables = {"request": {"slots": match.slots}, **match.slots}
+            cached = self._condition_checkers.get(rule_id)
+            if cached is not None and cached.config == conditions:
+                return cached.check(hass, variables)
+            async with self._condition_lock:
+                cached = self._condition_checkers.get(rule_id)
+                if cached is not None and cached.config == conditions:
+                    return cached.check(hass, variables)
+                checker = await self._async_create_condition_checker(hass, conditions)
+                if self._committed_condition_configs().get(rule_id) == conditions:
+                    self._discard_condition_checkers(rule_id)
+                    self._condition_checkers[rule_id] = checker
+                    return checker.check(hass, variables)
+                try:
+                    # A request can still be evaluating an older committed snapshot.
+                    return checker.check(hass, variables)
+                finally:
+                    checker.async_unload()
         except Exception as err:
             raise HomeAssistantError(
                 "Request Rule condition could not be evaluated"
             ) from err
+
+    def _committed_condition_configs(self) -> dict[str, list[Any]]:
+        if not self.routing_available or self._committed_state is None:
+            return {}
+        return {
+            rule["id"]: rule["conditions"]
+            for rule in self._committed_state["rules"]
+            if rule["enabled"] and rule.get("conditions")
+        }
+
+    async def _async_create_condition_checker(
+        self, hass: HomeAssistant, config: list[Any]
+    ) -> _NativeConditions:
+        self._require_current_owner()
+        epoch = self._condition_epoch
+        checker = await _NativeConditions.async_create(hass, config)
+        if self._retired or self._condition_epoch != epoch:
+            checker.async_unload()
+            raise HomeAssistantError("Request Rule condition tracking stopped")
+        return checker
+
+    async def _async_sync_condition_checkers(self) -> None:
+        """Retain unchanged trackers and start live duration tracking at commit."""
+        async with self._condition_lock:
+            configs = self._committed_condition_configs()
+            for rule_id, checker in tuple(self._condition_checkers.items()):
+                if configs.get(rule_id) != checker.config:
+                    self._discard_condition_checkers(rule_id)
+            if self._hass is None:
+                return
+            epoch = self._condition_epoch
+            for rule_id, config in configs.items():
+                if self._retired or self._condition_epoch != epoch:
+                    return
+                if rule_id in self._condition_checkers or not any(
+                    _has_tracked_duration(condition) for condition in config
+                ):
+                    continue
+                try:
+                    self._condition_checkers[
+                        rule_id
+                    ] = await self._async_create_condition_checker(self._hass, config)
+                except Exception as err:
+                    # Keep other rules available; a matching request can retry setup.
+                    log_handled_failure(
+                        _LOGGER, "Request Rule condition setup failed", err
+                    )
 
     async def async_eligible_matches(
         self, hass: HomeAssistant, text: str, skipped: list[dict[str, str]]
@@ -1525,6 +1599,7 @@ class RequestRules:
         def commit() -> None:
             self._remember_committed_state()
             if replacing:
+                self._discard_condition_checkers()
                 self._initialized = not self._retired
                 self._repair_required = self._routing_repair_required = False
 
@@ -1544,6 +1619,8 @@ class RequestRules:
             self._async_reconcile_failed_save if reconcile_failure else None,
             self._invalidate_after_unreadable_store,
         )
+        if self._initialized:
+            await self._async_sync_condition_checkers()
         self._notify_change()
 
     def _notify_change(self) -> None:
@@ -1580,7 +1657,6 @@ class RequestRules:
             and disk_state._revision_generation == self._committed_revision_generation
             and disk_state._opaque_fields == self._committed_opaque_fields
         )
-        self._discard_condition_checkers()
         self._defaults = deepcopy(disk_state._defaults)
         self._opaque_fields = deepcopy(disk_state._opaque_fields)
         self._wording_groups = deepcopy(disk_state._wording_groups)
@@ -1600,6 +1676,8 @@ class RequestRules:
             # manager's committed baseline, including its durable revision.
             self._remember_committed_state()
         self._initialized = not self._retired
+        if self._initialized:
+            await self._async_sync_condition_checkers()
         if self._initialized and not matches_committed:
             self._notify_change()
 
@@ -4127,6 +4205,7 @@ async def async_get_request_rules(
             managers[key] = RequestRules(
                 _request_rule_store(hass, entry_id, subentry_id),
                 on_change=reconcile_lifecycle,
+                hass=hass,
             )
         manager = cast(RequestRules, managers[key])
         if manager._unsubscribe_stop is None:

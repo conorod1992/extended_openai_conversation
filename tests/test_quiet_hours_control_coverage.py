@@ -583,6 +583,10 @@ async def test_restore_reverts_prepared_control_owned_by_quiet_hours(hass) -> No
 
     manager._async_set_volume.assert_awaited_once_with(entity_id, 0.8, context_id=ANY)
     assert manager._async_set_volume.await_args.kwargs["context_id"] != "quiet-hours-operation"
+    hass.states.get.side_effect = lambda _entity_id: _state(
+        manager._async_set_volume.await_args.kwargs["context_id"], volume=0.8
+    )
+    await manager._async_restore_locked()
     assert manager.active is None
 
 
@@ -628,6 +632,12 @@ async def test_pending_only_restore_leaves_non_pending_prepared_control_alone(ha
     await manager._async_restore_locked(pending_only=True)
 
     assert manager._active is not None
+    hass.states.get.side_effect = lambda entity_id: _state(
+        pending_control["restoration_context_id"] if entity_id == "switch.wake_sound" else "operation",
+        state="on" if entity_id == "switch.wake_sound" else "idle",
+        volume=0.2,
+    )
+    await manager._async_restore_locked(pending_only=True)
     assert manager._active["controls"] == {
         "media_player.bedroom": quiet_hours_control
     }

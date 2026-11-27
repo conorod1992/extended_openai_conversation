@@ -4,7 +4,7 @@ import {requireMutationAcknowledgement, captureConfigurationDraftOwner, captureC
 import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
 import {SETTING_LOOKUP} from "./management-setting-lookup.js";
 import {focusManagementSetting} from "./frontend-navigation.js";
-import {voiceMappingDraftError} from "./voice-mapping-draft.js";
+import {voiceMappingDraftDirty, voiceMappingDraftError} from "./voice-mapping-draft.js";
 import {configKeyForControl, isOptionalSamplingKey, isTimeoutKey, validTimeout} from "./configuration-controls.js";
 import {pendingRetentionFields} from "./management-state-safety.js";
 
@@ -160,7 +160,8 @@ async function saveConfiguration(panel, button) {
     }
   }
   const mappingError = voiceMappingDraftError(panel);
-  if (mappingError && panel._draft.voice_scope_policy === "device_mapping") {
+  if (mappingError && panel._draft.voice_scope_policy === "device_mapping"
+      && (voiceMappingDraftDirty(panel) || panel._eocDirtyConfigKeys?.has("voice_scope_policy"))) {
     showErrors(panel, {voice_device_mappings:mappingError});
     panel._toast?.(mappingError, true);
     return;

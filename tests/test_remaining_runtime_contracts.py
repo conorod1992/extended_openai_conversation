@@ -281,9 +281,13 @@ async def test_quiet_hours_pending_restore_releases_observed_control(hass, monke
     }
     monkeypatch.setattr(quiet, "_current_switch", lambda *_: False)
     await manager._async_restore_locked(pending_only=True)
+    assert manager._active["observed_controls"] == ["switch.wake"]
+    monkeypatch.setattr(quiet, "_current_switch", lambda *_: True)
+    context = hass.services.async_call.await_args.kwargs["context"]
+    hass.states.get.return_value.context = context
+    await manager._async_restore_locked(pending_only=True)
     assert manager._active["observed_controls"] == []
     assert manager._active["controls"] == {}
-    context = hass.services.async_call.await_args.kwargs["context"]
     assert isinstance(context, Context)
     assert context.id != "quiet-application"
     hass.services.async_call.assert_awaited_once_with(

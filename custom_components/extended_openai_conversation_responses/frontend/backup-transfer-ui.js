@@ -360,10 +360,13 @@ function updateUserScopeMappingUI(panel, preview) {
   const previous = selectedUserScopeMappings(root);
   const resolved = plan.resolved && typeof plan.resolved === "object" ? plan.resolved : {};
   const users = Array.isArray(plan.destination_users) ? plan.destination_users : [];
+  const voiceSources = new Set(plan.voice_source_user_ids || []);
+  const ineligibleVoiceUsers = new Set(plan.ineligible_voice_destination_user_ids || []);
   fieldset.hidden = false;
   list.innerHTML = required.map((source) => {
     const selected = resolved[source] || previous[source] || "";
-    const options = users.map((user) => {
+    const available = voiceSources.has(source) ? users.filter(user => !ineligibleVoiceUsers.has(user.user_id)) : users;
+    const options = available.map((user) => {
       const id = String(user?.user_id || "");
       const label = String(user?.name || id);
       return `<option value="${panel._e(id)}" ${id === selected ? "selected" : ""}>${panel._e(label)}</option>`;

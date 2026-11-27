@@ -167,17 +167,19 @@ function selectedEntityRegistryEntry(panel, scope, entityId) {
     const hass = panelHass(panel);
     const result = (async () => {
       let entry;
+      let resolved = false;
       try {
         entry = await hass?.callWS?.({type:"config/entity_registry/get", entity_id:entityId});
-      } catch {
-        entry = null;
+        resolved = entry?.entity_id === entityId;
+      } catch (error) {
+        resolved = error?.code === "not_found";
       }
       if (scope.list?.order > order) await scope.list.result;
       const snapshot = scope.snapshot;
       // A listing started after this lookup is newer evidence, even if it returned first.
       return snapshot?.order > order
-        ? {entry:snapshot.entries.find(item => item.entity_id === entityId), order:snapshot.order}
-        : {entry, order};
+        ? {entry:snapshot.entries.find(item => item.entity_id === entityId), order:snapshot.order, resolved:true}
+        : {entry, order, resolved};
     })().finally(() => scope.lookups.delete(entityId));
     scope.lookups.set(entityId, result);
   }
@@ -350,16 +352,16 @@ async function bindSatellitePicker(panel,row) {
       syncMappings(panel);
       return;
     }
-    const {entry, order} = await selectedEntityRegistryEntry(panel, scope, selectedEntity);
+    const {entry, order, resolved} = await selectedEntityRegistryEntry(panel, scope, selectedEntity);
     if (!rowCurrent() || !registryReadIsCurrent(panel, scope) || panel._viewKey?.() !== "assistant/voice"
         || picker.__voiceSelection !== selection) return;
     const registered = entry?.entity_id === selectedEntity;
-    const liveSatellite = !entry && panelHass(panel)?.states?.[selectedEntity];
+    const liveSatellite = resolved && !entry && panelHass(panel)?.states?.[selectedEntity];
     const deviceId = selectedEntity.startsWith("assist_satellite.") && (registered || liveSatellite)
       ? String(entry?.device_id || selectedEntity) : "";
     if (!deviceId) {
       row.dataset.voiceLookup = "unresolved";
-      setWarning(warning,"Select an available Assist satellite before saving.");
+      setWarning(warning,resolved ? "Select an available Assist satellite before saving." : "The satellite device lookup failed. Select the satellite again before saving.");
       syncMappings(panel);
       return;
     }

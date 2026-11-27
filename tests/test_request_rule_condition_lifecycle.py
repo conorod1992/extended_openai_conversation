@@ -2,24 +2,22 @@
 
 import asyncio
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from custom_components import extended_openai_conversation_responses as integration
+from custom_components.extended_openai_conversation_responses import request_rules as rr
+from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
+    async_request_rule_match_preview,
+)
 from homeassistant.components.light import condition as light_conditions
 from homeassistant.components.light.condition import BrightnessCondition
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import condition
-
-from custom_components.extended_openai_conversation_responses import (
-    request_rules as rr,
-)
-from custom_components import extended_openai_conversation_responses as integration
-from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
-    async_request_rule_match_preview,
-)
 from tests.test_request_rules import MemoryStore, local_rule
 
 
@@ -120,6 +118,7 @@ def native_duration(hass, monkeypatch):
     listener_module = condition
     if not hasattr(listener_module, "async_track_target_selector_state_change_event"):
         from homeassistant.helpers.condition import entity_condition
+
         listener_module = entity_condition
     monkeypatch.setattr(
         listener_module, "async_track_target_selector_state_change_event", track
@@ -178,6 +177,51 @@ async def test_native_duration_listener_is_released_on_retirement(
     assert not native_duration
     assert checker._unloaded
     rules.async_unload()  # Disposal is idempotent.
+
+
+async def test_first_request_uses_live_duration_across_unrelated_edit(
+    hass, native_duration
+):
+    raw = local_rule()
+    raw["conditions"] = [
+        {
+            "condition": "light.is_brightness",
+            "target": {"entity_id": ["light.kitchen"]},
+            "options": {
+                "for": {"minutes": 5},
+                "threshold": {"type": "above", "value": {"number": 50}},
+            },
+        }
+    ]
+    rules = rr.RequestRules(MemoryStore(), hass=hass)
+    await rules.async_initialize()
+    try:
+        rule = await rules.async_create(raw)
+        [(listen, _, _)] = native_duration
+        entity = "light.kitchen"
+        started = datetime.now(UTC) - timedelta(minutes=10)
+
+        def report(brightness, updated):
+            state = State(
+                entity, "on", {"brightness": brightness}, last_updated=updated
+            )
+            hass.states.get.return_value = state
+            listen(
+                SimpleNamespace(
+                    state_change_event=SimpleNamespace(
+                        data={"entity_id": entity, "new_state": state}
+                    ),
+                )
+            )
+
+        report(200, started)
+        await rules.async_update(rule["id"], {**rule, "name": "Updated name"})
+        assert len(native_duration) == 1
+        assert native_duration[0][0] is listen
+        report(220, datetime.now(UTC))
+        assert await rules.async_match(hass, "good night") is not None
+    finally:
+        rules.async_unload()
 
 
 async def test_entry_unload_disposes_manager_before_eviction(hass, monkeypatch):

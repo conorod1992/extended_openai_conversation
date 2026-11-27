@@ -169,18 +169,33 @@ def _install_registry(monkeypatch, *rooms: str) -> None:
         )
     registry = SimpleNamespace(
         async_get=entries.get,
-        async_get_entity_id=lambda domain, platform, unique: next((
-            item.entity_id for item in entries.values()
-            if (item.domain, item.platform, item.unique_id) == (domain, platform, unique)
-        ), None),
+        async_get_entity_id=lambda domain, platform, unique: next(
+            (
+                item.entity_id
+                for item in entries.values()
+                if (item.domain, item.platform, item.unique_id)
+                == (domain, platform, unique)
+            ),
+            None,
+        ),
     )
     monkeypatch.setattr(runtime.er, "async_get", lambda _hass: registry)
-    monkeypatch.setattr(runtime.er, "async_entries_for_device", lambda _reg, device: [
-        entry for entry in entries.values() if entry.device_id == device
-    ])
-    monkeypatch.setattr(runtime.dr, "async_get", lambda _hass: SimpleNamespace(
-        async_get=lambda _id: SimpleNamespace(manufacturer="Nabu Casa", model="Home Assistant Voice PE")
-    ))
+    monkeypatch.setattr(
+        runtime.er,
+        "async_entries_for_device",
+        lambda _reg, device: [
+            entry for entry in entries.values() if entry.device_id == device
+        ],
+    )
+    monkeypatch.setattr(
+        runtime.dr,
+        "async_get",
+        lambda _hass: SimpleNamespace(
+            async_get=lambda _id: SimpleNamespace(
+                manufacturer="Nabu Casa", model="Home Assistant Voice PE"
+            )
+        ),
+    )
 
 
 def _seed_room(hass, room: str, *, volume: float = 0.55, wake: str = "on") -> None:
@@ -404,7 +419,10 @@ async def test_failed_mutation_keeps_the_initial_receipt(monkeypatch, hass) -> N
 
     await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=UTC))
 
-    assert manager.active["controls"]["media_player.bedroom"]["application_state"] == "awaiting_feedback"
+    assert (
+        manager.active["controls"]["media_player.bedroom"]["application_state"]
+        == "awaiting_feedback"
+    )
     await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 1, tzinfo=UTC))
     manager._async_set_volume.assert_awaited_once()
 
@@ -589,12 +607,22 @@ def test_discovery_filters_disabled_registryless_and_unrelated_controls(
         )
     )
     monkeypatch.setattr(quiet_hours.er, "async_get", lambda _hass: registry)
-    monkeypatch.setattr(runtime.er, "async_entries_for_device", lambda _reg, device: [
-        entry for entry in entries.values() if entry.device_id == device
-    ])
-    monkeypatch.setattr(runtime.dr, "async_get", lambda _hass: SimpleNamespace(
-        async_get=lambda _id: SimpleNamespace(manufacturer="Nabu Casa", model="Home Assistant Voice PE")
-    ))
+    monkeypatch.setattr(
+        runtime.er,
+        "async_entries_for_device",
+        lambda _reg, device: [
+            entry for entry in entries.values() if entry.device_id == device
+        ],
+    )
+    monkeypatch.setattr(
+        runtime.dr,
+        "async_get",
+        lambda _hass: SimpleNamespace(
+            async_get=lambda _id: SimpleNamespace(
+                manufacturer="Nabu Casa", model="Home Assistant Voice PE"
+            )
+        ),
+    )
 
     discovered = quiet_hours.discover_satellite_capabilities(hass, QuietHoursConfig())
 
@@ -1401,8 +1429,17 @@ async def test_restore_respects_manual_changes_and_retains_failed_ownership() ->
     manager._async_set_switch.assert_awaited_once_with(
         "switch.owned", True, context_id=ANY
     )
+    assert set(manager._active["controls"]) == {"media_player.owned", "switch.owned"}
+    hass.states.values["media_player.owned"] = _state(
+        "media_player.owned", "idle", volume_level=0.7
+    )
+    hass.states.values["switch.owned"] = _state("switch.owned", "on")
+    await manager._async_restore_locked()
     assert manager._active is None
 
+    hass.states.values["media_player.owned"] = _state(
+        "media_player.owned", "idle", volume_level=0.2
+    )
     manager._active = {
         "controls": {
             "media_player.owned": {
@@ -1941,6 +1978,37 @@ async def test_prepare_control_reuses_unapplied_intent_at_original_baseline() ->
 
     assert result is control
     manager._async_save_control_state_locked.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delayed_switch_retarget_keeps_latest_policy(monkeypatch, hass):
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom", volume=0.1)
+    manager = _stateful_public_manager(hass)
+    manager._config = _config()
+    _, calls = await _install_services(hass)
+    now = datetime(2026, 9, 11, 23, tzinfo=UTC)
+    await manager.async_reconcile(now=now)
+    service = hass.services.async_call.side_effect
+    reports = []
+
+    async def defer_on(domain, name, data, **kwargs):
+        if (domain, name) == ("switch", "turn_on"):
+            reports.append((domain, name, data, kwargs))
+        else:
+            await service(domain, name, data, **kwargs)
+
+    hass.services.async_call.side_effect = defer_on
+    manager._config = _config(wake_sound="on")
+    await manager.async_reconcile(now=now)
+    manager._active = manager._normalize_active(deepcopy(manager.active))
+    manager._config = _config(wake_sound="off")
+    await manager.async_reconcile(now=now)
+    assert calls == [("switch.bedroom_wake_sound", False)]
+    [(domain, name, data, kwargs)] = reports
+    await service(domain, name, data, **kwargs)
+    await manager.async_reconcile(now=now)
+    assert [enabled for _, enabled in calls] == [False, True, False]
 
 
 @pytest.mark.asyncio

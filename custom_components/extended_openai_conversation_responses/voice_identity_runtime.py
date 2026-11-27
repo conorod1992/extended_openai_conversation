@@ -46,10 +46,19 @@ def voice_mapping_source_id(user_input: Any, options: Mapping[str, Any]) -> str 
     return source
 
 
+def eligible_configured_voice_owner(user: Any) -> bool:
+    """Match the editor's eligibility for configured voice owners."""
+    return (
+        user is not None
+        and getattr(user, "is_active", True)
+        and not getattr(user, "system_generated", False)
+    )
+
+
 async def _user_is_active(agent: Any, user_id: str) -> bool:
-    """Return whether one configured HA user still exists and is active."""
+    """Validate one configured owner without changing authenticated identity."""
     user = await agent.hass.auth.async_get_user(user_id)
-    return user is not None and user.is_active
+    return eligible_configured_voice_owner(user)
 
 
 async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str]:

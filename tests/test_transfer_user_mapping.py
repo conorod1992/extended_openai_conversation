@@ -98,7 +98,9 @@ def _prepared() -> transfer.PreparedTransfer:
     )
 
 
-async def test_restore_requires_mapping_for_source_user_missing_on_destination() -> None:
+async def test_restore_requires_mapping_for_source_user_missing_on_destination() -> (
+    None
+):
     hass = SimpleNamespace(
         auth=_Auth([SimpleNamespace(id="destination-a", name="Destination user")])
     )
@@ -116,7 +118,9 @@ async def test_restore_requires_mapping_for_source_user_missing_on_destination()
 
 
 async def test_restore_uses_same_user_id_without_prompting_for_mapping() -> None:
-    hass = SimpleNamespace(auth=_Auth([SimpleNamespace(id="source-a", name="Same user")]))
+    hass = SimpleNamespace(
+        auth=_Auth([SimpleNamespace(id="source-a", name="Same user")])
+    )
 
     plan = await transfer.async_user_scope_mapping_plan(
         hass, _prepared(), _prepared().available_sections
@@ -124,6 +128,31 @@ async def test_restore_uses_same_user_id_without_prompting_for_mapping() -> None
 
     assert plan["required_source_user_ids"] == []
     assert plan["missing_source_user_ids"] == []
+    assert plan["resolved"] == {"source-a": "source-a"}
+
+
+async def test_system_account_is_not_a_configured_voice_owner() -> None:
+    hass = SimpleNamespace(
+        auth=_Auth(
+            [
+                SimpleNamespace(id="source-a", name="System", system_generated=True),
+                SimpleNamespace(id="destination-a", name="Person"),
+            ]
+        )
+    )
+    prepared = _prepared()
+    plan = await transfer.async_user_scope_mapping_plan(
+        hass, prepared, prepared.available_sections
+    )
+    assert plan["missing_source_user_ids"] == ["source-a"]
+    assert plan["ineligible_voice_destination_user_ids"] == ["source-a"]
+    with pytest.raises(backup.BackupError, match="unavailable for Voice Identity"):
+        await transfer.async_user_scope_mapping_plan(
+            hass, prepared, prepared.available_sections, {"source-a": "source-a"}
+        )
+    plan = await transfer.async_user_scope_mapping_plan(
+        hass, prepared, [transfer.SECTION_PERSISTENT_MEMORY]
+    )
     assert plan["resolved"] == {"source-a": "source-a"}
 
 

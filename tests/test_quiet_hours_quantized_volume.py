@@ -79,6 +79,47 @@ START = datetime(2026, 10, 18, 23, tzinfo=UTC)
 END = datetime(2026, 10, 19, 8, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("manual", [False, True])
+async def test_delayed_restoration_across_reenable(hass, monkeypatch, manual):
+    manager, state, calls, reports, report = _speaker(hass, monkeypatch)
+    await manager.async_reconcile(now=START)
+    service = hass.services.async_call.side_effect
+
+    async def delay_restore(domain, name, data, **kwargs):
+        if data["volume_level"] == 0.8:
+            calls.append(0.8)
+            reports.append((0.8, kwargs["context"]))
+        else:
+            await service(domain, name, data, **kwargs)
+
+    hass.services.async_call.side_effect = delay_restore
+    manager._config = replace(manager._config, enabled=False)
+    await manager.async_reconcile(now=START)
+    manager._active = manager._normalize_active(deepcopy(manager.active))
+    manager._config = replace(manager._config, enabled=True)
+    await manager.async_reconcile(now=START)
+    assert calls == [0.23, 0.8]
+    restored, context = reports.pop()
+    report(restored, Context(user_id="manual") if manual else context)
+    await manager.async_reconcile(now=START)
+    assert calls == ([0.23, 0.8] if manual else [0.23, 0.8, 0.23])
+    assert state.attributes["volume_level"] == (0.8 if manual else 0.25)
+
+
+async def test_unavailable_service_retries_initial_command(hass, monkeypatch):
+    manager, _, calls, _, _ = _speaker(hass, monkeypatch)
+    hass.services.has_service.return_value = False
+    await manager.async_reconcile(now=START)
+    assert calls == []
+    assert (
+        manager.active["controls"]["media_player.test"]["application_state"]
+        == "prepared"
+    )
+    hass.services.has_service.return_value = True
+    await manager.async_reconcile(now=START)
+    assert calls == [0.23]
+
+
 async def test_no_device_report_does_not_repeat_or_restore_the_command(
     hass, monkeypatch
 ):
