@@ -668,6 +668,108 @@ async def test_late_indexed_part_snapshot_is_not_presented_again(
     ] == [*presentation, terminal]
 
 
+@pytest.mark.parametrize("part_kind", ["output_text", "refusal", "content_part"])
+@pytest.mark.parametrize(
+    "resolution", ["late", "terminal", "same-text", "mixed", "item", "conflicting"]
+)
+async def test_anonymous_snapshot_after_indexed_completion_uses_message_evidence(
+    part_kind, resolution
+):
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+
+    field = "refusal" if part_kind == "refusal" else "text"
+    content_type = "refusal" if field == "refusal" else "output_text"
+
+    def message(identity, text):
+        return SimpleNamespace(
+            type="message",
+            id=identity,
+            role="assistant",
+            status="completed",
+            content=[SimpleNamespace(type=content_type, **{field: text})],
+        )
+
+    def snapshot(item):
+        part = item.content[0]
+        return event(
+            f"response.{part_kind}.done",
+            content_index=0,
+            **(
+                {"part": part}
+                if part_kind == "content_part"
+                else {field: getattr(part, field)}
+            ),
+        )
+
+    first = message("first", "First answer.")
+    second = message(
+        "second", "First answer." if resolution == "same-text" else "Second answer."
+    )
+    output = [first] if resolution == "late" else [first, second]
+    frames = [
+        event("response.output_item.added", output_index=0, item=first),
+        event("response.output_item.done", output_index=0, item=first),
+    ]
+    if resolution in {"late", "mixed"}:
+        frames.append(snapshot(first))
+    if resolution != "late":
+        candidate = (
+            message("unknown", "Conflicting text.")
+            if resolution == "conflicting"
+            else second
+        )
+        frames.append(snapshot(candidate))
+    if resolution == "item":
+        frames.append(event("response.output_item.done", item=second))
+    frames.append(
+        event("response.completed", response=SimpleNamespace(output=output, usage=None))
+    )
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    parsed = entity._transform_responses_stream(
+        SimpleNamespace(content=[]), stream(frames)
+    )
+    seen = []
+    if resolution == "conflicting":
+        with pytest.raises(ProviderStreamError, match="terminal output conflicts"):
+            async for delta in parsed:
+                seen.append(delta)
+        output = [first]
+    else:
+        seen = [delta async for delta in parsed]
+    assert [delta["native"] for delta in seen if "native" in delta] == output
+    assert [delta["content"] for delta in seen if "content" in delta] == [
+        getattr(item.content[0], field) for item in output
+    ]
+
+
+@pytest.mark.parametrize("separate_messages", [False, True])
+async def test_deferred_snapshots_share_the_output_buffer_budget(
+    monkeypatch, separate_messages
+):
+    from custom_components.extended_openai_conversation_responses import (
+        provider_output_budget,
+    )
+
+    monkeypatch.setattr(provider_output_budget, "MAX_BUFFERED_EVENTS", 1)
+    first = event("response.output_item.done", output_index=0)
+    late = event("response.output_text.done", content_index=0, text="Late snapshot")
+    frames = [first, late]
+    if separate_messages:
+        second = event("response.output_item.done", output_index=1)
+        frames.append(second)
+    terminal = event("response.completed")
+    frames.extend([late, terminal])
+    if separate_messages:
+        presented = [frame async for frame in ordered_output_events(stream(frames))]
+        assert presented[1::2] == [first, second]
+        assert presented[-1] is terminal
+    else:
+        with pytest.raises(ProviderStreamError, match="local safety limits"):
+            _ = [frame async for frame in ordered_output_events(stream(frames))]
+
+
 async def test_terminal_output_count_is_bounded_before_replay(monkeypatch):
     from custom_components.extended_openai_conversation_responses import (
         responses_stream_order,

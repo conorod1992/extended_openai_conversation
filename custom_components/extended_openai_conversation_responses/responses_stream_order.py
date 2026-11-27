@@ -51,6 +51,17 @@ def _malformed(reason: str) -> ProviderStreamError:
     )
 
 
+type _MessageParts = tuple[tuple[Any, Any, Any], ...]
+
+
+def _part_identity(part: Any) -> tuple[Any, Any, Any]:
+    return (
+        getattr(part, "type", None),
+        getattr(part, "text", None),
+        getattr(part, "refusal", None),
+    )
+
+
 def _item_identity(item: Any) -> tuple[Any, ...]:
     identity = tuple(
         getattr(item, field, None)
@@ -63,11 +74,7 @@ def _item_identity(item: Any) -> tuple[Any, ...]:
         getattr(item, "role", None),
         getattr(item, "phase", None),
         tuple(
-            (
-                getattr(part, "type", None),
-                getattr(part, "text", None),
-                getattr(part, "refusal", None),
-            )
+            _part_identity(part)
             for part in responses_array(getattr(item, "content", ()), "message content")
         ),
     )
@@ -216,6 +223,32 @@ class _MessagePart:
             yield tail
 
 
+def _message_text(event: Any) -> tuple[str, str] | None:
+    kind = event.type
+    if kind == "response.content_part.done":
+        part = getattr(event, "part", None)
+        part_type = getattr(part, "type", None)
+        if part_type not in {"output_text", "refusal"}:
+            return None
+        value = getattr(part, "text" if part_type == "output_text" else "refusal", None)
+    elif kind in _TEXT_EVENTS:
+        part_type = "refusal" if ".refusal." in kind else "output_text"
+        attr = (
+            "delta"
+            if kind.endswith(".delta")
+            else ("refusal" if part_type == "refusal" else "text")
+        )
+        value = getattr(event, attr, None)
+    else:
+        return None
+    if not isinstance(value, str):
+        if part_type == "refusal" and value is not None:
+            value = str(value)  # Legacy compatible providers use refusal objects.
+        else:
+            raise _malformed("invalid message text")
+    return part_type, value
+
+
 class ResponseMessageText:
     """Assemble one ordered assistant item before publishing ambiguous text."""
 
@@ -233,30 +266,9 @@ class ResponseMessageText:
 
     def observe(self, event: Any) -> str:
         """Stream the first part only when its phase is already established."""
-        kind = event.type
-        if kind == "response.content_part.done":
-            part = getattr(event, "part", None)
-            part_type = getattr(part, "type", None)
-            if part_type not in {"output_text", "refusal"}:
-                return ""
-            value = getattr(
-                part, "text" if part_type == "output_text" else "refusal", None
-            )
-        elif kind in _TEXT_EVENTS:
-            part_type = "refusal" if ".refusal." in kind else "output_text"
-            attr = (
-                "delta"
-                if kind.endswith(".delta")
-                else ("refusal" if part_type == "refusal" else "text")
-            )
-            value = getattr(event, attr, None)
-        else:
+        if (text := _message_text(event)) is None:
             return ""
-        if not isinstance(value, str):
-            if part_type == "refusal" and value is not None:
-                value = str(value)  # Legacy compatible providers use refusal objects.
-            else:
-                raise _malformed("invalid message text")
+        part_type, value = text
         index = getattr(event, "content_index", None)
         if index is None:
             self.unindexed = True
@@ -264,7 +276,7 @@ class ResponseMessageText:
         part_state = self.parts.setdefault(index, _MessagePart(part_type))
         if part_state.kind != part_type:
             raise _malformed("conflicting message content part type")
-        if kind.endswith(".delta"):
+        if event.type.endswith(".delta"):
             if part_state.snapshot is not None:
                 raise _malformed("text delta after completed content part")
             if value:
@@ -324,6 +336,56 @@ _TEXT_EVENTS = {
 }
 
 
+@dataclass(slots=True)
+class _DeferredMessageSnapshots:
+    """Bound anonymous snapshots whose output item is not known yet."""
+
+    events: list[Any] = field(default_factory=list)
+    weight: int = 0
+
+    def add(self, event: Any, budget: ProviderOutputBudget) -> None:
+        self.weight += budget.buffer(event)
+        self.events.append(event)
+
+    def clear(self, budget: ProviderOutputBudget) -> None:
+        budget.release_buffer(self.weight, len(self.events))
+        self.events.clear()
+        self.weight = 0
+
+    def confirms(self, previous: _MessageParts, candidate: Any) -> bool:
+        """Require evidence for one new message and account for any late duplicates."""
+        content = getattr(candidate, "content", None)
+        if (
+            not self.events
+            or getattr(candidate, "type", None) != "message"
+            or getattr(candidate, "role", None) not in (None, "assistant")
+            or content is None
+        ):
+            return False
+        parts = responses_array(content, "message content")
+        confirmed = False
+        for event in self.events:
+            if (text := _message_text(event)) is None:
+                continue
+            part_type, value = text
+            snapshot = (
+                (part_type, value, None)
+                if part_type == "output_text"
+                else (part_type, None, value)
+            )
+            content_index = getattr(event, "content_index", None)
+            index = content_index or 0
+            if (
+                (content_index is not None or len(parts) == 1)
+                and index < len(parts)
+                and _part_identity(parts[index]) == snapshot
+            ):
+                confirmed = True
+            elif index >= len(previous) or previous[index] != snapshot:
+                return False
+        return confirmed
+
+
 async def ordered_output_events(
     events: AsyncIterator[Any],
     *,
@@ -340,12 +402,22 @@ async def ordered_output_events(
     legacy_start = False
     legacy_message_active = False
     implicit_legacy_text = False
-    # Tracks the last presented item, including completions released from buffers.
-    message_finished = False
     legacy_completions: dict[str, _OutputItem] = {}
     last_legacy_completed: _OutputItem | None = None
     legacy_items: list[tuple[Any, ...]] = []
     legacy_output_seen = False
+    # A snapshot without an owner can be late or introduce an implicit message.
+    finished_parts: _MessageParts | None = None
+    deferred_snapshots = _DeferredMessageSnapshots()
+
+    def advance_message_boundary(completion: tuple[Any, ...] | None = None) -> None:
+        nonlocal finished_parts
+        if finished_parts is not None:
+            deferred_snapshots.clear(budget)
+        finished_parts = (
+            completion[-1] if completion and completion[0] == "message" else None
+        )
+
     try:
         async for event in events:
             index = getattr(event, "output_index", None)
@@ -353,7 +425,7 @@ async def ordered_output_events(
                 raise _malformed("invalid output index")
             kind = getattr(event, "type", "")
             anonymous_output_index = None
-            late_snapshot = False
+            late_snapshot = defer_snapshot = False
             if index is None and kind in _CONTENT_EVENTS:
                 content_owner = getattr(event, "item_id", None)
                 if isinstance(content_owner, str) and content_owner in owners:
@@ -367,29 +439,27 @@ async def ordered_output_events(
                     ):
                         # The visible indexed message already owns anonymous parts.
                         anonymous_output_index = next_index
-                late_snapshot = (
-                    index is None
-                    and kind in _PART_SNAPSHOTS
-                    and (
-                        (
-                            isinstance(content_owner, str)
-                            and content_owner in legacy_completions
-                        )
-                        or (
-                            not content_owner
-                            and anonymous_output_index is None
-                            and message_finished
-                        )
+                if index is None and kind in _PART_SNAPSHOTS:
+                    late_snapshot = (
+                        isinstance(content_owner, str)
+                        and content_owner in legacy_completions
                     )
-                )
+                    defer_snapshot = (
+                        not content_owner
+                        and anonymous_output_index is None
+                        and finished_parts is not None
+                    )
             budget.responses_event(
                 event,
                 anonymous_output_index=anonymous_output_index,
-                discard_snapshot=late_snapshot,
+                discard_snapshot=late_snapshot or defer_snapshot,
             )
             if terminal_seen and kind.startswith("response.") and kind not in _USAGE:
                 raise _malformed("event after terminal response")
             if late_snapshot:
+                continue
+            if defer_snapshot:
+                deferred_snapshots.add(event, budget)
                 continue
 
             if kind == "response.completed":
@@ -402,14 +472,25 @@ async def ordered_output_events(
                 output = responses_array(
                     getattr(response, "output", ()), "response output"
                 )
+                if len(output) > MAX_OUTPUT_ITEMS:
+                    raise ProviderStreamError(
+                        "Provider output exceeded local safety limits",
+                        error_type="output_limit_exceeded",
+                    )
+                completed_count = next_index + len(legacy_items)
+                final = output[-1] if len(output) == completed_count + 1 else None
+                snapshot_message = (
+                    finished_parts is not None
+                    and deferred_snapshots.confirms(finished_parts, final)
+                )
+                advance_message_boundary()
                 recovered = None
                 if (
                     legacy_start
                     or legacy_message_active
                     or (implicit_legacy_text and output)
+                    or snapshot_message
                 ):
-                    completed_count = next_index + len(legacy_items)
-                    final = output[-1] if len(output) == completed_count + 1 else None
                     if (
                         final is None
                         or getattr(final, "type", None) != "message"
@@ -429,15 +510,10 @@ async def ordered_output_events(
                     ):
                         raise _malformed("repeated completed output item")
                     legacy.bind_identity(final_id, _DONE)
-                    legacy_items.append(_item_identity(final))
                     recovered = SimpleNamespace(type=_DONE, item=final)
                     budget.responses_event(recovered)
+                    legacy_items.append(_item_identity(final))
                 if output:
-                    if len(output) > MAX_OUTPUT_ITEMS:
-                        raise ProviderStreamError(
-                            "Provider output exceeded local safety limits",
-                            error_type="output_limit_exceeded",
-                        )
                     if items or legacy_output_seen:
                         completed = [
                             items[index].completion for index in range(next_index)
@@ -538,7 +614,7 @@ async def ordered_output_events(
                     legacy.observe(event, kind, item_id)
                     legacy_start = True
                     implicit_legacy_text = False
-                    message_finished = False
+                    advance_message_boundary()
                 elif kind == _DONE:
                     if legacy.signature and legacy.signature[0] != getattr(
                         event.item, "type", None
@@ -556,8 +632,9 @@ async def ordered_output_events(
                     ):
                         record_web_search()
                     last_legacy_completed = legacy
-                    message_finished = getattr(event.item, "type", None) == "message"
-                    legacy_items.append(_item_identity(event.item))
+                    assert legacy.completion is not None
+                    advance_message_boundary(legacy.completion)
+                    legacy_items.append(legacy.completion)
                     legacy = _OutputItem()
                     legacy_start = legacy_message_active = implicit_legacy_text = False
                 else:
@@ -567,7 +644,7 @@ async def ordered_output_events(
                     elif kind in _TEXT_EVENTS or kind.startswith(
                         "response.content_part."
                     ):
-                        message_finished = False
+                        advance_message_boundary()
                         if anonymous_output_index is None:
                             if item_id or (
                                 kind.startswith("response.content_part.")
@@ -631,20 +708,20 @@ async def ordered_output_events(
 
             is_opening = event is item.opening
             if not item.presented:
-                message_finished = False
+                advance_message_boundary()
             if not item.presented or item.pending:
                 for frame in item.release(budget):
                     yield frame
             if not is_opening:
                 yield event
             while item.completion is not None:
-                message_finished = item.completion[0] == "message"
+                advance_message_boundary(item.completion)
                 next_index += 1
                 following = items.get(next_index)
                 if following is None or not following.ready:
                     break
                 item = following
-                message_finished = False
+                advance_message_boundary()
                 for frame in item.release(budget):
                     yield frame
     except ProviderStreamError:

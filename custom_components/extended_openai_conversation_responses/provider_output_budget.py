@@ -190,7 +190,7 @@ class ProviderOutputBudget:
         if content_index is None:
             content_index = 0
         if discard_snapshot:
-            return  # An already completed item cannot retain a late snapshot.
+            return  # No logical owner to charge for a late or deferred snapshot.
         if kind == "response.output_item.added":
             self._started_items += 1
             if self._started_items > MAX_OUTPUT_ITEMS:
