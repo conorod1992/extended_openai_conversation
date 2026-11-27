@@ -199,6 +199,7 @@
       "tests_browser/mounted-live-lifecycle-mutations.stress.mjs::chromium::mounted-live-lifecycle-mutations.stress.mjs::mounted native selector receives entity device and area renames without losing its draft",
       "tests_browser/native-yaml-editor-crud.spec.mjs::chromium::native-yaml-editor-crud.spec.mjs::modified native YAML requires confirmation before built-in preset replacement",
       "tests_browser/native-yaml-editor-crud.spec.mjs::chromium::native-yaml-editor-crud.spec.mjs::native YAML editor validates, duplicates, isolates tool state, deletes, and fits a narrow viewport",
+      "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::Broadcast mounts during stalled Overview detail and reconciles live controls",
       "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::Overview is usable while Broadcast implementation is still loading",
       "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::Overview snapshot is usable while the full implementation is still loading",
       "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::leaving Overview while Broadcast loads prevents stale hydration",

@@ -76,7 +76,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # bytes (907,554 -> 907,721). Allow 24 bytes of total JS headroom.
 # Scoped, ordered Voice registry reads add 479 minified JS bytes
 # (907,721 -> 908,200). Allow 25 bytes of total JS headroom.
-CEILINGS = {"javascript": 908_225, "css": 65_000, "management_entry": 120_500}
+# Broadcast reconciliation and Overview, Voice, and Memory status fixes add
+# 2,904 minified JS bytes (908,200 -> 911,104). Keep 26 bytes of headroom.
+CEILINGS = {"javascript": 911_130, "css": 65_000, "management_entry": 120_500}
 
 
 def measure(dist: Path) -> dict[str, int]:

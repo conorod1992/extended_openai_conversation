@@ -191,6 +191,7 @@ def test_skill_loader_leaves_complex_pattern_membership_uncertified():
 @pytest.mark.parametrize(
     ("pattern", "available"),
     [(r"(?i)^fıle$", True), (r"(?i)^f[^ı]le$", False)],
+    ids=["casefolded-literal", "casefolded-negation"],
 )
 def test_skill_name_pattern_uses_function_runtime_semantics(pattern, available):
     loader = _loader()
