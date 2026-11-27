@@ -1,4 +1,5 @@
-import {lookupModelData, modelDataStatusText} from "./model-catalog.js";
+import {lookupModelData, modelDataStatusText, modelProviderForPanel} from "./model-catalog.js";
+import {captureAuthentication} from "./authentication-presentation.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 
 function modelDataCardState(panel) {
@@ -107,21 +108,27 @@ export function renderOverviewModelDataCard(panel) {
 
 function ensureOverviewModelData(panel) {
   if (panel?._data?.is_admin === false || panel?._page !== "overview") return;
+  const key = () => JSON.stringify([panel._loadToken, panel._agentId, panel._selectedAgent?.()?.model, modelProviderForPanel(panel)]);
+  const visit = key();
+  const authenticated = captureAuthentication(panel);
+  if (panel._eocOverviewModelDataRead?.visit === visit
+      && panel._eocOverviewModelDataRead.authenticated()) return;
+  const read = {visit, authenticated};
+  panel._eocOverviewModelDataRead = read;
+  const current = () => authenticated() && panel._page === "overview"
+    && panel._eocOverviewModelDataRead === read && key() === visit;
   const model = panel._selectedAgent?.()?.model || "";
-  if (panel._modelCatalogData?.requested_model === model) return;
-  if (panel._eocOverviewModelDataPromise) return;
-  panel._eocOverviewModelDataPromise = lookupModelData(panel, model)
-    .then(() => { panel._eocOverviewModelDataError = null; })
-    .catch((err) => { panel._eocOverviewModelDataError = err.message || String(err); })
+  void lookupModelData(panel, model, "lookup", current)
+    .then(() => { if (current()) panel._eocOverviewModelDataError = null; })
+    .catch((err) => { if (current()) panel._eocOverviewModelDataError = err.message || String(err); })
     .finally(() => {
-      panel._eocOverviewModelDataPromise = null;
-      if (panel._page === "overview") renderOverviewModelDataCard(panel);
+      if (current()) renderOverviewModelDataCard(panel);
     });
 }
 
 export function enhanceOverviewHealthClarity(panel) {
   if (panel._page !== "overview" || !panel.shadowRoot) return;
+  ensureOverviewModelData(panel);
   if (!enhancementChanged(panel, "overview-health", [panel._agentId, panel._data?.is_admin, JSON.stringify(panel._modelCatalogData), panel._eocOverviewModelDataError])) return;
   renderOverviewModelDataCard(panel);
-  ensureOverviewModelData(panel);
 }

@@ -85,6 +85,7 @@ export function renderOverview(panel, agent) {
   const result = panel._result || {};
   const usage = result.usage || {};
   const conversations = result.conversations || {};
+  const retentionDays = conversations.archive_retention_days;
   const setupHealth = buildSetupHealth(result.setup_health);
   const checks = Object.fromEntries(setupHealth.checks.map(check => [check.id, check]));
   const web = checks.web_search;
@@ -129,7 +130,7 @@ export function renderOverview(panel, agent) {
         ? (agent?.function_count == null ? (result.loading?.setup_health || !panel._result ? "Loading…" : "Function count unavailable") : `${Number(agent.function_count).toLocaleString()} individually enabled`)
         : `${Number(agent.effective_function_count).toLocaleString()} available functions`} · ${agent.function_group_count == null ? "Unknown groups" : `${Number(agent.function_group_count).toLocaleString()} group${agent.function_group_count === 1 ? "" : "s"}`}`,`${checks.home_assistant_exposure?.value || "Assist exposure unavailable"}${checks.function_tools?.state === "warning" || checks.function_tools?.state === "error" ? ` · ${checks.function_tools.value}` : ""}`,"capabilities","home-assistant","Manage","mdi:tools")}
       ${card(panel,"Memory & Knowledge",`${checks.memory?.value || (loading.memory || !panel._result ? "Memory loading…" : "Memory status unavailable")} · Knowledge ${checks.knowledge?.value || (loading.knowledge || !panel._result ? "loading…" : "status unavailable")}`,loading.memory || loading.knowledge || !panel._result ? "Stored-data counts are loading." : `${result.load_errors?.some(issue => issue.key === "memory") ? "Memory count unavailable" : `${memoryCount} ${agent.memory_count === 1 ? "memory" : "memories"}`} · ${result.load_errors?.some(issue => issue.key === "knowledge") ? "Knowledge count unavailable" : `${knowledgeCount} Knowledge sources`}`,"data-memory","memories","Manage","mdi:brain")}
-      ${card(panel,"Conversation history",agent.archive_enabled ? "Archive enabled" : "Archive disabled",result.load_errors?.some((issue) => issue.key === "conversations") ? "Retention unavailable" : `Retention: ${conversations.archive_retention_days || 30} days`,"data-memory","conversations","View","mdi:message-text-clock-outline",archiveTone)}
+      ${card(panel,"Conversation history",agent.archive_enabled ? "Archive enabled" : "Archive disabled",Number.isInteger(retentionDays) && !loadErrors.some(issue => ["primary", "conversations"].includes(issue.key)) ? `Retention: ${retentionDays} days` : "Retention unavailable","data-memory","conversations","View","mdi:message-text-clock-outline",archiveTone)}
       ${card(panel,"Guest Mode",loading.guest_mode ? "Loading…" : result.load_errors?.some(issue => issue.key === "guest_mode") ? "Status unavailable" : guestLabel(panel, guest),loading.guest_mode ? "Loading current Guest Mode status." : "Integration-enforced visitor access and data restrictions.","capabilities","guest-mode","Configure","mdi:account-lock-outline",guestTone)}
       ${card(panel,"Usage",loading.usage ? "Loading usage…" : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage unavailable" : `${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,loading.usage ? "Loading today and monthly totals." : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage summary could not be loaded." : `${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View","mdi:chart-line",usage.storage_warning ? "warning" : "neutral",usage.storage_warning)}
       ${card(panel,"Web Search",web?.value || (!panel._result ? "Loading…" : "Status unavailable"),web?.detail || (!panel._result ? "Checking Web Search availability." : "Web Search status could not be loaded."),web?.action?.page || "capabilities",web?.action?.subsection || "web-skills","Configure","mdi:web",web?.state === "warning" ? "warning" : web?.state === "ready" ? "positive" : "neutral")}
@@ -195,10 +196,12 @@ function bindOverviewDashboard(panel, broadcastPromise) {
     await panel._navigate(button.dataset.page, button.dataset.subsection || null);
   }));
   if (!broadcastPromise) return;
+  const visit = panel._loadToken;
+  const current = () => panel._viewKey?.() === "overview" && panel._loadToken === visit;
   void import("./overview-broadcast.js")
-    .then((module) => module.bindBroadcast(panel, broadcastPromise))
+    .then((module) => { if (current()) return module.bindBroadcast(panel, broadcastPromise); })
     .catch((err) => {
-      if (panel._viewKey?.() !== "overview") return;
+      if (!current()) return;
       const host = panel.shadowRoot.querySelector("#broadcast-card");
       if (host) host.innerHTML = `<div class="error" role="alert">Unable to load Broadcast: ${panel._e(err.message || String(err))}</div>`;
     });

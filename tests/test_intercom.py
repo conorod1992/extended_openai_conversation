@@ -361,6 +361,10 @@ async def test_send_rejects_empty_message_and_no_targets(hass, monkeypatch) -> N
     with pytest.raises(HomeAssistantError, match="cannot be empty"):
         await manager.async_send("   ", whole_home=True)
 
+    with pytest.raises(HomeAssistantError, match="invalid Unicode"):
+        await manager.async_send("Hello\ud800", whole_home=True)
+    assert manager.history() == []
+
     monkeypatch.setattr(manager, "resolve_targets", lambda **_kwargs: [])
     with pytest.raises(HomeAssistantError, match="No matching"):
         await manager.async_send("Hello", whole_home=True)

@@ -70,6 +70,12 @@ for (const failure of ["duplicate","unresolved","pending","empty"]) {
   const rows=structuredClone(voiceMappingDraft(panel).rows);
   rememberVoiceDeviceAliases(panel,[{entity_id:legacy, device_id:canonical}]);
   assert.match(voiceMappingDraftError(panel), /assigned more than once/);
+  assert.equal(voiceMappingDraftDirty(panel), false);
+  panel._draft.prompt = "Updated prompt while legacy mappings remain unchanged";
+  panel._syncConfigDirty();
+  await saveConfiguration(panel,{});
+  assert.deepEqual(f.state.writes[0].config, {prompt:panel._draft.prompt});
+  assert.match(voiceMappingDraftError(panel), /assigned more than once/);
   const [old, current]=rows;
   assert.match(updateVoiceMappingRows(panel,[old]).error, /reactivate/);
   assert.deepEqual(panel._draft.voice_device_mappings, {[legacy]:"user:owner", [canonical]:"unretained"});

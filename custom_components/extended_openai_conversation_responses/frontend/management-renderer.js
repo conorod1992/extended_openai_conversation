@@ -288,7 +288,19 @@ function renderDynamicRegions(panel) {
   }
   panel._eocDeferredEditorRender = false;
   if (main && changed) {
-    main.innerHTML = markup;
+    const broadcast = route === panel._eocRenderedRoute && panel._viewKey() === "overview"
+      && panel._eocBroadcastSnapshotIsCurrent?.() && main.querySelector("#broadcast-card");
+    if (broadcast) {
+      const active = root.activeElement;
+      const focused = active && broadcast.contains(active);
+      const template = main.ownerDocument.createElement("template");
+      template.innerHTML = markup;
+      template.content.querySelector("#broadcast-card")?.replaceWith(broadcast);
+      main.replaceChildren(template.content);
+      if (focused && active.isConnected) active.focus({preventScroll: true});
+    } else {
+      main.innerHTML = markup;
+    }
     delete main.dataset.eocInitialLoading;
     panel._eocMainRevision = (panel._eocMainRevision || 0) + 1;
     panel._eocMainMarkup = markup;

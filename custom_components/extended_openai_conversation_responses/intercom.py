@@ -30,6 +30,7 @@ from .global_runtime import global_runtime_available, require_global_runtime
 from .intercom_permissions import async_authorized_broadcast_targets
 from .operation_settlement import async_settle_owned_operation
 from .persistence_hardening import StorageRepairRequired
+from .strict_json import has_surrogate
 from .strict_store import STORE_ENVELOPE_ERRORS, PropagatingWriteStore
 
 DOMAIN = "extended_openai_conversation_responses"
@@ -584,6 +585,8 @@ class IntercomManager:
         text = message.strip()
         if not text:
             raise HomeAssistantError("Broadcast message cannot be empty")
+        if has_surrogate(text):
+            raise HomeAssistantError("Broadcast message contains invalid Unicode")
         if not any(character.isalnum() for character in text):
             raise HomeAssistantError(
                 "Broadcast message must contain a letter or number"

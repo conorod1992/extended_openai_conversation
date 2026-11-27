@@ -92,11 +92,14 @@ def record_tool_execution(
                 value = json.loads(value)
         outcome = "returned" if successful else "failed"
         if successful and isinstance(value, dict):
-            if value.get("status") == "denied":
+            status = value.get("status")
+            if status == "denied":
                 outcome = "denied"
             elif (
                 value.get("error")
-                or value.get("status") in {"error", "failed", "failure"}
+                or (
+                    isinstance(status, str) and status in {"error", "failed", "failure"}
+                )
                 or value.get("success") is False
                 or (isinstance(value.get("exit_code"), int) and value["exit_code"] != 0)
             ):

@@ -330,6 +330,28 @@ def test_usage_text_and_action_detection_support_provider_variants() -> None:
     assert not debug._event_has_action({"item": {"type": "message"}})
 
 
+@pytest.mark.parametrize(
+    ("surface", "event"),
+    [
+        ("responses", {"type": "response.refusal.delta", "delta": "Cannot help"}),
+        ("chat_completions", {"choices": [{"delta": {"refusal": "Cannot help"}}]}),
+    ],
+)
+def test_refusal_delta_records_first_text_before_completion(surface, event, monkeypatch):
+    request = debug.DebugProviderRequest(
+        request_id="refusal",
+        api_surface=surface,
+        started_at="now",
+        started_offset_ms=0,
+        request={},
+        metrics={},
+        _started_monotonic=10.0,
+    )
+    monkeypatch.setattr(debug.time, "monotonic", lambda: 10.25)
+    request.add_event(event)
+    assert request.first_text_ms == 250
+
+
 def test_provider_request_records_timings_usage_and_truncates(monkeypatch) -> None:
     request = debug.DebugProviderRequest(
         request_id="req-1",

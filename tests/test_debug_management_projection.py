@@ -88,6 +88,23 @@ def test_debug_trace_provider_requests_are_paged_and_aggregate_bounded() -> None
     ]
 
 
+def test_capture_only_truncation_marks_management_trace() -> None:
+    manager = DebugManager()
+    manager.configure(enabled=True, limit=10)
+    trace = manager.begin(
+        entry_id="entry", subentry_id="agent", user_input={"text": "hello"},
+        incoming_conversation_id=None,
+    )
+    request = trace.start_provider_request("responses", (), {"input": "retained"})
+    request.metrics["request_capture_truncated"] = True
+    manager.finish(trace, successful=True)
+    page = debug_trace_page(manager, trace.debug_id)
+    [provider] = page["provider_requests"]
+    assert provider["request_meta"]["truncated"] is False
+    assert provider["request_meta"]["capture_truncated"] is True
+    assert page["management_projection"]["truncated"] is True
+
+
 def test_debug_run_summary_cannot_return_an_unbounded_error_object() -> None:
     manager, _debug_id = _captured_manager()
 

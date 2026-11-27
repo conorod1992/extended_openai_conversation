@@ -94,6 +94,7 @@ for (const fails of [false, true]) {
 // Failed lookups cannot silently submit the previously saved device; retry recovers.
 {
   const h = harness(); await h.ready;
+  h.panel.hass.states = {"assist_satellite.kitchen": {state:"idle"}};
   const failed = h.picker.select("assist_satellite.kitchen");
   await Promise.resolve(); await Promise.resolve();
   h.responses[0].reject(new Error("Registry unavailable")); await failed;
@@ -105,6 +106,17 @@ for (const fails of [false, true]) {
   h.responses[1].resolve({entity_id:"assist_satellite.kitchen", device_id:"retried-device"});
   await retry;
   assert.deepEqual(JSON.parse(h.card.value), {"retried-device":"user:office-owner"});
+}
+
+// Only an authoritative missing entry permits a live satellite-only assignment.
+{
+  const h = harness(); await h.ready;
+  h.panel.hass.states = {"assist_satellite.kitchen": {state:"idle"}};
+  const selected = h.picker.select("assist_satellite.kitchen");
+  await Promise.resolve(); await Promise.resolve();
+  h.responses[0].reject({code:"not_found"}); await selected;
+  assert.deepEqual(JSON.parse(h.card.value), {"assist_satellite.kitchen":"user:office-owner"});
+  assert.equal(voiceMappingDraftError(h.panel), "");
 }
 
 // A registered satellite with no associated device is saved by entity ID.

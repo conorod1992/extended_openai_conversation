@@ -126,11 +126,11 @@ function broadcastMarkup(panel, snapshot) {
   return `
     <div data-broadcast-load-error class="error" role="alert" hidden></div>
     <div class="section-heading broadcast-heading"><div><span class="section-kicker"><ha-icon icon="mdi:bullhorn-outline"></ha-icon> Home messaging</span><h2>Broadcast</h2><p>Send a spoken message to selected Assist satellites or the whole home. Busy satellites wait until they are free.</p></div></div>
-    <div class="broadcast-toggle-row">
+    <div class="broadcast-toggle-row" data-broadcast-setting="enabled">
       <div><strong>Enable Broadcast</strong>${enabled ? "" : "<p>Broadcast is currently off.</p>"}</div>
       ${canManage ? `<label class="switch-control" for="broadcast-enabled"><input id="broadcast-enabled" type="checkbox" role="switch" aria-label="Enable Broadcast" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label>` : `<strong class="status-pill ${enabled ? "status-on" : "status-off"}">${enabled ? "On" : "Off"}</strong>`}
     </div>
-    <div class="broadcast-toggle-row">
+    <div class="broadcast-toggle-row" data-broadcast-setting="voice">
       <div><strong>Built-in voice command</strong><p>Handle ‘Broadcast [message]’ locally without AI. Turn this off to manage Broadcast commands using Request Rules or your AI model.</p></div>
       ${canManage ? `<label class="switch-control" for="broadcast-builtin-voice-command"><input id="broadcast-builtin-voice-command" type="checkbox" role="switch" aria-label="Built-in voice command" ${builtinVoiceCommand ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label>` : `<strong class="status-pill ${builtinVoiceCommand ? "status-on" : "status-off"}">${builtinVoiceCommand ? "On" : "Off"}</strong>`}
     </div>
@@ -205,13 +205,7 @@ function bindBroadcastControls(panel, snapshot) {
     }
     bindBroadcastControls(panel, latest);
   }));
-  root.querySelectorAll("[data-broadcast-entity]").forEach((box) => box.addEventListener("change", (event) => {
-    panel._broadcastSelected ||= new Set();
-    if (event.target.checked) panel._broadcastSelected.add(event.target.dataset.broadcastEntity);
-    else panel._broadcastSelected.delete(event.target.dataset.broadcastEntity);
-    panel._broadcastDraftRevision = (panel._broadcastDraftRevision || 0) + 1;
-    event.target.closest(".broadcast-target")?.classList.toggle("is-selected", event.target.checked);
-  }));
+  bindBroadcastTargets(panel, root);
   root.querySelector("#broadcast-refresh")?.addEventListener("click", () => loadBroadcast(panel));
   root.querySelector("#broadcast-send")?.addEventListener("click", async (event) => {
     if (panel._broadcastSending) return;
@@ -290,30 +284,96 @@ function bindBroadcastControls(panel, snapshot) {
   });
 }
 
+function bindBroadcastTargets(panel, root) {
+  root.querySelectorAll("[data-broadcast-entity]").forEach((box) => box.addEventListener("change", (event) => {
+    panel._broadcastSelected ||= new Set();
+    if (event.target.checked) panel._broadcastSelected.add(event.target.dataset.broadcastEntity);
+    else panel._broadcastSelected.delete(event.target.dataset.broadcastEntity);
+    panel._broadcastDraftRevision = (panel._broadcastDraftRevision || 0) + 1;
+    event.target.closest(".broadcast-target")?.classList.toggle("is-selected", event.target.checked);
+  }));
+}
+
+function preserveBroadcastFocus(panel, host) {
+  const active = panel.shadowRoot.activeElement;
+  if (!active || !host.contains(active)) return () => {};
+  const {id, name, value, selectionStart, selectionEnd, selectionDirection} = active;
+  const satellite = active.dataset.broadcastEntity;
+  return () => {
+    if (host.contains(active)) return;
+    const next = id ? panel.shadowRoot.getElementById(id)
+      : [...host.querySelectorAll("input")].find(input => satellite
+        ? input.dataset.broadcastEntity === satellite
+        : input.name === name && input.value === value);
+    const focus = next || host.querySelector("#broadcast-enabled, #broadcast-refresh");
+    focus?.focus({preventScroll: true});
+    if (next && selectionStart != null) next.setSelectionRange(selectionStart, selectionEnd, selectionDirection);
+  };
+}
+
+function retainAvailableBroadcastSelections(panel, snapshot) {
+  const available = new Set((snapshot.catalog?.satellites || []).map(satellite => satellite.id));
+  panel._broadcastSelected = new Set([...(panel._broadcastSelected || [])].filter(id => available.has(id)));
+}
+
+function renderBroadcastCard(panel, host, snapshot) {
+  const restoreFocus = preserveBroadcastFocus(panel, host);
+  host.innerHTML = broadcastMarkup(panel, snapshot);
+  bindBroadcastControls(panel, snapshot);
+  restoreFocus();
+}
+
+function reconcileBroadcastPoll(panel, host, previous, result) {
+  retainAvailableBroadcastSelections(panel, result);
+  if (previous.enabled !== result.enabled || previous.can_manage !== result.can_manage) {
+    renderBroadcastCard(panel, host, result);
+    return;
+  }
+  const template = host.ownerDocument.createElement("template");
+  template.innerHTML = broadcastMarkup(panel, result);
+  const content = template.content;
+  const replace = selector => {
+    const fresh = content.querySelector(selector);
+    if (fresh) host.querySelector(selector)?.replaceWith(fresh);
+    return fresh;
+  };
+  replace(".broadcast-history");
+  if (previous.builtin_voice_command !== result.builtin_voice_command) {
+    const toggle = host.querySelector("#broadcast-builtin-voice-command");
+    if (toggle) {
+      if (!toggle.disabled) toggle.checked = result.builtin_voice_command !== false;
+    } else replace('[data-broadcast-setting="voice"] .status-pill');
+  }
+  if (JSON.stringify(previous.catalog) !== JSON.stringify(result.catalog)) {
+    const restoreFocus = preserveBroadcastFocus(panel, host);
+    const targets = replace(".broadcast-target-section");
+    if (targets) bindBroadcastTargets(panel, targets);
+    const send = host.querySelector("#broadcast-send");
+    if (send) send.disabled = !(result.catalog?.satellites || []).length || Boolean(panel._broadcastSending);
+    restoreFocus();
+  }
+}
+
 function applyBroadcastSnapshot(panel, snapshot) {
   if (panel._viewKey?.() !== "overview") return;
   const host = panel.shadowRoot.querySelector("#broadcast-card");
   if (!host) return;
-  const available = new Set((snapshot.catalog?.satellites || []).map((satellite) => satellite.id));
-  panel._broadcastSelected = new Set([...(panel._broadcastSelected || new Set())].filter((entityId) => available.has(entityId)));
-  host.innerHTML = broadcastMarkup(panel, snapshot);
-  bindBroadcastControls(panel, snapshot);
+  retainAvailableBroadcastSelections(panel, snapshot);
+  renderBroadcastCard(panel, host, snapshot);
   panel._eocBroadcastEpoch = (panel._eocBroadcastEpoch || 0) + 1;
   panel._eocBroadcastSnapshot = snapshot;
+  panel._eocBroadcastSnapshotVisit = panel._loadToken;
   panel._eocBroadcastSnapshotIsCurrent = captureAuthentication(panel);
   watchBroadcastStatus(panel, snapshot, async current => {
     const epoch = panel._eocBroadcastEpoch;
     const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
     const result = await panel._hass.callWS({type:WS_BROADCAST, action:"snapshot"});
     if (!current() || panel._eocBroadcastEpoch !== epoch || panel._eocBroadcastReadToken !== token) return;
+    const previous = panel._eocBroadcastSnapshot;
     panel._eocBroadcastSnapshot = result;
-    // Preserve the message draft, selection and focus while status settles.
     const currentHost = panel.shadowRoot.querySelector("#broadcast-card");
     if (!currentHost) return;
-    const history = currentHost.querySelector(".broadcast-history");
-    const template = currentHost.ownerDocument.createElement("template");
-    template.innerHTML = broadcastMarkup(panel, result);
-    history?.replaceWith(template.content.querySelector(".broadcast-history"));
+    reconcileBroadcastPoll(panel, currentHost, previous, result);
     return result;
   });
 }
@@ -352,7 +412,8 @@ async function loadBroadcast(panel, owns = () => true) {
 
 export function bindBroadcast(panel, broadcastPromise) {
   const authCurrent = captureAuthentication(panel);
-  const current = () => authCurrent() && authenticationReadIsCurrent(broadcastPromise);
+  const visit = panel._loadToken;
+  const current = () => authCurrent() && authenticationReadIsCurrent(broadcastPromise) && panel._loadToken === visit;
   ensureRouteStyle(panel);
   const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
   return Promise.resolve(broadcastPromise)

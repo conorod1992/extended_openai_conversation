@@ -3,6 +3,7 @@ import {readFile} from "node:fs/promises";
 
 import {buildSetupHealth} from "../custom_components/extended_openai_conversation_responses/frontend/overview-health.js";
 import {renderOverview} from "../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js";
+import {enhanceOverviewHealthClarity} from "../custom_components/extended_openai_conversation_responses/frontend/management-overview-health-clarity.js";
 
 const defaultFacts = {
   provider_runtime: {client_loaded: true, provider: "openai", model: "gpt-5-mini"},
@@ -211,11 +212,32 @@ assert.match(
   /panel\?\._data\?\.is_admin === false/,
   "the Model Data card should respect the existing admin-only management boundary",
 );
-assert.match(
-  claritySource,
-  /panel\._modelCatalogData\?\.requested_model === model/,
-  "Overview should reuse model data already loaded for the selected model",
-);
+let catalogueReads = 0;
+const overviewVisit = {
+  _page: "overview",
+  _loadToken: 1,
+  _agentId: "agent",
+  _data: {is_admin: true},
+  _selectedAgent: () => ({model: "same-model"}),
+  _hass: {callWS: async () => ({catalog_version: 1, update_available: ++catalogueReads > 1})},
+  shadowRoot: {querySelector: () => null},
+};
+enhanceOverviewHealthClarity(overviewVisit);
+enhanceOverviewHealthClarity(overviewVisit);
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(catalogueReads, 1);
+assert.equal(overviewVisit._modelCatalogData.update_available, false);
+overviewVisit._loadToken++;
+enhanceOverviewHealthClarity(overviewVisit);
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(catalogueReads, 2);
+assert.equal(overviewVisit._modelCatalogData.update_available, true);
+
+const failedSummary = renderOverview({
+  ...panel, _result: {load_errors: [{key: "primary", label: "Overview summary"}]},
+}, agent);
+assert.match(failedSummary, /Retention unavailable/);
+assert.doesNotMatch(failedSummary, /Retention: 30 days/);
 
 
 const overviewEntrySource = await readFile(

@@ -25,8 +25,15 @@ export async function ensureOverviewModule() {
 }
 
 export function startOverviewBroadcastSnapshot(panel) {
-  if (panel._eocOverviewBroadcastPromise) return panel._eocOverviewBroadcastPromise;
+  const visit = panel._loadToken;
+  if (panel._eocBroadcastSnapshotVisit === visit && panel._eocBroadcastSnapshotIsCurrent?.()) {
+    return Promise.resolve(panel._eocBroadcastSnapshot);
+  }
+  if (panel._eocOverviewBroadcastVisit === visit && panel._eocOverviewBroadcastPromise) {
+    return panel._eocOverviewBroadcastPromise;
+  }
   const promise = ownAuthenticationRead(panel, panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"}));
+  panel._eocOverviewBroadcastVisit = visit;
   panel._eocOverviewBroadcastPromise = promise;
   return promise;
 }
@@ -131,10 +138,10 @@ export function bindOverview(panel) {
   }
   // The agent snapshot and summary are the first useful Overview. Broadcast
   // starts after the summary is mounted so its request cannot contend for it.
-  const detailsPending = Object.values(panel._result?.loading || {}).some(Boolean);
   const agent = panel._selectedAgent?.();
-  const broadcast = (!agent || panel._result) && !detailsPending
-    ? panel._eocOverviewBroadcastPromise || startOverviewBroadcastSnapshot(panel)
+  const host = panel.shadowRoot?.querySelector?.("#broadcast-card");
+  const broadcast = (!agent || panel._result) && !host?.querySelector?.(".broadcast-history")
+    ? startOverviewBroadcastSnapshot(panel)
     : null;
   implementation.bindOverview(panel, broadcast);
   if (!agent) return;

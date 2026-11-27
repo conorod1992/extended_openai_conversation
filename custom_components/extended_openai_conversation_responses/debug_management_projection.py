@@ -194,6 +194,9 @@ def _provider_request(request: Any, page_budget: _ProjectionBudget) -> dict[str,
             "request": request_value,
             "request_meta": {
                 **request_meta,
+                "capture_truncated": bool(
+                    request.metrics.get("request_capture_truncated")
+                ),
                 "captured_characters": request.metrics.get(
                     "captured_request_characters",
                     request.metrics.get("request_characters"),
@@ -350,6 +353,7 @@ def debug_trace_page(
     field_truncated = any(meta.get("truncated") for meta in field_meta.values())
     provider_truncated = any(
         request["request_meta"].get("truncated")
+        or request["request_meta"].get("capture_truncated")
         or request["response_events_meta"].get("truncated")
         or request["response_events_meta"].get("capture_truncated")
         or request["error_meta"].get("truncated")

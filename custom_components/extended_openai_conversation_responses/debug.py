@@ -282,10 +282,14 @@ def _event_sequence(value: Any, limit: int = MAX_OUTPUT_ITEMS) -> Iterator[Any]:
 def _event_has_text(event: Any) -> bool:
     """Detect chat or Responses text without copying provider payloads."""
     event_type = _event_value(event, "type")
-    if event_type == "response.output_text.delta" and _event_value(event, "delta"):
+    if event_type in {
+        "response.output_text.delta",
+        "response.refusal.delta",
+    } and _event_value(event, "delta"):
         return True
     return any(
         _event_value(_event_value(choice, "delta"), "content")
+        or _event_value(_event_value(choice, "delta"), "refusal")
         for choice in _event_sequence(_event_value(event, "choices"))
     )
 
