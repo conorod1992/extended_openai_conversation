@@ -964,7 +964,7 @@ class ExtendedOpenAIAgentEntity(
                     SimpleNamespace(
                         context=llm_context.context,
                         device_id=voice_mapping_source_id(
-                            user_input, self.subentry.data
+                            user_input, self.subentry.data, hass=self.hass
                         ),
                     ),
                     self.subentry.data,

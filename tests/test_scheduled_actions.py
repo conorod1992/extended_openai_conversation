@@ -307,8 +307,14 @@ async def test_scope_checks_capacity_expiry_and_legacy_ids(
 
 
 async def test_native_summary_is_bounded_and_omits_private_arguments(
-    manager, hass, owner, agent
+    manager, hass, owner, agent, monkeypatch
 ):
+    from custom_components.extended_openai_conversation_responses.functions.native import (
+        NativeFunction,
+    )
+
+    # Exercise projection of a legacy stored action with a now-private target.
+    monkeypatch.setattr(NativeFunction, "async_authorize_scheduled_services", AsyncMock())
     tool = deepcopy(_valid_tool())
     tool["function"] = {"type": "native", "name": "execute_service_single"}
     agent.subentry.data = {"functions": yaml.safe_dump([tool], sort_keys=False)}

@@ -6,6 +6,8 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
+from homeassistant.core import HomeAssistant
+
 from .const import (
     CONF_VOICE_DEFAULT_USER_ID,
     CONF_VOICE_DEVICE_MAPPINGS,
@@ -17,6 +19,7 @@ from .const import (
     VOICE_POLICY_DEVICE_MAPPING,
     VOICE_POLICY_SHARED,
 )
+from .request_origin import registered_satellite
 from .scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
     UNRETAINED_SCOPE_ID,
@@ -32,10 +35,18 @@ def voice_source_device_id(user_input: Any) -> str | None:
     )
 
 
-def voice_mapping_source_id(user_input: Any, options: Mapping[str, Any]) -> str | None:
+def voice_mapping_source_id(
+    user_input: Any, options: Mapping[str, Any], *, hass: HomeAssistant | None = None
+) -> str | None:
     """Use a saved satellite assignment when no registry-device mapping exists."""
-    source = voice_source_device_id(user_input)
     satellite = getattr(user_input, "satellite_id", None)
+    source = getattr(user_input, "device_id", None)
+    if not source and hass is not None:
+        entry = registered_satellite(hass, satellite)
+        registry_device = getattr(entry, "device_id", None)
+        if isinstance(registry_device, str) and registry_device:
+            source = registry_device
+    source = source or satellite
     mappings = options.get(CONF_VOICE_DEVICE_MAPPINGS)
     if (
         isinstance(mappings, Mapping)
@@ -70,9 +81,8 @@ async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str
 
     options = getattr(agent.subentry, "data", {})
     policy = str(options.get(CONF_VOICE_SCOPE_POLICY, DEFAULT_VOICE_SCOPE_POLICY))
-    device_id = voice_mapping_source_id(user_input, options)
-
     if policy == VOICE_POLICY_DEVICE_MAPPING:
+        device_id = voice_mapping_source_id(user_input, options, hass=agent.hass)
         mappings = options.get(CONF_VOICE_DEVICE_MAPPINGS, {})
         mapped = (
             mappings.get(device_id)

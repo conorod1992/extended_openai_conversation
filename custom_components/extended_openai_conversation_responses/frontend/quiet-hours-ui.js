@@ -149,6 +149,9 @@ function satelliteCard(panel, satellite, config) {
 }
 
 function quietHoursStatus(panel) {
+  if (panel._result?.live_status_unavailable) {
+    return '<div><strong data-qh-live-title>Quiet Hours status unavailable</strong><small>Saved schedule shown below.</small></div><span data-qh-live-badge class="neutral-badge">Unknown</span>';
+  }
   const {active, config = {}} = panel._result || {};
   const title = active ? "Quiet Hours active now" : config.enabled ? "Outside Quiet Hours" : "Quiet Hours schedule disabled";
   const detail = config.enabled ? `${panel._e(config.start || "22:00")}–${panel._e(config.end || "07:00")} every day` : "The saved schedule is currently turned off.";

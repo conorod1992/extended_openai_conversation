@@ -28,8 +28,10 @@ from homeassistant.helpers.storage import Store
 
 from .global_runtime import global_runtime_available, require_global_runtime
 from .intercom_permissions import async_authorized_broadcast_targets
-from .operation_settlement import async_settle_owned_operation
-from .persistence_hardening import StorageRepairRequired
+from .persistence_hardening import (
+    StorageRepairRequired,
+    _async_settle_transactional_save,
+)
 from .strict_json import has_surrogate
 from .strict_store import STORE_ENVELOPE_ERRORS, PropagatingWriteStore
 
@@ -198,6 +200,7 @@ class IntercomManager:
         self._expiry_unsubscribers: set[Any] = set()
         self._expiry_by_message: dict[str, Any] = {}
         self._loaded = False
+        self._settings_recovery_pending = False
         self._state_lock = asyncio.Lock()
         self._retry_epoch = uuid4().hex
         self._retry_lock = asyncio.Lock()
@@ -209,23 +212,28 @@ class IntercomManager:
         async with self._state_lock:
             if self._loaded:
                 return
-            try:
-                stored = await self._store.async_load()
-            except (*STORE_ENVELOPE_ERRORS, StorageRepairRequired) as err:
-                raise HomeAssistantError(
-                    "Broadcast settings storage requires repair"
-                ) from err
-            if stored is None:
-                stored = {}
-            if not isinstance(stored, dict) or any(
-                key in stored and not isinstance(stored[key], bool)
-                for key in ("enabled", "builtin_voice_command")
-            ):
-                raise HomeAssistantError("Broadcast settings storage requires repair")
-            self._settings = stored.copy()
-            self._enabled = stored.get("enabled", False)
-            self._builtin_voice_command = stored.get("builtin_voice_command", True)
-            self._loaded = True
+            await self._async_reload_settings()
+
+    async def _async_reload_settings(self) -> None:
+        try:
+            stored = await self._store.async_load()
+        except (*STORE_ENVELOPE_ERRORS, StorageRepairRequired) as err:
+            raise HomeAssistantError(
+                "Broadcast settings storage requires repair"
+            ) from err
+        if stored is None:
+            stored = {}
+        if not isinstance(stored, dict) or any(
+            key in stored and not isinstance(stored[key], bool)
+            for key in ("enabled", "builtin_voice_command")
+        ):
+            raise HomeAssistantError("Broadcast settings storage requires repair")
+        self._publish_settings(stored.copy())
+
+    def _invalidate_settings(self) -> None:
+        self._loaded = False
+        self._settings_recovery_pending = True
+        self._enabled = False
 
     @property
     def enabled(self) -> bool:
@@ -240,35 +248,45 @@ class IntercomManager:
     async def async_set_builtin_voice_command(self, enabled: bool) -> None:
         """Commit both preferences without abandoning a write on cancellation."""
         async with self._state_lock:
+            if self._settings_recovery_pending:
+                await self._async_reload_settings()
             settings = {
                 **self._settings,
                 "enabled": self._enabled,
                 "builtin_voice_command": bool(enabled),
             }
-            await async_settle_owned_operation(self._async_commit_settings(settings))
+            await self._async_commit_settings(settings)
 
     async def async_set_enabled(self, enabled: bool) -> None:
         """Persist the master switch and stop pending deliveries when off."""
         async with self._state_lock:
+            if self._settings_recovery_pending:
+                await self._async_reload_settings()
             settings = {
                 **self._settings,
                 "enabled": bool(enabled),
                 "builtin_voice_command": self._builtin_voice_command,
             }
-            await async_settle_owned_operation(
-                self._async_commit_settings(settings, stop_pending=not bool(enabled))
-            )
+            await self._async_commit_settings(settings)
 
-    async def _async_commit_settings(
-        self, settings: dict[str, Any], *, stop_pending: bool = False
-    ) -> None:
+    async def _async_commit_settings(self, settings: dict[str, Any]) -> None:
         """Publish only after save; the caller holds the state lock until settled."""
-        await self._store.async_save(settings)
+        await _async_settle_transactional_save(
+            self._store.async_save(settings),
+            lambda: None,
+            lambda: self._publish_settings(settings),
+            self._async_reload_settings,
+            self._invalidate_settings,
+            record_execution=False,
+        )
+
+    def _publish_settings(self, settings: dict[str, Any]) -> None:
         self._settings = settings
-        self._enabled = settings["enabled"]
-        self._builtin_voice_command = settings["builtin_voice_command"]
+        self._enabled = settings.get("enabled", False)
+        self._builtin_voice_command = settings.get("builtin_voice_command", True)
         self._loaded = True
-        if stop_pending:
+        self._settings_recovery_pending = False
+        if not self._enabled:
             for entity_id, queue in list(self._queues.items()):
                 retained: deque[BroadcastMessage] = deque()
                 for item in queue:
@@ -285,6 +303,9 @@ class IntercomManager:
                 queue.extend(retained)
                 if not queue:
                     self._queues.pop(entity_id, None)
+        else:
+            for entity_id in self._queues:
+                self._schedule_drain(entity_id)
 
     async def async_shutdown(self) -> None:
         """Stop listeners, timers and every queued delivery without changing settings."""
@@ -318,7 +339,7 @@ class IntercomManager:
     def _refresh_state_listener(self) -> None:
         if self._closed:
             return
-        entity_ids = set(self._satellite_entity_ids())
+        entity_ids = set(self._satellite_entity_ids()) | self._queues.keys()
         if entity_ids == self._tracked_entities:
             return
         if self._unsub_state is not None:
@@ -712,6 +733,8 @@ class IntercomManager:
             while queue:
                 item = queue[0]
                 delivery = item.deliveries[entity_id]
+                if self._settings_recovery_pending:
+                    return
                 if not self._enabled or not global_runtime_available(self.hass):
                     delivery.set("expired", "broadcast_disabled")
                     self._release_completed_message(item)
@@ -734,6 +757,8 @@ class IntercomManager:
                 if delivery.status == "expired":
                     queue.popleft()
                     continue
+                if self._settings_recovery_pending:
+                    return
                 if not self._enabled or not global_runtime_available(self.hass):
                     delivery.set("expired", "broadcast_disabled")
                     self._release_completed_message(item)

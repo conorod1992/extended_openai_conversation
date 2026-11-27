@@ -45,6 +45,20 @@ def test_satellite_fallback_is_preserved_without_registry_device() -> None:
     assert user_input.satellite_id == "assist_satellite.kitchen"
 
 
+def test_satellite_only_request_prefers_canonical_privacy_mapping(monkeypatch) -> None:
+    request = SimpleNamespace(device_id=None, satellite_id="assist_satellite.kitchen")
+    hass = SimpleNamespace()
+    monkeypatch.setattr(
+        voice_identity_runtime, "registered_satellite",
+        lambda *_: SimpleNamespace(device_id="physical-device"),
+    )
+    mapping = {"physical-device": "unretained", request.satellite_id: "user:other"}
+    assert voice_identity_runtime.voice_mapping_source_id(
+        request, {CONF_VOICE_DEVICE_MAPPINGS: mapping}, hass=hass
+    ) == "physical-device"
+    assert request.device_id is None
+
+
 async def test_request_owner_uses_registry_device_and_restores_satellite(
     entry_agent, entry_input,
 ) -> None:

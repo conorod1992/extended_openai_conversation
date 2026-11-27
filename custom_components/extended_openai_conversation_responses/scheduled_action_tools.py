@@ -15,7 +15,7 @@ from .delayed_tools import (
 )
 from .function_tool_policy import runtime_function_tool_name
 from .model_payload import count_model_function_tools
-from .request_origin import get_request_satellite
+from .request_origin import get_request_satellite, satellite_registry_identity
 
 SCHEDULED_ACTION_TOOL_TYPE = "scheduled_actions"
 
@@ -100,6 +100,7 @@ def conversation_scheduled_action_owner(
         user_id,
         device_id,
         satellite_id,
+        satellite_identity=satellite_registry_identity(agent.hass, satellite_id),
     )
 
 

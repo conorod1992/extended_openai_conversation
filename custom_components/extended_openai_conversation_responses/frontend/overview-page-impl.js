@@ -164,7 +164,7 @@ async function bindOverviewGuestStatus(panel) {
       agent.guest_mode = status;
       const cached = panel._sectionCache?.get(panel._sectionCacheKey?.("overview"));
       for (const data of [panel._result, cached]) {
-        if (data?.load_errors) {
+        if (result?.agent?.guest_mode && data?.load_errors) {
           data.load_errors = data.load_errors.filter(issue => issue.key !== "guest_mode");
         }
       }
@@ -176,7 +176,7 @@ async function bindOverviewGuestStatus(panel) {
       }
       const warning = panel.shadowRoot.querySelector("[data-overview-guest-warning]");
       if (warning) {
-        warning.parentElement.querySelector("[data-overview-guest-error]")?.remove();
+        if (result?.agent?.guest_mode) warning.parentElement.querySelector("[data-overview-guest-error]")?.remove();
         warning.innerHTML = guestWarning(status);
         warning.parentElement.hidden = !warning.parentElement.querySelector(".notice");
       }

@@ -167,9 +167,9 @@ def _normalize_clock(value: str) -> str:
 def _next_discontinuous_transition(
     now: datetime, clock: time, zone: tzinfo, *, ending: bool
 ) -> datetime | None:
-    """Find the next skipped/repeated daily deadline (UTC), within one year."""
+    """Find the next skipped/repeated daily deadline (UTC), including late annual shifts."""
     local_day = now.astimezone(zone).date()
-    for days in range(371):
+    for days in range(400):
         day = local_day + timedelta(days=days)
         wall = datetime.combine(day, clock)
         # No extra timer is needed on ordinary dates: HA's daily local-time
@@ -996,6 +996,7 @@ class QuietHoursManager:
                     entity_id: [entry.domain, entry.platform, entry.unique_id],
                 }
             self._config = candidate
+            persistence_started = False
             try:
                 # An explicit selection edit uses the existing departure/restore
                 # contract, even when clearing it leaves automatic discovery
@@ -1106,11 +1107,13 @@ class QuietHoursManager:
                         ).items()
                         if key in observed
                     }
+                persistence_started = True
                 await self._async_save_locked()
             except BaseException as err:
                 failure = err
-                if self._config_recovery_pending:
-                    # Publish no speculative configuration while disk is unknown.
+                if not persistence_started or self._config_recovery_pending:
+                    # Before persistence, or when readback cannot settle the
+                    # write, the speculative policy cannot own device effects.
                     self._config = previous
                     self._selection_identities = previous_identities
                     self._deferred_selection_renames = previous_renames
@@ -1838,8 +1841,9 @@ class QuietHoursManager:
                 controls.pop(entity_id)
                 await self._async_save_control_state_locked()
                 continue
-            if kind == "switch" and control.get("retarget_awaiting_feedback"):
-                # Serialize switch effects until the prior target is observed.
+            if control.get("retarget_awaiting_feedback"):
+                # Keep a single identifiable effect in flight. The latest policy
+                # remains the desired target for the next reconciliation.
                 continue
             if value == control["quiet_value"] and "pending_quiet_value" not in control:
                 control.pop("restoration_pending", None)
@@ -1922,7 +1926,16 @@ class QuietHoursManager:
             else _current_switch(self.hass, entity_id)
         )
         if current is None or not (
-            (attributed and kind == "volume")
+            (
+                attributed
+                and kind == "volume"
+                and (
+                    not waiting
+                    or not self._control_values_equal(
+                        kind, current, self._attained_quiet_value(control)
+                    )
+                )
+            )
             or (
                 waiting
                 and self._control_values_equal(kind, current, control["quiet_value"])
@@ -1951,6 +1964,8 @@ class QuietHoursManager:
             control.pop("retarget_awaiting_feedback", None)
             if control["kind"] == "switch":
                 control.pop("attained_value", None)
+            else:
+                control["attained_value"] = _current_volume(self.hass, entity_id)
         control["quiet_value"] = control.pop("pending_quiet_value")
         if context_id := control.pop("pending_application_context_id", None):
             control["application_context_id"] = context_id
@@ -1974,16 +1989,20 @@ class QuietHoursManager:
             "pending_application_context_id", control.get("application_context_id")
         )
         state = self.hass.states.get(entity_id)
+        context = getattr(state, "context", None)
+        attributed = context_id and getattr(context, "id", None) == context_id
         if (
             control["kind"] == "volume"
             and current is not None
             and control.get("pending_application_context_id")
-            and getattr(getattr(state, "context", None), "id", None) == context_id
+            and attributed
+            and not self._control_values_equal(
+                "volume", current, self._attained_quiet_value(control)
+            )
         ):
             return True
         return same and (
-            not context_id
-            or getattr(getattr(state, "context", None), "id", None) == context_id
+            attributed or not context_id or not getattr(context, "user_id", None)
         )
 
     def _control_application_suppressed(
@@ -2123,7 +2142,10 @@ class QuietHoursManager:
         if (
             current is None
             or manual
-            or self._control_values_equal(kind, current, control["original_value"])
+            or (
+                not (attributed and kind == "volume")
+                and self._control_values_equal(kind, current, control["original_value"])
+            )
         ):
             return False
         if not (attributed and kind == "volume") and not self._control_values_equal(
@@ -2430,20 +2452,7 @@ class QuietHoursManager:
             ) == "awaiting_feedback" and not self._observe_initial_application(
                 entity_id, control
             ):
-                current, _attributed, manual = self._initial_control_observation(
-                    entity_id, control
-                )
-                fresh_baseline = (
-                    self._control_values_equal(kind, current, control["original_value"])
-                    and (state_context := self._control_context_id(entity_id))
-                    is not None
-                    and state_context != control.get("baseline_context_id")
-                )
-                if fresh_baseline:
-                    self._settle_control_restoration(
-                        entity_id, control, restored=period_ended and not manual
-                    )
-                elif self._initial_application_pending(entity_id, control):
+                if self._initial_application_pending(entity_id, control):
                     control["restoration_pending"] = True
                     if period_ended:
                         control["restore_before_apply"] = True

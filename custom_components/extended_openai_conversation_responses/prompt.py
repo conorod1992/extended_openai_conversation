@@ -293,14 +293,14 @@ def _temporary_memory_context(memories: list[TemporaryMemoryRecord]) -> str:
     )
 
 
-def _prompt_memory_scope_available(options: Any, user_input: Any) -> bool:
+def _prompt_memory_scope_available(hass: Any, options: Any, user_input: Any) -> bool:
     """Resolve the same persistent-memory scope eligibility used by live tools."""
     # Management previews and direct renderer tests have no request identity. They
     # represent an authenticated/usable scope unless the caller supplies an explicit
     # capability decision below.
     if user_input is None or not hasattr(user_input, "context"):
         return True
-    source_device_id = voice_mapping_source_id(user_input, options)
+    source_device_id = voice_mapping_source_id(user_input, options, hass=hass)
     scope = resolve_data_scope(
         SimpleNamespace(
             context=getattr(user_input, "context", None),
@@ -362,7 +362,9 @@ def render_effective_prompt(
     sections: list[PromptSection] = []
     policy = guest_policy or GuestCapabilityPolicy.unrestricted()
     if memory_scope_available is None:
-        memory_scope_available = _prompt_memory_scope_available(options, user_input)
+        memory_scope_available = _prompt_memory_scope_available(
+            hass, options, user_input
+        )
     capabilities = resolve_effective_capabilities(
         options,
         memory_scope_available=memory_scope_available,

@@ -2962,6 +2962,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     llm_context,
                     function_tool=function_tool,
                     execution_delay=duration,
+                    exposed_entities=exposed_entities,
                 )
                 return make_tool_result_content(
                     agent_id=self.entity_id,

@@ -20,7 +20,7 @@ import yaml
 from homeassistant.components import automation, energy, recorder
 from homeassistant.config import AUTOMATION_CONFIG_PATH
 from homeassistant.const import SERVICE_RELOAD
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import Context, HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import llm, target as target_helpers
 from homeassistant.util.yaml import Secrets, parse_yaml
@@ -33,10 +33,16 @@ from ..function_execution import backend_failure
 from ..ha_actions import (
     _service_participants,
     action_requires_available_entities,
+    async_authorize_ha_action,
     async_call_ha_action,
     resolve_action_entity_ids,
 )
-from ..ha_permissions import entity_access_error, get_active_ha_context
+from ..ha_permissions import (
+    bind_active_ha_context,
+    entity_access_error,
+    get_active_ha_context,
+)
+from ..helpers import get_exposed_entities
 from ..indirect_targets import validate_indirect_targets
 from ..intercom import async_get_intercom
 from ..native_read_scope import current_native_read_entities
@@ -663,14 +669,12 @@ class NativeFunction(Function):
             require_available=action_requires_available_entities(domain, service),
         )
 
-    async def execute_service_single(
+    def _prepare_native_service(
         self,
         hass: HomeAssistant,
-        function_config: dict[str, Any],
         service_argument: dict[str, Any],
-        llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], str, str, dict[str, Any]]:
         from ..execution_arguments import prepare_service_arguments
 
         service_argument = prepare_service_arguments(service_argument)
@@ -689,6 +693,45 @@ class NativeFunction(Function):
         # Keep this presence restriction out of trusted targetless HA actions.
         self.validate_service_targets(
             hass, service_data, exposed_entities, domain=domain, service=service
+        )
+        return service_argument, domain, service, service_data
+
+    async def async_authorize_scheduled_services(
+        self,
+        hass: HomeAssistant,
+        arguments: dict[str, Any],
+        context: Context | None,
+        exposed_entities: list[dict[str, Any]] | None,
+        *,
+        single: bool = False,
+    ) -> None:
+        """Check native targets and HA access before accepting a delayed action."""
+        if not single:
+            _validate_execute_service_request(arguments)
+        with bind_active_ha_context(context):
+            exposed = (
+                get_exposed_entities(hass)
+                if exposed_entities is None
+                else exposed_entities
+            )
+            for action in (arguments,) if single else arguments["list"]:
+                _, domain, service, data = self._prepare_native_service(
+                    hass, action, exposed
+                )
+                await async_authorize_ha_action(
+                    hass, domain, service, data=data, context=context
+                )
+
+    async def execute_service_single(
+        self,
+        hass: HomeAssistant,
+        function_config: dict[str, Any],
+        service_argument: dict[str, Any],
+        llm_context: llm.LLMContext | None,
+        exposed_entities: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        service_argument, domain, service, service_data = self._prepare_native_service(
+            hass, service_argument, exposed_entities
         )
 
         from ..execution_outcomes import execution_operation, execution_refused

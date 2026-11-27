@@ -226,6 +226,7 @@ export function bindGuestInterval(panel) {
 }
 
 function intervalSummary(panel, status, state) {
+  if (status.state === "unavailable") return "Status unavailable · Current interval unknown";
   const date = key => {
     if (status[`${key}_local`] === null) {
       const utc = guestIntervalUtc(status, key);
@@ -239,10 +240,11 @@ function intervalSummary(panel, status, state) {
 }
 
 function guestActivationActions(status) {
-  const hasInterval = status.currently_active || status.scheduled || status.active_from || status.active_until;
+  const unknown = status.state === "unavailable";
+  const hasInterval = unknown || status.currently_active || status.scheduled || status.active_from || status.active_until;
   const update = `<button type="button" ${hasInterval ? "" : 'class="secondary" '}id="guest-update">Update interval</button>`;
   const now = `<button type="button" ${hasInterval ? 'class="secondary" ' : ""}id="guest-now">Activate now</button>`;
-  return hasInterval ? update + now + `<button type="button" class="danger secondary-danger" id="guest-disable">${status.scheduled ? "Cancel schedule" : "End Guest Mode"}</button>` : now + update;
+  return hasInterval ? update + now + `<button type="button" class="danger secondary-danger" id="guest-disable">${unknown ? "End or cancel Guest Mode" : status.scheduled ? "Cancel schedule" : "End Guest Mode"}</button>` : now + update;
 }
 
 export function refreshTimedStatus(panel) {

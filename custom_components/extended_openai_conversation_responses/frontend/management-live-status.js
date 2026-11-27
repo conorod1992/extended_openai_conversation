@@ -109,7 +109,7 @@ export function watchTimedFeatureStatus(panel, feature) {
       if (pending()) return;
       const publishGuestUnavailable = () => {
         if (!current() || pending() || panel._result !== previous) return;
-        const status = {state:"unavailable", currently_active:null};
+        const status = {...previous?.status, state:"unavailable", currently_active:null};
         panel._result = {...previous, status, policy:null};
         const agent = panel._selectedAgent?.();
         if (agent) agent.guest_mode = status;
@@ -119,7 +119,13 @@ export function watchTimedFeatureStatus(panel, feature) {
       try {
         fresh = await panel._call(guest ? "guest_mode" : "quiet_hours", "get");
       } catch (error) {
-        if (!guest) throw error;
+        if (!guest) {
+          if (current() && !pending() && panel._result === previous) {
+            panel._result = {...previous, live_status_unavailable:true};
+            feature?.refreshTimedStatus(panel);
+          }
+          return;
+        }
         publishGuestUnavailable();
         return;
       }

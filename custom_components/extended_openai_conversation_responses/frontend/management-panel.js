@@ -2219,13 +2219,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _runGuestOperation(operation) {
     if (this._guestOperation) return this._guestOperation;
-    const pending = Promise.resolve().then(operation);
-    this._guestOperation = pending;
-    syncAgentPicker(this);
-    return pending.finally(() => {
+    const release = () => {
+      if (this._guestOperation !== pending) return;
       this._guestOperation = null;
       syncAgentPicker(this);
-    });
+    };
+    const pending = Promise.resolve().then(() => operation(release));
+    this._guestOperation = pending;
+    syncAgentPicker(this);
+    return pending.finally(release);
   }
 
   _patchGuestModeStatus(agentId, status) {
@@ -2240,17 +2242,20 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _refreshGuestModeMutation(agentId, mutationResult) {
     if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
     const loadToken = ++this._loadToken;
+    const submission = captureConfigurationOwner(this);
+    const current = () => configurationSubmissionIsCurrent(this, submission)
+      && this._agentId === agentId && this._viewKey() === "capabilities/guest-mode" && this._loadToken === loadToken;
     this._patchGuestModeStatus(agentId, mutationResult?.status);
-    this._result = {...this._result, loading: {...(this._result?.loading || {}), details: true}};
+    this._result = {...this._result, policy:null, loading: {...(this._result?.loading || {}), details: true}};
     this._error = null;
     this._render();
     try {
       const details = await this._call("guest_mode", "details");
-      if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode" || this._loadToken !== loadToken) return;
+      if (!current()) return;
       this._result = {...this._result, ...details, loading: {...this._result.loading, details: false},
         load_errors: (this._result.load_errors || []).filter(issue => issue.key !== "details")};
     } catch (err) {
-      if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode" || this._loadToken !== loadToken) return;
+      if (!current()) return;
       this._result = {...this._result, loading: {...this._result.loading, details: false},
         load_errors: [...(this._result.load_errors || []).filter(issue => issue.key !== "details"),
           {key: "details", label: "Guest Mode capabilities", message: err.message || String(err)}]};
@@ -2263,14 +2268,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const result = await this._call("guest_mode", "get");
       if (!result?.status || !configurationSubmissionIsCurrent(this, submission)) return;
       if (intervalSubmission) getRouteFeature("capabilities/guest-mode")?.acknowledgeGuestInterval(this, intervalSubmission, result.status);
-      await this._refreshGuestModeMutation(agentId, result);
+      void this._refreshGuestModeMutation(agentId, result).catch(() => {});
     } catch {
       // The existing saved notice remains accurate if a read is unavailable.
     }
   }
 
   _updateGuestMode(now = false) {
-    return this._runGuestOperation(async () => {
+    return this._runGuestOperation(async release => {
       const agentId = this._agentId;
       const submission = captureConfigurationOwner(this);
       const guest = getRouteFeature("capabilities/guest-mode");
@@ -2283,6 +2288,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         const payload = guest.guestIntervalUpdatePayload(this, intervalSubmission, now);
         const result = await this._call("guest_mode", "update", payload);
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
+        release();
         await presentAcknowledgedMutation(this, submission, "Guest Mode updated", () => {
           getRouteFeature("capabilities/guest-mode")?.acknowledgeGuestInterval(this, intervalSubmission, result.status);
           return this._refreshGuestModeMutation(agentId, result);
@@ -2299,7 +2305,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _disableGuestMode() {
-    return this._runGuestOperation(async () => {
+    return this._runGuestOperation(async release => {
       const agentId = this._agentId;
       const owner = this._retainedMutationOwner();
       const submission = captureConfigurationOwner(this);
@@ -2308,6 +2314,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       try {
         const result = await this._call("guest_mode", "disable");
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
+        release();
         await presentAcknowledgedMutation(this, submission, "Guest Mode ended", () => this._refreshGuestModeMutation(agentId, result), result);
       } catch (err) {
         if (!configurationSubmissionIsCurrent(this, submission)) return;

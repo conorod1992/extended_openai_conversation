@@ -270,7 +270,9 @@ def _management_operation_owns_its_gate(message: dict[str, Any]) -> bool:
     section = message.get("section", "overview")
     action = message.get("action")
     return section == "backup" or (
-        (section == "request_rules" and action == "test")
+        section == "quiet_hours"
+        or (section == "scheduled_actions" and action in {"list", "cancel"})
+        or (section == "request_rules" and action == "test")
         or (section == "diagnostics" and action == "test_agent")
     )
 

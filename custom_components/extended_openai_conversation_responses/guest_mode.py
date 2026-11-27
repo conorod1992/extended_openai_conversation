@@ -1166,6 +1166,8 @@ def async_setup_guest_entity_renames(hass: HomeAssistant) -> None:
                 for key in (
                     CONF_GUEST_EXCLUDED_ENTITIES,
                     CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
+                    CONF_GUEST_READABLE_ENTITIES,
+                    CONF_GUEST_CONTROLLABLE_ENTITIES,
                 ):
                     selectors = candidate.get(key)
                     if isinstance(selectors, (list, tuple)) and old in selectors:

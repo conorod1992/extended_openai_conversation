@@ -149,6 +149,8 @@ function broadcastMarkup(panel, snapshot) {
               const detail = [area, panel._titleCase(sat.state || "unknown")].filter(Boolean).join(" · ");
               return `<label class="broadcast-target ${selected.has(sat.id) ? "is-selected" : ""}"><input type="checkbox" data-broadcast-entity="${panel._e(sat.id)}" ${selected.has(sat.id) ? "checked" : ""}><span><strong>${panel._e(sat.name)}</strong><small>${panel._e(detail || "Assist satellite")}</small></span></label>`;
             }).join("") || `<p class="empty">No announcement-capable Assist satellites are available.</p>`}
+            ${[...selected].filter(id => !satellitesById.has(id)).map(id =>
+                `<label class="broadcast-target is-selected"><input type="checkbox" data-broadcast-entity="${panel._e(id)}" checked><span><strong>${panel._e(id)}</strong><small>Unavailable · Clear to remove this recipient</small></span></label>`).join("")}
           </div></div>`}
         </fieldset>
         <p id="broadcast-retry-status" role="status" ${panel._broadcastAttempt?.uncertain || panel._broadcastAttempt?.blocked ? "" : "hidden"}>An earlier send may already have been queued. Retry unchanged while its original ten-minute window is available. Sending as new can repeat an announcement. Recent history is cleared on restart, and the earlier announcement may already have played.</p>
@@ -220,6 +222,16 @@ function bindBroadcastControls(panel, snapshot) {
     if (!wholeHome && !selected.length) return panel._toast("Choose at least one Assist satellite or Whole home.", true);
     panel._broadcastSending = true;
     button.disabled = true;
+    let sending = true;
+    const release = () => {
+      if (!sending) return;
+      sending = false;
+      panel._broadcastSending = false;
+      const notice = panel.shadowRoot.querySelector("#broadcast-retry-status");
+      if (notice) notice.hidden = !(panel._broadcastAttempt?.uncertain || panel._broadcastAttempt?.blocked);
+      const currentButton = panel.shadowRoot.querySelector("#broadcast-send");
+      if (currentButton) currentButton.disabled = !(panel._eocBroadcastSnapshot?.catalog?.satellites || []).length;
+    };
     let attempt;
     let retrying = false;
     let dispatched = false;
@@ -245,6 +257,13 @@ function bindBroadcastControls(panel, snapshot) {
         const fresh = await panel._hass.callWS({type:WS_BROADCAST, action:"snapshot"});
         if (!ownsSubmission()) return;
         if (typeof fresh?.retry_token !== "string" || !fresh.retry_token) throw Error("Broadcast could not be prepared. Refresh devices before sending.");
+        if (!wholeHome && Array.isArray(fresh.catalog?.satellites)) {
+          const available = new Set(fresh.catalog.satellites.map(satellite => satellite.id));
+          if (selected.some(id => !available.has(id))) {
+            applyBroadcastSnapshot(panel, fresh);
+            throw Error("A selected satellite is unavailable. Review the recipients before sending.");
+          }
+        }
         retireBroadcastAttempt(panel, attempt);
         attempt = broadcastAttempt(panel, submission, payload, fresh.retry_token);
       }
@@ -262,6 +281,7 @@ function bindBroadcastControls(panel, snapshot) {
       // confirmation coupled to it rather than silently rearming that message.
       if (authenticated()) retireBroadcastAttempt(panel, attempt);
       else attempt.blocked = true;
+      release();
       await presentAcknowledgedMutation(panel, submission, "Broadcast queued", async () => {
         if (!await loadBroadcast(panel)) throw Error("Broadcast history could not be refreshed.");
       }, result);
@@ -275,11 +295,7 @@ function bindBroadcastControls(panel, snapshot) {
       }
       panel._toast(`Unable to send Broadcast: ${err.message || String(err)}`, true);
     } finally {
-      panel._broadcastSending = false;
-      const notice = panel.shadowRoot.querySelector("#broadcast-retry-status");
-      if (notice) notice.hidden = !(panel._broadcastAttempt?.uncertain || panel._broadcastAttempt?.blocked);
-      const currentButton = panel.shadowRoot.querySelector("#broadcast-send");
-      if (currentButton) currentButton.disabled = !(panel._eocBroadcastSnapshot?.catalog?.satellites || []).length;
+      release();
     }
   });
 }
@@ -311,11 +327,6 @@ function preserveBroadcastFocus(panel, host) {
   };
 }
 
-function retainAvailableBroadcastSelections(panel, snapshot) {
-  const available = new Set((snapshot.catalog?.satellites || []).map(satellite => satellite.id));
-  panel._broadcastSelected = new Set([...(panel._broadcastSelected || [])].filter(id => available.has(id)));
-}
-
 function renderBroadcastCard(panel, host, snapshot) {
   const restoreFocus = preserveBroadcastFocus(panel, host);
   host.innerHTML = broadcastMarkup(panel, snapshot);
@@ -324,7 +335,6 @@ function renderBroadcastCard(panel, host, snapshot) {
 }
 
 function reconcileBroadcastPoll(panel, host, previous, result) {
-  retainAvailableBroadcastSelections(panel, result);
   if (previous.enabled !== result.enabled || previous.can_manage !== result.can_manage) {
     renderBroadcastCard(panel, host, result);
     return;
@@ -358,7 +368,6 @@ function applyBroadcastSnapshot(panel, snapshot) {
   if (panel._viewKey?.() !== "overview") return;
   const host = panel.shadowRoot.querySelector("#broadcast-card");
   if (!host) return;
-  retainAvailableBroadcastSelections(panel, snapshot);
   renderBroadcastCard(panel, host, snapshot);
   panel._eocBroadcastEpoch = (panel._eocBroadcastEpoch || 0) + 1;
   panel._eocBroadcastSnapshot = snapshot;

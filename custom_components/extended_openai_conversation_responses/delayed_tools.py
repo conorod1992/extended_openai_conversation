@@ -49,7 +49,11 @@ from .persistence_hardening import (
     _async_settle_transactional_save,
 )
 from .record_timestamps import parse_datetime
-from .request_origin import bind_request_satellite, get_request_satellite
+from .request_origin import (
+    bind_request_satellite,
+    get_request_satellite,
+    satellite_registry_identity,
+)
 from .scheduled_action_summary import describe_native_action, present_entities
 from .strict_store import PropagatingWriteStore, _async_settle_store_io
 
@@ -84,6 +88,7 @@ class ScheduledActionOwner:
     device_id: str | None = None
     satellite_id: str | None = None
     administrator: bool = False
+    satellite_identity: tuple[str, str] | None = None
 
     def allows(self, record: DelayedToolCall) -> bool:
         if (self.entry_id, self.subentry_id) != (record.entry_id, record.subentry_id):
@@ -92,10 +97,14 @@ class ScheduledActionOwner:
             return True
         if self.user_id or record.user_id is not None:
             return bool(self.user_id) and self.user_id == record.user_id
-        # Prefer the most specific origin. Older records may only have a device
-        # ID, but a stored satellite must never match a different satellite.
+        if record.satellite_identity is not None:
+            return self.satellite_identity == record.satellite_identity
+        # Legacy jobs cannot prove a rename. Reject known device mismatches even
+        # when HA currently assigns the same entity ID to the new device.
         if record.satellite_id and self.satellite_id:
-            return record.satellite_id == self.satellite_id
+            return record.satellite_id == self.satellite_id and (
+                not record.device_id or record.device_id == self.device_id
+            )
         return (
             not record.satellite_id
             and bool(self.device_id)
@@ -204,6 +213,7 @@ class DelayedToolCall:
     retry_count: int = 0
     definition_fingerprint: str | None = None
     satellite_id: str | None = None
+    satellite_identity: tuple[str, str] | None = None
     # Missing/null means eventual execution, including all pre-expiry jobs.
     expires_at: str | None = None
     # Preserve absent legacy metadata on read/write, while newly scheduled
@@ -217,6 +227,10 @@ class DelayedToolCall:
         if self.satellite_id is None:
             # Preserve legacy queue shape when there is no physical origin.
             payload.pop("satellite_id")
+        if self.satellite_identity is None:
+            payload.pop("satellite_identity")
+        else:
+            payload["satellite_identity"] = list(self.satellite_identity)
         if self.expires_at is None and not self._expiry_metadata_present:
             payload.pop("expires_at")
         return payload
@@ -254,6 +268,7 @@ class DelayedToolCall:
         user_id = raw.get("user_id")
         device_id = raw.get("device_id")
         satellite_id = raw.get("satellite_id")
+        satellite_identity = raw.get("satellite_identity")
         expires_at = raw.get("expires_at")
         if expires_at is not None:
             if not isinstance(expires_at, str):
@@ -274,6 +289,12 @@ class DelayedToolCall:
             raise ValueError("stored delayed call has invalid device_id")
         if satellite_id is not None and not isinstance(satellite_id, str):
             raise ValueError("stored delayed call has invalid satellite_id")
+        if satellite_identity is not None and (
+            not isinstance(satellite_identity, (list, tuple))
+            or len(satellite_identity) != 2
+            or not all(isinstance(part, str) and part for part in satellite_identity)
+        ):
+            raise ValueError("stored delayed call has invalid satellite identity")
         return cls(
             call_id=raw["call_id"],
             entry_id=raw["entry_id"],
@@ -288,6 +309,11 @@ class DelayedToolCall:
             retry_count=retry_count,
             definition_fingerprint=fingerprint,
             satellite_id=satellite_id,
+            satellite_identity=(
+                (satellite_identity[0], satellite_identity[1])
+                if satellite_identity is not None
+                else None
+            ),
             expires_at=expires_at,
             _expiry_metadata_present="expires_at" in raw,
         )
@@ -551,6 +577,7 @@ class DelayedToolManager:
         *,
         function_tool: dict[str, Any] | None = None,
         execution_delay: dict[str, Any] | timedelta | None = None,
+        exposed_entities: list[dict[str, Any]] | None = None,
     ) -> DelayedToolCall:
         """Persist a delayed call before exposing it as scheduled."""
         if self._quarantined:
@@ -562,13 +589,21 @@ class DelayedToolManager:
         if not self._setup_complete:
             raise HomeAssistantError("Delayed Function Tool scheduler is unavailable")
         implementation = (function_tool or {}).get("function", {})
-        if (
-            implementation.get("type") == "native"
-            and implementation.get("name") == "execute_service"
+        context = getattr(llm_context, "context", None)
+        native_name = implementation.get("name")
+        if implementation.get("type") == "native" and native_name in (
+            "execute_service",
+            "execute_service_single",
         ):
-            from .safety_hardening import _validate_execute_service_request
+            from .functions.native import NativeFunction
 
-            _validate_execute_service_request(arguments)
+            await NativeFunction().async_authorize_scheduled_services(
+                self.hass,
+                arguments,
+                context,
+                exposed_entities,
+                single=native_name == "execute_service_single",
+            )
         delay = _delay_as_timedelta(
             execution_delay if execution_delay is not None else arguments.get("delay")
         )
@@ -576,7 +611,6 @@ class DelayedToolManager:
         catch_up = (function_tool or {}).get("delay_catch_up", False)
         if not isinstance(catch_up, bool):
             raise HomeAssistantError("Function Tool delay_catch_up must be a boolean")
-        context = getattr(llm_context, "context", None)
         from .execution_outcomes import (
             execution_completed,
             execution_operation,
@@ -608,6 +642,7 @@ class DelayedToolManager:
                 raise HomeAssistantError(
                     "Function Tool delay exceeds the supported scheduling range"
                 ) from err
+            satellite_id = get_request_satellite()
             record = DelayedToolCall(
                 call_id=uuid4().hex,
                 entry_id=entity.entry.entry_id,
@@ -619,7 +654,8 @@ class DelayedToolManager:
                 created_at=now.isoformat(),
                 user_id=getattr(context, "user_id", None),
                 device_id=getattr(llm_context, "device_id", None),
-                satellite_id=get_request_satellite(),
+                satellite_id=satellite_id,
+                satellite_identity=satellite_registry_identity(self.hass, satellite_id),
                 definition_fingerprint=tool_definition_fingerprint(function_tool)
                 if function_tool is not None
                 else None,

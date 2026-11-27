@@ -190,6 +190,7 @@ function refreshSavedGuestPolicy(panel, scope, owner) {
     && panel._loadToken === owner.token && panel._cacheGeneration === owner.generation && panel._viewKey?.() === GUEST
     && pageCoordinator(panel).scopes.get(GUEST) === scope && scope.revision === owner.revision;
   if (!current()) return;
+  panel._result = {...panel._result, policy:null};
   const paint = (policy, loading = false) => {
     if (!metrics) return;
     const fallback = loading ? "Refreshing…" : "—";
