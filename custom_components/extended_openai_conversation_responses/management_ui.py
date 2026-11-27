@@ -2119,6 +2119,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
     if action == "validate":
         return _validation_result(lambda: validate_function_tools(message.get("tools")))
     if action == "serialize":
+        editor_source = message.get("tool")
         if isinstance(name := message.get("name"), str):
             _require_agent_config_revision(subentry, message.get("revision"))
             configured = parse_configured_function_tools(subentry.data)
@@ -2137,10 +2138,8 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 raise HomeAssistantError(
                     "Function Tool is missing or ambiguous; reload the latest saved tools"
                 )
-            tool = matches[0]
-        else:
-            tool = message.get("tool")
-        yaml, config = function_tool_editor_payload(tool)
+            editor_source = matches[0]
+        yaml, config = function_tool_editor_payload(editor_source)
         return {"yaml": yaml, "config": config}
     if action == "starter":
         return {"yaml": starter_function_tool_yaml()}
