@@ -99,7 +99,7 @@ def test_unsupported_sampling_keeps_existing_omission(model, effort, value, api)
 @pytest.mark.parametrize("api", ["chat_completions", "responses"])
 @pytest.mark.parametrize("sampling", [{}, {"temperature": None, "top_p": None}])
 def test_unset_sampling_stays_omitted(api, sampling):
-    stored = {"chat_model": "gpt-4.1", "api_mode": api, **sampling}
+    stored = {"chat_model": "gpt-4.1", "api_mode": api, "functions": "[]", **sampling}
     editor = agent_config.agent_config_snapshot(stored)
     assert editor["temperature"] is None
     assert editor["top_p"] is None
