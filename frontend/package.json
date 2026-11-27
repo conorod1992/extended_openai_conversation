@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node ../scripts/generate-management-owners.mjs && node ../scripts/generate-agent-config-sections.mjs && vite build",
+    "build": "node ../scripts/generate-management-owners.mjs && node ../scripts/generate-agent-config-sections.mjs && vite build && node ../scripts/precompress-frontend.mjs",
     "check": "tsc --noEmit && tsc -p tsconfig.production.json",
     "test": "vitest run",
     "verify": "npm run check && npm test && npm run build"

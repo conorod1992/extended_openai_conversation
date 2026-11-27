@@ -1,6 +1,46 @@
 import {expect, test} from "@playwright/test";
 import {fixtureUrl, trackPageErrors, expectHarnessClean, acceptConfirmation} from "./browser-helpers.mjs";
 
+test("Broadcast completes on admission and a delayed refresh keeps the next draft", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#broadcast-enabled").check();
+  await panel.evaluate(host => {
+    const call = host.hass.callWS.bind(host.hass);
+    let admitted = false;
+    host.hass.callWS = async message => {
+      if (!message.type.endsWith("/broadcast")) return call(message);
+      if (message.action === "send") {
+        admitted = true;
+        return {id:"admission", targets:message.entity_ids};
+      }
+      if (message.action !== "snapshot") return call(message);
+      if (admitted) await new Promise(resolve => { window.releaseBroadcastHistory = resolve; });
+      return {enabled:true, can_manage:true, retry_token:`${"a".repeat(32)}:1234`,
+        catalog:{satellites:[{id:"assist_satellite.kitchen", name:"Kitchen"}], areas:[]}, history:[], pending:[]};
+    };
+  });
+  await panel.locator("#broadcast-refresh").click();
+  await panel.locator('[data-broadcast-entity="assist_satellite.kitchen"]').check();
+  const composer = panel.locator("#broadcast-message");
+  await composer.fill("First announcement");
+  await panel.locator("#broadcast-send").click();
+  await expect.poll(() => page.evaluate(() => Boolean(window.releaseBroadcastHistory))).toBe(true);
+  await expect(panel.locator("#toast")).toContainText("Broadcast queued");
+  await expect(panel.locator("#broadcast-send")).toBeEnabled();
+  await expect(composer).toHaveValue("");
+  await composer.fill("Next announcement");
+  await composer.evaluate(node => { node.focus(); node.setSelectionRange(4, 4); });
+  const epoch = await panel.evaluate(host => host._eocBroadcastEpoch);
+  await page.evaluate(() => window.releaseBroadcastHistory());
+  await expect.poll(() => panel.evaluate(host => host._eocBroadcastEpoch)).toBeGreaterThan(epoch);
+  await expect(composer).toHaveValue("Next announcement");
+  await expect(composer).toBeFocused();
+  expect(await composer.evaluate(node => node.selectionStart)).toBe(4);
+  await expectHarnessClean(page, errors);
+});
+
 for (const changed of [false, true]) test(`Broadcast retains an uncertain operation across refresh and ${changed ? "requires a new-send confirmation for edits" : "retries the same admission"}`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("overview"));

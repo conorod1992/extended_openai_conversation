@@ -284,11 +284,11 @@ export function refreshPageSaveBar(panel) {
   const refreshing = hasPendingPageSaveRead(panel);
   const invalid = panel._viewKey?.() === RULES && panel._rulesSettingsDraft?.wording_groups.some((group) => group.validation_error);
   if (!enhancementChanged(panel, "page-save-bar", [scope, dirty, scope.pending, invalid, refreshing])) return;
-  let bar = root.querySelector(".save-bar");
+  let bar = root.querySelector("#save-page")?.closest(".save-bar");
   if (!dirty) { bar?.remove(); root.dispatchEvent?.(new Event("eoc-config-dirty-changed")); return; }
   if (!bar) {
     root.querySelector("main")?.insertAdjacentHTML("beforeend", saveBarMarkup(scope));
-    bar = root.querySelector(".save-bar");
+    bar = root.querySelector("#save-page")?.closest(".save-bar");
   }
   const save = bar?.querySelector("#save-page"), discard = bar?.querySelector("#discard-page");
   if (save) { save.disabled = scope.pending || invalid || refreshing; save.textContent = scope.pending ? "Saving…" : refreshing ? "Refreshing saved policy…" : "Save changes"; }

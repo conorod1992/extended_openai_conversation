@@ -240,7 +240,8 @@ export function bindNativeToolYaml(panel) {
     }
   };
 
-  const syncNativeFromYaml = async (yaml) => {
+  let authoritativeConfig;
+  const syncNativeFromYaml = async (yaml, config = authoritativeConfig) => {
     showFallback();
     const generation = ++syncGeneration;
     if (typeof nativeEditor.setValue !== "function") return;
@@ -265,6 +266,11 @@ export function bindNativeToolYaml(panel) {
         return;
       }
 
+      const starter = nativeStarterConfig(yaml, panel._toolOriginalName ?? null);
+      if (config || starter) {
+        if (ownsSync()) await setNativeValue(config || starter, ownsSync);
+        return;
+      }
       try {
         const result = await panel._call("tools", "validate_yaml", {yaml});
         if (!ownsSync()) return;
@@ -272,9 +278,7 @@ export function bindNativeToolYaml(panel) {
           await setNativeValue(result.config, ownsSync);
           return;
         }
-        const starter = nativeStarterConfig(yaml, panel._toolOriginalName ?? null);
-        if (starter) await setNativeValue(starter, ownsSync);
-        else showFallback();
+        showFallback();
       } catch (_err) {
         if (ownsSync()) showFallback();
       }
@@ -299,6 +303,7 @@ export function bindNativeToolYaml(panel) {
   const onTextareaInput = () => {
     claimFallback();
     rawYaml = String(textarea.value ?? "");
+    authoritativeConfig = undefined;
     toolYamlChangeHandler(panel, rawYaml);
   };
 
@@ -312,6 +317,7 @@ export function bindNativeToolYaml(panel) {
     if (!nativeReady) return;
     ++syncGeneration;
     rawYaml = String(nativeEditor.yaml ?? "");
+    authoritativeConfig = undefined;
     textarea.value = rawYaml;
     toolYamlChangeHandler(panel, rawYaml, event.detail || {});
   };
@@ -337,8 +343,9 @@ export function bindNativeToolYaml(panel) {
     getYaml() {
       return rawYaml;
     },
-    setYaml(value) {
+    setYaml(value, config) {
       rawYaml = String(value ?? "");
+      authoritativeConfig = config?.spec && config?.function ? config : undefined;
       textarea.value = rawYaml;
       ++syncGeneration;
       fallbackClaimed = false;

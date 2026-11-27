@@ -215,9 +215,10 @@ function bindBroadcastControls(panel, snapshot) {
       // confirmation coupled to it rather than silently rearming that message.
       if (authenticated()) retireBroadcastAttempt(panel, attempt);
       else attempt.blocked = true;
-      await presentAcknowledgedMutation(panel, submission, "Broadcast queued", async () => {
-        if (!await loadBroadcast(panel)) throw Error("Broadcast history could not be refreshed.");
-      }, result);
+      await presentAcknowledgedMutation(panel, submission, "Broadcast queued", null, result);
+      if (authenticated() && panel._viewKey() === "overview" && panel.isConnected !== false) {
+        void loadBroadcast(panel, () => panel._viewKey() === "overview", {afterSend:true});
+      }
     } catch (err) {
       if (attempt && dispatched) {
         if (["invalid_request", "broadcast_retry_capacity"].includes(err.code) || err.mutationOutcome === "rejected") {
@@ -237,14 +238,22 @@ function bindBroadcastControls(panel, snapshot) {
   });
 }
 
-function applyBroadcastSnapshot(panel, snapshot) {
+function applyBroadcastSnapshot(panel, snapshot, preserveComposerFocus = false) {
   if (panel._viewKey?.() !== "overview") return;
   const host = panel.shadowRoot.querySelector("#broadcast-card");
   if (!host) return;
+  const composer = panel.shadowRoot.activeElement;
+  const selection = preserveComposerFocus && composer?.id === "broadcast-message"
+    ? [composer.selectionStart, composer.selectionEnd, composer.selectionDirection] : null;
   const available = new Set((snapshot.catalog?.satellites || []).map((satellite) => satellite.id));
   panel._broadcastSelected = new Set([...(panel._broadcastSelected || new Set())].filter((entityId) => available.has(entityId)));
   host.innerHTML = broadcastMarkup(panel, snapshot);
   bindBroadcastControls(panel, snapshot);
+  if (selection) {
+    const next = host.querySelector("#broadcast-message");
+    next?.focus({preventScroll:true});
+    next?.setSelectionRange(...selection);
+  }
   panel._eocBroadcastEpoch = (panel._eocBroadcastEpoch || 0) + 1;
   panel._eocBroadcastSnapshot = snapshot;
   if (hasPendingBroadcast(snapshot)) {
@@ -279,15 +288,18 @@ function applyBroadcastError(panel, err) {
   host.innerHTML = `<div class="error" role="alert">Unable to load Broadcast: ${panel._e(err.message || String(err))}</div>`;
 }
 
-async function loadBroadcast(panel, owns = () => true) {
+async function loadBroadcast(panel, owns = () => true, {afterSend = false} = {}) {
   const current = captureAuthentication(panel);
   const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
   try {
     const snapshot = await panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
-    if (current() && owns() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot);
+    if (current() && owns() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot, afterSend);
     return true;
   } catch (err) {
-    if (current() && owns() && panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err);
+    if (current() && owns() && panel._eocBroadcastReadToken === token) {
+      if (afterSend) panel._toast("Broadcast queued, but history could not be refreshed.", true);
+      else applyBroadcastError(panel, err);
+    }
     return false;
   }
 }

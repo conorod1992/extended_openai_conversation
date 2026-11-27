@@ -1,6 +1,39 @@
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+for (const action of ["save-config", "revert-config"]) {
+  test(`shared Assistant draft can ${action} from Memories without replacing its view`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
+    const panel = page.locator("extended-openai-management-panel");
+    const title = panel.locator('[data-config="__title"]');
+    await title.fill("Draft assistant name");
+    await panel.evaluate(host => host._navigate("data-memory", "memories"));
+    await expect(panel.locator("#assistant-dirty-state")).toBeVisible();
+    const search = panel.locator("#list-search");
+    await search.fill("kept in the current view");
+    await panel.evaluate(host => {
+      window.draftRouteMain = host.shadowRoot.querySelector("main");
+      window.draftRouteSearch = host.shadowRoot.querySelector("#list-search");
+      window.draftRouteResult = host._result;
+      window.draftRouteWrites = browserHarness.calls.length;
+    });
+    await panel.locator(`#${action}`).click();
+    await expect(panel.locator("#assistant-dirty-state")).toHaveCount(0);
+    await expect(search).toHaveValue("kept in the current view");
+    const state = await panel.evaluate(host => ({
+      sameMain: window.draftRouteMain === host.shadowRoot.querySelector("main"),
+      sameSearch: window.draftRouteSearch === host.shadowRoot.querySelector("#list-search"),
+      sameResult: window.draftRouteResult === host._result,
+      saves: browserHarness.calls.slice(window.draftRouteWrites).filter(call => call.section === "configuration" && call.action === "save").length,
+    }));
+    expect(state).toEqual({sameMain:true, sameSearch:true, sameResult:true, saves:Number(action === "save-config")});
+    await panel.evaluate(host => host._navigate("assistant", "basics"));
+    await expect(title).toHaveValue(action === "save-config" ? "Draft assistant name" : "Jarvis");
+    await expectHarnessClean(page, errors);
+  });
+}
+
 for (const [pageName, section, ready] of [
   ["guide", null, "#guide-search"],
   ["usage-maintenance", "usage", "#usage-window"],

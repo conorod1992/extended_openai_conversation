@@ -20,7 +20,7 @@ import {
 import {cacheTimestampIsFresh, readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, renderManagementRoute, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
-import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors} from "./management-actions.js";
+import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors, syncSharedConfigurationBar} from "./management-actions.js";
 import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent, catalogMayPublish} from "./management-catalog-ownership.js";
 import {capturePageRead, acceptPageRead, hasPendingPageSaveRead, retryPageSaveReadsOnTransport} from "./page-save-acknowledgement.js";
@@ -546,6 +546,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!value) {
       this._eocDirtyConfigKeys = new Set();
       this._configDirty = false;
+      syncSharedConfigurationBar(this);
       return;
     }
     this._configDirty = true;
@@ -1955,6 +1956,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         main.classList.remove("eoc-loading-in-background");
       }
       syncAgentPicker(this);
+      syncSharedConfigurationBar(this);
       finishMeasure(measure, {view, busy});
       this._markColdLifecycle("first-render-complete");
     }
@@ -2030,6 +2032,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         <div class="section-layout">
           <main data-eoc-main ${this._page === "guide" ? 'data-eoc-guide-layout=""' : ""}>${this._eocMainMarkup}</main>
         </div>
+        <div id="eoc-shared-configuration-bar" hidden></div>
       </div>
       <div id="eoc-dialog-host">${this._eocDialogMarkup}</div>
       <div id="toast" class="toast" role="status" aria-live="polite"></div>`;
@@ -2230,17 +2233,20 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _refreshGuestModeMutation(agentId, mutationResult) {
     if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
     const loadToken = ++this._loadToken;
+    const owner = captureConfigurationOwner(this);
+    const current = () => this._loadToken === loadToken
+      && this._viewKey() === "capabilities/guest-mode" && configurationSubmissionIsCurrent(this, owner);
     this._patchGuestModeStatus(agentId, mutationResult?.status);
     this._result = {...this._result, loading: {...(this._result?.loading || {}), details: true}};
     this._error = null;
     this._render();
     try {
       const details = await this._call("guest_mode", "details");
-      if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode" || this._loadToken !== loadToken) return;
+      if (!current()) return;
       this._result = {...this._result, ...details, loading: {...this._result.loading, details: false},
         load_errors: (this._result.load_errors || []).filter(issue => issue.key !== "details")};
     } catch (err) {
-      if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode" || this._loadToken !== loadToken) return;
+      if (!current()) return;
       this._result = {...this._result, loading: {...this._result.loading, details: false},
         load_errors: [...(this._result.load_errors || []).filter(issue => issue.key !== "details"),
           {key: "details", label: "Guest Mode capabilities", message: err.message || String(err)}]};
@@ -2259,6 +2265,19 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
   }
 
+  async _presentGuestModeAcknowledgement(agentId, submission, message, result, acknowledgeInterval = null) {
+    if (!await presentAcknowledgedMutation(this, submission, message, acknowledgeInterval, result)) return;
+    if (!configurationSubmissionIsCurrent(this, submission) || this._viewKey() !== "capabilities/guest-mode") return;
+    const refresh = this._refreshGuestModeMutation(agentId, result);
+    const loadToken = this._loadToken;
+    void refresh.catch(() => {
+      if (configurationSubmissionIsCurrent(this, submission) && this._loadToken === loadToken
+          && this._viewKey() === "capabilities/guest-mode") {
+        this._toast(`${message}, but details could not be refreshed.`, true);
+      }
+    });
+  }
+
   _updateGuestMode(now = false) {
     return this._runGuestOperation(async () => {
       const agentId = this._agentId;
@@ -2273,10 +2292,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         const payload = guest.guestIntervalUpdatePayload(this, intervalSubmission, now);
         const result = await this._call("guest_mode", "update", payload);
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
-        await presentAcknowledgedMutation(this, submission, "Guest Mode updated", () => {
+        await this._presentGuestModeAcknowledgement(agentId, submission, "Guest Mode updated", result, () => {
           getRouteFeature("capabilities/guest-mode")?.acknowledgeGuestInterval(this, intervalSubmission, result.status);
-          return this._refreshGuestModeMutation(agentId, result);
-        }, result);
+        });
       } catch (err) {
         getRouteFeature("capabilities/guest-mode")?.retainUncertainGuestInterval(this, intervalSubmission, err);
         if (!configurationSubmissionIsCurrent(this, submission)) return;
@@ -2298,7 +2316,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       try {
         const result = await this._call("guest_mode", "disable");
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
-        await presentAcknowledgedMutation(this, submission, "Guest Mode ended", () => this._refreshGuestModeMutation(agentId, result), result);
+        await this._presentGuestModeAcknowledgement(agentId, submission, "Guest Mode ended", result);
       } catch (err) {
         if (!configurationSubmissionIsCurrent(this, submission)) return;
         if (err?.mutationOutcome === "committed") {

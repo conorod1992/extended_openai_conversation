@@ -77,6 +77,15 @@ for (const action of ["add", "edit"]) {
       await panel.locator("#function-add").click();
       await panel.locator("#add-tool").click();
     } else {
+      await panel.evaluate(host => {
+        const call = host._call.bind(host);
+        host._call = async (section, verb, args) => {
+          if (section === "tools" && verb === "validate_yaml") throw Error("The editor should use the serialized projection");
+          const result = await call(section, verb, args);
+          return section === "tools" && verb === "serialize"
+            ? {...result, config:host._draft.functions.find(tool => tool.spec.name === args.name)} : result;
+        };
+      });
       await panel.locator('[data-tool-key="baseline_tool"]').evaluate(card => { card.closest("details").open = true; });
       await panel.locator('[data-tool-key="baseline_tool"] .edit-tool').click();
     }
@@ -124,12 +133,18 @@ test(`stalled ${stalled} falls back and its late events cannot overwrite the sav
       return result;
     };
   });
-  await panel.locator("#function-add").click();
-  await panel.locator("#add-tool").click();
+  if (stalled === "validation reply") {
+    await panel.locator('[data-tool-key="baseline_tool"]').evaluate(card => { card.closest("details").open = true; });
+    await panel.locator('[data-tool-key="baseline_tool"] .edit-tool').click();
+  } else {
+    await panel.locator("#function-add").click();
+    await panel.locator("#add-tool").click();
+  }
   await expect.poll(() => page.evaluate(stalled => stalled === "validation reply" ? window.validationHeld === true
     : window.nativeHydrations.some(item => item.yaml.includes("spec:")), stalled)).toBe(true);
   await expect(panel.locator("#tool-save")).toBeEnabled({timeout:10000});
-  const yaml = browserToolYaml("Fallback after stalled native document");
+  const name = stalled === "validation reply" ? "baseline_tool" : "browser_tool";
+  const yaml = browserToolYaml("Fallback after stalled native document").replace("name: browser_tool", `name: ${name}`);
   await panel.locator("#tool-yaml").fill(yaml);
   await page.evaluate(() => window.releaseValidation?.());
   await releaseHydration(page);
@@ -137,7 +152,7 @@ test(`stalled ${stalled} falls back and its late events cannot overwrite the sav
   await expect(panel.locator("#tool-yaml")).toHaveValue(yaml);
   await panel.locator("#tool-save").click();
   await expect(panel.locator("#tool-dialog")).not.toHaveJSProperty("open", true);
-  expect(await page.evaluate(() => window.browserHarness.getState().toolYamls.browser_tool)).toBe(yaml);
+  expect(await page.evaluate(name => window.browserHarness.getState().toolYamls[name], name)).toBe(yaml);
   await expectHarnessClean(page, errors);
 });
 }
@@ -149,10 +164,10 @@ for (const mutation of ["early dialog gate", "outer update only"]) {
     await page.route(`**/${target}`, async route => {
       const response = await route.fetch();
       const source = (await response.text()).replace(/\r\n/g, "\n");
-      const original = mutation === "early dialog gate" ? "await editor.setYaml(response.yaml);"
+      const original = mutation === "early dialog gate" ? "await editor.setYaml(response.yaml, response.config);"
         : "await code?.updateComplete;";
       expect(source).toContain(original);
-      let body = source.replace(original, mutation === "early dialog gate" ? "editor.setYaml(response.yaml);" : "");
+      let body = source.replace(original, mutation === "early dialog gate" ? "editor.setYaml(response.yaml, response.config);" : "");
       if (mutation === "outer update only") {
         const check = "code?.codemirror?.state.doc.toString() !== yaml";
         expect(body).toContain(check);

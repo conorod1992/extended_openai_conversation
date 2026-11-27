@@ -20,7 +20,7 @@ export function refreshConfigurationSaveBar(panel) {
     const help = root.querySelector(".action-help");
     if (help) help.hidden = !panel._configDirty;
   }
-  const bar = root.querySelector(".save-bar");
+  const bar = root.querySelector("main #save-config")?.closest(".save-bar");
   if (!panel._configDirty) { bar?.remove(); return; }
   if (bar) return;
   const anchor = root.querySelector("#save-bar-anchor") || root.querySelector("#memory-settings-save-anchor");

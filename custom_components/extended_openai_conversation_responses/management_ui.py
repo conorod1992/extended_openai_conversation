@@ -33,6 +33,7 @@ from .agent_config import (
     agent_config_model_repair_snapshot,
     agent_config_options,
     agent_config_snapshot,
+    function_tool_editor_payload,
     function_tool_enabled,
     function_tool_yaml,
     merge_agent_config,
@@ -2132,12 +2133,15 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 if isinstance(configured, list)
                 else []
             )
-            if len(matches) == 1:
-                return {"yaml": function_tool_yaml(matches[0])}
-            raise HomeAssistantError(
-                "Function Tool is missing or ambiguous; reload the latest saved tools"
-            )
-        return {"yaml": function_tool_yaml(message.get("tool"))}
+            if len(matches) != 1:
+                raise HomeAssistantError(
+                    "Function Tool is missing or ambiguous; reload the latest saved tools"
+                )
+            tool = matches[0]
+        else:
+            tool = message.get("tool")
+        yaml, config = function_tool_editor_payload(tool)
+        return {"yaml": yaml, "config": config}
     if action == "starter":
         return {"yaml": starter_function_tool_yaml()}
     if action == "built_in_catalog":
