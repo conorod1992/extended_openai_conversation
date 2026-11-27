@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {fixture, saveConfiguration, discardConfigurationDraft, retainPanelDrafts, restorePanelDrafts, stopDraftRecovery, captureConfigurationSubmission, reconcileConfigurationAcknowledgement} from "./management-ownership-harness.mjs";
-import {voiceMappingDraft, updateVoiceMappingRows, voiceMappingDraftError, voiceMappingDraftDirty, captureVoiceMappingDraft} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
+import {voiceMappingDraft, updateVoiceMappingRows, voiceMappingDraftError, voiceMappingDraftDirty, captureVoiceMappingDraft, rememberVoiceDeviceAliases} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
 
 const mappings={office:"user:owner",living:"shared:household"};
 function setup() {
@@ -60,4 +60,22 @@ for (const failure of ["duplicate","unresolved","pending","empty"]) {
   assert.equal(captureVoiceMappingDraft(panel).length,3,"a full response to a different field cannot consume unfinished rows");
   assert.ok(voiceMappingDraftError(panel));
 }
+{
+  const f=setup();
+  const legacy="assist_satellite.kitchen", canonical="registry-kitchen";
+  for (const record of f.state.records.values()) {
+    record.config.voice_device_mappings = {[legacy]:"user:owner", [canonical]:"unretained"};
+  }
+  const panel=f.create();
+  const rows=structuredClone(voiceMappingDraft(panel).rows);
+  rememberVoiceDeviceAliases(panel,[{entity_id:legacy, device_id:canonical}]);
+  assert.match(voiceMappingDraftError(panel), /assigned more than once/);
+  const [old, current]=rows;
+  assert.match(updateVoiceMappingRows(panel,[old]).error, /reactivate/);
+  assert.deepEqual(panel._draft.voice_device_mappings, {[legacy]:"user:owner", [canonical]:"unretained"});
+  assert.deepEqual(updateVoiceMappingRows(panel,[current]).mapping, {[canonical]:"unretained"});
+  assert.deepEqual(updateVoiceMappingRows(panel,[{...old,deviceId:canonical}]).mapping, {[canonical]:"user:owner"});
+  assert.deepEqual(updateVoiceMappingRows(panel,[]).mapping, {});
+}
+
 console.log("Voice invalid row retention, central save guard, recovery, discard and acknowledgement tests passed");

@@ -156,4 +156,51 @@ for (const changeOwner of [h => {h.panel._agentId = "other-agent";},
   await selected;
   assert.equal(h.hidden.value, "device-office");
 }
+for (const action of ["keep-legacy-owner", "remove-effective"]) {
+  const legacy = "assist_satellite.kitchen", device = "registry-kitchen";
+  const mapping = {[legacy]:"user:person", [device]:"unretained"};
+  const card = new TestEventTarget(), error = {};
+  const panel = {
+    _agentId:"voice-agent", _viewKey:()=>"assistant/voice",
+    _draft:{voice_device_mappings:{...mapping}},
+    _configData:{config:{voice_device_mappings:{...mapping}}},
+    hass:{callWS:async () => [{entity_id:legacy, device_id:device}]},
+  };
+  const rows = voiceMappingDraft(panel).rows.map(saved => {
+    const picker = new TestEventTarget(); picker.dataset={};
+    const remove = new TestEventTarget(), keep = new TestEventTarget();
+    const nodes = {".voice-satellite-picker":picker, ".voice-device-id":{value:saved.deviceId},
+      ".voice-mapping-owner":{value:saved.owner}, ".remove-voice-mapping":remove,
+      ".keep-voice-mapping":keep, ".voice-satellite-warning":{}};
+    return {
+      isConnected:true, dataset:{voiceRowId:saved.id}, picker, removeButton:remove, keep,
+      querySelector: selector => nodes[selector] || null,
+      remove() { this.isConnected = false; },
+    };
+  });
+  const visible = () => rows.filter(row => row.isConnected);
+  panel.shadowRoot = {
+    querySelector: selector => ({
+      "#voice-mappings":card, "#voice-mapping-list":{},
+      '[data-error="voice_device_mappings"]':error,
+      "[data-voice-mapping-row]":visible()[0],
+    })[selector] || null,
+    querySelectorAll: selector => selector === "[data-voice-mapping-row]" ? visible() : [],
+  };
+  bindVoiceMappings(panel);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(rows.map(row => row.picker.value), [legacy, legacy]);
+  assert.match(error.textContent, /assigned more than once/);
+  if (action === "keep-legacy-owner") {
+    assert.equal(rows[0].keep.hidden, false);
+    rows[0].keep.dispatchEvent(new Event("click"));
+    assert.deepEqual(panel._draft.voice_device_mappings, {[device]:"user:person"});
+  } else {
+    assert.match(rows[1].removeButton.textContent, /Remove all assignments/);
+    rows[1].removeButton.dispatchEvent(new Event("click"));
+    assert.deepEqual(panel._draft.voice_device_mappings, {});
+  }
+  assert.equal(error.textContent, "");
+}
+
 console.log("Voice registry freshness, retry and selection ownership tests passed");

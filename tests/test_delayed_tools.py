@@ -952,21 +952,33 @@ def test_negative_delay_is_rejected() -> None:
         _delay_as_timedelta({"seconds": -1})
 
 
-async def test_setup_cleans_invalid_persisted_records_and_is_idempotent(hass) -> None:
+async def test_setup_cleans_invalid_persisted_records_and_is_idempotent(hass, monkeypatch) -> None:
     """Corrupt records are removed durably and a second setup is a no-op."""
     valid = _coverage_record(call_id="valid")
-    manager = DelayedToolManager(hass)
-    manager._store = SimpleNamespace(
-        async_load=AsyncMock(return_value={"calls": [valid.as_dict(), {"bad": True}]}),
-        async_save=AsyncMock(),
-    )
+    invalid = _coverage_record(call_id="invalid").as_dict()
+    for bad_record in ({"bad": True}, {**invalid, "status": []}, {**invalid, "status": {}}):
+        manager = DelayedToolManager(hass)
+        manager._store = SimpleNamespace(
+            async_load=AsyncMock(return_value={"calls": [valid.as_dict(), bad_record]}),
+            async_save=AsyncMock(),
+        )
+        arm = MagicMock()
+        monkeypatch.setattr(manager, "_arm", arm)
 
-    await manager.async_setup()
-    await manager.async_setup()
+        await manager.async_setup()
+        await manager.async_setup()
 
-    assert manager._records == {"valid": valid}
-    manager._store.async_load.assert_awaited_once()
-    manager._store.async_save.assert_awaited_once_with({"calls": [valid.as_dict()]})
+        assert manager._records == {"valid": valid}
+        manager._store.async_load.assert_awaited_once()
+        manager._store.async_save.assert_awaited_once_with({"calls": [valid.as_dict()]})
+        manager._handle_started()
+        arm.assert_called_once_with(valid.call_id)
+        entity = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry"),
+            subentry=SimpleNamespace(subentry_id="agent"),
+        )
+        new = await manager.async_schedule(entity, "control_light", {"delay": {"seconds": 1}}, None)
+        assert set(manager._records) == {valid.call_id, new.call_id}
 
 
 async def test_schedule_requires_setup_and_arms_when_already_started(

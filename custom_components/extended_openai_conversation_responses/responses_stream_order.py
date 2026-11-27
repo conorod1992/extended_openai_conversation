@@ -339,6 +339,7 @@ async def ordered_output_events(
     legacy = _OutputItem()
     legacy_start = False
     legacy_message_active = False
+    implicit_legacy_text = False
     legacy_message_finished = False
     legacy_completions: dict[str, _OutputItem] = {}
     last_legacy_completed: _OutputItem | None = None
@@ -350,14 +351,41 @@ async def ordered_output_events(
             if index is not None and (type(index) is not int or index < 0):
                 raise _malformed("invalid output index")
             kind = getattr(event, "type", "")
+            anonymous_output_index = None
+            late_legacy_snapshot = False
             if index is None and kind in _CONTENT_EVENTS:
                 content_owner = getattr(event, "item_id", None)
                 if isinstance(content_owner, str) and content_owner in owners:
                     index = owners[content_owner]
                     event = _IndexedContentEvent(event, index)
-            budget.responses_event(event)
+                elif not content_owner and (active := items.get(next_index)):
+                    if (
+                        active.presented
+                        and active.signature
+                        and active.signature[0] == "message"
+                    ):
+                        # The visible indexed message already owns anonymous parts.
+                        anonymous_output_index = next_index
+                late_legacy_snapshot = (
+                    index is None
+                    and kind in _PART_SNAPSHOTS
+                    and (
+                        (
+                            isinstance(content_owner, str)
+                            and content_owner in legacy_completions
+                        )
+                        or (not content_owner and legacy_message_finished)
+                    )
+                )
+            budget.responses_event(
+                event,
+                anonymous_output_index=anonymous_output_index,
+                discard_snapshot=late_legacy_snapshot,
+            )
             if terminal_seen and kind.startswith("response.") and kind not in _USAGE:
                 raise _malformed("event after terminal response")
+            if late_legacy_snapshot:
+                continue
 
             if kind == "response.completed":
                 if any(index >= next_index for index in items):
@@ -370,16 +398,32 @@ async def ordered_output_events(
                     getattr(response, "output", ()), "response output"
                 )
                 recovered = None
-                if legacy_start or legacy_message_active:
+                if (
+                    legacy_start
+                    or legacy_message_active
+                    or (implicit_legacy_text and output)
+                ):
                     completed_count = next_index + len(legacy_items)
                     final = output[-1] if len(output) == completed_count + 1 else None
                     if (
                         final is None
                         or getattr(final, "type", None) != "message"
                         or (legacy.signature and legacy.signature[0] != "message")
+                        or (
+                            implicit_legacy_text
+                            and (
+                                getattr(final, "role", None) not in {None, "assistant"}
+                                or getattr(final, "content", None) is None
+                            )
+                        )
                     ):
                         raise _malformed("unfinished legacy output item")
-                    legacy.bind_identity(getattr(final, "id", None), _DONE)
+                    final_id = getattr(final, "id", None)
+                    if final_id and (
+                        final_id in legacy_completions or final_id in owners
+                    ):
+                        raise _malformed("repeated completed output item")
+                    legacy.bind_identity(final_id, _DONE)
                     legacy_items.append(_item_identity(final))
                     recovered = SimpleNamespace(type=_DONE, item=final)
                     budget.responses_event(recovered)
@@ -482,23 +526,13 @@ async def ordered_output_events(
                         continue
             if index is None:
                 # Older providers and synthetic streams may omit all indices.
-                if kind in _PART_SNAPSHOTS and (
-                    (
-                        item_id
-                        and (
-                            item_id in legacy_completions
-                            or (item_id in owners and items[owners[item_id]].done)
-                        )
-                    )
-                    or (not item_id and legacy_message_finished)
-                ):
-                    continue
                 legacy_output_seen = True
                 if kind == _ADDED:
                     if legacy_start:
                         raise _malformed("unfinished legacy output item")
                     legacy.observe(event, kind, item_id)
                     legacy_start = True
+                    implicit_legacy_text = False
                     legacy_message_finished = False
                 elif kind == _DONE:
                     if legacy.signature and legacy.signature[0] != getattr(
@@ -522,7 +556,7 @@ async def ordered_output_events(
                     )
                     legacy_items.append(_item_identity(event.item))
                     legacy = _OutputItem()
-                    legacy_start = legacy_message_active = False
+                    legacy_start = legacy_message_active = implicit_legacy_text = False
                 else:
                     if kind in _ARGUMENT_EVENTS:
                         legacy.bind_identity(item_id, kind)
@@ -531,25 +565,15 @@ async def ordered_output_events(
                         "response.content_part."
                     ):
                         legacy_message_finished = False
-                        active = items.get(next_index)
-                        # Some providers omit item identity even on numbered
-                        # parts. A visible indexed message already owns these
-                        # deltas; otherwise a numbered part opens a legacy item.
-                        indexed_message = (
-                            active is not None
-                            and active.presented
-                            and active.signature is not None
-                            and active.signature[0] == "message"
-                        )
-                        if item_id or (
-                            not indexed_message
-                            and (
+                        if anonymous_output_index is None:
+                            if item_id or (
                                 kind.startswith("response.content_part.")
                                 or getattr(event, "content_index", None) is not None
-                            )
-                        ):
-                            legacy.bind_identity(item_id, kind)
-                            legacy_message_active = True
+                            ):
+                                legacy.bind_identity(item_id, kind)
+                                legacy_message_active = True
+                            elif kind in _TEXT_EVENTS:
+                                implicit_legacy_text = True
                 yield event
                 continue
 
@@ -582,7 +606,7 @@ async def ordered_output_events(
                     item.arguments = legacy.arguments
                     item.arguments_done = legacy.arguments_done
                 legacy = _OutputItem()
-                legacy_start = legacy_message_active = False
+                legacy_start = legacy_message_active = implicit_legacy_text = False
 
             was_done = item.done
             item.observe(event, kind, item_id)

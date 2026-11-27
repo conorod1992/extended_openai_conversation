@@ -1665,9 +1665,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 ):
                                     raise missing_answer
                         if speech_presentation is not None and not streaming:
-                            # Completed Chat and Responses adapters emit synthetic
-                            # text deltas. Join each known-complete answer and run
-                            # the speech-only parser off-loop before delivery.
+                            # Publish a completed provider response only after the
+                            # parser and final-answer checks succeed.
                             await speech_presentation.async_flush_completed(
                                 self.hass, chat_log
                             )

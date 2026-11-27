@@ -182,6 +182,73 @@ async def test_completed_chat_chunks_handle_missing_tools_usage_and_empty_choice
 
 
 
+@pytest.mark.parametrize(
+    ("mode", "status"),
+    [
+        ("chat", "completed"),
+        ("chat", "incomplete"),
+        ("responses", "completed"),
+        ("responses", "incomplete"),
+        ("responses", "failed"),
+    ],
+)
+async def test_completed_response_presentation_waits_without_speech_cleanup(hass, mode, status):
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_SPEECH_PROCESSING_ENABLED,
+    )
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+    from custom_components.extended_openai_conversation_responses.speech import (
+        async_streaming_speech_cleanup,
+    )
+    from custom_components.extended_openai_conversation_responses.provider_errors import (
+        ProviderStreamError,
+    )
+    from homeassistant.exceptions import HomeAssistantError
+    from tests.test_function_tool_error_recovery import _chat_log
+
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    log = _chat_log(hass)
+    heard = []
+    listener = lambda _log, delta: heard.append(delta.get("content", ""))
+    log.delta_listener = listener
+    raw = "**Provider answer**"
+    success = status == "completed"
+    if mode == "chat":
+        choice = SimpleNamespace(
+            message=SimpleNamespace(content=raw), finish_reason="stop" if success else "length"
+        )
+        transformed = entity._transform_chat_stream(log, completed_chat_chunks(SimpleNamespace(choices=[choice])))
+    else:
+        item = SimpleNamespace(
+            type="message", role="assistant", status="completed", phase="final_answer",
+            content=[SimpleNamespace(type="output_text", text=raw)],
+        )
+        response = SimpleNamespace(
+            output=[item], status=status, usage=None,
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        )
+        transformed = entity._transform_responses_stream(log, completed_responses_events(response))
+
+    async def consume():
+        with async_streaming_speech_cleanup(log, {CONF_SPEECH_PROCESSING_ENABLED: False}, completed=True) as presentation:
+            async for delta in transformed:
+                log.delta_listener(log, delta)
+            assert "".join(heard) == ""
+            await presentation.async_flush_completed(hass, log)
+
+    if success:
+        await consume()
+        assert "".join(heard) == raw
+    else:
+        error_type = ProviderStreamError if status == "failed" else HomeAssistantError
+        with pytest.raises(error_type):
+            await consume()
+        assert "".join(heard) == ""
+    assert log.delta_listener is listener
+
+
 async def test_completed_chat_adapter_keeps_legacy_function_payload_for_rejection() -> None:
     """A non-streaming provider must not discard legacy call evidence."""
     legacy = SimpleNamespace(name="old_function", arguments="{}")

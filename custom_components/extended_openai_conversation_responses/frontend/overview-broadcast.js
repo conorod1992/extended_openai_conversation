@@ -38,10 +38,55 @@ function ensureRouteStyle(panel) {
 
 const WS_BROADCAST = "extended_openai_conversation_responses/broadcast";
 
+const PENDING_STATUSES = new Set(["pending", "queued", "queued_idle", "queued_busy", "waiting_idle", "delivering"]);
+const broadcastWatches = new WeakMap();
+// Covers the 60-minute queue TTL plus 632 seconds of announcement time.
+const BROADCAST_REFRESH_LIMIT = 900;
+
+function pendingBroadcasts(snapshot) {
+  return [...(snapshot?.pending || []), ...(snapshot?.history || [])].filter(item =>
+    PENDING_STATUSES.has(item.status) || Object.values(item.deliveries || {}).some(delivery => PENDING_STATUSES.has(delivery.status)));
+}
+
 export function hasPendingBroadcast(snapshot) {
-  const pending = new Set(["pending", "queued", "queued_idle", "queued_busy", "waiting_idle", "delivering"]);
-  return [...(snapshot?.pending || []), ...(snapshot?.history || [])].some(item => pending.has(item.status)
-    || Object.values(item.deliveries || {}).some(delivery => pending.has(delivery.status)));
+  return pendingBroadcasts(snapshot).length > 0;
+}
+
+function observeBroadcasts(panel, snapshot, restartExhausted = false) {
+  const pending = pendingBroadcasts(snapshot);
+  if (!pending.length) {
+    stopLiveStatus(panel, "broadcast");
+    broadcastWatches.delete(panel);
+    return false;
+  }
+  const ids = new Set(pending.map(item => item.id));
+  const current = broadcastWatches.get(panel);
+  if (!current || [...ids].some(id => !current.ids.has(id))
+      || (restartExhausted && current.attempts >= BROADCAST_REFRESH_LIMIT)) {
+    broadcastWatches.set(panel, {ids, attempts:0, started:Date.now()});
+  } else {
+    current.ids = ids;
+  }
+  return true;
+}
+
+export function watchBroadcastStatus(panel, snapshot, refresh) {
+  if (!observeBroadcasts(panel, snapshot, true)) return;
+  watchLiveStatus(panel, "broadcast", {
+    view:"overview",
+    delay:() => {
+      const watch = broadcastWatches.get(panel);
+      if (!watch || watch.attempts >= BROADCAST_REFRESH_LIMIT) return null;
+      return Date.now() - watch.started < 30000 ? 1000 : 5000;
+    },
+    refresh:async current => {
+      const watch = broadcastWatches.get(panel);
+      if (!watch) return;
+      watch.attempts++;
+      const result = await refresh(current);
+      if (result && current()) observeBroadcasts(panel, result);
+    },
+  });
 }
 
 function statusLabel(status) {
@@ -256,29 +301,21 @@ function applyBroadcastSnapshot(panel, snapshot) {
   panel._eocBroadcastEpoch = (panel._eocBroadcastEpoch || 0) + 1;
   panel._eocBroadcastSnapshot = snapshot;
   panel._eocBroadcastSnapshotIsCurrent = captureAuthentication(panel);
-  if (hasPendingBroadcast(snapshot)) {
-    const started = Date.now();
-    watchLiveStatus(panel, "broadcast", {
-      // Fast completion feedback, then back off while a satellite is busy.
-      // The bounded budget covers the backend's maximum one-hour delivery TTL.
-      view:"overview", delay:() => Date.now() - started < 30000 ? 1000 : 5000, maxRefreshes:800,
-      refresh: async current => {
-        const epoch = panel._eocBroadcastEpoch;
-        const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
-        const result = await panel._hass.callWS({type:WS_BROADCAST, action:"snapshot"});
-        if (!current() || panel._eocBroadcastEpoch !== epoch || panel._eocBroadcastReadToken !== token) return;
-        panel._eocBroadcastSnapshot = result;
-        // Preserve the message draft, selection and focus while status settles.
-        const currentHost = panel.shadowRoot.querySelector("#broadcast-card");
-        if (!currentHost) return;
-        const history = currentHost.querySelector(".broadcast-history");
-        const template = currentHost.ownerDocument.createElement("template");
-        template.innerHTML = broadcastMarkup(panel, result);
-        history?.replaceWith(template.content.querySelector(".broadcast-history"));
-        if (!hasPendingBroadcast(result)) stopLiveStatus(panel, "broadcast");
-      },
-    });
-  } else stopLiveStatus(panel, "broadcast");
+  watchBroadcastStatus(panel, snapshot, async current => {
+    const epoch = panel._eocBroadcastEpoch;
+    const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
+    const result = await panel._hass.callWS({type:WS_BROADCAST, action:"snapshot"});
+    if (!current() || panel._eocBroadcastEpoch !== epoch || panel._eocBroadcastReadToken !== token) return;
+    panel._eocBroadcastSnapshot = result;
+    // Preserve the message draft, selection and focus while status settles.
+    const currentHost = panel.shadowRoot.querySelector("#broadcast-card");
+    if (!currentHost) return;
+    const history = currentHost.querySelector(".broadcast-history");
+    const template = currentHost.ownerDocument.createElement("template");
+    template.innerHTML = broadcastMarkup(panel, result);
+    history?.replaceWith(template.content.querySelector(".broadcast-history"));
+    return result;
+  });
 }
 
 function applyBroadcastError(panel, err) {

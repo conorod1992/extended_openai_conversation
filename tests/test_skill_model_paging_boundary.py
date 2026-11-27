@@ -222,3 +222,24 @@ def test_paging_upgrade_preserves_authored_custom_reader_contract():
     tool["spec"]["parameters"]["properties"].pop("custom_argument")
     tool["spec"]["parameters"]["properties"]["name"] = True
     assert upgrade_skill_loader_paging(tool) is tool
+
+    from custom_components.extended_openai_conversation_responses.function_execution import (
+        _validate_object,
+    )
+
+    parameters = tool["spec"]["parameters"]
+    parameters["properties"]["name"] = {"type": "string"}
+    tool["spec"]["strict"] = False
+    parameters["required"] = ["name", "file"]
+    parameters["maxProperties"] = 2
+    initial = {"name": "calendar", "file": "SKILL.md"}
+    assert _validate_object("", initial, parameters) == initial
+    before = deepcopy(tool)
+    assert upgrade_skill_loader_paging(tool) is tool
+    assert tool == before
+
+    parameters["maxProperties"] = 3
+    upgraded = upgrade_skill_loader_paging(tool)
+    continuation = {**initial, "offset": 100}
+    assert "page_offset" in upgraded["function"]
+    assert _validate_object("", continuation, upgraded["spec"]["parameters"]) == continuation

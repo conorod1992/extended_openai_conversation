@@ -187,6 +187,8 @@ class PreparedRestore:
     usage_snapshotted: bool = True
     # Destination preview only, captured before export retention filtering.
     usage_revision: str | None = None
+    # Runtime admission is a dependency only when the restore changes routing inputs.
+    validates_provider_routes: bool = True
     # The verified outer journal is authoritative for partition writes during
     # this restore. Never accepted from a portable document.
     archive_disk_backed: bool = False

@@ -1832,6 +1832,7 @@ async def async_materialize_restore(
                 )
         preview.update(await asyncio.to_thread(_usage_restore_preview, target))
     target.journaled_sections = frozenset(data_sections)
+    target.validates_provider_routes = validates_routes
     return target, preview
 
 

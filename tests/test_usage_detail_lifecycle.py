@@ -418,6 +418,51 @@ class DelayedStorage:
         self.delayed.append((data_func, delay))
 
 
+async def test_failed_startup_retention_cleanup_preserves_pending_checkpoint():
+    class FailingPruneStore(usage_module._UsageStore):
+        def __init__(self, data):
+            self.data = data
+            self.pending = None
+
+        async def async_load(self):
+            return deepcopy(self.data)
+
+        def async_delay_save(self, callback, delay):
+            self.pending = callback
+
+        async def async_save(self, data):
+            self.pending = None
+            raise OSError("prune write failed")
+
+        async def async_read_persisted_details(self):
+            self.pending = None
+            return await self.async_load()
+
+    expired = (dt_util.utcnow() - timedelta(days=10)).isoformat()
+    details = FailingPruneStore({
+        "requests": [asdict(_request("old", expired))],
+        "runs": [asdict(_run("old", expired))],
+    })
+    manager = UsageManager(
+        TotalsStorage(), detail_storage=details, request_retention_days=1, run_retention_days=1
+    )
+    await manager.async_initialize()
+    assert manager.requests == manager.runs == []
+    manager._last_prune_date = dt_util.utcnow().date().isoformat()
+    async with manager.async_run(home_assistant_conversation_id="conversation"):
+        await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=9))
+    before = details.pending()
+    assert len(before["requests"]) == len(before["runs"]) == 1
+
+    with pytest.raises(OSError, match="prune write failed") as error:
+        await manager.async_prune_details()
+
+    assert mutation_failure(error.value).outcome == "rejected"
+    assert details.pending() == before
+    assert len(manager.requests) == len(manager.runs) == 1
+    assert manager.totals.total_tokens == 9
+
+
 async def test_routine_usage_persistence_is_owned_and_coalesced_by_manager() -> None:
     """Routine accounting remains off-path without lifecycle patch installation."""
     totals = DelayedStorage()

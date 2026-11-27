@@ -1547,19 +1547,20 @@ async def _async_restore_backup_recoverably(
             subentry_id,
             verified_live=verified_live,
         )
-        from .request import validate_runtime_readiness
+        if prepared.validates_provider_routes or provider_data is not None:
+            from .request import validate_runtime_readiness
 
-        try:
-            validate_runtime_readiness(
-                prepared.config,
-                provider_data
-                if provider_data is not None
-                else getattr(entry, "data", {}),
-            )
-        except HomeAssistantError as err:
-            raise backup.BackupError(
-                f"Restored request is not runtime-ready: {err}"
-            ) from err
+            try:
+                validate_runtime_readiness(
+                    prepared.config,
+                    provider_data
+                    if provider_data is not None
+                    else getattr(entry, "data", {}),
+                )
+            except HomeAssistantError as err:
+                raise backup.BackupError(
+                    f"Restored request is not runtime-ready: {err}"
+                ) from err
         journal = await asyncio.to_thread(
             _new_journal,
             entry_id,

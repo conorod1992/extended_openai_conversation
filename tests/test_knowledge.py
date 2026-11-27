@@ -465,8 +465,10 @@ async def test_search_ranking_prioritizes_boiler_terms_over_question_filler() ->
         "Reset the boiler by pressing its power switch for three seconds.",
     )
 
-    results = await library.async_search("how do I reset the boiler", limit=2)
-    assert [result.source_id for result in results] == [boiler.source_id]
+    await library.async_create("About the house", "Please read", "The house is green.")
+    for query in ("boiler", "What about the boiler?", "Please, what about the boiler?", "how do I reset the boiler"):
+        results = await library.async_search(query, limit=2)
+        assert [result.source_id for result in results] == [boiler.source_id]
 
     # Stop-word-only searches retain the former scoring and do not disappear.
     assert garage.source_id in {

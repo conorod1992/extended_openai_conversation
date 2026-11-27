@@ -6,6 +6,17 @@ from typing import Any
 SKILL_PAGE_OFFSET_TEMPLATE = (
     "{{ offset if offset is defined and offset is not none else 0 }}"
 )
+_LEGACY_PAGING_SCHEMA_KEYS = {
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "title",
+    "description",
+    "$comment",
+    "maxProperties",
+    "minProperties",
+}
 SKILL_OFFSET_SCHEMA = {
     "type": ["integer", "null"],
     "description": "Non-negative Unicode character offset. Start at 0; when has_more is true, call again with next_offset until the file is complete.",
@@ -22,6 +33,21 @@ def upgrade_skill_loader_paging(tool: dict[str, Any]) -> dict[str, Any]:
         and getattr(function.get("path"), "template", function.get("path"))
         == "{{extended_openai.skill_dir(name)}}/{{file}}"
         and parameters.get("type") == "object"
+        and parameters.keys() <= _LEGACY_PAGING_SCHEMA_KEYS
+        and (
+            "maxProperties" not in parameters
+            or (
+                type(parameters["maxProperties"]) is int
+                and parameters["maxProperties"] >= 3
+            )
+        )
+        and (
+            "minProperties" not in parameters
+            or (
+                type(parameters["minProperties"]) is int
+                and parameters["minProperties"] <= 2
+            )
+        )
         and isinstance(parameters.get("properties"), dict)
         and set(parameters["properties"]) == {"name", "file"}
         and all(

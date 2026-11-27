@@ -120,6 +120,10 @@ def test_selected_skills_require_canonical_enabled_loader() -> None:
     del parameters["patternProperties"]
     parameters["additionalProperties"] = {"type": "integer"}
     assert not skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+    for pattern, usable in (("^other$", False), ("^oth.*$", False), ("^file$", True), ("^fi.*$", True)):
+        parameters["patternProperties"] = {pattern: {"type": "string"}}
+        assert skill_loader_status(["calendar"], [loader], []).available is usable
+    parameters["patternProperties"] = {"^other$": {"type": "string"}}
     parameters["additionalProperties"] = {"type": "string"}
     assert skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
     parameters["properties"]["name"]["maxLength"] = 0

@@ -2957,9 +2957,11 @@ class _SpeechDeltaListener:
         agent_config: Mapping[str, Any],
         *,
         completed: bool = False,
+        sanitize: bool = True,
     ) -> None:
         self._listener = listener
         self._agent_config = agent_config
+        self._sanitize = sanitize
         self._sanitizer = self._new_sanitizer()
         self._completed = completed
         self._completed_deltas: list[dict[str, Any]] = []
@@ -3007,6 +3009,10 @@ class _SpeechDeltaListener:
             return
         pending = self._completed_deltas
         self._completed_deltas = []
+        if not self._sanitize:
+            for delta in pending:
+                self._listener(chat_log, delta)
+            return
         groups: list[list[dict[str, Any]]] = []
         group: list[dict[str, Any]] = []
         for delta in pending:
@@ -3108,20 +3114,25 @@ def async_streaming_speech_cleanup(
     *,
     completed: bool = False,
 ):
-    """Present cleaned speech without altering ChatLog's original content."""
+    """Buffer completed responses and optionally clean speech for the listener."""
     listener = getattr(chat_log, "delta_listener", None)
-    if listener is None or not streaming_speech_processing_enabled(agent_config):
+    sanitize = streaming_speech_processing_enabled(agent_config)
+    if listener is None or not (completed or sanitize):
         yield None
         return
-    wrapper = _SpeechDeltaListener(listener, agent_config, completed=completed)
+    wrapper = _SpeechDeltaListener(
+        listener, agent_config, completed=completed, sanitize=sanitize
+    )
     chat_log.delta_listener = wrapper
-    _LOGGER.debug("Streaming speech sanitizer enabled")
+    if sanitize:
+        _LOGGER.debug("Streaming speech sanitizer enabled")
     try:
         yield wrapper
     finally:
         try:
             wrapper.flush(chat_log)
-            wrapper.log_summary()
+            if sanitize:
+                wrapper.log_summary()
         finally:
             chat_log.delta_listener = listener
 

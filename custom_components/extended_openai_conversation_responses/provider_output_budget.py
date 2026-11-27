@@ -111,7 +111,7 @@ class ProviderOutputBudget:
         self.buffered_weight = 0
         self.buffered_events = 0
         self._unindexed = 0
-        self._active_unindexed: Hashable | None = None
+        self._active_unindexed: tuple[str, str | int] | None = None
         self._chat_tools = ChatToolCallResolver(MAX_OUTPUT_ITEMS)
 
     def event(self) -> None:
@@ -169,7 +169,13 @@ class ProviderOutputBudget:
         self._account(key, content=current - previous)
         self._parts[part] = current
 
-    def responses_event(self, event: Any) -> None:
+    def responses_event(
+        self,
+        event: Any,
+        *,
+        anonymous_output_index: int | None = None,
+        discard_snapshot: bool = False,
+    ) -> None:
         self.event()
         kind = getattr(event, "type", "")
         content_index = getattr(event, "content_index", None)
@@ -180,21 +186,44 @@ class ProviderOutputBudget:
                 "Provider returned malformed data: invalid content index",
                 error_type="invalid_event_sequence",
             )
+        # The text assembler treats an omitted content index as part zero.
+        if content_index is None:
+            content_index = 0
+        if discard_snapshot:
+            return  # An already completed item cannot retain a late snapshot.
         if kind == "response.output_item.added":
             self._started_items += 1
             if self._started_items > MAX_OUTPUT_ITEMS:
                 _exceeded()
         item = getattr(event, "item", None)
         index = getattr(event, "output_index", None)
+        if index is None:
+            index = anonymous_output_index
         if index is not None:
-            key: Hashable = ("responses", index)
+            key = ("responses", index)
         else:
             identity = (
                 getattr(item, "id", None)
                 or getattr(item, "call_id", None)
                 or getattr(event, "item_id", None)
             )
-            if identity:
+            message_content = kind.startswith(
+                ("response.output_text.", "response.refusal.", "response.content_part.")
+            )
+            if (
+                self._active_unindexed is not None
+                and self._active_unindexed[0] == "unindexed"
+                and (
+                    message_content
+                    or (
+                        kind == "response.output_item.done"
+                        and getattr(item, "type", None) == "message"
+                    )
+                )
+            ):
+                # A later frame can supply the ID of an already budgeted message.
+                key = self._active_unindexed
+            elif identity:
                 key = ("responses-id", identity)
                 if key not in self.items:
                     self._account(key, content=len(identity))
@@ -206,7 +235,9 @@ class ProviderOutputBudget:
             else:
                 self._unindexed += 1
                 key = ("unindexed", self._unindexed)
-            if kind == "response.output_item.added":
+            if kind == "response.output_item.added" or (
+                self._active_unindexed is None and message_content
+            ):
                 self._active_unindexed = key
         if kind in {"response.output_item.added", "response.output_item.done"}:
             arguments = getattr(item, "arguments", None)

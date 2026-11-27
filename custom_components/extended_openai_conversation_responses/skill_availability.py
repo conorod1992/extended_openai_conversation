@@ -141,6 +141,42 @@ def _closed_property_keys(properties: dict[str, Any], patterns: Any) -> set[str]
     return keys
 
 
+def _patterned_loader_keys(keys: set[str], patterns: Any) -> set[str] | None:
+    """Determine additional-property membership under one small work budget."""
+    if not keys or not patterns:
+        return set()
+    if (
+        not isinstance(patterns, dict)
+        or len(patterns) > 64
+        or any(
+            not isinstance(pattern, str) or len(pattern) > 1024 for pattern in patterns
+        )
+    ):
+        return None
+    literal_keys = _closed_property_keys({}, patterns)
+    if literal_keys is not None:
+        return keys & literal_keys
+    matches: set[str] = set()
+    deadline = monotonic() + 0.01
+    try:
+        for pattern in patterns:
+            # Match the runtime's Python re syntax and search semantics while
+            # bounding matching on HA's synchronous availability path.
+            re.compile(pattern)
+            compiled = regex.compile(pattern, regex.VERSION0)
+            for key in keys - matches:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    return None
+                if compiled.search(key, timeout=remaining) is not None:
+                    matches.add(key)
+            if matches == keys:
+                return matches
+    except re.error, regex.error, TimeoutError, RecursionError, OverflowError:
+        return None
+    return matches
+
+
 def _loader_allowed_names(
     tool: dict[str, Any], selected: tuple[str, ...]
 ) -> tuple[str, ...] | None:
@@ -169,12 +205,20 @@ def _loader_allowed_names(
             or (type(minimum) is int and minimum > len(possible))
         ):
             return None
+    missing = {"name", "file", *required} - properties.keys()
+    additional = parameters.get("additionalProperties")
+    patterned: set[str] = set()
+    if missing and (
+        additional is False or (isinstance(additional, dict) and additional)
+    ):
+        matched = _patterned_loader_keys(missing, parameters.get("patternProperties"))
+        if matched is None or (additional is False and missing - matched):
+            return None
+        patterned = matched
     for key in ("file", "name"):
         schema = properties.get(key)
-        if key not in properties:
-            additional = parameters.get("additionalProperties")
-            if not parameters.get("patternProperties"):
-                schema = additional
+        if key not in properties and key not in patterned:
+            schema = additional
         if schema is False:
             return None
         if not isinstance(schema, dict):

@@ -70,6 +70,7 @@ _PHRASE_TOKEN_PATTERN = re.compile(r"[\w'-]+[+#]*")
 _SEARCH_FILLER_TERMS = frozenset(
     {
         "a",
+        "about",
         "an",
         "and",
         "are",
@@ -96,6 +97,7 @@ _SEARCH_FILLER_TERMS = frozenset(
         "of",
         "or",
         "our",
+        "please",
         "that",
         "the",
         "their",

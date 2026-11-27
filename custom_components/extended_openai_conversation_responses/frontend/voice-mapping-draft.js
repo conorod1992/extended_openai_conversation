@@ -89,7 +89,7 @@ export function transferVoiceMappingDraft(target, source, retry) {
     }
     return false;
   }
-  const validated = validateRows(state.rows);
+  const validated = validateRows(state.rows, state);
   const targetMapping = mapping(target._draft.voice_device_mappings);
   const sourceMapping = validated.mapping || mapping(source._draft?.voice_device_mappings);
   if (!same(targetMapping, baselineMapping(target)) && !same(targetMapping, sourceMapping)) return false;
@@ -117,7 +117,7 @@ export function voiceMappingDraft(panel) {
     let collection = states.get(panel);
     if (!collection) states.set(panel, collection = new Map());
     const rows = fromMapping(panel._draft?.voice_device_mappings ?? baselineMapping(panel));
-    state = {owner:owner(panel), rows, baseline:projection(fromMapping(baselineMapping(panel)))};
+    state = {owner:owner(panel), rows, baseline:projection(fromMapping(baselineMapping(panel))), aliases:new Map()};
     collection.set(key(state.owner), state);
   }
   register(panel, state);
@@ -128,22 +128,51 @@ export function newVoiceMappingRow() {
   return {id:`voice-row-${++rowSequence}`, deviceId:"", owner:"unretained", satellite:"", lookup:""};
 }
 
-function validateRows(rows) {
-  const result = {};
+export function rememberVoiceDeviceAliases(panel, entries) {
+  const {aliases} = voiceMappingDraft(panel);
+  for (const entry of entries) {
+    if (!entry?.entity_id?.startsWith("assist_satellite.")) continue;
+    aliases.set(entry.entity_id, entry.device_id || entry.entity_id);
+  }
+}
+
+export function voiceMappingDeviceKey(state, id) {
+  return state?.aliases.get(id) || id;
+}
+
+function validateRows(rows, state) {
+  const result = Object.create(null);
+  const devices = new Set();
   for (const row of rows) {
     if (row.lookup === "pending") return {error:"Wait for the Assist satellite device lookup to finish.", mapping:null};
     if (row.lookup) return {error:"Select an available Assist satellite before saving.", mapping:null};
     if (!row.deviceId) return {error:"Choose an Assist satellite or remove the empty assignment before saving.", mapping:null};
-    if (Object.hasOwn(result, row.deviceId)) return {error:"This Assist satellite is assigned more than once.", mapping:null};
+    const device = voiceMappingDeviceKey(state, row.deviceId);
+    if (devices.has(device)) return {error:"This Assist satellite is assigned more than once. Choose an assignment to keep or remove the extra assignment.", mapping:null};
+    devices.add(device);
     result[row.deviceId] = row.owner ?? "unretained";
   }
-  return {error:"", mapping:result};
+  const savedIds = new Set(state?.baseline.map(row => row.deviceId));
+  if (state?.baseline.some(row => {
+    const device = voiceMappingDeviceKey(state, row.deviceId);
+    return device !== row.deviceId && Object.hasOwn(result, row.deviceId)
+      && !Object.hasOwn(result, device) && savedIds.has(device);
+  })) {
+    return {error:"Removing the device assignment would reactivate its older satellite assignment. Keep the older assignment explicitly or remove it too.", mapping:null};
+  }
+  if (state?.baseline.some(saved => !saved.deviceId.startsWith("assist_satellite.")
+      && !Object.hasOwn(result, saved.deviceId))
+      && rows.some(row => row.deviceId.startsWith("assist_satellite.")
+        && !state.aliases.has(row.deviceId))) {
+    return {error:"Verify the older satellite assignments before removing a device assignment, or remove the older assignments too.", mapping:null};
+  }
+  return {error:"", mapping:{...result}};
 }
 
 export function updateVoiceMappingRows(panel, rows) {
   const state = voiceMappingDraft(panel);
   state.rows = clone(rows);
-  const validated = validateRows(state.rows);
+  const validated = validateRows(state.rows, state);
   // The persistence draft always contains a map. Invalid authoring rows and
   // diagnostics have their own lifetime and never masquerade as field values.
   if (validated.mapping && panel._draft) panel._draft.voice_device_mappings = validated.mapping;
@@ -152,7 +181,7 @@ export function updateVoiceMappingRows(panel, rows) {
 
 export function voiceMappingDraftError(panel) {
   const state = existing(panel);
-  return state ? validateRows(state.rows).error : "";
+  return state ? validateRows(state.rows, state).error : "";
 }
 
 export function voiceMappingDraftDirty(panel) {

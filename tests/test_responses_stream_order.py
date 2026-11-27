@@ -753,6 +753,59 @@ async def test_anonymous_numbered_part_can_complete_its_open_indexed_message(par
     assert [frame async for frame in ordered_output_events(stream(frames))] == frames
 
 
+@pytest.mark.parametrize("indexed", [False, True])
+@pytest.mark.parametrize("part_kind", ["output_text", "refusal"])
+async def test_anonymous_fragments_share_one_item_and_reconcile_terminal(indexed, part_kind):
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+    from custom_components.extended_openai_conversation_responses.provider_output_budget import (
+        MAX_OUTPUT_ITEMS,
+    )
+
+    field = "text" if part_kind == "output_text" else "refusal"
+    count = MAX_OUTPUT_ITEMS + 1
+    item = SimpleNamespace(
+        type="message", role="assistant", id="answer", status="completed",
+        content=[SimpleNamespace(type=part_kind, **{field: "x" * count + "!"})],
+    )
+    frames = []
+    if indexed:
+        frames.append(event("response.output_item.added", output_index=0, item=item))
+    for _ in range(count):
+        frames.append(event(f"response.{part_kind}.delta", delta="x"))
+    if indexed:
+        frames.append(event("response.output_item.done", output_index=0, item=item))
+    frames.append(event("response.completed", response=SimpleNamespace(output=[item], usage=None)))
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    chunks = [
+        delta["content"]
+        async for delta in entity._transform_responses_stream(SimpleNamespace(content=[]), stream(frames))
+        if "content" in delta
+    ]
+    assert "".join(chunks) == "x" * count + "!"
+
+
+@pytest.mark.parametrize("case", ["conflict", "multiple", "non-assistant"])
+async def test_implicit_anonymous_terminal_rejects_inconsistent_messages(case):
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+
+    item = SimpleNamespace(
+        type="message", role="user" if case == "non-assistant" else "assistant", id="answer",
+        content=[SimpleNamespace(type="output_text", text="off" if case == "conflict" else "online")],
+    )
+    output = [item, item] if case == "multiple" else [item]
+    frames = [
+        event("response.output_text.delta", delta="on"),
+        event("response.completed", response=SimpleNamespace(output=output, usage=None)),
+    ]
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    with pytest.raises(ProviderStreamError):
+        _ = [delta async for delta in entity._transform_responses_stream(SimpleNamespace(content=[]), stream(frames))]
+
+
 @pytest.mark.parametrize("completion", ["part", "item"])
 @pytest.mark.parametrize("part_kind", ["output_text", "refusal"])
 async def test_conflicting_text_snapshot_cannot_supply_a_suffix(completion, part_kind):

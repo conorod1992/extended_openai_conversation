@@ -641,6 +641,19 @@ async def test_archive_restore_only_extends_privacy_for_verified_destination_ses
         assert prepared.archive_sessions[0].retention_state == "private"
 
 
+async def test_data_only_restore_ignores_existing_invalid_provider_route(transaction):
+    tx = transaction
+    # The deployment alias is structurally valid but only usable with Azure.
+    tx.subentry.data["azure_model"] = "old-deployment"
+    _, preview = await transfer.async_materialize_restore(
+        tx.hass, tx.entry, tx.subentry, tx.imported
+    )
+    assert preview["selected_sections"] == [transfer.SECTION_KNOWLEDGE]
+    await tx.restore()
+    assert tx.writes == [("knowledge",)]
+    assert tx.subentry.data["azure_model"] == "old-deployment"
+
+
 async def test_knowledge_restore_and_journal_replay_skip_unselected_stores(monkeypatch):
     from custom_components.extended_openai_conversation_responses import knowledge, memory
 

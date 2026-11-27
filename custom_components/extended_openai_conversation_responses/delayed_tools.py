@@ -241,7 +241,7 @@ class DelayedToolCall:
             raise ValueError("stored delayed call has invalid arguments")
         _validate_argument_budget(raw["arguments"])
         status = raw.get("status", _PENDING)
-        if status not in {_PENDING, _EXECUTING}:
+        if not isinstance(status, str) or status not in {_PENDING, _EXECUTING}:
             raise ValueError("stored delayed call has invalid status")
         retry_count = raw.get("retry_count", 0)
         if not isinstance(retry_count, int) or retry_count < 0:

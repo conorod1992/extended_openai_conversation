@@ -898,6 +898,12 @@ class UsageManager:
                 readback_outcome = MutationFailure("committed")
                 return
 
+            retained_requests, retained_runs, expired = retained_usage_details(
+                restored,
+                restored_runs,
+                request_days=self.request_retention_days,
+                run_days=self.run_retention_days,
+            )
             live_requests = {record.request_id: record for record in self.requests}
             live_runs = {record.run_id: record for record in self.runs}
             candidate_requests = {record.request_id for record in requests}
@@ -906,12 +912,16 @@ class UsageManager:
             # operation removes, proves the atomic replacement did not apply.
             # Keep recent records still waiting for a checkpoint when the disk
             # generation is otherwise a subset of the current live state.
+            # Startup already filters expired disk records out of live history.
             if not (damaged or self._details_need_repair) and (
                 raw is None
                 or (
-                    all(live_requests.get(item.request_id) == item for item in restored)
+                    all(
+                        live_requests.get(item.request_id) == item
+                        for item in retained_requests
+                    )
                     and all(
-                        live_runs.get(item.run_id) == item for item in restored_runs
+                        live_runs.get(item.run_id) == item for item in retained_runs
                     )
                     and (
                         any(
@@ -930,12 +940,7 @@ class UsageManager:
                     )
                 readback_outcome = MutationFailure("rejected")
                 return
-            self.requests, self.runs, expired = retained_usage_details(
-                restored,
-                restored_runs,
-                request_days=self.request_retention_days,
-                run_days=self.run_retention_days,
-            )
+            self.requests, self.runs = retained_requests, retained_runs
             self._details_need_repair = damaged
             self._detail_records_repairable = repairable
             self._detail_retention_dirty = inline_dates or any(expired.values())
