@@ -142,9 +142,13 @@ def test_selected_skills_require_canonical_enabled_loader() -> None:
 
 
 @pytest.mark.parametrize(
-    ("pattern", "matches"), [(r"(?i)^fıle$", True), (r"(?i)^f[^ı]le$", False)]
+    ("pattern", "matches"),
+    [("(?i)^f\u0131le$", True), ("(?i)^f[^\u0131]le$", False)],
+    ids=["casefolded-literal", "casefolded-negation"],
 )
-@pytest.mark.parametrize("additional", [False, {"type": "integer"}])
+@pytest.mark.parametrize(
+    "additional", [False, {"type": "integer"}], ids=["closed", "integer-extra"]
+)
 def test_skill_loader_pattern_membership_matches_runtime(pattern, matches, additional):
     from custom_components.extended_openai_conversation_responses.function_execution import (
         patterned_object_keys,
