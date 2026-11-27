@@ -141,6 +141,35 @@ def test_selected_skills_require_canonical_enabled_loader() -> None:
         assert status.available is available, schema
 
 
+@pytest.mark.parametrize(
+    ("pattern", "matches"), [(r"(?i)^fıle$", True), (r"(?i)^f[^ı]le$", False)]
+)
+@pytest.mark.parametrize("additional", [False, {"type": "integer"}])
+def test_skill_loader_pattern_membership_matches_runtime(pattern, matches, additional):
+    from custom_components.extended_openai_conversation_responses.function_execution import (
+        patterned_object_keys,
+    )
+
+    loader = _loader()
+    loader["spec"]["strict"] = False
+    parameters = loader["spec"]["parameters"]
+    del parameters["properties"]["file"]
+    parameters["patternProperties"] = {pattern: {"type": "string"}}
+    parameters["additionalProperties"] = additional
+    assert ("file" in patterned_object_keys({"file": "SKILL.md"}, parameters)) is matches
+    assert skill_loader_status(["calendar"], [loader], []).available is matches
+
+
+def test_skill_loader_leaves_complex_pattern_membership_uncertified():
+    loader = _loader()
+    parameters = loader["spec"]["parameters"]
+    del parameters["properties"]["file"]
+    parameters["patternProperties"] = {r"^(?:fi)+le$": {"type": "string"}}
+    parameters["additionalProperties"] = False
+
+    assert not skill_loader_status(["calendar"], [loader], []).available
+
+
 def test_selected_skills_require_reachable_enabled_group_and_tool_budget() -> None:
     disabled_group = skill_loader_status(
         ["calendar"], [_loader()], [_group(enabled=False)], max_function_calls=1

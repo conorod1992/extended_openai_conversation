@@ -1,0 +1,1 @@
+import"./management-core-DHLvmvKc.js";import{s as e}from"./management-temporary-memory-B_X54ubm.js";export{e as openTemporaryMemory};

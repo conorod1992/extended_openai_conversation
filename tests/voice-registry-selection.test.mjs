@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {bindVoiceMappings} from "../custom_components/extended_openai_conversation_responses/frontend/voice-identity-ui.js";
-import {voiceMappingDraft, voiceMappingDraftError} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
+import {rememberVoiceDeviceAliases, voiceMappingDraft, voiceMappingDraftError} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
 import {deferred, TestEventTarget} from "./frontend-test-helpers.mjs";
 
 function harness(firstFails = false, hydration = null) {
@@ -159,6 +159,7 @@ for (const changeOwner of [h => {h.panel._agentId = "other-agent";},
 for (const action of [
   "keep-legacy-owner", "remove-effective", "fresh-alias", "remove-duplicate",
   "remove-duplicate-with-legacy", "remove-unsaved-canonical",
+  "removed-alias", "failed-refresh", "invalid-refresh", "fresh-alias-omitted",
 ]) {
   const legacy = "assist_satellite.kitchen", device = "registry-kitchen";
   const mapping = action === "remove-duplicate" ? {[device]:"user:person"} :
@@ -167,17 +168,24 @@ for (const action of [
   const removeNew = action.startsWith("remove-duplicate") || action === "remove-unsaved-canonical";
   const card = new TestEventTarget(), error = {};
   const hydration = deferred();
+  const fresh = action.startsWith("fresh-alias");
   const panel = {
     _agentId:"voice-agent", _viewKey:()=>"assistant/voice",
     _draft:{voice_device_mappings:{...mapping}},
     _configData:{config:{voice_device_mappings:{...mapping}}},
     hass:{callWS:async message => {
       if (message.type === "config/entity_registry/get") return {entity_id:legacy, device_id:device};
-      if (action === "fresh-alias") return hydration.promise;
+      if (fresh) return hydration.promise;
+      if (action === "removed-alias") return [];
+      if (action === "failed-refresh") throw new Error("Registry offline");
+      if (action === "invalid-refresh") return [{entity_id:null}];
       return [{entity_id:legacy, device_id:device}];
     }},
   };
   const draft = voiceMappingDraft(panel);
+  if (action === "removed-alias" || action.endsWith("-refresh")) {
+    rememberVoiceDeviceAliases(panel, [{entity_id:legacy, device_id:device}]);
+  }
   if (removeNew) {
     draft.rows.push({id:"duplicate-row", deviceId:device, owner:"unretained"});
   }
@@ -203,13 +211,22 @@ for (const action of [
     querySelectorAll: selector => selector === "[data-voice-mapping-row]" ? visible() : [],
   };
   bindVoiceMappings(panel);
-  if (action === "fresh-alias") {
+  if (fresh) {
     await Promise.all([...rows[1].picker.listeners.get("value-changed")]
       .map(listener => listener({detail:{value:legacy}})));
     assert.match(error.textContent, /assigned more than once/);
-    hydration.resolve([{entity_id:legacy, device_id:"outdated-device"}]);
+    hydration.resolve(action === "fresh-alias-omitted" ? [] :
+      [{entity_id:legacy, device_id:"outdated-device"}]);
   }
   await new Promise(resolve => setImmediate(resolve));
+  if (action === "removed-alias") {
+    assert.equal(error.textContent, "");
+    assert.equal(rows[0].keep.hidden, true);
+    assert.equal(rows[1].removeButton.textContent, "Remove");
+    rows[1].removeButton.dispatchEvent(new Event("click"));
+    assert.deepEqual(panel._draft.voice_device_mappings, {[legacy]:"user:person"});
+    continue;
+  }
   assert.ok(rows.every(row => row.picker.value === legacy));
   assert.match(error.textContent, /assigned more than once/);
   if (action === "keep-legacy-owner") {
@@ -230,7 +247,7 @@ for (const action of [
   if (action === "remove-duplicate-with-legacy") {
     assert.match(error.textContent, /assigned more than once/);
     assert.match(rows[1].removeButton.textContent, /Remove all assignments/);
-  } else if (action !== "fresh-alias") assert.equal(error.textContent, "");
+  } else if (!fresh && !action.endsWith("-refresh")) assert.equal(error.textContent, "");
 }
 
 console.log("Voice registry freshness, retry and selection ownership tests passed");

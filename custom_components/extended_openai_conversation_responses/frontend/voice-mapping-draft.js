@@ -95,8 +95,10 @@ export function transferVoiceMappingDraft(target, source, retry) {
   const receiving = voiceMappingDraft(target);
   // Keep an off-route draft's known conflicts until the receiving panel can
   // verify the registry. A lookup already made by that panel takes precedence.
-  for (const [id, {entry}] of state.aliases) {
-    if (!receiving.aliases.has(id)) receiving.aliases.set(id, {entry});
+  if (!receiving.registryListed) {
+    for (const [id, {entry}] of state.aliases) {
+      if (!receiving.aliases.has(id)) receiving.aliases.set(id, {entry});
+    }
   }
   // Equal projections can keep their mounted widgets. Preserve their row IDs
   // so those widgets still address the receiving state after recovery.
@@ -134,15 +136,22 @@ export function newVoiceMappingRow() {
 }
 
 export function rememberVoiceDeviceAliases(panel, entries, before) {
-  const {aliases} = voiceMappingDraft(panel);
-  return entries.map(entry => {
+  const state = voiceMappingDraft(panel);
+  const {aliases} = state;
+  if (entries && before) {
+    state.registryListed = true;
+    // Rebuild from the full listing and retain selections resolved since it began.
+    for (const [id, latest] of aliases) {
+      if (!latest.selected || latest === before.get(id)) aliases.delete(id);
+    }
+  }
+  for (const entry of entries || []) {
     const id = entry?.entity_id;
-    if (!id?.startsWith("assist_satellite.")) return entry;
-    const latest = aliases.get(id);
-    if (before && latest?.selected && latest !== before.get(id)) return latest.entry;
-    aliases.set(id, {entry, selected:!before});
-    return entry;
-  });
+    if (id?.startsWith("assist_satellite.") && (!before || !aliases.has(id))) {
+      aliases.set(id, {entry, selected:!before});
+    }
+  }
+  return Array.from(aliases.values(), alias => alias.entry);
 }
 
 export function voiceMappingDeviceKey(state, id) {
@@ -169,7 +178,7 @@ function validateRows(rows, state) {
   })) {
     return {error:"Removing the device assignment would reactivate its older satellite assignment. Keep the older assignment explicitly or remove it too.", mapping:null};
   }
-  if (state?.baseline.some(saved => !saved.deviceId.startsWith("assist_satellite.")
+  if (state && !state.registryListed && state.baseline.some(saved => !saved.deviceId.startsWith("assist_satellite.")
       && !Object.hasOwn(result, saved.deviceId))
       && rows.some(row => row.deviceId.startsWith("assist_satellite.")
         && !state.aliases.has(row.deviceId))) {

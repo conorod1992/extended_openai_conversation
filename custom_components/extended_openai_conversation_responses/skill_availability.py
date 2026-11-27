@@ -16,6 +16,12 @@ SKILL_LOADER_TOOL_NAME = "load_skill"
 CANONICAL_SKILL_LOADER_PATH = "{{extended_openai.skill_dir(name)}}/{{file}}"
 _LITERAL_PROPERTY_KEY = re.compile(r"[a-zA-Z0-9_-]+")
 _PROPERTY_END_ASSERTION = r"(?![\s\S])"
+# Accept only short sequences of single-character atoms, with at most one
+# quantifier. stdlib re can match these without combinatorial backtracking.
+_PROPERTY_ATOM = r"(?:[\w.-]|\[\^?[\w.-]+\])"
+_SIMPLE_PROPERTY_PATTERN = re.compile(
+    rf"(?:\(\?[aimsu]+\))?\^?{_PROPERTY_ATOM}*(?:{_PROPERTY_ATOM}[*+?]{_PROPERTY_ATOM}*)?\$?"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,37 +148,39 @@ def _closed_property_keys(properties: dict[str, Any], patterns: Any) -> set[str]
 
 
 def _patterned_loader_keys(keys: set[str], patterns: Any) -> set[str] | None:
-    """Determine additional-property membership under one small work budget."""
+    """Prove additional-property membership with bounded stdlib re searches."""
     if not keys or not patterns:
         return set()
     if (
         not isinstance(patterns, dict)
         or len(patterns) > 64
+        or len(keys) > 64
+        or any(len(key) > 128 for key in keys)
         or any(
             not isinstance(pattern, str) or len(pattern) > 1024 for pattern in patterns
         )
     ):
         return None
-    literal_keys = _closed_property_keys({}, patterns)
-    if literal_keys is not None:
-        return keys & literal_keys
     matches: set[str] = set()
     deadline = monotonic() + 0.01
     try:
         for pattern in patterns:
-            # Match the runtime's Python re syntax and search semantics while
-            # bounding matching on HA's synchronous availability path.
-            re.compile(pattern)
-            compiled = regex.compile(pattern, regex.VERSION0)
+            if monotonic() >= deadline:
+                return None
+            if (literal_keys := _closed_property_keys({}, {pattern: None})) is not None:
+                matches.update(keys & literal_keys)
+                continue
+            if not _SIMPLE_PROPERTY_PATTERN.fullmatch(pattern):
+                # An unknown match can change which additionalProperties
+                # constraint applies. The synchronous check cannot certify it.
+                return None
+            compiled = re.compile(pattern)
             for key in keys - matches:
-                remaining = deadline - monotonic()
-                if remaining <= 0:
+                if monotonic() >= deadline:
                     return None
-                if compiled.search(key, timeout=remaining) is not None:
+                if compiled.search(key) is not None:
                     matches.add(key)
-            if matches == keys:
-                return matches
-    except re.error, regex.error, TimeoutError, RecursionError, OverflowError:
+    except re.error, RecursionError, OverflowError:
         return None
     return matches
 

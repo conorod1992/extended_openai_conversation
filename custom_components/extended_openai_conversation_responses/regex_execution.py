@@ -218,7 +218,8 @@ def _run_regex_worker(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         completed = subprocess.run(
             [sys.executable, "-I", "-c", _REGEX_WORKER],
-            input=json.dumps(payload, ensure_ascii=False),
+            # ASCII JSON preserves Unicode across an isolated worker's locale.
+            input=json.dumps(payload),
             capture_output=True,
             text=True,
             timeout=_CONFIGURED_REGEX_TIMEOUT_SECONDS,
@@ -252,7 +253,7 @@ async def _async_run_regex_worker(payload: dict[str, Any]) -> dict[str, Any]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    encoded = json.dumps(payload, ensure_ascii=False).encode()
+    encoded = json.dumps(payload).encode()
     try:
         stdout, stderr = await asyncio.wait_for(
             process.communicate(encoded), timeout=_CONFIGURED_REGEX_TIMEOUT_SECONDS

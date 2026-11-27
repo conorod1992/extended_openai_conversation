@@ -78,7 +78,7 @@ for (const failure of ["duplicate","unresolved","pending","empty"]) {
   assert.deepEqual(updateVoiceMappingRows(panel,[]).mapping, {});
 }
 
-for (const freshAssociation of [false, true]) {
+for (const registry of ["unknown", "changed", "removed"]) {
   const f=setup();
   const legacy="assist_satellite.kitchen", canonical="registry-kitchen";
   for (const record of f.state.records.values()) {
@@ -93,11 +93,14 @@ for (const freshAssociation of [false, true]) {
   retainPanelDrafts(panel);
   const replacement=f.create();
   replacement._subsection="basics";
-  if (freshAssociation) {
+  if (registry === "changed") {
     rememberVoiceDeviceAliases(replacement,[{entity_id:legacy, device_id:"different-device"}]);
+  } else if (registry === "removed") {
+    const before=new Map(voiceMappingDraft(replacement).aliases);
+    rememberVoiceDeviceAliases(replacement,[],before);
   }
   restorePanelDrafts(replacement);
-  if (freshAssociation) {
+  if (registry !== "unknown") {
     assert.equal(voiceMappingDraftError(replacement), "");
     assert.deepEqual(replacement._draft.voice_device_mappings, {[legacy]:"user:owner", [canonical]:"unretained"});
   } else {

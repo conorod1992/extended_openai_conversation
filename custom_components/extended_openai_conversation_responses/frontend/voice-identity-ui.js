@@ -133,8 +133,9 @@ async function entityRegistry(panel) {
     const before = new Map(voiceMappingDraft(panel).aliases);
     const request = hass?.callWS
       ? Promise.resolve().then(() => hass.callWS({type:"config/entity_registry/list"}))
-          .then(entries => Array.isArray(entries) ? entries : []).catch(() => [])
-      : Promise.resolve([]);
+          .then(entries => Array.isArray(entries) && entries.every(entry => typeof entry?.entity_id === "string")
+            ? entries : null).catch(() => null)
+      : Promise.resolve(null);
     const tracked = request.then(entries => ({entries, before})).finally(() => {
       if (panel.__voiceEntityRegistryPromise === tracked) panel.__voiceEntityRegistryPromise = null;
     });
