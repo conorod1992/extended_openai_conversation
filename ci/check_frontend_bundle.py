@@ -70,9 +70,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # (898,853 -> 904,716). Keep the existing management-entry and CSS ceilings.
 # Voice assignment reconciliation and renewed Broadcast tracking add 2,486
 # minified JS bytes (904,716 -> 907,202). Allow 98 bytes of total JS headroom.
-# Voice duplicate removal and registry freshness add 229 minified JS bytes
-# (907,202 -> 907,431). Keep a 19-byte margin and the existing other ceilings.
-CEILINGS = {"javascript": 907_450, "css": 65_000, "management_entry": 120_500}
+# Voice duplicate removal, registry freshness and retained-draft alias checks
+# add 352 minified JS bytes (907,202 -> 907,554). Allow 21 bytes of total headroom.
+CEILINGS = {"javascript": 907_575, "css": 65_000, "management_entry": 120_500}
 
 
 def measure(dist: Path) -> dict[str, int]:

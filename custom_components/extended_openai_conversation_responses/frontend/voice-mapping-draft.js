@@ -89,18 +89,23 @@ export function transferVoiceMappingDraft(target, source, retry) {
     }
     return false;
   }
-  const validated = validateRows(state.rows, state);
   const targetMapping = mapping(target._draft.voice_device_mappings);
-  const sourceMapping = validated.mapping || mapping(source._draft?.voice_device_mappings);
+  const sourceMapping = validateRows(state.rows, state).mapping || mapping(source._draft?.voice_device_mappings);
   if (!same(targetMapping, baselineMapping(target)) && !same(targetMapping, sourceMapping)) return false;
   const receiving = voiceMappingDraft(target);
+  // Keep an off-route draft's known conflicts until the receiving panel can
+  // verify the registry. A lookup already made by that panel takes precedence.
+  for (const [id, {entry}] of state.aliases) {
+    if (!receiving.aliases.has(id)) receiving.aliases.set(id, {entry});
+  }
   // Equal projections can keep their mounted widgets. Preserve their row IDs
   // so those widgets still address the receiving state after recovery.
   if (!same(projection(receiving.rows), projection(state.rows))) receiving.rows = clone(state.rows);
   receiving.baseline = projection(fromMapping(baselineMapping(target)));
   // A deferred row-only recovery can outlive the original configuration handoff.
   // Keep the valid persistence map aligned with the rows the editor now owns.
-  if (validated.mapping) target._draft.voice_device_mappings = clone(validated.mapping);
+  const resolved = validateRows(receiving.rows, receiving).mapping;
+  if (resolved) target._draft.voice_device_mappings = resolved;
   state.rows = fromMapping(baselineMapping(source));
   state.baseline = projection(state.rows);
   clearRecovery(state);
@@ -134,14 +139,14 @@ export function rememberVoiceDeviceAliases(panel, entries, before) {
     const id = entry?.entity_id;
     if (!id?.startsWith("assist_satellite.")) return entry;
     const latest = aliases.get(id);
-    if (before && latest && latest !== before.get(id)) return latest;
-    aliases.set(id, entry);
+    if (before && latest?.selected && latest !== before.get(id)) return latest.entry;
+    aliases.set(id, {entry, selected:!before});
     return entry;
   });
 }
 
 export function voiceMappingDeviceKey(state, id) {
-  return state?.aliases.get(id)?.device_id || id;
+  return state?.aliases.get(id)?.entry.device_id || id;
 }
 
 function validateRows(rows, state) {

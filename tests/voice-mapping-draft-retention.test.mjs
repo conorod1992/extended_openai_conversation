@@ -78,4 +78,34 @@ for (const failure of ["duplicate","unresolved","pending","empty"]) {
   assert.deepEqual(updateVoiceMappingRows(panel,[]).mapping, {});
 }
 
+for (const freshAssociation of [false, true]) {
+  const f=setup();
+  const legacy="assist_satellite.kitchen", canonical="registry-kitchen";
+  for (const record of f.state.records.values()) {
+    record.config.voice_device_mappings = {[legacy]:"user:owner"};
+  }
+  const panel=f.create();
+  rememberVoiceDeviceAliases(panel,[{entity_id:legacy, device_id:canonical}]);
+  const rows=[...voiceMappingDraft(panel).rows,{id:"alias-row",deviceId:canonical,owner:"unretained"}];
+  assert.match(updateVoiceMappingRows(panel,rows).error, /assigned more than once/);
+  panel._syncConfigDirty();
+  panel.isConnected=false;
+  retainPanelDrafts(panel);
+  const replacement=f.create();
+  replacement._subsection="basics";
+  if (freshAssociation) {
+    rememberVoiceDeviceAliases(replacement,[{entity_id:legacy, device_id:"different-device"}]);
+  }
+  restorePanelDrafts(replacement);
+  if (freshAssociation) {
+    assert.equal(voiceMappingDraftError(replacement), "");
+    assert.deepEqual(replacement._draft.voice_device_mappings, {[legacy]:"user:owner", [canonical]:"unretained"});
+  } else {
+    assert.match(voiceMappingDraftError(replacement), /assigned more than once/);
+    await saveConfiguration(replacement,{});
+    assert.equal(f.state.writes.length, 0, "off-route Save must preserve the recovered alias conflict");
+  }
+  stopDraftRecovery(replacement);
+}
+
 console.log("Voice invalid row retention, central save guard, recovery, discard and acknowledgement tests passed");
