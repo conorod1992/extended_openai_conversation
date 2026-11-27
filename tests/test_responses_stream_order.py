@@ -721,7 +721,23 @@ async def test_legacy_introduced_message_requires_completion(
         assert not any(seen)
 
 
-async def test_anonymous_numbered_part_can_complete_its_open_indexed_message():
+@pytest.mark.parametrize(
+    "part_frame",
+    [
+        event("response.output_text.delta", content_index=0, delta="Light is "),
+        event(
+            "response.content_part.added",
+            content_index=0,
+            part=SimpleNamespace(type="output_text", text=""),
+        ),
+        event(
+            "response.content_part.done",
+            content_index=0,
+            part=SimpleNamespace(type="output_text", text="Light is on"),
+        ),
+    ],
+)
+async def test_anonymous_numbered_part_can_complete_its_open_indexed_message(part_frame):
     item = SimpleNamespace(
         type="message",
         id="message",
@@ -730,7 +746,7 @@ async def test_anonymous_numbered_part_can_complete_its_open_indexed_message():
     )
     frames = [
         event("response.output_item.added", output_index=0, item=item),
-        event("response.output_text.delta", content_index=0, delta="Light is "),
+        part_frame,
         event("response.output_item.done", output_index=0, item=item),
         event("response.completed", response=SimpleNamespace(output=[item])),
     ]

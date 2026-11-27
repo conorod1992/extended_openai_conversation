@@ -160,6 +160,7 @@ class ImportSession:
     preview_archive_retention_at: datetime | None = None
     preview_provider_data: dict[str, Any] | None = None
     preview_restore_provider: bool = False
+    preview_requires_retention_confirmation: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     inspection_tasks: set[asyncio.Task[Any]] = field(default_factory=set, repr=False)
     inspection: asyncio.Task[dict[str, Any]] | None = field(default=None, repr=False)
@@ -1635,6 +1636,9 @@ async def _inspect_import_admitted(
                 session.preview_token = token
                 session.preview_revision = revision
                 session.preview_restore_provider = restore_provider
+                session.preview_requires_retention_confirmation = bool(
+                    preview.get("shortened_usage_retention")
+                )
                 session.preview_provider_data = deepcopy(
                     dict(getattr(entry, "data", {}))
                 )
@@ -1744,6 +1748,11 @@ async def _restore_import_admitted(
                 != (session.session_id, token)
             ):
                 raise backup.BackupError("The backup preview is stale; preview again")
+            if (
+                session.preview_requires_retention_confirmation
+                and data.get("confirm_retention") is not True
+            ):
+                raise backup.BackupError(transfer.CONFIRM_SHORTER_USAGE_RETENTION)
         current = await transfer._current_snapshot(
             hass,
             entry,

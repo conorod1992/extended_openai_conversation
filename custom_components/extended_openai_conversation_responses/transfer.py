@@ -96,6 +96,10 @@ SECTION_CONVERSATION_ARCHIVE = "conversation_archive"
 SECTION_USAGE = "usage"
 SECTION_GUEST_MODE = "guest_mode"
 
+CONFIRM_SHORTER_USAGE_RETENTION = (
+    "Confirm applying shorter Usage detail retention before restoring configuration"
+)
+
 SETUP_SECTIONS = frozenset({SECTION_CONFIGURATION, SECTION_REQUEST_RULES})
 ALL_SECTIONS = frozenset(
     {
@@ -1889,9 +1893,7 @@ async def async_restore_transfer(
             **provider_options,
         )
         if preview.get("shortened_usage_retention") and not confirm_retention:
-            raise backup.BackupError(
-                "Confirm applying shorter Usage detail retention before restoring configuration"
-            )
+            raise backup.BackupError(CONFIRM_SHORTER_USAGE_RETENTION)
         # Exclusivity already covers the destination snapshot. Call the journaled
         # inner restore directly: the public backup wrapper would reacquire this
         # non-reentrant gate. Lock order remains maintenance gate -> backup lock.

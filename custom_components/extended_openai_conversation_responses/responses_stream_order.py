@@ -541,12 +541,11 @@ async def ordered_output_events(
                             and active.signature is not None
                             and active.signature[0] == "message"
                         )
-                        if (
-                            item_id
-                            or kind.startswith("response.content_part.")
-                            or (
-                                not indexed_message
-                                and getattr(event, "content_index", None) is not None
+                        if item_id or (
+                            not indexed_message
+                            and (
+                                kind.startswith("response.content_part.")
+                                or getattr(event, "content_index", None) is not None
                             )
                         ):
                             legacy.bind_identity(item_id, kind)
