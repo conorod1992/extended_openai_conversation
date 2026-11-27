@@ -208,9 +208,9 @@ const overviewImpl = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js", import.meta.url),
   "utf8",
 );
-assert.match(overviewImpl, /bindOverview\(panel, broadcastPromise\)/);
+assert.match(overviewImpl, /bindOverviewBroadcast\(panel, broadcastPromise, current\)/);
 assert.doesNotMatch(
   overviewImpl,
-  /export function bindOverview\(panel[^)]*\)[\s\S]*?loadBroadcast\(panel\);/,
+  /export function bindOverviewBroadcast\(panel[^)]*\)[\s\S]*?loadBroadcast\(panel\);/,
   "Overview binding must consume the already-started Broadcast snapshot rather than start a serial fetch",
 );

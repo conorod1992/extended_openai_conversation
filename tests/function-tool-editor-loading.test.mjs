@@ -156,7 +156,7 @@ for (const change of ["removed", "replaced", "reopened"]) {
   await opened;
 }
 
-// The Add path waits for both the starter and built-in catalog, not just one reply.
+// The optional catalog cannot delay editing or saving the starter.
 {
   const {controls: c, nextLoad} = harness();
   const starterRequested = nextLoad("starter");
@@ -164,10 +164,11 @@ for (const change of ["removed", "replaced", "reopened"]) {
   const opened = c["add-tool"].emit("click");
   const [starter, catalog] = await Promise.all([starterRequested, catalogRequested]);
   starter.resolve({yaml: "starter YAML"});
-  await Promise.resolve();
-  assert.equal(c["tool-save"].disabled, true);
-  catalog.resolve({functions: []});
   await opened;
+  assert.equal(c["tool-save"].disabled, false);
+  assert.equal(c["built-in-function"].disabled, true);
+  catalog.resolve({functions: []});
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(c["tool-yaml"].value, "starter YAML");
   assert.equal(c["tool-save"].disabled, false);
 }

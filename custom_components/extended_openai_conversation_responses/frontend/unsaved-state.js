@@ -51,6 +51,6 @@ export function draftScope({read, write, baseline, save, owns, destinations, isC
   };
 }
 
-export function saveBarMarkup({pending = false, configuration = false} = {}) {
-  return `<div class="save-bar"><div class="setting-copy"><strong id="dirty-state" class="dirty-state">Unsaved changes</strong>${configuration ? '<small class="help">Save and discard apply to this assistant&#39;s configuration draft, including edits in other sections.</small>' : ""}</div><div class="actions"><button type="button" class="secondary" id="${configuration ? "revert-config" : "discard-page"}" ${pending ? "disabled" : ""}>Discard changes</button><button type="button" id="${configuration ? "save-config" : "save-page"}" data-label="Save changes" ${pending ? "disabled" : ""}>${pending ? "Saving…" : "Save changes"}</button></div></div>`;
+export function saveBarMarkup({pending = false, configuration = false, shared = false} = {}) {
+  return `<div class="save-bar"><div class="setting-copy"><strong id="${shared ? "assistant-dirty-state" : "dirty-state"}" class="dirty-state">${shared ? "Unsaved assistant settings" : "Unsaved changes"}</strong>${configuration ? '<small class="help">Save and discard apply to this assistant&#39;s configuration draft, including edits in other sections.</small>' : ""}</div><div class="actions"><button type="button" class="secondary" id="${configuration ? "revert-config" : "discard-page"}" ${shared ? 'aria-label="Discard Assistant settings"' : ""} ${pending ? "disabled" : ""}>Discard changes</button><button type="button" id="${configuration ? "save-config" : "save-page"}" data-label="Save changes" ${shared ? 'aria-label="Save Assistant settings"' : ""} ${pending ? "disabled" : ""}>${pending ? "Saving…" : "Save changes"}</button></div></div>`;
 }

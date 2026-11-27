@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 from typing import Any
 
@@ -47,6 +48,19 @@ async def test_startup_serves_bundled_assets_idempotently(
     response = await client.get(management_url)
     assert response.status == 200
     assert response.content_type in {"text/javascript", "application/javascript"}
+
+    # The same hashed URL serves the gzip sidecar or original bytes.
+    compressed = await client.get(
+        management_url, headers={"Accept-Encoding": "gzip"}, auto_decompress=False
+    )
+    assert compressed.status == 200
+    assert compressed.headers["Content-Encoding"] == "gzip"
+    assert compressed.headers["Vary"] == "Accept-Encoding"
+    assert compressed.content_type == response.content_type
+    identity = await client.get(management_url, headers={"Accept-Encoding": "identity"})
+    assert identity.status == 200
+    assert "Content-Encoding" not in identity.headers
+    assert gzip.decompress(await compressed.read()) == await identity.read()
 
     # Raw source modules are build inputs, not production HTTP assets.
     for name in ("management-panel.js", "debug-panel.js", "knowledge-panel.js"):

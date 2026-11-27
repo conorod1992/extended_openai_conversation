@@ -52,7 +52,7 @@ assert.equal(route.getConfigurationEditor(), undefined);
 panel._configData = {config:{}, title:"A", revision:"r1"};
 panel._draftAgentId = "agent-a";
 resolveConfig();
-await Promise.resolve();
+await new Promise(resolve => setImmediate(resolve));
 assert.equal(settingsPatches, 1, "late configuration updates only the settings region");
 assert.match(renders.at(-1), /First conversation/);
 

@@ -26,20 +26,21 @@ assert.match(broadcast, /panel\._viewKey\?\.\(\) !== "overview"/);
 
 
 // Execute the real handler with a rejected module load, including stale views.
-const bindSource = overview.slice(overview.indexOf("export function bindOverview"))
+const bindSource = overview.slice(overview.indexOf("export function bindOverviewBroadcast"))
   .replace("export function", "function")
   .replace('import("./overview-broadcast.js")', 'Promise.reject(new Error("chunk unavailable"))');
-const bindOverview = new Function(`${bindSource}; return bindOverview;`)();
+const bindOverviewBroadcast = new Function(`${bindSource}; return bindOverviewBroadcast;`)();
 const host = {innerHTML: "Loading Broadcast…"};
 const panel = {
   shadowRoot: {querySelectorAll: () => [], querySelector: selector => selector === "#broadcast-card" ? host : null},
   _viewKey: () => "overview", _e: (text) => text,
 };
-bindOverview(panel, Promise.resolve({}));
+const current = () => panel._viewKey() === "overview";
+bindOverviewBroadcast(panel, Promise.resolve({}), current);
 await new Promise((resolve) => setImmediate(resolve));
 assert.match(host.innerHTML, /Unable to load Broadcast: chunk unavailable/);
 host.innerHTML = "Other page";
 panel._viewKey = () => "other";
-bindOverview(panel, Promise.resolve({}));
+bindOverviewBroadcast(panel, Promise.resolve({}), current);
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(host.innerHTML, "Other page");

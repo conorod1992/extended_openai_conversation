@@ -539,32 +539,41 @@ export async function openTool(panel, index = null, initialTool = null) {
   panel._toolRevision = panel._configData?.revision;
   panel._toolInitialYaml = null;
   dialog.showModal();
+  const presets = tool ? null : panel._call("tools", "built_in_catalog", {tools: panel._draft.functions || []})
+    .then((catalog) => catalog, () => null);
   try {
-    const [nativeYaml, [response, catalog]] = await Promise.all([
+    const [nativeYaml, response] = await Promise.all([
       import("./agent-config-native-yaml.js"),
       tool
         ? panel._call("tools", "serialize", index === null
           ? {tool}
-          : {name: tool.spec?.name, revision: panel._toolRevision}).then((response) => [response, null])
-        : Promise.all([
-          panel._call("tools", "starter"),
-          panel._call("tools", "built_in_catalog", {tools: panel._draft.functions || []}),
-        ]),
+          : {name: tool.spec?.name, revision: panel._toolRevision})
+        : panel._call("tools", "starter"),
     ]);
     if (!isCurrent()) return;
     nativeYaml.bindNativeToolYaml(panel);
     editor = getToolYamlEditor(panel);
-    if (catalog) {
-      populateToolPresetPicker(panel, catalog);
-    }
-    if (!isCurrent()) return;
-    await editor.setYaml(response.yaml);
+    await editor.setYaml(response.yaml, response.config);
     if (!isCurrent()) return;
     panel._toolInitialYaml = response.yaml;
     panel._toolReplaceableYaml = response.yaml;
     root.querySelector("#tool-dialog-meta").textContent = index === null ? "New tool / YAML" : `${tool.spec?.name || "Unnamed"} / ${tool.function?.type || "unknown"}`;
     status.textContent = "Edit the YAML, then save the function.";
     setToolEditorLoading(root, false);
+    if (presets) {
+      const picker = root.querySelector("#built-in-function");
+      picker.disabled = true;
+      picker.innerHTML = '<option value="">Loading built-in functions…</option>';
+      void presets.then((catalog) => {
+        if (!isCurrent()) return;
+        if (catalog) {
+          populateToolPresetPicker(panel, catalog);
+          picker.disabled = false;
+        } else {
+          picker.innerHTML = '<option value="">Built-in functions unavailable</option>';
+        }
+      });
+    }
     editor.focus();
   } catch (err) {
     if (!isCurrent()) return;

@@ -30,6 +30,7 @@ test("Broadcast retries a lost actual queue acknowledgement with the original op
   await expect(panel.locator("#broadcast-message")).toHaveValue("Retry witness");
   await panel.locator("#broadcast-send").click();
   await expect(panel.locator("#broadcast-message")).toHaveValue("");
+  await expect.poll(() => panel.evaluate(host => host._eocBroadcastSnapshot.history.filter(item => item.message === "Retry witness"))).toHaveLength(1);
   const state = await panel.evaluate(host => ({requests:host._retryActualRequests, admissions:host._retryActualAdmissions, history:host._eocBroadcastSnapshot.history.filter(item => item.message === "Retry witness")}));
   expect(state.requests).toHaveLength(2);
   expect(state.requests[0]).toEqual(expect.any(String));
@@ -46,6 +47,7 @@ for (const bundle of [false, true]) {
     const panel = page.locator("extended-openai-management-panel");
     await expect(panel.locator("#broadcast-message")).toBeVisible();
     const priorHistoryCount = await panel.evaluate(host => host._eocBroadcastSnapshot.history.length);
+    const composer = await panel.locator("#broadcast-message").elementHandle();
     await panel.locator('[data-broadcast-entity="assist_satellite.kitchen"]').check();
     await panel.evaluate((host, failRefresh) => {
       const original = host._hass.callWS;
@@ -66,13 +68,8 @@ for (const bundle of [false, true]) {
     await panel.locator("#broadcast-message").fill(`Dinner ${bundle ? "bundle" : "source"}`);
     await panel.locator("#broadcast-send").click();
     if (!bundle) {
-      // A failed refresh replaces the card with an error. Return through the
-      // normal navigation path before exercising the next composer action.
-      await expect(panel.locator("#broadcast-card [role=alert]")).toContainText("controlled history refresh failure");
-      expect(await panel.evaluate(host => host._broadcastMessage)).toBe("");
-      await panel.evaluate(host => host._testFailBroadcastRefresh = false);
-      await panel.getByRole("button", {name:"Guide", exact:true}).click();
-      await panel.getByRole("button", {name:"Overview", exact:true}).click();
+      await expect(panel.locator("#toast")).toContainText("Broadcast queued, but history could not be refreshed");
+      expect(await composer.evaluate(node => node.isConnected)).toBe(true);
     }
     await expect(panel.locator("#broadcast-message")).toHaveValue("");
     await expect(panel.locator("#broadcast-send")).toBeEnabled();

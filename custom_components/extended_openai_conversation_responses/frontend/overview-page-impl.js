@@ -59,7 +59,7 @@ function setupHealthMarkup(panel, health, cards) {
       ${health.checks.map((check) => {
         const checkState = HEALTH_ICONS[check.state] ? check.state : "unknown";
         const actionMarkup = ["error", "warning"].includes(check.state) ? "" : healthAction(panel, health, check);
-        return `<article class="setup-health-check setup-health-check-${checkState}"><ha-icon class="setup-health-icon" icon="${HEALTH_ICONS[checkState]}" aria-hidden="true"></ha-icon><div class="setup-health-copy"><span>${panel._e(check.title)}</span><strong>${panel._e(check.value)}</strong><p>${panel._e(check.detail)}</p></div>${actionMarkup}</article>`;
+        return `<article class="setup-health-check setup-health-check-${checkState}" data-health-check="${panel._e(check.id)}"><ha-icon class="setup-health-icon" icon="${HEALTH_ICONS[checkState]}" aria-hidden="true"></ha-icon><div class="setup-health-copy"><span>${panel._e(check.title)}</span><strong>${panel._e(check.value)}</strong><p>${panel._e(check.detail)}</p></div>${actionMarkup}</article>`;
       }).join("")}
     </div>
     <p class="setup-health-footnote"><ha-icon icon="mdi:information-outline" aria-hidden="true"></ha-icon> Connection tests only run when you start one from Diagnostics.</p>
@@ -127,7 +127,7 @@ export function renderOverview(panel, agent) {
     ${broadcastCard}`;
 }
 
-export function bindOverview(panel, broadcastPromise) {
+export function bindOverview(panel) {
   const details = panel.shadowRoot.querySelector("#overview-health-details");
   if (details) {
     details.open = panel._overviewHealthExpanded === panel._agentId;
@@ -138,11 +138,13 @@ export function bindOverview(panel, broadcastPromise) {
     panel._pendingSettingFocus = button.dataset.target || "";
     await panel._navigate(button.dataset.page, button.dataset.subsection || null);
   }));
-  if (!broadcastPromise) return;
+}
+
+export function bindOverviewBroadcast(panel, broadcastPromise, current) {
   void import("./overview-broadcast.js")
-    .then((module) => module.bindBroadcast(panel, broadcastPromise))
+    .then((module) => { if (current()) return module.bindBroadcast(panel, broadcastPromise, current); })
     .catch((err) => {
-      if (panel._viewKey?.() !== "overview") return;
+      if (!current()) return;
       const host = panel.shadowRoot.querySelector("#broadcast-card");
       if (host) host.innerHTML = `<div class="error" role="alert">Unable to load Broadcast: ${panel._e(err.message || String(err))}</div>`;
     });
