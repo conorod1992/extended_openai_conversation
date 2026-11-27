@@ -10,6 +10,7 @@ import {stopLiveStatus, pauseLiveStatus, resumeLiveStatus, watchTimedFeatureStat
 import {bindConfigurationClarity, enhanceConfigurationClarity} from "./management-draft-navigation.js";
 import {formatManagementTimestamp, prepareMemoryBrowser, ensureTemporaryScope, storeRuntimeGuidance} from "./management-data-state.js";
 import {enhanceConfirmationScope} from "./management-confirmation-scope.js";
+import {settleSecondaryRead, trackSecondaryRead, publishSecondaryResult} from "./management-secondary-reads.js";
 import {configurationDestinations} from "./management-config-destinations.js";
 import {
   bindPageDrafts,
@@ -1366,8 +1367,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._render();
     }
     try {
-      const configPromise = view === "data-memory/conversations" && this._data?.is_admin
-        ? this._loadConfigDraft() : Promise.resolve();
+      const adminHistory = view === "data-memory/conversations" && this._data?.is_admin;
+      const readHistoryConfig = () => this._loadConfigDraft();
+      const configPromise = adminHistory ? settleSecondaryRead(readHistoryConfig()) : null;
       const initialScopeId = needsScopes ? this._scopeId : null;
       const cachedScopeLoadedAt = scopeCatalogKey ? this._eocScopeCatalogTimes.get(scopeCatalogKey) : null;
       const cachedScopes = cacheTimestampIsFresh(cachedScopeLoadedAt, SCOPE_CACHE_TTL_MS)
@@ -1380,15 +1382,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         ? this._call("conversations", "list", { scope_id: scopeId, limit: 50 })
         : this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: scopeId, limit: 100 });
       const scopeCatalogKind = this._scopeCatalogKind(view);
-      const scopePromise = needsScopes ? this._loadScopes(scopeCatalogKey, scopeCatalogKind) : Promise.resolve();
+      const readScopes = () => this._loadScopes(scopeCatalogKey, scopeCatalogKind);
+      const scopePromise = needsScopes ? readScopes() : Promise.resolve();
       const prefetchedScopedCollection = canPrefetchScopedCollection
         ? loadScopedCollection(initialScopeId).then(
           (value) => ({status: "fulfilled", value}),
           (reason) => ({status: "rejected", reason}),
         )
         : null;
-      const activeConversationsPromise = view === "data-memory/conversations" && this._data?.is_admin
-        ? this._call("conversations", "active") : Promise.resolve({active: []});
+      const readActiveConversations = () => this._call("conversations", "active");
+      const activeConversationsPromise = adminHistory ? settleSecondaryRead(readActiveConversations()) : null;
+      const deferredScopes = view === "data-memory/conversations" && prefetchedScopedCollection
+        ? settleSecondaryRead(scopePromise) : null;
       // Memory still waits for an authoritative scope selection. History may
       // render a known selected scope immediately while its archive counts refresh.
       if (needsScopes && (view !== "data-memory/conversations" || !prefetchedScopedCollection)) {
@@ -1426,12 +1431,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           ? Promise.resolve(cache.result.summary) : this._call("usage", "summary");
         const daysPromise = cache.fresh && cache.result?.days
           ? Promise.resolve(cache.result.days) : this._call("usage", "daily");
-        const settle = (promise) => promise.then(
-          (value) => ({status: "fulfilled", value}),
-          (reason) => ({status: "rejected", reason}),
-        );
-        const runsPromise = settle(this._call("usage", "runs", { limit: 30 }));
-        const retentionPromise = settle(this._call("usage", "retention"));
+        const runs = () => this._call("usage", "runs", {limit: 30});
+        const retention = () => this._call("usage", "retention");
+        const runsPromise = settleSecondaryRead(runs());
+        const retentionPromise = settleSecondaryRead(retention());
         const primary = await Promise.allSettled([summaryPromise, daysPromise]);
         const settledPrimary = settledSectionResult([["summary", "Usage summary"], ["days", "Daily usage"]], primary);
         usagePrimaryComplete = settledPrimary.load_errors.length === 0;
@@ -1441,8 +1444,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           loading: {runs: true, retention: true},
         };
         usageSecondary = [
-          ["runs", "Recent runs", runsPromise],
-          ["retention", "Usage retention", retentionPromise],
+          ["runs", "Recent runs", runsPromise, runs],
+          ["retention", "Usage retention", retentionPromise, retention],
         ];
       } else if (view === "data-memory/conversations") {
         const sessions = await scopedCollection();
@@ -1459,9 +1462,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         };
         result = admin ? (this._configData || null) : contentData;
 
+        const ownsHistory = () => ownsLoad() && this._viewKey() === view && this._contentData;
         const patchHistory = (key, settled, label) => {
-          if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
-              || this._viewKey() !== "data-memory/conversations" || !this._contentData) return;
           const loadErrors = (this._contentData.load_errors || []).filter((issue) => issue.key !== key);
           const loading = {...(this._contentData.loading || {}), [key]: false};
           if (settled.status === "rejected") {
@@ -1488,17 +1490,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           this._render();
         };
 
-        if (prefetchedScopedCollection) {
-          void scopePromise.then(async () => {
-            if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
-                || this._viewKey() !== "data-memory/conversations") return;
-            let refreshedSessions = null;
-            if (this._scopeId !== initialScopeId) {
-              refreshedSessions = await loadScopedCollection(this._scopeId);
-              if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
-                  || this._viewKey() !== "data-memory/conversations") return;
-            }
-            if (this._contentData) {
+        if (deferredScopes) {
+          trackSecondaryRead(this, ownsHistory, deferredScopes, readScopes, async (settled, current) => {
+            if (settled.status === "rejected") return patchHistory("scopes", settled, "Scope catalogue");
+            try {
+              const refreshedSessions = this._scopeId === initialScopeId ? null : await loadScopedCollection(this._scopeId);
+              if (!current()) return;
               this._contentData = {
                 ...this._contentData,
                 ...(refreshedSessions ? {sessions: refreshedSessions} : {}),
@@ -1506,35 +1503,31 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
               };
               if (!refreshedSessions && reconcileScopePicker(this)) return;
               this._render();
+            } catch (reason) {
+              if (current()) patchHistory("scopes", {status: "rejected", reason}, "Scope catalogue");
             }
-          }).catch((reason) => patchHistory("scopes", {status: "rejected", reason}, "Scope catalogue"));
+          });
         }
         if (admin) {
-          void Promise.resolve(activeConversationsPromise).then(
-            (value) => patchHistory("active", {status: "fulfilled", value}, "Active conversations"),
-            (reason) => patchHistory("active", {status: "rejected", reason}, "Active conversations"),
-          );
-          void Promise.resolve(configPromise).then(
-            () => patchHistory("config", {status: "fulfilled", value: this._configData}, "Archive settings"),
-            (reason) => patchHistory("config", {status: "rejected", reason}, "Archive settings"),
-          );
+          trackSecondaryRead(this, ownsHistory, activeConversationsPromise, readActiveConversations,
+            settled => patchHistory("active", settled, "Active conversations"));
+          trackSecondaryRead(this, ownsHistory, configPromise, readHistoryConfig,
+            settled => patchHistory("config", settled, "Archive settings"));
         }
       } else if (view === "data-memory/memories") {
         result = await scopedCollection();
       } else if (view === "data-memory/knowledge") {
         result = await consumeIntentRead(this, view, "knowledge", "list");
       } else if (view === "capabilities/guest-mode") {
-        const detailsPromise = this._call("guest_mode", "details").then(
-          (value) => ({status: "fulfilled", value}),
-          (reason) => ({status: "rejected", reason}),
-        );
+        const details = () => this._call("guest_mode", "details");
+        const detailsPromise = settleSecondaryRead(details());
         result = await this._call("guest_mode", "get");
         result = {
           ...result,
           loading: {...(result.loading || {}), details: true},
           load_errors: result.load_errors || [],
         };
-        guestDetailsSecondary = detailsPromise;
+        guestDetailsSecondary = [detailsPromise, details];
       } else if (view === "capabilities/request-rules") {
         result = await consumeIntentRead(this, view, "request_rules", "list");
       } else if (this._isDraftView() && view !== "usage-maintenance/backup-restore") {
@@ -1567,53 +1560,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         void startOverviewDetailReads(this, {loadToken, cacheGeneration});
       }
       if (guestDetailsSecondary) {
-        void guestDetailsSecondary.then((settled) => {
-          if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
-              || this._viewKey() !== "capabilities/guest-mode") return;
-          const errors = (this._result?.load_errors || []).filter((issue) => issue.key !== "details");
-          const loading = {...(this._result?.loading || {}), details: false};
-          if (settled.status === "fulfilled") {
-            this._result = {
-              ...(this._result || {}),
-              ...settled.value,
-              load_errors: errors,
-              loading,
-            };
-          } else {
-            this._result = {
-              ...(this._result || {}),
-              load_errors: [...errors, {
-                key: "details",
-                label: "Guest Mode capabilities",
-                message: settled.reason?.message || String(settled.reason || "Unknown error"),
-              }],
-              loading,
-            };
-          }
+        trackSecondaryRead(this, () => ownsLoad() && this._viewKey() === view, ...guestDetailsSecondary, settled => {
+          publishSecondaryResult(this, "details", "Guest Mode capabilities", settled, true);
           this._render();
         });
       }
       if (usageSecondary) {
-        for (const [key, label, pending] of usageSecondary) {
-          void pending.then((settled) => {
-            if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
-                || (key === "runs" && usageDetailGeneration !== (this._usageDetailGeneration || 0))
-                || this._viewKey() !== "usage-maintenance/usage") return;
-            const errors = (this._result?.load_errors || []).filter((issue) => issue.key !== key);
-            const loading = {...(this._result?.loading || {}), [key]: false};
-            if (settled.status === "fulfilled") {
-              this._result = {...(this._result || {}), [key]: settled.value, load_errors: errors, loading};
-            } else {
-              this._result = {
-                ...(this._result || {}),
-                load_errors: [...errors, {
-                  key,
-                  label,
-                  message: settled.reason?.message || String(settled.reason || "Unknown error"),
-                }],
-                loading,
-              };
-            }
+        for (const [key, label, pending, read] of usageSecondary) {
+          const current = () => ownsLoad() && this._viewKey() === view
+            && (key !== "runs" || usageDetailGeneration === (this._usageDetailGeneration || 0));
+          trackSecondaryRead(this, current, pending, read, settled => {
+            publishSecondaryResult(this, key, label, settled);
             if (!getRouteFeature("usage-maintenance/usage")?.reconcileUsageSecondary(this, key)) this._render();
           });
         }
@@ -1936,6 +1893,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       let result;
       if (preserve) {
         showPendingDestination(this);
+        syncSharedConfigurationBar(this);
       } else {
         result = this._renderContent(...args);
         if (view === "data-memory/conversations") {
@@ -1956,7 +1914,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         main.classList.remove("eoc-loading-in-background");
       }
       syncAgentPicker(this);
-      syncSharedConfigurationBar(this);
       finishMeasure(measure, {view, busy});
       this._markColdLifecycle("first-render-complete");
     }
@@ -1983,6 +1940,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       applyRequestRuleSearch(this);
     }
     if (ownsPageDraft) refreshPageSaveBar(this);
+    syncSharedConfigurationBar(this);
     refreshConfigurationErrors(this);
 
     // Keep the former decorator ordering explicit without mutating class methods at runtime.
@@ -2150,6 +2108,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!reconcileHistoryConfiguration(this, this._historySettingsMarkup())) return false;
     if (this._configData && this._draftAgentId === this._agentId && !this._eocHistoryEditorLoading
         && !this._eocHistoryEditorError) getConfigurationEditor()?.bindConfiguration(this);
+    syncSharedConfigurationBar(this);
+    refreshConfigurationErrors(this);
     return true;
   }
 

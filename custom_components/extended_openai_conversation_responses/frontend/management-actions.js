@@ -7,6 +7,9 @@ import {focusManagementSetting} from "./frontend-navigation.js";
 import {voiceMappingDraftError} from "./voice-mapping-draft.js";
 import {configKeyForControl, isTimeoutKey, validTimeout} from "./configuration-controls.js";
 import {pendingRetentionFields} from "./management-state-safety.js";
+import {resumeSecondaryReads} from "./management-secondary-reads.js";
+import {updateAgentPicker} from "./management-renderer.js";
+import {reconcileOverviewAssistant, resumeOverviewDetails} from "./overview-page.js";
 
 function fieldErrorKey(key) {
   return key === "title" ? "__title" : key;
@@ -92,8 +95,8 @@ export function refreshConfigurationErrors(panel) {
     summary.tabIndex = -1;
     summary.setAttribute("role", "region");
     summary.setAttribute("aria-label", "Configuration errors");
-    host.before(summary);
   }
+  if (summary.nextElementSibling !== host) host.before(summary);
   if (summary.innerHTML !== markup) summary.innerHTML = markup;
 }
 
@@ -266,8 +269,10 @@ async function saveConfiguration(panel, button) {
           if (panel._viewKey?.() === submission.view && panel._eocRenderedRoute === owner.route) panel._result = panel._configData;
           reconcileSavedConfiguration(panel, owner);
           panel._render();
-        } else if (panel.shadowRoot.querySelector("main #save-config")) {
-          panel._render();
+        } else {
+          updateAgentPicker(panel);
+          if (panel.shadowRoot.querySelector("main #save-config")) panel._render();
+          else reconcileOverviewAssistant(panel);
         }
       },
     });
@@ -285,6 +290,10 @@ async function saveConfiguration(panel, button) {
     panel._configurationSaving = false;
     panel._setSaving(panel.shadowRoot.querySelector("#save-config") || button, false);
     syncSharedConfigurationBar(panel);
+    if (configurationSubmissionIsCurrent(panel, submission)) {
+      resumeSecondaryReads(panel);
+      resumeOverviewDetails(panel);
+    }
     if (shared) panel.shadowRoot.dispatchEvent(new Event("eoc-config-dirty-changed"));
     const discard = panel.shadowRoot.querySelector("#revert-config");
     if (discard) discard.disabled = false;

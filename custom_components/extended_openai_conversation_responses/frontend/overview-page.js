@@ -122,6 +122,31 @@ export function renderOverview(panel, agent) {
   return renderOverviewSnapshot(panel, agent);
 }
 
+export function reconcileOverviewAssistant(panel) {
+  if (panel._viewKey() !== "overview" || panel._busy) return;
+  const agent = panel._selectedAgent();
+  if (!agent) return;
+  const root = panel.shadowRoot;
+  const title = root.querySelector("main .page-intro h1");
+  if (title && title.textContent !== agent.title) title.textContent = agent.title;
+  const card = root.querySelector('.dashboard-action[data-page="assistant"][data-subsection="basics"]')?.closest(".dashboard-card");
+  const model = card?.querySelector("strong");
+  const subtitle = `${agent.provider} · ${agent.model}`;
+  if (model && model.textContent !== subtitle) model.textContent = subtitle;
+
+  const runtime = panel._result?.setup_health?.provider_runtime;
+  const config = panel._configDataStale ? null : panel._configData?.config;
+  if (!runtime || !config) return;
+  const modelName = String(config.chat_model ?? agent.model ?? "").trim();
+  const apiMode = String(config.api_mode ?? runtime.configured_api_mode ?? "").trim();
+  if (runtime.model === modelName && (runtime.configured_api_mode || "") === apiMode) return;
+  runtime.model = modelName;
+  runtime.configured_api_mode = apiMode;
+  const providerCheck = root.querySelector('[data-health-check="provider_runtime"] strong');
+  if (providerCheck) providerCheck.textContent = `${runtime.provider || "Unknown provider"} · ${modelName || "No model selected"}`;
+  onboardingModule?.bindGettingStarted(panel);
+}
+
 export function bindOverview(panel) {
   if (!implementation) {
     bindSnapshotOverview(panel);
@@ -171,7 +196,15 @@ function mergeSetupHealthFacts(current = {}, patch = {}) {
   return next;
 }
 
-export function startOverviewDetailReads(panel, {loadToken, cacheGeneration} = {}) {
+export function resumeOverviewDetails(panel) {
+  const previous = panel._eocOverviewDetailState;
+  if (previous?.remaining.size && previous.token === panel._loadToken
+      && previous.agentId === panel._agentId && previous.generation !== panel._cacheGeneration) {
+    void startOverviewDetailReads(panel, {kinds: [...previous.remaining]});
+  }
+}
+
+export function startOverviewDetailReads(panel, {loadToken, cacheGeneration, kinds = Object.keys(OVERVIEW_DETAIL_LABELS)} = {}) {
   const agent = panel._selectedAgent?.();
   if (!agent || panel._viewKey?.() !== "overview") return null;
   const agentId = agent.subentry_id;
@@ -184,7 +217,7 @@ export function startOverviewDetailReads(panel, {loadToken, cacheGeneration} = {
     token,
     generation,
     result: panel._result || {},
-    remaining: new Set(Object.keys(OVERVIEW_DETAIL_LABELS)),
+    remaining: new Set(kinds),
   };
   panel._eocOverviewDetailState = state;
 
@@ -248,7 +281,7 @@ export function startOverviewDetailReads(panel, {loadToken, cacheGeneration} = {
     }
   };
 
-  const reads = Object.keys(OVERVIEW_DETAIL_LABELS).map((kind) =>
+  const reads = kinds.map((kind) =>
     panel._hass.callWS({
       type: WS_MANAGEMENT,
       section: "overview",

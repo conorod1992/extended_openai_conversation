@@ -18,6 +18,7 @@ export default defineConfig({
           const coreHelpers = [
             "management-enhancement-state.js",
             "management-data-state.js",
+            "management-secondary-reads.js",
             "management-confirmation-scope.js",
             "management-dialogs.js",
             "agent-config-help.js",

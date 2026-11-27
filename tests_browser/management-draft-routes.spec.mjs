@@ -28,8 +28,128 @@ for (const action of ["save-config", "revert-config"]) {
       saves: browserHarness.calls.slice(window.draftRouteWrites).filter(call => call.section === "configuration" && call.action === "save").length,
     }));
     expect(state).toEqual({sameMain:true, sameSearch:true, sameResult:true, saves:Number(action === "save-config")});
+    await expect(panel.locator("#agent option:checked"))
+      .toHaveText(action === "save-config" ? "Draft assistant name" : "Jarvis");
     await panel.evaluate(host => host._navigate("assistant", "basics"));
     await expect(title).toHaveValue(action === "save-config" ? "Draft assistant name" : "Jarvis");
+    await expectHarnessClean(page, errors);
+  });
+}
+
+test("shared and page drafts expose distinct actions and remain independent", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator('[data-config="__title"]').fill("Renamed assistant");
+  await panel.evaluate(host => host._navigate("capabilities", "quiet-hours"));
+  const enabled = panel.locator("#qh-enabled");
+  await expect(enabled).toBeVisible();
+  const desired = !await enabled.isChecked();
+  await enabled.setChecked(desired);
+  await expect(panel.getByRole("button", {name:"Discard Assistant settings", exact:true})).toBeVisible();
+  await expect(panel.getByRole("button", {name:"Discard changes", exact:true})).toBeVisible();
+  await panel.getByRole("button", {name:"Save Assistant settings", exact:true}).click();
+  await expect(panel.locator("#agent option:checked")).toHaveText("Renamed assistant");
+  await expect(panel.getByRole("button", {name:"Save changes", exact:true})).toBeEnabled();
+  expect(await enabled.isChecked()).toBe(desired);
+  await panel.getByRole("button", {name:"Save changes", exact:true}).click();
+  await expect(panel.locator("#save-page")).toHaveCount(0);
+  await expectHarnessClean(page, errors);
+});
+
+test("a shared save updates the Overview name and model without replacing Broadcast", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator('[data-config="__title"]').fill("Renamed overview assistant");
+  const model = panel.locator('[data-config="chat_model"]');
+  await model.fill("gpt-4o");
+  await model.press("Tab");
+  await panel.evaluate(host => host._navigate("overview"));
+  await expect(panel.locator("#broadcast-enabled")).toBeVisible();
+  const broadcast = await panel.locator("#broadcast-enabled").elementHandle();
+  await panel.locator("#save-config").click();
+  await expect(panel.locator("main h1")).toHaveText("Renamed overview assistant");
+  await expect(panel.locator("#agent option:checked")).toHaveText("Renamed overview assistant");
+  await expect(panel.locator(".agent-picker small")).toContainText("gpt-4o");
+  await expect(panel.locator(".dashboard-card").filter({has:page.getByRole("heading", {name:"Assistant", exact:true})}).locator("strong"))
+    .toContainText("gpt-4o");
+  await expect(panel.locator("#eoc-getting-started")).toContainText("gpt-4o");
+  await expect(panel.locator('[data-health-check="provider_runtime"] strong')).toContainText("gpt-4o");
+  expect(await broadcast.evaluate(node => node.isConnected)).toBe(true);
+  await expectHarnessClean(page, errors);
+});
+
+test("Assistant validation summary follows the save bar and links to its setting", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  const title = panel.locator('[data-config="__title"]');
+  await title.fill("Rejected title");
+  await panel.evaluate(host => {
+    const callWS = host.hass.callWS.bind(host.hass);
+    host.hass.callWS = request => request.section === "configuration" && request.action === "save"
+      ? Promise.resolve({valid:false, errors:{title:"Choose a different name"}}) : callWS(request);
+    return host._navigate("data-memory", "memories");
+  });
+  await panel.locator("#save-config").click();
+  await expect(panel.locator("#eoc-shared-configuration-bar #configuration-errors")).toContainText("Choose a different name");
+  await panel.locator("#configuration-errors [data-config-error]").click();
+  await expect(title).toBeFocused();
+  await expect(panel.locator("main #configuration-errors")).toContainText("Choose a different name");
+  await panel.evaluate(host => host._navigate("data-memory", "memories"));
+  await expect(panel.locator("#eoc-shared-configuration-bar #configuration-errors")).toContainText("Choose a different name");
+  await expect(panel.locator("#configuration-errors")).toHaveCount(1);
+  await expectHarnessClean(page, errors);
+});
+
+for (const [view, section, actions] of [
+  ["capabilities/guest-mode", "guest_mode", ["details"]],
+  ["usage-maintenance/usage", "usage", ["runs", "retention"]],
+  ["data-memory/conversations", "conversations", ["active"]],
+  ["overview", "overview", ["detail"]],
+]) {
+  test(`Assistant save resumes pending secondary reads for ${view}`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("assistant/basics", "&bundle=1"));
+    const panel = page.locator("extended-openai-management-panel");
+    await panel.locator('[data-config="__title"]').fill("Assistant with pending reads");
+    await panel.evaluate((host, {view, section, actions}) => {
+      const callWS = host.hass.callWS.bind(host.hass);
+      window.secondaryReads = Object.fromEntries(actions.map(action => [action, []]));
+      host.hass.callWS = async request => {
+        const response = await callWS(request);
+        if (request.section !== section || !actions.includes(request.action)
+            || (section === "overview" && request.kind !== "usage")) return response;
+        const holds = window.secondaryReads[request.action];
+        const witness = holds.length + 1;
+        const marked = section === "overview"
+          ? {...response, usage:{...response.usage, witness}} : {...response, witness};
+        return new Promise(resolve => holds.push(() => resolve(marked)));
+      };
+      return host._navigate(...view.split("/"));
+    }, {view, section, actions});
+    const requests = () => page.evaluate(() => Object.values(window.secondaryReads).map(holds => holds.length));
+    await expect.poll(requests).toEqual(actions.map(() => 1));
+    if (section === "conversations") {
+      await expect(panel.locator("main #save-config")).toBeEnabled();
+      await expect(panel.locator("#eoc-shared-configuration-bar #save-config")).toHaveCount(0);
+    }
+    await panel.locator("#save-config").click();
+    await expect.poll(requests).toEqual(actions.map(() => 2));
+    await page.evaluate(() => Object.values(window.secondaryReads).forEach(holds => holds[1]()));
+    const published = () => panel.evaluate((host, {section, actions}) => {
+      if (section === "guest_mode") return [host._result?.witness, host._result?.loading?.details];
+      if (section === "overview") return [host._result?.usage?.witness, host._result?.loading?.usage];
+      if (section === "conversations") return [host._contentData?.active?.witness, host._contentData?.loading?.active];
+      return actions.flatMap(action => [host._result?.[action]?.witness, host._result?.loading?.[action]]);
+    }, {section, actions});
+    await expect.poll(published).toEqual(actions.flatMap(() => [2, false]));
+    await page.evaluate(async () => {
+      Object.values(window.secondaryReads).forEach(holds => holds[0]());
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    });
+    expect(await published()).toEqual(actions.flatMap(() => [2, false]));
     await expectHarnessClean(page, errors);
   });
 }

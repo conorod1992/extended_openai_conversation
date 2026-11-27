@@ -59,7 +59,7 @@ function setupHealthMarkup(panel, health, cards) {
       ${health.checks.map((check) => {
         const checkState = HEALTH_ICONS[check.state] ? check.state : "unknown";
         const actionMarkup = ["error", "warning"].includes(check.state) ? "" : healthAction(panel, health, check);
-        return `<article class="setup-health-check setup-health-check-${checkState}"><ha-icon class="setup-health-icon" icon="${HEALTH_ICONS[checkState]}" aria-hidden="true"></ha-icon><div class="setup-health-copy"><span>${panel._e(check.title)}</span><strong>${panel._e(check.value)}</strong><p>${panel._e(check.detail)}</p></div>${actionMarkup}</article>`;
+        return `<article class="setup-health-check setup-health-check-${checkState}" data-health-check="${panel._e(check.id)}"><ha-icon class="setup-health-icon" icon="${HEALTH_ICONS[checkState]}" aria-hidden="true"></ha-icon><div class="setup-health-copy"><span>${panel._e(check.title)}</span><strong>${panel._e(check.value)}</strong><p>${panel._e(check.detail)}</p></div>${actionMarkup}</article>`;
       }).join("")}
     </div>
     <p class="setup-health-footnote"><ha-icon icon="mdi:information-outline" aria-hidden="true"></ha-icon> Connection tests only run when you start one from Diagnostics.</p>
