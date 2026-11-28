@@ -34,6 +34,7 @@ class ConversationTurnContext:
     scope: ResolvedDataScope | None = None
     archive: tuple[str, str] | None = None
     archive_turn_private: bool = False
+    archive_scope: ResolvedDataScope | None = None
     temporary_scope: str | None = None
     function_group_session: FunctionGroupSession | None = None
     memory_session: tuple[str, int] | None = None

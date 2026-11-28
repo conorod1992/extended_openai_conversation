@@ -439,3 +439,52 @@ async def test_stalled_service_releases_reconciliation_lock(hass, monkeypatch):
         release.set()
         if task := manager._pending_service_calls.get("media_player.test"):
             await task
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("new_target", [0.2, 0.1])
+@pytest.mark.parametrize("report_during_save", [False, True])
+async def test_next_quiet_period_carries_owned_effect_without_retrying_daytime_volume(
+    hass, monkeypatch, restart, new_target, report_during_save
+):
+    manager, state, calls, reports, report = _speaker(hass, monkeypatch, requested=0.2)
+    monkeypatch.setattr(runtime.dt_util, "utcnow", lambda: END)
+    await manager.async_reconcile(now=START)
+    service = hass.services.async_call.side_effect
+
+    async def defer(_domain, _name, data, **kwargs):
+        calls.append(data["volume_level"])
+        reports.append((data["volume_level"], kwargs["context"]))
+
+    hass.services.async_call.side_effect = defer
+    await manager.async_reconcile(now=END)
+    if restart:
+        manager._active = manager._normalize_active(deepcopy(manager.active))
+
+    new_period = START + timedelta(days=1)
+    monkeypatch.setattr(runtime.dt_util, "utcnow", lambda: new_period)
+    manager._config = replace(manager.config, max_volume=new_target)
+    hass.services.async_call.side_effect = service
+    original_receipt = reports[0][1].id
+
+    def deliver_as_carry_is_saved():
+        control = (manager.active or {}).get("controls", {}).get("media_player.test")
+        if reports and control and not control.get("restoration_pending"):
+            report(*reports.pop())
+
+    if report_during_save:
+        manager._async_save_locked.side_effect = deliver_as_carry_is_saved
+    await manager.async_reconcile(now=new_period)
+    if report_during_save:
+        assert calls == [0.2, 0.8, new_target]
+    else:
+        assert calls == [0.2, 0.8] + ([0.1] if new_target == 0.1 else [])
+        control = manager.active["controls"]["media_player.test"]
+        assert control["original_value"] == 0.8
+        assert control["restoration_context_id"] == original_receipt
+        report(*reports.pop())
+        await manager.async_reconcile(now=new_period)
+        assert calls[-1] == new_target
+    assert state.attributes["volume_level"] == new_target
+    await manager.async_reconcile(now=END + timedelta(days=1))
+    assert calls[-1] == 0.8

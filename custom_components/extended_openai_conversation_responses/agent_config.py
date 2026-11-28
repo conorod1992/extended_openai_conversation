@@ -1731,8 +1731,13 @@ def agent_config_model_repair_snapshot(
                 }
                 for rule in (rules if isinstance(rules, list) else [None])
             ]
+    model_data = data
+    saved_model = data.get(CONF_CHAT_MODEL)
+    if isinstance(saved_model, str) and not saved_model.strip():
+        damaged[CONF_CHAT_MODEL] = saved_model
+        model_data = {**data, CONF_CHAT_MODEL: DEFAULT_CHAT_MODEL}
     model, effective_provider, efforts = _configuration_reasoning_context(
-        data, provider
+        model_data, provider
     )
     effort = data.get(CONF_REASONING_EFFORT)
     if efforts and isinstance(effort, str) and effort not in efforts:

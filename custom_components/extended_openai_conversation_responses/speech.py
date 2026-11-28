@@ -86,7 +86,8 @@ def _join_speech(parts: list[str], kinds: Mapping[int, _LiteralKind]) -> str:
 
 
 _BACKTICK_RUN = re.compile(r"`+")
-_INLINE_CODE_BOUNDARY = re.compile(r"`+|\n[ \t\r]*\n")
+_QUOTE_PREFIX_PATTERN = r"(?: {0,3}>[ \t]?)+"
+_INLINE_CODE_BOUNDARY = re.compile(rf"`+|\n(?:{_QUOTE_PREFIX_PATTERN})?+[ \t\r]*+\n")
 _LABEL_SYNTAX = re.compile(r"`+|[\[\]]")
 _LINK_WHITESPACE = " \t\r\n"
 # Bare destinations stop at any whitespace, but only these separators can
@@ -176,7 +177,7 @@ DEFAULT_STREAMING_BUFFER_LIMIT = 4096
 COMPLETED_SPEECH_EXECUTOR_THRESHOLD = 4096
 _FORMAT_PREFIX_LIMIT = 32
 _QUOTE_MARKER = re.compile(r" {0,3}>[ \t]?")
-_QUOTE_PREFIX = re.compile(r"^(?: {0,3}>[ \t]?)+")
+_QUOTE_PREFIX = re.compile(rf"^{_QUOTE_PREFIX_PATTERN}")
 _LIST_PREFIX = re.compile(r"[ ]{0,3}(?:[-+*]|[0-9]{1,9}[.)])[ \t]+")
 
 
@@ -481,10 +482,15 @@ class StreamingSpeechSanitizer:
                 if text[match.start()] == "\n":
                     previous.clear()
                 else:
-                    width = match.end() - match.start()
+                    start, end = match.span()
+                    width = end - start
                     if width in previous:
                         self._complete_code_openers.add(previous[width])
-                    previous[width] = match.start()
+                    # In prose only the first backtick is escaped. Inside
+                    # code the full run can still close an existing span.
+                    start += self._is_escaped(text, start)
+                    if start < end:
+                        previous[end - start] = start
         self._buffer = text
         link_safe = self._drain_links(final=True)
         if self._needs_separator:
@@ -1554,7 +1560,9 @@ class StreamingSpeechSanitizer:
                 if (
                     not self._link_block
                     and char == "\n"
-                    and not self._original_line_prefix.strip(" \t\r")
+                    and not _QUOTE_PREFIX.sub(
+                        "", self._original_line_prefix, count=1
+                    ).strip(" \t\r")
                 ):
                     # A streaming span that exceeded lookahead cannot cross a paragraph.
                     self._link_code = 0

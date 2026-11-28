@@ -9,7 +9,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from .agent_config import normalized_function_call_budget
+from .agent_config import AgentConfigError, normalized_function_call_budget
 from .const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -79,37 +79,40 @@ def configuration_guidance_snapshot(
     configured_api_mode = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
     effective_api_mode = configured_api_mode
     hosted_tools_supported = is_native_openai_connection(entry_data, client=client)
-    tools_required = conversation_tools_required(options)
-    with suppress(HomeAssistantError):
-        effective_api_mode = build_provider_request_snapshot(
-            options, entry_data, tools_required=tools_required, client=client
+
+    def request_mode(config: Mapping[str, Any]) -> str:
+        return build_provider_request_snapshot(
+            config,
+            entry_data,
+            tools_required=conversation_tools_required(config),
+            client=client,
         ).api_mode
+
+    with suppress(HomeAssistantError):
+        effective_api_mode = request_mode(options)
 
     # Check the hypothetical feature without changing the current route.
     probe = dict(options)
     probe[CONF_WEB_SEARCH] = True
     web_search_available = True
     web_search_message: str | None = None
+    needs_repair = False
     try:
-        build_provider_request_snapshot(
-            probe, entry_data, tools_required=tools_required, client=client
-        )
+        request_mode(probe)
     except HomeAssistantError as err:
         web_search_available = False
         web_search_message = str(err)
+        needs_repair = isinstance(err, AgentConfigError)
     compatibility_mode = effective_api_mode
-    if not web_search_available:
+    if not web_search_available and not needs_repair:
         with suppress(HomeAssistantError):
-            compatibility_mode = build_provider_request_snapshot(
-                {**options, CONF_WEB_SEARCH: False},
-                entry_data,
-                tools_required=tools_required,
-                client=client,
-            ).api_mode
+            compatibility_mode = request_mode({**options, CONF_WEB_SEARCH: False})
 
     reason: str | None
     if web_search_available:
         reason = None
+    elif needs_repair:
+        reason = "unavailable"
     elif compatibility_mode != API_MODE_RESPONSES:
         reason = "requires_responses"
     elif not hosted_tools_supported:

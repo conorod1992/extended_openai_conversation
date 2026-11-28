@@ -1753,8 +1753,6 @@ class QuietHoursManager:
                 allow_application_context="pending_quiet_value" not in control,
             ):
                 await self._async_save_control_state_locked()
-            if control.get("restoration_awaiting_feedback"):
-                continue
             if (
                 control.get("restore_before_apply")
                 and control.get("application_state") != "awaiting_feedback"
@@ -1789,6 +1787,35 @@ class QuietHoursManager:
             if target is None or target[0] != control["kind"]:
                 control["restoration_pending"] = True
                 continue
+            kind, _, value = target
+            original = control["original_value"]
+            if kind == "volume":
+                value = min(value, original)
+            if control.get("restoration_awaiting_feedback"):
+                state = self.hass.states.get(entity_id)
+                context = getattr(state, "context", None)
+                if getattr(context, "user_id", None):
+                    control["restoration_pending"] = True
+                    continue
+                if control.get("restoration_pending"):
+                    still_required = (
+                        original > value + _VOLUME_TOLERANCE
+                        if kind == "volume"
+                        else original is not value
+                    )
+                    if (
+                        not control.get("restore_before_apply")
+                        or not still_required
+                        or await self._async_control_feedback_pending(
+                            control, "restoration"
+                        )
+                    ):
+                        continue
+                    # The new quiet period still owns this effect. Keep the old
+                    # receipt so a delayed restoration can be recognized.
+                    control.pop("restoration_pending")
+                    control.pop("restore_before_apply")
+                    await self._async_save_control_state_locked()
             # Observe ownership before any persistence yields to another actor.
             state = self.hass.states.get(entity_id)
             observed_context = getattr(getattr(state, "context", None), "id", None)
@@ -1867,9 +1894,6 @@ class QuietHoursManager:
             if self._pending_quiet_attained(entity_id, control):
                 self._commit_pending_quiet(entity_id, control)
                 await self._async_save_control_state_locked()
-            kind, _, value = target
-            if kind == "volume":
-                value = min(value, control["original_value"])
             # Reconcile ownership even if the configured target is unchanged.
             current = (
                 _current_volume(self.hass, entity_id)
@@ -1882,8 +1906,12 @@ class QuietHoursManager:
                 kind, current, self._attained_quiet_value(control)
             )
             if not same:
-                # An independent adjustment ends ownership; never claim its value as our baseline.
-                controls.pop(entity_id)
+                if self._restoration_attained(entity_id, control):
+                    # The carried receipt can report while persistence yields.
+                    self._settle_control_restoration(entity_id, control, restored=True)
+                else:
+                    # An independent adjustment ends ownership.
+                    controls.pop(entity_id)
                 await self._async_save_control_state_locked()
                 continue
             if control.get("retarget_awaiting_feedback"):
@@ -1935,7 +1963,10 @@ class QuietHoursManager:
                 kind, current, self._attained_quiet_value(control)
             )
             if not same or current_context != observed_context:
-                controls.pop(entity_id)
+                if self._restoration_attained(entity_id, control):
+                    self._settle_control_restoration(entity_id, control, restored=True)
+                else:
+                    controls.pop(entity_id)
                 await self._async_save_control_state_locked()
                 continue
             try:

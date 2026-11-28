@@ -309,3 +309,60 @@ async def test_native_contextless_retarget_history(
         await exercise_history(driver, VOLUME_RETARGET_HISTORIES[history])
     finally:
         await driver.manager.async_shutdown()
+
+
+@pytest.mark.parametrize("restart", [False, True])
+async def test_next_quiet_period_keeps_volume_when_daytime_restore_has_no_feedback(
+    hass, monkeypatch, real_store_io, restart
+):
+    await hass.config.async_set_time_zone("UTC")
+    now = datetime(2026, 11, 1, 22, 30, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    monkeypatch.setattr(runtime.dt_util, "utcnow", lambda: now)
+    _, media, _ = _install_satellite_entities(hass, volume=0.8)
+    calls, pending = [], []
+    defer_restore = True
+
+    def report(value, context):
+        hass.states.async_set(media, "idle", {"volume_level": value}, context=context)
+
+    async def volume_set(call):
+        value = call.data["volume_level"]
+        calls.append(value)
+        if defer_restore and value == 0.8:
+            pending.append((value, call.context))
+        else:
+            report(value, call.context)
+
+    hass.services.async_register("media_player", "volume_set", volume_set)
+    manager = QuietHoursManager(hass)
+    manager._initialized = True
+    manager._config = runtime.QuietHoursConfig(enabled=True, wake_sound="unchanged")
+    try:
+        await manager.async_reconcile(now=now)
+        now += timedelta(hours=10)
+        await manager.async_reconcile(now=now)
+        assert calls == [0.2, 0.8]
+        assert hass.states.get(media).attributes["volume_level"] == 0.2
+
+        now += timedelta(hours=14)
+        defer_restore = False
+        if restart:
+            retire_without_restoration(manager)
+            manager = QuietHoursManager(hass)
+            await manager.async_setup()
+        await manager.async_reconcile(now=now)
+        assert calls == [0.2, 0.8]
+        assert manager.active["controls"][media]["original_value"] == 0.8
+        assert hass.states.get(media).attributes["volume_level"] == 0.2
+
+        report(*pending.pop())
+        await manager.async_reconcile(now=now)
+        assert calls == [0.2, 0.8, 0.2]
+        now += timedelta(hours=10)
+        await manager.async_reconcile(now=now)
+        assert calls == [0.2, 0.8, 0.2, 0.8]
+        assert manager.active is None
+    finally:
+        defer_restore = False
+        await manager.async_shutdown()

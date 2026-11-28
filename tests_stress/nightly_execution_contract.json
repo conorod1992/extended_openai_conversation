@@ -115,6 +115,8 @@
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_available_quiet_effect_carries_across_missed_daytime_boundary[False-True]",
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_available_quiet_effect_carries_across_missed_daytime_boundary[True-False]",
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_available_quiet_effect_carries_across_missed_daytime_boundary[True-True]",
+    "tests_real_ha/test_quiet_hours_period_recovery.py::test_next_quiet_period_keeps_volume_when_daytime_restore_has_no_feedback[False]",
+    "tests_real_ha/test_quiet_hours_period_recovery.py::test_next_quiet_period_keeps_volume_when_daytime_restore_has_no_feedback[True]",
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_offline_control_rejoins_later_period_with_durable_baseline[False-False-volume]",
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_offline_control_rejoins_later_period_with_durable_baseline[False-False-switch]",
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_offline_control_rejoins_later_period_with_durable_baseline[False-True-volume]",

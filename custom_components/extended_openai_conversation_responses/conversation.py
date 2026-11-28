@@ -1194,11 +1194,14 @@ class ExtendedOpenAIAgentEntity(
                     if chat_log.conversation_id
                     else f"context:{context_id or scope.device_id or 'unidentified'}"
                 )
-                archive_session = await self._async_begin_archive_session(
-                    session_key,
+                archive_scope = (
                     replace(scope, device_id=continuity_device_id)
                     if resolution.key and continuity_device_id
-                    else scope,
+                    else scope
+                )
+                archive_session = await self._async_begin_archive_session(
+                    session_key,
+                    archive_scope,
                     chat_log.conversation_id,
                     request_policy,
                     live_logical_conversation=(live_managed or live_native)
@@ -1228,6 +1231,7 @@ class ExtendedOpenAIAgentEntity(
                 turn_token = _ACTIVE_TURN.set(
                     ConversationTurnContext(
                         scope=scope,
+                        archive_scope=archive_scope,
                         archive=(session_key, archive_session.session_id)
                         if archive_session
                         else None,
@@ -3846,7 +3850,7 @@ class ExtendedOpenAIAgentEntity(
                 session = await self._archive.async_resume_saving(
                     session_key,
                     session_id,
-                    scope,
+                    turn.archive_scope or scope,
                     shared_archive_enabled=bool(
                         self.subentry.data.get(
                             CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED

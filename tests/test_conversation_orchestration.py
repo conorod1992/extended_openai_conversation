@@ -137,15 +137,16 @@ def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
         lambda *_args, **_kwargs: nullcontext(chat_log),
     )
 
-    async def process():
+    async def process(*, turn_scope=scope, continuity=resolution, continuity_device_id=None):
         return await entity._async_process_claimed(
             user_input,
             llm_context,
             policy,
-            scope,
+            turn_scope,
             "kitchen",
             15,
-            resolution,
+            continuity,
+            continuity_device_id=continuity_device_id,
         )
 
     return entity, user_input, chat_log, policy, process
@@ -1107,3 +1108,99 @@ async def test_broadcast_failure_after_queue_insertion_never_repeats_effect(hass
     assert len(manager.history()) == len(manager._queues["assist_satellite.kitchen"]) == 1
     entity._async_handle_message_with_ha_tools.assert_not_awaited()
     assert entity.hass.bus.async_fire.call_args.args[1]["handled_locally"] is True
+
+
+async def test_resumed_mapped_voice_archive_keeps_live_private_marker_through_restore(
+    monkeypatch,
+):
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_ARCHIVE_ENABLED,
+        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    )
+    from custom_components.extended_openai_conversation_responses.conversation_archive import (
+        ConversationArchive,
+    )
+    from tests.test_conversation_archive import FakeArchiveStorage
+    from tests.test_selective_restore_concurrency import RestoreHarness
+
+    tx = RestoreHarness(monkeypatch)
+    entity, request, log, _, process = _pipeline_fixture(monkeypatch)
+    config = {
+        CONF_ARCHIVE_ENABLED: True,
+        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES: 1,
+        CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_DEVICE,
+        CONF_CONVERSATION_TIMEOUT_MINUTES: 15,
+    }
+    entity.subentry.data.update(config)
+    request.context = Context()
+    entity._usage = _UsageRecorder()
+    scope = user_scope(
+        "alice", source="device_mapping", device_id="assist_satellite.kitchen"
+    )
+    device_id = "kitchen-registry-id"
+    now = dt_util.utcnow()
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    agent_id = tx.subentry.subentry_id
+    continuity = entity._continuity = ConversationContinuity(agent_id)
+    resolution = await continuity.async_resolve(
+        CONVERSATION_CONTINUITY_DEVICE, scope, device_id, None, 15, native_user_id=None
+    )
+    log.conversation_id = resolution.conversation_id
+    archive = entity._archive = ConversationArchive(FakeArchiveStorage(), agent_id)
+    await archive.async_initialize()
+
+    async def begin(key, archive_scope, conversation_id, *_args, **_kwargs):
+        assert archive_scope.device_id == device_id
+        return await archive.async_begin_session(
+            key,
+            archive_scope,
+            conversation_id,
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=1,
+        )
+
+    async def handle(*_args, **_kwargs):
+        assert _ACTIVE_TURN.get().scope.device_id == scope.device_id
+        for operation in ("private", "resume", "private"):
+            result = await entity._async_execute_archive_tool(operation, {})
+            assert "error" not in result, result
+        return conversation.ConversationResult(
+            response=intent.IntentResponse(language="en"),
+            conversation_id=log.conversation_id,
+        )
+
+    entity._async_begin_archive_session.side_effect = begin
+    entity._async_handle_message_with_ha_tools.side_effect = handle
+    monkeypatch.setattr(
+        conversation_module,
+        "async_try_handle_local_intent",
+        AsyncMock(return_value=None),
+    )
+    await process(
+        turn_scope=scope, continuity=resolution, continuity_device_id=device_id
+    )
+    await continuity.async_release(resolution.key, resolution.claim_token)
+
+    current = replace(
+        tx.state,
+        config=config,
+        archive_sessions=list(archive._sessions.values()),
+        archive_active=dict(archive._active),
+    )
+    target = replace(current, archive_sessions=[], archive_active=None)
+    monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: entity)
+    now += timedelta(minutes=2)
+    verified = await restore_recovery._async_destination_archive_liveness(
+        tx.hass, tx.entry.entry_id, agent_id, current, target
+    )
+    prepared = restore_recovery._with_destination_archive_privacy(
+        target, current, agent_id, verified_live=verified
+    )
+    assert prepared.archive_active == current.archive_active
+    [private] = prepared.archive_sessions
+    assert private.retention_state == "private"
+    assert private.source_device_id == device_id

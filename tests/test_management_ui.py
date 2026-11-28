@@ -1781,3 +1781,44 @@ async def test_guest_domains_include_unexposed_registry_entries_and_saved_domain
         hass, "admin", True, _residual_message("guest_mode", "details")
     )
     assert details["domains"] == ["camera", "lock"]
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("max_function_calls_per_conversation", None),
+        ("max_function_calls_per_conversation", "bad"),
+        ("max_function_calls_per_conversation", 1.5),
+        ("chat_model", ""),
+        ("chat_model", "  "),
+    ],
+)
+async def test_configuration_read_preserves_values_that_require_repair(
+    monkeypatch, field, invalid
+):
+    entry, subentry = _residual_entry_pair()
+    subentry.data["functions"] = [
+        {
+            "spec": {"name": "who"},
+            "function": {"type": "native", "name": "get_user_from_user_id"},
+        }
+    ]
+    monkeypatch.setattr(management_ui, "_configuration_defaults", agent_config_defaults)
+    subentry.data[field] = invalid
+    hass = _residual_hass(entry)
+    monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
+
+    result = await management_ui.async_management_command(
+        hass, "admin", True, _residual_message("configuration", "get")
+    )
+    assert result["config"][field] == invalid
+    assert not result["configuration_guidance"]["web_search"]["available"]
+
+    validated = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        _residual_message("configuration", "validate", config={field: invalid}),
+    )
+    assert validated["valid"] is False
+    hass.config_entries.async_update_subentry.assert_not_called()

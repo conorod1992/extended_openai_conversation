@@ -388,11 +388,11 @@ class GuestModeManager:
         }
 
     @property
-    def continuity_activation(self) -> tuple[object, str] | None:
+    def continuity_activation(self) -> object | None:
         """Identify this interval without exposing or persisting a session identifier."""
         if self._schedule is None or not self.authoritative_available:
             return None
-        return self._continuity_epoch, self._schedule.active_from
+        return self._continuity_epoch
 
     def is_active(self, now: Any | None = None) -> bool:
         return bool(self.status(now)["currently_active"])
@@ -674,16 +674,9 @@ class GuestModeManager:
             )
             settled = True
         finally:
-            previous_expired = (
-                previous is not None
-                and previous.active_until is not None
-                and _parse_timestamp(self.hass, previous.active_until, "active_until")
-                <= dt_util.utcnow()
-            )
-            if (
-                self.authoritative_available != was_available
-                or (self._schedule is None) != (previous is None)
-                or (self._schedule != previous and previous_expired)
+            if self.authoritative_available != was_available or (
+                self._schedule != previous
+                and not self._continuously_active(previous, self._schedule)
             ):
                 self._continuity_epoch = object()
             # A failed write followed by a failed authoritative readback can
@@ -709,6 +702,24 @@ class GuestModeManager:
                         _LOGGER.warning(
                             "Could not notify Guest Mode listeners during save recovery"
                         )
+
+    def _continuously_active(
+        self,
+        previous: GuestModeSchedule | None,
+        current: GuestModeSchedule | None,
+    ) -> bool:
+        """Keep the activation identity when a write leaves Guest Mode active."""
+        now = dt_util.utcnow()
+        return all(
+            schedule is not None
+            and _parse_timestamp(self.hass, schedule.active_from, "active_from") <= now
+            and (
+                schedule.active_until is None
+                or now
+                < _parse_timestamp(self.hass, schedule.active_until, "active_until")
+            )
+            for schedule in (previous, current)
+        )
 
     def _live_or_future_schedule(self, now: Any) -> GuestModeSchedule | None:
         if self._persistence_unavailable:

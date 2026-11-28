@@ -1660,6 +1660,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             state, state_cache_hit = repair_state_for_projection(projection)
             if state is None:
                 if err.field.split("[", 1)[0] not in {
+                    CONF_CHAT_MODEL,
                     "max_tokens",
                     "max_function_calls_per_conversation",
                     "temperature",
