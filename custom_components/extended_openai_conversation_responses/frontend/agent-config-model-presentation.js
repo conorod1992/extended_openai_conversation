@@ -8,6 +8,14 @@ export function reasoningEffortOptionsForResult(result = {}) {
 
 export function webSearchControlState(panel) {
   const config = panel?._draft || panel?._result?.config || {};
+  const providerSupported = panel?._result?.hosted_web_search_provider_supported
+    ?? panel?._configData?.hosted_web_search_provider_supported;
+  if (providerSupported === false || (panel && modelProviderForPanel(panel) === "azure")) {
+    return {
+      disabled:!config.web_search,
+      note:"Hosted Web Search requires a direct OpenAI connection.",
+    };
+  }
   const metadata = modelCapabilitiesForDraft(panel);
   if (!metadata?.evaluations) return {disabled:false, note:""};
   const effort = config.reasoning_effort ?? metadata.recommended_profile?.reasoning_effort ?? null;
@@ -30,14 +38,32 @@ export function modelCapabilitiesForDraft(panel) {
   const config = panel?._draft || panel?._result?.config || {};
   const model = capabilityModelForPanel(panel, config);
   const catalog = panel?._modelCatalogData;
-  const saved = panel?._result?.config;
-  const fallback = saved && capabilityModelForPanel(panel, saved) !== model
-    ? {} : panel?._result?.model_capabilities || {};
-  if (catalog?.requested_model !== model || (catalog.requested_provider && catalog.requested_provider !== modelProviderForPanel(panel))) return fallback;
+  const provider = modelProviderForPanel(panel);
+  const validated = panel?._eocDraftModelCapabilities;
+  const savedResult = panel?._result?.config ? panel._result : panel?._configData || panel?._result;
+  const saved = savedResult?.config;
+  const fallback = (saved && capabilityModelForPanel(panel, saved) !== model)
+    || (savedResult?.api_provider && savedResult.api_provider !== provider)
+    ? {} : savedResult?.model_capabilities || {};
+  const draftCapabilities = validated && validated.draft === panel._draft
+    && validated.model === model && validated.provider === provider ? validated.capabilities : null;
+  if (catalog?.requested_model !== model || (catalog.requested_provider && catalog.requested_provider !== provider)) return draftCapabilities || fallback;
   if (catalog.model_capabilities) return catalog.model_capabilities;
   // Older catalogue envelopes expose metadata separately from the legacy
   // support flags. Reuse those flags only when they belong to this same model.
   return Object.keys(fallback).length ? {...fallback, ...catalog.model_metadata} : catalog.model_metadata || {};
+}
+
+export function resetReasoningEffort(panel, fallback) {
+  const config = panel._draft;
+  const metadata = modelCapabilitiesForDraft(panel);
+  const efforts = metadata.reasoning?.efforts || [];
+  if (!efforts.length) return metadata.reasoning?.supported === false ? fallback : config.reasoning_effort;
+  const compatible = efforts.filter(effort => apiPathSelectable(
+    metadata, config.api_mode, toolsRequired(config), effort, Boolean(config.web_search),
+  ));
+  return [fallback, metadata.recommended_profile?.reasoning_effort, ...compatible]
+    .find(effort => compatible.includes(effort)) ?? config.reasoning_effort;
 }
 
 // Presentation only: the catalogue and backend still own capability semantics.
@@ -72,14 +98,25 @@ export function modelFieldPresentation(panel, key, value) {
   }
   if (key === "reasoning_effort") {
     const reasoning = metadata.reasoning || {};
-    const selected = String(config.reasoning_effort ?? metadata.recommended_profile?.reasoning_effort ?? "");
+    const savedResult = panel?._result?.config ? panel._result : panel?._configData;
+    const authored = Object.hasOwn(config, "reasoning_effort") ? config.reasoning_effort
+      : savedResult?.config && capabilityModelForPanel(panel, savedResult.config) === capabilityModelForPanel(panel, config)
+        ? savedResult.inactive_reasoning_effort : null;
+    const selected = String(authored ?? metadata.recommended_profile?.reasoning_effort ?? "");
+    const clearingSavedEffort = Object.hasOwn(config, "reasoning_effort") && config.reasoning_effort === null && !reasoning.supported;
     const functions = toolsRequired(config);
     const key = `${selected || "null"}:${Number(functions)}:${Number(Boolean(config.web_search))}`;
     const api = config.api_mode === "auto" ? metadata.auto_paths?.[key] : config.api_mode;
     const efforts = reasoning.by_api?.[api]?.efforts || reasoning.efforts || [];
     const options = efforts.map((effort) => ({value:effort, label:String(effort).replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())}));
-    if (selected && !efforts.includes(selected)) options.push({value:selected, label:`${selected} (inactive)`});
-    return {visible:Boolean(reasoning.supported), value:selected, options, efforts};
+    const unsupported = Boolean(authored && !efforts.includes(selected));
+    if (clearingSavedEffort || (unsupported && !reasoning.supported)) options.push({value:"", label:"Model default"});
+    if (unsupported) {
+      options.push({value:selected, label:`${selected} (inactive)`});
+    }
+    return {visible:Boolean(reasoning.supported || unsupported || clearingSavedEffort), value:selected, options, efforts,
+      repairable:clearingSavedEffort || (unsupported && !reasoning.supported),
+      note:unsupported ? "Choose a supported value to replace the saved reasoning effort." : ""};
   }
   if (key === "temperature" || key === "top_p") {
     const state = parameterControlState(metadata[key], config.reasoning_effort, config[key]);

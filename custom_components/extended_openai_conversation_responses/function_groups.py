@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -12,7 +12,9 @@ from typing import Any, cast
 
 from .agent_config import function_tool_enabled
 from .const import (
+    CONF_FUNCTION_GROUPS,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+    DEFAULT_FUNCTION_GROUPS,
     FUNCTION_GROUP_LOADER_TOOL_NAME,
     FUNCTION_GROUP_LOADING_ALWAYS,
     FUNCTION_GROUP_LOADING_ON_DEMAND,
@@ -202,7 +204,52 @@ def function_tool_runtime_available(tool: dict[str, Any]) -> bool:
     function_config = tool.get("function", {})
     if function_config.get("type") == "bash":
         return function_config.get("allow_unsafe_shell") is True
+    if function_config.get("type") == "composite":
+        from .functions.composite import composite_backends_available
+
+        return composite_backends_available(function_config)
     return True
+
+
+def safe_function_groups(
+    options: Mapping[str, Any], tools: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Use the runtime quarantine projection for malformed saved group data."""
+    from .function_tool_quarantine import _runtime_validate_function_groups
+
+    return _runtime_validate_function_groups(
+        options.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)), tools
+    )
+
+
+def effective_configured_function_names(
+    options: Mapping[str, Any],
+    tools: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+    *,
+    assume_ha_available: bool = False,
+) -> set[str]:
+    """List executable configured members across enabled groups."""
+    from .request import function_call_budget_available
+
+    if not function_call_budget_available(options):
+        return set()
+    disabled = {
+        name
+        for group in groups
+        if not function_group_enabled(group)
+        for name in group["functions"]
+    }
+    return {
+        tool["spec"]["name"]
+        for tool in tools
+        if tool["spec"]["name"] not in disabled
+        and function_tool_runtime_available(
+            {**tool, "ha_available": True}
+            if assume_ha_available and "ha_available" not in tool
+            else tool
+        )
+    }
 
 
 def _effective_runtime(
@@ -258,11 +305,13 @@ def _tool_is_available(
 def _available_group_sets(
     configured_tools: list[dict[str, Any]] | None,
     groups: list[dict[str, Any]],
+    loaded_group_ids: set[str],
     *,
     function_tools_supported: bool,
     group_loader_supported: bool,
     tool_available: ToolAvailabilityPredicate | None,
     runtime: ToolRuntimeAvailability | None = None,
+    request_tool_available: ToolAvailabilityPredicate | None = None,
 ) -> tuple[set[str], dict[str, dict[str, Any]], set[str]]:
     """Resolve executable members plus reachable on-demand and always groups."""
     runtime = runtime or _effective_runtime(
@@ -285,19 +334,33 @@ def _available_group_sets(
             )
         }
 
-    always = {
-        group["id"]
-        for group in groups
-        if function_group_enabled(group)
-        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ALWAYS
-        and any(name in available_names for name in group["functions"])
-    }
     on_demand = {
         group["id"]: group
         for group in groups
         if runtime.group_loader_supported
         and function_group_enabled(group)
         and group["loading_mode"] == FUNCTION_GROUP_LOADING_ON_DEMAND
+        and any(name in available_names for name in group["functions"])
+    }
+    # Prune permanently unavailable groups before applying turn-specific rules.
+    loaded_group_ids.intersection_update(on_demand)
+    if request_tool_available is not None and configured_tools is not None:
+        available_names.difference_update(
+            tool["spec"]["name"]
+            for tool in configured_tools
+            if tool["spec"]["name"] in available_names
+            and not request_tool_available(tool)
+        )
+        on_demand = {
+            group_id: group
+            for group_id, group in on_demand.items()
+            if any(name in available_names for name in group["functions"])
+        }
+    always = {
+        group["id"]
+        for group in groups
+        if function_group_enabled(group)
+        and group["loading_mode"] == FUNCTION_GROUP_LOADING_ALWAYS
         and any(name in available_names for name in group["functions"])
     }
     return available_names, on_demand, always
@@ -343,6 +406,7 @@ def assemble_function_tools(
     group_loader_supported: bool = True,
     tool_available: ToolAvailabilityPredicate | None = None,
     runtime: ToolRuntimeAvailability | None = None,
+    request_tool_available: ToolAvailabilityPredicate | None = None,
 ) -> FunctionToolAssembly:
     """Centralize the effective configured tool set for one provider request."""
     membership = {
@@ -351,14 +415,13 @@ def assemble_function_tools(
     available_names, on_demand, _always = _available_group_sets(
         configured_tools,
         groups,
+        loaded_group_ids,
         function_tools_supported=function_tools_supported,
         group_loader_supported=group_loader_supported,
         tool_available=tool_available,
         runtime=runtime,
+        request_tool_available=request_tool_available,
     )
-
-    # Never resurrect an old loaded state after the group becomes unavailable.
-    loaded_group_ids.intersection_update(on_demand)
 
     effective: list[dict[str, Any]] = []
     for tool in configured_tools:
@@ -401,24 +464,78 @@ def assemble_function_tools(
     )
 
 
-def admit_function_group_loader(
-    tools: list[dict[str, Any]],
-    max_tools: int | None,
-    *,
-    extra_tool_count: int = 0,
-    loader_available: bool = True,
-) -> list[dict[str, Any]]:
-    """Drop the optional loader when executable tools fill the remaining slots."""
-    if loader_available and (
-        max_tools is None
-        or count_model_function_tools(tools) + extra_tool_count != max_tools + 1
-    ):
+def is_function_group_loader(tool: dict[str, Any]) -> bool:
+    """Identify the synthesized loader independently of configured tool names."""
+    return bool(tool.get("function", {}).get("type") == "function_group_loader")
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionToolAdmission:
+    """Admission rules and reservations for one provider round."""
+
+    max_tools: int | None = None
+    extra_tool_count: int = 0
+    loader_available: bool = True
+    function_calls_available: bool = True
+    request_tool_available: ToolAvailabilityPredicate | None = None
+
+    def admit(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Apply runtime eligibility, then fit the optional tools."""
+        from .scheduled_action_tools import fit_scheduled_action_tools
+
+        if not self.loader_available:
+            tools = [tool for tool in tools if not is_function_group_loader(tool)]
+        if not self.function_calls_available:
+            # Loading schemas and finalizing do not consume execution slots.
+            tools = [tool for tool in tools if is_function_group_loader(tool)]
+        if self.request_tool_available is not None:
+            tools = [tool for tool in tools if self.request_tool_available(tool)]
+        tools = fit_scheduled_action_tools(
+            tools, self.max_tools, extra_tool_count=self.extra_tool_count
+        )
+        if self.max_tools is not None and (
+            count_model_function_tools(tools) + self.extra_tool_count
+            == self.max_tools + 1
+        ):
+            tools = [tool for tool in tools if not is_function_group_loader(tool)]
         return tools
-    return [
-        tool
-        for tool in tools
-        if tool.get("function", {}).get("type") != "function_group_loader"
-    ]
+
+    def fits(self, tools: list[dict[str, Any]]) -> bool:
+        """Check the admitted schemas and reserved provider slots."""
+        return (
+            self.max_tools is None
+            or count_model_function_tools(tools) + self.extra_tool_count
+            <= self.max_tools
+        )
+
+
+def skill_loader_reachable(
+    admitted: list[dict[str, Any]],
+    admission: FunctionToolAdmission,
+    groups: Callable[[], list[dict[str, Any]]],
+    can_load_group: Callable[[str], bool],
+) -> bool:
+    """Resolve reachability after the provider's tool slots have been allocated."""
+    from .skill_availability import (
+        SKILL_LOADER_TOOL_NAME,
+        function_group_for_tool,
+        is_canonical_skill_loader,
+    )
+
+    if not admission.function_calls_available:
+        return False
+    if any(map(is_canonical_skill_loader, admitted)):
+        return True
+    loader = next((tool for tool in admitted if is_function_group_loader(tool)), None)
+    if loader is None:
+        return False
+    group = function_group_for_tool(SKILL_LOADER_TOOL_NAME, groups())
+    return (
+        group is not None
+        and group["id"]
+        in loader["spec"]["parameters"]["properties"]["groups"]["items"]["enum"]
+        and (admission.max_tools is None or can_load_group(group["id"]))
+    )
 
 
 def load_function_groups(
@@ -430,19 +547,66 @@ def load_function_groups(
     function_tools_supported: bool = True,
     group_loader_supported: bool = True,
     tool_available: ToolAvailabilityPredicate | None = None,
-    max_tools: int | None = None,
-    extra_tool_count: int = 0,
-    loader_available_next_round: bool = True,
+    admission: FunctionToolAdmission = FunctionToolAdmission(),
+    integration_tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Validate and apply one model-requested group load operation."""
-    _available_names, on_demand, always = _available_group_sets(
+    available_names, on_demand, always = _available_group_sets(
         configured_tools,
         groups,
+        session.loaded_group_ids,
         function_tools_supported=function_tools_supported,
         group_loader_supported=group_loader_supported,
         tool_available=tool_available,
+        request_tool_available=admission.request_tool_available,
     )
-    session.loaded_group_ids.intersection_update(on_demand)
+
+    def prospective_tools(loaded_ids: set[str]) -> list[dict[str, Any]]:
+        if admission.max_tools is None or configured_tools is None:
+            return []
+        effective = assemble_function_tools(
+            configured_tools,
+            groups,
+            loaded_ids.copy(),
+            function_tools_supported=function_tools_supported,
+            group_loader_supported=group_loader_supported,
+            tool_available=tool_available,
+            request_tool_available=admission.request_tool_available,
+        )
+        return admission.admit([*effective.tools, *(integration_tools or ())])
+
+    def loadable_groups(
+        loaded_ids: set[str], admitted: list[dict[str, Any]]
+    ) -> list[str]:
+        remaining = on_demand.keys() - loaded_ids
+        if not admission.loader_available or not remaining:
+            return []
+        if admission.max_tools is None or configured_tools is None:
+            return sorted(remaining)
+        if not any(map(is_function_group_loader, admitted)):
+            return []
+        by_name = {
+            tool["spec"]["name"]: tool
+            for tool in configured_tools
+            if tool["spec"]["name"] in available_names
+        }
+        return sorted(
+            group_id
+            for group_id in remaining
+            if admission.fits(
+                admission.admit(
+                    [
+                        *admitted,
+                        *(
+                            by_name[name]
+                            for name in on_demand[group_id]["functions"]
+                            if name in by_name
+                        ),
+                    ]
+                )
+            )
+        )
+
     if (
         not isinstance(requested, list)
         or not requested
@@ -451,64 +615,42 @@ def load_function_groups(
         return {
             "status": "error",
             "error": "groups must be a non-empty array of group IDs",
-            "loadable_groups": sorted(
-                group_id
-                for group_id in on_demand
-                if group_id not in session.loaded_group_ids
+            "loadable_groups": loadable_groups(
+                session.loaded_group_ids, prospective_tools(session.loaded_group_ids)
             ),
         }
 
     loaded: list[str] = []
-    previous = set(session.loaded_group_ids)
+    prospective = session.loaded_group_ids.copy()
     already_loaded: list[str] = []
     already_available: list[str] = []
     unknown: list[str] = []
     for group_id in dict.fromkeys(requested):
-        if group_id in session.loaded_group_ids and group_id in on_demand:
+        if group_id in prospective and group_id in on_demand:
             already_loaded.append(group_id)
         elif group_id in on_demand:
-            session.loaded_group_ids.add(group_id)
+            prospective.add(group_id)
             loaded.append(group_id)
         elif group_id in always:
             already_available.append(group_id)
         else:
             unknown.append(group_id)
     session.last_active = time.monotonic()
-    loader_admitted = loader_available_next_round
-    if max_tools is not None and configured_tools is not None:
-        effective = assemble_function_tools(
-            configured_tools,
-            groups,
-            set(session.loaded_group_ids),
-            function_tools_supported=function_tools_supported,
-            group_loader_supported=group_loader_supported,
-            tool_available=tool_available,
-        )
-        admitted = admit_function_group_loader(
-            effective.tools,
-            max_tools,
-            extra_tool_count=extra_tool_count,
-            loader_available=loader_available_next_round,
-        )
-        loader_admitted = len(admitted) == len(effective.tools) and loader_admitted
-        if count_model_function_tools(admitted) + extra_tool_count > max_tools:
-            session.loaded_group_ids.clear()
-            session.loaded_group_ids.update(previous)
-            return {
-                "status": "error",
-                "error": f"Loading these groups exceeds the provider's {max_tools}-tool limit",
-            }
+    admitted = prospective_tools(prospective)
+    if configured_tools is not None and not admission.fits(admitted):
+        return {
+            "status": "error",
+            "error": (
+                "Loading these groups exceeds the provider's "
+                f"{admission.max_tools}-tool limit"
+            ),
+        }
+    session.loaded_group_ids.update(loaded)
     return {
         "status": "success" if not unknown else "partial" if loaded else "error",
         "loaded": loaded,
         "already_loaded": already_loaded,
         "already_available": already_available,
         "unknown": unknown,
-        "loadable_groups": []
-        if not loader_admitted
-        else sorted(
-            group_id
-            for group_id in on_demand
-            if group_id not in session.loaded_group_ids
-        ),
+        "loadable_groups": loadable_groups(prospective, admitted),
     }

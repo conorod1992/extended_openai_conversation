@@ -8,12 +8,29 @@ import subprocess
 from zoneinfo import ZoneInfo
 
 import pytest
-
-from tests.test_guest_mode import _manager
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses.management_datetime import (
+    project_management_dates,
     resolve_management_dates,
+    resolve_local_time,
 )
+from tests.test_guest_mode import _manager
+
+
+@pytest.mark.parametrize(
+    ("zone", "wall_time", "message"),
+    [
+        ("Missing/Timezone", "2027-06-04T12:00", "timezone is unavailable"),
+        ("Asia/Tokyo", "0001-01-01T00:00", "Choose a valid local date"),
+    ],
+)
+def test_local_time_rejects_unavailable_zones_and_unrepresentable_utc(
+    hass, zone, wall_time, message
+):
+    hass.config.time_zone = zone
+    with pytest.raises(HomeAssistantError, match=message):
+        resolve_local_time(hass, wall_time, reject_ambiguous=True)
 
 
 @pytest.mark.parametrize("browser_zone", ["UTC", "Pacific/Auckland"])
@@ -70,6 +87,61 @@ def test_guest_wall_times_survive_panel_wire_normalization(
 
 
 @pytest.mark.parametrize("implementation", ["source", "bundle"])
+async def test_restored_offset_expiry_uses_utc_for_display_and_edits(
+    hass, implementation
+):
+    hass.config.time_zone = "Asia/Tokyo"
+    manager = _manager(hass)
+    original = "9999-12-31T23:59:59.123456+01:00"
+    schedule = manager.validate_backup_data(
+        {
+            "schedule": {
+                "active_from": "2027-06-04T12:00:00+00:00",
+                "active_until": original,
+                "source": "home_assistant",
+                "updated_at": None,
+            }
+        }
+    )
+    await manager.async_replace_backup(schedule)
+    status = project_management_dates(hass, "guest_mode", {"status": manager.status()})[
+        "status"
+    ]
+    assert status["active_until"] == original
+    assert status["active_until_local"] is None
+    assert status["active_until_utc"] == "9999-12-31T22:59:59"
+    result = subprocess.check_output(
+        [
+            "node",
+            str(Path(__file__).with_name("guest-wall-time-wire.mjs")),
+            hass.config.time_zone,
+            implementation,
+            "2027-06-01T12:00:00Z",
+            json.dumps(status),
+        ],
+        env={**os.environ, "TZ": "Pacific/Auckland"},
+        text=True,
+    )
+    unchanged, edited = json.loads(result)
+    for case in (unchanged, edited):
+        assert case["displayed"]["end"] == "9999-12-31T22:59"
+        assert "Ends 9999-12-31 22:59:59 UTC" in case["displayed"]["summary"]
+        assert case["message"]["local_times"] == {}
+    assert unchanged["message"]["active_until"] == original
+    edited_message = resolve_management_dates(hass, edited["message"])
+    assert edited_message["active_until"] == "9999-12-31T22:58Z"
+    saved = await manager.async_update_trusted(
+        active_from=edited_message["active_from"],
+        active_until=edited_message["active_until"],
+        indefinite=False,
+        now=datetime(2027, 6, 1, tzinfo=UTC),
+    )
+    assert datetime.fromisoformat(saved["active_until"]) < datetime.fromisoformat(
+        original
+    )
+
+
+@pytest.mark.parametrize("implementation", ["source", "bundle"])
 @pytest.mark.parametrize(
     "browser_clock", ["2027-06-01T12:00:00Z", "2027-06-07T12:00:00Z"]
 )
@@ -114,3 +186,16 @@ async def test_activation_uses_server_clock_and_preserves_rejected_schedule(
         )
     assert await manager.async_backup_data() == saved
     assert manager._store.async_save.await_count == writes
+
+
+@pytest.mark.parametrize("method", ["async_restrict", "async_update_trusted"])
+@pytest.mark.parametrize(
+    ("wall", "reason"),
+    [("2027-03-14T02:30", "does not exist"), ("2027-11-07T01:30", "occurs twice")],
+)
+async def test_guest_authoring_rejects_dst_gap_and_fold(hass, method, wall, reason):
+    hass.config.time_zone = "America/New_York"
+    manager = _manager(hass)
+    with pytest.raises(ValueError, match=reason):
+        await getattr(manager, method)(active_from=wall)
+    assert manager._schedule is None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from openai import OpenAIError
 
@@ -13,6 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
     configured_function_tools_from_data,
+    normalized_function_call_budget,
     parse_configured_function_tools,
     validate_function_groups,
 )
@@ -26,17 +27,19 @@ from .const import (
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
     CONF_FUNCTION_GROUPS,
-    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_SKILLS,
     CONF_WEB_SEARCH,
     DEFAULT_API_MODE,
     DEFAULT_CHAT_MODEL,
     DEFAULT_FUNCTION_GROUPS,
-    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_WEB_SEARCH,
 )
 from .functions import get_function
-from .guest_mode import get_loaded_guest_mode, resolve_guest_policy
+from .guest_mode import (
+    async_get_guest_mode,
+    get_loaded_guest_mode,
+    resolve_guest_policy,
+)
 from .ha_llm_tools import is_ha_tool, validate_reference
 from .helpers import (
     effective_api_provider,
@@ -46,6 +49,7 @@ from .helpers import (
 )
 from .memory import async_get_memory, memory_enabled
 from .model_capabilities import (
+    OutputTokenLimitError,
     capability_allowed,
     model_capability_snapshot,
     recommended_reasoning_effort,
@@ -55,15 +59,19 @@ from .provider_content import answer_text
 from .provider_credentials import require_provider_restore_complete
 from .provider_errors import (
     classify_config_provider_error,
+    clear_provider_authentication_rejection,
     ensure_successful_responses_result,
+    provider_authentication_snapshot,
     provider_user_message,
     request_reauthentication,
 )
 from .request import (
+    async_capacity_ha_snapshot,
     auxiliary_output_token_limit,
     build_provider_request_snapshot,
     conversation_tools_required,
     request_model_capabilities,
+    validate_runtime_readiness,
 )
 from .skill_availability import skill_loader_status
 from .skills import SkillManager
@@ -77,6 +85,7 @@ class TestCheck:
     name: str
     status: str
     message: str
+    recovery_setting: Literal["azure_model", "max_tokens"] | None = None
 
 
 @dataclass(slots=True)
@@ -91,7 +100,14 @@ class AgentTestResult:
         """Return a JSON-safe response for flows and WebSocket clients."""
         return {
             "status": self.status,
-            "checks": [asdict(check) for check in self.checks],
+            "checks": [
+                {
+                    key: value
+                    for key, value in asdict(check).items()
+                    if value is not None
+                }
+                for check in self.checks
+            ],
             "authentication_rejected": self.authentication_rejected,
         }
 
@@ -148,6 +164,9 @@ async def async_test_agent(
     if client is None:
         checks.append(_check("Authentication", "Failed", "API client is unavailable"))
         return AgentTestResult(_overall(checks), checks)
+    authentication = getattr(client, "_eoai_authentication_snapshot", None) or (
+        provider_authentication_snapshot(entry)
+    )
     checks.append(_check("Authentication", "Passed", "API client is available"))
 
     model = subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
@@ -167,10 +186,11 @@ async def async_test_agent(
     )
     if subentry.data.get("azure_model") and usage_provider != "azure":
         checks.append(
-            _check(
+            TestCheck(
                 "Configuration",
                 "Failed",
                 "Azure underlying model is only supported with Azure; clear the setting for this provider.",
+                recovery_setting="azure_model",
             )
         )
         return AgentTestResult(_overall(checks), checks)
@@ -185,7 +205,16 @@ async def async_test_agent(
             client=client,
         )
     except HomeAssistantError as err:
-        checks.append(_check("Saved request settings", "Failed", str(err)))
+        checks.append(
+            TestCheck(
+                "Saved request settings",
+                "Failed",
+                str(err),
+                recovery_setting="max_tokens"
+                if isinstance(err.__cause__, OutputTokenLimitError)
+                else None,
+            )
+        )
     else:
         checks.append(
             _check(
@@ -235,30 +264,67 @@ async def async_test_agent(
     checks.append(
         _check("Configuration", "Passed", f"{function_count} tool schemas valid")
     )
-    guest_mode = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
-    guest_status = (
-        guest_mode.status() if guest_mode is not None else {"state": "inactive"}
-    )
-    guest_policy = resolve_guest_policy(
-        hass,
-        subentry.data,
-        guest_mode,
-        configured_tools,
-    )
-    policy = guest_policy.as_diagnostics()
-    checks.append(
-        _check(
-            "Guest Mode",
-            "Passed",
-            (
-                f"{str(guest_status['state']).replace('_', ' ').title()}; "
-                f"{policy['readable_entity_count'] or 0} visible entities; "
-                f"{policy['configured_tool_count'] or 0} custom tools"
-                if guest_policy.guest_active
-                else "Inactive"
-            ),
+    groups = []
+    group_error = None
+    if getattr(subentry, "subentry_type", "conversation") == "conversation":
+        try:
+            groups = validate_function_groups(
+                subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
+                configured_tools,
+            )
+        except Exception as err:
+            group_error = err
+            checks.append(_check("Function Groups", "Failed", str(err)))
+        else:
+            try:
+                validate_runtime_readiness(
+                    subentry.data,
+                    entry.data,
+                    client=client,
+                    ha_snapshot=(
+                        await async_capacity_ha_snapshot(hass, subentry.data, None)
+                        if any(is_ha_tool(tool) for tool in configured_tools)
+                        else None
+                    ),
+                    validated_catalogue=(configured_tools, groups),
+                )
+            except HomeAssistantError as err:
+                checks.append(_check("Function Tool availability", "Failed", str(err)))
+    try:
+        guest_mode = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
+        if guest_mode is None or not getattr(
+            guest_mode, "authoritative_available", True
+        ):
+            guest_mode = await async_get_guest_mode(
+                hass, entry.entry_id, subentry.subentry_id
+            )
+        guest_status = guest_mode.status()
+        guest_policy = resolve_guest_policy(
+            hass,
+            subentry.data,
+            guest_mode,
+            configured_tools,
         )
-    )
+        policy = guest_policy.as_diagnostics()
+        guest_message = str(guest_status["state"]).replace("_", " ").title()
+        if guest_policy.guest_active:
+            guest_message += (
+                f"; {policy['readable_entity_count'] or 0} visible entities"
+                f"; {policy['configured_tool_count'] or 0} custom tools"
+            )
+        elif guest_status["state"] == "scheduled" and guest_status.get("active_from"):
+            guest_message += f" for {guest_status['active_from']}"
+        checks.append(
+            _check(
+                "Guest Mode",
+                "Passed",
+                guest_message,
+            )
+        )
+    except Exception:
+        checks.append(
+            _check("Guest Mode", "Failed", "Guest Mode policy is unavailable")
+        )
 
     try:
         entity_count = len(get_exposed_entities(hass))
@@ -275,21 +341,16 @@ async def async_test_agent(
     selected_skills = list(subentry.data.get(CONF_SKILLS, []) or [])
     if not selected_skills:
         checks.append(_check("Skills", "Passed", "Disabled"))
+    elif group_error is not None:
+        checks.append(_check("Skills", "Failed", str(group_error)))
     else:
         try:
-            groups = validate_function_groups(
-                subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
-                configured_tools,
-            )
             loader_status = skill_loader_status(
                 selected_skills,
                 configured_tools,
                 groups,
-                max_function_calls=int(
-                    subentry.data.get(
-                        CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                        DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                    )
+                max_function_calls=normalized_function_call_budget(
+                    subentry.data, allow_unlimited=True
                 ),
             )
             if not loader_status.available:
@@ -333,11 +394,16 @@ async def async_test_agent(
     if memory_enabled(subentry.data):
         try:
             memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
+            stats = memory.stats()
+            stored_count = stats["memory_count"]
+            needs_repair = stats.get("memory_storage_repair_required", False)
             checks.append(
                 _check(
                     "Long-term memory",
-                    "Passed",
-                    f"Available ({memory.stats()['memory_count']} stored)",
+                    "Warning" if needs_repair else "Passed",
+                    f"Read-only pending storage repair ({stored_count} readable)"
+                    if needs_repair
+                    else f"Available ({stored_count} stored)",
                 )
             )
         except Exception as err:
@@ -374,7 +440,7 @@ async def async_test_agent(
             _check("Function calling", "Skipped", "Not required by this agent")
         )
 
-    noop_tool = {
+    noop_tool: dict[str, Any] = {
         "type": "function",
         "name": "configuration_test_noop",
         "description": "Schema-only compatibility test; never execute this function.",
@@ -383,8 +449,11 @@ async def async_test_agent(
             "properties": {},
             "additionalProperties": False,
         },
-        "strict": True,
     }
+    if usage_provider == "azure" or is_native_openai_connection(
+        entry.data, client=client
+    ):
+        noop_tool["strict"] = True
     usage_manager = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
     probe_budget_exhausted = False
     probe_usage = None
@@ -549,6 +618,7 @@ async def async_test_agent(
         if web_search and web_search_compatible:
             checks.append(_check("Web Search", "Failed", str(err)))
     else:
+        clear_provider_authentication_rejection(hass, entry, authentication)
         await usage_manager.async_record_request(
             successful=True,
             usage=probe_usage,

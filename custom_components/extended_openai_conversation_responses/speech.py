@@ -86,6 +86,8 @@ def _join_speech(parts: list[str], kinds: Mapping[int, _LiteralKind]) -> str:
 
 
 _BACKTICK_RUN = re.compile(r"`+")
+_QUOTE_PREFIX_PATTERN = r"(?: {0,3}>[ \t]?)+"
+_INLINE_CODE_BOUNDARY = re.compile(rf"`+|\n(?:{_QUOTE_PREFIX_PATTERN})?+[ \t\r]*+\n")
 _LABEL_SYNTAX = re.compile(r"`+|[\[\]]")
 _LINK_WHITESPACE = " \t\r\n"
 # Bare destinations stop at any whitespace, but only these separators can
@@ -175,7 +177,7 @@ DEFAULT_STREAMING_BUFFER_LIMIT = 4096
 COMPLETED_SPEECH_EXECUTOR_THRESHOLD = 4096
 _FORMAT_PREFIX_LIMIT = 32
 _QUOTE_MARKER = re.compile(r" {0,3}>[ \t]?")
-_QUOTE_PREFIX = re.compile(r"^(?: {0,3}>[ \t]?)+")
+_QUOTE_PREFIX = re.compile(rf"^{_QUOTE_PREFIX_PATTERN}")
 _LIST_PREFIX = re.compile(r"[ ]{0,3}(?:[-+*]|[0-9]{1,9}[.)])[ \t]+")
 
 
@@ -430,6 +432,7 @@ class StreamingSpeechSanitizer:
             None
         )
         self._complete_mode = False
+        self._complete_code_openers: set[int] = set()
         self._completed_last_markers: dict[int, dict[str, int]] | None = None
         self._completed_singles: dict[str, array] | None = None
         self._completed_nested_singles: dict[str, array] | None = None
@@ -471,8 +474,23 @@ class StreamingSpeechSanitizer:
         if self._complete_mode or self._buffer or self._format_buffer:
             raise ValueError("Completed speech requires a fresh sanitizer")
         self._complete_mode = True
-        if self.markdown and len(text) > DEFAULT_STREAMING_BUFFER_LIMIT and "[" in text:
-            self._completed_links = self._index_complete_links(text)
+        if self.markdown:
+            if len(text) > DEFAULT_STREAMING_BUFFER_LIMIT and "[" in text:
+                self._completed_links = self._index_complete_links(text)
+            previous: dict[int, int] = {}
+            for match in _INLINE_CODE_BOUNDARY.finditer(text):
+                if text[match.start()] == "\n":
+                    previous.clear()
+                else:
+                    start, end = match.span()
+                    width = end - start
+                    if width in previous:
+                        self._complete_code_openers.add(previous[width])
+                    # In prose only the first backtick is escaped. Inside
+                    # code the full run can still close an existing span.
+                    start += self._is_escaped(text, start)
+                    if start < end:
+                        previous[end - start] = start
         self._buffer = text
         link_safe = self._drain_links(final=True)
         if self._needs_separator:
@@ -649,21 +667,27 @@ class StreamingSpeechSanitizer:
         self._suppressed_line_break = False
         # A held list prefix has emitted no content on this line. Keep its
         # preceding line boundary so removing the item cannot duplicate it.
+        trimmed = 0
         while (
             not self._pending_list_prefix
             and output
             and output[-1]
             and output[-1][-1].isspace()
         ):
-            output[-1] = output[-1].rstrip()
+            stripped = output[-1].rstrip()
+            trimmed += len(output[-1]) - len(stripped)
+            output[-1] = stripped
             if not output[-1]:
                 output.pop()
         if not output and not self._pending_list_prefix:
             # The adjacent whitespace may still be waiting for an emphasis
             # closer in the next stage. Apply the same removal in either stage.
-            self._format_buffer = self._format_buffer.rstrip()
-        if not self._pending_list_prefix:
-            self._last_output = self._last_output.rstrip()
+            stripped = self._format_buffer.rstrip()
+            trimmed += len(self._format_buffer) - len(stripped)
+            self._format_buffer = stripped
+        if trimmed:
+            # Whitespace already sent to the listener cannot be retracted.
+            self._last_output = self._last_output[:-trimmed]
         self._needs_separator = True
         self.suppressed_constructs += 1
         return end
@@ -724,6 +748,19 @@ class StreamingSpeechSanitizer:
         """
         if not self._needs_separator or text[index].isspace():
             return 0
+        if (
+            self.markdown
+            and text[index] == "\\"
+            and not self._is_escaped(text, index, self._link_backslashes)
+        ):
+            following = text[index + 1 : index + 2]
+            if not following and not final:
+                return None
+            if following and following in ")]}":
+                self._needs_separator = False
+                self._suppressed_line_break = False
+                self._suppressed_closer = self._suppressed_opener = None
+                return 0
         closer = self._suppressed_closer
         if closer and text[index] == closer[0]:
             remaining = text[index:]
@@ -1504,6 +1541,14 @@ class StreamingSpeechSanitizer:
                         if not final and len(text) - index <= self.max_buffer_chars:
                             break
                 if not self._link_code:
+                    has_closer = self._inline_code_has_closer(text, index, end, final)
+                    if has_closer is None:
+                        break
+                    if not has_closer:
+                        if count == 1:
+                            self._emit(output, _RenderedLabel(text[index:end], ()))
+                        index = end
+                        continue
                     self._link_code = count
                 elif count == self._link_code:
                     self._link_code = 0
@@ -1512,9 +1557,21 @@ class StreamingSpeechSanitizer:
                 index = end
                 continue
             if self._link_code:
-                self._emit(output, char)
-                index += 1
-                continue
+                if (
+                    not self._link_block
+                    and char == "\n"
+                    and not _QUOTE_PREFIX.sub(
+                        "", self._original_line_prefix, count=1
+                    ).strip(" \t\r")
+                ):
+                    # A streaming span that exceeded lookahead cannot cross a paragraph.
+                    self._link_code = 0
+                    fences[len(output)] = False
+                    output.append("")
+                else:
+                    self._emit(output, char)
+                    index += 1
+                    continue
 
             # Recognize only bounded, top-level Setext underlines using authored
             # line context, before link removal can manufacture a heading.
@@ -1593,7 +1650,12 @@ class StreamingSpeechSanitizer:
                     index = self._suppress(output, end)
                     continue
 
-            if self.markdown and not self._inline_only and char == "(":
+            if (
+                self.markdown
+                and not self._inline_only
+                and char == "("
+                and not self._is_escaped(text, index, self._link_backslashes)
+            ):
                 link_start = index + 1
                 if link_start < len(text) and text[link_start] == "!":
                     link_start += 1
@@ -1702,7 +1764,6 @@ class StreamingSpeechSanitizer:
             markdown_start = index
             if (
                 self.markdown
-                and not self._inline_only
                 and char == "!"
                 and not self._is_escaped(text, index, self._link_backslashes)
             ):
@@ -1712,7 +1773,7 @@ class StreamingSpeechSanitizer:
                     markdown_start += 1
             if (
                 self.markdown
-                and not self._inline_only
+                and (not self._inline_only or markdown_start != index)
                 and text[markdown_start : markdown_start + 1] == "["
                 and not self._is_escaped(text, markdown_start, self._link_backslashes)
             ):
@@ -1891,6 +1952,26 @@ class StreamingSpeechSanitizer:
                 self._format_fences[offset] = len(part), fences[part_index]
             offset += len(part)
         return "".join(output)
+
+    def _inline_code_has_closer(
+        self, text: str, start: int, end: int, final: bool
+    ) -> bool | None:
+        """Decide before suppressing Markdown syntax inside an inline span."""
+        if self._complete_mode:
+            return start in self._complete_code_openers
+        count = end - start
+        limit = min(len(text), start + self.max_buffer_chars)
+        for match in _INLINE_CODE_BOUNDARY.finditer(text, end, limit):
+            if text[match.start()] == "\n":
+                return False
+            if match.end() - match.start() == count and (
+                match.end() < limit or (final and limit == len(text))
+            ):
+                return True
+        if limit - start >= self.max_buffer_chars:
+            # Stay bounded on long code spans. The drain resets at a blank line.
+            return True
+        return False if final else None
 
     @staticmethod
     def _index_complete_links(
@@ -2371,6 +2452,7 @@ class StreamingSpeechSanitizer:
                 continue
             if index == format_end:
                 width, self._format_block = self._format_fences[index]
+                self._format_code = 0
                 format_end = next(fences, buffer_end)
                 index += width
                 if width:
@@ -2816,8 +2898,10 @@ class StreamingSpeechSanitizer:
             char = text[index]
             if char == marker:
                 count += 1
-            elif char == "\n":
+            elif char == "\n" or text.startswith("\r\n", index):
                 return ("strip", index - start) if count >= 3 else ("none", 0)
+            elif char == "\r" and index == len(text) - 1 and not final:
+                return "incomplete", 0
             elif char not in " \t":
                 return "none", 0
             index += 1
@@ -2863,7 +2947,13 @@ class StreamingSpeechSanitizer:
                 if marker == "-":
                     if end == len(text) and not final:
                         return "incomplete", 0
-                    if end < len(text) and text[end].isdigit():
+                    if text[end : end + 1] == ".":
+                        fraction = text[end + 1 : end + 2]
+                        if not fraction and not final:
+                            return "incomplete", 0
+                        if fraction.isdecimal():
+                            return "none", 0
+                    if end < len(text) and text[end].isnumeric():
                         nested_action, nested_count = (
                             StreamingSpeechSanitizer._line_prefix(text, final, end)
                         )
@@ -2945,9 +3035,11 @@ class _SpeechDeltaListener:
         agent_config: Mapping[str, Any],
         *,
         completed: bool = False,
+        sanitize: bool = True,
     ) -> None:
         self._listener = listener
         self._agent_config = agent_config
+        self._sanitize = sanitize
         self._sanitizer = self._new_sanitizer()
         self._completed = completed
         self._completed_deltas: list[dict[str, Any]] = []
@@ -2995,6 +3087,10 @@ class _SpeechDeltaListener:
             return
         pending = self._completed_deltas
         self._completed_deltas = []
+        if not self._sanitize:
+            for delta in pending:
+                self._listener(chat_log, delta)
+            return
         groups: list[list[dict[str, Any]]] = []
         group: list[dict[str, Any]] = []
         for delta in pending:
@@ -3096,20 +3192,25 @@ def async_streaming_speech_cleanup(
     *,
     completed: bool = False,
 ):
-    """Present cleaned speech without altering ChatLog's original content."""
+    """Buffer completed responses and optionally clean speech for the listener."""
     listener = getattr(chat_log, "delta_listener", None)
-    if listener is None or not streaming_speech_processing_enabled(agent_config):
+    sanitize = streaming_speech_processing_enabled(agent_config)
+    if listener is None or not (completed or sanitize):
         yield None
         return
-    wrapper = _SpeechDeltaListener(listener, agent_config, completed=completed)
+    wrapper = _SpeechDeltaListener(
+        listener, agent_config, completed=completed, sanitize=sanitize
+    )
     chat_log.delta_listener = wrapper
-    _LOGGER.debug("Streaming speech sanitizer enabled")
+    if sanitize:
+        _LOGGER.debug("Streaming speech sanitizer enabled")
     try:
         yield wrapper
     finally:
         try:
             wrapper.flush(chat_log)
-            wrapper.log_summary()
+            if sanitize:
+                wrapper.log_summary()
         finally:
             chat_log.delta_listener = listener
 

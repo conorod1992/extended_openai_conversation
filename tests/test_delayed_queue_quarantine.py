@@ -39,7 +39,7 @@ async def oversized_manager(hass, monkeypatch, kind="global"):
         async_load=AsyncMock(side_effect=lambda: deepcopy(saved)),
         async_save=AsyncMock(side_effect=save),
     )
-    monkeypatch.setattr(delayed, "PropagatingWriteStore", lambda *args, **kwargs: store)
+    monkeypatch.setattr(delayed, "_ScheduledActionStore", lambda *args, **kwargs: store)
     monkeypatch.setattr(delayed, "_async_repair_private_store_mode", AsyncMock())
     manager = delayed.DelayedToolManager(hass)
     hass.data.setdefault(DOMAIN, {})[delayed.DATA_DELAYED_TOOL_MANAGER] = manager

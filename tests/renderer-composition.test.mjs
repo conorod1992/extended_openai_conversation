@@ -24,11 +24,11 @@ try {
     assert.doesNotMatch(html, /agent-actions-menu|config-toolbar|action-help/);
     assert.match(actions, /class="[^"]*\bagent-actions-menu\b[^"]*"/);
     assert.equal((html.match(/<details class="local-handling-help">/g) || []).length, 1);
-    assert.doesNotMatch(html, /data-field="local_intent_delayed_commands_to_ai"/);
-    const choice = html.match(/<div id="local-intent-list"[^>]*><label[^>]*><input[^>]+>/)?.[0];
-    assert.ok(choice, "delayed device commands belong first in the exception list");
-    assert.equal(choice.includes("checked"), delayed);
-    assert.equal(choice.includes("disabled"), !enabled);
+    assert.match(html, /Use EOAI for delayed actions/);
+    const switchControl = html.match(/<input id="config-local_intent_delayed_commands_to_ai"[^>]+>/)?.[0];
+    assert.ok(switchControl);
+    assert.equal(switchControl.includes("checked"), delayed);
+    assert.equal(switchControl.includes("disabled"), false);
     assert.match(html, /Lights &lt;on&gt;/);
     assert.equal(renderConfiguration(owner), html, "rerender cannot duplicate controls");
   }
@@ -73,7 +73,12 @@ try {
   assert.ok(tierSelect, "models without optional tiers must still offer the default tier");
   assert.doesNotMatch(tierSelect, /disabled/, "a retained unsupported tier must remain correctable");
   assert.match(unsupportedHtml, /value="default"/);
-  for (const key of ["temperature","top_p","reasoning_effort"]) {
+  const reasoningSelect = unsupportedHtml.match(/<select id="config-reasoning_effort"[^>]*>[\s\S]*?<\/select>/)?.[0];
+  assert.ok(reasoningSelect, "the inactive reasoning effort must remain visible");
+  assert.doesNotMatch(reasoningSelect.split(">")[0], /disabled/);
+  assert.match(reasoningSelect, /value=""[^>]*>Model default</);
+  assert.match(reasoningSelect, /value="high"[^>]*selected[^>]*>high \(inactive\)</);
+  for (const key of ["temperature","top_p"]) {
     assert.match(
       unsupportedHtml,
       new RegExp(`class="setting is-disabled eoc-unavailable-model-setting"[^>]*data-field="${key}"`),

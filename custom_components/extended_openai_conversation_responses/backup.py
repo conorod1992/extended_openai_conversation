@@ -144,13 +144,13 @@ class AgentDataParticipants:
     when its transaction includes Usage.
     """
 
-    memory: PersistentMemory
-    temporary: TemporaryMemory
-    knowledge: KnowledgeLibrary
-    archive: ConversationArchive
-    usage: UsageManager | None
-    guest_mode: GuestModeManager
-    request_rules: RequestRules
+    memory: PersistentMemory | None = None
+    temporary: TemporaryMemory | None = None
+    knowledge: KnowledgeLibrary | None = None
+    archive: ConversationArchive | None = None
+    usage: UsageManager | None = None
+    guest_mode: GuestModeManager | None = None
+    request_rules: RequestRules | None = None
 
 
 @dataclass(slots=True)
@@ -176,6 +176,7 @@ class PreparedRestore:
     archive_active: dict[str, str] | None = None
     # Internal provenance, never accepted as an import-document switch.
     authoritative_config: bool = False
+    retains_configuration: bool = False
     # Live Knowledge and Usage restores may retain untouched conversation state.
     # Deliberately absent from journal/portable documents: recovery resets safely.
     preserve_retained_continuity: bool = False
@@ -187,6 +188,8 @@ class PreparedRestore:
     usage_snapshotted: bool = True
     # Destination preview only, captured before export retention filtering.
     usage_revision: str | None = None
+    # Runtime admission is a dependency only when the restore changes routing inputs.
+    validates_provider_routes: bool = True
     # The verified outer journal is authoritative for partition writes during
     # this restore. Never accepted from a portable document.
     archive_disk_backed: bool = False
@@ -248,7 +251,10 @@ def _configuration_snapshot_preserving_quarantine(
         # A backup is also a repair path for older inactive Skill selections.
         # All other scalar, Function and permission validation remains strict.
         return normalize_agent_config(
-            value, allow_unavailable_skills=True, provider=provider
+            value,
+            allow_unavailable_skills=True,
+            allow_legacy_usage_retention=persisted_source,
+            provider=provider,
         )
 
     try:
@@ -342,6 +348,12 @@ async def async_collect_backup_snapshot(
 
     participants = await _managers(hass, entry.entry_id, subentry.subentry_id)
     assert participants.usage is not None
+    assert participants.memory is not None
+    assert participants.temporary is not None
+    assert participants.knowledge is not None
+    assert participants.archive is not None
+    assert participants.guest_mode is not None
+    assert participants.request_rules is not None
     config_snapshot = deepcopy(dict(subentry.data))
     return DecodedPrivateDocument(
         {
@@ -376,23 +388,18 @@ def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             "This backup is too large for the legacy one-message JSON export; "
             "use the full backup transfer interface"
         ) from err
-    try:
-        document = (
-            encode_document(snapshot)
-            if snapshot.get("version") == PRIVATE_BACKUP_VERSION
-            else {
-                **snapshot,
-                "agent": {
-                    **snapshot["agent"],
-                    "config": _safe_configuration(snapshot["agent"]["config"]),
-                },
-                "request_rules": _safe_configuration(snapshot["request_rules"]),
-            }
-        )
-    except SerializedDocumentLimit:
-        raise BackupError(
-            "The backup configuration or Request Rules exceed the YAML safety limit"
-        ) from None
+    document = (
+        _encode_private_export(snapshot)
+        if snapshot.get("version") == PRIVATE_BACKUP_VERSION
+        else {
+            **snapshot,
+            "agent": {
+                **snapshot["agent"],
+                "config": _safe_configuration(snapshot["agent"]["config"]),
+            },
+            "request_rules": _safe_configuration(snapshot["request_rules"]),
+        }
+    )
     try:
         _validate_import_structure(document)
         serialized = bounded_json_dumps(document, MAX_LEGACY_EXPORT_BYTES)
@@ -454,6 +461,7 @@ async def async_inspect_backup(
     max_bytes: int | None = None,
     private_journal: bool = False,
     provider: str | None = None,
+    preserve_configuration: bool = False,
 ) -> PreparedRestore:
     """Process bounded JSON and bulk categories off-loop; retain HA-aware schema context."""
     if isinstance(value, PreparedRestore):
@@ -483,6 +491,7 @@ async def async_inspect_backup(
         private_journal=private_journal,
         validated_categories=categories,
         provider=provider,
+        preserve_configuration=preserve_configuration,
     )
 
 
@@ -572,10 +581,11 @@ def _decode_backup_document(
             raise BackupError("The backup is incomplete or corrupted") from err
     if not isinstance(value, dict):
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
+    version = value.get("version")
     try:
         document = (
             decode_document(value)
-            if value.get("version") == PRIVATE_BACKUP_VERSION
+            if type(version) is int and version == PRIVATE_BACKUP_VERSION
             else value
         )
     except (ValueError, TypeError, KeyError, yaml.YAMLError) as err:
@@ -601,6 +611,17 @@ def _validate_import_structure(value: Any) -> None:
         raise BackupError(str(err)) from None
 
 
+def _encode_private_export(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Check the same decoded structure that an import must admit."""
+    _validate_import_structure(snapshot)
+    try:
+        return encode_document(snapshot)
+    except SerializedDocumentLimit:
+        raise BackupError(
+            "The backup configuration or Request Rules exceed the YAML safety limit"
+        ) from None
+
+
 def _validate_backup_configuration_unicode(document: Mapping[str, Any]) -> None:
     agent = document.get("agent")
     if isinstance(agent, Mapping):
@@ -618,13 +639,21 @@ def _inspect_decoded_backup(
     header_only: bool = False,
     provider: str | None = None,
     validated_categories: dict[str, Any] | None = None,
+    preserve_configuration: bool = False,
 ) -> PreparedRestore:
     """Validate the decoded envelope and categories, including HA-aware schemas."""
     if value.get("format") != BACKUP_FORMAT:
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     version = value.get("version")
-    if version not in {1, 2, 3, 4, BACKUP_VERSION, PRIVATE_BACKUP_VERSION}:
-        if isinstance(version, int) and version > BACKUP_VERSION:
+    if type(version) is not int or version not in {
+        1,
+        2,
+        3,
+        4,
+        BACKUP_VERSION,
+        PRIVATE_BACKUP_VERSION,
+    }:
+        if type(version) is int and version > BACKUP_VERSION:
             raise BackupError(
                 "This backup was created using a newer unsupported backup format"
             )
@@ -718,7 +747,9 @@ def _inspect_decoded_backup(
                 else source_api_provider(value),
             )
         )
-        if private_journal or version == PRIVATE_BACKUP_VERSION:
+        if (private_journal or version == PRIVATE_BACKUP_VERSION) and not (
+            private_journal and preserve_configuration
+        ):
             # Validate an effective projection, never replace authoritative
             # private source with reserialized YAML or injected defaults.
             private_configuration_snapshot(
@@ -775,7 +806,12 @@ def _inspect_decoded_backup(
 
 
 async def async_restore_backup(
-    hass: HomeAssistant, entry: Any, subentry: Any, value: Any
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    value: Any,
+    *,
+    require_existing_owners: bool = False,
 ) -> dict[str, Any]:
     """Replace all durable categories, rolling back if a commit step fails."""
     from .restore_recovery import (
@@ -784,8 +820,14 @@ async def async_restore_backup(
     )
 
     gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
+    ownership_options: dict[str, Any] = (
+        {"require_existing_owners": True} if require_existing_owners else {}
+    )
     result = await _async_run_exclusive_operation(
-        gate, lambda: async_restore_backup_recoverably(hass, entry, subentry, value)
+        gate,
+        lambda: async_restore_backup_recoverably(
+            hass, entry, subentry, value, **ownership_options
+        ),
     )
     await async_finish_restore_reload(hass, entry, subentry)
     return result
@@ -817,7 +859,6 @@ async def _snapshot_for_restore(
     usage = participants.usage
     if include_usage and usage is None:
         raise RuntimeError("Usage rollback requires a durable manager")
-    archive = await participants.archive.async_recovery_data()
     usage_revision = None
     if include_usage and usage is not None:
         if capture_usage_revision:
@@ -831,36 +872,44 @@ async def _snapshot_for_restore(
             "requests": [],
             "runs": [],
         }
-    raw_categories = {
-        "archive": archive,
-        "usage": usage_data,
-        "memories": await participants.memory.async_backup_data(),
-        "temporary_memories": await participants.temporary.async_backup_data(),
-        "knowledge": await participants.knowledge.async_backup_data(),
-    }
+    raw_categories = {"usage": usage_data}
+    if participants.archive is not None:
+        raw_categories["archive"] = await participants.archive.async_recovery_data()
+    for key, manager in (
+        ("memories", participants.memory),
+        ("temporary_memories", participants.temporary),
+        ("knowledge", participants.knowledge),
+    ):
+        if manager is not None:
+            raw_categories[key] = await manager.async_backup_data()
     categories = await asyncio.to_thread(
         _validate_data_categories,
         raw_categories,
         subentry.subentry_id,
         private_journal=True,
     )
-    archive_sessions, archive_turns, archive_active = categories["archive"]
-    usage_totals, usage_daily, usage_requests, usage_runs = categories["usage"]
-    guest_mode_schedule = GuestModeManager.validate_backup_data(
-        await participants.guest_mode.async_backup_data()
+    archive_sessions, archive_turns, archive_active = categories.get(
+        "archive", ([], [], None)
     )
+    usage_totals, usage_daily, usage_requests, usage_runs = categories["usage"]
+    guest_mode_schedule = None
+    if participants.guest_mode is not None:
+        guest_mode_schedule = GuestModeManager.validate_backup_data(
+            await participants.guest_mode.async_backup_data()
+        )
     request_rule_backup = RequestRules.validate_backup_data(
         await participants.request_rules.async_backup_data()
+        if participants.request_rules is not None
+        else {}
     )
-    private_configuration_snapshot(subentry.data, provider=provider)
     return PreparedRestore(
         subentry.title,
         # Recovery applies this mapping directly, including during same-process
         # rollback. A frontend [] must not become a legacy persisted default.
         deepcopy(dict(subentry.data)),
-        categories["memories"],
-        categories["temporary_memories"],
-        categories["knowledge"],
+        categories.get("memories", []),
+        categories.get("temporary_memories", []),
+        categories.get("knowledge", []),
         archive_sessions,
         archive_turns,
         usage_totals,

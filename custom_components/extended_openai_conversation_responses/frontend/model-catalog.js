@@ -14,9 +14,16 @@ export function observeCatalogGeneration(panel, result = {}, forceInvalidate = f
   if (version !== null) panel._eocCatalogVersion = version;
   if (!changed && !staleBaseline && !forceInvalidate) return;
   panel._modelCatalogData = null;
+  panel._eocDraftModelCapabilities = null;
   panel._cleanConfigSnapshots?.clear();
   panel._invalidateCleanConfiguration?.(panel._draftAgentId || panel._agentId);
   panel._eocCatalogValidation = null;
+  for (const key of panel._sectionCache?.keys() || []) {
+    if (key.endsWith("|overview")) {
+      panel._sectionCache.delete(key);
+      panel._eocSectionCacheTimes?.delete(key);
+    }
+  }
   panel._settingsSearchConfig = null;
   panel._settingsSearchConfigAgentId = null;
   panel._settingsSearchConfigError = null;
@@ -53,7 +60,6 @@ export async function lookupModelData(panel, model = "", action = "lookup", isCu
   if (panel && result && !result.last_error && (current || mutation)) observeCatalogGeneration(panel, result, mutation);
   if (panel && result && current) {
     panel._modelCatalogData = {...result, requested_model: String(model || ""), requested_provider: provider};
-    if (panel._result && result.model_capabilities) panel._result.model_capabilities = result.model_capabilities;
   }
   return result;
 }
@@ -107,6 +113,7 @@ export function pickerModels(result = {}, selectedModel = "") {
 }
 
 export function modelDataStatusText(result = {}) {
+  if (result.last_check_error) return result.last_check_error;
   if (result.incompatible_catalog) {
     return "A newer model catalogue is available, but it requires a newer version of Extended OpenAI Conversation.";
   }
@@ -117,6 +124,7 @@ export function modelDataStatusText(result = {}) {
   if (result.update_available && Number.isInteger(available)) {
     return `Update available: ${activeLabel} → v${available}. The newer catalogue will not be used until you apply it.`;
   }
+  if (result.check_outcome === "unchecked") return `Model data ${activeLabel}. No update check has completed.`;
   return `Up to date — model data ${activeLabel}`;
 }
 
@@ -188,7 +196,11 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
       syncModelDataControls(panel, result);
       if (!result.last_error) {
         catalogueSucceeded = true;
-        await onUpdated(status?.textContent || "Model data updated.", button.dataset.modelData);
+        const action = button.dataset.modelData;
+        const message = action === "apply" ? "Model data update applied."
+          : action === "reset" ? "Bundled model data restored."
+          : status?.textContent || "Model data checked.";
+        await onUpdated(message, action);
       }
     } catch (err) {
       if (!(catalogueSucceeded ? ownsAction() : current()) || !status) return;
@@ -196,7 +208,8 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
         status.textContent = `Model data updated, but assistant settings could not be refreshed: ${err.message || String(err)}. Your unsaved edits are retained. Leave this section and return to retry loading the settings.`;
         panel._toast?.(status.textContent, true);
       } else if (button.dataset.modelData === "check") {
-        status.textContent = "Unable to check for model data updates. The existing model data is still in use. Check Home Assistant's internet connection and try again.";
+        status.textContent = err?.code === "model_catalog_check_failed" ? err.message
+          : "Unable to check for model data updates. The existing model data is still in use. Check Home Assistant's internet connection and try again.";
       } else if (button.dataset.modelData === "apply") {
         status.textContent = `Unable to apply the model data update: ${err.message || String(err)}`;
       } else {

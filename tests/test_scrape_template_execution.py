@@ -25,6 +25,7 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.functions import web
 from custom_components.extended_openai_conversation_responses.functions.exact_text import (
     ExactTextTemplate,
+    render_exact_text,
 )
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
@@ -32,6 +33,7 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
 )
+from homeassistant.exceptions import TemplateError
 from homeassistant.helpers.template import Template
 from tests.test_remote_response_bounds import _FakeResponse, _FakeSession
 
@@ -129,6 +131,26 @@ async def test_literal_and_omitted_fields(execute_scrape):
     assert request["headers"] == {"X-Literal": "plain"}
     assert request["params"] == {"q": "plain"}
     assert "https://example.com/page" in args
+
+
+async def test_exact_text_preserves_mixed_line_endings(hass):
+    hass.config.legacy_templates = False
+    source = ExactTextTemplate("  before\r\n{{ value }}\rafter  ", hass)
+    assert render_exact_text(source, {"value": "inside\nline"}) == (
+        "  before\r\ninside\nline\rafter  "
+    )
+
+
+async def test_exact_text_rejects_invalid_jinja_and_missing_boundaries(hass, monkeypatch):
+    hass.config.legacy_templates = False
+    with pytest.raises(TemplateError):
+        ExactTextTemplate("before\r\n{% invalid_tag %}", hass).ensure_valid()
+    rendered = ExactTextTemplate("content", hass)
+    monkeypatch.setattr(
+        ExactTextTemplate, "async_render", lambda *_args, **_kwargs: "unexpected"
+    )
+    with pytest.raises(TemplateError, match="could not be rendered as exact text"):
+        render_exact_text(rendered, {})
 
 
 async def test_each_template_renders_once_with_arguments_and_ha_context(

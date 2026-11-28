@@ -1,5 +1,17 @@
 import assert from "node:assert/strict";
 import {requestRuleCapabilityModel} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
+import {setReasoningOptions} from "../custom_components/extended_openai_conversation_responses/frontend/request-rule-routing-controls.js";
+
+const reasoning = {
+  ownerDocument: {createElement: () => ({})},
+  replaceChildren(...options) { this.options = options; },
+};
+const routingForm = {querySelector: selector => selector === "#rule-reasoning" ? reasoning : null};
+setReasoningOptions(routingForm, ["low"], "high", true);
+assert.equal(reasoning.value, "high");
+assert.equal(reasoning.options.find(option => option.value === "high").disabled, true);
+setReasoningOptions(routingForm, ["low"], "high");
+assert.equal(reasoning.value, "");
 const panel = {_result: {effective_model: "gpt-6-astra"}};
 assert.equal(requestRuleCapabilityModel({_result: {effective_model: "gpt-4.1-mini"}}), "");
 assert.equal(requestRuleCapabilityModel(panel, "gpt-5-pro"), "gpt-5-pro");

@@ -3,6 +3,7 @@
 from dataclasses import replace
 from datetime import date
 import json
+import math
 
 from hypothesis import given, settings, strategies as st
 import pytest
@@ -39,6 +40,26 @@ def test_function_documents_keep_their_format_scalar_semantics():
     }
     with pytest.raises(yaml.YAMLError):
         load_yaml_or_json("!!python/object/apply:os.system ['false']")
+
+
+@pytest.mark.parametrize("load", [load_authored_config, load_yaml_or_json])
+def test_nonstandard_json_constants_use_safe_yaml_scalar_semantics(load):
+    expected = ["NaN", "Infinity", "-Infinity"]
+    for value in expected:
+        assert load(value) == value
+    literals = load('{"value": [NaN, Infinity, -Infinity]}')
+    assert literals == {"value": expected}
+    assert authored_function_configuration_equal(
+        literals, load(dump_authored_function_configuration(literals))
+    )
+    assert load('{"value": 1e-06, "text": "Infinity"}') == {
+        "value": 1e-6,
+        "text": "Infinity",
+    }
+    nan, positive, negative = load("[.nan, .inf, -.inf]")
+    assert math.isnan(nan)
+    assert positive == math.inf
+    assert negative == -math.inf
 
 
 @given(st.text(alphabet=st.characters(codec="utf-8"), max_size=256))

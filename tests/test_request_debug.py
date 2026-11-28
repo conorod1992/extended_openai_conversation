@@ -390,3 +390,210 @@ def test_first_action_timing_covers_both_provider_formats(monkeypatch, surface, 
     request.add_event(event)
     assert request.first_action_ms==125
     assert request.response_events[-1]==event
+
+
+@pytest.mark.parametrize(
+    ("surface", "payload"),
+    [
+        ("responses", {"output": [
+            {"type": "reasoning"},
+            {"type": "message", "content": [{"type": "output_text", "text": "Done"}]},
+            {"type": "function_call"},
+        ]}),
+        ("chat_completions", {"choices": [{"message": {
+            "content": "Done",
+            "tool_calls": [{"type": "function"}],
+        }}]}),
+    ],
+)
+def test_completed_reply_uses_arrival_for_text_and_action_timings(monkeypatch, surface, payload):
+    from custom_components.extended_openai_conversation_responses import debug
+
+    request = DebugProviderRequest(
+        request_id="timing", api_surface=surface, started_at="now",
+        started_offset_ms=0, request={}, metrics={},
+    )
+    request._started_monotonic = 10.0
+    monkeypatch.setattr(debug.time, "monotonic", lambda: 10.125)
+    request.add_event(payload, completed=True)
+    assert request.first_event_ms == request.first_text_ms == request.first_action_ms == 125
+
+
+@pytest.mark.parametrize("capture_full", [False, True])
+@pytest.mark.parametrize("surface", ["responses", "chat.completions"])
+def test_large_completed_reply_keeps_diagnostics_when_capture_is_truncated(
+    monkeypatch, capture_full, surface
+):
+    from custom_components.extended_openai_conversation_responses import debug
+
+    request = DebugProviderRequest(
+        request_id="timing",
+        api_surface=surface,
+        started_at="now",
+        started_offset_ms=0,
+        request={},
+        metrics={},
+        _started_monotonic=10.0,
+        _budget=debug._CaptureBudget(1024),
+        response_events_truncated=capture_full,
+    )
+    monkeypatch.setattr(debug.time, "monotonic", lambda: 10.125)
+    usage = SimpleNamespace(input_tokens=31, output_tokens=7)
+    large = "private response content" * 10_000
+    if surface == "responses":
+        payload = SimpleNamespace(
+            prefix=large,
+            output=[
+                SimpleNamespace(type="message", content=[
+                    SimpleNamespace(type="refusal", refusal="Declined"),
+                ]),
+                SimpleNamespace(type="function_call"),
+            ],
+            usage=usage,
+            status="incomplete",
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        )
+    else:
+        payload = {
+            "prefix": large,
+            "choices": [{"message": {"content": "Done", "tool_calls": [{"id": "call"}]}}],
+            "usage": usage,
+        }
+
+    request.add_event(payload, completed=True)
+    request.finish(successful=True)
+
+    assert request.response_events_truncated and request.response_events == []
+    assert request.first_event_ms == request.first_text_ms == request.first_action_ms == 125
+    assert request.usage["total_tokens"] == 38
+    assert request.successful is (surface == "chat.completions")
+    assert request.error_type == (
+        "TokenLengthExceededError" if surface == "responses" else None
+    )
+
+
+def test_stream_terminal_recovers_metadata_after_debug_capture_is_full(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import debug
+
+    request = DebugProviderRequest(
+        request_id="timing",
+        api_surface="responses",
+        started_at="now",
+        started_offset_ms=0,
+        request={},
+        metrics={},
+        _started_monotonic=10.0,
+        response_events_truncated=True,
+    )
+    monkeypatch.setattr(debug.time, "monotonic", lambda: 10.125)
+
+    def reject_serialization(*_args, **_kwargs):
+        pytest.fail("Payload retention should stop when the capture is full")
+
+    monkeypatch.setattr(debug, "_jsonable", reject_serialization)
+    request.add_event(SimpleNamespace(
+        type="response.incomplete",
+        response=SimpleNamespace(
+            output=[SimpleNamespace(type="web_search_call")],
+            usage=SimpleNamespace(output_tokens=5),
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        ),
+    ))
+
+    assert request.first_text_ms is None
+    assert request.first_action_ms == 125
+    assert request.usage["output_tokens"] == 5
+    assert request.error_type == "TokenLengthExceededError"
+
+
+def test_debug_capture_budgets_and_original_hashes(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import debug
+
+    monkeypatch.setattr(debug, "DEBUG_MAX_STRING_CHARACTERS", 64)
+    monkeypatch.setattr(debug, "DEBUG_MAX_REQUEST_BYTES", 2_000)
+    monkeypatch.setattr(debug, "DEBUG_MAX_RUN_BYTES", 4_000)
+    monkeypatch.setattr(debug, "DEBUG_MAX_RETAINED_BYTES", 3_000)
+    manager = DebugManager()
+
+    def capture(suffix, credential):
+        trace = manager.begin(
+            entry_id="entry", subentry_id="agent", user_input={},
+            incoming_conversation_id=None,
+        )
+        request = trace.start_provider_request("responses", (), {
+            "input": ["x" * 10_000 + suffix], "api_key": credential,
+        })
+        manager.finish(trace, successful=True)
+        return request
+
+    first = capture("a", "first-secret")
+    redacted = capture("a", "second-secret")
+    different = capture("b", "second-secret")
+    assert first.request == different.request
+    assert first.metrics["request_sha256"] == redacted.metrics["request_sha256"]
+    assert first.metrics["request_sha256"] != different.metrics["request_sha256"]
+    assert first.metrics["request_capture_truncated"]
+    assert first.metrics["request_characters"] > first.metrics["captured_request_characters"]
+    assert first.request["kwargs"]["api_key"] == "<redacted credential>"
+    assert len(manager.summaries()) < 3
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_debug_request_waits_for_consumer_validation(streaming):
+    from custom_components.extended_openai_conversation_responses.debug import (
+        DebugProviderAttempt,
+    )
+
+    trace = _trace(DebugManager())
+    proxy = DebugOpenAIClientProxy(_FakeClient([{"type": "response.completed"}]))
+    attempt = DebugProviderAttempt()
+    token = _ACTIVE_DEBUG_TRACE.set(trace)
+    try:
+        if streaming:
+            stream = await attempt.create(
+                proxy.responses, model="gpt-test", stream=True
+            )
+            _ = [event async for event in stream]
+            await stream.close()
+        else:
+            result = SimpleNamespace(status="completed", output=[])
+            endpoint = proxy.responses._delegate
+
+            async def completed(**_kwargs):
+                return result
+
+            endpoint.create = completed
+            assert (
+                await attempt.create(proxy.responses, model="gpt-test", stream=False)
+                is result
+            )
+        request = trace.provider_requests[0]
+        assert request.successful is None
+        attempt.finish(ValueError("consumer rejected output"))
+        assert request.successful is False
+    finally:
+        _ACTIVE_DEBUG_TRACE.reset(token)
+
+
+def test_missing_tool_digests_and_captured_breakdown_are_marked_partial(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import debug
+
+    trace = _trace(DebugManager())
+    tools = [{"type": "function", "name": "lookup"}]
+    original_metrics = debug._original_payload_metrics
+
+    monkeypatch.setattr(
+        debug,
+        "_original_payload_metrics",
+        lambda value: (None, None) if value is tools else original_metrics(value),
+    )
+    payload = {
+        "tools": tools,
+        "input": [
+            {"role": "user", "content": "x" * (debug.DEBUG_MAX_STRING_CHARACTERS + 10)}
+        ],
+    }
+    for _ in range(2):
+        request = trace.start_provider_request("responses", (), payload)
+        assert request.metrics["payload_breakdown_partial"] is True
+        assert request.metrics["tools_same_as_previous_request"] is None

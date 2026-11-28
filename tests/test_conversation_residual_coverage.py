@@ -31,6 +31,7 @@ from custom_components.extended_openai_conversation_responses.exceptions import 
 from custom_components.extended_openai_conversation_responses.function_groups import (
     FunctionGroupSession,
     FunctionToolAssembly,
+    FunctionToolAdmission,
 )
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
@@ -324,7 +325,7 @@ def test_function_tool_assembly_records_runtime_and_maps_failures(
         conversation_module, "validate_function_groups", lambda *_args: []
     )
     monkeypatch.setattr(
-        conversation_module, "assemble_function_tools", lambda *_args: assembly
+        conversation_module, "assemble_function_tools", lambda *_args, **_kwargs: assembly
     )
     monkeypatch.setattr(
         conversation_module,
@@ -356,7 +357,8 @@ def test_function_group_loader_requires_session_and_routes_active_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent = _agent()
-    assert Agent._load_function_groups(agent, ["group-1"], None)["status"] == "error"
+    admission = FunctionToolAdmission()
+    assert Agent._load_function_groups(agent, ["group-1"], admission)["status"] == "error"
 
     configured = [{"spec": {"name": "demo"}}]
     groups = [{"id": "group-1", "functions": ["demo"]}]
@@ -373,12 +375,11 @@ def test_function_group_loader_requires_session_and_routes_active_request(
         replace(conversation_module._ACTIVE_TURN.get(), function_group_session=session)
     )
     try:
-        assert Agent._load_function_groups(agent, ["group-1"], None) is expected
+        assert Agent._load_function_groups(agent, ["group-1"], admission) is expected
     finally:
         conversation_module._ACTIVE_TURN.reset(token)
     loader.assert_called_once_with(
-        session, ["group-1"], groups, configured, max_tools=None, extra_tool_count=0,
-        loader_available_next_round=True,
+        session, ["group-1"], groups, configured, admission=admission, integration_tools=None,
     )
 
 
@@ -513,7 +514,7 @@ async def test_knowledge_tool_validation(
     operation: str, arguments: dict, message: str
 ) -> None:
     agent = _agent()
-    agent._knowledge_available = True
+    agent.subentry.data["knowledge_enabled"] = True
     agent._knowledge = SimpleNamespace()
     with pytest.raises(ValueError, match=message):
         await Agent._async_execute_knowledge_tool(agent, operation, arguments)

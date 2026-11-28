@@ -3,6 +3,18 @@
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 
 
+def wall_time_instants(wall: datetime, zone: tzinfo) -> set[datetime]:
+    """Return the distinct instants that round-trip to a naive local wall time."""
+    candidates = {
+        wall.replace(tzinfo=zone, fold=fold).astimezone(UTC) for fold in (0, 1)
+    }
+    return {
+        instant
+        for instant in candidates
+        if instant.astimezone(zone).replace(tzinfo=None) == wall
+    }
+
+
 def resolve_wall_time(
     day: date, clock: time, zone: tzinfo, *, ending: bool = False
 ) -> datetime:

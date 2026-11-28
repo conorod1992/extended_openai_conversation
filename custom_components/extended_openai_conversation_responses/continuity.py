@@ -98,8 +98,11 @@ def chat_log_admission_scope(
     if (
         source is None
         or source.conversation_id != conversation_id
-        or not getattr(source, "turn_active", False)
-        or getattr(source, "turn_start", None) != len(source.content) - 1
+        or getattr(source, "turn_active", None) is False
+        or (
+            getattr(source, "turn_active", None) is True
+            and getattr(source, "turn_start", None) != len(source.content) - 1
+        )
         or not source.content
         or not isinstance(source.content[-1], conversation.UserContent)
         or source.content[-1].content != request_text
@@ -184,6 +187,14 @@ def forward_chat_log_deltas(
     if (
         source is None
         or source is target
+        or (
+            bool(admissions)
+            and (
+                admission is None
+                or not admission.active
+                or admission.source is not source
+            )
+        )
         or not source.content
         or not isinstance(source.content[-1], conversation.UserContent)
         or source.content[-1].content != request_text
@@ -273,6 +284,19 @@ class ConversationContinuity:
         self._lock = asyncio.Lock()
         self.resume_count = 0
         self.new_session_count = 0
+        self._guest_access: object = None
+        self._guest_namespace: str | None = None
+
+    def guest_namespace(self, access: object) -> str | None:
+        """Rotate Guest continuity as a unit whenever its effective access changes."""
+        if access != self._guest_access:
+            self._guest_access = access
+            self._guest_namespace = (
+                f"{GUEST_CONTINUITY_NAMESPACE}-{uuid4().hex}"
+                if access is not None
+                else None
+            )
+        return self._guest_namespace
 
     def reset_all(
         self,
@@ -280,6 +304,7 @@ class ConversationContinuity:
         private_bindings: dict[str, str] | None = None,
         retained_bindings: dict[str, str] | None = None,
         retained_ha_default_ids: frozenset[str] = frozenset(),
+        preserve_unverified_bindings: bool = False,
     ) -> frozenset[tuple[str | None, str]]:
         """Discard transient context under the caller's exclusive restore lease.
 
@@ -303,8 +328,13 @@ class ConversationContinuity:
                 discard_history=True,
             )
             for key, active in self._sessions.items()
-            if private_bindings is not None
-            and private_bindings.get(key) == active.conversation_id
+            if (
+                preserve_unverified_bindings
+                or (
+                    private_bindings is not None
+                    and private_bindings.get(key) == active.conversation_id
+                )
+            )
             and key not in self._pending_ends
         }
         self._sessions.update(retained)
@@ -341,6 +371,8 @@ class ConversationContinuity:
         scope: ResolvedDataScope,
         device_id: str | None,
         namespace: str | None = None,
+        *,
+        native_authenticated: bool = True,
     ) -> tuple[str | None, str]:
         """Return the safe continuity owner and a human-readable label."""
         if mode == CONVERSATION_CONTINUITY_USER and scope.scope_type == "user":
@@ -358,8 +390,12 @@ class ConversationContinuity:
                 key, label = None, "Home Assistant default"
         else:
             key, label = None, "Home Assistant default"
-        if key is not None and namespace is not None:
-            return f"{namespace}:{key}", f"Guest {label.lower()}"
+        if key is not None:
+            if namespace is not None:
+                key, label = f"{namespace}:{key}", f"Guest {label.lower()}"
+            if not native_authenticated and scope.scope_type == "user":
+                # Retained-data ownership from voice mapping grants no Core identity.
+                key += ":native-unauthenticated"
         return key, label
 
     async def async_resolve(
@@ -443,7 +479,13 @@ class ConversationContinuity:
             return ContinuityResolution(
                 conversation_id, None, [], False, claim_token=claim_token
             )
-        key, label = self.identity_key(mode, scope, device_id, namespace)
+        key, label = self.identity_key(
+            mode,
+            scope,
+            device_id,
+            namespace,
+            native_authenticated=native_user_id is not None,
+        )
         if key is None:
             if namespace is not None:
                 conversation_id = (
@@ -463,11 +505,6 @@ class ConversationContinuity:
             return ContinuityResolution(
                 conversation_id, None, [], False, claim_token=claim_token
             )
-        if native_user_id is None and scope.scope_type == "user":
-            # Voice mappings authorize EOAI's retained-data owner. They never
-            # authenticate the caller to Core or share a native session with a
-            # signed-in request for the same owner.
-            key += ":native-unauthenticated"
         now = dt_util.utcnow()
         cutoff = now - timedelta(minutes=timeout_minutes)
         async with self._lock:

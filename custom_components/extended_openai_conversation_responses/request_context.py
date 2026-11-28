@@ -34,6 +34,7 @@ class ConversationTurnContext:
     scope: ResolvedDataScope | None = None
     archive: tuple[str, str] | None = None
     archive_turn_private: bool = False
+    archive_scope: ResolvedDataScope | None = None
     temporary_scope: str | None = None
     function_group_session: FunctionGroupSession | None = None
     memory_session: tuple[str, int] | None = None
@@ -56,6 +57,8 @@ class RequestInvocation:
 
     metadata: dict[str, Any] | None = None
     temporary_memory_prefetch: asyncio.Task[Any] | None = None
+    routing_rule: str | None = None
+    retained_routing_rules: tuple[str, ...] = ()
 
 
 _NO_INVOCATION = RequestInvocation()
@@ -68,6 +71,17 @@ def set_temporary_memory_prefetch(task: asyncio.Task[Any] | None) -> None:
     """Replace only this task's speculative retrieval handle."""
     _ACTIVE_INVOCATION.set(
         replace(_ACTIVE_INVOCATION.get(), temporary_memory_prefetch=task)
+    )
+
+
+def set_invocation_routing_rule(rule_id: str | None, retained: tuple[str, ...]) -> None:
+    """Retain routing provenance for provider failure diagnostics."""
+    _ACTIVE_INVOCATION.set(
+        replace(
+            _ACTIVE_INVOCATION.get(),
+            routing_rule=rule_id,
+            retained_routing_rules=retained,
+        )
     )
 
 

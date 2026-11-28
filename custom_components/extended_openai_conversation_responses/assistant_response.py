@@ -27,6 +27,11 @@ def classify_provider_output(item: Any) -> ProviderOutputKind:
         item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
     )
     if not native_type or native_type == "message":
+        role = (
+            item.get("role") if isinstance(item, dict) else getattr(item, "role", None)
+        )
+        if role not in (None, "assistant"):
+            return "replay_only"
         phase = (
             item.get("phase")
             if isinstance(item, dict)
@@ -61,8 +66,8 @@ async def provider_output_presentation(
     """Filter listener text while ChatLog keeps the complete original stream.
 
     HA excludes native metadata from listener deltas. Bind its interpretation
-    before yielding each item's deltas, rather than altering the accumulated text
-    or waiting for completion. Unphased output keeps its existing low latency.
+    before yielding the item's text. The Responses assembler resolves ambiguous
+    opening phases before yielding text to this listener.
     """
     listener = getattr(chat_log, "delta_listener", None)
     kind: ProviderOutputKind = "answer"
@@ -123,6 +128,13 @@ def separate_assistant_messages(chat_log: Any, *, enabled: bool) -> Iterator[Non
 def final_assistant_text(
     content: Sequence[conversation.Content], *, separator: str = "\n\n"
 ) -> str:
+    """Return the final text for display."""
+    return final_assistant_answer(content, separator=separator) or ""
+
+
+def final_assistant_answer(
+    content: Sequence[conversation.Content], *, separator: str = "\n\n"
+) -> str | None:
     """Combine the final answer after the latest user/tool exchange.
 
     Responses may emit several message items, interspersed with reasoning or
@@ -130,6 +142,7 @@ def final_assistant_text(
     Native items and their IDs remain untouched for subsequent provider replay.
     """
     texts: list[str] = []
+    found_answer = False
     for item in reversed(content):
         if isinstance(item, conversation.UserContent) or is_tool_result_content(item):
             break
@@ -137,11 +150,14 @@ def final_assistant_text(
             item, "tool_calls", None
         ):
             continue
-        if classify_provider_output(getattr(item, "native", None)) != "answer":
+        native = getattr(item, "native", None)
+        if classify_provider_output(native) != "answer":
             continue
-        if item.content:
-            texts.append(item.content)
-    return separator.join(reversed(texts))
+        if item.content is not None or getattr(native, "type", None) == "message":
+            found_answer = True
+            if item.content:
+                texts.append(item.content)
+    return separator.join(reversed(texts)) if found_answer else None
 
 
 def responses_leave_tool_results_unanswered(

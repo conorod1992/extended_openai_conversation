@@ -116,7 +116,7 @@
     "stores": [
       {
         "module": "guest_mode.py",
-        "constructor": "PropagatingWriteStore",
+        "constructor": "_GuestModeStore",
         "count": 1
       }
     ],
@@ -131,11 +131,12 @@
     "stores": [
       {
         "module": "delayed_tools.py",
-        "constructor": "PropagatingWriteStore",
+        "constructor": "_ScheduledActionStore",
         "count": 2
       }
     ],
     "evidence": [
+      "tests/test_delayed_tools.py::test_explicit_null_queue_is_quarantined_and_preserved",
       "tests/test_delayed_tools.py::test_schedule_is_persisted_before_becoming_live",
       "tests/test_delayed_tools.py::test_schedule_reconciles_after_lost_store_acknowledgement",
       "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable",
@@ -188,11 +189,12 @@
     "stores": [
       {
         "module": "intercom.py",
-        "constructor": "PropagatingWriteStore",
+        "constructor": "_BroadcastStore",
         "count": 1
       }
     ],
     "evidence": [
+      "tests/test_intercom.py::test_explicit_null_broadcast_settings_preserve_the_native_envelope",
       "tests_stress/test_os_storage_faults.py::test_broadcast_switch_failure_does_not_report_enabled"
     ]
   },

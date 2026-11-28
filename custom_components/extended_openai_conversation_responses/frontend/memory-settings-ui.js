@@ -31,7 +31,7 @@ function saveBar(panel) {
 export function renderMemorySettings(panel) {
   const config = panel._draft || panel._result?.config || {};
   const hybrid = config.memory_retrieval_mode === "hybrid";
-  return `<section class="page-intro"><div class="section-heading"><h1>Memory settings</h1><button type="button" class="secondary inline-route" data-page="data-memory" data-subsection="memories">Manage stored memories</button></div><p>Choose what the assistant may remember, how relevant memories are found, and whether household memories are available. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></section>
+  return `<div class="page-intro-with-action memory-settings-intro"><section class="page-intro"><h1>Memory settings</h1><p>Choose what the assistant may remember, how relevant memories are found, and whether household memories are available. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></section><button type="button" class="secondary inline-route" data-page="data-memory" data-subsection="memories">Manage stored memories</button></div>
     <div class="content-card config-surface">
       <section id="config-memory" class="config-section" data-config-section data-search="memory persistent temporary short term long term automatic retrieval embeddings shared household">
         <div class="config-stack">

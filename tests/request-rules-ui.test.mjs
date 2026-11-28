@@ -49,7 +49,7 @@ const grouped = {...panel, _ruleGroupFilter:"lighting", _result:{...panel._resul
 const groupedHtml=renderRequestRules(grouped);
 assert.match(groupedHtml, /#1 <span class="rule-group-chip">Lighting/);
 assert.doesNotMatch(groupedHtml, /data-rule-key="two"/);
-assert.match(groupedHtml, /Switch to All rules to change priority/);
+assert.match(groupedHtml, /Set Group to All and clear Search rules to change priority/);
 const ungroupedHtml=renderRequestRules({...grouped,_ruleGroupFilter:"ungrouped"});
 assert.match(ungroupedHtml, /#2 <span class="rule-group-chip">Ungrouped/);
 assert.doesNotMatch(ungroupedHtml, /data-rule-key="one"/);

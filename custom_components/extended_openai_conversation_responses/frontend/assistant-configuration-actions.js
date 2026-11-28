@@ -1,6 +1,6 @@
 import {usageRetentionDeletionNotice} from "./retention-settings-ui.js";
 import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft, recoverCommittedRetention} from "./configuration-acknowledgement.js";
-import {invalidateOperation} from "./operation-ownership.js";
+import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
 import {captureCatalogSelectionIntent} from "./management-catalog-ownership.js";
 
@@ -41,37 +41,92 @@ export async function refreshUncertainConfigurationImport(panel, {configuration 
   }
 }
 
-export function renderConfigurationActions(panel, sections = panel._configSections || []) {
-  const cleanOnly = panel._configDirty ? "disabled title=\"Save or revert the shared draft first\"" : "";
-  const includesBackup = sections.includes("backup");
-  return `<details class="agent-actions-menu eoc-details-base"><summary aria-haspopup="menu">Assistant actions</summary><div role="menu"><button type="button" class="secondary" role="menuitem" id="duplicate-agent" ${cleanOnly}>Duplicate agent</button>${includesBackup ? "" : `<button type="button" class="secondary" role="menuitem" id="import-agent">Import configuration</button>`}</div></details>${panel._configDirty ? `<p class="action-help">Duplicate agent uses the saved configuration. Save or revert your settings changes to enable it.</p>` : ""}`;
+export function bindSavedConfigurationActions(panel, root) {
+  bindOwnedEvent(root.querySelector("#duplicate-agent"), "click", "assistant-actions",
+    event => duplicateSavedConfiguration(panel, event.currentTarget));
 }
 
-export function bindSavedConfigurationActions(panel, root) {
-  bindOwnedEvent(root.querySelector("#duplicate-agent"), "click", "assistant-actions", async event => {
-    const button = event.currentTarget;
-    if (panel._configDirty || button.disabled || panel._eocAssistantDuplicatePending) return;
-    const intent = captureCatalogSelectionIntent(panel);
-    panel._eocAssistantDuplicatePending = true;
-    button.disabled = true;
+export async function duplicateSavedConfiguration(panel, button) {
+  if (panel._configDirty || button.disabled || panel._eocAssistantDuplicatePending) return;
+  const intent = captureCatalogSelectionIntent(panel);
+  panel._eocAssistantDuplicatePending = true;
+  button.disabled = true;
+  try {
+    const result = await panel._call("configuration", "duplicate");
+    requireMutationAcknowledgement(result?.subentry_id && typeof result.title === "string", "creating the duplicate agent");
+    // The catalogue has its own publication/selection guards. Refresh it even
+    // when a later selection retired the source; never steal that selection.
+    await processMutationResponse(result, () => panel._loadAgents(result.subentry_id, null, intent));
+    let acknowledgementOwner = intent.owner;
+    // Selecting the newly created agent deliberately retires the source draft.
+    // Adopt only that destination, retaining the original authentication lease.
+    if (panel._agentId === result.subentry_id) acknowledgementOwner = {...captureConfigurationOwner(panel), userId:intent.owner.userId, authenticationGeneration:intent.owner.authenticationGeneration};
+    await presentAcknowledgedMutation(panel, acknowledgementOwner, `Created ${result.title}`, null, result);
+  } catch (err) {
+    if (configurationSubmissionIsCurrent(panel, intent.owner)) panel._toast(`Unable to duplicate agent: ${err.message || String(err)}`, true);
+  } finally {
+    panel._eocAssistantDuplicatePending = false;
+    button.disabled = Boolean(panel._configDirty);
+  }
+}
+
+export function openConfigurationImport(panel) {
+  panel._eocConfigurationImportDialog = renderConfigurationImportDialog;
+  panel._ensureOwnedDialog("import-dialog");
+  const root = panel.shadowRoot;
+  const actionsMenu = root.querySelector(".agent-actions-menu");
+  const dialog = root.querySelector("#import-dialog");
+  if (!dialog) return;
+  const importDocument = root.querySelector("#import-document"), importApply = root.querySelector("#import-apply"), importSummary = root.querySelector("#import-summary");
+  bindOwnedEvent(importDocument, "input", "assistant-actions", () => invalidateImportPreview(panel, importApply, importSummary));
+  root.querySelectorAll('input[name="import-mode"]').forEach(control => bindOwnedEvent(control, "change", "assistant-actions", () => invalidateImportPreview(panel, importApply, importSummary)));
+  bindOwnedEvent(root.querySelector("#import-preview"), "click", "assistant-actions", async () => {
+    invalidateImportPreview(panel, importApply, importSummary);
+    const document = importDocument.value, mode = root.querySelector('input[name="import-mode"]:checked').value;
+    let revision = panel._configData?.revision;
+    const agent = panel._agentId;
+    const ownsOperation = beginOperation(panel, "import-preview");
+    const ownsInput = () => ownsOperation() && dialog?.open && importDocument.isConnected
+      && importDocument.value === document && root.querySelector('input[name="import-mode"]:checked').value === mode && panel._agentId === agent;
+    const current = () => ownsInput() && panel._configData?.revision === revision;
     try {
-      const result = await panel._call("configuration", "duplicate");
-      requireMutationAcknowledgement(result?.subentry_id && typeof result.title === "string", "creating the duplicate agent");
-      // The catalogue has its own publication/selection guards. Refresh it even
-      // when a later selection retired the source; never steal that selection.
-      await processMutationResponse(result, () => panel._loadAgents(result.subentry_id, null, intent));
-      let acknowledgementOwner = intent.owner;
-      // Selecting the newly created agent deliberately retires the source draft.
-      // Adopt only that destination, retaining the original authentication lease.
-      if (panel._agentId === result.subentry_id) acknowledgementOwner = {...captureConfigurationOwner(panel), userId:intent.owner.userId, authenticationGeneration:intent.owner.authenticationGeneration};
-      await presentAcknowledgedMutation(panel, acknowledgementOwner, `Created ${result.title}`, null, result);
+      if (await refreshUncertainConfigurationImport(panel, {configuration:mode === "current"})) revision = panel._configData?.revision;
+      if (!ownsInput()) return;
+      if (mode === "current" && (panel._draftAgentId !== agent || panel._configData?.projection === "retention"
+          || panel._configDataStale || !revision)) {
+        await panel._loadConfigDraft({preserveResult:true, full:true});
+        if (!ownsInput()) return;
+        revision = panel._configData?.revision;
+        if (!revision || panel._configDataStale || panel._draftAgentId !== agent || panel._configData?.projection === "retention") {
+          throw new Error("Unable to load the saved configuration for import.");
+        }
+      }
+      if (!current()) return;
+      const result = await panel._call("configuration", "import_preview", {document, mode});
+      if (!current()) return;
+      panel._importDocument = document;
+      panel._importMode = mode;
+      panel._importRevision = revision;
+      panel._importShortenedRetention = result.shortened_usage_retention || null;
+      const retentionNotice = usageRetentionDeletionNotice(panel._importShortenedRetention);
+      importSummary.textContent = `${result.title} / ${result.summary.model} / ${result.summary.tools} tools / ${result.summary.function_groups} function groups / ${result.summary.speech_rules} speech rules${retentionNotice ? `. ${retentionNotice}` : ""}`;
+      importApply.disabled = false;
     } catch (err) {
-      if (configurationSubmissionIsCurrent(panel, intent.owner)) panel._toast(`Unable to duplicate agent: ${err.message || String(err)}`, true);
-    } finally {
-      panel._eocAssistantDuplicatePending = false;
-      button.disabled = false;
+      if (!current()) return;
+      panel._importDocument = null;
+      importSummary.textContent = err.message || String(err);
+      importApply.disabled = true;
     }
   });
+  bindOwnedEvent(root.querySelector("#import-apply"), "click", "assistant-actions", () => applyConfigurationImport(panel, root));
+  bindOwnedEvent(root.querySelector("#import-cancel"), "click", "assistant-actions",()=>{invalidateImportPreview(panel,importApply,importSummary);root.querySelector("#import-dialog").close();actionsMenu?.querySelector("summary")?.focus();});
+  bindOwnedEvent(root.querySelector("#import-dialog"), "cancel", "assistant-actions",()=>{invalidateImportPreview(panel,importApply,importSummary);requestAnimationFrame(()=>actionsMenu?.querySelector("summary")?.focus());});
+  invalidateImportPreview(panel, importApply, importSummary);
+  if (!dialog.open) dialog.showModal();
+}
+
+function renderConfigurationImportDialog(panel) {
+  return `<dialog id="import-dialog" class="editor-dialog wide" aria-labelledby="import-dialog-title"><div class="dialog-header"><h2 id="import-dialog-title">Import agent configuration</h2></div><div class="dialog-body">${panel._configDirty ? `<div class="notice warning"><strong>Unsaved shared draft</strong><p>Creating a new agent preserves this draft. Overwriting the current agent discards it after confirmation.</p></div>` : ""}<label>Exported JSON or YAML<textarea id="import-document" class="yaml-editor" spellcheck="false"></textarea></label><div class="mode-row"><label><input type="radio" name="import-mode" value="new" checked> Create a new agent</label><label><input type="radio" name="import-mode" value="current"> Overwrite current agent</label></div><div id="import-summary" class="validation" aria-live="polite">Validate the document to preview it.</div></div><div class="dialog-actions"><button type="button" class="secondary" id="import-cancel">Cancel</button><button type="button" class="secondary" id="import-preview">Validate & preview</button><button type="button" id="import-apply" disabled>Import</button></div></dialog>`;
 }
 
 // Preview admission and server acknowledgement are separate from catalogue/DOM

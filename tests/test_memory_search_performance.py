@@ -224,3 +224,29 @@ async def test_search_results_are_unchanged_after_cache_warmup(
     actual = await cached_manager.async_search(scope, query, category=category, limit=5)
 
     assert _ids(actual) == _ids(expected)
+
+
+async def test_long_queries_bound_fuzzy_work_without_skipping_later_lexical_hits(
+    monkeypatch,
+):
+    records = [
+        _record(str(i), "alice", f"unrelated filler {i}", "general") for i in range(30)
+    ]
+    # A full phrase at the end of the corpus must still be scored.
+    records.append(_record("target", "alice", "needle", "general", key="needle"))
+    memory = PersistentMemory(_Storage(records))
+    await memory.async_initialize()
+    query = "needle " * 1000 + "outsidebudget"
+    monkeypatch.setattr(memory_module, "MAX_MEMORY_FUZZY_TERM_PAIRS", 12)
+    original_fuzzy = memory_module._fuzzy_relevance
+    pairs = []
+
+    def count_fuzzy(query_tokens, document_tokens):
+        assert "outsidebudget" not in query_tokens
+        pairs.append(len(query_tokens) * len(document_tokens))
+        return original_fuzzy(query_tokens, document_tokens)
+
+    monkeypatch.setattr(memory_module, "_fuzzy_relevance", count_fuzzy)
+    found = await memory.async_search("alice", query)
+    assert [record.memory_id for record in found] == ["target"]
+    assert 0 < sum(pairs) <= 12

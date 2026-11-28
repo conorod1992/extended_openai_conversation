@@ -117,7 +117,7 @@ async def test_memory_move_to_disabled_shared_scope_is_rejected(hass, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_quiet_hours_failed_volume_apply_releases_unchanged_control(
+async def test_quiet_hours_failed_volume_apply_awaits_feedback_for_unchanged_control(
     hass, monkeypatch
 ) -> None:
     from custom_components.extended_openai_conversation_responses import (
@@ -148,8 +148,8 @@ async def test_quiet_hours_failed_volume_apply_releases_unchanged_control(
         "assist_satellite.kitchen", "media_player.kitchen", controls
     )
 
-    assert "media_player.kitchen" not in controls
-    assert "media_player.kitchen" not in manager._active["observed_controls"]
+    assert controls["media_player.kitchen"]["application_state"] == "awaiting_feedback"
+    assert "media_player.kitchen" in manager._active["observed_controls"]
     manager._async_save_control_state_locked.assert_awaited_once()
 
 
@@ -186,7 +186,8 @@ async def test_quiet_hours_failed_volume_apply_retains_changed_control(
     )
 
     assert controls["media_player.kitchen"] is control
-    manager._async_save_control_state_locked.assert_not_awaited()
+    assert control["application_state"] == "awaiting_feedback"
+    manager._async_save_control_state_locked.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -260,11 +260,11 @@ test("Knowledge warns before a separate submission creates an exact copy", async
       : {status:"duplicate"};
   };
   await panel._saveKnowledge();
-  assert.match(panel.visibleError, /identical Knowledge source already exists/);
+  assert.match(panel.visibleError, /Another Knowledge source has the same content/);
   assert.equal(panel._knowledgeMode, "create");
   await panel._saveKnowledge();
   assert.equal(requests.length, 2);
-  assert.equal(requests[0].confirm_duplicate, undefined);
+  assert.equal(requests[0].confirm_duplicate, false);
   assert.equal(requests[1].confirm_duplicate, true);
   assert.equal(requests[0].create_token, requests[1].create_token);
   assert.equal(panel._editingSource.source_id, "copy");
@@ -428,6 +428,39 @@ test("duplicate's lost response remains uncertain without an automatic second cr
   assert.match(panel.toasts.at(-1)[0], /Unable to duplicate agent: .*outcome is unknown/);
   assert.equal(panel._eocRequestDiagnostics.at(-1).status, "uncertain");
   assert.equal(button.disabled, false);
+});
+
+test("debug capture can be disabled while an acknowledged enable is still refreshing", async () => {
+  const panel = new DebugPanel();
+  panel._status = {enabled:false, limit:10, count:0};
+  panel._agent = {entry_id:"entry-1", subentry_id:"agent-1"};
+  panel._render = () => {};
+  panel._toast = () => {};
+  const writes = [];
+  panel._hass = {callWS:async message => {
+    writes.push(message.enabled);
+    return {enabled:message.enabled, limit:10};
+  }};
+  let releaseRefresh, refreshStarted;
+  const heldRefresh = new Promise(resolve => { releaseRefresh = resolve; });
+  const began = new Promise(resolve => { refreshStarted = resolve; });
+  let refreshes = 0;
+  panel._fetchRuns = async () => {
+    if (++refreshes === 1) {
+      refreshStarted();
+      await heldRefresh;
+    }
+  };
+  const first = panel._configure({enabled:true});
+  await began;
+  try {
+    await panel._configure({enabled:false});
+    assert.deepEqual(writes, [true, false]);
+    assert.equal(panel._status.enabled, false);
+  } finally {
+    releaseRefresh();
+    await first;
+  }
 });
 
 for (const shape of ["nested", "bare"]) {

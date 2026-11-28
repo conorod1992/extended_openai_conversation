@@ -240,6 +240,13 @@
       "tests_stress/test_request_rules_provider_wire.py::test_matcher_route_scope_reaches_wire_and_next_turn"
     ]
   },
+  "capabilities/scheduled-actions::list_refresh": {
+    "controls": [
+      "refresh-scheduled-actions"
+    ],
+    "classification": "read_only_filter",
+    "reason": "Refresh retrieves pending Scheduled Actions for the selected assistant through the read-only list action."
+  },
   "capabilities/quiet-hours::schedule_controls": {
     "controls": [
       "qh-enabled",

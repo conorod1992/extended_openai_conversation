@@ -198,7 +198,7 @@ async def test_broadcast_suspend_cancels_volatile_work_and_preserves_preferences
         ),
         async_save=AsyncMock(),
     )
-    monkeypatch.setattr(intercom, "PropagatingWriteStore", lambda *_: store)
+    monkeypatch.setattr(intercom, "_BroadcastStore", lambda *_: store)
     monkeypatch.setattr(
         hass, "async_create_task", lambda coro: asyncio.create_task(coro)
     )
@@ -411,7 +411,7 @@ async def test_startup_restoration_only_settles_saved_owned_controls(
         assert recovery.config.enabled
 
 
-async def test_component_startup_restores_before_failed_provider_auth(
+async def test_component_startup_restores_after_failed_provider_auth(
     hass, monkeypatch
 ):
     from copy import deepcopy
@@ -476,9 +476,15 @@ async def test_component_startup_restores_before_failed_provider_auth(
     hass.async_create_background_task = Mock(
         side_effect=lambda coro, _name, **_kwargs: asyncio.create_task(coro)
     )
+    on_component_setup = Mock()
+    monkeypatch.setattr(integration, "async_when_setup", on_component_setup)
     assert await integration.async_setup(hass, {})
+    assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.2
     with pytest.raises(ConfigEntryAuthFailed):
         await integration.async_setup_entry(hass, entry)
+    call_hass, component, restore = on_component_setup.call_args.args
+    assert call_hass is hass and component == DOMAIN
+    await restore(hass, component)
     assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.8
     assert hass.data[OWNERS] == set()
     assert "quiet_hours_manager" not in hass.data.get(DOMAIN, {})
@@ -542,3 +548,32 @@ async def test_startup_restoration_never_interrupts_an_operating_manager(
     monkeypatch.setattr(quiet_hours, "_RuntimeQuietHoursManager", factory)
     await quiet_hours.async_restore_saved_quiet_hours(hass)
     factory.assert_not_called()
+
+
+async def test_failed_setup_preserves_runtime_until_remaining_platform_unloads(monkeypatch):
+    from homeassistant.exceptions import ConfigEntryNotReady
+
+    _stub_setup(monkeypatch)
+    entry = _Entry("entry", 0)
+    hass = _hass(entry)
+    forward = hass.config_entries.async_forward_entry_setups = AsyncMock()
+    failure = HomeAssistantError("platform failed to initialize")
+    forward.side_effect = failure
+    hass.config_entries.async_unload_platforms = AsyncMock(side_effect=[False, False, True])
+    retire = AsyncMock()
+    monkeypatch.setattr(integration, "_async_retire_runtime_owners", retire)
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await integration.async_setup_entry(hass, entry)
+    assert raised.value is failure
+    existing_client = entry.runtime_data
+    with pytest.raises(ConfigEntryNotReady, match="Previous setup could not unload"):
+        await integration.async_setup_entry(hass, entry)
+    assert entry.runtime_data is existing_client
+    assert forward.await_count == 1
+    retire.assert_not_awaited()
+
+    forward.side_effect = None
+    assert await integration.async_setup_entry(hass, entry)
+    assert forward.await_count == 2
+    retire.assert_awaited_once_with(hass, entry)

@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from pytest_homeassistant_custom_component.common import (
@@ -204,6 +205,105 @@ async def _upload_archive(
         assert uploaded["complete"] is (offset + chunk_size >= len(archive))
 
     return session_id
+
+
+async def _inspect_json_upload(client, entry, document, *, inspect_only):
+    session_id = await _upload_archive(
+        client,
+        entry=entry,
+        archive=json.dumps(document).encode(),
+        filename="backup.json",
+    )
+    try:
+        return await _transfer_call(
+            client,
+            entry=entry,
+            action="import_inspect",
+            data={"session_id": session_id, "inspect_only": inspect_only},
+        )
+    finally:
+        cancelled = await _transfer_call(
+            client, entry=entry, action="import_cancel", data={"session_id": session_id}
+        )
+        assert cancelled["success"], cancelled
+
+
+@pytest.mark.parametrize("kind", ["full", "custom", "setup", "legacy"])
+async def test_uploaded_backup_reports_malformed_version_and_mode(
+    hass, hass_ws_client, kind
+):
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.private_backup import (
+        encode_document,
+    )
+    from tests.helpers import historical_shareable_export, legacy_agent_export
+
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    client = await hass_ws_client(
+        hass, await _user_token(hass, MockUser(is_owner=True))
+    )
+    if kind == "full":
+        document = encode_document(
+            await backup.async_collect_backup_snapshot(hass, entry, subentry)
+        )
+    elif kind == "custom":
+        document = encode_document(
+            await transfer.async_collect_transfer_snapshot(
+                hass, entry, subentry, sections=[SECTION_CONFIGURATION]
+            )
+        )
+    elif kind == "setup":
+        document = historical_shareable_export("setup")
+    else:
+        document = legacy_agent_export(subentry)
+
+    valid = await _inspect_json_upload(client, entry, document, inspect_only=True)
+    assert valid["success"] and valid["result"]["valid"], valid
+    cases = [
+        ("version", value, "unsupported")
+        for value in ([], {}, True, float(document["version"]))
+    ]
+    if kind in {"custom", "setup"}:
+        cases.extend(
+            ("mode", value, "transfer mode is invalid") for value in ([], {}, True)
+        )
+    for field, value, expected in cases:
+        rejected = await _inspect_json_upload(
+            client, entry, {**document, field: value}, inspect_only=True
+        )
+        assert not rejected["success"], (field, value, rejected)
+        assert expected in rejected["error"]["message"], (field, value, rejected)
+
+
+async def test_uploaded_backup_rejects_oversized_daily_usage(hass, hass_ws_client):
+    from custom_components.extended_openai_conversation_responses import backup, usage
+    from custom_components.extended_openai_conversation_responses.private_backup import (
+        encode_document,
+    )
+
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    client = await hass_ws_client(
+        hass, await _user_token(hass, MockUser(is_owner=True))
+    )
+    snapshot = await backup.async_collect_backup_snapshot(
+        hass, entry, _conversation_subentry(entry)
+    )
+    date = "2026-11-01"
+    snapshot["usage"]["daily"][date] = usage._empty_day(date) | {
+        "run_count": 1,
+        "run_total_tokens": 10**309,
+    }
+    response = await _inspect_json_upload(
+        client, entry, encode_document(snapshot), inspect_only=False
+    )
+    assert not response["success"], response
+    assert "usage counter run_total_tokens is invalid" in response["error"]["message"]
 
 
 @pytest.mark.parametrize(
@@ -486,11 +586,26 @@ async def test_backup_transfer_rejects_non_admin_through_registered_websocket(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("storage_fails_before", ["preview", "restore"])
 async def test_custom_backup_selection_round_trip_through_registered_websocket(
     hass: HomeAssistant,
     hass_ws_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    storage_fails_before: str,
 ) -> None:
-    """A custom backup restores only selected sections and preserves configuration."""
+    """An unavailable unselected store does not prevent a Memory restore."""
+    from custom_components.extended_openai_conversation_responses import (
+        knowledge,
+        request_rules,
+    )
+
+    unavailable_knowledge = AsyncMock(side_effect=OSError("Knowledge storage failed"))
+    unavailable_rules = AsyncMock(side_effect=OSError("Request Rules storage failed"))
+
+    def fail_unselected_storage() -> None:
+        monkeypatch.setattr(knowledge, "async_get_knowledge", unavailable_knowledge)
+        monkeypatch.setattr(request_rules, "async_get_request_rules", unavailable_rules)
+
     entry = _entry()
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
@@ -534,6 +649,8 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
         filename=metadata["filename"],
     )
     try:
+        if storage_fails_before == "preview":
+            fail_unselected_storage()
         inspected = await _transfer_call(
             admin_client,
             entry=entry,
@@ -547,6 +664,8 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
         assert inspection["preview"]["selected_sections"] == [SECTION_PERSISTENT_MEMORY]
         assert inspection["can_create_new_agent"] is False
 
+        if storage_fails_before == "restore":
+            fail_unselected_storage()
         restored = await _transfer_call(
             admin_client,
             entry=entry,
@@ -580,6 +699,8 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
 
     assert dict(subentry.data) == original_raw_config
     assert agent_config_snapshot(subentry.data) == original_config
+    unavailable_knowledge.assert_not_awaited()
+    unavailable_rules.assert_not_awaited()
 
 
 @pytest.mark.parametrize("route_owner", ["target", "sibling"])

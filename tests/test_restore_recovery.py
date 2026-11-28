@@ -70,6 +70,11 @@ class FakeHass:
     def __init__(self) -> None:
         self.data: dict = {}
         self.config_entries = FakeConfigEntries()
+        self.auth = SimpleNamespace(
+            async_get_users=AsyncMock(return_value=[
+                SimpleNamespace(id="user-1", name="Local user", is_active=True, system_generated=False)
+            ])
+        )
 
 
 def _states():

@@ -5,7 +5,7 @@ import {
   parameterControlState,
   pickerModels,
 } from "../custom_components/extended_openai_conversation_responses/frontend/model-catalog.js";
-import {modelFieldPresentation, webSearchControlState} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-model-presentation.js";
+import {modelFieldPresentation, resetReasoningEffort, webSearchControlState} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-model-presentation.js";
 
 {
   const panel = {_result:{model_capabilities:{service_tier_options:[]}}};
@@ -105,6 +105,8 @@ import {modelFieldPresentation, webSearchControlState} from "../custom_component
   assert.equal(apiPathSelectable(capabilities,"chat_completions",false,"max"),false);
   assert.equal(apiPathSelectable(capabilities,"chat_completions",true,"high"),false);
   assert.equal(apiPathSelectable(capabilities,"chat_completions",true,"none"),true);
+  assert.equal(resetReasoningEffort(panel,"high"),"none");
+  assert.equal(panel._draft.api_mode,"chat_completions");
   assert.equal(apiPathSelectable(capabilities,"auto",true,"max",true),false);
   assert.deepEqual(modelFieldPresentation(panel,"reasoning_effort","high").options.map(({value})=>value),["none","high"]);
   panel._draft.api_mode="responses";
@@ -130,6 +132,13 @@ import {modelFieldPresentation, webSearchControlState} from "../custom_component
   capabilities.auto_paths["null:1:1"]="responses";
   capabilities.evaluations.responses.null={reasoning:true,function:true,web_search:true};
   assert.equal(webSearchControlState(panel).disabled,false);
+  panel._result.hosted_web_search_provider_supported=false;
+  panel._draft.web_search=false;
+  assert.equal(webSearchControlState(panel).disabled,true);
+  panel._draft.web_search=true;
+  assert.equal(webSearchControlState(panel).disabled,false);
+  assert.match(webSearchControlState(panel).note,/direct OpenAI connection/);
+  delete panel._result.hosted_web_search_provider_supported;
 }
 
 {

@@ -9,7 +9,9 @@ from datetime import datetime
 import logging
 from typing import Any, cast
 
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.components import conversation
+from homeassistant.components.homeassistant.exposed_entities import async_should_expose
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
     area_registry as ar,
@@ -23,7 +25,6 @@ from homeassistant.util import dt as dt_util
 from .agent_config import CONF_GUEST_WEB_SEARCH, DEFAULT_GUEST_WEB_SEARCH
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
-    CONF_FUNCTION_GROUPS,
     CONF_GUEST_ALLOWED_FUNCTION_NAMES,
     CONF_GUEST_ALLOWED_GROUP_IDS,
     CONF_GUEST_CONTROL_EXCLUDED_AREAS,
@@ -60,10 +61,13 @@ from .function_tool_policy import runtime_function_tool_name
 from .functions.security import FunctionSecurity, classify_tool
 from .helpers import get_exposed_entities
 from .mutation_outcomes import after_confirmed_mutation
-from .persistence_hardening import _async_settle_transactional_save
+from .persistence_hardening import (
+    StorageRepairRequired,
+    _async_settle_transactional_save,
+)
 from .record_timestamps import parse_datetime
 from .storage_namespaces import GUEST_MODE_PREFIX as GUEST_MODE_STORAGE_PREFIX
-from .strict_store import PropagatingWriteStore
+from .strict_store import STORE_ENVELOPE_ERRORS, PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -218,12 +222,18 @@ def can_reuse_request_policy(request_policy: Any, guest_mode: Any) -> bool:
     )
 
 
+class _GuestModeStore(PropagatingWriteStore):
+    """Distinguish a corrupt null payload from absent Guest Mode settings."""
+
+    _null_payload_label = "Guest Mode"
+
+
 class GuestModeManager:
     """Integration-owned, per-agent Guest Mode schedule."""
 
     def __init__(self, hass: HomeAssistant, entry_id: str, subentry_id: str) -> None:
         self.hass = hass
-        self._store = PropagatingWriteStore(
+        self._store = _GuestModeStore(
             hass,
             GUEST_MODE_STORAGE_VERSION,
             f"{GUEST_MODE_STORAGE_PREFIX}.{entry_id}.{subentry_id}",
@@ -232,6 +242,7 @@ class GuestModeManager:
             serialize_in_event_loop=False,
         ).bind_agent(entry_id, subentry_id)
         self._schedule: GuestModeSchedule | None = None
+        self._continuity_epoch = object()
         self._listeners: set[Callable[[], None]] = set()
         self._cancel_transition: Callable[[], None] | None = None
         self._clock_check: asyncio.TimerHandle | None = None
@@ -254,9 +265,11 @@ class GuestModeManager:
             # later getter/setup can retry instead of silently disabling Guest Mode.
             try:
                 data = await self._store.async_load()
-            except Exception:
+            except Exception as err:
                 self._persistence_unavailable = True
                 self._cancel_transition_timer()
+                if isinstance(err, STORE_ENVELOPE_ERRORS):
+                    raise StorageRepairRequired("Guest Mode") from err
                 raise
             recovering = self._persistence_unavailable
             try:
@@ -264,12 +277,12 @@ class GuestModeManager:
             except TypeError, ValueError:
                 self._persistence_unavailable = True
                 self._cancel_transition_timer()
-                from .persistence_hardening import StorageRepairRequired
-
                 raise StorageRepairRequired("Guest Mode") from None
             self._schedule = schedule
             self._persistence_unavailable = False
             self._initialized = True
+            if recovering:
+                self._continuity_epoch = object()
             if recovering or self._listeners:
                 self._notify()
 
@@ -374,6 +387,13 @@ class GuestModeManager:
             "updated_at": schedule.updated_at if schedule else None,
         }
 
+    @property
+    def continuity_activation(self) -> object | None:
+        """Identify this interval without exposing or persisting a session identifier."""
+        if self._schedule is None or not self.authoritative_available:
+            return None
+        return self._continuity_epoch
+
     def is_active(self, now: Any | None = None) -> bool:
         return bool(self.status(now)["currently_active"])
 
@@ -393,12 +413,12 @@ class GuestModeManager:
             raise ValueError("start_now and active_from cannot be supplied together")
         current = _as_utc(now or dt_util.utcnow())
         requested_start = (
-            _parse_timestamp(self.hass, active_from, "active_from")
+            _parse_timestamp(self.hass, active_from, "active_from", authored=True)
             if active_from is not None
             else current
         )
         requested_end = (
-            _parse_timestamp(self.hass, active_until, "active_until")
+            _parse_timestamp(self.hass, active_until, "active_until", authored=True)
             if active_until is not None
             else None
         )
@@ -450,14 +470,16 @@ class GuestModeManager:
         """Replace the interval from an authenticated HA control surface."""
         current = _as_utc(now or dt_util.utcnow())
         start = (
-            _parse_timestamp(self.hass, active_from, "active_from")
+            _parse_timestamp(self.hass, active_from, "active_from", authored=True)
             if active_from is not None
             else current
         )
         end = (
             None
             if indefinite
-            else _parse_timestamp(self.hass, active_until, "active_until")
+            else _parse_timestamp(
+                self.hass, active_until, "active_until", authored=True
+            )
             if active_until is not None
             else None
         )
@@ -652,6 +674,11 @@ class GuestModeManager:
             )
             settled = True
         finally:
+            if self.authoritative_available != was_available or (
+                self._schedule != previous
+                and not self._continuously_active(previous, self._schedule)
+            ):
+                self._continuity_epoch = object()
             # A failed write followed by a failed authoritative readback can
             # leave the old in-memory schedule unchanged but untrustworthy.
             # Notify once on that availability edge and retire obsolete timers.
@@ -675,6 +702,24 @@ class GuestModeManager:
                         _LOGGER.warning(
                             "Could not notify Guest Mode listeners during save recovery"
                         )
+
+    def _continuously_active(
+        self,
+        previous: GuestModeSchedule | None,
+        current: GuestModeSchedule | None,
+    ) -> bool:
+        """Keep the activation identity when a write leaves Guest Mode active."""
+        now = dt_util.utcnow()
+        return all(
+            schedule is not None
+            and _parse_timestamp(self.hass, schedule.active_from, "active_from") <= now
+            and (
+                schedule.active_until is None
+                or now
+                < _parse_timestamp(self.hass, schedule.active_until, "active_until")
+            )
+            for schedule in (previous, current)
+        )
 
     def _live_or_future_schedule(self, now: Any) -> GuestModeSchedule | None:
         if self._persistence_unavailable:
@@ -775,18 +820,15 @@ def _resolve_legacy_policy(
     """Preserve the pre-v2 allow-list policy without broadening access."""
     readable = _resolve_legacy_entity_ids(hass, options, control=False)
     controllable = _resolve_legacy_entity_ids(hass, options, control=True) & readable
-    groups = options.get(CONF_FUNCTION_GROUPS, ())
-    membership = (
-        {
-            name: group
-            for group in groups
-            if isinstance(group, Mapping)
-            for name in group.get("functions", ())
-            if isinstance(name, str)
-        }
-        if isinstance(groups, Sequence) and not isinstance(groups, (str, bytes))
-        else {}
+    from .function_groups import (
+        effective_configured_function_names,
+        safe_function_groups,
     )
+
+    tools = [dict(tool) for tool in configured_tools]
+    groups = safe_function_groups(options, tools)
+    effective_names = effective_configured_function_names(options, tools, groups)
+    membership = {name: group for group in groups for name in group["functions"]}
     guest_tools = frozenset(
         str(tool.get("spec", {}).get("name"))
         for tool in configured_tools
@@ -798,6 +840,7 @@ def _resolve_legacy_policy(
             or membership[str(tool.get("spec", {}).get("name"))].get("guest_allowed")
             is True
         )
+        and tool["spec"]["name"] in effective_names
         and classify_tool(tool) <= FunctionSecurity.CONTROL
     )
     return GuestCapabilityPolicy(
@@ -861,22 +904,27 @@ def _resolve_exclusion_policy(
         if isinstance(tool.get("spec"), Mapping)
         and isinstance(tool["spec"].get("name"), str)
     }
+    from .function_groups import (
+        effective_configured_function_names,
+        safe_function_groups,
+    )
+
+    tools = [dict(tool) for tool in configured_by_name.values()]
+    groups = safe_function_groups(options, tools)
+    effective_names = effective_configured_function_names(options, tools, groups)
     function_policy = options.get(CONF_GUEST_FUNCTION_POLICY, "off")
     if function_policy == "on":
-        guest_tools = set(configured_by_name)
+        guest_tools = effective_names
     elif function_policy == "custom":
         guest_tools = _string_set(options.get(CONF_GUEST_ALLOWED_FUNCTION_NAMES, ()))
         selected_groups = _string_set(options.get(CONF_GUEST_ALLOWED_GROUP_IDS, ()))
-        groups = options.get(CONF_FUNCTION_GROUPS, ())
-        if isinstance(groups, Sequence) and not isinstance(groups, (str, bytes)):
-            guest_tools.update(
-                name
-                for group in groups
-                if isinstance(group, Mapping) and group.get("id") in selected_groups
-                for name in group.get("functions", ())
-                if isinstance(name, str)
-            )
-        guest_tools &= set(configured_by_name)
+        guest_tools.update(
+            name
+            for group in groups
+            if group["id"] in selected_groups
+            for name in group["functions"]
+        )
+        guest_tools &= effective_names
     else:
         guest_tools = set()
     guest_tools = {
@@ -1002,8 +1050,19 @@ def guest_policy_editor_snapshot(
         for item in exposed
         if isinstance(item, Mapping) and isinstance(item.get("entity_id"), str)
     }
-    readable = _resolve_legacy_entity_ids(hass, options, control=False)
-    controllable = _resolve_legacy_entity_ids(hass, options, control=True) & readable
+    baseline.update(
+        entity_id
+        for entity_id in getattr(er.async_get(hass), "entities", {})
+        if hass.states.get(entity_id) is None
+        and async_should_expose(hass, conversation.DOMAIN, entity_id)
+    )
+    readable = _resolve_legacy_entity_ids(
+        hass, options, control=False, entity_ids=baseline
+    )
+    controllable = (
+        _resolve_legacy_entity_ids(hass, options, control=True, entity_ids=baseline)
+        & readable
+    )
     legacy_tools = _resolve_legacy_policy(hass, options, configured_tools)
     shared_read = bool(options.get(CONF_GUEST_SHARED_MEMORY_READ, False))
     shared_write = bool(options.get(CONF_GUEST_SHARED_MEMORY_WRITE, False))
@@ -1058,7 +1117,11 @@ def _effective_guest_entity_area(
 
 
 def _resolve_legacy_entity_ids(
-    hass: HomeAssistant, options: Mapping[str, Any], *, control: bool
+    hass: HomeAssistant,
+    options: Mapping[str, Any],
+    *,
+    control: bool,
+    entity_ids: set[str] | None = None,
 ) -> set[str]:
     prefix = "controllable" if control else "readable"
     entity_key = (
@@ -1079,8 +1142,12 @@ def _resolve_legacy_entity_ids(
     device_registry = dr.async_get(hass)
     area_registry = ar.async_get(hass)
     allowed: set[str] = set()
-    for state in hass.states.async_all():
-        entity_id = state.entity_id
+    candidates = (
+        (state.entity_id for state in hass.states.async_all())
+        if entity_ids is None
+        else entity_ids
+    )
+    for entity_id in candidates:
         registry_entry = entity_registry.async_get(entity_id)
         device = (
             device_registry.async_get(registry_entry.device_id)
@@ -1103,6 +1170,51 @@ def _resolve_legacy_entity_ids(
             allowed.add(entity_id)
     _LOGGER.debug("Resolved %d Guest %s entities", len(allowed), prefix)
     return allowed
+
+
+def async_setup_guest_entity_renames(hass: HomeAssistant) -> None:
+    """Follow Home Assistant entity renames for saved individual exclusions."""
+    from .live_subentry_updates import update_live_subentry
+
+    listener_key = f"{DOMAIN}.guest_entity_renames"
+    if listener_key in hass.data:
+        return
+
+    @callback
+    def renamed(event: Event[Any]) -> None:
+        changes = event.data.get("changes", {})
+        old = changes.get("entity_id") if isinstance(changes, Mapping) else None
+        new = event.data.get("entity_id")
+        if (
+            event.data.get("action") != "update"
+            or not isinstance(old, str)
+            or not isinstance(new, str)
+            or old == new
+        ):
+            return
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            for subentry in tuple(entry.subentries.values()):
+                candidate = dict(subentry.data)
+                changed = False
+                for key in (
+                    CONF_GUEST_EXCLUDED_ENTITIES,
+                    CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
+                    CONF_GUEST_READABLE_ENTITIES,
+                    CONF_GUEST_CONTROLLABLE_ENTITIES,
+                ):
+                    selectors = candidate.get(key)
+                    if isinstance(selectors, (list, tuple)) and old in selectors:
+                        candidate[key] = [
+                            new if selector == old else selector
+                            for selector in selectors
+                        ]
+                        changed = True
+                if changed:
+                    update_live_subentry(hass, entry, subentry, data=candidate)
+
+    hass.data[listener_key] = hass.bus.async_listen(
+        er.EVENT_ENTITY_REGISTRY_UPDATED, renamed
+    )
 
 
 def resolve_guest_selector_entity_ids(
@@ -1344,7 +1456,9 @@ def _string_set(value: Any) -> set[str]:
     return {item for item in value if isinstance(item, str) and item}
 
 
-def _parse_timestamp(hass: HomeAssistant | None, value: str, field: str) -> datetime:
+def _parse_timestamp(
+    hass: HomeAssistant | None, value: str, field: str, *, authored: bool = False
+) -> datetime:
     parsed = parse_datetime(value) if isinstance(value, str) else None
     if parsed is None:
         if hass is None:
@@ -1356,6 +1470,20 @@ def _parse_timestamp(hass: HomeAssistant | None, value: str, field: str) -> date
         zone = dt_util.get_time_zone(hass.config.time_zone)
         if zone is None:
             raise ValueError("Home Assistant timezone is unavailable")
+        if authored:
+            from .local_time import wall_time_instants
+
+            try:
+                candidates = wall_time_instants(parsed, zone)
+            except (OverflowError, ValueError) as err:
+                raise ValueError(f"{field} is outside the supported range") from err
+            if not candidates:
+                raise ValueError(f"{field} does not exist in Home Assistant's timezone")
+            if len(candidates) != 1:
+                raise ValueError(
+                    f"{field} occurs twice in Home Assistant's timezone; specify a UTC offset"
+                )
+            return candidates.pop()
         parsed = parsed.replace(tzinfo=zone)
     return _as_utc(parsed, field=field)
 

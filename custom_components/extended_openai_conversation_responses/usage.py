@@ -13,8 +13,9 @@ from functools import partial, wraps
 from hashlib import sha256
 import json
 import logging
+from math import isfinite
 import time
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeGuard
 from uuid import uuid4
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
@@ -44,6 +45,7 @@ from .persistence_hardening import (
     _async_settle_transactional_save,
 )
 from .storage_namespaces import USAGE_PREFIX as STORAGE_KEY_PREFIX
+from .strict_json import has_surrogate
 from .strict_store import (
     PropagatingWriteStore,
     RecoveryGuardedStore,
@@ -67,6 +69,15 @@ _RUN_ATTRIBUTION_COUNTERS = frozenset(
     {"run_total_tokens", "run_request_count", "unattributed_run_count"}
 )
 MAX_RECENT_LIMIT = 200
+# Home Assistant's JSON encoder supports unsigned 64-bit counters.
+_MAX_USAGE_COUNT = (1 << 64) - 1
+_TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cached_input_tokens",
+    "reasoning_tokens",
+)
 _LOGGER = logging.getLogger(__name__)
 _EXPLICIT_USAGE_SAVE: ContextVar[bool] = ContextVar(
     "explicit_usage_save", default=False
@@ -89,6 +100,7 @@ class _UsageStore(PropagatingWriteStore):
     """Surface explicit save failures while keeping delayed telemetry best effort."""
 
     _checkpoint_deadline: float | None = None
+    checkpoint_failed = False
 
     @callback
     def async_delay_save(
@@ -104,7 +116,12 @@ class _UsageStore(PropagatingWriteStore):
         # Store has consumed the pending data. A load may evaluate the data
         # callback too, so evaluating a snapshot cannot retire this deadline.
         self._checkpoint_deadline = None
-        await super()._async_write_data(data)
+        try:
+            await super()._async_write_data(data)
+        except OSError:
+            self.checkpoint_failed = True
+            raise
+        self.checkpoint_failed = False
 
     async def async_save(self, data: dict[str, Any]) -> None:
         token = _EXPLICIT_USAGE_SAVE.set(True)
@@ -165,6 +182,13 @@ class RequestUsage:
     cached_input_tokens: int = 0
     reasoning_tokens: int = 0
     details: dict[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for name in _TOKEN_FIELDS:
+            setattr(self, name, _integer(getattr(self, name)))
+        self.details = {
+            name: count for name, count in self.details.items() if is_usage_count(count)
+        }
 
 
 @dataclass(slots=True)
@@ -237,12 +261,37 @@ class UsageRun:
     accounting_date: str | None = None
 
 
-def _integer(value: Any) -> int:
+_REQUEST_SCALARS = tuple(
+    item.name for item in fields(UsageRequest) if item.name != "details"
+)
+_RUN_SCALARS = tuple(
+    item.name
+    for item in fields(UsageRun)
+    if item.name not in {"models", "providers", "api_modes"}
+)
+
+
+def is_usage_count(value: object) -> TypeGuard[int]:
+    """Accept integers that can round-trip through HA's JSON encoder."""
     return (
-        value
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0
-        else 0
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= _MAX_USAGE_COUNT
     )
+
+
+def is_usage_detail_key(value: object) -> TypeGuard[str]:
+    """Accept provider detail names that can be persisted as JSON keys."""
+    return isinstance(value, str) and not has_surrogate(value)
+
+
+def add_usage_counts(current: int, increment: int) -> int:
+    """Keep accumulated Usage counters serializable without resetting prior counts."""
+    return min(_MAX_USAGE_COUNT, current + increment)
+
+
+def _integer(value: Any) -> int:
+    return value if is_usage_count(value) else 0
 
 
 def _value(source: Any, key: str) -> Any:
@@ -357,7 +406,7 @@ def extract_usage(usage: Any) -> RequestUsage:
             detail_source = vars(detail_source)
         if isinstance(detail_source, dict):
             for key, value in detail_source.items():
-                if amount := _integer(value):
+                if is_usage_detail_key(key) and (amount := _integer(value)):
                     details[f"{prefix}_{key}"] = amount
     return RequestUsage(
         input_tokens,
@@ -379,8 +428,9 @@ class UsageManager:
         detail_storage: UsageStorage | None = None,
         *,
         agent_subentry_id: str = "",
-        request_retention_days: int = DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-        run_retention_days: int = DEFAULT_USAGE_RUN_RETENTION_DAYS,
+        request_retention_days: int | None = DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+        run_retention_days: int | None = DEFAULT_USAGE_RUN_RETENTION_DAYS,
+        read_retention: Callable[[], tuple[int | None, int | None]] | None = None,
     ) -> None:
         self._storage = storage
         self._daily_storage = daily_storage
@@ -388,6 +438,7 @@ class UsageManager:
         self._agent_subentry_id = agent_subentry_id
         self.request_retention_days = request_retention_days
         self.run_retention_days = run_retention_days
+        self._read_retention = read_retention
         self.totals = UsageTotals()
         self.daily: dict[str, dict[str, Any]] = {}
         self.requests: list[UsageRequest] = []
@@ -406,6 +457,7 @@ class UsageManager:
         )
         self._run_started: dict[str, float] = {}
         self._active_runs: dict[str, asyncio.Task[Any]] = {}
+        self._primary_request_models: dict[str, str] = {}
         self._stopping = False
         self._shutdown_lock = asyncio.Lock()
         self._shutdown_registered = False
@@ -471,8 +523,6 @@ class UsageManager:
                         staged_totals, revision, mirror
                     )
 
-            staged_daily, invalid_days = _load_stored_usage_days(daily_data)
-            daily_needs_repair |= invalid_days
             load_failed = False
             loaded_details = None
             if self._detail_storage is not None:
@@ -492,28 +542,34 @@ class UsageManager:
                     if not isinstance(error.__cause__, OSError):
                         raise
                     load_failed = True
-            (
-                staged_requests,
-                staged_runs,
-                details_need_repair,
-                detail_records_repairable,
-                inline_run_dates,
-            ) = _decode_usage_detail_store(loaded_details)
+            policy = self._initialization_retention()
+            while True:
+                (
+                    staged_daily,
+                    invalid_days,
+                    staged_requests,
+                    staged_runs,
+                    details_need_repair,
+                    detail_records_repairable,
+                    detail_retention_dirty,
+                ) = await asyncio.to_thread(
+                    _prepare_usage_history, daily_data, loaded_details, *policy
+                )
+                current_policy = self._initialization_retention()
+                if current_policy == policy:
+                    break
+                # Reapply the latest policy to the original, unfiltered payload.
+                policy = current_policy
+            daily_needs_repair |= invalid_days
             details_need_repair |= load_failed
-
-            staged_requests, staged_runs, expired = retained_usage_details(
-                staged_requests,
-                staged_runs,
-                request_days=self.request_retention_days,
-                run_days=self.run_retention_days,
-            )
 
             self.totals = staged_totals
             self.daily = staged_daily
             self.requests = staged_requests
             self.runs = staged_runs
+            self.request_retention_days, self.run_retention_days = policy
             # The next normal detail write also normalizes older inline dates.
-            self._detail_retention_dirty = inline_run_dates or any(expired.values())
+            self._detail_retention_dirty = detail_retention_dirty
             self._totals_need_repair = totals_need_repair
             self._daily_needs_repair = daily_needs_repair
             self._details_need_repair = details_need_repair
@@ -528,11 +584,18 @@ class UsageManager:
                 )
             self._initialized = True
 
+    def _initialization_retention(self) -> tuple[int | None, int | None]:
+        if self._read_retention is not None:
+            return self._read_retention()
+        return self.request_retention_days, self.run_retention_days
+
     async def async_record_conversation(self) -> None:
         """Compatibility API; new conversation code uses ``async_run``."""
         async with async_storage_lock(self._storage, self._lock):
             self._require_aggregates_writable()
-            self.totals.conversation_count += 1
+            self.totals.conversation_count = add_usage_counts(
+                self.totals.conversation_count, 1
+            )
             try:
                 await self._async_save_aggregates()
             finally:
@@ -575,6 +638,7 @@ class UsageManager:
                 await self._async_finalize_run(run)
             finally:
                 self._active_runs.pop(run.run_id, None)
+                self._primary_request_models.pop(run.run_id, None)
 
     async def async_prepare_for_deletion(self) -> None:
         """Drain pruning and release callbacks without flushing erased data.
@@ -640,6 +704,11 @@ class UsageManager:
     def current_run(self) -> UsageRun | None:
         return self._current_run.get()
 
+    def current_primary_request_model(self) -> str | None:
+        """Return the latest model used for the active conversation or AI Task."""
+        run = self._current_run.get()
+        return self._primary_request_models.get(run.run_id) if run is not None else None
+
     def mark_current_run_failed(self, error_type: str) -> None:
         record_current_run_failure(error_type)
         if run := self._current_run.get():
@@ -660,17 +729,24 @@ class UsageManager:
         tool_calls_requested: int = 0,
         web_search_used: bool = False,
         error_type: str | None = None,
+        affects_run_success: bool = True,
     ) -> None:
-        """Count exactly one completed provider request."""
+        """Count one provider request, including failures a later round can recover."""
         usage = usage or RequestUsage()
+        duration_ms = _integer(duration_ms)
+        tool_calls_requested = _integer(tool_calls_requested)
         completed_at = dt_util.utcnow()
         async with async_storage_lock(self._storage, self._lock):
             if not self._aggregates_need_repair:
-                self.totals.api_request_count += 1
-                if successful:
-                    self.totals.successful_request_count += 1
-                else:
-                    self.totals.failed_request_count += 1
+                self.totals.api_request_count = add_usage_counts(
+                    self.totals.api_request_count, 1
+                )
+                self.totals.successful_request_count = add_usage_counts(
+                    self.totals.successful_request_count, int(successful)
+                )
+                self.totals.failed_request_count = add_usage_counts(
+                    self.totals.failed_request_count, int(not successful)
+                )
                 self._add_tokens(self.totals, usage)
                 day_key = _local_day_key(completed_at)
                 _add_request_to_day(
@@ -684,10 +760,18 @@ class UsageManager:
 
             run = self._current_run.get()
             if run is not None:
-                run.request_count += 1
-                run.successful_request_count += int(successful)
-                run.failed_request_count += int(not successful)
-                run.tool_call_count += max(0, tool_calls_requested)
+                if request_stage in {"initial", "after_tool"} and model:
+                    self._primary_request_models[run.run_id] = model
+                run.request_count = add_usage_counts(run.request_count, 1)
+                run.successful_request_count = add_usage_counts(
+                    run.successful_request_count, int(successful)
+                )
+                run.failed_request_count = add_usage_counts(
+                    run.failed_request_count, int(not successful)
+                )
+                run.tool_call_count = add_usage_counts(
+                    run.tool_call_count, tool_calls_requested
+                )
                 run.web_search_used = run.web_search_used or web_search_used
                 self._add_tokens(run, usage)
                 for collection, value in (
@@ -697,15 +781,20 @@ class UsageManager:
                 ):
                     if value and value not in collection:
                         collection.append(value)
-                if not successful and request_stage not in {
-                    "embeddings",
-                    "context_summary",
-                }:
+                if (
+                    not successful
+                    and affects_run_success
+                    and request_stage
+                    not in {
+                        "embeddings",
+                        "context_summary",
+                    }
+                ):
                     run.successful = False
                     run.error_type = error_type or run.error_type or "provider_error"
             retain_request = (
-                self.request_retention_days > 0 and not self._repair_required
-            )
+                self.request_retention_days or 0
+            ) > 0 and not self._repair_required
             if retain_request:
                 self.requests.append(
                     UsageRequest(
@@ -717,14 +806,14 @@ class UsageManager:
                         model=model,
                         api_mode=api_mode,
                         successful=successful,
-                        duration_ms=max(0, duration_ms),
+                        duration_ms=duration_ms,
                         input_tokens=usage.input_tokens,
                         output_tokens=usage.output_tokens,
                         total_tokens=usage.total_tokens,
                         cached_input_tokens=usage.cached_input_tokens,
                         reasoning_tokens=usage.reasoning_tokens,
                         request_stage=request_stage,
-                        tool_calls_requested=max(0, tool_calls_requested),
+                        tool_calls_requested=tool_calls_requested,
                         web_search_used=web_search_used,
                         error_type=error_type,
                         details=dict(usage.details),
@@ -761,10 +850,12 @@ class UsageManager:
                         * 1000
                     ),
                 )
-                if self.run_retention_days > 0 and not self._repair_required:
+                if (self.run_retention_days or 0) > 0 and not self._repair_required:
                     self.runs.append(run)
                 if not self._aggregates_need_repair:
-                    self.totals.conversation_count += 1
+                    self.totals.conversation_count = add_usage_counts(
+                        self.totals.conversation_count, 1
+                    )
                     _add_run_to_day(
                         self.daily.setdefault(day_key, _empty_day(day_key)), run
                     )
@@ -834,29 +925,26 @@ class UsageManager:
                 readback_outcome = MutationFailure("committed")
                 return
 
+            retained_requests, retained_runs, expired = retained_usage_details(
+                restored,
+                restored_runs,
+                request_days=self.request_retention_days,
+                run_days=self.run_retention_days,
+            )
             live_requests = {record.request_id: record for record in self.requests}
             live_runs = {record.run_id: record for record in self.runs}
-            candidate_requests = {record.request_id for record in requests}
-            candidate_runs = {record.run_id for record in runs}
-            # A missing file, or a previous generation containing a record this
-            # operation removes, proves the atomic replacement did not apply.
-            # Keep recent records still waiting for a checkpoint when the disk
-            # generation is otherwise a subset of the current live state.
+            # Keep records still waiting for a normal checkpoint when the
+            # replacement did not commit and disk agrees with a subset of live.
+            # Startup already filters expired disk records out of live history.
             if not (damaged or self._details_need_repair) and (
                 raw is None
                 or (
-                    all(live_requests.get(item.request_id) == item for item in restored)
-                    and all(
-                        live_runs.get(item.run_id) == item for item in restored_runs
+                    all(
+                        live_requests.get(item.request_id) == item
+                        for item in retained_requests
                     )
-                    and (
-                        any(
-                            item.request_id not in candidate_requests
-                            for item in restored
-                        )
-                        or any(
-                            item.run_id not in candidate_runs for item in restored_runs
-                        )
+                    and all(
+                        live_runs.get(item.run_id) == item for item in retained_runs
                     )
                 )
             ):
@@ -866,12 +954,7 @@ class UsageManager:
                     )
                 readback_outcome = MutationFailure("rejected")
                 return
-            self.requests, self.runs, expired = retained_usage_details(
-                restored,
-                restored_runs,
-                request_days=self.request_retention_days,
-                run_days=self.run_retention_days,
-            )
+            self.requests, self.runs = retained_requests, retained_runs
             self._details_need_repair = damaged
             self._detail_records_repairable = repairable
             self._detail_retention_dirty = inline_dates or any(expired.values())
@@ -1009,8 +1092,9 @@ class UsageManager:
     def detail_is_current(self, timestamp: str, *, request: bool = False) -> bool:
         """Do not expose expired details between periodic maintenance runs."""
         days = self.request_retention_days if request else self.run_retention_days
-        return days > 0 and _parse_time(timestamp) >= dt_util.utcnow() - timedelta(
-            days=days
+        return days is None or (
+            days > 0
+            and _parse_time(timestamp) >= _detail_cutoff(dt_util.utcnow(), days)
         )
 
     def recent_runs(
@@ -1065,8 +1149,8 @@ class UsageManager:
                 ("api_modes", "api_mode_breakdown"),
             ):
                 for value, tokens in day.get(day_key, {}).items():
-                    result[output_key][value] = (
-                        result[output_key].get(value, 0) + tokens
+                    result[output_key][value] = add_usage_counts(
+                        result[output_key].get(value, 0), tokens
                     )
         return result
 
@@ -1116,10 +1200,22 @@ class UsageManager:
     def persistence_status(self) -> dict[str, Any]:
         """Expose only persistence state, without request or conversation details."""
         volatile = self.is_volatile
+        aggregate_failed = any(
+            isinstance(store, _UsageStore) and store.checkpoint_failed
+            for store in (self._storage, self._daily_storage)
+        )
+        details_failed = (
+            isinstance(self._detail_storage, _UsageStore)
+            and self._detail_storage.checkpoint_failed
+        )
         return {
             "mode": "volatile" if volatile else "durable",
-            "survives_restart": not volatile and not self._repair_required,
+            "survives_restart": not (
+                volatile or self._repair_required or aggregate_failed or details_failed
+            ),
             **({"storage_repair_required": True} if self._repair_required else {}),
+            **({"aggregate_checkpoint_failed": True} if aggregate_failed else {}),
+            **({"detail_checkpoint_failed": True} if details_failed else {}),
         }
 
     @property
@@ -1131,6 +1227,11 @@ class UsageManager:
             return "Usage totals need storage repair. The available figures can be incomplete, and new usage is not being recorded."
         if self._details_need_repair:
             return "Usage details need storage repair. Token totals are still recorded, but recent runs and requests can be incomplete."
+        status = self.persistence_status()
+        if status.get("aggregate_checkpoint_failed"):
+            return "The latest Usage totals checkpoint failed. Recent accounting may be lost on restart."
+        if status.get("detail_checkpoint_failed"):
+            return "The latest Usage details checkpoint failed. Recent requests and runs may be lost on restart."
         return None
 
     def _require_writable(self) -> None:
@@ -1255,14 +1356,17 @@ class UsageManager:
 
     @staticmethod
     def _add_tokens(target: Any, usage: RequestUsage) -> None:
-        target.input_tokens += usage.input_tokens
-        target.output_tokens += usage.output_tokens
-        target.total_tokens += usage.total_tokens
-        target.cached_input_tokens += usage.cached_input_tokens
-        target.reasoning_tokens += usage.reasoning_tokens
+        for name in _TOKEN_FIELDS:
+            setattr(
+                target,
+                name,
+                add_usage_counts(getattr(target, name), getattr(usage, name)),
+            )
         if isinstance(target, UsageTotals):
             for key, value in usage.details.items():
-                target.details[key] = target.details.get(key, 0) + value
+                target.details[key] = add_usage_counts(
+                    target.details.get(key, 0), value
+                )
 
     async def _async_save_totals(self, *, replacing: bool = False) -> None:
         if not replacing:
@@ -1389,18 +1493,49 @@ class UsageManager:
 
 def _validate_counter_mapping(data: dict[str, Any], keys: set[str]) -> None:
     for key in keys:
-        value = data.get(key)
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        if not is_usage_count(data.get(key)):
             raise ValueError(f"usage counter {key} is invalid")
+
+
+def _prepare_usage_history(
+    daily: dict[str, Any],
+    details: Any,
+    request_days: int | None,
+    run_days: int | None,
+) -> tuple[
+    dict[str, dict[str, Any]],
+    bool,
+    list[UsageRequest],
+    list[UsageRun],
+    bool,
+    bool,
+    bool,
+]:
+    """Decode and prune history without publishing or modifying live state."""
+    days, invalid_days = _load_stored_usage_days(daily)
+    requests, runs, needs_repair, repairable, inline_dates = _decode_usage_detail_store(
+        details
+    )
+    requests, runs, expired = retained_usage_details(
+        requests,
+        runs,
+        request_days=request_days,
+        run_days=run_days,
+    )
+    return (
+        days,
+        invalid_days,
+        requests,
+        runs,
+        needs_repair,
+        repairable,
+        inline_dates or any(expired.values()),
+    )
 
 
 def _validate_breakdown(value: Any, label: str) -> dict[str, int]:
     if not isinstance(value, dict) or not all(
-        isinstance(key, str)
-        and isinstance(amount, int)
-        and not isinstance(amount, bool)
-        and amount >= 0
-        for key, amount in value.items()
+        isinstance(key, str) and is_usage_count(amount) for key, amount in value.items()
     ):
         raise ValueError(f"{label} is invalid")
     return dict(value)
@@ -1507,6 +1642,8 @@ def _validate_usage_day(
             not isinstance(amount, int | float)
             or isinstance(amount, bool)
             or amount < 0
+            or (isinstance(amount, float) and not isfinite(amount))
+            or (isinstance(amount, int) and not is_usage_count(amount))
         ):
             raise ValueError(f"daily usage value {key} is invalid")
     result = dict(value)
@@ -1631,8 +1768,9 @@ def _usage_request_from_record(raw: Any) -> UsageRequest:
         or _parse_time(request.timestamp) == datetime.min.replace(tzinfo=dt_util.UTC)
     ):
         raise ValueError("usage request metadata is invalid")
-    values = asdict(request)
-    _validate_counter_mapping(values, counter_keys)
+    _validate_counter_mapping(
+        {key: getattr(request, key) for key in counter_keys}, counter_keys
+    )
     request.details = _validate_breakdown(request.details, "usage request details")
     return request
 
@@ -1699,7 +1837,9 @@ def _usage_run_from_record(raw: Any) -> UsageRun:
         raise ValueError("usage run metadata is invalid")
     if run.accounting_date is not None:
         _validate_run_accounting_date(run.accounting_date, run.completed_at)
-    _validate_counter_mapping(asdict(run), counter_keys)
+    _validate_counter_mapping(
+        {key: getattr(run, key) for key in counter_keys}, counter_keys
+    )
     return run
 
 
@@ -1793,36 +1933,39 @@ def _add_request_to_day(
     model: str,
     api_mode: str,
 ) -> None:
-    day["api_request_count"] += 1
-    day["successful_request_count"] += int(successful)
-    day["failed_request_count"] += int(not successful)
-    for key in (
-        "input_tokens",
-        "output_tokens",
-        "total_tokens",
-        "cached_input_tokens",
-        "reasoning_tokens",
-    ):
-        day[key] += getattr(usage, key)
+    day["api_request_count"] = add_usage_counts(day["api_request_count"], 1)
+    day["successful_request_count"] = add_usage_counts(
+        day["successful_request_count"], int(successful)
+    )
+    day["failed_request_count"] = add_usage_counts(
+        day["failed_request_count"], int(not successful)
+    )
+    for key in _TOKEN_FIELDS:
+        day[key] = add_usage_counts(day[key], getattr(usage, key))
     for key, value in (
         ("provider_breakdown", provider),
         ("model_breakdown", model),
         ("api_mode_breakdown", api_mode),
     ):
         if value:
-            day[key][value] = day[key].get(value, 0) + usage.total_tokens
+            day[key][value] = add_usage_counts(
+                day[key].get(value, 0), usage.total_tokens
+            )
     _calculate_averages(day)
 
 
 def _add_run_to_day(day: dict[str, Any], run: UsageRun) -> None:
-    day["run_total_tokens"] += run.total_tokens
-    day["run_request_count"] += run.request_count
-    day["run_count"] += 1
-    day["successful_run_count"] += int(run.successful)
-    day["failed_run_count"] += int(not run.successful)
-    day["tool_call_count"] += run.tool_call_count
-    day["web_search_run_count"] += int(run.web_search_used)
-    day["total_run_duration_ms"] += run.duration_ms
+    for key, increment in (
+        ("run_total_tokens", run.total_tokens),
+        ("run_request_count", run.request_count),
+        ("run_count", 1),
+        ("successful_run_count", int(run.successful)),
+        ("failed_run_count", int(not run.successful)),
+        ("tool_call_count", run.tool_call_count),
+        ("web_search_run_count", int(run.web_search_used)),
+        ("total_run_duration_ms", run.duration_ms),
+    ):
+        day[key] = add_usage_counts(day[key], increment)
     _calculate_averages(day)
 
 
@@ -1831,14 +1974,22 @@ def _merge_day(target: dict[str, Any], source: dict[str, Any]) -> None:
         if isinstance(value, dict):
             bucket = target.setdefault(key, {})
             for name, amount in value.items():
-                bucket[name] = bucket.get(name, 0) + amount
+                bucket[name] = add_usage_counts(bucket.get(name, 0), amount)
         elif key not in {
             "date",
             "average_tokens_per_completed_run",
             "average_requests_per_completed_run",
             "average_duration_ms_per_completed_run",
         } and isinstance(value, int):
-            target[key] += value
+            target[key] = add_usage_counts(target[key], value)
+
+
+def _rounded_token_average(total: int, count: int) -> int:
+    # Round ties to even without a float that can round MAX up to 2**64.
+    quotient, remainder = divmod(total, count)
+    return quotient + int(
+        2 * remainder > count or (2 * remainder == count and quotient % 2)
+    )
 
 
 def _calculate_averages(day: dict[str, Any]) -> None:
@@ -1848,8 +1999,8 @@ def _calculate_averages(day: dict[str, Any]) -> None:
             day["average_tokens_per_completed_run"] = None
             day["average_requests_per_completed_run"] = None
         else:
-            day["average_tokens_per_completed_run"] = round(
-                day["run_total_tokens"] / count
+            day["average_tokens_per_completed_run"] = _rounded_token_average(
+                day["run_total_tokens"], count
             )
             day["average_requests_per_completed_run"] = round(
                 day["run_request_count"] / count, 2
@@ -1857,6 +2008,10 @@ def _calculate_averages(day: dict[str, Any]) -> None:
         day["average_duration_ms_per_completed_run"] = round(
             day["total_run_duration_ms"] / count, 2
         )
+    else:
+        day["average_tokens_per_completed_run"] = 0
+        day["average_requests_per_completed_run"] = 0.0
+        day["average_duration_ms_per_completed_run"] = 0.0
 
 
 def _local_day_key(timestamp: datetime) -> str:
@@ -1872,26 +2027,35 @@ def _parse_time(value: Any) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_util.UTC)
 
 
+def _detail_cutoff(now: datetime, days: int) -> datetime:
+    earliest = datetime.min.replace(tzinfo=now.tzinfo)
+    return (
+        earliest if days > (now - earliest).days else now - timedelta(days=max(0, days))
+    )
+
+
 def retained_usage_details(
     requests: list[UsageRequest],
     runs: list[UsageRun],
     *,
-    request_days: int,
-    run_days: int,
+    request_days: int | None,
+    run_days: int | None,
 ) -> tuple[list[UsageRequest], list[UsageRun], dict[str, int]]:
     """Project the same retained details for restore review and storage."""
     now = dt_util.utcnow()
-    request_cutoff = now - timedelta(days=max(0, request_days))
-    run_cutoff = now - timedelta(days=max(0, run_days))
+    request_cutoff = _detail_cutoff(now, request_days or 0)
+    run_cutoff = _detail_cutoff(now, run_days or 0)
     retained_requests = [
         item
         for item in requests
-        if request_days > 0 and _parse_time(item.timestamp) >= request_cutoff
+        if request_days is None
+        or (request_days > 0 and _parse_time(item.timestamp) >= request_cutoff)
     ]
     retained_runs = [
         item
         for item in runs
-        if run_days > 0 and _parse_time(item.started_at) >= run_cutoff
+        if run_days is None
+        or (run_days > 0 and _parse_time(item.started_at) >= run_cutoff)
     ]
     return (
         retained_requests,
@@ -1926,26 +2090,21 @@ def _register_usage_maintenance(hass: HomeAssistant, manager: UsageManager) -> N
 
 def _saved_retention(
     hass: HomeAssistant, entry_id: str, subentry_id: str
-) -> dict[str, int]:
+) -> dict[str, int | None]:
     """Resolve authoritative policy before any caller loads durable detail."""
     entry = hass.config_entries.async_get_entry(entry_id)
     subentry = entry.subentries.get(subentry_id) if entry is not None else None
     return usage_retention_policy(subentry.data if subentry is not None else {})
 
 
-def usage_retention_policy(options: Mapping[str, Any]) -> dict[str, int]:
+def usage_retention_policy(options: Mapping[str, Any]) -> dict[str, int | None]:
     """Read retention consistently for durable, volatile and platform consumers."""
-    from .agent_config import normalized_agent_integer
+    from .agent_config import effective_usage_retention
 
+    retention = effective_usage_retention(options)
     return {
-        "request_retention_days": normalized_agent_integer(
-            options,
-            CONF_USAGE_REQUEST_RETENTION_DAYS,
-            DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-        ),
-        "run_retention_days": normalized_agent_integer(
-            options, CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
-        ),
+        "request_retention_days": retention[CONF_USAGE_REQUEST_RETENTION_DAYS],
+        "run_retention_days": retention[CONF_USAGE_RUN_RETENTION_DAYS],
     }
 
 
@@ -2059,12 +2218,17 @@ async def async_get_durable_usage(
             totals_store, daily_store, detail_store = _durable_usage_stores(
                 hass, entry_id, subentry_id
             )
+
+            def read_retention() -> tuple[int | None, int | None]:
+                policy = _saved_retention(hass, entry_id, subentry_id)
+                return policy["request_retention_days"], policy["run_retention_days"]
+
             manager = UsageManager(
                 totals_store,
                 daily_store,
                 detail_store,
                 agent_subentry_id=subentry_id,
-                **_saved_retention(hass, entry_id, subentry_id),
+                read_retention=read_retention,
             )
             # Publish before the first await so every concurrent caller initializes and
             # retains the same authoritative manager instance.
@@ -2075,7 +2239,7 @@ async def async_get_durable_usage(
 
 
 async def async_apply_volatile_usage_retention(
-    hass: HomeAssistant, entry_id: str, subentry_id: str, policy: dict[str, int]
+    hass: HomeAssistant, entry_id: str, subentry_id: str, policy: dict[str, int | None]
 ) -> None:
     """Apply committed policy to any existing in-memory fallback."""
     fallback = hass.data.get(_VOLATILE_USAGE_MANAGERS, {}).get((entry_id, subentry_id))
@@ -2094,6 +2258,7 @@ async def async_apply_usage_retention(
     policy = _saved_retention(hass, entry_id, subentry_id)
     await async_apply_volatile_usage_retention(hass, entry_id, subentry_id, policy)
     durable = await async_get_durable_usage(hass, entry_id, subentry_id)
+    policy = _saved_retention(hass, entry_id, subentry_id)
     durable.request_retention_days = policy["request_retention_days"]
     durable.run_retention_days = policy["run_retention_days"]
     await durable.async_prune_details()
@@ -2199,12 +2364,14 @@ async def async_get_usage(
                     "in this mode will be lost on Home Assistant restart; conversation remains available",
                     err,
                 )
+                retention = _saved_retention(hass, entry_id, subentry_id)
                 manager = UsageManager(
                     _VolatileUsageStorage(),
                     _VolatileUsageStorage(),
                     _VolatileUsageStorage(),
                     agent_subentry_id=subentry_id,
-                    **_saved_retention(hass, entry_id, subentry_id),
+                    request_retention_days=retention["request_retention_days"],
+                    run_retention_days=retention["run_retention_days"],
                 )
                 await manager.async_initialize()
                 fallbacks[key] = manager
@@ -2227,14 +2394,18 @@ def _serialize_usage_aggregate_snapshots(
     days = {}
     attribution = {}
     for date, daily_record in daily.items():
-        day = deepcopy(daily_record)
+        day = dict(daily_record)
+        for key in ("provider_breakdown", "model_breakdown", "api_mode_breakdown"):
+            day[key] = dict(daily_record[key])
         counters = {key: day.pop(key) for key in _RUN_ATTRIBUTION_COUNTERS}
         if day["run_count"] or any(counters.values()):
             attribution[date] = counters
         # 6.8.3 expects numeric daily averages and uses these broader totals.
         if day["average_tokens_per_completed_run"] is None:
             count = day["run_count"]
-            day["average_tokens_per_completed_run"] = round(day["total_tokens"] / count)
+            day["average_tokens_per_completed_run"] = _rounded_token_average(
+                day["total_tokens"], count
+            )
             day["average_requests_per_completed_run"] = round(
                 day["api_request_count"] / count, 2
             )
@@ -2250,8 +2421,22 @@ def _serialize_usage_details(
 ) -> dict[str, Any]:
     """Convert stable completed records without occupying the HA event loop."""
     return {
-        "requests": [asdict(request) for request in requests],
-        "runs": [asdict(run) for run in runs],
+        "requests": [
+            {
+                **{key: getattr(request, key) for key in _REQUEST_SCALARS},
+                "details": dict(request.details),
+            }
+            for request in requests
+        ],
+        "runs": [
+            {
+                **{key: getattr(run, key) for key in _RUN_SCALARS},
+                "models": list(run.models),
+                "providers": list(run.providers),
+                "api_modes": list(run.api_modes),
+            }
+            for run in runs
+        ],
     }
 
 

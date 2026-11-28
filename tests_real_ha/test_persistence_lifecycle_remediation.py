@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
-from custom_components.extended_openai_conversation_responses import backup_transfer
+from custom_components.extended_openai_conversation_responses import (
+    backup,
+    backup_transfer,
+    transfer,
+)
 from custom_components.extended_openai_conversation_responses.agent_deletion import (
     async_delete_agent_data,
 )
@@ -17,6 +21,7 @@ from custom_components.extended_openai_conversation_responses.usage import (
     RequestUsage,
     UsageRequest,
     UsageRun,
+    UsageTotals,
     async_get_durable_usage,
     async_get_usage,
 )
@@ -169,9 +174,24 @@ async def test_public_entry_removal_disposes_usage_timer(hass, freezer, caplog):
             [10, 120, 200],
         ),
         (
+            {"usage_request_retention_days": 90, "usage_run_retention_days": 90},
+            [10, 60],
+            [10],
+        ),
+        (
             {"usage_request_retention_days": 15, "usage_run_retention_days": 15},
+            [10, 60, 200],
+            [10, 120, 200],
+        ),
+        (
+            {"usage_request_retention_days": False, "usage_run_retention_days": 90},
+            [10, 60, 200],
             [10],
-            [10],
+        ),
+        (
+            {"usage_request_retention_days": 90, "usage_run_retention_days": 15},
+            [10, 60],
+            [10, 120, 200],
         ),
         ({}, [10], [10]),
         ({"usage_request_retention_days": 0, "usage_run_retention_days": 0}, [], []),
@@ -245,6 +265,72 @@ async def test_cold_usage_first_access_honors_saved_policy(
     assert [int(r.request_id) for r in loaded.requests] == expected_requests
     assert [int(r.run_id) for r in loaded.runs] == expected_runs
     assert loaded.totals.total_tokens == 369
+
+
+@pytest.mark.parametrize(
+    ("target", "restore_usage", "expected_requests"),
+    [(0, False, []), ("15.0", True, ["request"])],
+)
+async def test_private_restore_publishes_exact_usage_policy_and_history(
+    hass, target, restore_usage, expected_requests
+):
+    field = "usage_request_retention_days"
+    agent = await _agent(hass, **{field: False})
+    entry, subentry = agent.entry, agent.subentry
+    now = dt_util.utcnow().isoformat()
+    request = UsageRequest(
+        "request",
+        "run",
+        now,
+        subentry.subentry_id,
+        "openai",
+        "gpt-test",
+        "chat_completions",
+        True,
+        1,
+        total_tokens=5,
+    )
+    run = UsageRun("run", now, now, 1, subentry.subentry_id, None, None)
+    await agent._usage.async_replace_backup(
+        UsageTotals(total_tokens=5, api_request_count=1, conversation_count=1),
+        {},
+        [request],
+        [run],
+    )
+
+    snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    snapshot["agent"]["config"][field] = target
+    document = backup.finalize_backup_snapshot(snapshot)["document"]
+    imported = transfer.inspect_transfer(document, subentry.subentry_id)
+    sections = [transfer.SECTION_CONFIGURATION]
+    if restore_usage:
+        sections.append(transfer.SECTION_USAGE)
+    await transfer.async_restore_transfer(
+        hass,
+        entry,
+        subentry,
+        imported,
+        sections=sections,
+        confirm_retention=True,
+    )
+    assert type(subentry.data[field]) is type(target)
+    assert subentry.data[field] == target
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert [row.request_id for row in agent._usage.requests] == expected_requests
+    assert [row.run_id for row in agent._usage.runs] == ["run"]
+    assert agent._usage.totals.total_tokens == 5
+    verifier = Store(
+        hass, hass.config_entries._store.version, hass.config_entries._store.key
+    )
+    persisted = await verifier.async_load()
+    saved_entry = next(
+        row for row in persisted["entries"] if row["entry_id"] == entry.entry_id
+    )
+    value = saved_entry["subentries"][0]["data"][field]
+    assert type(value) is type(target) and value == target
 
 
 @pytest.mark.parametrize("action", ["export_start", "import_start"])

@@ -488,10 +488,15 @@ async def test_ha_tool_add_validation_refresh_and_group_assignment(
     reference = {"source_id": "assist", "tool_name": "Light"}
     monkeypatch.setattr(management_ui, "validate_reference", lambda _value: reference)
     monkeypatch.setattr(management_ui, "reference_key", lambda _value: "assist:Light")
-    snapshot = SimpleNamespace(tools={
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        ToolSnapshot,
+    )
+
+    snapshot = ToolSnapshot(tools={
         "assist:Light": SimpleNamespace(
             source_label="Assist",
             tool=SimpleNamespace(description="Control lights"),
+            spec={"description": "Control lights"},
         )
     })
     monkeypatch.setattr(
@@ -1034,13 +1039,16 @@ def test_revision_and_reference_helpers_cover_validation_edges() -> None:
         ("config: [", "invalid JSON/YAML"),
         ([], "must be an object"),
         ({"schema": "wrong", "version": 1, "config": {}}, "export schema"),
-        (
-            {
-                "schema": "extended_openai_conversation.agent",
-                "version": 3,
-                "config": {},
-            },
-            "export version",
+        *(
+            (
+                {
+                    "schema": "extended_openai_conversation.agent",
+                    "version": version,
+                    "config": {},
+                },
+                "export version",
+            )
+            for version in (3, [], {}, True, 1.0)
         ),
         (
             {
@@ -1747,3 +1755,70 @@ async def test_websocket_and_setup_wiring(monkeypatch) -> None:
     module_url = register_panel.await_args.kwargs["module_url"]
     assert module_url.startswith(f"/{DOMAIN}/frontend/assets/management-")
     assert module_url.endswith(".js")
+
+
+async def test_guest_domains_include_unexposed_registry_entries_and_saved_domains(monkeypatch):
+    from homeassistant.helpers import entity_registry
+
+    entry, subentry = _residual_entry_pair()
+    subentry.data["guest_excluded_domains"] = ["lock"]
+    hass = _residual_hass(entry)
+    monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
+    monkeypatch.setattr(management_ui, "get_exposed_entities", lambda *_: [])
+    monkeypatch.setattr(management_ui, "resolve_guest_policy", lambda *_a, **_kw:
+        SimpleNamespace(as_diagnostics=lambda: {"guest_active": False}))
+    monkeypatch.setattr(management_ui, "async_get_guest_mode", AsyncMock())
+    hass.data[entity_registry.DATA_REGISTRY] = SimpleNamespace(
+        entities={"camera.porch": SimpleNamespace(domain="camera")}
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_knowledge",
+        AsyncMock(return_value=SimpleNamespace(async_list=AsyncMock(return_value=[]))),
+    )
+
+    details = await management_ui.async_management_command(
+        hass, "admin", True, _residual_message("guest_mode", "details")
+    )
+    assert details["domains"] == ["camera", "lock"]
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("max_function_calls_per_conversation", None),
+        ("max_function_calls_per_conversation", "bad"),
+        ("max_function_calls_per_conversation", 1.5),
+        ("chat_model", ""),
+        ("chat_model", "  "),
+    ],
+)
+async def test_configuration_read_preserves_values_that_require_repair(
+    monkeypatch, field, invalid
+):
+    entry, subentry = _residual_entry_pair()
+    subentry.data["functions"] = [
+        {
+            "spec": {"name": "who"},
+            "function": {"type": "native", "name": "get_user_from_user_id"},
+        }
+    ]
+    monkeypatch.setattr(management_ui, "_configuration_defaults", agent_config_defaults)
+    subentry.data[field] = invalid
+    hass = _residual_hass(entry)
+    monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
+
+    result = await management_ui.async_management_command(
+        hass, "admin", True, _residual_message("configuration", "get")
+    )
+    assert result["config"][field] == invalid
+    assert not result["configuration_guidance"]["web_search"]["available"]
+
+    validated = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        _residual_message("configuration", "validate", config={field: invalid}),
+    )
+    assert validated["valid"] is False
+    hass.config_entries.async_update_subentry.assert_not_called()

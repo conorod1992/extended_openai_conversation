@@ -15,11 +15,13 @@ from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_FLOOR_ID,
     ATTR_LABEL_ID,
+    CONF_EXCLUDE,
     ENTITY_MATCH_ALL,
 )
 from homeassistant.core import Context, HomeAssistant, State, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import (
+    config_validation as cv,
     device_registry as dr,
     entity_registry as er,
     service as service_helpers,
@@ -30,7 +32,11 @@ from .const import DOMAIN, SERVICE_PROCESS
 from .exceptions import EffectOutcomeUnknown, NestedConversationRejected
 from .function_tool_recovery import should_report_uncertain_effects
 from .ha_permissions import async_require_control_permission, get_active_ha_context
-from .ha_service_compat import prepare_service_dispatch
+from .ha_service_compat import (
+    _entity_dispatcher,
+    _generic_power,
+    prepare_service_dispatch,
+)
 from .indirect_targets import validate_indirect_targets
 from .operational_errors import log_handled_failure
 from .schema_errors import SCHEMA_ERRORS as _SERVICE_SCHEMA_ERRORS
@@ -449,19 +455,9 @@ def resolve_action_entity_ids(
     | None = None,
 ) -> set[str]:
     """Resolve selectors using the registered service's actual participants."""
-    selection = _target_selection(data, target)
-    # HA expands this sentinel inside dispatch, after our participant lookup.
-    # Treating it as an entity ID would filter it out and authorize no targets
-    # while the original request still controls every entity in the domain.
-    if ENTITY_MATCH_ALL in selection.get(ATTR_ENTITY_ID, []):
-        raise HomeAssistantError(
-            "entity_id 'all' is not supported; select explicit entities, areas, "
-            "devices, floors or labels for authorization"
-        )
-    selected = _resolve_target_entity_ids(hass, data, target)
+    selected, explicit = _resolve_action_targets(hass, domain, service, data, target)
     if not hasattr(hass, "services"):
         return selected
-    explicit = set(selection.get(ATTR_ENTITY_ID, [])) - {"all", "none"}
     participating = service_target_entity_ids(
         hass, domain, service, selected, participants=participants, explicit=explicit
     )
@@ -471,6 +467,67 @@ def resolve_action_entity_ids(
         for entity_id in explicit - participating
         if hass.states.get(entity_id) is None
     }
+
+
+def _resolve_action_targets(
+    hass: HomeAssistant,
+    domain: str,
+    service: str,
+    data: Mapping[str, Any] | None,
+    target: Mapping[str, Any] | None,
+    *,
+    reject_match_all: bool = True,
+) -> tuple[set[str], set[str]]:
+    """Return selected and explicitly named IDs after effective exclusions."""
+    selection = _target_selection(data, target)
+    # HA expands this sentinel inside dispatch, after our participant lookup.
+    # Treating it as an entity ID would filter it out and authorize no targets
+    # while the original request still controls every entity in the domain.
+    if reject_match_all and ENTITY_MATCH_ALL in selection.get(ATTR_ENTITY_ID, []):
+        raise HomeAssistantError(
+            "entity_id 'all' is not supported; select explicit entities, areas, "
+            "devices, floors or labels for authorization"
+        )
+    explicit = set(selection.get(ATTR_ENTITY_ID, [])) - {"all", "none"}
+    merged = {**(data or {}), **(target or {})}
+    extract_excluded = getattr(
+        target_helpers, "async_extract_excluded_entity_ids", None
+    )
+    if CONF_EXCLUDE not in merged or extract_excluded is None:
+        return _resolve_target_entity_ids(hass, data, target), explicit
+
+    domain, service = domain.lower(), service.lower()
+    handler = _registered_service_target(hass, domain, service)
+    generic = _generic_power(handler, domain, service)
+    if not generic and not _is_entity_service_dispatcher(handler):
+        # An opaque handler can interpret an "exclude" field as ordinary data.
+        return _resolve_target_entity_ids(hass, data, target), explicit
+
+    try:
+        exclusion = cv.TARGET_EXCLUDE_SCHEMA(merged[CONF_EXCLUDE])
+    except _SERVICE_SCHEMA_ERRORS as err:
+        raise HomeAssistantError("Invalid Home Assistant target exclusion") from err
+
+    native_selection = target_helpers.TargetSelection(
+        {**selection, CONF_EXCLUDE: exclusion}
+    )
+    referenced = target_helpers.async_extract_referenced_entity_ids(
+        hass, native_selection
+    )
+    selected = set(referenced.referenced | referenced.indirectly_referenced)
+    if generic and any(
+        hass.services.has_service(entity_domain, service)
+        and _entity_dispatcher(_registered_service_target(hass, entity_domain, service))
+        is None
+        for entity_domain in {item.partition(".")[0] for item in selected}
+        if entity_domain != "homeassistant"
+    ):
+        # Generic power forwards the original selectors and exclusion to each
+        # delegate. Preserve the existing scope when a delegate can observe them.
+        return _resolve_target_entity_ids(hass, data, target), explicit
+    if explicit:
+        explicit -= extract_excluded(hass, native_selection)
+    return selected, explicit
 
 
 def _target_identity(
@@ -545,22 +602,30 @@ def _action_supports_previous_state(domain: str, service: str) -> bool:
     return domain != "automation" or service in _AUTOMATION_STATE_SERVICES
 
 
+def _registered_service_target(hass: HomeAssistant, domain: str, service: str) -> Any:
+    services_for_domain = getattr(
+        getattr(hass, "services", None), "async_services_for_domain", None
+    )
+    registered = (
+        services_for_domain(domain).get(service) if services_for_domain else None
+    )
+    return registered.job.target if registered is not None else None
+
+
+def _is_entity_service_dispatcher(handler: Any) -> bool:
+    return isinstance(handler, partial) and handler.func in (
+        service_helpers.entity_service_call,
+        getattr(service_helpers, "batched_entity_service_call", None),
+    )
+
+
 def _registered_entity_service(
     hass: HomeAssistant, domain: str, service: str
 ) -> tuple[partial, Mapping[str, Any]] | None:
     """Read known HA entity-service registrations across Core versions."""
     domain, service = domain.lower(), service.lower()
-    services_for_domain = getattr(hass.services, "async_services_for_domain", None)
-    if services_for_domain is None:
-        return None
-    registered = services_for_domain(domain).get(service)
-    target = registered.job.target if registered is not None else None
-    if not isinstance(target, partial) or target.func not in (
-        service_helpers.entity_service_call,
-        getattr(service_helpers, "batched_entity_service_call", None),
-    ):
-        return None
-    if len(target.args) < 2:
+    target = _registered_service_target(hass, domain, service)
+    if not _is_entity_service_dispatcher(target) or len(target.args) < 2:
         return None
     entities = target.args[1]
     if callable(entities):

@@ -2,6 +2,7 @@
 
 import logging
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -137,6 +138,9 @@ def test_speech_links_preserve_labels_across_provider_splits(
         ("The total is\n42. That's all.", "The total is\n42. That's all."),
         ("- 3 degrees tonight", "- 3 degrees tonight"),
         ("- 30 degrees tonight", "- 30 degrees tonight"),
+        ("- .5 degrees tonight", "- .5 degrees tonight"),
+        ("- ½ degree tonight", "- ½ degree tonight"),
+        ("- ...then wait", "...then wait"),
         ("## Report\n- **First** item\n2. Second item", "Report\nFirst item\n2. Second item"),
         ("1. First item\n2. Second item", "1. First item\n2. Second item"),
         ("- **First** item\n\n42. Total", "First item\n42. Total"),
@@ -1394,6 +1398,52 @@ async def test_known_complete_listener_preserves_role_groups_and_metadata(hass) 
     ]
 
 
+async def test_completed_speech_with_only_metadata_does_not_call_the_executor(
+    hass, monkeypatch
+):
+    executor = AsyncMock()
+    monkeypatch.setattr(hass, "async_add_executor_job", executor)
+    heard = []
+    log = SimpleNamespace(delta_listener=lambda _log, delta: heard.append(delta))
+    metadata = {"role": "assistant", "tool_calls": ["lookup"]}
+    with async_streaming_speech_cleanup(log, _config(), completed=True) as wrapper:
+        await wrapper.async_flush_completed(hass, log)
+        log.delta_listener(log, metadata)
+        await wrapper.async_flush_completed(hass, log)
+        await wrapper.async_flush_completed(hass, log)
+    assert heard == [metadata]
+    executor.assert_not_awaited()
+
+
+def test_deferred_speech_suppresses_only_assistant_text_and_restores_listener():
+    heard = []
+    original_listener = lambda _log, delta: heard.append(delta)
+    log = SimpleNamespace(delta_listener=original_listener)
+    config = _config(
+        speech_regex_replacements=[{"pattern": "HA", "replacement": "Home Assistant"}]
+    )
+    frames = [
+        {"content": "Partial HA response"},
+        {"role": "assistant", "content": "HA"},
+        {"role": "tool", "content": "raw tool output"},
+        {"content": "second tool delta"},
+        {"role": "assistant", "tool_calls": ["lookup"], "content": "Calling HA"},
+    ]
+    with pytest.raises(RuntimeError, match="stream stopped"):
+        with speech.defer_assistant_presentation(log, config):
+            for frame in frames:
+                log.delta_listener(log, frame)
+            raise RuntimeError("stream stopped")
+    assert heard == [
+        {"role": "assistant"},
+        frames[2],
+        frames[3],
+        {"role": "assistant", "tool_calls": ["lookup"]},
+    ]
+    assert frames[-1]["content"] == "Calling HA"
+    assert log.delta_listener is original_listener
+
+
 
 async def test_known_complete_speech_presentation_preserves_original_chat_log(
     hass,
@@ -1516,6 +1566,7 @@ async def test_local_rule_speech_uses_async_regex_and_keeps_action_success(hass)
     response = intent.IntentResponse(language="en")
     response.async_set_speech(original)
     agent = SimpleNamespace(
+        entity_id="conversation.test",
         _usage=None,
         _continuity=SimpleNamespace(async_record_success=AsyncMock()),
         _async_archive_turn=AsyncMock(),
@@ -1536,7 +1587,9 @@ async def test_local_rule_speech_uses_async_regex_and_keeps_action_success(hass)
             original, None, "continuity", "claim", None,
         )
     assert result.response.speech["plain"]["speech"] == "Home Assistant is ready"
-    cleanup.assert_awaited_once_with(hass, original, agent.subentry.data)
+    cleanup.assert_awaited_once_with(
+        hass, original, agent.subentry.data, assistant=agent.entity_id
+    )
 
 
 async def test_local_rule_speech_failure_does_not_turn_executed_action_into_failure(hass):

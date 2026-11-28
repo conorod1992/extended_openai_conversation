@@ -108,6 +108,13 @@
             ],
             "description": "For the next page, copy the prior result's ranking and use its next_offset."
           },
+          "ranking_revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Copy the previous page's ranking_revision when continuing Hybrid Memory search."
+          },
           "category": {
             "type": [
               "string",
@@ -1003,6 +1010,13 @@
                 null
               ],
               "description": "For the next page, copy the prior result's ranking and use its next_offset."
+            },
+            "ranking_revision": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Copy the previous page's ranking_revision when continuing Hybrid Memory search."
             },
             "category": {
               "type": [

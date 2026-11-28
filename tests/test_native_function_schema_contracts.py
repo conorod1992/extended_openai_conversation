@@ -35,6 +35,7 @@ from custom_components.extended_openai_conversation_responses.request import (
 from custom_components.extended_openai_conversation_responses.resource_limits import (
     MAX_NATIVE_SERVICE_ACTIONS,
 )
+from tests.helpers import get_function_tool_from_yaml
 
 _STATISTICS_PERIODS = ["5minute", "hour", "day", "week", "month", "year"]
 _STATISTICS_TYPES = [
@@ -49,6 +50,8 @@ _STATISTICS_TYPES = [
 
 
 def _preset_tool(implementation: str) -> dict[str, Any]:
+    if implementation == "execute_service_single":
+        return get_function_tool_from_yaml("legacy_execute_service_single.yaml")
     preset = next(
         item
         for item in BUILT_IN_FUNCTION_PRESETS
@@ -196,10 +199,9 @@ def test_service_presets_advertise_open_service_data(implementation: str) -> Non
     assert "floor_id" in service_data["description"]
     assert "label_id" in service_data["description"]
     if implementation == "execute_service":
-        assert (
-            tool["spec"]["parameters"]["properties"]["list"]["maxItems"]
-            == MAX_NATIVE_SERVICE_ACTIONS
-        )
+        batch = tool["spec"]["parameters"]["properties"]["list"]
+        assert batch["minItems"] == 1
+        assert batch["maxItems"] == MAX_NATIVE_SERVICE_ACTIONS
 
 
 def test_service_preset_validation_preserves_service_specific_data() -> None:
@@ -424,3 +426,31 @@ def test_custom_statistics_period_contract_is_not_migrated() -> None:
     assert changed is False
     assert migrated == [original]
     assert prepared == original
+
+
+def test_responses_keeps_nested_open_object_non_strict():
+    tool = _preset_tool("execute_service_single")
+    tool["spec"].pop("strict", None)
+    tool["spec"]["parameters"] = {
+        "type": "object", "properties": {
+            "service_data": {"type": "object", "additionalProperties": {"type": "string"}},
+        },
+        "required": ["service_data"], "additionalProperties": False,
+    }
+    formatted = format_function_tools([tool], API_MODE_RESPONSES)
+    assert formatted[0]["strict"] is False
+    assert formatted[0]["parameters"]["properties"]["service_data"]["additionalProperties"] == {"type": "string"}
+
+
+def test_strict_schema_rejects_unknown_types_in_nested_definitions():
+    from custom_components.extended_openai_conversation_responses.function_execution import (
+        validate_strict_function_schema,
+    )
+
+    schema = {
+        "type": "object", "properties": {"field": {"$ref": "#/$defs/value"}},
+        "required": ["field"], "additionalProperties": False,
+        "$defs": {"value": {"anyOf": [{"type": "string"}, {"type": "str"}]}},
+    }
+    with pytest.raises(Exception, match="must name valid JSON types"):
+        validate_strict_function_schema(schema)

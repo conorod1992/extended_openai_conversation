@@ -31,6 +31,62 @@ def _active(entity_id, kind):
     }
 
 
+@pytest.mark.parametrize(
+    ("field", "damaged", "error"),
+    [
+        ("detached_controls", [], "detached controls"),
+        ("detached_controls", {"wrong-identity": {}}, "detached controls"),
+        (
+            "detached_controls",
+            {
+                "wrong-identity": {
+                    "kind": "volume",
+                    "satellite_entity_id": "assist_satellite.bedroom",
+                    "original_value": 0.8,
+                    "quiet_value": 0.2,
+                    "registry_identity": ["media_player", "test", "original-device"],
+                }
+            },
+            "detached control identity",
+        ),
+        ("detached_observations", [], "detached observations"),
+        (
+            "detached_observations",
+            {"wrong-identity": ["media_player", "test", "original-device"]},
+            "detached observation identity",
+        ),
+    ],
+)
+def test_damaged_detached_ownership_cannot_be_used_for_restoration(
+    hass, field, damaged, error
+):
+    manager = _stateful_public_manager(hass)
+    active = {**_active("media_player.bedroom", "volume"), field: damaged}
+    original = deepcopy(active)
+    with pytest.raises(ValueError, match=error):
+        manager._normalize_active(active)
+    assert active == original
+    assert manager.active is None
+    hass.services.async_call.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "label"),
+    [
+        ("attained_context_id", 123, "attained context"),
+        ("restoration_context_id", "", "restoration context"),
+    ],
+)
+def test_unusable_saved_context_cannot_establish_device_ownership(hass, field, value, label):
+    manager = _stateful_public_manager(hass)
+    active = _active("media_player.bedroom", "volume")
+    active["controls"]["media_player.bedroom"][field] = value
+    with pytest.raises(ValueError, match=label):
+        manager._normalize_active(active)
+    assert manager.active is None
+    hass.services.async_call.assert_not_awaited()
+
+
 @pytest.mark.parametrize("manager_type", ["base", "public"])
 @pytest.mark.parametrize("kind", ["volume", "switch"])
 async def test_unavailable_control_retains_baseline_until_return(
@@ -68,6 +124,10 @@ async def test_unavailable_control_retains_baseline_until_return(
     method.assert_awaited_once_with(
         entity_id, 0.8 if kind == "volume" else True, context_id=ANY
     )
+    assert manager.active["controls"][entity_id]["restoration_awaiting_feedback"]
+    state.state = "idle" if kind == "volume" else "on"
+    state.attributes["volume_level"] = 0.8
+    await manager._async_restore_locked()
     assert manager.active is None
     manager._store.async_save.assert_awaited()
 
@@ -161,3 +221,54 @@ async def test_old_period_pending_baseline_survives_next_period(hass, monkeypatc
     control = manager.active["controls"]["media_player.bedroom"]
     assert control["original_value"] == 0.8
     assert control["restoration_pending"]
+
+
+@pytest.mark.parametrize("kind", ["volume", "switch"])
+@pytest.mark.parametrize("failed_ack", [False, True])
+async def test_initial_application_keeps_baseline_until_delayed_feedback(
+    hass, kind, failed_ack
+):
+    manager = _runtime_manager(hass)
+    entity_id = "media_player.bedroom" if kind == "volume" else "switch.wake_sound"
+    state = SimpleNamespace(
+        state="idle" if kind == "volume" else "on",
+        attributes={"volume_level": 0.8},
+        context=SimpleNamespace(id="baseline", user_id=None),
+    )
+    hass.states.get.side_effect = lambda _: state
+    manager._active = _active(entity_id, kind)
+    controls = manager._active["controls"]
+    control = controls[entity_id]
+    control.update(
+        application_state="prepared",
+        baseline_context_id="baseline",
+        application_context_id="dispatch",
+    )
+    error = OSError("missing acknowledgement") if failed_ack else None
+    manager._async_set_volume = AsyncMock(side_effect=error if kind == "volume" else None)
+    manager._async_set_switch = AsyncMock(side_effect=error if kind == "switch" else None)
+    await manager._async_dispatch_initial_control_locked(entity_id, controls, control)
+    assert control["application_state"] == "awaiting_feedback"
+    await manager._async_restore_locked(period_ended=True)
+    assert manager.active["controls"][entity_id]["restoration_pending"]
+    persisted = deepcopy(manager._store.async_save.call_args.args[0]["active"])
+    manager._active = manager._normalize_active(persisted)
+
+    state.state = "idle" if kind == "volume" else "off"
+    state.attributes = {"volume_level": 0.2}
+    state.context.id = "delayed"
+    manager._async_set_volume.side_effect = None
+    manager._async_set_switch.side_effect = None
+    await manager._async_restore_locked(period_ended=True)
+    method = manager._async_set_volume if kind == "volume" else manager._async_set_switch
+    assert method.await_count == 2
+    assert method.await_args.args[:2] == (entity_id, 0.8 if kind == "volume" else True)
+
+
+async def test_recovering_generation_publishes_unavailable_without_revision(hass):
+    manager = _runtime_manager(hass)
+    manager._invalidate_generation()
+    assert manager.snapshot()["recovery_pending"]
+    assert "revision" not in manager.snapshot()
+    assert "config" not in manager.snapshot()
+    assert hass.states.async_set.call_args.args[1] == "unavailable"

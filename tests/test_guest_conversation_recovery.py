@@ -23,6 +23,82 @@ from homeassistant.exceptions import HomeAssistantError
 from tests.test_configuration_lifecycle_hardening import _disabled_runtime_config
 
 
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "schedule",
+        "version-type",
+        "future-version",
+        "null-payload",
+        "null-before-migration",
+    ],
+)
+async def test_guest_failure_during_startup_retains_fail_closed_manager(
+    hass, entry_agent, entry_input, monkeypatch, damage
+):
+    entry_agent.subentry.data = _disabled_runtime_config()
+    guest = GuestModeManager(hass, "entry", "agent")
+    path = Path(guest._store.path)
+    if damage == "schedule":
+        await guest._store.async_save({"schedule": {"active_from": "invalid"}})
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        envelope = {
+            "version": guest._store.version,
+            "minor_version": guest._store.minor_version,
+            "key": path.name,
+            "data": {"schedule": None},
+        }
+        if damage == "version-type":
+            envelope["version"] = "1"
+        elif damage == "future-version":
+            envelope["version"] = 999
+        else:
+            envelope["data"] = None
+            if damage == "null-before-migration":
+                envelope["minor_version"] += 1
+        path.write_text(json.dumps(envelope), encoding="utf-8")
+    evidence = path.read_bytes()
+    await entry_agent._async_initialize_agent_state()
+    assert not entry_agent._guest_mode.authoritative_available
+    assert path.read_bytes() == evidence
+    monkeypatch.setattr(
+        conversation,
+        "async_reconcile_runtime_configuration",
+        runtime.async_reconcile_runtime_configuration,
+    )
+
+    async def continue_request(_request):
+        return entry_agent._guest_mode.is_active()
+
+    entry_agent._async_process_with_continuity = continue_request
+    with pytest.raises(HomeAssistantError, match="unavailable"):
+        await entry_agent.async_process(entry_input)
+    await guest._store.async_save({"schedule": None})
+    assert await entry_agent.async_process(entry_input) is False
+    assert entry_agent._guest_mode.authoritative_available
+
+
+@pytest.mark.parametrize(
+    "empty", ["absent", "legacy-empty", "empty-payload", "disabled", "emergency"]
+)
+async def test_guest_empty_generations_keep_inactive_schedule(hass, empty):
+    guest = GuestModeManager(hass, "entry", "agent")
+    path = Path(guest._store.path)
+    if empty == "legacy-empty":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+    elif empty != "absent":
+        data = {"empty-payload": {}, "disabled": {"schedule": None}, "emergency": None}[empty]
+        await guest._store.async_save(data)
+    if empty == "emergency":
+        guest._store.set_load_empty()
+    evidence = path.read_bytes() if path.exists() else None
+    await guest.async_initialize()
+    assert guest.authoritative_available and not guest.is_active()
+    assert (path.read_bytes() if path.exists() else None) == evidence
+
+
 @pytest.mark.parametrize("after_write", [False, True])
 async def test_conversation_recovers_guest_state_and_keeps_corruption_fail_closed(
     hass,

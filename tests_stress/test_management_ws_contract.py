@@ -26,6 +26,7 @@ EXPECTED_JOURNEYS = {
     "request_rules_empty",
     "functions",
     "knowledge",
+    "scheduled_actions",
     "guest_quiet",
     "guest_operations",
     "backup",
@@ -51,6 +52,7 @@ CRITICAL_ACTIONS = {
     ("knowledge", "set_enabled"),
     ("guest_mode", "save_policy"),
     ("quiet_hours", "update"),
+    ("scheduled_actions", "cancel"),
 }
 
 FRONTEND_DIR = ROOT / "custom_components/extended_openai_conversation_responses/frontend"
@@ -70,6 +72,7 @@ REVIEWED_FRONTEND_MUTATIONS = {
     ("request_rules", "duplicate"), ("request_rules", "groups"),
     ("request_rules", "move"),
     ("request_rules", "settings"), ("request_rules", "update"),
+    ("scheduled_actions", "cancel"),
     ("tools", "delete"), ("tools", "delete_group"),
     ("tools", "ha_add"), ("tools", "save"),
     ("tools", "save_group"), ("tools", "set_enabled"),

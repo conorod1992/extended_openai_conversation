@@ -779,8 +779,18 @@ async def test_hybrid_memory_pagination_keeps_the_first_pages_ranking():
     assert not second["has_more"]
     assert "ranking" not in second
 
+    continuation = {
+        **arguments,
+        "offset": fresh["next_offset"],
+        "ranking": fresh["ranking"],
+        "ranking_revision": fresh["ranking_revision"],
+    }
+    hybrid_second = await entity._async_execute_memory_tool("search", continuation, context)
+    assert hybrid_second["memories"][0]["memory_id"] == "m000"
+    with pytest.raises(ValueError, match="Hybrid ranking changed"):
+        await entity._async_execute_memory_tool(
+            "search", {**continuation, "query": "bin"}, context
+        )
     memory.set_embedding_provider(None, "fixture-model")
     with pytest.raises(ValueError, match="Hybrid ranking is unavailable"):
-        await entity._async_execute_memory_tool(
-            "search", {**arguments, "offset": fresh["next_offset"], "ranking": fresh["ranking"]}, context
-        )
+        await entity._async_execute_memory_tool("search", continuation, context)

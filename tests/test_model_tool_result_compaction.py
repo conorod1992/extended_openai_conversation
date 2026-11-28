@@ -172,6 +172,17 @@ def test_knowledge_filter_envelope_removed_only_when_no_filter_exists() -> None:
     )
 
 
+def test_large_guest_filter_metadata_keeps_results_and_reports_the_total():
+    applied_ids = [f"source-{index}-" + "x" * 1000 for index in range(20)]
+    raw = {"results": [{"source_id": applied_ids[-1], "excerpt": "answer"}],
+           "source_filter": {"applied_source_ids": applied_ids}}
+    projected = knowledge_search_payload(raw, filter_requested=False, policy_filter_applied=True)
+    assert projected["results"] == raw["results"]
+    assert projected["source_filter"]["applied_source_count"] == len(applied_ids)
+    assert len(projected["source_filter"]["applied_source_ids"]) < len(applied_ids)
+    assert raw["source_filter"]["applied_source_ids"] == applied_ids
+
+
 def test_paging_cursor_is_removed_only_when_backend_says_no_more() -> None:
     """Paging-critical cursors remain whenever another page exists."""
     complete = {

@@ -114,6 +114,7 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
         {
             "list": {
                 "type": "array",
+                "minItems": 1,
                 "maxItems": MAX_NATIVE_SERVICE_ACTIONS,
                 "items": {
                     "type": "object",
@@ -137,29 +138,6 @@ BUILT_IN_FUNCTION_PRESETS: tuple[dict[str, Any], ...] = (
             }
         },
         ["list"],
-        strict=False,
-    ),
-    _preset(
-        "Execute one service",
-        "execute_service_single",
-        (
-            "Execute one Home Assistant service on an exposed target. Supply "
-            "service-specific fields inside service_data when the requested action "
-            "needs them."
-        ),
-        {
-            "domain": {
-                "type": "string",
-                "description": "The Home Assistant service domain.",
-            },
-            "service": {"type": "string", "description": "The service name to call."},
-            "service_data": {
-                "type": "object",
-                "description": _SERVICE_DATA_DESCRIPTION,
-                "additionalProperties": True,
-            },
-        },
-        ["domain", "service", "service_data"],
         strict=False,
     ),
     _preset(

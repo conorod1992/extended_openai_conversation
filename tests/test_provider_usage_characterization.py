@@ -176,6 +176,10 @@ async def test_interrupted_usage_retains_partial_provider_counts(mode, ending):
             yield chunk
         else:
             yield _event(
+                "response.output_item.added",
+                item=SimpleNamespace(type="message", phase="final_answer"),
+            )
+            yield _event(
                 "response.output_text.delta", delta="Partial", usage=_reported("output")
             )
         reached.set()
@@ -187,6 +191,8 @@ async def test_interrupted_usage_retains_partial_provider_counts(mode, ending):
     if ending == "close":
         # Stop at the consumer-visible yield, without allowing wrapper repair.
         await anext(transformed)
+        if mode == "responses":
+            await anext(transformed)  # The Responses opener carries no usage.
         await transformed.aclose()
     else:
 

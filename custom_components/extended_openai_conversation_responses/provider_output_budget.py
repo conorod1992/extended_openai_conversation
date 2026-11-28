@@ -68,6 +68,25 @@ def _text_weight(value: Any) -> int:
     )
 
 
+def _responses_string_length(value: Any, field: str) -> int:
+    if not isinstance(value, str):
+        raise ProviderStreamError(
+            f"Provider returned malformed data: {field} must be a string",
+            error_type="invalid_event_sequence",
+        )
+    return len(value)
+
+
+def responses_array(value: Any, field: str) -> list[Any] | tuple[Any, ...]:
+    """Validate an external Responses collection before callers iterate it."""
+    if not isinstance(value, (list, tuple)):
+        raise ProviderStreamError(
+            f"Provider returned malformed data: {field} must be an array",
+            error_type="invalid_event_sequence",
+        )
+    return value
+
+
 @dataclass
 class _ItemSize:
     content: int = 0
@@ -92,7 +111,7 @@ class ProviderOutputBudget:
         self.buffered_weight = 0
         self.buffered_events = 0
         self._unindexed = 0
-        self._active_unindexed: Hashable | None = None
+        self._active_unindexed: tuple[str, str | int] | None = None
         self._chat_tools = ChatToolCallResolver(MAX_OUTPUT_ITEMS)
 
     def event(self) -> None:
@@ -150,24 +169,61 @@ class ProviderOutputBudget:
         self._account(key, content=current - previous)
         self._parts[part] = current
 
-    def responses_event(self, event: Any) -> None:
+    def responses_event(
+        self,
+        event: Any,
+        *,
+        anonymous_output_index: int | None = None,
+        discard_snapshot: bool = False,
+    ) -> None:
         self.event()
         kind = getattr(event, "type", "")
+        content_index = getattr(event, "content_index", None)
+        if content_index is not None and (
+            type(content_index) is not int or content_index < 0
+        ):
+            raise ProviderStreamError(
+                "Provider returned malformed data: invalid content index",
+                error_type="invalid_event_sequence",
+            )
+        # The text assembler treats an omitted content index as part zero.
+        if content_index is None:
+            content_index = 0
+        if discard_snapshot:
+            return  # No logical owner to charge for a late or deferred snapshot.
         if kind == "response.output_item.added":
             self._started_items += 1
             if self._started_items > MAX_OUTPUT_ITEMS:
                 _exceeded()
         item = getattr(event, "item", None)
         index = getattr(event, "output_index", None)
+        if index is None:
+            index = anonymous_output_index
         if index is not None:
-            key: Hashable = ("responses", index)
+            key = ("responses", index)
         else:
             identity = (
                 getattr(item, "id", None)
                 or getattr(item, "call_id", None)
                 or getattr(event, "item_id", None)
             )
-            if identity:
+            message_content = kind.startswith(
+                ("response.output_text.", "response.refusal.", "response.content_part.")
+            )
+            if (
+                self._active_unindexed is not None
+                and self._active_unindexed[0] == "unindexed"
+                and (
+                    message_content
+                    or (
+                        kind == "response.output_item.done"
+                        and getattr(item, "type", None) == "message"
+                    )
+                )
+            ):
+                # A later frame can supply the ID of an already budgeted message.
+                key = self._active_unindexed
+            elif identity:
                 key = ("responses-id", identity)
                 if key not in self.items:
                     self._account(key, content=len(identity))
@@ -179,43 +235,92 @@ class ProviderOutputBudget:
             else:
                 self._unindexed += 1
                 key = ("unindexed", self._unindexed)
-            if kind == "response.output_item.added":
+            if kind == "response.output_item.added" or (
+                self._active_unindexed is None and message_content
+            ):
                 self._active_unindexed = key
         if kind in {"response.output_item.added", "response.output_item.done"}:
             arguments = getattr(item, "arguments", None)
-            if isinstance(arguments, str) and len(arguments) > MAX_ARGUMENT_CHARACTERS:
+            if (
+                arguments is not None
+                or (
+                    kind.endswith(".done")
+                    and getattr(item, "type", None) == "function_call"
+                )
+            ) and _responses_string_length(
+                arguments, "tool arguments"
+            ) > MAX_ARGUMENT_CHARACTERS:
                 _exceeded()
             self._account(key, native=item)
+            if getattr(item, "type", None) == "message":
+                parts = getattr(item, "content", ())
+                if parts is None and kind == "response.output_item.added":
+                    parts = ()  # A streaming opener can be a content placeholder.
+                for part in responses_array(parts, "message content"):
+                    if getattr(part, "type", None) == "output_text":
+                        _responses_string_length(
+                            getattr(part, "text", ""), "output text"
+                        )
+                    elif getattr(part, "type", None) == "refusal":
+                        _responses_string_length(
+                            getattr(part, "refusal", ""), "refusal text"
+                        )
             if index is None and kind.endswith(".done"):
                 self._active_unindexed = None
         elif kind in {"response.output_text.delta", "response.refusal.delta"}:
+            delta = getattr(event, "delta", None)
             self._text(
                 key,
                 (
                     key,
-                    getattr(event, "content_index", None),
+                    content_index,
                     kind.removesuffix(".delta"),
                 ),
-                _text_weight(event.delta),
+                _responses_string_length(delta, "text delta")
+                if kind == "response.output_text.delta"
+                else _text_weight(delta),
             )
         elif kind == "response.function_call_arguments.delta":
-            self._account(key, arguments=len(event.delta))
+            self._account(
+                key,
+                arguments=_responses_string_length(
+                    getattr(event, "delta", None), "tool argument delta"
+                ),
+            )
         elif kind == "response.function_call_arguments.done":
-            if len(event.arguments) > MAX_ARGUMENT_CHARACTERS:
+            if (
+                _responses_string_length(
+                    getattr(event, "arguments", None), "tool arguments"
+                )
+                > MAX_ARGUMENT_CHARACTERS
+            ):
                 _exceeded()
         elif kind in {"response.output_text.done", "response.refusal.done"}:
             self._text(
                 key,
                 (
                     key,
-                    getattr(event, "content_index", None),
+                    content_index,
                     kind.removesuffix(".done"),
                 ),
-                _text_weight(
-                    event.text if kind == "response.output_text.done" else event.refusal
-                ),
+                _responses_string_length(getattr(event, "text", None), "output text")
+                if kind == "response.output_text.done"
+                else _text_weight(getattr(event, "refusal", None)),
                 complete=True,
             )
+        elif kind == "response.content_part.done":
+            part = getattr(event, "part", None)
+            part_type = getattr(part, "type", None)
+            if part_type in {"output_text", "refusal"}:
+                value = getattr(
+                    part, "text" if part_type == "output_text" else "refusal", None
+                )
+                self._text(
+                    key,
+                    (key, content_index, f"response.{part_type}"),
+                    _responses_string_length(value, "message text"),
+                    complete=True,
+                )
         elif kind == "response.output_text.annotation.added":
             self._account(
                 key, content=output_weight(event.annotation, MAX_OUTPUT_CHARACTERS)

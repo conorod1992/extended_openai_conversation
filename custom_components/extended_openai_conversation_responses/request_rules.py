@@ -13,7 +13,7 @@ from collections.abc import (
 )
 from contextlib import suppress
 from contextvars import ContextVar
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from functools import lru_cache
 from hashlib import sha256
@@ -21,7 +21,7 @@ import json
 import logging
 import re
 from time import monotonic
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 import unicodedata
 from urllib.parse import quote
 from uuid import uuid4
@@ -60,6 +60,7 @@ from .helpers import (
     get_reasoning_effort_options,
 )
 from .model_catalog import all_reasoning_efforts
+from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .persistence_hardening import (
     StorageRepairRequired,
@@ -284,6 +285,8 @@ class _MatchCursor:
 class RequestRuleStore(PropagatingWriteStore):
     """Versioned private Home Assistant storage."""
 
+    _null_payload_label = "Request Rules"
+
     def __init__(self, hass: HomeAssistant, version: int, key: str) -> None:
         """Initialize private, atomic Request Rule storage."""
         super().__init__(hass, version, key, private=True, atomic_writes=True)
@@ -292,6 +295,8 @@ class RequestRuleStore(PropagatingWriteStore):
         self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
     ) -> dict[str, Any]:
         """Migrate additive Request Rule storage changes."""
+        if old_data is None:
+            self._raise_null_payload_repair()
         if old_major_version == 1:
             return {
                 "wording_groups": _copy_wording_groups(DEFAULT_WORDING_GROUPS),
@@ -376,12 +381,29 @@ class _NativeConditions:
                     )
 
 
+def _has_tracked_duration(condition: Any) -> bool:
+    """Find native duration options, including inside compound conditions."""
+    if not isinstance(condition, Mapping) or condition.get("enabled") is False:
+        return False
+    options = condition.get("options")
+    children = condition.get("conditions")
+    return (isinstance(options, Mapping) and bool(options.get("for"))) or (
+        isinstance(children, list)
+        and any(_has_tracked_duration(child) for child in children)
+    )
+
+
 class RequestRules:
     """Concurrency-safe persisted rules with precomputed matcher state."""
 
     def __init__(
-        self, store: RequestRuleStore, on_change: Callable[[], None] | None = None
+        self,
+        store: RequestRuleStore,
+        on_change: Callable[[], None] | None = None,
+        *,
+        hass: HomeAssistant | None = None,
     ) -> None:
+        self._hass = hass
         self._store = store
         self._on_change = on_change
         self._rules: list[dict[str, Any]] = []
@@ -393,9 +415,13 @@ class RequestRules:
         self._matching_snapshot = _MatchingSnapshot((), ())
         self._committed_matching_snapshot = self._matching_snapshot
         self._condition_checkers: dict[str, _NativeConditions] = {}
+        self._condition_lock = asyncio.Lock()
+        self._condition_epoch = 0
         self._unsubscribe_stop: Callable[[], None] | None = None
         self._diagnostics: dict[str, str] = {}
         self._wording_diagnostics: dict[str, int] = {}
+        self._committed_diagnostics = self._diagnostics
+        self._committed_wording_diagnostics = self._wording_diagnostics
         self._lock = asyncio.Lock()
         self._initialized = False
         self._retired = False
@@ -414,6 +440,7 @@ class RequestRules:
 
     def async_unload(self) -> None:
         """Release native subscriptions when this manager generation retires."""
+        self._condition_epoch += 1
         self._discard_condition_checkers()
         if self._unsubscribe_stop is not None:
             self._unsubscribe_stop()
@@ -489,9 +516,9 @@ class RequestRules:
                             "defaults", DEFAULT_MATCHING
                         )
                     except ValueError:
-                        _LOGGER.warning("Ignoring invalid stored Request Rule defaults")
+                        _LOGGER.warning("Stored Request Rule defaults require repair")
                         migrated = True
-                        self._repair_required = True
+                        self._repair_required = self._routing_repair_required = True
                     try:
                         self._wording_groups = validate_wording_groups(
                             stored.get("wording_groups", DEFAULT_WORDING_GROUPS),
@@ -564,16 +591,28 @@ class RequestRules:
                         self._rules.append(validated)
                         migrated = migrated or validated != raw
                     except ValueError as err:
-                        _LOGGER.warning("Ignoring invalid stored Request Rule: %s", err)
+                        log_handled_failure(
+                            _LOGGER,
+                            f"Ignoring invalid stored Request Rule in store={getattr(self._store, 'key', 'unknown')}",
+                            err,
+                        )
                         migrated = True
                         self._repair_required = True
-                migrated = self._sort_and_compile() or migrated
+                migrated = await self._async_sort_and_compile() or migrated
+                if self._repair_required:
+                    _LOGGER.warning(
+                        "Request Rules store=%s needs repair; %d validated rules kept in memory. Automatic rewrites are suspended",
+                        getattr(self._store, "key", "unknown"),
+                        len(self._rules),
+                    )
                 if persist_migrations and migrated and not self._repair_required:
                     await self._async_save_locked(reconcile_failure=False)
                 self._require_current_owner()
                 self._remember_committed_state()
                 self._initialized = True
+                await self._async_sync_condition_checkers()
             except BaseException:
+                self._discard_condition_checkers()
                 self._defaults = dict(DEFAULT_MATCHING)
                 self._wording_groups = deepcopy(list(DEFAULT_WORDING_GROUPS))
                 self._groups = []
@@ -772,8 +811,7 @@ class RequestRules:
                 )
                 for rule in prepared["rules"]
             ]
-            self._discard_condition_checkers()
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked(replacing=True)
 
     async def async_set_defaults(
@@ -784,7 +822,7 @@ class RequestRules:
         async with self._lock:
             self._require_revision_locked(expected_revision)
             self._defaults = defaults
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked()
         return dict(defaults)
 
@@ -796,7 +834,7 @@ class RequestRules:
         async with self._lock:
             self._require_revision_locked(expected_revision)
             self._wording_groups = groups
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked()
         return _copy_wording_groups(groups)
 
@@ -814,7 +852,7 @@ class RequestRules:
             self._require_revision_locked(expected_revision)
             self._defaults = defaults
             self._wording_groups = groups
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked()
             revision = self.revision()
         return {
@@ -846,13 +884,17 @@ class RequestRules:
             self._require_group(rule)
             if any(item["id"] == rule["id"] for item in self._rules):
                 raise ValueError("rule id already exists")
-            _validate_total_pattern_states(
-                [*self._rules, rule], inactive_rule_ids=self._inactive_diagnostic_ids()
+            await asyncio.to_thread(
+                _validate_total_pattern_states,
+                [*self._rules, rule],
+                inactive_rule_ids=self._inactive_diagnostic_ids(),
             )
+            if check_configuration is not None:
+                check_configuration()
             self._rules.append(rule)
-            self._sort_and_compile()
+            await self._async_sort_and_compile(check_configuration)
             await self._async_save_locked()
-        return dict(rule)
+        return self.rule_snapshot(rule["id"])
 
     def preserves_inactive_pattern(
         self, rule_id: str, value: Mapping[str, Any]
@@ -960,12 +1002,14 @@ class RequestRules:
             self._require_group(rule)
             prospective = deepcopy(self._rules)
             prospective[index] = rule
-            _validate_total_pattern_states(
+            await asyncio.to_thread(
+                _validate_total_pattern_states,
                 prospective,
                 inactive_rule_ids=self._inactive_diagnostic_ids() - {rule_id},
             )
+            if check_configuration is not None:
+                check_configuration()
             self._rules[index] = rule
-            self._discard_condition_checkers(rule_id)
             match_fields = (
                 "enabled",
                 "phrases",
@@ -979,9 +1023,9 @@ class RequestRules:
             ):
                 self._refresh_snapshot_rule(rule_id, rule)
             else:
-                self._sort_and_compile()
+                await self._async_sort_and_compile(check_configuration)
             await self._async_save_locked()
-        return dict(rule)
+        return self.rule_snapshot(rule_id)
 
     async def async_delete(
         self, rule_id: str, *, expected_revision: str | None = None
@@ -991,8 +1035,7 @@ class RequestRules:
             self._require_revision_locked(expected_revision)
             index = self._index(rule_id)
             del self._rules[index]
-            self._discard_condition_checkers(rule_id)
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked()
         return True
 
@@ -1018,13 +1061,15 @@ class RequestRules:
             prospective.insert(source_index + 1, rule)
             for order, item in enumerate(prospective):
                 item["order"] = order
-            _validate_total_pattern_states(
-                prospective, inactive_rule_ids=self._inactive_diagnostic_ids()
+            await asyncio.to_thread(
+                _validate_total_pattern_states,
+                prospective,
+                inactive_rule_ids=self._inactive_diagnostic_ids(),
             )
             self._rules = prospective
-            self._sort_and_compile()
+            await self._async_sort_and_compile()
             await self._async_save_locked()
-        return dict(rule)
+        return self.rule_snapshot(rule["id"])
 
     async def async_move(
         self,
@@ -1070,7 +1115,7 @@ class RequestRules:
             # previously admitted subset. Healthy collections keep the
             # zero-recompile fast path and compiled pattern identities.
             if self._diagnostics:
-                self._sort_and_compile()
+                await self._async_sort_and_compile()
             else:
                 self._reorder_matching_snapshot()
             await self._async_save_locked()
@@ -1176,22 +1221,77 @@ class RequestRules:
         conditions = match.rule.get("conditions", [])
         if not conditions:
             return True
+        rule_id = match.rule["id"]
         try:
-            cached = self._condition_checkers.get(match.rule["id"])
-            if cached is None or cached.config != conditions:
-                self._discard_condition_checkers(match.rule["id"])
-                cached = await _NativeConditions.async_create(hass, conditions)
-                if self._retired:
-                    cached.async_unload()
-                    self._require_current_owner()
-                self._condition_checkers[match.rule["id"]] = cached
-            return cached.check(
-                hass, {"request": {"slots": match.slots}, **match.slots}
-            )
+            variables = {"request": {"slots": match.slots}, **match.slots}
+            cached = self._condition_checkers.get(rule_id)
+            if cached is not None and cached.config == conditions:
+                return cached.check(hass, variables)
+            async with self._condition_lock:
+                cached = self._condition_checkers.get(rule_id)
+                if cached is not None and cached.config == conditions:
+                    return cached.check(hass, variables)
+                checker = await self._async_create_condition_checker(hass, conditions)
+                if self._committed_condition_configs().get(rule_id) == conditions:
+                    self._discard_condition_checkers(rule_id)
+                    self._condition_checkers[rule_id] = checker
+                    return checker.check(hass, variables)
+                try:
+                    # A request can still be evaluating an older committed snapshot.
+                    return checker.check(hass, variables)
+                finally:
+                    checker.async_unload()
         except Exception as err:
             raise HomeAssistantError(
                 "Request Rule condition could not be evaluated"
             ) from err
+
+    def _committed_condition_configs(self) -> dict[str, list[Any]]:
+        if not self.routing_available or self._committed_state is None:
+            return {}
+        return {
+            rule["id"]: rule["conditions"]
+            for rule in self._committed_state["rules"]
+            if rule["enabled"] and rule.get("conditions")
+        }
+
+    async def _async_create_condition_checker(
+        self, hass: HomeAssistant, config: list[Any]
+    ) -> _NativeConditions:
+        self._require_current_owner()
+        epoch = self._condition_epoch
+        checker = await _NativeConditions.async_create(hass, config)
+        if self._retired or self._condition_epoch != epoch:
+            checker.async_unload()
+            raise HomeAssistantError("Request Rule condition tracking stopped")
+        return checker
+
+    async def _async_sync_condition_checkers(self) -> None:
+        """Retain unchanged trackers and start live duration tracking at commit."""
+        async with self._condition_lock:
+            configs = self._committed_condition_configs()
+            for rule_id, checker in tuple(self._condition_checkers.items()):
+                if configs.get(rule_id) != checker.config:
+                    self._discard_condition_checkers(rule_id)
+            if self._hass is None:
+                return
+            epoch = self._condition_epoch
+            for rule_id, config in configs.items():
+                if self._retired or self._condition_epoch != epoch:
+                    return
+                if rule_id in self._condition_checkers or not any(
+                    _has_tracked_duration(condition) for condition in config
+                ):
+                    continue
+                try:
+                    self._condition_checkers[
+                        rule_id
+                    ] = await self._async_create_condition_checker(self._hass, config)
+                except Exception as err:
+                    # Keep other rules available; a matching request can retry setup.
+                    log_handled_failure(
+                        _LOGGER, "Request Rule condition setup failed", err
+                    )
 
     async def async_eligible_matches(
         self, hass: HomeAssistant, text: str, skipped: list[dict[str, str]]
@@ -1315,7 +1415,46 @@ class RequestRules:
                 return index
         raise ValueError("Request Rule not found")
 
-    def _sort_and_compile(self) -> bool:
+    async def _async_sort_and_compile(
+        self, check_configuration: Callable[[], None] | None = None
+    ) -> bool:
+        """Compile an owned candidate without touching HA state from the worker."""
+        candidate = copy(self)
+        # Sorting writes order into each rule. Compilation independently copies
+        # authored action and match data before building the immutable snapshot.
+        candidate._rules = [dict(rule) for rule in self._rules]
+        loop = asyncio.get_running_loop()
+
+        def validate_local_action(
+            action: Mapping[str, Any], captures: set[str]
+        ) -> None:
+            async def validate() -> None:
+                _validate_action("local_action", action, capture_names=captures)
+
+            # HA template schema validators require the event-loop thread.
+            asyncio.run_coroutine_threadsafe(validate(), loop).result()
+
+        try:
+            changed = await async_settle_owned_operation(
+                asyncio.to_thread(candidate._sort_and_compile, validate_local_action)
+            )
+            self._require_current_owner()
+            if check_configuration is not None:
+                check_configuration()
+        except BaseException:
+            self._restore_committed_state()
+            raise
+        self._rules = candidate._rules
+        self._matching_snapshot = candidate._matching_snapshot
+        self._diagnostics = candidate._diagnostics
+        self._wording_diagnostics = candidate._wording_diagnostics
+        return changed
+
+    def _sort_and_compile(
+        self,
+        validate_local_action: Callable[[Mapping[str, Any], set[str]], None]
+        | None = None,
+    ) -> bool:
         """Sort, reindex, compile safe rules, and retain diagnostics for unsafe ones."""
         raw_wording = tuple(
             (g["canonical"], tuple(g["alternatives"])) for g in self._wording_groups
@@ -1414,13 +1553,20 @@ class RequestRules:
                 rule[MATCH_REPAIR] = repair_issue
             else:
                 try:
-                    _validate_action(
-                        rule["action_type"],
-                        rule["action"],
-                        capture_names=phrase_slots[0]
+                    captures = (
+                        phrase_slots[0]
                         if rule["match_type"] == "sentence_pattern"
-                        else set(),
+                        else set()
                     )
+                    if (
+                        validate_local_action is not None
+                        and rule["action_type"] == "local_action"
+                    ):
+                        validate_local_action(rule["action"], captures)
+                    else:
+                        _validate_action(
+                            rule["action_type"], rule["action"], capture_names=captures
+                        )
                 except ValueError as err:
                     diagnostics[rule["id"]] = f"Action is inactive: {err}"
                     continue
@@ -1453,6 +1599,7 @@ class RequestRules:
         def commit() -> None:
             self._remember_committed_state()
             if replacing:
+                self._discard_condition_checkers()
                 self._initialized = not self._retired
                 self._repair_required = self._routing_repair_required = False
 
@@ -1472,6 +1619,11 @@ class RequestRules:
             self._async_reconcile_failed_save if reconcile_failure else None,
             self._invalidate_after_unreadable_store,
         )
+        if self._initialized:
+            await self._async_sync_condition_checkers()
+        self._notify_change()
+
+    def _notify_change(self) -> None:
         if self._on_change is not None:
             try:
                 self._on_change()
@@ -1505,14 +1657,15 @@ class RequestRules:
             and disk_state._revision_generation == self._committed_revision_generation
             and disk_state._opaque_fields == self._committed_opaque_fields
         )
-        self._discard_condition_checkers()
         self._defaults = deepcopy(disk_state._defaults)
         self._opaque_fields = deepcopy(disk_state._opaque_fields)
         self._wording_groups = deepcopy(disk_state._wording_groups)
         self._groups = deepcopy(disk_state._groups)
         self._rules = deepcopy(disk_state._rules)
         self._revision_generation = disk_state._revision_generation
-        self._sort_and_compile()
+        self._matching_snapshot = disk_state._matching_snapshot
+        self._diagnostics = disk_state._diagnostics
+        self._wording_diagnostics = disk_state._wording_diagnostics
         if matches_committed and not matches_candidate:
             # The failed mutation did not reach disk. Keep its revision unchanged.
             self._committed_state = deepcopy(disk_snapshot)
@@ -1523,6 +1676,10 @@ class RequestRules:
             # manager's committed baseline, including its durable revision.
             self._remember_committed_state()
         self._initialized = not self._retired
+        if self._initialized:
+            await self._async_sync_condition_checkers()
+        if self._initialized and not matches_committed:
+            self._notify_change()
 
     def _invalidate_after_unreadable_store(self) -> None:
         """Fail closed when the authoritative Request Rules file cannot be read."""
@@ -1555,6 +1712,8 @@ class RequestRules:
         # Assist reads one immutable committed generation without waiting behind
         # management I/O. Candidate compilation never grants execution authority.
         self._committed_matching_snapshot = self._matching_snapshot
+        self._committed_diagnostics = self._diagnostics
+        self._committed_wording_diagnostics = self._wording_diagnostics
 
     def _restore_committed_state(self) -> None:
         snapshot = self._committed_state
@@ -1567,14 +1726,23 @@ class RequestRules:
         self._groups = deepcopy(snapshot["groups"])
         self._rules = deepcopy(snapshot["rules"])
         self._revision_generation = self._committed_revision_generation
-        self._sort_and_compile()
+        self._matching_snapshot = self._committed_matching_snapshot
+        self._diagnostics = self._committed_diagnostics
+        self._wording_diagnostics = self._committed_wording_diagnostics
+
+
+class _ConversationRoute(NamedTuple):
+    values: dict[str, str]
+    last_used: float
+    timeout: int
+    sources: tuple[tuple[str, str], ...] = ()
 
 
 class RequestRuleRuntime:
     """Per-agent, in-memory conversation routing overrides."""
 
     def __init__(self) -> None:
-        self._conversation_overrides: dict[str, tuple[dict[str, str], float, int]] = {}
+        self._conversation_overrides: dict[str, _ConversationRoute] = {}
         self._requests = ConversationRequests[str]()
 
     def get(
@@ -1583,24 +1751,19 @@ class RequestRuleRuntime:
         timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     ) -> dict[str, str]:
         now = monotonic()
-        for key, (_, last_used, stored_timeout) in list(
-            self._conversation_overrides.items()
-        ):
+        for key, route in list(self._conversation_overrides.items()):
             if (
                 not self._requests.active(key)
-                and now - last_used >= max(1, stored_timeout) * 60
+                and now - route.last_used >= max(1, route.timeout) * 60
             ):
                 self._conversation_overrides.pop(key, None)
         entry = self._conversation_overrides.get(session_id)
         if entry is None:
             return {}
-        values, _, _ = entry
-        self._conversation_overrides[session_id] = (
-            values,
-            now,
-            max(1, timeout_minutes),
+        self._conversation_overrides[session_id] = entry._replace(
+            last_used=now, timeout=max(1, timeout_minutes)
         )
-        return dict(values)
+        return dict(entry.values)
 
     def begin_request(self, session_id: str, timeout_minutes: int) -> object:
         """Resolve idle expiration before protecting an active request."""
@@ -1612,13 +1775,12 @@ class RequestRuleRuntime:
         entry = self._conversation_overrides.get(session_id)
         if entry is None:
             return {}
-        values, last_used, timeout = entry
         if (
             not self._requests.active(session_id)
-            and monotonic() - last_used >= timeout * 60
+            and monotonic() - entry.last_used >= entry.timeout * 60
         ):
             return {}
-        return dict(values)
+        return dict(entry.values)
 
     def request_ownership(
         self, session_id: str
@@ -1631,20 +1793,32 @@ class RequestRuleRuntime:
         session_id = self._requests.finish(token, successful=successful)
         entry = self._conversation_overrides.get(session_id) if session_id else None
         if session_id is not None and entry is not None:
-            values, _, timeout = entry
-            self._conversation_overrides[session_id] = (values, monotonic(), timeout)
+            self._conversation_overrides[session_id] = entry._replace(
+                last_used=monotonic()
+            )
 
     def set(
         self,
         session_id: str,
         override: Mapping[str, str],
         timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
+        *,
+        rule_id: str | None = None,
     ) -> None:
         values = {**self.get(session_id, timeout_minutes), **dict(override)}
-        self._conversation_overrides[session_id] = (
+        previous = self._conversation_overrides.get(session_id)
+        sources = {
+            key: source
+            for key, source in (previous.sources if previous else ())
+            if key not in override
+        }
+        if rule_id:
+            sources.update(dict.fromkeys(override, rule_id))
+        self._conversation_overrides[session_id] = _ConversationRoute(
             values,
             monotonic(),
             max(1, timeout_minutes),
+            tuple(sources.items()),
         )
 
     def reset(self, session_id: str) -> None:
@@ -1690,6 +1864,22 @@ class RequestRuleRuntime:
             **self.get(session_id, timeout_minutes),
             **request_values,
         }
+
+    def effective_routing_sources(
+        self, session_id: str, request_override: Mapping[str, str] | None
+    ) -> tuple[str, ...]:
+        """Report sources still contributing to the resolved conversation route."""
+        if request_override and request_override.get(_REQUEST_RESET_SENTINEL) == "1":
+            return ()
+        route = self._conversation_overrides.get(session_id)
+        if route is None:
+            return ()
+        overrides = request_override or {}
+        return tuple(
+            dict.fromkeys(
+                source for key, source in route.sources if key not in overrides
+            )
+        )
 
 
 def request_rule_session_id(continuity_key: str | None, conversation_id: str) -> str:
@@ -2171,11 +2361,6 @@ def _validate_ha_action(value: Any) -> dict[str, Any]:
         )
     domain = _clean(value.get("domain"), 64, "domain")
     service = _clean(value.get("service"), 64, "service")
-    result = {
-        "action": f"{domain}.{service}",
-        "target": _migrate_slot_templates(dict(value.get("target") or {})),
-        "data": _migrate_slot_templates(dict(value.get("data") or {})),
-    }
     if not re.fullmatch(r"[a-z0-9_]+", domain) or not re.fullmatch(
         r"[a-z0-9_]+", service
     ):
@@ -2184,7 +2369,11 @@ def _validate_ha_action(value: Any) -> dict[str, Any]:
         value.get("data", {}), Mapping
     ):
         raise ValueError("action target and data must be objects")
-    return result
+    return {
+        "action": f"{domain}.{service}",
+        "target": _migrate_slot_templates(dict(value.get("target", {}))),
+        "data": _migrate_slot_templates(dict(value.get("data", {}))),
+    }
 
 
 def _validate_local_action(value: Any) -> dict[str, Any]:
@@ -3519,12 +3708,11 @@ async def _async_evaluate_matched_rule(
         except Exception as err:
             if require_matching_revision is not None:
                 require_matching_revision()
-            _LOGGER.error(
-                "Request Rule '%s' failed while running its local Home Assistant "
-                "action. Review the rule's actions and referenced entities/services "
-                "in Extended OpenAI > Request Rules (%s)",
-                rule.get("name") or rule["id"],
-                type(err).__name__,
+            log_handled_failure(
+                _LOGGER,
+                f"Request Rule {rule['id']} failed while running local actions. Review the action sequence in Extended OpenAI > Request Rules and the Home Assistant script trace",
+                err,
+                level=logging.ERROR,
             )
             return RuleEvaluation(
                 match,
@@ -3648,7 +3836,10 @@ async def _async_evaluate_matched_rule(
     if action["scope"] == "conversation" and (
         can_retain_conversation_route is None or can_retain_conversation_route()
     ):
-        runtime.set(session_id, override, timeout_minutes)
+        if isinstance(runtime, RequestRuleRuntime):
+            runtime.set(session_id, override, timeout_minutes, rule_id=rule["id"])
+        else:
+            runtime.set(session_id, override, timeout_minutes)
         request_override = None
     else:
         request_override = override
@@ -4013,6 +4204,7 @@ async def async_get_request_rules(
             managers[key] = RequestRules(
                 _request_rule_store(hass, entry_id, subentry_id),
                 on_change=reconcile_lifecycle,
+                hass=hass,
             )
         manager = cast(RequestRules, managers[key])
         if manager._unsubscribe_stop is None:

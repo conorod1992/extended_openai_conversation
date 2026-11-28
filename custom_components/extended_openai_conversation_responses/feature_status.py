@@ -23,7 +23,7 @@ from .memory import get_memory_mode
 def management_feature_status(
     options: Mapping[str, Any],
     *,
-    knowledge_source_count: int,
+    knowledge_source_count: int | None,
     knowledge_total_source_count: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Describe what Memory and Knowledge currently mean for one agent.
@@ -91,8 +91,14 @@ def management_feature_status(
         )
         memory_state = "enabled"
 
-    source_count = max(0, int(knowledge_source_count))
-    total_source_count = max(source_count, int(knowledge_total_source_count or 0))
+    source_count = (
+        max(0, knowledge_source_count) if knowledge_source_count is not None else None
+    )
+    total_source_count = (
+        max(source_count, knowledge_total_source_count or 0)
+        if source_count is not None
+        else None
+    )
     knowledge_enabled = bool(
         options.get(CONF_KNOWLEDGE_ENABLED, DEFAULT_KNOWLEDGE_ENABLED)
     )
@@ -102,11 +108,18 @@ def management_feature_status(
         knowledge_summary = (
             f"{total_source_count} stored source{'s' if total_source_count != 1 else ''} retained; "
             "model access is off."
+            if total_source_count is not None
+            else "Model access is off. The stored source count is unavailable."
         )
         knowledge_detail = (
             "Knowledge Library is disabled for this agent. Stored sources are retained, "
             "but Knowledge tools and prompt guidance are not available to conversations."
         )
+    elif source_count is None:
+        knowledge_state = "unavailable"
+        knowledge_label = "Unavailable"
+        knowledge_summary = "The stored source count is unavailable."
+        knowledge_detail = "Knowledge status could not be read. Review Knowledge Library recovery before relying on its availability."
     elif source_count == 0:
         knowledge_state = "empty"
         knowledge_label = (
@@ -150,7 +163,9 @@ def management_feature_status(
             "summary": knowledge_summary,
             "detail": knowledge_detail,
             "enabled": knowledge_enabled,
-            "available": knowledge_enabled and source_count > 0,
+            "available": knowledge_enabled
+            and source_count is not None
+            and source_count > 0,
             "source_count": source_count,
             "total_source_count": total_source_count,
         },

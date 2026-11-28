@@ -87,12 +87,19 @@ async def test_legacy_default_is_persisted_readable_editable_and_requestable(
         options={},
         subentries={"stock": stock, "task": task, "future": unsupported},
     )
+    damaged = SimpleNamespace(
+        entry_id="damaged",
+        disabled_by="user",
+        data={"base_url": {"malformed": True}},
+        version=CONFIG_ENTRY_VERSION,
+        subentries={},
+    )
     updates = []
 
     class ConfigEntries:
         def async_entries(self, domain):
             assert domain == DOMAIN
-            return [entry]
+            return [damaged, entry]
 
         def async_update_subentry(self, parent, child, *, data):
             assert parent is entry

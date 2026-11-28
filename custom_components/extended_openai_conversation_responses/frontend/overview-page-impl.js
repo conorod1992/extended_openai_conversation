@@ -1,7 +1,7 @@
 import {buildSetupHealth} from "./overview-health.js";
 
-function card(panel, title, status, detail, page, section, action, icon, tone = "neutral") {
-  return `<article class="dashboard-card dashboard-tone-${tone}"><div class="dashboard-card-main"><span class="dashboard-icon" aria-hidden="true"><ha-icon icon="${panel._e(icon)}"></ha-icon></span><div><h3>${panel._e(title)}</h3><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p></div></div><button type="button" class="secondary dashboard-action" data-page="${page}" data-subsection="${section}">${action}</button></article>`;
+function card(panel, title, status, detail, page, section, action, icon, tone = "neutral", warning = "") {
+  return `<article class="dashboard-card dashboard-tone-${tone}" data-overview-section="${section}"><div class="dashboard-card-main"><span class="dashboard-icon" aria-hidden="true"><ha-icon icon="${panel._e(icon)}"></ha-icon></span><div><h3>${panel._e(title)}</h3><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p>${warning ? `<p role="status">${panel._e(warning)}</p>` : ""}</div></div>${panel._canAccessView?.(page, section) === false ? "" : `<button type="button" class="secondary dashboard-action" data-page="${page}" data-subsection="${section}">${action}</button>`}</article>`;
 }
 
 const HEALTH_ICONS = {
@@ -68,6 +68,15 @@ function setupHealthMarkup(panel, health, cards) {
 }
 
 const broadcastCard = '<section id="broadcast-card" class="content-card" aria-label="Broadcast"><p class="empty">Loading Broadcast…</p></section>';
+const activeGuest = status => ["active", "active_indefinitely"].includes(status.state);
+const unrestrictedGuest = status => activeGuest(status)
+  && (status.has_home_assistant_restrictions ?? status.has_home_assistant_exclusions) === false;
+const guestLabel = (panel, status) => status.state === "unavailable"
+  ? "Status unavailable" : panel._titleCase(String(status.state || "inactive").replaceAll("_"," "));
+const guestInEffect = status => activeGuest(status) || status.state === "scheduled";
+const guestWarning = status => unrestrictedGuest(status)
+  ? '<div class="notice warning"><strong>Review recommended</strong><p>Guest Mode is active without configured Home Assistant exclusions.</p></div>'
+  : "";
 
 export function renderOverview(panel, agent) {
   if (!agent) {
@@ -76,19 +85,23 @@ export function renderOverview(panel, agent) {
   const result = panel._result || {};
   const usage = result.usage || {};
   const conversations = result.conversations || {};
-  const setupHealth = buildSetupHealth(result.setup_health || {});
+  const retentionDays = conversations.archive_retention_days;
+  const setupHealth = buildSetupHealth(result.setup_health);
   const checks = Object.fromEntries(setupHealth.checks.map(check => [check.id, check]));
   const web = checks.web_search;
   const guest = agent.guest_mode || {};
-  const warnings = [];
-  if (["active", "active_indefinitely"].includes(guest.state) && guest.has_home_assistant_exclusions === false) warnings.push("Guest Mode is active without configured Home Assistant exclusions.");
-  for (const issue of new Map([...(result.load_errors || []), ...(agent.metadata_errors || [])].map((item) => [item.key, item])).values()) warnings.push(`${issue.label} could not be loaded. Other overview information is still available.`);
+  const loadErrors = result.load_errors || [];
+  const metadataErrors = (agent.metadata_errors || []).filter(issue =>
+    !["knowledge", "guest_mode"].includes(issue.key) || result.loading?.[issue.key] !== false);
+  const warnings = [...new Map([...loadErrors, ...metadataErrors].map(issue => [issue.key, issue])).values()];
   const loading = result.loading || {};
+  const memoryStatus = checks.memory?.value.toLowerCase() || (loading.memory || !panel._result ? "loading…" : "status unavailable");
+  const knowledgeStatus = checks.knowledge?.value.toLowerCase() || (loading.knowledge || !panel._result ? "loading…" : "status unavailable");
   const memoryCount = agent.memory_count == null ? "Unknown" : Number(agent.memory_count).toLocaleString();
   const sources = agent.knowledge_total_source_count ?? agent.knowledge_source_count;
   const knowledgeCount = sources == null ? "Unknown" : Number(sources).toLocaleString();
   const archiveTone = agent.archive_enabled ? "positive" : "neutral";
-  const guestTone = ["active", "active_indefinitely", "scheduled"].includes(guest.state) ? "warning" : "neutral";
+  const guestTone = guestInEffect(guest) ? "warning" : "neutral";
   return `<style>
       .configuration-health .dashboard-grid{grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:12px}
       .configuration-health .dashboard-card{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:16px;background:var(--secondary-background-color);box-shadow:none}
@@ -114,20 +127,62 @@ export function renderOverview(panel, agent) {
     </style>
     <section class="page-intro"><h1>${panel._e(agent.title)}</h1><p>Review your assistant’s settings and current status.</p></section>
     ${setupHealthMarkup(panel, setupHealth, `<section class="dashboard-grid" aria-label="Assistant overview">
-      ${card(panel,"Assistant",`${agent.provider} · ${agent.model}`,`${checks.provider_runtime?.state === "error" ? "Connection unavailable" : checks.provider_runtime?.value ? "Connection available" : "Connection status unavailable"} · ${checks.instructions?.value || "Instructions unavailable"}`,"assistant","basics","Configure","mdi:robot-outline")}
-      ${card(panel,"Capabilities",`${agent.function_count == null ? "Loading…" : `${Number(agent.function_count).toLocaleString()} function${agent.function_count === 1 ? "" : "s"}`} · ${agent.function_group_count == null ? "Unknown groups" : `${Number(agent.function_group_count).toLocaleString()} group${agent.function_group_count === 1 ? "" : "s"}`}`,`${checks.home_assistant_exposure?.value || "Assist exposure unavailable"}${checks.function_tools?.state === "warning" || checks.function_tools?.state === "error" ? ` · ${checks.function_tools.value}` : ""}`,"capabilities","home-assistant","Manage","mdi:tools")}
-      ${card(panel,"Memory & Knowledge",`${checks.memory?.value || "Memory status unavailable"} · Knowledge ${checks.knowledge?.value || "status unavailable"}`,loading.memory || loading.knowledge ? "Stored-data counts are loading." : `${result.load_errors?.some(issue => issue.key === "memory") ? "Memory count unavailable" : `${memoryCount} ${agent.memory_count === 1 ? "memory" : "memories"}`} · ${result.load_errors?.some(issue => issue.key === "knowledge") ? "Knowledge count unavailable" : `${knowledgeCount} Knowledge sources`}`,"data-memory","memories","Manage","mdi:brain")}
-      ${card(panel,"Conversation history",agent.archive_enabled ? "Archive enabled" : "Archive disabled",result.load_errors?.some((issue) => issue.key === "conversations") ? "Retention unavailable" : `Retention: ${conversations.archive_retention_days || 30} days`,"data-memory","conversations","View","mdi:message-text-clock-outline",archiveTone)}
-      ${card(panel,"Guest Mode",loading.guest_mode ? "Loading…" : result.load_errors?.some(issue => issue.key === "guest_mode") ? "Status unavailable" : panel._titleCase(String(guest.state || "inactive").replaceAll("_"," ")),loading.guest_mode ? "Loading current Guest Mode status." : "Integration-enforced visitor access and data restrictions.","capabilities","guest-mode","Configure","mdi:account-lock-outline",guestTone)}
-      ${card(panel,"Usage",loading.usage ? "Loading usage…" : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage unavailable" : `${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,loading.usage ? "Loading today and monthly totals." : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage summary could not be loaded." : `${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View","mdi:chart-line")}
-      ${card(panel,"Web Search",web?.value || "Status unavailable",web?.detail || "Web Search status could not be loaded.",web?.action?.page || "capabilities",web?.action?.subsection || "web-skills","Configure","mdi:web",web?.state === "warning" ? "warning" : web?.state === "ready" ? "positive" : "neutral")}
+      ${card(panel,"Assistant",`${agent.provider} · ${agent.model}`,`${checks.provider_runtime?.state === "error" ? "Connection unavailable" : checks.provider_runtime?.state === "ready" ? "Connection available" : setupHealth.checks[0]?.value === "Loading…" ? "Checking connection status…" : "Connection status unavailable"} · ${checks.instructions?.value || "Instructions unavailable"}`,"assistant","basics","Configure","mdi:robot-outline")}
+      ${card(panel,"Capabilities",`${agent?.effective_function_count == null
+        ? (agent?.function_count == null ? (result.loading?.setup_health || !panel._result ? "Loading…" : "Function count unavailable") : `${Number(agent.function_count).toLocaleString()} individually enabled`)
+        : `${Number(agent.effective_function_count).toLocaleString()} available functions`} · ${agent.function_group_count == null ? "Unknown groups" : `${Number(agent.function_group_count).toLocaleString()} group${agent.function_group_count === 1 ? "" : "s"}`}`,`${checks.home_assistant_exposure?.value || "Assist exposure unavailable"}${checks.function_tools?.state === "warning" || checks.function_tools?.state === "error" ? ` · ${checks.function_tools.value}` : ""}`,"capabilities","home-assistant","Manage","mdi:tools")}
+      ${card(panel,"Memory & Knowledge",`Long-term memory ${memoryStatus} · Knowledge ${knowledgeStatus}`,loading.memory || loading.knowledge || !panel._result ? "Stored-data counts are loading." : `${result.load_errors?.some(issue => issue.key === "memory") ? "Memory count unavailable" : `${memoryCount} ${agent.memory_count === 1 ? "memory" : "memories"}`} · ${result.load_errors?.some(issue => issue.key === "knowledge") ? "Knowledge count unavailable" : `${knowledgeCount} Knowledge sources`}`,"data-memory","memories","Manage","mdi:brain")}
+      ${card(panel,"Conversation history",agent.archive_enabled ? "Archive enabled" : "Archive disabled",Number.isInteger(retentionDays) && !loadErrors.some(issue => ["primary", "conversations"].includes(issue.key)) ? `Retention: ${retentionDays} days` : "Retention unavailable","data-memory","conversations","View","mdi:message-text-clock-outline",archiveTone)}
+      ${card(panel,"Guest Mode",loading.guest_mode ? "Loading…" : result.load_errors?.some(issue => issue.key === "guest_mode") ? "Status unavailable" : guestLabel(panel, guest),loading.guest_mode ? "Loading current Guest Mode status." : "Integration-enforced visitor access and data restrictions.","capabilities","guest-mode","Configure","mdi:account-lock-outline",guestTone)}
+      ${card(panel,"Usage",loading.usage ? "Loading usage…" : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage unavailable" : `${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,loading.usage ? "Loading today and monthly totals." : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage summary could not be loaded." : `${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View","mdi:chart-line",usage.storage_warning ? "warning" : "neutral",usage.storage_warning)}
+      ${card(panel,"Web Search",web?.value || (!panel._result ? "Loading…" : "Status unavailable"),web?.detail || (!panel._result ? "Checking Web Search availability." : "Web Search status could not be loaded."),web?.action?.page || "capabilities",web?.action?.subsection || "web-skills","Configure","mdi:web",web?.state === "warning" ? "warning" : web?.state === "ready" ? "positive" : "neutral")}
     </section>`)}
-    ${warnings.length ? `<section class="overview-warnings" aria-label="Actionable warnings">${warnings.map((warning) => `<div class="notice warning"><strong>Review recommended</strong><p>${panel._e(warning)}</p></div>`).join("")}</section>` : ""}
+    <section class="overview-warnings" aria-label="Actionable warnings" ${warnings.length || unrestrictedGuest(guest) ? "" : "hidden"}><div data-overview-guest-warning>${guestWarning(guest)}</div>${warnings.map(({key, label}) => `<div class="notice warning" ${key === "guest_mode" ? "data-overview-guest-error" : ""}><strong>Review recommended</strong><p>${panel._e(label)} could not be loaded. Other overview information is still available.</p></div>`).join("")}</section>
 
     ${broadcastCard}`;
 }
 
+async function bindOverviewGuestStatus(panel) {
+  const {boundaryDelay, watchLiveStatus} = await import("./management-live-status.js");
+  if (panel._viewKey?.() !== "overview") return;
+  watchLiveStatus(panel, "overview-guest", {
+    view: "overview",
+    delay: () => {
+      const status = panel._selectedAgent?.()?.guest_mode;
+      return boundaryDelay(status?.scheduled ? status.active_from : status?.active_until);
+    },
+    refresh: async current => {
+      const agent = panel._selectedAgent?.();
+      if (!agent) return;
+      const visit = panel._loadToken;
+      const result = await panel._call("overview", "detail", {kind:"guest_mode"}).catch(() => null);
+      const status = result?.agent?.guest_mode || {state:"unavailable", currently_active:null};
+      if (!current() || panel._loadToken !== visit || panel._selectedAgent?.() !== agent || !status) return;
+      agent.guest_mode = status;
+      const cached = panel._sectionCache?.get(panel._sectionCacheKey?.("overview"));
+      for (const data of [panel._result, cached]) {
+        if (result?.agent?.guest_mode && data?.load_errors) {
+          data.load_errors = data.load_errors.filter(issue => issue.key !== "guest_mode");
+        }
+      }
+      const card = panel.shadowRoot.querySelector('[data-overview-section="guest-mode"]');
+      if (card) {
+        card.querySelector("strong").textContent = guestLabel(panel, status);
+        card.classList.toggle("dashboard-tone-warning", guestInEffect(status));
+        card.classList.toggle("dashboard-tone-neutral", !guestInEffect(status));
+      }
+      const warning = panel.shadowRoot.querySelector("[data-overview-guest-warning]");
+      if (warning) {
+        if (result?.agent?.guest_mode) warning.parentElement.querySelector("[data-overview-guest-error]")?.remove();
+        warning.innerHTML = guestWarning(status);
+        warning.parentElement.hidden = !warning.parentElement.querySelector(".notice");
+      }
+    },
+  });
+}
+
 export function bindOverview(panel) {
+  if (panel._selectedAgent?.()) void bindOverviewGuestStatus(panel).catch(() => {});
   const details = panel.shadowRoot.querySelector("#overview-health-details");
   if (details) {
     details.open = panel._overviewHealthExpanded === panel._agentId;

@@ -256,6 +256,10 @@ def test_default_prompt_segmentation_is_byte_identical(
         assert result.text.startswith(
             "## Skills\n"
             "Use load_skill with a skill name when one of these skills is relevant:\n"
+            "Read SKILL.md first. If the result has has_more, pass next_offset as "
+            "offset on the next call with the same name and file.\n"
+            "Resolve relative script paths from the Skill directory listed below, "
+            "rather than from the current working directory.\n"
             "- lighting: Lighting guidance\n"
         )
         assert result.text.endswith(legacy_rendered)

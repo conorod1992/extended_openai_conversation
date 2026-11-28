@@ -10,9 +10,7 @@ An authenticated Home Assistant user attached to the request takes precedence. T
 
 ## How a voice source is identified
 
-For Assist requests that contain both a Home Assistant device-registry device ID and satellite metadata, Extended OpenAI uses the Home Assistant `device_id` as the canonical source identity. Satellite metadata remains useful as context and as a fallback when no registry device ID is available.
-
-This avoids treating two identifiers for the same physical voice source as different owners.
+Extended OpenAI uses the Home Assistant device ID when available. If Assist only supplies a registered satellite, Extended OpenAI looks up its device ID. When there is no saved assignment for that device ID, a saved satellite assignment can still apply. If neither supplies a usable assignment, Extended OpenAI uses the configured fallback for an unassigned source.
 
 ## Voice scope policies
 
@@ -25,7 +23,7 @@ The Voice & identity page lets you configure:
 
 A device mapped to a user can use that user's eligible personal memories, temporary context and retained conversation scope according to the agent's other settings. Shared-household and no-personal-data scopes keep personal information from being attached merely because a request came from a voice device.
 
-An explicit no-retained-data assignment overrides the unmapped-device fallback. It cannot retrieve saved memories or conversations or retain new ones. Missing assignments and stale/inactive user assignments follow the configured fallback; they do not select the unavailable user.
+An explicit no-retained-data assignment overrides the configured fallback for unassigned devices. It cannot retrieve saved memories or conversations or retain new ones. Missing assignments and stale/inactive user assignments follow the configured fallback; they do not select the unavailable user.
 
 ## Shared devices
 

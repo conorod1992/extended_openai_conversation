@@ -27,6 +27,7 @@
     "ijson==3.6.0",
     "jsonschema==4.26.0",
     "openai>=2.21.0,<=3.26.0",
+    "regex>=2025.11.3",
     "zstandard>=0.24.0",
     "voluptuous-openapi==0.4.1"
   ],

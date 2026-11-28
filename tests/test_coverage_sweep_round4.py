@@ -923,6 +923,7 @@ def test_debug_stream_finish_is_idempotent() -> None:
     stream = debug._DebugAsyncStream.__new__(debug._DebugAsyncStream)
     stream._delegate = delegate
     stream._request = request
+    stream._validated_by_caller = False
     stream._finished = False
 
     stream._finish(True)

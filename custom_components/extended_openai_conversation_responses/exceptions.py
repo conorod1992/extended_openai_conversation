@@ -3,6 +3,10 @@
 from homeassistant.exceptions import HomeAssistantError
 
 
+class DuplicateMemoryEdit(ValueError):
+    """A Management edit would duplicate another memory in its destination."""
+
+
 class EntityNotFound(HomeAssistantError):
     """When referenced entity not found."""
 
@@ -126,6 +130,18 @@ class ParseArgumentsFailed(HomeAssistantError):
 
 class FunctionResponseParseError(HomeAssistantError):
     """A backend response cannot be safely interpreted as a Function result."""
+
+
+class SQLiteDeadlineExceeded(HomeAssistantError):
+    """A read-only SQLite query exceeded its configured execution deadline."""
+
+
+class SQLiteResultLimitExceeded(HomeAssistantError):
+    """A SQLite query would return more rows or bytes than configured."""
+
+
+class StructuredOutputsUnavailable(HomeAssistantError):
+    """The effective provider model cannot accept a native output schema."""
 
 
 class FunctionValidationInfrastructureError(HomeAssistantError):

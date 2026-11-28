@@ -43,7 +43,7 @@ async def test_section_save_preserves_sampling_presence_but_transfer_materialize
         hass, owner.id, True, {**base, "action": "get"}
     )
     for key in ("temperature", "top_p"):
-        assert before["config"][key] == defaults[key]
+        assert before["config"][key] == (defaults[key] if explicit_sampling else None)
         assert (key in subentry.data) is explicit_sampling
     saved = await async_management_command(
         hass,

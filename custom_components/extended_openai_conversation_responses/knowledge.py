@@ -48,6 +48,7 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 2
 
 MAX_SOURCES_PER_AGENT = 500
+_MAX_DELETED_CREATION_RECEIPTS = 1_000
 MAX_TITLE_LENGTH = 120
 MAX_DESCRIPTION_LENGTH = 500
 MAX_CONTENT_LENGTH = 100_000
@@ -70,6 +71,7 @@ _PHRASE_TOKEN_PATTERN = re.compile(r"[\w'-]+[+#]*")
 _SEARCH_FILLER_TERMS = frozenset(
     {
         "a",
+        "about",
         "an",
         "and",
         "are",
@@ -96,6 +98,7 @@ _SEARCH_FILLER_TERMS = frozenset(
         "of",
         "or",
         "our",
+        "please",
         "that",
         "the",
         "their",
@@ -135,7 +138,7 @@ class KnowledgeSource:
 
 
 class DuplicateKnowledgeSource(ValueError):
-    """An independently submitted source matches an existing source."""
+    """A proposed source would duplicate existing Knowledge content."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -288,10 +291,14 @@ class KnowledgeStorage(Protocol):
 class KnowledgeStore(PropagatingWriteStore):
     """Versioned Home Assistant Store backend."""
 
+    _null_payload_label = "Knowledge"
+
     async def _async_migrate_func(
         self, old_major_version: int, old_minor_version: int, old_data: Any
     ) -> dict[str, Any]:
         """Migrate older knowledge payloads."""
+        if old_data is None:
+            self._raise_null_payload_repair()
         if old_major_version in {0, 1}:
             return _migrated_storage_payload(old_data)
         raise NotImplementedError
@@ -324,6 +331,7 @@ class KnowledgeLibrary:
     def __init__(self, storage: KnowledgeStorage) -> None:
         self._storage = storage
         self._sources: dict[str, KnowledgeSource] = {}
+        self._deleted_creation_receipts: dict[str, tuple[str, str]] = {}
         self._chunks: dict[tuple[str, int], _Chunk] = {}
         self._source_features: dict[str, _SourceFeatures] = {}
         self._token_index: dict[str, set[tuple[str, int]]] = defaultdict(set)
@@ -345,19 +353,40 @@ class KnowledgeLibrary:
                 return
             try:
                 data = await self._storage.async_load()
-                if data is not None and not isinstance(data, Mapping):
-                    raise ValueError("Knowledge Library store has invalid structure")
-                if (
-                    isinstance(data, Mapping)
-                    and "sources" in data
-                    and not isinstance(data["sources"], list)
-                ):
-                    raise ValueError("Knowledge Library sources have invalid structure")
-                raw_sources = (
-                    data.get("sources", []) if isinstance(data, Mapping) else []
+                raw_sources = _stored_sources(data)
+                raw_receipts = (
+                    data.get("deleted_creation_receipts", {})
+                    if isinstance(data, Mapping)
+                    else {}
                 )
+                self._deleted_creation_receipts = {}
+                if isinstance(raw_receipts, Mapping):
+                    for key, receipt in tuple(raw_receipts.items())[
+                        -_MAX_DELETED_CREATION_RECEIPTS:
+                    ]:
+                        if (
+                            isinstance(key, str)
+                            and re.fullmatch(r"[0-9a-f]{32}", key)
+                            and isinstance(receipt, list)
+                            and len(receipt) == 2
+                            and isinstance(receipt[0], str)
+                            and re.fullmatch(r"[0-9a-f]{64}", receipt[0])
+                            and isinstance(receipt[1], str)
+                            and parse_datetime(receipt[1]) is not None
+                        ):
+                            self._deleted_creation_receipts[key] = (
+                                receipt[0],
+                                receipt[1],
+                            )
                 sources, index = await asyncio.to_thread(_load_index, raw_sources)
                 self._repair_required = len(sources) != len(raw_sources)
+                if self._repair_required:
+                    _LOGGER.warning(
+                        "Knowledge Library store=%s needs repair; %d of %d records remain readable. Writes and backup export are blocked; the original data was kept",
+                        getattr(self._storage, "key", "unknown"),
+                        len(sources),
+                        len(raw_sources),
+                    )
                 self._sources = sources
                 self._publish_index(index)
                 self._remember_committed_state()
@@ -374,7 +403,10 @@ class KnowledgeLibrary:
                     # or modifying independent restore-journal evidence.
                     await _async_settle_transactional_save(
                         self._storage.async_save(
-                            {**(data or {}), "sources": normalized}
+                            {
+                                **(data if isinstance(data, Mapping) else {}),
+                                "sources": normalized,
+                            }
                         ),
                         self._invalidate_after_unreadable_store,
                         self._remember_committed_state,
@@ -395,6 +427,23 @@ class KnowledgeLibrary:
         """Return the number of model-available sources."""
         self._ensure_initialized()
         return sum(source.enabled for source in self._published_sources().values())
+
+    def has_enabled_sources(self, allowed: frozenset[str] | None = None) -> bool:
+        """Whether the current published library has an enabled permitted source."""
+        return any(
+            source.enabled and (allowed is None or source.source_id in allowed)
+            for source in self._published_sources().values()
+        )
+
+    def enabled_source_ids(
+        self, allowed: frozenset[str] | None = None
+    ) -> frozenset[str]:
+        """Return the IDs available to one Guest policy."""
+        return frozenset(
+            source.source_id
+            for source in self._published_sources().values()
+            if source.enabled and (allowed is None or source.source_id in allowed)
+        )
 
     @property
     def total_source_count(self) -> int:
@@ -499,12 +548,12 @@ class KnowledgeLibrary:
         enabled: bool = True,
         *,
         create_token: str | None = None,
-        confirm_duplicate: bool = False,
+        confirm_duplicate: bool | None = None,
     ) -> KnowledgeSource:
         """Create a source or acknowledge the same submission again."""
         title, description, content = _validated_fields(title, description, content)
         enabled = _validated_enabled(enabled)
-        if not isinstance(confirm_duplicate, bool):
+        if confirm_duplicate is not None and not isinstance(confirm_duplicate, bool):
             raise ValueError("confirm_duplicate must be a boolean")
         fields = (title, description, content, enabled)
         if create_token is not None:
@@ -536,13 +585,36 @@ class KnowledgeLibrary:
                     enabled=enabled,
                     updated_at=existing.created_at,
                 )
+            if (receipt := self._deleted_creation_receipts.get(source_id)) is not None:
+                old_fingerprint, created_at = receipt
+                if fingerprint != old_fingerprint:
+                    raise ValueError(
+                        "Knowledge create token belongs to a different submission"
+                    )
+                # Acknowledge the original write without making the deleted source live again.
+                return KnowledgeSource(
+                    source_id=source_id,
+                    title=title,
+                    description=description,
+                    content=content,
+                    created_at=created_at,
+                    updated_at=created_at,
+                    enabled=enabled,
+                    creation_fingerprint=fingerprint,
+                )
+            # A caller that supplies the confirmation flag supports the broader
+            # content warning. Older callers still get their exact-copy check.
             if not confirm_duplicate and any(
-                (source.title, source.description, source.content, source.enabled)
-                == fields
+                (
+                    confirm_duplicate is False
+                    or (source.title, source.description, source.enabled)
+                    == (title, description, enabled)
+                )
+                and source.content == content
                 for source in self._sources.values()
             ):
                 raise DuplicateKnowledgeSource(
-                    "An identical Knowledge source already exists"
+                    "Another Knowledge source has the same content"
                 )
             if len(self._sources) >= MAX_SOURCES_PER_AGENT:
                 raise ValueError(
@@ -575,6 +647,8 @@ class KnowledgeLibrary:
         content: str | None = None,
         enabled: bool | None = None,
         expected_revision: str | None = None,
+        *,
+        confirm_duplicate: bool = False,
     ) -> KnowledgeSource:
         """Update and immediately re-index one source."""
         async with async_storage_lock(self._storage, self._lock):
@@ -604,6 +678,17 @@ class KnowledgeLibrary:
             )
             if updated == current:
                 return current
+            if (
+                not confirm_duplicate
+                and updated.content != current.content
+                and any(
+                    source.source_id != source_id and source.content == updated.content
+                    for source in self._sources.values()
+                )
+            ):
+                raise DuplicateKnowledgeSource(
+                    "Another Knowledge source has the same content"
+                )
             updated = replace(updated, updated_at=dt_util.utcnow().isoformat())
             index = await asyncio.to_thread(_build_index, (updated,))
             self._unindex(source_id)
@@ -619,7 +704,19 @@ class KnowledgeLibrary:
             if source_id not in self._sources:
                 return False
             self._unindex(source_id)
-            del self._sources[source_id]
+            removed = self._sources.pop(source_id)
+            if removed.creation_fingerprint:
+                self._deleted_creation_receipts[source_id] = (
+                    removed.creation_fingerprint,
+                    removed.created_at,
+                )
+                if (
+                    len(self._deleted_creation_receipts)
+                    > _MAX_DELETED_CREATION_RECEIPTS
+                ):
+                    self._deleted_creation_receipts.pop(
+                        next(iter(self._deleted_creation_receipts))
+                    )
             await self._async_save_locked()
             return True
 
@@ -700,29 +797,47 @@ class KnowledgeLibrary:
             candidates.update(self._token_index.get(token, set()))
 
         best_by_source: dict[str, tuple[bool, float, _Chunk]] = {}
+        exact_terms = raw_query_tokens - _SEARCH_FILLER_TERMS
+        salient_terms = query_tokens - _SEARCH_FILLER_TERMS
+        source_scores: dict[str, tuple[bool, bool, float, float, bool, bool]] = {}
         for chunk_key in candidates:
             chunk = self._chunks[chunk_key]
             if allowed is not None and chunk.source_id not in allowed:
                 continue
-            features = self._source_features[chunk.source_id]
-            title_tokens = features.title_tokens
-            description_tokens = features.description_tokens
-            normalized_title = features.normalized_title
-            normalized_description = features.normalized_description
-            all_tokens = chunk.tokens | title_tokens | description_tokens
-            exact_salient = bool((raw_query_tokens - _SEARCH_FILLER_TERMS) & all_tokens)
-            if has_salient_terms and not (
-                (query_tokens - _SEARCH_FILLER_TERMS) & all_tokens
+            source_score = source_scores.get(chunk.source_id)
+            if source_score is None:
+                features = self._source_features[chunk.source_id]
+                title_tokens = features.title_tokens
+                description_tokens = features.description_tokens
+                source_score = source_scores[chunk.source_id] = (
+                    not exact_terms.isdisjoint(title_tokens)
+                    or not exact_terms.isdisjoint(description_tokens),
+                    not salient_terms.isdisjoint(title_tokens)
+                    or not salient_terms.isdisjoint(description_tokens),
+                    weighted_overlap(title_tokens) * 8,
+                    weighted_overlap(description_tokens) * 4,
+                    bounded_phrase(normalized_query, features.normalized_title),
+                    bounded_phrase(normalized_query, features.normalized_description),
+                )
+            (
+                exact,
+                salient,
+                title_score,
+                description_score,
+                title_phrase,
+                description_phrase,
+            ) = source_score
+            exact_salient = exact or not exact_terms.isdisjoint(chunk.tokens)
+            if (
+                has_salient_terms
+                and not salient
+                and salient_terms.isdisjoint(chunk.tokens)
             ):
                 continue
-            score = (
-                weighted_overlap(chunk.tokens)
-                + weighted_overlap(title_tokens) * 8
-                + weighted_overlap(description_tokens) * 4
-            )
-            if bounded_phrase(normalized_query, normalized_title):
+            score = weighted_overlap(chunk.tokens) + title_score + description_score
+            if title_phrase:
                 score += 8
-            if bounded_phrase(normalized_query, normalized_description):
+            if description_phrase:
                 score += 5
             if bounded_phrase(normalized_query, chunk.normalized_text):
                 score += 4
@@ -870,6 +985,11 @@ class KnowledgeLibrary:
                 )
             return page
 
+    @property
+    def needs_storage_repair(self) -> bool:
+        """Return the last confirmed storage validation result."""
+        return self._repair_required
+
     def stats(self) -> dict[str, Any]:
         """Return non-sensitive diagnostics."""
         self._ensure_initialized()
@@ -992,7 +1112,17 @@ class KnowledgeLibrary:
                 {
                     "sources": [
                         _stored_source_dict(source) for source in self._sources.values()
-                    ]
+                    ],
+                    **(
+                        {
+                            "deleted_creation_receipts": {
+                                key: list(receipt)
+                                for key, receipt in self._deleted_creation_receipts.items()
+                            }
+                        }
+                        if self._deleted_creation_receipts
+                        else {}
+                    ),
                 }
             ),
             self._invalidate_after_unreadable_store,
@@ -1007,6 +1137,7 @@ class KnowledgeLibrary:
         await disk_state.async_initialize(persist_normalization=False)
         self._repair_required = disk_state._repair_required
         self._sources = disk_state._sources
+        self._deleted_creation_receipts = disk_state._deleted_creation_receipts
         self._publish_index(
             _KnowledgeIndex(
                 disk_state._chunks,
@@ -1076,6 +1207,11 @@ async def async_get_knowledge(
         )
     library = managers[key]
     await library.async_initialize()
+    from .storage_repairs import set_storage_repair
+
+    set_storage_repair(
+        hass, entry_id, subentry_id, "knowledge", library.needs_storage_repair
+    )
     return library
 
 
@@ -1225,15 +1361,12 @@ def _migrated_storage_payload(old_data: Any) -> dict[str, Any]:
     """Normalize legacy stores and make previous sources explicitly enabled."""
     if not isinstance(old_data, (list, Mapping)):
         raise StorageRepairRequired("Knowledge Library")
-    raw_sources = (
-        old_data
-        if isinstance(old_data, list)
-        else old_data.get("sources", [])
-        if isinstance(old_data, Mapping)
-        else []
-    )
-    if not isinstance(raw_sources, list):
-        raise StorageRepairRequired("Knowledge Library")
+    try:
+        raw_sources = (
+            old_data if isinstance(old_data, list) else _stored_sources(old_data)
+        )
+    except ValueError as err:
+        raise StorageRepairRequired("Knowledge Library") from err
     migrated: list[Any] = []
     for raw in raw_sources:
         if isinstance(raw, Mapping):
@@ -1243,6 +1376,18 @@ def _migrated_storage_payload(old_data: Any) -> dict[str, Any]:
         else:
             migrated.append(raw)
     return {**(old_data if isinstance(old_data, Mapping) else {}), "sources": migrated}
+
+
+def _stored_sources(data: Any) -> list[Any]:
+    if data is None or (isinstance(data, Mapping) and not data):
+        return []
+    if not isinstance(data, Mapping):
+        raise ValueError("Knowledge Library store has invalid structure")
+    if "sources" not in data:
+        raise StorageRepairRequired("Knowledge Library")
+    if not isinstance(data["sources"], list):
+        raise ValueError("Knowledge Library sources have invalid structure")
+    return data["sources"]
 
 
 def _source_from_stored(raw: Any) -> KnowledgeSource:
@@ -1448,6 +1593,7 @@ def _split_chunks(content: str) -> list[tuple[int, str]]:
         if end >= length:
             break
         next_start = max(start + 1, end - CHUNK_OVERLAP)
-        line_after_overlap = content.find("\n", next_start, end)
+        # Align near the overlap start while retaining most of the context.
+        line_after_overlap = content.find("\n", next_start, end - CHUNK_OVERLAP // 2)
         start = line_after_overlap + 1 if line_after_overlap != -1 else next_start
     return chunks

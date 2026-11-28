@@ -41,3 +41,18 @@ const {bindKnowledgeAvailability} = await import("../custom_components/extended_
   assert.equal(panel._configData.revision,"new");
   assert.equal(panel._configDirty,true);
 }
+
+
+const {renderKnowledge} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-knowledge-feature.js");
+for (const enabled of [true, false]) {
+  const unavailable = renderKnowledge({
+    _data:{is_admin:true},
+    _selectedAgent:() => ({knowledge_enabled:enabled}),
+    _result:{sources_unavailable:true},
+    _e:String,
+  });
+  assert.match(unavailable, /stored source count is unavailable/);
+  assert.match(unavailable, enabled ? />Unavailable<\/strong>/ : />Off<\/strong>/);
+  assert.match(unavailable, /id="knowledge-enabled-toggle"/);
+  assert.doesNotMatch(unavailable, /Needs sources|0 sources/);
+}

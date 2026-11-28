@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {watchLiveStatus, stopLiveStatus} from "../custom_components/extended_openai_conversation_responses/frontend/management-live-status.js";
 import {bindOwnedEvent} from "../custom_components/extended_openai_conversation_responses/frontend/management-owned-events.js";
-import {hasPendingBroadcast} from "../custom_components/extended_openai_conversation_responses/frontend/overview-broadcast.js";
+import {hasPendingBroadcast, watchBroadcastStatus} from "../custom_components/extended_openai_conversation_responses/frontend/overview-broadcast.js";
 import {ensureRequestRuleTranslations} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 
 const target = new EventTarget();
@@ -57,3 +57,47 @@ try {
 assert.equal(hasPendingBroadcast({history:[{deliveries:{speaker:{status:"waiting_idle"}}}]}),true);
 assert.equal(hasPendingBroadcast({history:[{deliveries:{speaker:{status:"delivered"}}}]}),false);
 assert.equal(hasPendingBroadcast({history:[{deliveries:{speaker:{status:"failed"}}}]}),false);
+
+{
+  const due = new Map();
+  const realNow = Date.now;
+  let now = 0;
+  globalThis.setTimeout = (callback, delay) => {
+    due.set(++serial, {callback, delay});
+    return serial;
+  };
+  globalThis.clearTimeout = id => due.delete(id);
+  Date.now = () => now;
+  const overview = {_viewKey:()=>"overview", isConnected:true};
+  const pending = id => ({id, deliveries:{speaker:{status:"delivering"}}});
+  let snapshot = {pending:[pending("long")]};
+  const refresh = async () => snapshot;
+  const advance = async target => {
+    while (now < target) {
+      assert.equal(due.size, 1);
+      const {callback, delay} = due.values().next().value;
+      due.clear();
+      now += delay;
+      await callback();
+    }
+  };
+  try {
+    watchBroadcastStatus(overview, snapshot, refresh);
+    // Wait a maximum queue TTL and announcement interval.
+    await advance((3600 + 632) * 1000);
+    assert.equal(due.size, 1);
+    // A fresh admission observed by the existing watcher renews its budget.
+    snapshot = {pending:[pending("overlap")]};
+    await advance(now + 1);
+    await advance(now + 3600 * 1000);
+    assert.equal(due.size, 1);
+    snapshot = {pending:[]};
+    await advance(now + 1);
+    assert.equal(due.size, 0);
+  } finally {
+    stopLiveStatus(overview);
+    Date.now = realNow;
+    globalThis.setTimeout = realSet;
+    globalThis.clearTimeout = realClear;
+  }
+}

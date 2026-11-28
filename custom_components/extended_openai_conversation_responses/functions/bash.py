@@ -798,6 +798,11 @@ class BashFunction(Function):
                 raise
 
             execution_completed(receipt)
+            if process.returncode:
+                _LOGGER.debug(
+                    "Function Tool shell command exited with code %d",
+                    process.returncode,
+                )
             stdout_text = _decode_bounded_output(stdout, stdout_truncated)
             stderr_text = _decode_bounded_output(stderr, stderr_truncated)
 

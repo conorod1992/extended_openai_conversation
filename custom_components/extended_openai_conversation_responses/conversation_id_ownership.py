@@ -201,6 +201,7 @@ def claim_conversation_id(
     conversation_id: str | None,
     *,
     guest_active: bool,
+    guest_namespace: str | None = None,
     provisional_claim: ProvisionalConversationIDClaim | None = None,
 ) -> str | None:
     """Prevent a caller-selected HA ChatLog ID crossing EOAI privacy boundaries."""
@@ -222,15 +223,23 @@ def claim_conversation_id(
             provisional_claim.record(target, owner, created=created)
         return target
 
+    namespace = (
+        (guest_namespace or GUEST_CONTINUITY_NAMESPACE) if guest_active else None
+    )
     existing = owners.get(conversation_id)
     history = _unclaimed_live_history(hass, conversation_id)
     if history is not None:
         target = history.bindings.get(owner)
-        if target is not None and owners.get(target) == owner:
+        if (
+            target is not None
+            and owners.get(target) == owner
+            and (
+                guest_namespace is None
+                or target.startswith(f"extended-openai-{guest_namespace}-{agent_id}-")
+            )
+        ):
             return claimed(target, created=False)
-        target = create_conversation_id(
-            agent_id, GUEST_CONTINUITY_NAMESPACE if guest_active else None
-        )
+        target = create_conversation_id(agent_id, namespace)
         owners[target] = owner
         history.bindings[owner] = target
         return claimed(target, created=True)
@@ -244,9 +253,7 @@ def claim_conversation_id(
         owners[conversation_id] = owner
         return claimed(conversation_id, created=False)
 
-    target = create_conversation_id(
-        agent_id, GUEST_CONTINUITY_NAMESPACE if guest_active else None
-    )
+    target = create_conversation_id(agent_id, namespace)
     owners[target] = owner
     return claimed(target, created=True)
 

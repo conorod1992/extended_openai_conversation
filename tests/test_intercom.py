@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from datetime import UTC, datetime, timedelta
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -21,6 +23,53 @@ from custom_components.extended_openai_conversation_responses.intercom import (
     Delivery,
     IntercomManager,
 )
+
+
+@pytest.mark.parametrize(
+    "saved", [{"enabled": "false"}, {"enabled": True, "builtin_voice_command": 1}, []]
+)
+async def test_malformed_broadcast_preferences_fail_closed(hass, saved):
+    manager = IntercomManager(hass)
+    await manager._store.async_save(saved)
+    with pytest.raises(HomeAssistantError, match="requires repair"):
+        await manager.async_initialize()
+    assert not manager.enabled
+    assert await manager._store.async_load() == saved
+
+
+@pytest.mark.parametrize("version", ["1", 999])
+async def test_broadcast_unreadable_native_version_fails_closed(hass, version):
+    manager = IntercomManager(hass)
+    path = Path(manager._store.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    evidence = json.dumps(
+        {"version": version, "key": path.name, "data": {"enabled": True}}
+    )
+    path.write_text(evidence, encoding="utf-8")
+    with pytest.raises(HomeAssistantError, match="requires repair"):
+        await manager.async_initialize()
+    assert not manager.enabled
+    assert path.read_text(encoding="utf-8") == evidence
+    await manager._store.async_save({"enabled": False})
+    await manager.async_initialize()
+    assert not manager.enabled and manager.builtin_voice_command
+
+
+async def test_explicit_null_broadcast_settings_preserve_the_native_envelope(hass):
+    manager = IntercomManager(hass)
+    path = Path(manager._store.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    await manager._store.async_save(None)
+    evidence = path.read_bytes()
+    with pytest.raises(HomeAssistantError, match="requires repair"):
+        await manager.async_initialize()
+    with pytest.raises(ValueError, match="Broadcast storage needs repair"):
+        await manager._store.async_save({"enabled": True})
+    assert not manager.enabled
+    assert path.read_bytes() == evidence
+    path.unlink()
+    await manager.async_initialize()
+    assert not manager.enabled
 
 
 @pytest.mark.asyncio
@@ -311,6 +360,10 @@ async def test_send_rejects_empty_message_and_no_targets(hass, monkeypatch) -> N
 
     with pytest.raises(HomeAssistantError, match="cannot be empty"):
         await manager.async_send("   ", whole_home=True)
+
+    with pytest.raises(HomeAssistantError, match="invalid Unicode"):
+        await manager.async_send("Hello\ud800", whole_home=True)
+    assert manager.history() == []
 
     monkeypatch.setattr(manager, "resolve_targets", lambda **_kwargs: [])
     with pytest.raises(HomeAssistantError, match="No matching"):

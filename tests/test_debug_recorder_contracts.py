@@ -22,6 +22,33 @@ def _begin(manager: DebugManager, index: int = 0):
     )
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ({"unattainable": "private-value"}, {"__debug_truncated__": True}),
+        (["private-value"], ["<debug capture budget exhausted>"]),
+    ],
+)
+def test_debug_snapshot_stays_bounded_after_allocating_its_top_level_container(value, expected):
+    assert debug._jsonable(value, budget=debug._CaptureBudget(128)) == expected
+
+
+@pytest.mark.parametrize(
+    "payload", [{"nested": {"large": "0123456789" * 16}}, [["0123456789" * 16]]]
+)
+def test_debug_fingerprints_are_omitted_instead_of_claiming_partial_hashes(monkeypatch, payload):
+    monkeypatch.setattr(debug, "_MAX_METRIC_CHARACTERS", 80)
+    assert debug._original_payload_metrics(payload) == (None, None)
+
+
+def test_debug_uninspectable_payload_is_not_guessed():
+    class FailingKey:
+        def __str__(self):
+            raise ValueError("private data")
+
+    assert debug._original_payload_metrics({FailingKey(): "ignored"}) == (None, None)
+
+
 def test_debug_manager_status_configure_and_clear() -> None:
     manager = DebugManager()
 
@@ -303,6 +330,28 @@ def test_usage_text_and_action_detection_support_provider_variants() -> None:
     assert not debug._event_has_action({"item": {"type": "message"}})
 
 
+@pytest.mark.parametrize(
+    ("surface", "event"),
+    [
+        ("responses", {"type": "response.refusal.delta", "delta": "Cannot help"}),
+        ("chat_completions", {"choices": [{"delta": {"refusal": "Cannot help"}}]}),
+    ],
+)
+def test_refusal_delta_records_first_text_before_completion(surface, event, monkeypatch):
+    request = debug.DebugProviderRequest(
+        request_id="refusal",
+        api_surface=surface,
+        started_at="now",
+        started_offset_ms=0,
+        request={},
+        metrics={},
+        _started_monotonic=10.0,
+    )
+    monkeypatch.setattr(debug.time, "monotonic", lambda: 10.25)
+    request.add_event(event)
+    assert request.first_text_ms == 250
+
+
 def test_provider_request_records_timings_usage_and_truncates(monkeypatch) -> None:
     request = debug.DebugProviderRequest(
         request_id="req-1",
@@ -346,6 +395,54 @@ def test_provider_request_records_timings_usage_and_truncates(monkeypatch) -> No
     assert request.successful is True
     assert request.error_type is None
     assert request.as_dict()["request_id"] == "req-1"
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_provider_event_byte_ceiling_and_terminal_metadata(monkeypatch, malformed):
+    request = _begin(DebugManager()).start_provider_request("responses", (), {})
+    first = {"type": "response.output_text.delta", "delta": "é😀"}
+    size = len(
+        json.dumps(first, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+    # A valid event exactly at the byte ceiling fits. An event with the same
+    # character count but a smaller byte allowance must truncate.
+    monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", size)
+    request.add_event(first)
+    assert request.response_events == [first]
+    assert request.first_text_ms is not None
+
+    if malformed:
+        monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", 1000)
+        request.add_event({"type": "response.output_text.delta", "delta": "\ud800"})
+        normalized = {"type": "response.output_text.delta", "delta": r"\ud800"}
+        assert request.response_events == [first, normalized]
+        monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", size)
+        request.add_event(first)
+    else:
+        request = _begin(DebugManager()).start_provider_request("responses", (), {})
+        monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", size - 1)
+        request.add_event(first)
+        assert request.first_text_ms is not None
+    assert request.response_events == ([first, normalized] if malformed else [])
+    assert request.response_events_truncated
+
+    request.add_event({"type": "response.function_call_arguments.delta"})
+    request.add_event(
+        {
+            "type": "response.incomplete",
+            "response": {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "usage": {"input_tokens": 2, "output_tokens": 3},
+            },
+        }
+    )
+    request.finish(successful=True)
+    assert request.response_events == ([first, normalized] if malformed else [])
+    assert request.first_action_ms is not None
+    assert request.usage["total_tokens"] == 5
+    assert request.successful is False
+    assert request.error_type == "TokenLengthExceededError"
 
 
 def test_trace_request_metrics_summary_and_manager_lifecycle() -> None:
@@ -400,7 +497,7 @@ def test_debug_manager_is_scoped_per_agent() -> None:
     assert debug.get_debug_manager(hass, "entry", "two") is not first
 
 
-def test_record_current_provider_failure_is_optional_and_finishes_latest_request(
+def test_record_current_provider_failure_leaves_unrelated_request_outcome_alone(
     monkeypatch,
 ) -> None:
     error = RuntimeError("boom")
@@ -412,6 +509,7 @@ def test_record_current_provider_failure_is_optional_and_finishes_latest_request
 
     trace = _trace()
     request = trace.start_provider_request("responses", (), {})
+    request.finish(successful=True)
     token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
         debug.record_current_provider_failure(error)
@@ -420,8 +518,8 @@ def test_record_current_provider_failure_is_optional_and_finishes_latest_request
 
     assert trace.error_type == "RuntimeError"
     assert trace.error == {"message": "boom"}
-    assert request.successful is False
-    assert request.error_type == "RuntimeError"
+    assert request.successful is True
+    assert request.error_type is None
 
 
 class _Stream:
@@ -760,3 +858,25 @@ async def test_endpoint_proxy_leaves_stream_untouched_without_active_trace() -> 
     proxy = debug._DebugEndpointProxy(_ResidualEndpoint(stream), "responses")
 
     assert await proxy.create(input="hello") is stream
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        {"type": "response.output_text.done", "text": "answer"},
+        {"type": "response.refusal.done", "refusal": "answer"},
+        {"type": "response.content_part.done", "part": {"type": "output_text", "text": "answer"}},
+        {
+            "type": "response.output_item.done",
+            "item": {"type": "message", "content": [{"type": "refusal", "refusal": "answer"}]},
+        },
+    ],
+)
+def test_first_text_tracks_responses_snapshots_before_the_terminal_event(snapshot):
+    manager = DebugManager()
+    manager.configure(enabled=True, limit=5)
+    provider = _begin(manager).start_provider_request("responses", (), {})
+    provider.add_event({"type": "response.output_text.done", "text": ""})
+    assert provider.first_text_ms is None
+    provider.add_event(snapshot)
+    assert provider.first_text_ms is not None

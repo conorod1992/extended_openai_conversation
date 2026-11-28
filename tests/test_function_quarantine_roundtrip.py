@@ -228,7 +228,7 @@ def test_stock_migration_preserves_quarantined_and_disabled_typed_siblings(case)
         asyncio.CancelledError(),
     ],
 )
-async def test_migration_does_not_mask_unexpected_failures(monkeypatch, error):
+async def test_migration_defers_unexpected_failures_and_propagates_cancellation(monkeypatch, error, caplog):
     restarted, _affected, _healthy, writes = _restart_and_migrate(
         SimpleNamespace(data={})
     )
@@ -237,7 +237,11 @@ async def test_migration_does_not_mask_unexpected_failures(monkeypatch, error):
         raise error
 
     monkeypatch.setattr(integration, "_migrate_saved_agent_defaults", fail)
-    with pytest.raises(type(error)) as raised:
+    if isinstance(error, asyncio.CancelledError):
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await integration.async_migrate_integration(restarted)
+        assert raised.value is error
+    else:
         await integration.async_migrate_integration(restarted)
-    assert raised.value is error
+        assert "Assistant configuration migration deferred" in caplog.text
     assert writes == []

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from copy import deepcopy
 from dataclasses import asdict, replace
 import json
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
+from httpx import InvalidURL
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -20,7 +23,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import backup
-from .agent_config import agent_retention_snapshot, normalized_agent_integer
+from .agent_config import normalized_agent_integer
 from .agent_maintenance import (
     _async_run_exclusive_operation,
     get_agent_maintenance_gate,
@@ -29,8 +32,6 @@ from .const import (
     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_CONVERSATION_CONTINUITY,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
-    CONF_USAGE_REQUEST_RETENTION_DAYS,
-    CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
@@ -38,10 +39,13 @@ from .const import (
     SUBSYSTEM_STATUS_KEY,
 )
 from .conversation_archive import ArchiveSession, archive_session_inactive
+from .helpers import ProviderEndpointError
 from .live_subentry_updates import (
     configuration_supports_live_update,
     live_subentry_update,
+    persisted_configuration_matches,
     update_live_subentry,
+    write_configuration_subentry,
 )
 from .mutation_outcomes import mark_mutation_failure, mutation_failure
 from .operation_settlement import async_settle_owned_operation
@@ -263,6 +267,8 @@ def _new_journal(
         "created_at": dt_util.utcnow().isoformat(),
         "target": _prepared_document(target, entry_id, subentry_id),
         "rollback": _prepared_document(rollback, entry_id, subentry_id),
+        **({"replaces_usage": False} if not target.replaces_usage else {}),
+        **({"retains_configuration": True} if target.retains_configuration else {}),
         **(
             {"data_sections": sorted(target.journaled_sections)}
             if target.journaled_sections is not None
@@ -368,7 +374,13 @@ async def _async_load_journal(
         or not value.keys() >= _JOURNAL_REQUIRED_FIELDS
         or set(value)
         - _JOURNAL_REQUIRED_FIELDS
-        - {"configuration_providers", "data_sections", "provider_connections"}
+        - {
+            "configuration_providers",
+            "data_sections",
+            "provider_connections",
+            "replaces_usage",
+            "retains_configuration",
+        }
     ):
         raise backup.BackupError("Pending restore transaction is corrupted")
     transaction_id = value["transaction_id"]
@@ -385,6 +397,11 @@ async def _async_load_journal(
     ):
         raise backup.BackupError("Pending restore transaction is corrupted")
     journal = dict(value)
+    replaces_usage = journal.get("replaces_usage", True)
+    if not isinstance(replaces_usage, bool):
+        raise backup.BackupError(
+            "Pending restore Usage replacement intent is corrupted"
+        )
     sections = None
     if "data_sections" in journal:
         raw_sections = journal["data_sections"]
@@ -400,45 +417,40 @@ async def _async_load_journal(
         sections = frozenset(raw_sections)
     providers = _journal_providers(journal, provider)
     _journal_provider_connections(journal, providers)
+    retains_configuration = journal.get("retains_configuration", False)
+    if not isinstance(retains_configuration, bool):
+        raise backup.BackupError("Pending restore configuration intent is corrupted")
+    side = "target" if phase == _PHASE_COMMITTED else "rollback"
     try:
-        try:
-            rollback = await backup.async_inspect_backup(
-                _journal_backup_document(value["rollback"], sections),
-                subentry_id,
-                max_bytes=backup.MAX_BACKUP_BYTES,
-                private_journal=True,
-                provider=providers["rollback"],
-            )
-        except backup.BackupError as err:
-            # Older writers could journal an oversized rollback. Once committed,
-            # only the target is authoritative; never replay that rollback.
-            if phase != _PHASE_COMMITTED or "safety limit" not in str(err):
-                raise
-            rollback = await backup.async_inspect_backup(
-                _journal_backup_document(value["target"], sections),
-                subentry_id,
-                max_bytes=backup.MAX_BACKUP_BYTES,
-                private_journal=True,
-                provider=providers["target"],
-            )
-        try:
+        selected = await backup.async_inspect_backup(
+            _journal_backup_document(value[side], sections),
+            subentry_id,
+            max_bytes=backup.MAX_BACKUP_BYTES,
+            private_journal=True,
+            provider=providers[side],
+            preserve_configuration=(side == "rollback" or retains_configuration),
+        )
+    except HomeAssistantError as err:
+        raise backup.BackupError("Pending restore transaction is corrupted") from err
+    target = rollback = selected
+    if phase == _PHASE_APPLYING:
+        # Keep a readable target for journal inspection. Recovery never
+        # replays it in this phase, so invalid prior input cannot block rollback.
+        with suppress(HomeAssistantError):
             target = await backup.async_inspect_backup(
                 _journal_backup_document(value["target"], sections),
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
                 provider=providers["target"],
+                preserve_configuration=retains_configuration,
             )
-        except HomeAssistantError:
-            if phase != _PHASE_APPLYING:
-                raise
-            # An uncommitted target is never replayed. A valid rollback must
-            # remain recoverable even if an older release journaled bad input.
-            target = rollback
-    except HomeAssistantError as err:
-        raise backup.BackupError("Pending restore transaction is corrupted") from err
+    if retains_configuration:
+        target.retains_configuration = True
     if sections is not None:
         target.journaled_sections = rollback.journaled_sections = sections
+    if not replaces_usage:
+        target.replaces_usage = False
     return journal, target, rollback
 
 
@@ -470,6 +482,7 @@ async def _durable_managers(
     *,
     include_usage: bool = True,
     recover_archive: bool = False,
+    sections: frozenset[str] | None = None,
 ) -> backup.AgentDataParticipants:
     """Load the actual durable managers; restore must never target Usage fallback RAM."""
     from .conversation_archive import archive_manager, async_get_archive
@@ -480,22 +493,33 @@ async def _durable_managers(
     from .temporary_memory import async_get_temporary_memory
     from .usage import async_get_durable_usage
 
+    selected = _DATA_SECTIONS if sections is None else sections
     return backup.AgentDataParticipants(
-        memory=await async_get_memory(hass, entry_id, subentry_id),
-        temporary=await async_get_temporary_memory(hass, entry_id, subentry_id),
-        knowledge=await async_get_knowledge(hass, entry_id, subentry_id),
+        memory=await async_get_memory(hass, entry_id, subentry_id)
+        if "memories" in selected
+        else None,
+        temporary=await async_get_temporary_memory(hass, entry_id, subentry_id)
+        if "temporary_memories" in selected
+        else None,
+        knowledge=await async_get_knowledge(hass, entry_id, subentry_id)
+        if "knowledge" in selected
+        else None,
         archive=(
             archive_manager(hass, entry_id, subentry_id)
             if recover_archive
             else await async_get_archive(hass, entry_id, subentry_id)
-        ),
-        usage=(
-            await async_get_durable_usage(hass, entry_id, subentry_id)
-            if include_usage
-            else None
-        ),
-        guest_mode=await async_get_guest_mode(hass, entry_id, subentry_id),
-        request_rules=await async_get_request_rules(hass, entry_id, subentry_id),
+        )
+        if "archive" in selected
+        else None,
+        usage=await async_get_durable_usage(hass, entry_id, subentry_id)
+        if include_usage and "usage" in selected
+        else None,
+        guest_mode=await async_get_guest_mode(hass, entry_id, subentry_id)
+        if "guest_mode" in selected
+        else None,
+        request_rules=await async_get_request_rules(hass, entry_id, subentry_id)
+        if "request_rules" in selected
+        else None,
     )
 
 
@@ -504,23 +528,25 @@ async def _apply_prepared(
 ) -> None:
     """Apply validated durable categories in a deterministic, idempotent order."""
     if prepared.restores("usage"):
+        from .usage import usage_retention_policy
+
         if managers.usage is None:
             raise RuntimeError("Usage restore requires a durable manager")
-        retention = agent_retention_snapshot(prepared.config)
-        managers.usage.request_retention_days = int(
-            retention[CONF_USAGE_REQUEST_RETENTION_DAYS]
-        )
-        managers.usage.run_retention_days = int(
-            retention[CONF_USAGE_RUN_RETENTION_DAYS]
-        )
+        retention = usage_retention_policy(prepared.config)
+        managers.usage.request_retention_days = retention["request_retention_days"]
+        managers.usage.run_retention_days = retention["run_retention_days"]
 
     if prepared.restores("memories"):
+        assert managers.memory is not None
         await managers.memory.async_replace_backup(prepared.memories)
     if prepared.restores("temporary_memories"):
+        assert managers.temporary is not None
         await managers.temporary.async_replace_backup(prepared.temporary_memories)
     if prepared.restores("knowledge"):
+        assert managers.knowledge is not None
         await managers.knowledge.async_replace_backup(prepared.knowledge)
     if prepared.restores("archive"):
+        assert managers.archive is not None
         archive_args = (prepared.archive_sessions, prepared.archive_turns)
         if prepared.archive_disk_backed:
             await managers.archive.async_replace_backup(
@@ -543,8 +569,10 @@ async def _apply_prepared(
             prepared.usage_runs,
         )
     if prepared.restores("guest_mode"):
+        assert managers.guest_mode is not None
         await managers.guest_mode.async_replace_backup(prepared.guest_mode_schedule)
     if prepared.restores("request_rules"):
+        assert managers.request_rules is not None
         await managers.request_rules.async_replace_backup(prepared.request_rules)
 
 
@@ -566,7 +594,11 @@ async def _recovery_managers(
     from .usage import async_verify_rejected_usage_stores
 
     include_usage = selected.restores("usage")
-    archive_options = {"recover_archive": True} if selected.archive_disk_backed else {}
+    archive_options: dict[str, Any] = (
+        {"recover_archive": True} if selected.archive_disk_backed else {}
+    )
+    if selected.journaled_sections is not None:
+        archive_options["sections"] = selected.journaled_sections
     try:
         managers = await _durable_managers(
             hass, entry_id, subentry_id, include_usage=include_usage, **archive_options
@@ -606,10 +638,9 @@ async def _recovery_managers(
 
         repaired = False
         try:
-            await async_get_memory(hass, entry_id, subentry_id)
+            if selected.restores("memories"):
+                await async_get_memory(hass, entry_id, subentry_id)
         except StorageRepairRequired:
-            if not selected.restores("memories"):
-                raise
 
             def memory_payload() -> dict[str, Any]:
                 payload = {
@@ -642,11 +673,11 @@ async def _recovery_managers(
                 selected.knowledge,
             ),
         ):
+            if not selected.restores(section):
+                continue
             try:
                 await getter(hass, entry_id, subentry_id)
             except ValueError:
-                if not selected.restores(section):
-                    raise
 
                 def serialize(
                     field: str = field, records: list[Any] = records
@@ -656,12 +687,10 @@ async def _recovery_managers(
                 payload = await asyncio.to_thread(serialize)
                 await storage_factory(hass, entry_id, subentry_id).async_save(payload)
                 repaired = True
-        if not selected.archive_disk_backed:
+        if selected.restores("archive") and not selected.archive_disk_backed:
             try:
                 await async_get_archive(hass, entry_id, subentry_id)
             except ValueError:
-                if not selected.restores("archive"):
-                    raise
                 await HomeAssistantArchiveStorage(
                     hass, entry_id, subentry_id
                 ).async_stage_journal_recovery(
@@ -699,13 +728,11 @@ async def _recovery_managers(
                 ),
             ),
         ):
-            if section == "usage" and not include_usage:
+            if not selected.restores(section):
                 continue
             try:
                 await recovery_getter(hass, entry_id, subentry_id)
             except StorageRepairRequired:
-                if not selected.restores(section):
-                    raise
                 await stage()
                 repaired = True
         if not repaired:
@@ -767,6 +794,16 @@ def reset_restored_runtime(
     # A portable restore can retain destination privacy bindings. Retained
     # continuity is kept only for a restore that leaves the live history intact.
     archive = managers.archive if managers is not None else None
+    archive_unselected = managers is not None and archive is None
+    if archive_unselected:
+        from .conversation_archive import _ARCHIVE_MANAGERS
+
+        cached_archive = hass.data.get(_ARCHIVE_MANAGERS, {}).get(key)
+        if (
+            isinstance(cached_archive, backup.ConversationArchive)
+            and cached_archive.initialized
+        ):
+            archive = cached_archive
     private_bindings = (
         archive.private_continuity_bindings()
         if isinstance(archive, backup.ConversationArchive)
@@ -812,7 +849,10 @@ def reset_restored_runtime(
                     for continuity_key, conversation_id in retained
                 )
         else:
-            current.reset_all(private_bindings=private_bindings)
+            if archive_unselected and archive is None:
+                current.reset_all(preserve_unverified_bindings=True)
+            else:
+                current.reset_all(private_bindings=private_bindings)
     if agent_continuity is not None:
         continuity_managers[key] = agent_continuity
 
@@ -851,7 +891,7 @@ def reset_restored_runtime(
     # durable manager rather than merely deleting the fallback registry entry.
     fallback = (
         hass.data.get(usage._VOLATILE_USAGE_MANAGERS, {}).pop(key, None)
-        if replace_usage and managers is not None
+        if replace_usage and managers is not None and managers.usage is not None
         else None
     )
     if fallback is not None and managers is not None:
@@ -899,7 +939,9 @@ def _persisted_subentry_matches(
             ):
                 return bool(
                     raw_subentry.get("title") == prepared.title
-                    and raw_subentry.get("data") == prepared.config
+                    and persisted_configuration_matches(
+                        raw_subentry.get("data"), prepared.config
+                    )
                 )
         return False
     return False
@@ -972,6 +1014,7 @@ async def _update_configuration(
     provider: str | None = None,
     previous_provider: str | None = None,
     provider_data: dict[str, Any] | None = None,
+    provider_client: Any = None,
 ) -> None:
     # The owned restore already resets live subsystem runtimes. Apply its
     # configuration through the normal live-update path instead of starting an
@@ -983,33 +1026,42 @@ async def _update_configuration(
     )
     if provider_data is not None:
         await _async_publish_provider_pair(
-            hass, entry, subentry, prepared, provider_data
+            hass, entry, subentry, prepared, provider_data, client=provider_client
         )
         return
     # A committed journal can be replayed after target configuration was already
     # persisted. That exact generation must use its own context on both sides.
     current_provider = (
         destination_provider
-        if subentry.data == prepared.config
+        if persisted_configuration_matches(subentry.data, prepared.config)
         else previous_provider
         if previous_provider is not None
         else entry_api_provider(entry)
     )
-    if not configuration_supports_live_update(
-        # Interpret authoritative private data as persisted on both sides.
-        # A raw legacy [] must not look like a decoded empty edit and reload.
-        backup.private_configuration_snapshot(subentry.data, provider=current_provider),
-        (
+    try:
+        supports_live_update = configuration_supports_live_update(
             backup.private_configuration_snapshot(
-                prepared.config, provider=destination_provider
-            )
-            if prepared.authoritative_config
-            else backup.recoverable_configuration_snapshot(
-                prepared.config, provider=destination_provider
-            )
-        ),
-        title_changed=subentry.title != prepared.title,
-    ):
+                subentry.data, provider=current_provider
+            ),
+            (
+                backup.private_configuration_snapshot(
+                    prepared.config, provider=destination_provider
+                )
+                if prepared.authoritative_config
+                else backup.recoverable_configuration_snapshot(
+                    prepared.config, provider=destination_provider
+                )
+            ),
+            title_changed=subentry.title != prepared.title,
+        )
+    except HomeAssistantError, ValueError:
+        # Both sides are already admitted by the restore path. A saved legacy
+        # value can predate today's runtime contract and force a normal reload.
+        supports_live_update = (
+            persisted_configuration_matches(subentry.data, prepared.config)
+            and subentry.title == prepared.title
+        )
+    if not supports_live_update:
         hass.data.setdefault(RESTORE_RELOAD_PENDING, set()).add(entry.entry_id)
     update_live_subentry(
         hass, entry, subentry, data=prepared.config, title=prepared.title
@@ -1071,11 +1123,14 @@ async def _async_publish_provider_pair(
     subentry: Any,
     prepared: backup.PreparedRestore,
     provider_data: dict[str, Any],
+    *,
+    client: Any = None,
 ) -> None:
     """Publish one Core config snapshot with the matching runtime connection."""
     from homeassistant.config_entries import ConfigEntryState
 
-    client = await _async_prepare_provider_runtime(hass, entry, provider_data)
+    if client is None:
+        client = await _async_prepare_provider_runtime(hass, entry, provider_data)
     previous_config = dict(subentry.data)
     previous_title = subentry.title
     if getattr(entry, "state", None) is ConfigEntryState.LOADED and (
@@ -1090,8 +1145,8 @@ async def _async_publish_provider_pair(
     # Core queues both updates on the same Store. Neither setter yields, so
     # persistence observes the complete pair in one config entry snapshot.
     with live_subentry_update():
-        hass.config_entries.async_update_subentry(
-            entry, subentry, data=prepared.config, title=prepared.title
+        write_configuration_subentry(
+            hass, entry, subentry, data=prepared.config, title=prepared.title
         )
         hass.config_entries.async_update_entry(entry, data=deepcopy(provider_data))
     await async_persist_config_entries(
@@ -1108,7 +1163,7 @@ async def _async_publish_provider_pair(
     await _apply_restored_volatile_retention(
         hass, entry.entry_id, subentry.subentry_id, prepared
     )
-    if client is not None:
+    if client is not None and getattr(entry, "state", None) is ConfigEntryState.LOADED:
         _publish_provider_runtime(entry, client)
 
 
@@ -1118,10 +1173,17 @@ async def _async_prepare_provider_runtime(
     """Construct the runtime for a provider generation before changing Core."""
     from homeassistant.config_entries import ConfigEntryState
 
-    from .helpers import get_authenticated_client
-
     if getattr(entry, "state", None) is not ConfigEntryState.LOADED:
         return None
+    return await _async_construct_provider_client(hass, provider_data)
+
+
+async def _async_construct_provider_client(
+    hass: HomeAssistant, provider_data: dict[str, Any]
+) -> Any:
+    """Construct the SDK client locally, without probing the provider."""
+    from .helpers import get_authenticated_client
+
     return await get_authenticated_client(
         hass,
         provider_data["api_key"],
@@ -1227,7 +1289,11 @@ async def _recover_failed_apply(
     try:
         await _rollback_transaction(hass, entry, subentry, managers, store, rollback)
     except Exception:
-        _LOGGER.exception("Agent backup restore rollback remains pending")
+        _LOGGER.exception(
+            "Restore rollback did not finish; entry=%s assistant=%s. Restart Home Assistant to resume recovery before editing this assistant",
+            entry.entry_id,
+            subentry.subentry_id,
+        )
         raise mark_mutation_failure(
             backup.BackupError(
                 "Restore failed and recovery is still pending; restart Home Assistant "
@@ -1365,6 +1431,8 @@ async def _async_destination_archive_liveness(
                 ),
                 scope,
                 scope.device_id,
+                native_authenticated=scope.source
+                not in {"device_mapping", "agent_default_user"},
             )[0]
             for config in configs
         ]
@@ -1405,6 +1473,7 @@ async def _async_restore_backup_recoverably(
     value: Any,
     *,
     provider_data: Mapping[str, Any] | None = None,
+    require_existing_owners: bool = False,
 ) -> dict[str, Any]:
     """Restore one agent with a durable cross-category commit decision.
 
@@ -1430,8 +1499,13 @@ async def _async_restore_backup_recoverably(
             )
 
         include_usage = prepared.restores("usage")
+        section_options: dict[str, Any] = (
+            {"sections": prepared.journaled_sections}
+            if prepared.journaled_sections is not None
+            else {}
+        )
         managers = await _durable_managers(
-            hass, entry_id, subentry_id, include_usage=include_usage
+            hass, entry_id, subentry_id, include_usage=include_usage, **section_options
         )
         from .helpers import effective_api_provider, entry_api_provider
 
@@ -1461,8 +1535,16 @@ async def _async_restore_backup_recoverably(
             # Public legacy documents contain redaction markers. Resolve them
             # against the exclusively owned destination before journaling, using
             # the same context checks and fail-closed policy as selective restore.
+            ownership_options: dict[str, Any] = (
+                {"require_existing_owners": True} if require_existing_owners else {}
+            )
             prepared, _preview = await async_materialize_restore(
-                hass, entry, subentry, value, current_snapshot=rollback
+                hass,
+                entry,
+                subentry,
+                value,
+                current_snapshot=rollback,
+                **ownership_options,
             )
         if prepared.journaled_sections is not None:
             rollback = replace(rollback, journaled_sections=prepared.journaled_sections)
@@ -1481,19 +1563,20 @@ async def _async_restore_backup_recoverably(
             subentry_id,
             verified_live=verified_live,
         )
-        from .request import validate_runtime_readiness
+        if prepared.validates_provider_routes or provider_data is not None:
+            from .request import validate_runtime_readiness
 
-        try:
-            validate_runtime_readiness(
-                prepared.config,
-                provider_data
-                if provider_data is not None
-                else getattr(entry, "data", {}),
-            )
-        except HomeAssistantError as err:
-            raise backup.BackupError(
-                f"Restored request is not runtime-ready: {err}"
-            ) from err
+            try:
+                validate_runtime_readiness(
+                    prepared.config,
+                    provider_data
+                    if provider_data is not None
+                    else getattr(entry, "data", {}),
+                )
+            except HomeAssistantError as err:
+                raise backup.BackupError(
+                    f"Restored request is not runtime-ready: {err}"
+                ) from err
         journal = await asyncio.to_thread(
             _new_journal,
             entry_id,
@@ -1504,10 +1587,19 @@ async def _async_restore_backup_recoverably(
             rollback_provider=rollback_provider,
             provider_connections=connections,
         )
+        provider_client = None
         if connections:
             _journal_provider_connections(
                 journal, {"target": target_provider, "rollback": rollback_provider}
             )
+            try:
+                provider_client = await _async_construct_provider_client(
+                    hass, connections["target"]
+                )
+            except (InvalidURL, ProviderEndpointError) as err:
+                raise backup.BackupError(
+                    "The restored provider URL could not be used to construct the client"
+                ) from err
         # PreparedRestore bypasses inspect_backup's serialized-size validation.
         # Validate the actual journal documents before even the write-ahead save.
         for section in ("target", "rollback"):
@@ -1522,6 +1614,9 @@ async def _async_restore_backup_recoverably(
                     provider=target_provider
                     if section == "target"
                     else rollback_provider,
+                    preserve_configuration=(
+                        section == "rollback" or prepared.retains_configuration
+                    ),
                 )
             except HomeAssistantError as err:
                 raise backup.BackupError(
@@ -1534,6 +1629,10 @@ async def _async_restore_backup_recoverably(
         # This is the write-ahead boundary. If it cannot be verified, no category
         # has changed and a possibly-written journal remains harmless recovery data.
         if connections:
+            if entry.data != connections["rollback"]:
+                raise backup.BackupError(
+                    "The provider connection changed after preview; import and preview again"
+                )
             _claim_provider_restore(hass, entry_id, subentry_id)
         try:
             journal_saved = await _async_write_journal_verified(store, journal)
@@ -1568,6 +1667,11 @@ async def _async_restore_backup_recoverably(
         try:
             committed = await _async_write_journal_verified(store, committed_journal)
         except _JournalVerificationUnavailable as err:
+            log_handled_failure(
+                _LOGGER,
+                f"Restore outcome is uncertain entry={entry.entry_id} assistant={subentry.subentry_id}. Restart Home Assistant to resolve the saved transaction before retrying",
+                err,
+            )
             raise mark_mutation_failure(
                 backup.BackupError(
                     "Restore data was written, but its commit decision could not be "
@@ -1601,6 +1705,7 @@ async def _async_restore_backup_recoverably(
                 context["provider"] = target_provider
             if connections:
                 context["provider_data"] = connections["target"]
+                context["provider_client"] = provider_client
             await _update_configuration(
                 hass,
                 entry,
@@ -1610,7 +1715,11 @@ async def _async_restore_backup_recoverably(
             )
             await store.async_remove()
         except Exception as err:
-            _LOGGER.exception("Agent restore committed but completion remains pending")
+            _LOGGER.exception(
+                "Restore committed but completion remains pending; entry=%s assistant=%s. Restart Home Assistant to finish the committed restore",
+                entry.entry_id,
+                subentry.subentry_id,
+            )
             raise mark_mutation_failure(
                 backup.BackupError(
                     "Restore committed successfully, but completion is pending; restart "
@@ -1670,7 +1779,8 @@ async def _async_recover_pending_restore(
             or (
                 side == "target"
                 and (
-                    subentry.data != selected.config or subentry.title != selected.title
+                    not persisted_configuration_matches(subentry.data, selected.config)
+                    or subentry.title != selected.title
                 )
             )
         ):
@@ -1687,7 +1797,9 @@ async def _async_recover_pending_restore(
                 subentry_id,
                 managers,
                 journal["phase"] != _PHASE_COMMITTED,
-                journal["phase"] == _PHASE_COMMITTED and selected.restores("usage"),
+                side == "target"
+                and selected.replaces_usage
+                and selected.restores("usage"),
                 reset_native_history=side == "target",
             )
             context: dict[str, Any] = {}
@@ -1767,6 +1879,11 @@ async def _async_recovery_operation[T](
                             recovery_pending=not absent,
                         )
                 statuses = hass.data.setdefault(SUBSYSTEM_STATUS_KEY, {})
+                from .storage_repairs import set_storage_repair
+
+                set_storage_repair(
+                    hass, entry.entry_id, subentry.subentry_id, "restore", not absent
+                )
                 if not absent:
                     statuses.setdefault((entry.entry_id, subentry.subentry_id), {})[
                         "restore_recovery"
@@ -1791,6 +1908,7 @@ async def async_restore_backup_recoverably(
     value: Any,
     *,
     provider_data: Mapping[str, Any] | None = None,
+    require_existing_owners: bool = False,
 ) -> dict[str, Any]:
     """Restore with exclusive ownership and quarantine any unresolved journal."""
     result = await _async_recovery_operation(
@@ -1798,7 +1916,12 @@ async def async_restore_backup_recoverably(
         entry,
         subentry,
         lambda: _async_restore_backup_recoverably(
-            hass, entry, subentry, value, provider_data=provider_data
+            hass,
+            entry,
+            subentry,
+            value,
+            provider_data=provider_data,
+            require_existing_owners=require_existing_owners,
         ),
         quarantine_on_entry=False,
     )

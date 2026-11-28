@@ -53,7 +53,6 @@ from .const import DOMAIN
 from .ha_schema import websocket_command as ha_websocket_command
 from .operation_settlement import async_settle_owned_operation, async_wait_owned_cleanup
 from .strict_json import has_surrogate
-from .yaml_serialization import SerializedDocumentLimit
 
 WS_BACKUP_TRANSFER = f"{DOMAIN}/management/backup_transfer"
 ARCHIVE_FORMAT = "extended_openai_conversation_backup_archive"
@@ -161,6 +160,7 @@ class ImportSession:
     preview_archive_retention_at: datetime | None = None
     preview_provider_data: dict[str, Any] | None = None
     preview_restore_provider: bool = False
+    preview_requires_retention_confirmation: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     inspection_tasks: set[asyncio.Task[Any]] = field(default_factory=set, repr=False)
     inspection: asyncio.Task[dict[str, Any]] | None = field(default=None, repr=False)
@@ -193,15 +193,15 @@ def _snapshot_revision(
 ) -> str:
     """Hash selected destination data and conservative review dependencies off-loop."""
     selected = set(transfer.SECTION_ORDER if sections is None else sections)
-    # Raw setup and rules affect secret preservation, routing and Function
-    # dependencies even when they are not selected for replacement. Never expose
-    # this private projection (including provider credentials) in diagnostics.
+    # Keep the destination setup and provider in the private preview revision.
+    # Hash Request Rules when setup validation depends on them.
     snapshot = {
         "title": value.title,
         "config": value.config,
-        "request_rules": value.request_rules,
         "provider": provider_data,
     }
+    if "request_rules" in transfer._restore_snapshot_sections(selected):
+        snapshot["request_rules"] = value.request_rules
     category_fields = {
         transfer.SECTION_PERSISTENT_MEMORY: ("memories",),
         transfer.SECTION_TEMPORARY_MEMORY: ("temporary_memories",),
@@ -479,15 +479,10 @@ def _resolve_agent(
 
 
 def _redacted_document(snapshot: dict[str, Any]) -> dict[str, Any]:
-    from .private_backup import encode_document, is_private_document
+    from .private_backup import is_private_document
 
     if is_private_document(snapshot):
-        try:
-            return encode_document(snapshot)
-        except SerializedDocumentLimit:
-            raise backup.BackupError(
-                "The backup configuration or Request Rules exceed the YAML safety limit"
-            ) from None
+        return backup._encode_private_export(snapshot)
     if snapshot.get("format") == transfer.TRANSFER_FORMAT:
         return transfer.redact_transfer_document(snapshot)
     return {
@@ -997,9 +992,11 @@ def _load_open_archive_document(archive: zipfile.ZipFile) -> dict[str, Any]:
     backup._validate_import_unicode(manifest)
     payload_bytes = manifest.get("payload_bytes")
     payload_sha256 = manifest.get("payload_sha256")
+    manifest_version = manifest.get("version")
     if (
         manifest.get("format") != ARCHIVE_FORMAT
-        or manifest.get("version") != ARCHIVE_VERSION
+        or type(manifest_version) is not int
+        or manifest_version != ARCHIVE_VERSION
         or manifest.get("payload") != PAYLOAD_NAME
         or isinstance(payload_bytes, bool)
         or not isinstance(payload_bytes, int)
@@ -1186,7 +1183,7 @@ async def _start_export(
             _ensure_session_capacity(hass, MAX_BACKUP_ARCHIVE_BYTES)
 
         mode = data.get("mode", "full")
-        if mode not in {"full", "custom"}:
+        if not isinstance(mode, str) or mode not in {"full", "custom"}:
             raise backup.BackupError("Export mode must be full or custom")
         gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
         async with gate.exclusive():
@@ -1552,6 +1549,9 @@ async def _inspect_import_admitted(
                 subentry,
                 include_usage=transfer.SECTION_USAGE in selected,
                 capture_usage_revision=True,
+                sections=transfer._restore_snapshot_sections(
+                    selected, restore_provider=restore_provider
+                ),
             )
         )
         archive_retention_at = None
@@ -1601,6 +1601,11 @@ async def _inspect_import_admitted(
                     prepared, selected, mapping_plan["resolved"]
                 )
             )
+            provider_options: dict[str, Any] = (
+                {"provider_connection": prepared.provider_connection}
+                if restore_provider
+                else {}
+            )
             _target, preview = await async_settle_owned_operation(
                 transfer.async_materialize_restore(
                     hass,
@@ -1610,11 +1615,7 @@ async def _inspect_import_admitted(
                     sections=selected,
                     current_snapshot=current,
                     archive_retention_at=archive_retention_at,
-                    **(
-                        {"provider_connection": prepared.provider_connection}
-                        if restore_provider
-                        else {}
-                    ),
+                    **provider_options,
                 )
             )
             preview["user_scope_mapping"] = mapping_plan
@@ -1636,6 +1637,9 @@ async def _inspect_import_admitted(
                 session.preview_token = token
                 session.preview_revision = revision
                 session.preview_restore_provider = restore_provider
+                session.preview_requires_retention_confirmation = bool(
+                    preview.get("shortened_usage_retention")
+                )
                 session.preview_provider_data = deepcopy(
                     dict(getattr(entry, "data", {}))
                 )
@@ -1745,17 +1749,25 @@ async def _restore_import_admitted(
                 != (session.session_id, token)
             ):
                 raise backup.BackupError("The backup preview is stale; preview again")
+            if (
+                session.preview_requires_retention_confirmation
+                and data.get("confirm_retention") is not True
+            ):
+                raise backup.BackupError(transfer.CONFIRM_SHORTER_USAGE_RETENTION)
         current = await transfer._current_snapshot(
             hass,
             entry,
             subentry,
-            include_usage=transfer.SECTION_USAGE in (session.preview_sections or ()),
+            include_usage=transfer.SECTION_USAGE in selected_sections,
             capture_usage_revision=True,
+            sections=transfer._restore_snapshot_sections(
+                selected_sections, restore_provider=session.preview_restore_provider
+            ),
         )
         revision = await asyncio.to_thread(
             _snapshot_revision,
             current,
-            session.preview_sections,
+            selected_sections,
             dict(getattr(entry, "data", {})),
         )
         if revision != session.preview_revision:

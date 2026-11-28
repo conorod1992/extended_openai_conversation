@@ -93,13 +93,11 @@ async def output_witness(hass, *, cleanup, phase, completed=False):
     log = conversation.ChatLog(hass, "classification")
     log.async_add_user_content(conversation.UserContent(content="Question"))
     heard = []
-    heard_answer = asyncio.Event()
+    delta_received = asyncio.Event()
     finish = asyncio.Event()
 
     def listener(_log, delta):
         heard.append(delta)
-        if "answer." in delta.get("content", ""):
-            heard_answer.set()
 
     log.delta_listener = listener
 
@@ -117,6 +115,7 @@ async def output_witness(hass, *, cleanup, phase, completed=False):
         async for event in provider_events():
             yield event
             if event.type == "response.output_text.delta" and event.output_index == 3:
+                delta_received.set()
                 await finish.wait()
 
     async def consume():
@@ -127,15 +126,17 @@ async def output_witness(hass, *, cleanup, phase, completed=False):
                 pass
 
     task = asyncio.create_task(consume())
-    waiter = asyncio.create_task(heard_answer.wait())
+    waiter = asyncio.create_task(delta_received.wait())
     try:
         done, _ = await asyncio.wait(
             [task, waiter], timeout=5, return_when=asyncio.FIRST_COMPLETED
         )
         if task in done:
             await task
-        assert waiter in done, "answer speech was held until completion"
-        assert not task.done(), "answer speech must precede native/response completion"
+        assert waiter in done, "provider did not reach its pending phase"
+        spoke_answer = any("answer." in delta.get("content", "") for delta in heard)
+        assert spoke_answer is (phase == "final_answer")
+        assert not task.done()
         assert not any(
             "Private progress" in delta.get("content", "") for delta in heard
         )
@@ -417,10 +418,13 @@ async def test_conditional_fallback_preserves_only_a_displayable_draft(
     heard = []
     log.delta_listener = lambda _log, delta: heard.append(delta.get("content", ""))
     async with completion_event_scope():
-        assert (
-            await obj._async_handle_chat_log(log, [], [], conditional_continue=True)
-            is None
-        )
+        if not has_draft_answer and not retry_blank_answer:
+            from homeassistant.exceptions import HomeAssistantError
+
+            with pytest.raises(HomeAssistantError, match="without assistant output"):
+                await obj._async_handle_chat_log(log, [], [], conditional_continue=True)
+        else:
+            assert await obj._async_handle_chat_log(log, [], [], conditional_continue=True) is None
     expected = "The switch is on." if has_draft_answer else ""
     assert final_assistant_text(log.content) == "".join(heard) == expected
     assert [
@@ -515,3 +519,27 @@ def test_response_separator_precedes_leading_whitespace_delta():
         log.delta_listener(log, {"content": " "})
         log.delta_listener(log, {"content": "Spaced."})
     assert "".join(heard) == "First.\n\n Spaced."
+
+
+async def test_phase_only_on_completed_item_keeps_commentary_out_of_speech(hass):
+    progress = message("progress", "I will check the private setting.")
+    answer = message("answer", "Done.", phase="final_answer")
+    frames = []
+    for event in events([progress, answer]).events:
+        if event.type == "response.output_item.added" and event.item.id == "progress":
+            event = event.model_copy(
+                update={"item": event.item.model_copy(update={"phase": None})}
+            )
+        frames.append(event)
+    obj, _ = entity(hass, [])
+    log = conversation.ChatLog(hass, "phase-after-delta")
+    heard = []
+    log.delta_listener = lambda _log, delta: heard.append(delta.get("content", ""))
+    async for _ in log.async_add_delta_content_stream(
+        obj.entity_id,
+        obj._transform_responses_stream(log, FakeStream(frames)),
+    ):
+        pass
+    assert "".join(heard) == "Done."
+    assert final_assistant_text(log.content) == "Done."
+    assert log.content[-2].native == progress

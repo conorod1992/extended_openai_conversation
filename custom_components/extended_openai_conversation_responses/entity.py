@@ -17,7 +17,7 @@ import time
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
-from openai import AsyncClient, AsyncStream
+from openai import AsyncClient, AsyncStream, OpenAIError
 from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
     ChatCompletionChunk,
@@ -32,8 +32,10 @@ from homeassistant.helpers import device_registry as dr, llm
 from homeassistant.helpers.entity import Entity
 from homeassistant.util import slugify
 
+from .agent_config import normalized_function_call_budget
 from .assistant_response import (
     classify_provider_output,
+    final_assistant_answer,
     provider_output_presentation,
     responses_answer_text,
     responses_leave_tool_results_unanswered,
@@ -49,7 +51,6 @@ from .const import (
     CONF_CONTEXT_THRESHOLD,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONF_FUNCTION_TOOL_ERROR_RECOVERY,
-    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_SHORTEN_TOOL_CALL_ID,
     CONTEXT_TRUNCATE_CLEAR,
     CONTEXT_TRUNCATE_KEEP_RECENT,
@@ -60,7 +61,6 @@ from .const import (
     DEFAULT_CONTEXT_THRESHOLD,
     DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
     DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,
-    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_SHORTEN_TOOL_CALL_ID,
     DOMAIN,
     FUNCTION_GROUP_LOADER_TOOL_NAME,
@@ -91,16 +91,19 @@ from .context_usage_hardening import (
     normalized_chat_stream,
     normalized_responses_stream,
 )
+from .debug import DebugProviderAttempt
 from .delayed_tools import (
     _DELAYED_EXECUTION_MARKER,
     DATA_DELAYED_TOOL_MANAGER,
     DelayedToolManager,
+    _delay_as_timedelta,
 )
 from .exceptions import (
     EffectOutcomeUnknown,
     EffectReplayBlocked,
     FunctionResponseParseError,
     ParseArgumentsFailed,
+    StructuredOutputsUnavailable,
     TokenLengthExceededError,
 )
 from .execution_outcomes import with_execution_receipt
@@ -110,7 +113,7 @@ from .function_execution import (
     function_execution_errors_propagate,
     split_legacy_execution_delay,
 )
-from .function_groups import admit_function_group_loader
+from .function_groups import FunctionToolAdmission, is_function_group_loader
 from .function_tool_recovery import (
     MalformedToolArguments,
     ToolRecoveryState,
@@ -121,10 +124,17 @@ from .function_tool_recovery import (
     utf8_safe_provider_arguments,
 )
 from .functions import get_function
-from .ha_llm_tools import async_discover, current_snapshot, is_ha_tool, reference_key
+from .ha_llm_tools import (
+    ToolSnapshot,
+    async_discover,
+    current_snapshot,
+    is_ha_tool,
+    reference_key,
+)
 from .ha_schema import SchemaValidator
 from .ha_tool_result_compat import (
     HAToolResultError,
+    ScheduledExecution,
     execution_tool_result,
     is_tool_result_content,
     make_tool_result_content,
@@ -136,6 +146,8 @@ from .operational_errors import log_handled_failure
 from .provider_content import RoutedReasoning, answer_text
 from .provider_errors import (
     ProviderStreamError,
+    annotate_provider_request,
+    clear_provider_authentication_rejection,
     ensure_successful_responses_result,
     provider_authentication_snapshot,
     provider_stream_error,
@@ -154,13 +166,14 @@ from .request import (
     request_function_tools as provider_request_function_tools,
     validate_provider_tool_count,
 )
+from .request_context import _ACTIVE_INVOCATION
 from .request_static_cache import cached_format_tools
 from .resource_limits import (
     MAX_ATTACHMENT_COUNT,
     bounded_local_file_size,
     read_bounded_local_file,
 )
-from .responses_stream_order import ordered_output_events
+from .responses_stream_order import ResponseMessageText, ordered_output_events
 from .schema_normalization import normalize_exclusive_bounds
 from .speech import async_streaming_speech_cleanup
 from .strict_json import strict_json_loads
@@ -260,10 +273,22 @@ def _normalize_function_result(
                 )
             ancestors = _ancestors | {id(result)}
             if isinstance(result, dict):
-                normalized = {
-                    str(key): _normalize_function_result(value, _ancestors=ancestors)
-                    for key, value in result.items()
+                from .strict_json import has_surrogate
+
+                normalized = {}
+                reserved = {
+                    key
+                    for key in result
+                    if isinstance(key, str) and not has_surrogate(key)
                 }
+                for key, value in result.items():
+                    target = _function_result_text(key)
+                    if not isinstance(key, str) or target != key:
+                        while target in reserved or target in normalized:
+                            target += "_"
+                    normalized[target] = _normalize_function_result(
+                        value, _ancestors=ancestors
+                    )
                 if isinstance(result, BackendExecutionFailure):
                     return BackendExecutionFailure(normalized)
                 if isinstance(result, ExecutionFailure):
@@ -273,8 +298,14 @@ def _normalize_function_result(
                 _normalize_function_result(value, _ancestors=ancestors)
                 for value in result
             ]
-        return str(result)
+        return _function_result_text(result)
     return result
+
+
+def _function_result_text(value: Any) -> str:
+    from .strict_json import replace_surrogates
+
+    return replace_surrogates(str(value))
 
 
 def _schema_explicitly_allows_null(schema: dict[str, Any]) -> bool:
@@ -316,11 +347,19 @@ def _schema_explicitly_allows_null(schema: dict[str, Any]) -> bool:
 
 def _make_schema_nullable(schema: dict[str, Any]) -> None:
     """Make one property schema nullable without assuming a direct type field."""
-    if _schema_explicitly_allows_null(schema):
+    has_reference = any(
+        key in schema for key in ("$ref", "$dynamicRef", "$recursiveRef")
+    )
+    if not has_reference and _schema_explicitly_allows_null(schema):
         return
 
-    if not any(
-        keyword in schema for keyword in (*_SCHEMA_COMPOSITION_KEYS, "enum", "const")
+    if not has_reference and not any(
+        keyword in schema
+        for keyword in (
+            *_SCHEMA_COMPOSITION_KEYS,
+            "enum",
+            "const",
+        )
     ):
         schema_type = schema.get("type")
         if isinstance(schema_type, str):
@@ -1012,11 +1051,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         structure: SchemaValidator | None = None,
         conditional_continue: bool = False,
         function_tools_factory: Callable[[], list[dict[str, Any]]] | None = None,
-        function_group_loader: Callable[[Any, int | None, bool], dict[str, Any]]
+        function_group_loader: Callable[[Any, FunctionToolAdmission], dict[str, Any]]
         | None = None,
         reset_loaded_function_groups: Callable[[], bool] | None = None,
         request_options: Mapping[str, Any] | None = None,
         structure_schema: dict[str, Any] | None = None,
+        prompt_for_admitted_tools: Callable[
+            [list[dict[str, Any]], FunctionToolAdmission], str
+        ]
+        | None = None,
+        before_provider_request: Callable[[], None] | None = None,
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
         from .provider_credentials import require_provider_restore_complete
@@ -1095,16 +1139,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if function_tools_factory is not None
                     else function_tools
                 )
-                max_calls = options.get(
-                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                )
-                if int(max_calls) == 0:
+                if normalized_function_call_budget(options, allow_unlimited=True) == 0:
                     initial_tools = [
-                        tool
-                        for tool in initial_tools
-                        if tool.get("function", {}).get("type")
-                        == "function_group_loader"
+                        tool for tool in initial_tools if is_function_group_loader(tool)
                     ]
 
                 def request_snapshot(
@@ -1237,11 +1274,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     chat_log, enabled=api_mode == API_MODE_RESPONSES
                 )
             )
-            max_function_calls = options.get(
-                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+            function_call_budget = FunctionCallBudget(
+                normalized_function_call_budget(options, allow_unlimited=True)
             )
-            function_call_budget = FunctionCallBudget(int(max_function_calls))
             recovery_state = ToolRecoveryState(
                 enabled=options.get(
                     CONF_FUNCTION_TOOL_ERROR_RECOVERY,
@@ -1264,7 +1299,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             if structure is not None:
                 if not provider_snapshot.structured_outputs:
-                    raise HomeAssistantError(
+                    raise StructuredOutputsUnavailable(
                         f"{model} does not support native Structured Outputs."
                     )
                 preserve_date_formats = (
@@ -1319,6 +1354,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 base_system_prompt
             )
             ha_prompt_applied = False
+            selected_system_prompt = base_system_prompt
             draft_content_ids: set[int] = set()
             draft_content: list[conversation.AssistantContent] = []
             context_measurement: ContextInputMeasurement | None = None
@@ -1328,27 +1364,36 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             def prepare_round_tools(
                 candidates: list[dict[str, Any]],
-                capacity: int | None,
+                admission: FunctionToolAdmission,
             ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-                if function_call_budget.exhausted:
-                    # The loader and finalizer do not execute ordinary tools.
-                    candidates = [
-                        tool
-                        for tool in candidates
-                        if tool.get("function", {}).get("type")
-                        == "function_group_loader"
-                    ]
-                candidates = admit_function_group_loader(
-                    candidates,
-                    capacity,
-                    extra_tool_count=int(conditional_continue),
-                    loader_available=loader_rounds < MAX_FUNCTION_GROUP_LOAD_ROUNDS,
-                )
+                candidates = admission.admit(candidates)
                 return candidates, _format_tools(
                     provider_request_function_tools(
                         candidates, conditional_continue=conditional_continue
                     ),
                     api_mode,
+                )
+
+            def admission_for_round(provider_tool_count: int) -> FunctionToolAdmission:
+                snapshot = current_snapshot()
+                return FunctionToolAdmission(
+                    max_tools=provider_snapshot.tool_limit,
+                    extra_tool_count=int(conditional_continue) + provider_tool_count,
+                    loader_available=loader_rounds < MAX_FUNCTION_GROUP_LOAD_ROUNDS,
+                    function_calls_available=not function_call_budget.exhausted,
+                    request_tool_available=(
+                        snapshot.delayed_action_tool_available
+                        if isinstance(snapshot, ToolSnapshot)
+                        and snapshot.require_positive_delay
+                        else None
+                    ),
+                )
+
+            def current_web_search() -> dict[str, Any] | None:
+                return (
+                    web_search_tool
+                    if web_search_tool and self._provider_tool_allowed("web_search")
+                    else None
                 )
 
             for n_requests in range(MAX_TOOL_ITERATIONS):
@@ -1362,19 +1407,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if function_tools_factory is not None
                     else function_tools
                 )
-                allowed_web_search = (
-                    web_search_tool
-                    if web_search_tool and self._provider_tool_allowed("web_search")
-                    else None
-                )
+                allowed_web_search = current_web_search()
                 limit = provider_snapshot.tool_limit
-                capacity = (
-                    limit - int(allowed_web_search is not None)
-                    if limit is not None
-                    else None
-                )
+                admission = admission_for_round(int(allowed_web_search is not None))
                 request_function_tools, formatted_function_tools = prepare_round_tools(
-                    candidates, capacity
+                    candidates, admission
                 )
                 if (
                     not force_finalizer_only
@@ -1390,11 +1427,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # turn's loaded groups too large. Offer the current loader
                     # again so this turn can select a set that fits.
                     request_function_tools, formatted_function_tools = (
-                        prepare_round_tools(function_tools_factory(), capacity)
+                        prepare_round_tools(function_tools_factory(), admission)
                     )
                 integration_loader_seen = integration_loader_seen or any(
-                    tool.get("function", {}).get("type") == "function_group_loader"
-                    for tool in request_function_tools
+                    map(is_function_group_loader, request_function_tools)
                 )
                 # Keep the request-local formatted list intact when there is no
                 # provider-owned tool so its exact serialized footprint can be reused
@@ -1413,13 +1449,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if tools:
                     tool_kwargs.update(tools=tools, tool_choice=tool_choice)
 
-                ha_prompt = current_snapshot().prompt_for(
-                    [] if force_finalizer_only else request_function_tools
+                admitted_tools = [] if force_finalizer_only else request_function_tools
+                round_prompt = (
+                    prompt_for_admitted_tools(admitted_tools, admission)
+                    if prompt_for_admitted_tools is not None
+                    else base_system_prompt
                 )
-                if ha_prompt or ha_prompt_applied:
+                ha_prompt = current_snapshot().prompt_for(admitted_tools)
+                if (
+                    ha_prompt
+                    or ha_prompt_applied
+                    or round_prompt != selected_system_prompt
+                ):
                     ha_prompt_applied = bool(ha_prompt)
+                    selected_system_prompt = round_prompt
                     effective_prompt = "\n".join(
-                        part for part in (base_system_prompt, ha_prompt) if part
+                        part for part in (round_prompt, ha_prompt) if part
                     )
                     chat_log.content[0] = conversation.SystemContent(
                         content=effective_prompt
@@ -1540,13 +1585,17 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 existing_content = tuple(chat_log.content)
                 existing_content_ids = {id(content) for content in existing_content}
                 pending_tool_calls: list[llm.ToolInput] = []
-                web_search_used = False
                 provider_stream: AsyncStream[Any] | None = None
                 transformed_stream: AsyncGenerator[Any] | None = None
                 streaming = api_kwargs.get("stream", True)
+                debug_attempt = DebugProviderAttempt()
+                missing_answer: HomeAssistantError | None = None
+                if before_provider_request is not None:
+                    before_provider_request()
                 try:
                     if api_mode == API_MODE_RESPONSES:
-                        response = await provider_client.responses.create(
+                        response = await debug_attempt.create(
+                            provider_client.responses,
                             input=messages,
                             **api_kwargs,
                             **tool_kwargs,
@@ -1566,7 +1615,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             reasoning_route=reasoning_route,
                         )
                     else:
-                        response = await provider_client.chat.completions.create(
+                        response = await debug_attempt.create(
+                            provider_client.chat.completions,
                             messages=messages,
                             **api_kwargs,
                             **tool_kwargs,
@@ -1605,19 +1655,54 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 if isinstance(content, conversation.AssistantContent):
                                     native = getattr(content, "native", None)
                                     if getattr(native, "type", "") == "web_search_call":
-                                        web_search_used = True
+                                        request_usage.record_web_search()
                                     if content.tool_calls:
                                         pending_tool_calls.extend(content.tool_calls)
                         finally:
                             chat_log.delta_listener = listener
+                        if api_mode == API_MODE_RESPONSES and not pending_tool_calls:
+                            new_output = [
+                                item
+                                for item in chat_log.content
+                                if id(item) not in existing_content_ids
+                            ]
+                            if final_assistant_answer(new_output) is None:
+                                suffix = (
+                                    " after tool results"
+                                    if responses_leave_tool_results_unanswered(
+                                        chat_log.content
+                                    )
+                                    else ""
+                                )
+                                missing_answer = HomeAssistantError(
+                                    "OpenAI Responses completed without assistant output"
+                                    + suffix
+                                )
+                                draft_answer = final_assistant_answer(
+                                    [
+                                        item
+                                        for item in chat_log.content
+                                        if id(item) in draft_content_ids
+                                    ]
+                                )
+                                if not conditional_continue or (
+                                    finalization_retry_attempted
+                                    and draft_answer is None
+                                ):
+                                    raise missing_answer
                         if speech_presentation is not None and not streaming:
-                            # Completed Chat and Responses adapters emit synthetic
-                            # text deltas. Join each known-complete answer and run
-                            # the speech-only parser off-loop before delivery.
+                            # Publish a completed provider response only after the
+                            # parser and final-answer checks succeed.
                             await speech_presentation.async_flush_completed(
                                 self.hass, chat_log
                             )
                 except BaseException as err:
+                    debug_attempt.finish(err)
+                    stage = "initial" if n_requests == 0 else "after_tool"
+                    current_run = getattr(usage_manager, "current_run", None)
+                    usage_run = current_run() if callable(current_run) else None
+                    run_id = getattr(usage_run, "run_id", None)
+                    invocation = _ACTIVE_INVOCATION.get()
                     append_unresolved_tool_results(
                         chat_log,
                         self.entity_id,
@@ -1635,26 +1720,59 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             duration_ms=int(
                                 (time.monotonic() - request_started) * 1000
                             ),
-                            request_stage="initial"
-                            if n_requests == 0
-                            else "after_tool",
+                            request_stage=stage,
                             error_type=type(err).__name__,
+                            web_search_used=request_usage.web_search_used,
                         )
                     if isinstance(
                         err, (TimeoutError, ConnectionError, httpx.RequestError)
                     ):
-                        raise provider_transport_error(err) from err
+                        transport = provider_transport_error(err)
+                        annotate_provider_request(
+                            transport,
+                            model,
+                            api_mode,
+                            stage,
+                            run_id,
+                            routing_rule=invocation.routing_rule,
+                            retained_routing_rules=invocation.retained_routing_rules,
+                        )
+                        raise transport from err
                     if isinstance(err, ValueError):
-                        raise ProviderStreamError(
+                        malformed = ProviderStreamError(
                             "Provider returned malformed data or an invalid event sequence",
                             error_type=type(err).__name__,
-                        ) from err
+                        )
+                        annotate_provider_request(
+                            malformed,
+                            model,
+                            api_mode,
+                            stage,
+                            run_id,
+                            routing_rule=invocation.routing_rule,
+                            retained_routing_rules=invocation.retained_routing_rules,
+                        )
+                        raise malformed from err
+                    if isinstance(err, OpenAIError):
+                        annotate_provider_request(
+                            err,
+                            model,
+                            api_mode,
+                            stage,
+                            run_id,
+                            routing_rule=invocation.routing_rule,
+                            retained_routing_rules=invocation.retained_routing_rules,
+                        )
                     raise
                 else:
+                    debug_attempt.finish(missing_answer)
+                    clear_provider_authentication_rejection(
+                        self.hass, self.entry, client_auth or authentication
+                    )
                     try:
                         if usage_manager is not None:
                             await usage_manager.async_record_request(
-                                successful=True,
+                                successful=missing_answer is None,
                                 usage=request_usage.reported,
                                 provider=provider,
                                 model=model,
@@ -1666,7 +1784,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                     "initial" if n_requests == 0 else "after_tool"
                                 ),
                                 tool_calls_requested=len(pending_tool_calls),
-                                web_search_used=web_search_used,
+                                error_type=type(missing_answer).__name__
+                                if missing_answer
+                                else None,
+                                web_search_used=request_usage.web_search_used,
+                                **(
+                                    {"affects_run_success": False}
+                                    if missing_answer is not None
+                                    else {}
+                                ),
                             )
                     except BaseException as err:
                         append_unresolved_tool_results(
@@ -1742,6 +1868,20 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         integration_loader_seen=integration_loader_seen,
                     )
                 )
+                if control_calls and not conditional_continue:
+                    call = control_calls[0]
+                    error = HomeAssistantError(
+                        f"Tool `{call.tool_name}` was not advertised"
+                    )
+                    append_unresolved_tool_results(
+                        chat_log,
+                        self.entity_id,
+                        round_tool_calls,
+                        failed_call_id=call.id,
+                        error=error,
+                        existing_content_ids=existing_content_ids,
+                    )
+                    raise error
                 validate_retained_tool_calls(
                     self,
                     chat_log,
@@ -1770,8 +1910,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             else:
                                 loader_result = function_group_loader(
                                     loader_call.tool_args.get("groups"),
-                                    provider_snapshot.tool_limit,
-                                    loader_rounds < MAX_FUNCTION_GROUP_LOAD_ROUNDS,
+                                    admission_for_round(
+                                        int(current_web_search() is not None)
+                                    ),
                                 )
                         except BaseException as err:
                             append_unresolved_tool_results(
@@ -2394,6 +2535,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     error_type="invalid_event_sequence",
                 )
             choice = chunk.choices[0]
+            if len(chunk.choices) != 1 or getattr(choice, "index", 0) not in (None, 0):
+                await async_recover_trailing_usage(result, request_usage)
+                raise ProviderStreamError(
+                    "Provider returned multiple or inconsistent completion choices",
+                    error_type="invalid_event_sequence",
+                )
             delta = getattr(choice, "delta", None)
             finish_reason = choice.finish_reason
             if delta is None:
@@ -2473,6 +2620,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             tool_call_delta.arguments
                         )
 
+            if finish_reason == "tool_calls" and not current_tool_calls:
+                await async_recover_trailing_usage(result, request_usage)
+                raise ProviderStreamError(
+                    "Provider returned a tool-call finish without any tool calls",
+                    error_type="invalid_event_sequence",
+                )
             if current_tool_calls and finish_reason in {
                 "tool_calls",
                 "stop",
@@ -2608,19 +2761,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         """Transform a Responses API event stream to Home Assistant format."""
         request_usage = request_usage or RequestTokenMeasurements()
         recovery_state = current_tool_recovery_state()
-        response_text_lengths: dict[tuple[int | None, int | None], int] = {}
-        response_refusal_lengths: dict[tuple[int | None, int | None], int] = {}
-        url_citations: dict[tuple[int | None, int | None], list[dict[str, Any]]] = {}
+        message = ResponseMessageText()
         terminal_event_seen = False
         completed_calls: list[llm.ToolInput] = []
-        started_messages: set[int | None] = set()
-        streamed_messages: set[int | None] = set()
         event_count = 0
         async with (
             provider_output_presentation(chat_log) as select_output,
             aclosing(
                 ordered_output_events(
                     normalized_responses_stream(chat_log, result, request_usage),
+                    record_web_search=request_usage.record_web_search,
                     recover_usage=lambda: async_recover_trailing_usage(
                         result, request_usage
                     ),
@@ -2630,13 +2780,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             async for event in events:
                 event_count += 1
                 event_type = getattr(event, "type", "")
-                output_index = getattr(event, "output_index", None)
                 if event_type == "response.output_item.added":
                     select_output(event.item)
                     item_type = getattr(event.item, "type", "")
                     if item_type == "message":
-                        started_messages.add(output_index)
-                        streamed_messages.discard(None)
+                        message.start(event.item)
                     if item_type in {
                         "message",
                         "function_call",
@@ -2646,96 +2794,29 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         yield {"role": "assistant"}
                     continue
 
-                if event_type == "response.output_text.delta":
-                    if event.delta:
-                        streamed_messages.add(output_index)
-                        part_key = (
-                            output_index,
-                            getattr(event, "content_index", None),
-                        )
-                        response_text_lengths[part_key] = response_text_lengths.get(
-                            part_key, 0
-                        ) + len(event.delta)
-                        yield {"content": event.delta}
-                    continue
-
-                if event_type == "response.output_text.done":
-                    part_key = (output_index, getattr(event, "content_index", None))
-                    # Before an item is introduced its final phase is unknown.
-                    # The completed item below supplies the fallback in that case.
-                    if output_index in started_messages and (text := event.text):
-                        already_streamed = response_text_lengths.get(part_key, 0)
-                        if len(text) > already_streamed:
-                            streamed_messages.add(output_index)
-                            response_text_lengths[part_key] = len(text)
-                            yield {"content": text[already_streamed:]}
-                    continue
-
-                if event_type == "response.refusal.delta":
-                    refusal_delta = getattr(event, "delta", None)
-                    if refusal_delta:
-                        streamed_messages.add(output_index)
-                        if not isinstance(refusal_delta, str):
-                            refusal_delta = str(refusal_delta)
-                        part_key = (
-                            getattr(event, "output_index", None),
-                            getattr(event, "content_index", None),
-                        )
-                        response_refusal_lengths[part_key] = (
-                            response_refusal_lengths.get(part_key, 0)
-                            + len(refusal_delta)
-                        )
-                        yield {"content": refusal_delta}
-                    continue
-
-                if event_type == "response.refusal.done":
-                    refusal = getattr(event, "refusal", None)
-                    if refusal:
-                        part_key = (
-                            output_index,
-                            getattr(event, "content_index", None),
-                        )
-                        # Defer an indexed refusal with no open message to the
-                        # completed item, which can establish its own role and phase.
-                        if (
-                            output_index is not None
-                            and output_index not in started_messages
-                            and None not in started_messages
-                            and part_key not in response_refusal_lengths
-                        ):
-                            continue
-                        streamed_messages.add(output_index)
-                        if not isinstance(refusal, str):
-                            refusal = str(refusal)
-                        already_streamed = response_refusal_lengths.get(part_key, 0)
-                        if len(refusal) > already_streamed:
-                            yield {"content": refusal[already_streamed:]}
-                        response_refusal_lengths[part_key] = max(
-                            already_streamed, len(refusal)
-                        )
+                if event_type in {
+                    "response.output_text.delta",
+                    "response.output_text.done",
+                    "response.refusal.delta",
+                    "response.refusal.done",
+                    "response.content_part.done",
+                }:
+                    if text := message.observe(event):
+                        yield {"content": text}
                     continue
 
                 if event_type == "response.output_text.annotation.added":
-                    citation = _normalize_url_citation(
+                    if citation := _normalize_url_citation(
                         getattr(event, "annotation", None)
-                    )
-                    if citation is not None:
-                        part_key = (
-                            getattr(event, "output_index", None),
-                            getattr(event, "content_index", None),
-                        )
-                        url_citations.setdefault(part_key, []).append(citation)
-                        current_length = response_text_lengths.get(part_key, 0)
+                    ):
+                        part_index = getattr(event, "content_index", None)
                         timing = (
                             "after cited text"
-                            if citation["end_index"] <= current_length
+                            if citation["end_index"]
+                            <= message.received_length(part_index)
                             else "before cited text completed"
                         )
-                        _LOGGER.debug(
-                            "Observed structured URL citation %s (%d total for content part)",
-                            timing,
-                            len(url_citations[part_key]),
-                        )
+                        _LOGGER.debug("Observed structured URL citation %s", timing)
                     continue
 
                 if event_type == "response.output_item.done":
@@ -2749,43 +2830,34 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             if item_type == "reasoning" and reasoning_route is not None
                             else item
                         }
-                    elif (
-                        item_type == "message"
-                        and getattr(item, "content", None) is not None
-                    ):
-                        if output_index not in started_messages:
+                    elif item_type == "message":
+                        if getattr(item, "status", None) not in (None, "completed"):
+                            raise ProviderStreamError(
+                                "Provider returned an unfinished assistant message",
+                                error_type="invalid_event_sequence",
+                            )
+                        if not message.opened:
+                            yield {"role": "assistant"}
+                        if (
+                            getattr(item, "phase", None) is not None
+                            or not message.opened
+                        ):
                             select_output(item)
-                            if (
-                                output_index not in streamed_messages
-                                and None not in streamed_messages
-                            ):
-                                yield {"role": "assistant"}
-                        # SDK events index every content part. Legacy providers
-                        # with unindexed deltas already supplied this item's text.
-                        if None not in streamed_messages:
-                            for content_index, part in enumerate(item.content):
-                                part_key = (output_index, content_index)
-                                part_type = getattr(part, "type", None)
-                                if part_type == "output_text":
-                                    missing = (part.text or "")[
-                                        response_text_lengths.get(part_key, 0) :
-                                    ]
-                                elif part_type == "refusal":
-                                    missing = (part.refusal or "")[
-                                        response_refusal_lengths.get(part_key, 0) :
-                                    ]
-                                else:
-                                    continue
-                                if missing:
-                                    yield {"content": missing}
-                        streamed_messages.discard(None)
-                        started_messages.discard(output_index)
-                        # Keep URL citation annotations internally. Home Assistant's
-                        # native field is not exposed to the streaming listener, so the
-                        # original message and structured metadata remain available for
-                        # stateless replay while speech receives sanitized text deltas.
-                        yield {"native": item}
+                        for text in message.complete(item):
+                            yield {"content": text}
+                        # Preserve native replay only when the provider supplied
+                        # the message body. Legacy markers often carry no body.
+                        if getattr(item, "content", None) is not None:
+                            yield {"native": item}
+                        elif message.phase == "commentary":
+                            yield {"native": {"type": "message", "phase": "commentary"}}
+                        message = ResponseMessageText()
                     elif item_type == "function_call":
+                        if getattr(item, "status", None) not in (None, "completed"):
+                            raise ProviderStreamError(
+                                "Provider returned an unfinished Function Tool call",
+                                error_type="invalid_event_sequence",
+                            )
                         try:
                             raw_args = item.arguments
                             arguments = (
@@ -2837,6 +2909,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if event_type in {"response.completed", "response.incomplete"}:
                     if event_type == "response.completed":
                         terminal_event_seen = True
+                        if message.parts:
+                            # Some legacy streams provide a single implicit plain
+                            # text answer and a response-level terminal frame.
+                            yield {"role": "assistant"}
+                            select_output(None)
+                            for text in message.remaining():
+                                yield {"content": text}
                     response = event.response
                     if response.usage is not None:
                         _trace_provider_usage(chat_log, extract_usage(response.usage))
@@ -2882,11 +2961,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
     ) -> conversation.ToolResultContent:
         """Execute a configured Function Tool."""
         delayed = getattr(llm_context, _DELAYED_EXECUTION_MARKER, False)
-        if is_ha_tool(function_tool) and delayed:
-            raise HomeAssistantError(
-                "HA LLM Tools cannot execute in the delayed scheduler"
-            )
-        if not is_ha_tool(function_tool):
+        if is_ha_tool(function_tool):
+            if delayed:
+                raise HomeAssistantError(
+                    "HA LLM Tools cannot execute in the delayed scheduler"
+                )
+            if getattr(current_snapshot(), "require_positive_delay", False):
+                raise HomeAssistantError(
+                    "This request requires a positive EOAI Function Tool delay"
+                )
+        else:
             spec = function_tool.get("spec", {})
             arguments = await async_execution_arguments(self.hass, spec, tool_input)
             from .execution_outcomes import execute_backend, execution_prepared
@@ -2895,10 +2979,23 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             execution_arguments, execution_delay = split_legacy_execution_delay(
                 spec, arguments
             )
-            if not delayed and self.should_run_in_background(execution_delay):
-                from .delayed_tools import _delay_as_timedelta
-
+            duration = (
                 _delay_as_timedelta(execution_delay)
+                if not delayed and self.should_run_in_background(execution_delay)
+                else None
+            )
+            if not duration and getattr(
+                current_snapshot(), "require_positive_delay", False
+            ):
+                from .function_tool_policy import is_integration_owned_read_only_tool
+
+                if duration is not None or not is_integration_owned_read_only_tool(
+                    function_tool
+                ):
+                    raise HomeAssistantError(
+                        "This request requires a positive EOAI Function Tool delay"
+                    )
+            if duration is not None:
                 manager = self.hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
                 if not isinstance(manager, DelayedToolManager):
                     raise HomeAssistantError(
@@ -2906,19 +3003,24 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
                 # The scheduler owns the receipt at its transactional write,
                 # after admission checks and before a durable effect is possible.
-                await manager.async_schedule(
+                record = await manager.async_schedule(
                     self,
                     str(spec.get("name", tool_input.tool_name)),
                     arguments,
                     llm_context,
                     function_tool=function_tool,
-                    execution_delay=execution_delay,
+                    execution_delay=duration,
+                    exposed_entities=exposed_entities,
                 )
                 return make_tool_result_content(
                     agent_id=self.entity_id,
                     tool_call_id=tool_input.id,
                     tool_name=tool_input.tool_name,
-                    tool_result={"result": "Scheduled"},
+                    tool_result=ScheduledExecution(
+                        result="Scheduled",
+                        action_id=record.call_id,
+                        scheduled_at=record.due_at,
+                    ),
                 )
         execution_error = False
         try:
@@ -2927,6 +3029,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     raise HomeAssistantError("HA tool request context unavailable")
                 reference = function_tool["function"]
                 snapshot = current_snapshot()
+                restrict_delayed = getattr(snapshot, "use_eoai_delayed_actions", False)
                 if not snapshot.caller_provided:
                     snapshot = await async_discover(self.hass, llm_context, [reference])
                 live = snapshot.tools.get(reference_key(reference))
@@ -2941,8 +3044,19 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if user is None or not user.is_active:
                         raise HomeAssistantError("HA tool caller is no longer active")
                 # Recheck after discovery/auth awaits, immediately before dispatch.
-                from .function_tool_resolution import latest_function_tool_for_execution
+                from .function_tool_resolution import (
+                    current_configuration_data,
+                    latest_function_tool_for_execution,
+                )
+                from .local_intents import CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI
 
+                if not snapshot.caller_provided and (
+                    restrict_delayed
+                    or (current_configuration_data(self) or {}).get(
+                        CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI
+                    )
+                ):
+                    live = live.restrict_delayed_commands()
                 latest_function_tool_for_execution(self, function_tool)
                 guest_policy = getattr(self, "_effective_guest_policy", None)
                 if callable(guest_policy) and guest_policy().guest_active:
@@ -2970,13 +3084,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     exposed_entities,
                 )
             if delayed:
-                from .ha_tool_result_compat import ExecutionFailure
+                from .ha_tool_result_compat import is_execution_failure
 
                 # Preserve producer-owned failure markers for the scheduler.
-                if not isinstance(result, ExecutionFailure) and not (
-                    isinstance(result, list)
-                    and any(isinstance(item, ExecutionFailure) for item in result)
-                ):
+                if not is_execution_failure(result):
                     result = str(result)
         except HomeAssistantError as err:
             if (
@@ -3191,6 +3302,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         request_usage = RequestUsage()
         request_started = time.monotonic()
         exhausted = False
+        debug_attempt = DebugProviderAttempt()
         try:
             settings = context_summary_request_settings(
                 model, api_mode, options, {}, model_capabilities=binding.capabilities
@@ -3208,7 +3320,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     return None, False
                 settings = expanded
             if api_mode == API_MODE_RESPONSES:
-                response = await binding.client.responses.create(
+                response = await debug_attempt.create(
+                    binding.client.responses,
                     model=model,
                     input=[{"role": "user", "content": prompt}],
                     **settings,
@@ -3231,7 +3344,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     "stream": False,
                     **settings,
                 }
-                response = await binding.client.chat.completions.create(**kwargs)
+                response = await debug_attempt.create(
+                    binding.client.chat.completions, **kwargs
+                )
                 choices = getattr(response, "choices", [])
                 text = (
                     getattr(getattr(choices[0], "message", None), "content", None)
@@ -3250,7 +3365,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     "Context summary did not complete normally",
                     error_type="summary_finish_reason",
                 )
+            if not isinstance(text, str) or not text.strip():
+                raise ProviderStreamError(
+                    "Context summary completed without usable text",
+                    error_type="missing_assistant_output",
+                )
         except BaseException as err:
+            debug_attempt.finish(err)
             if binding.usage is not None:
                 await binding.usage.async_record_request(
                     successful=False,
@@ -3269,6 +3390,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 raise
             return None, exhausted
 
+        debug_attempt.finish()
         if binding.usage is not None:
             await binding.usage.async_record_request(
                 successful=True,
@@ -3279,4 +3401,4 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 duration_ms=int((time.monotonic() - request_started) * 1000),
                 request_stage="context_summary",
             )
-        return (text.strip() if isinstance(text, str) and text.strip() else None), False
+        return text.strip(), False

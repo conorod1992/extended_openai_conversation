@@ -22,6 +22,16 @@ MANAGEMENT_ACTIONS = ROOT / "tests_stress" / "management_action_inventory.json"
 STRESS_CONFIG = ROOT / "playwright.stress.config.mjs"
 BASE_PLAYWRIGHT_CONFIG = ROOT / "playwright.config.mjs"
 STRESS_WORKFLOW = ROOT / ".github" / "workflows" / "enhanced-stress.yml"
+NIGHTLY_NATIVE_BROWSER_SPECS = {
+    "tests_browser/real-ha-shell.spec.mjs": (
+        "tests_stress/test_browser_backend_resilience.py",
+        "playwright.real-ha-shell.config.mjs",
+    ),
+    "tests_browser/real-ha-backend.spec.mjs": (
+        "tests_real_ha/test_browser_backend_acceptance.py",
+        "playwright.config.mjs",
+    ),
+}
 
 # The old numbered roadmap is closed. Future gaps need accountable, expiring
 # plans; recycling an old number must never reopen completed coverage.
@@ -185,15 +195,17 @@ def test_covered_browser_and_nightly_evidence_uses_appropriate_test_surfaces() -
                     )
                     if tier == "nightly":
                         workflow = STRESS_WORKFLOW.read_text(encoding="utf-8")
-                        browser_backend_tests = (
-                            ROOT / "tests_stress" / "test_browser_backend_resilience.py"
-                        ).read_text(encoding="utf-8")
-                        native_real_ha_campaign = (
-                            path == "tests_browser/real-ha-shell.spec.mjs"
-                            and "tests_stress/test_browser_backend_resilience.py" in workflow
-                            and f'spec="{path}"' in browser_backend_tests
-                            and 'config="playwright.real-ha-shell.config.mjs"' in browser_backend_tests
-                        )
+                        native_real_ha_campaign = False
+                        if path in NIGHTLY_NATIVE_BROWSER_SPECS:
+                            test_file, config = NIGHTLY_NATIVE_BROWSER_SPECS[path]
+                            browser_backend_tests = (ROOT / test_file).read_text(
+                                encoding="utf-8"
+                            )
+                            native_real_ha_campaign = (
+                                test_file in workflow
+                                and f'spec="{path}"' in browser_backend_tests
+                                and f'config="{config}"' in browser_backend_tests
+                            )
                         assert path.endswith(".stress.mjs") or path in _nightly_interaction_specs() or path == "tests_browser/nightly-diagnostics-probe.mjs" or native_real_ha_campaign, (
                             f"{key}:nightly evidence is not in the nightly stress collection: {path}"
                         )

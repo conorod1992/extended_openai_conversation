@@ -7,6 +7,7 @@ from collections.abc import Callable
 import logging
 from typing import Any
 
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, ServiceCall, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -50,6 +51,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         self._published_state: State | None = None
         self._registry_unsubscribe: Callable[[], None] | None = None
         self._setup_lock = asyncio.Lock()
+        self._stop_unsubscribe: Callable[[], None] | None = None
 
     async def async_setup(self) -> None:
         async with self._setup_lock:
@@ -85,6 +87,10 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         await super().async_setup()
         if self._stopping or self.startup_unavailable:
             return
+        if self._stop_unsubscribe is None:
+            self._stop_unsubscribe = self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STOP, self._async_home_assistant_stop
+            )
         if self._registry_unsubscribe is None:
             self._registry_unsubscribe = self.hass.bus.async_listen(
                 er.EVENT_ENTITY_REGISTRY_UPDATED, self._async_registry_updated
@@ -108,6 +114,11 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             entity_id in {self._registered_state_entity_id, current}
             or entity_id in selected
             or old_id in selected
+            or (
+                isinstance(entity_id, str)
+                and self._entity_registry_identity(entity_id)
+                in self._selection_identities.values()
+            )
         ):
             try:
                 await self.async_reconcile()
@@ -188,6 +199,12 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             if isinstance(registry_name, str) and registry_name.strip()
             else "Quiet Hours"
         )
+        if getattr(self, "_config_recovery_pending", False):
+            self.hass.states.async_set(
+                entity_id, "unavailable", {"friendly_name": friendly_name}
+            )
+            self._published_state = self.hass.states.get(entity_id)
+            return
         self.hass.states.async_set(
             entity_id,
             "on" if period is not None else "off",
@@ -223,8 +240,20 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         if unsubscribe is not None:
             self._unsubscribe_callback(unsubscribe)
 
+    async def _async_home_assistant_stop(self, _event: Any) -> None:
+        self._stop_unsubscribe = None
+        try:
+            await self.async_shutdown()
+        except Exception as err:
+            log_handled_failure(
+                logging.getLogger(__name__), "Quiet Hours shutdown deferred", err
+            )
+
     async def async_shutdown(self) -> None:
         self._stopping = True
+        if unsubscribe := getattr(self, "_stop_unsubscribe", None):
+            self._unsubscribe_callback(unsubscribe)
+            self._stop_unsubscribe = None
         self._detach_registry_listener()
         await super().async_shutdown()
 
@@ -306,7 +335,7 @@ def _register_quiet_hours_actions(hass: HomeAssistant) -> None:
 
 
 async def async_restore_saved_quiet_hours(hass: HomeAssistant) -> None:
-    """Attempt durable restoration once before any entry/provider can load.
+    """Attempt startup restoration when no config entry owns Quiet Hours.
 
     This manager is never cached or exposed to public actions. Failed/unavailable
     controls remain in the existing private store for a later recovery attempt.

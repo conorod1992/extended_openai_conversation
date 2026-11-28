@@ -1,10 +1,12 @@
 """Policy saves must not erase observations that protect a manual choice."""
 
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
+from homeassistant.exceptions import HomeAssistantError
 from tests.test_quiet_hours_runtime import (
     _config,
     _install_registry,
@@ -15,6 +17,45 @@ from tests.test_quiet_hours_runtime import (
 from tests.test_review_quiet_recovery import timers  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("timers")
+
+
+@pytest.mark.parametrize("change", ["toggle", "edit"])
+@pytest.mark.parametrize(
+    ("blocked_by", "exception", "message"),
+    [
+        ("shutdown", HomeAssistantError, "shutting down"),
+        ("recovery", ValueError, "configuration recovery is pending"),
+        ("selection", ValueError, "selections are changing"),
+    ],
+)
+async def test_policy_change_cannot_write_across_an_unsettled_generation(
+    hass, monkeypatch, change, blocked_by, exception, message
+):
+    from unittest.mock import AsyncMock
+
+    manager = _stateful_public_manager(hass)
+    previous = manager.config.as_dict()
+    recovery = AsyncMock(return_value=blocked_by != "recovery")
+    resolve = AsyncMock(return_value=blocked_by != "selection")
+    manager._stopping = blocked_by == "shutdown"
+    monkeypatch.setattr(manager, "_async_recover_configuration_locked", recovery)
+    monkeypatch.setattr(manager, "_async_resolve_control_identities_locked", resolve)
+    monkeypatch.setattr(
+        manager, "_selected_entity_ids", lambda *_args: {"media_player.bedroom"}
+    )
+    candidate = {**previous, "enabled": not previous["enabled"]}
+
+    with pytest.raises(exception, match=message):
+        if change == "toggle":
+            await manager.async_set_enabled(candidate["enabled"])
+        else:
+            await manager.async_update_config(candidate)
+
+    assert manager.config.as_dict() == previous
+    manager._store.async_save.assert_not_awaited()
+    hass.services.async_call.assert_not_awaited()
+    assert recovery.await_count == (blocked_by != "shutdown")
+    assert resolve.await_count == (blocked_by == "selection")
 
 
 @pytest.mark.parametrize("kind", ["volume", "switch"])
@@ -226,3 +267,27 @@ async def test_unreadable_policy_save_preserves_already_quiet_observation(
     await manager.async_reconcile()
     assert manager.config.max_volume == 0.25
     assert volumes == []
+
+
+async def test_policy_save_after_missed_transition_expires_old_observations(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import quiet_hours_runtime
+
+    _install_registry(monkeypatch, "bedroom")
+    manager = _stateful_public_manager(hass)
+    manager._config = _config()
+    _seed_room(hass, "bedroom", volume=0.8)
+    volumes, _ = await _install_services(hass)
+    quiet_start = datetime(2026, 10, 3, 23, tzinfo=UTC)
+    monkeypatch.setattr(quiet_hours_runtime.dt_util, "now", lambda: quiet_start)
+    await manager.async_reconcile()
+    hass.states.async_set("media_player.bedroom", "idle", {"volume_level": 0.6})
+    await manager.async_reconcile()
+    volumes.clear()
+
+    monkeypatch.setattr(
+        quiet_hours_runtime.dt_util, "now", lambda: quiet_start + timedelta(days=1)
+    )
+    await manager.async_update_config({**manager.config.as_dict(), "start": "21:00"})
+
+    assert volumes
+    assert manager.active["controls"]["media_player.bedroom"]["original_value"] == 0.6

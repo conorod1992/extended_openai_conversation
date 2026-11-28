@@ -211,3 +211,32 @@ async def test_failed_callback_cannot_discard_replacement_owner(tmp_path):
     replacement.cancel()
     staging._discard_failed_initialization(hass, replacement)
     assert staging._OWNER_KEY not in hass.data
+
+
+def test_interrupted_owner_cleanup_keeps_marker_for_next_startup(tmp_path, monkeypatch):
+    root = tmp_path / "private"
+    owner = _initialize_owner(root)
+    payload = owner.directory / "payload"
+    payload.mkdir()
+    (payload / "private.zip").write_bytes(b"private")
+    original = staging.shutil.rmtree
+
+    with monkeypatch.context() as patch:
+        def fail(path):
+            assert (owner.directory / "owner.lock").exists()
+            assert path == payload
+            raise OSError("interrupted cleanup")
+
+        patch.setattr(staging.shutil, "rmtree", fail)
+        with pytest.raises(OSError, match="interrupted cleanup"):
+            owner.close()
+
+    assert (owner.directory / "owner.lock").exists()
+    assert not owner.lock_handle.closed
+    assert staging.shutil.rmtree is original
+    owner.lock_handle.close()  # The OS releases the lock when the process exits.
+    fresh = _initialize_owner(root)
+    try:
+        assert not owner.directory.exists()
+    finally:
+        fresh.close()

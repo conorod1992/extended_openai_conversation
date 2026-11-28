@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import re
 from typing import Any
@@ -91,14 +91,13 @@ async def async_try_handle_local_intent(
     options: Mapping[str, Any],
     *,
     guest_active: bool,
+    on_delayed_action: Callable[[], None] | None = None,
 ) -> LocalIntentResult | None:
-    """Try eligible Home Assistant intents, always excluding HassBroadcast."""
-    if not options.get(CONF_LOCAL_INTENTS_ENABLED, DEFAULT_LOCAL_INTENTS_ENABLED):
-        return None
-
-    # Home Assistant's normal intent engine does not know about this integration's
-    # Guest Mode policy. Keep Guest Mode on the existing policy-enforced model path.
-    if guest_active:
+    """Try eligible HA intents, or recognise a delayed action without dispatch."""
+    local_execution = not guest_active and options.get(
+        CONF_LOCAL_INTENTS_ENABLED, DEFAULT_LOCAL_INTENTS_ENABLED
+    )
+    if not local_execution and on_delayed_action is None:
         return None
 
     handle_intents = getattr(conversation, "async_handle_intents", None)
@@ -113,13 +112,22 @@ async def async_try_handle_local_intent(
         )
     )
     accepted_intent: str | None = None
-    entity_reads_allowed = await async_local_entity_reads_allowed(
+    entity_reads_allowed = local_execution and await async_local_entity_reads_allowed(
         hass, getattr(user_input, "context", None)
     )
 
     def intent_filter(result: RecognizeResult) -> bool:
         """Return True when Home Assistant should reject this local intent match."""
         nonlocal accepted_intent
+        if (
+            on_delayed_action is not None
+            and result.intent.name == ha_intent.INTENT_START_TIMER
+            and _has_conversation_command(result)
+        ):
+            on_delayed_action()
+            return True
+        if not local_execution:
+            return True
         if not entity_reads_allowed and (
             result.intent.name in {"HassGetState", "HassClimateGetTemperature"}
             or {"name", "domain", "device_class", "area", "floor"}.intersection(

@@ -60,6 +60,39 @@ test("Leaving the Retention projection loads the full configuration editor", asy
   await expectHarnessClean(page, errors);
 });
 
+test("Suspended Usage retention keeps Disabled an explicit choice", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/usage", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  await panel.evaluate(async host => {
+    const call = browserHarness.hass.callWS.bind(browserHarness.hass);
+    browserHarness.hass.callWS = async message => {
+      const result = await call(message);
+      if (message.section === "configuration" && message.action === "retention_get") {
+        return {...result, config:{...result.config,
+          usage_request_retention_days:[0], usage_run_retention_days:{toString:null},
+        }};
+      }
+      return result;
+    };
+    await host._navigate("usage-maintenance", "retention");
+  });
+  const request = panel.locator("#config-usage_request_retention_days");
+  const run = panel.locator("#config-usage_run_retention_days");
+  await expect(request.locator("option:checked")).toHaveText(/Suspended/);
+  await expect(run.locator("option:checked")).toHaveText(/Suspended/);
+  await request.dispatchEvent("change");
+  await expect(panel.locator("#save-config")).toHaveCount(0);
+  await request.selectOption("0");
+  await panel.locator("#save-config").click();
+  const save = await page.evaluate(() => browserHarness.calls.find(
+    call => call.section === "configuration" && call.action === "save",
+  ));
+  expect(save.config).toEqual({usage_request_retention_days:0});
+  await expectHarnessClean(page, errors);
+});
+
 test("Configuration save sends dirty fields and consumes the normalized response", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));

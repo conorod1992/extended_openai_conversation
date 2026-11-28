@@ -51,6 +51,7 @@ from .knowledge import async_get_knowledge
 from .memory import async_get_memory, get_memory_mode
 from .model_catalog import BUNDLED_CATALOG
 from .model_catalog_manager import DATA_MANAGER
+from .operational_errors import failure_diagnostic
 from .persistence_hardening import StorageRepairRequired
 from .request import build_provider_request_snapshot, conversation_tools_required
 from .storage_recovery_diagnostics import storage_recovery_snapshot
@@ -69,6 +70,13 @@ def _require_readable_store(
     """Do not initialize a rejected store merely to download diagnostics."""
     if pending or (recovery and recovery["stores"][category]["unavailable_stores"]):
         raise StorageRepairRequired(category)
+
+
+def _record_failure(payload: dict[str, Any], key: str, error: BaseException) -> None:
+    payload[key] = type(error).__name__
+    detail = failure_diagnostic(error)
+    if detail.category != "backend" or detail.explanation:
+        payload.setdefault("failure_details", {})[key] = detail.context()
 
 
 async def async_get_config_entry_diagnostics(
@@ -123,11 +131,13 @@ async def async_get_config_entry_diagnostics(
                 "structured_outputs": snapshot.structured_outputs,
                 "effective_response_limit": snapshot.api_kwargs.get(
                     "max_output_tokens",
-                    snapshot.api_kwargs.get("max_completion_tokens"),
+                    snapshot.api_kwargs.get(
+                        "max_completion_tokens", snapshot.api_kwargs.get("max_tokens")
+                    ),
                 ),
             }
         except Exception as err:
-            diagnostics["provider_configuration_error"] = type(err).__name__
+            _record_failure(diagnostics, "provider_configuration_error", err)
         subsystem_status = hass.data.get(SUBSYSTEM_STATUS_KEY, {}).get(
             (entry.entry_id, subentry.subentry_id), {}
         )
@@ -144,7 +154,7 @@ async def async_get_config_entry_diagnostics(
             )
             diagnostics["storage_recovery"] = recovery
         except OSError as err:
-            diagnostics["storage_recovery_error"] = type(err).__name__
+            _record_failure(diagnostics, "storage_recovery_error", err)
         recovery_pending = get_agent_maintenance_gate(
             hass, entry.entry_id, subentry.subentry_id
         ).recovery_required
@@ -155,13 +165,13 @@ async def async_get_config_entry_diagnostics(
                 async_get_continuity(hass, entry.entry_id, subentry.subentry_id).stats()
             )
         except Exception as err:
-            diagnostics["continuity_error"] = type(err).__name__
+            _record_failure(diagnostics, "continuity_error", err)
         function_tools = None
         try:
             function_tools = _configured_function_tools(subentry.data)
             diagnostics["configured_function_tools"] = len(function_tools)
         except Exception as err:
-            diagnostics["function_tool_configuration_error"] = type(err).__name__
+            _record_failure(diagnostics, "function_tool_configuration_error", err)
         if function_tools is not None:
             try:
                 function_groups = validate_function_groups(
@@ -180,7 +190,7 @@ async def async_get_config_entry_diagnostics(
                     }
                 )
             except Exception as err:
-                diagnostics["function_group_configuration_error"] = type(err).__name__
+                _record_failure(diagnostics, "function_group_configuration_error", err)
         try:
             runtime = get_function_group_runtime(
                 hass, entry.entry_id, subentry.subentry_id
@@ -188,7 +198,7 @@ async def async_get_config_entry_diagnostics(
             if runtime is not None:
                 diagnostics.update(runtime.stats())
         except Exception as err:
-            diagnostics["function_group_runtime_error"] = type(err).__name__
+            _record_failure(diagnostics, "function_group_runtime_error", err)
         try:
             _require_readable_store("guest_mode", recovery, recovery_pending)
             guest_mode = await async_get_guest_mode(
@@ -196,7 +206,7 @@ async def async_get_config_entry_diagnostics(
             )
             diagnostics["guest_mode"] = {"status": guest_mode.status()}
         except Exception as err:
-            diagnostics["guest_mode_storage_error"] = type(err).__name__
+            _record_failure(diagnostics, "guest_mode_storage_error", err)
         else:
             try:
                 if function_tools is None:
@@ -215,7 +225,7 @@ async def async_get_config_entry_diagnostics(
             )
             diagnostics.update(temporary.stats())
         except Exception as err:
-            diagnostics["temporary_memory_storage_error"] = type(err).__name__
+            _record_failure(diagnostics, "temporary_memory_storage_error", err)
         try:
             _require_readable_store("persistent_memory", recovery, recovery_pending)
             if subsystem_status.get("persistent_memory", {}).get("status") == "failed":
@@ -223,7 +233,7 @@ async def async_get_config_entry_diagnostics(
             memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
             diagnostics.update(memory.stats())
         except Exception as err:
-            diagnostics["storage_error"] = type(err).__name__
+            _record_failure(diagnostics, "storage_error", err)
         try:
             _require_readable_store("knowledge", recovery, recovery_pending)
             if subsystem_status.get("knowledge", {}).get("status") == "failed":
@@ -233,7 +243,7 @@ async def async_get_config_entry_diagnostics(
             )
             diagnostics.update(knowledge.stats())
         except Exception as err:
-            diagnostics["knowledge_storage_error"] = type(err).__name__
+            _record_failure(diagnostics, "knowledge_storage_error", err)
         try:
             _require_readable_store("archive", recovery, recovery_pending)
             archive_status = subsystem_status.get("archive", {})
@@ -247,14 +257,14 @@ async def async_get_config_entry_diagnostics(
             )
             diagnostics["archive"] = archive.stats()
         except Exception as err:
-            diagnostics["archive_storage_error"] = type(err).__name__
+            _record_failure(diagnostics, "archive_storage_error", err)
         try:
             _require_readable_store("usage", recovery, recovery_pending)
             usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
             diagnostics["usage"] = usage.as_dict()
             diagnostics["usage_persistence"] = usage.persistence_status()
         except Exception as err:
-            diagnostics["usage_storage_error"] = type(err).__name__
+            _record_failure(diagnostics, "usage_storage_error", err)
         agents.append(diagnostics)
     manager = hass.data.get(DATA_MANAGER)
     catalog_status = manager.status() if manager is not None else BUNDLED_CATALOG

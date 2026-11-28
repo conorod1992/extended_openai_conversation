@@ -6,6 +6,7 @@ import asyncio
 from contextlib import suppress
 import logging
 from types import MappingProxyType
+from typing import Any
 
 from openai import AsyncClient
 from openai._exceptions import AuthenticationError, OpenAIError
@@ -20,6 +21,7 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.setup import async_when_setup
 
 from .backup_transfer import setup_backup_transfer_websocket
 from .const import (
@@ -109,6 +111,7 @@ from .helpers import (
     entry_api_provider,
     get_authenticated_client,
     get_model_config,
+    new_agent_options,
 )
 from .intercom_services import async_setup_intercom_services
 from .live_subentry_updates import is_live_subentry_update
@@ -142,6 +145,8 @@ _LOGGER = logging.getLogger(__name__)
 
 _REQUEST_RULE_RUNTIMES = "extended_openai_conversation_responses.request_rule_runtimes"
 _REQUEST_RULE_MANAGERS = "extended_openai_conversation_responses.request_rule_managers"
+
+_PENDING_SETUP_ROLLBACK = f"{DOMAIN}.pending_setup_rollback"
 
 PLATFORMS = [Platform.AI_TASK, Platform.CONVERSATION, Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -211,7 +216,31 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Extended OpenAI Conversation (Responses)."""
     initialize_global_runtime(hass)
     await async_setup_model_catalog(hass)
-    await async_restore_saved_quiet_hours(hass)
+    has_enabled_entries = bool(
+        hass.config_entries.async_entries(
+            DOMAIN, include_ignore=False, include_disabled=False
+        )
+    )
+    if not has_enabled_entries:
+        await async_restore_saved_quiet_hours(hass)
+    try:
+        await _async_setup_integration(hass, config)
+    except BaseException:
+        if has_enabled_entries:
+            await async_restore_saved_quiet_hours(hass)
+        raise
+    if has_enabled_entries:
+        # Core fires component_loaded after its config-entry setup attempts.
+        # An active owner takes over the saved effects through reconciliation.
+        async def restore_if_unowned(hass: HomeAssistant, _component: str) -> None:
+            await async_restore_saved_quiet_hours(hass)
+
+        async_when_setup(hass, DOMAIN, restore_if_unowned)
+    return True
+
+
+async def _async_setup_integration(hass: HomeAssistant, config: ConfigType) -> None:
+    """Initialize integration-wide dependencies and public entry points."""
     apply_openai_compatibility()
     await async_migrate_integration(hass)
     from .agent_deletion import async_reconcile_with_retry, async_setup_agent_deletion
@@ -226,6 +255,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         async_start_archive_retention(hass)
     await async_setup_ha_permissions(hass)
+    from .guest_mode import async_setup_guest_entity_renames
+
+    async_setup_guest_entity_renames(hass)
     await async_setup_services(hass, config)
     await async_setup_intercom_services(hass)
     # Register narrow admin-only commands separately from the broad management
@@ -257,7 +289,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 "reinstall if the bundled frontend files are missing or invalid.",
                 err,
             )
-    return True
 
 
 def _wrap_provider_client(client, entry, authentication):
@@ -279,6 +310,12 @@ async def async_setup_entry(
     from .conversation_archive import async_start_archive_retention
     from .provider_errors import provider_authentication_snapshot
     from .usage import async_retry_unused_volatile_usage
+
+    pending_rollback = hass.data.setdefault(_PENDING_SETUP_ROLLBACK, set())
+    if entry.entry_id in pending_rollback and not await async_settle_owned_operation(
+        _async_finish_setup_rollback(hass, entry)
+    ):
+        raise ConfigEntryNotReady("Previous setup could not unload its platforms")
 
     initialize_global_runtime(hass)
     async_start_archive_retention(hass)
@@ -326,30 +363,40 @@ async def async_setup_entry(
         entry.subentries
     )
 
-    entry.runtime_data = _wrap_provider_client(client, entry, authentication_snapshot)
     await async_retry_unused_volatile_usage(hass, entry.entry_id)
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    sync_entry_model_lifecycle(hass, entry)
+    entry.runtime_data = _wrap_provider_client(client, entry, authentication_snapshot)
     try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        sync_entry_model_lifecycle(hass, entry)
         await async_setup_templates(hass, entry.entry_id)
         entry.async_on_unload(entry.add_update_listener(update_listener))
         await _async_activate_global_effects(hass, entry.entry_id)
     except BaseException:
+        pending_rollback.add(entry.entry_id)
         try:
-            await async_settle_owned_operation(
-                _async_release_global_effects(hass, entry.entry_id)
+            unloaded = await async_settle_owned_operation(
+                _async_finish_setup_rollback(hass, entry)
             )
-        finally:
-            try:
-                await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-            finally:
-                await async_unload_templates(hass, entry.entry_id)
+            if not unloaded:
+                _LOGGER.error("Setup rollback left one or more EOAI platforms loaded")
+        except Exception:
+            _LOGGER.exception("Unable to complete EOAI setup rollback")
         raise
     with suppress(Exception):
         # Optional cache preparation must never affect integration setup.
         _schedule_sole_agent_prewarm(hass, entry)
     hass.data.get(RESTORE_RELOAD_PENDING, set()).discard(entry.entry_id)
+    return True
+
+
+async def _async_finish_setup_rollback(
+    hass: HomeAssistant, entry: ExtendedOpenAIConfigEntry
+) -> bool:
+    """Release failed setup owners only after all forwarded platforms unload."""
+    if not await async_unload_entry(hass, entry):
+        return False
+    del entry.runtime_data
+    hass.data[_PENDING_SETUP_ROLLBACK].discard(entry.entry_id)
     return True
 
 
@@ -369,53 +416,54 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for platform in platforms:
         platform.async_unsub_polling()
 
-    async def retire_runtime_owners() -> None:
-        from .agent_maintenance import get_agent_maintenance_gate
-
-        hass_data = getattr(hass, "data", None)
-        subentries = getattr(entry, "subentries", None)
-        if isinstance(hass_data, dict) and subentries is not None:
-            from .management_function_repair import discard_persisted_config_projection
-
-            runtimes = hass_data.get(_REQUEST_RULE_RUNTIMES, {})
-            managers = hass_data.get(_REQUEST_RULE_MANAGERS, {})
-            owners = [
-                (
-                    key := (entry.entry_id, subentry.subentry_id),
-                    managers.get(key),
-                    runtimes.get(key),
-                    subentry,
-                )
-                for subentry in subentries.values()
-            ]
-            for key, manager, runtime, subentry in owners:
-                # Existing restore/rollback owns its participant until the
-                # exclusive lease settles. This does not upgrade a caller's
-                # ordinary shared lease, as a native reload action may hold one.
-                await get_agent_maintenance_gate(hass, *key).async_wait_idle()
-                if manager is not None:
-                    try:
-                        # Fence delayed validation and drain physical writes before
-                        # a replacement Store/manager can publish the next generation.
-                        await manager.async_retire()
-                    finally:
-                        if managers.get(key) is manager:
-                            managers.pop(key)
-                if runtime is not None and runtimes.get(key) is runtime:
-                    runtimes.pop(key)
-                discard_persisted_config_projection(subentry)
-        await async_unload_templates(hass, entry.entry_id)
-
     # Platforms have unloaded. Cancellation must not abandon a retired manager
     # in the cache or allow its pending write to race a replacement generation.
     async def retire_all_owners() -> None:
         try:
             await _async_release_global_effects(hass, entry.entry_id)
         finally:
-            await retire_runtime_owners()
+            await _async_retire_runtime_owners(hass, entry)
 
     await async_settle_owned_operation(retire_all_owners())
     return True
+
+
+async def _async_retire_runtime_owners(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    from .agent_maintenance import get_agent_maintenance_gate
+
+    hass_data = getattr(hass, "data", None)
+    subentries = getattr(entry, "subentries", None)
+    if isinstance(hass_data, dict) and subentries is not None:
+        from .management_function_repair import discard_persisted_config_projection
+
+        runtimes = hass_data.get(_REQUEST_RULE_RUNTIMES, {})
+        managers = hass_data.get(_REQUEST_RULE_MANAGERS, {})
+        owners = [
+            (
+                key := (entry.entry_id, subentry.subentry_id),
+                managers.get(key),
+                runtimes.get(key),
+                subentry,
+            )
+            for subentry in subentries.values()
+        ]
+        for key, manager, runtime, subentry in owners:
+            # Existing restore/rollback owns its participant until the
+            # exclusive lease settles. This does not upgrade a caller's
+            # ordinary shared lease, as a native reload action may hold one.
+            await get_agent_maintenance_gate(hass, *key).async_wait_idle()
+            if manager is not None:
+                try:
+                    # Fence delayed validation and drain physical writes before
+                    # a replacement Store/manager can publish the next generation.
+                    await manager.async_retire()
+                finally:
+                    if managers.get(key) is manager:
+                        managers.pop(key)
+            if runtime is not None and runtimes.get(key) is runtime:
+                runtimes.pop(key)
+            discard_persisted_config_projection(subentry)
+    await async_unload_templates(hass, entry.entry_id)
 
 
 async def _async_suspend_global_effects(hass: HomeAssistant) -> None:
@@ -500,10 +548,12 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Erase private agent data and stop global effects after the final removal."""
     from .agent_deletion import async_delete_entry_data
+    from .provider_errors import clear_provider_authentication_rejection
 
     try:
         await async_delete_entry_data(hass, entry)
     finally:
+        clear_provider_authentication_rejection(hass, entry)
         if not hass.config_entries.async_entries(DOMAIN):
             await _async_remove_global_effects(hass)
 
@@ -626,48 +676,15 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 entry, data={**entry.data, CONF_API_PROVIDER: provider}
             )
 
-    # Schema migration is intentionally independent of config-entry version. It is
-    # idempotent and exact-match only, so current entries created by an older release
-    # can be corrected without inventing another provider-only representation.
     for entry in entries:
-        if entry.version < CONFIG_ENTRY_VERSION:
-            continue
-        for subentry in tuple(entry.subentries.values()):
-            if subentry.subentry_type not in {"conversation", "ai_task_data"}:
-                continue
-            source = subentry.data
-            data = dict(source)
-            changed = await asyncio.to_thread(
-                _migrate_saved_agent_defaults,
-                data,
-                subentry.subentry_type,
-                entry_api_provider(entry),
+        legacy = entry.version < CONFIG_ENTRY_VERSION
+        if legacy:
+            _LOGGER.warning(
+                "Migrating Extended OpenAI Conversation (Responses) config entry %s from version %s to version %s",
+                entry.entry_id,
+                entry.version,
+                CONFIG_ENTRY_VERSION,
             )
-            # Preparation yields: preserve any newer save or agent/entry removal.
-            if (
-                subentry.data is not source
-                or not any(current is subentry for current in entry.subentries.values())
-                or not any(
-                    current is entry
-                    for current in hass.config_entries.async_entries(DOMAIN)
-                )
-            ):
-                continue
-            if changed:
-                hass.config_entries.async_update_subentry(entry, subentry, data=data)
-
-    if not any(entry.version < CONFIG_ENTRY_VERSION for entry in entries):
-        return
-
-    for entry in entries:
-        if entry.version >= CONFIG_ENTRY_VERSION:
-            continue
-        _LOGGER.warning(
-            "Migrating Extended OpenAI Conversation (Responses) config entry %s from version %s to version %s",
-            entry.entry_id,
-            entry.version,
-            CONFIG_ENTRY_VERSION,
-        )
         if entry.version == 1:
             existing_types = {
                 subentry.subentry_type for subentry in entry.subentries.values()
@@ -682,7 +699,9 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 hass.config_entries.async_add_subentry(entry, conversation_subentry)
             if "ai_task_data" not in existing_types:
                 ai_task_subentry = ConfigSubentry(
-                    data=MappingProxyType(dict(DEFAULT_AI_TASK_OPTIONS)),
+                    data=MappingProxyType(
+                        new_agent_options(DEFAULT_AI_TASK_OPTIONS, entry.data)
+                    ),
                     subentry_type="ai_task_data",
                     title=DEFAULT_AI_TASK_NAME,
                     unique_id=None,
@@ -692,97 +711,122 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 entry, title=entry.title, options={}, version=2
             )
 
+        complete = True
         for subentry in tuple(entry.subentries.values()):
             if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                 continue
-            source = subentry.data
-            data = dict(source)
-            changed = await asyncio.to_thread(
-                _migrate_saved_agent_defaults,
-                data,
-                subentry.subentry_type,
-                entry_api_provider(entry),
-            )
-            # Preparation yields: preserve any newer save or agent/entry removal.
-            if (
-                subentry.data is not source
-                or not any(current is subentry for current in entry.subentries.values())
-                or not any(
-                    current is entry
-                    for current in hass.config_entries.async_entries(DOMAIN)
-                )
-            ):
-                continue
-            if subentry.subentry_type == "ai_task_data":
-                if changed:
-                    hass.config_entries.async_update_subentry(
-                        entry, subentry, data=data
+            try:
+                complete = (
+                    await _async_migrate_saved_assistant(
+                        hass, entry, subentry, legacy=legacy
                     )
-                continue
-            mode = get_memory_mode(data)
-            data[CONF_MEMORY_MODE] = mode
-            data[CONF_MEMORY_ENABLED] = mode != MEMORY_MODE_OFF
-            data[CONF_MEMORY_AUTO_CREATE] = mode == MEMORY_MODE_AUTOMATIC
-            data.setdefault(
-                CONF_CONTEXT_TRUNCATE_STRATEGY,
-                LEGACY_CONTEXT_TRUNCATE_STRATEGY,
+                    and complete
+                )
+            except Exception as err:
+                complete = False
+                log_handled_failure(
+                    _LOGGER,
+                    f"Assistant configuration migration deferred entry={entry.entry_id} assistant={subentry.subentry_id}",
+                    err,
+                )
+        if (
+            legacy
+            and complete
+            and any(
+                current is entry
+                for current in hass.config_entries.async_entries(DOMAIN)
             )
-            data.setdefault(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
-            data.setdefault(CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS)
-            data.setdefault(
-                CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
-                DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
-            )
-            data.setdefault(CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED)
-            data.setdefault(
-                CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-                DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
-            )
-            data.setdefault(CONF_VOICE_SCOPE_POLICY, DEFAULT_VOICE_SCOPE_POLICY)
-            data.setdefault(CONF_VOICE_UNMAPPED_POLICY, DEFAULT_VOICE_UNMAPPED_POLICY)
-            data.setdefault(CONF_VOICE_DEVICE_MAPPINGS, {})
-            data.setdefault(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
-            data.setdefault(
-                CONF_USAGE_REQUEST_RETENTION_DAYS,
-                DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-            )
-            data.setdefault(
-                CONF_USAGE_RUN_RETENTION_DAYS,
-                DEFAULT_USAGE_RUN_RETENTION_DAYS,
-            )
-            data.setdefault(
-                CONF_SPEECH_PROCESSING_ENABLED,
-                DEFAULT_SPEECH_PROCESSING_ENABLED,
-            )
-            data.setdefault(CONF_SPEECH_STRIP_MARKDOWN, DEFAULT_SPEECH_STRIP_MARKDOWN)
-            data.setdefault(CONF_SPEECH_STRIP_URLS, DEFAULT_SPEECH_STRIP_URLS)
-            data.setdefault(
-                CONF_SPEECH_REGEX_REPLACEMENTS,
-                list(DEFAULT_SPEECH_REGEX_REPLACEMENTS),
-            )
-            data.setdefault(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
-            data.setdefault(CONF_GUEST_MODE_ENABLED, False)
-            data.setdefault(CONF_GUEST_SHARED_MEMORY_READ, False)
-            data.setdefault(CONF_GUEST_SHARED_MEMORY_WRITE, False)
-            data.setdefault(CONF_GUEST_KNOWLEDGE_ENABLED, False)
-            for guest_selector in (
-                CONF_GUEST_READABLE_ENTITIES,
-                CONF_GUEST_CONTROLLABLE_ENTITIES,
-                CONF_GUEST_READABLE_DOMAINS,
-                CONF_GUEST_CONTROLLABLE_DOMAINS,
-                CONF_GUEST_READABLE_AREAS,
-                CONF_GUEST_CONTROLLABLE_AREAS,
-                CONF_GUEST_READABLE_LABELS,
-                CONF_GUEST_CONTROLLABLE_LABELS,
-            ):
-                data.setdefault(guest_selector, [])
-            data.setdefault(CONF_CURRENT_DATETIME_ENABLED, False)
-            data.setdefault(
-                CONF_CURRENT_DATETIME_TEMPLATE, DEFAULT_CURRENT_DATETIME_TEMPLATE
-            )
-            data.setdefault(CONF_EXPOSED_ENTITIES_ENABLED, False)
-            data.setdefault(
-                CONF_EXPOSED_ENTITIES_TEMPLATE, DEFAULT_EXPOSED_ENTITIES_TEMPLATE
-            )
-            hass.config_entries.async_update_subentry(entry, subentry, data=data)
-        hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)
+        ):
+            hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)
+
+
+async def _async_migrate_saved_assistant(
+    hass: HomeAssistant, entry: ConfigEntry, subentry: ConfigSubentry, *, legacy: bool
+) -> bool:
+    """Migrate one assistant and preserve any concurrent edit."""
+    source = subentry.data
+    data = dict(source)
+    changed = await asyncio.to_thread(
+        _migrate_saved_agent_defaults,
+        data,
+        subentry.subentry_type,
+        entry_api_provider(entry),
+    )
+    if (
+        subentry.data is not source
+        or not any(current is subentry for current in entry.subentries.values())
+        or not any(
+            current is entry for current in hass.config_entries.async_entries(DOMAIN)
+        )
+    ):
+        return False
+    if legacy and subentry.subentry_type == "conversation":
+        _migrate_legacy_conversation_fields(data)
+        changed = True
+    if changed:
+        hass.config_entries.async_update_subentry(entry, subentry, data=data)
+    return True
+
+
+def _migrate_legacy_conversation_fields(data: dict[str, Any]) -> None:
+    mode = get_memory_mode(data)
+    data[CONF_MEMORY_MODE] = mode
+    data[CONF_MEMORY_ENABLED] = mode != MEMORY_MODE_OFF
+    data[CONF_MEMORY_AUTO_CREATE] = mode == MEMORY_MODE_AUTOMATIC
+    data.setdefault(
+        CONF_CONTEXT_TRUNCATE_STRATEGY,
+        LEGACY_CONTEXT_TRUNCATE_STRATEGY,
+    )
+    data.setdefault(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
+    data.setdefault(CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS)
+    data.setdefault(
+        CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+        DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+    )
+    data.setdefault(CONF_SHARED_ARCHIVE_ENABLED, DEFAULT_SHARED_ARCHIVE_ENABLED)
+    data.setdefault(
+        CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+        DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    )
+    data.setdefault(CONF_VOICE_SCOPE_POLICY, DEFAULT_VOICE_SCOPE_POLICY)
+    data.setdefault(CONF_VOICE_UNMAPPED_POLICY, DEFAULT_VOICE_UNMAPPED_POLICY)
+    data.setdefault(CONF_VOICE_DEVICE_MAPPINGS, {})
+    data.setdefault(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
+    data.setdefault(
+        CONF_USAGE_REQUEST_RETENTION_DAYS,
+        DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+    )
+    data.setdefault(
+        CONF_USAGE_RUN_RETENTION_DAYS,
+        DEFAULT_USAGE_RUN_RETENTION_DAYS,
+    )
+    data.setdefault(
+        CONF_SPEECH_PROCESSING_ENABLED,
+        DEFAULT_SPEECH_PROCESSING_ENABLED,
+    )
+    data.setdefault(CONF_SPEECH_STRIP_MARKDOWN, DEFAULT_SPEECH_STRIP_MARKDOWN)
+    data.setdefault(CONF_SPEECH_STRIP_URLS, DEFAULT_SPEECH_STRIP_URLS)
+    data.setdefault(
+        CONF_SPEECH_REGEX_REPLACEMENTS,
+        list(DEFAULT_SPEECH_REGEX_REPLACEMENTS),
+    )
+    data.setdefault(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
+    data.setdefault(CONF_GUEST_MODE_ENABLED, False)
+    data.setdefault(CONF_GUEST_SHARED_MEMORY_READ, False)
+    data.setdefault(CONF_GUEST_SHARED_MEMORY_WRITE, False)
+    data.setdefault(CONF_GUEST_KNOWLEDGE_ENABLED, False)
+    for guest_selector in (
+        CONF_GUEST_READABLE_ENTITIES,
+        CONF_GUEST_CONTROLLABLE_ENTITIES,
+        CONF_GUEST_READABLE_DOMAINS,
+        CONF_GUEST_CONTROLLABLE_DOMAINS,
+        CONF_GUEST_READABLE_AREAS,
+        CONF_GUEST_CONTROLLABLE_AREAS,
+        CONF_GUEST_READABLE_LABELS,
+        CONF_GUEST_CONTROLLABLE_LABELS,
+    ):
+        data.setdefault(guest_selector, [])
+    data.setdefault(CONF_CURRENT_DATETIME_ENABLED, False)
+    data.setdefault(CONF_CURRENT_DATETIME_TEMPLATE, DEFAULT_CURRENT_DATETIME_TEMPLATE)
+    data.setdefault(CONF_EXPOSED_ENTITIES_ENABLED, False)
+    data.setdefault(CONF_EXPOSED_ENTITIES_TEMPLATE, DEFAULT_EXPOSED_ENTITIES_TEMPLATE)

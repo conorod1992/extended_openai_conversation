@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import yaml
 
+from .backup_input import check_decoded_structure
 from .resource_limits import MAX_NATIVE_SERVICE_ACTIONS
 from .yaml_serialization import dump_yaml, load_authored_config, validate_yaml_structure
 
@@ -211,6 +212,7 @@ def _migrate_service_schema(tool: dict[str, Any], implementation: str) -> bool:
     if implementation == "execute_service":
         properties = cast(dict[str, Any], parameters["properties"])
         list_schema = cast(dict[str, Any], properties["list"])
+        list_schema["minItems"] = 1
         list_schema["maxItems"] = MAX_NATIVE_SERVICE_ACTIONS
     if legacy_default:
         parameters["required"] = ["list"]
@@ -270,6 +272,7 @@ def migrate_legacy_stock_native_function_tools(
     therefore preserved value-for-value. Any schema change, including a strict setting
     or a changed parameter constraint, prevents migration.
     """
+    check_decoded_structure(tools)
     migrated = [deepcopy(tool) for tool in tools]
     changed = False
     for tool in migrated:

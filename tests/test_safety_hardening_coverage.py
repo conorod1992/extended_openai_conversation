@@ -106,6 +106,8 @@ def test_execute_service_validation_rejects_invalid_and_oversized_batches() -> N
     """Native service execution is bounded before Home Assistant actions begin."""
     with pytest.raises(HomeAssistantError, match="list must be an array"):
         safety_hardening._validate_execute_service_request({"list": "not-a-list"})
+    with pytest.raises(HomeAssistantError, match="at least one action"):
+        safety_hardening._validate_execute_service_request({"list": []})
 
     with pytest.raises(HomeAssistantError, match="may contain at most"):
         safety_hardening._validate_execute_service_request(

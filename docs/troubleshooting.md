@@ -41,7 +41,7 @@ A ChatGPT subscription does not itself provide an API key. Eligible subscription
 
 Your provider or selected model may not implement a compatible `/v1/responses` endpoint.
 
-Set **API mode** to **Chat Completions** and test again.
+In **Assistant → Basics → Advanced request settings**, set **Provider API format** to **Chat Completions** and test again. For an unknown text-only model, see [Compatibility](reference/compatibility.md#model-ids-and-api-selection) for the other settings to check.
 
 For direct OpenAI, confirm the selected model supports the feature you are trying to use. For custom providers, consult the provider's API documentation rather than assuming that “OpenAI-compatible” includes Responses.
 
@@ -69,7 +69,7 @@ Set the mode temporarily to **Always**:
 
 ## Memory does not remember something
 
-Check that memory is not Off.
+Check that memory is not Off. Test as an authenticated Home Assistant user, or check the source device's retained-data scope under **Assistant → Voice & identity**. Unidentified voice requests are unretained by default and cannot save or retrieve persistent memories. Household scope also requires Shared Memory to be enabled, with a mode that permits the intended operation. See [Voice Identity](features/voice-identity.md) and [Persistent memory](features/persistent-memory.md).
 
 In **Manual** mode, explicitly say something like:
 
@@ -112,7 +112,7 @@ Open **Extended OpenAI → Data & Memory → Knowledge Library** and select the 
 
 Search is lexical. Add important alternative terms to the source title or description, use clear headings, and split unrelated material into focused sources. The assistant is prompted to use short keyword searches, retry once with broader terms, and browse metadata with `knowledge_list` when needed. It is also instructed never to invent source IDs. A filter containing only blank or unknown source IDs returns no results; it does not broaden the search to the full library. Use IDs returned by `knowledge_list`, or omit the filter to search the agent's full permitted library. A source is re-indexed immediately after editing; no Home Assistant restart is required. Knowledge is not learned automatically from conversations, and “remember this” continues to use persistent memory rather than the Knowledge Library.
 
-Do not put instructions or action authorization in a source. Source text is untrusted reference content and cannot override the assistant's higher-priority instructions.
+Do not put instructions or action authorization in a source. Extended OpenAI tells the model to treat source text as untrusted reference material. The integration checks permissions separately when a tool runs.
 
 ## Usage values look incomplete
 
@@ -155,3 +155,14 @@ Use **Settings → Devices & services → Extended OpenAI Conversation → Enabl
 This captures operational logs. EOAI's separate **Request debugging** feature captures deeper per-request details; neither switch enables the other. See [Logging](reference/logging.md) for details and privacy precautions.
 
 When reporting an issue, include the smallest relevant log excerpt and redact credentials, private URLs, entity data, and conversation text as necessary.
+
+## What to check when a warning appears
+
+| Log or status | Where to investigate |
+| --- | --- |
+| Provider authentication, model, or API format | Check **Chat model** in **Assistant → Basics**, and **Provider API format** under **Advanced request settings**. Use **Usage & Maintenance → Diagnostics → Run diagnostics** to test the connection. |
+| Provider response limit or rejected parameter | Review **Model parameters** and **Maximum response length** for the effective model. |
+| Function Tool or Request Rule failure | Open its editor. Check the Home Assistant trace and verify the actual outcome before repeating an action that may have taken effect. |
+| Speech regex worker or replacement failure | Use **Preview spoken text** in **Assistant → Speech**. If a custom replacement fails, speech uses the text from before custom replacements. |
+| Store needs repair or restore recovery is pending | Preserve the files and consult [Backup & Restore](features/backup-restore.md). Restart Home Assistant if the warning says it can resume a saved transaction. |
+| Scheduled Action abandoned | Check the assistant, Function Tool and due time in the warning before rescheduling. |

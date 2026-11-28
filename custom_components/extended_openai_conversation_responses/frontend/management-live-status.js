@@ -72,7 +72,7 @@ export function watchLiveStatus(panel, key, {view, delay, refresh, maxRefreshes 
   schedule();
 }
 
-function boundaryDelay(value) {
+export function boundaryDelay(value) {
   const boundary = Date.parse(value || "");
   return Number.isFinite(boundary) && boundary > Date.now()
     ? Math.min(60000, boundary - Date.now() + 200) : 60000;
@@ -107,10 +107,40 @@ export function watchTimedFeatureStatus(panel, feature) {
       const previous = panel._result, read = capturePageRead(panel, view);
       const pending = () => panel._guestOperation || panel._unsavedState?.scopes.get(view)?.pending;
       if (pending()) return;
-      const fresh = await panel._call(guest ? "guest_mode" : "quiet_hours", "get");
+      const publishGuestUnavailable = () => {
+        if (!current() || pending() || panel._result !== previous) return;
+        const status = {...previous?.status, state:"unavailable", currently_active:null};
+        panel._result = {...previous, status, policy:null};
+        const agent = panel._selectedAgent?.();
+        if (agent) agent.guest_mode = status;
+        feature?.refreshTimedStatus(panel);
+      };
+      let fresh;
+      try {
+        fresh = await panel._call(guest ? "guest_mode" : "quiet_hours", "get");
+      } catch (error) {
+        if (!guest) {
+          if (current() && !pending() && panel._result === previous) {
+            panel._result = {...previous, live_status_unavailable:true};
+            feature?.refreshTimedStatus(panel);
+          }
+          return;
+        }
+        publishGuestUnavailable();
+        return;
+      }
       if (!current() || pending() || panel._result !== previous) return;
-      if (guest && !completePolicyResponse(fresh, true)) return;
-      const result = guest ? {...previous, ...fresh} : fresh;
+      if (guest && (!completePolicyResponse(fresh, true) || !fresh?.status || typeof fresh.status !== "object")) {
+        publishGuestUnavailable();
+        return;
+      }
+      let policy = previous?.policy;
+      if (guest && (fresh.status?.currently_active || fresh.status?.state?.startsWith("active"))) {
+        const details = await panel._call("guest_mode", "policy").catch(() => null);
+        if (!current() || pending() || panel._result !== previous) return;
+        policy = details?.revision === fresh.revision ? details?.policy : null;
+      } else if (guest) policy = null;
+      const result = guest ? {...previous, ...fresh, policy} : fresh;
       if (!acceptPageRead(panel, result, read, {publish:true})) return;
       if (guest) {
         const agent = panel._selectedAgent?.();

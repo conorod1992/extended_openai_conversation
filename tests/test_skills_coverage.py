@@ -79,6 +79,19 @@ def test_skill_metadata_validation(tmp_path: Path) -> None:
         Skill(name="ok", description="x" * 1025, path=tmp_path / "SKILL.md")
 
 
+def test_discovered_skill_descriptions_are_utf8_safe(hass, tmp_path):
+    _write_skill(tmp_path / "literal", description='"😀"')
+    _write_skill(tmp_path / "long-escape", description=r'"\U0001F600"')
+    _write_skill(tmp_path / "paired-escapes", description=r'"\uD83D\uDE00"')
+    _write_skill(tmp_path / "unpaired-escape", description=r'"\uD83D"')
+
+    discovered = SkillManager(hass)._discover_skills_sync(tmp_path)
+    assert set(discovered) == {"literal", "long-escape", "paired-escapes"}
+    assert {skill.description.encode("utf-8") for skill in discovered.values()} == {
+        "😀".encode("utf-8")
+    }
+
+
 @pytest.mark.parametrize(
     "content",
     [

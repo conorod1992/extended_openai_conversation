@@ -57,7 +57,7 @@ Home Assistant Assist exposure determines which normal entities are available to
 
 When model processing is needed, relevant request text, prompts/context, tool definitions and retrieved memory or Knowledge content may be sent to the provider you configure. Provider-side retention and processing are governed by that provider's policies.
 
-Optional Hybrid semantic memory retrieval also sends eligible memory text and search queries to the configured embedding provider to build or refresh its local search cache. Choose lexical retrieval if you do not want that additional embedding request path.
+**Keyword + meaning** can send eligible memory text and search queries to your configured embedding provider. Choose **Keyword matching** to search saved memories locally. Eligible recent Short-term memories can also be included automatically in a model request, even when unrelated to the question.
 
 Memories, Knowledge Library content, Request Rules, optional archived conversations, usage data and related integration state are stored locally in Home Assistant. Private full backups include provider connection settings and API credentials alongside sensitive retained data. They are not encrypted. Keep them private and store them securely.
 

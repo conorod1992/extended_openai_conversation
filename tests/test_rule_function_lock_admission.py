@@ -90,8 +90,8 @@ async def test_queued_rule_admission_after_failed_write_and_function_validation(
             function_validating.set()
             await release_function.wait()
 
-    async def observed_rule(*args):
-        result = await validate_rule(*args)
+    async def observed_rule(*args, **kwargs):
+        result = await validate_rule(*args, **kwargs)
         validated.set()
         return result
 

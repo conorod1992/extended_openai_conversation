@@ -49,6 +49,8 @@ def _chat_sse_tool_call(
     call_id: str = _TOOL_CALL_ID,
     name: str = "execute_services",
     arguments: dict[str, Any] | None = None,
+    *,
+    raw_arguments: str | None = None,
 ) -> bytes:
     arguments = _TOOL_ARGUMENTS if arguments is None else arguments
     chunk = {
@@ -68,9 +70,9 @@ def _chat_sse_tool_call(
                             "type": "function",
                             "function": {
                                 "name": name,
-                                "arguments": json.dumps(
-                                    arguments, separators=(",", ":")
-                                ),
+                                "arguments": raw_arguments
+                                if raw_arguments is not None
+                                else json.dumps(arguments, separators=(",", ":")),
                             },
                         }
                     ],
@@ -129,10 +131,16 @@ def _responses_sse_tool_call(
     call_id: str = _TOOL_CALL_ID,
     name: str = "execute_services",
     tool_arguments: dict[str, Any] | None = None,
+    *,
+    raw_arguments: str | None = None,
 ) -> bytes:
-    arguments = json.dumps(
-        _TOOL_ARGUMENTS if tool_arguments is None else tool_arguments,
-        separators=(",", ":"),
+    arguments = (
+        raw_arguments
+        if raw_arguments is not None
+        else json.dumps(
+            _TOOL_ARGUMENTS if tool_arguments is None else tool_arguments,
+            separators=(",", ":"),
+        )
     )
     item = {
         "id": "fc-provider-wire",
@@ -705,8 +713,13 @@ async def test_provider_tool_cannot_use_stale_guest_entity_exposure(
         release_provider.set()
 
     result = await asyncio.wait_for(pending, timeout=10)
-    assert _speech(result) == "The request was handled safely."
     assert calls == []
+    if initially_exposed:
+        # Revocation also invalidates the admitted guest continuity scope.
+        assert result.response.error_code is not None
+        assert len(wire.requests) == 1
+        return
+    assert _speech(result) == "The request was handled safely."
     assert len(wire.requests) == 2
     tool_result = _tool_result_from_chat_request(wire.requests[1]["body"])
     tool_results = tool_result.get("result")

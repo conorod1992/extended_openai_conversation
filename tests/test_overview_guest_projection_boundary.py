@@ -15,7 +15,11 @@ from custom_components.extended_openai_conversation_responses import management_
 @pytest.mark.parametrize("excluded", [False, True])
 async def test_overview_primary_detail_cache_flag(hass, monkeypatch, state, excluded):
     status = {"state": state, "currently_active": state in {"active", "active_indefinitely"}}
-    options = {"guest_excluded_entities": ["lock.front_door"] if excluded else [], "functions": []}
+    options = {
+        "guest_policy_version": 2,
+        "guest_excluded_entities": ["lock.front_door"] if excluded else [],
+        "functions": [],
+    }
     entry = SimpleNamespace(entry_id="entry", title="Provider", data={})
     subentry = SimpleNamespace(subentry_id="agent", title="Assistant", data=options)
     manager = SimpleNamespace(status=lambda: dict(status))

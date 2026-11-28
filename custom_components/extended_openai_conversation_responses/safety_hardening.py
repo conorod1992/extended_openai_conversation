@@ -121,6 +121,10 @@ def _validate_execute_service_request(arguments: dict[str, Any]) -> None:
     actions = arguments.get("list")
     if not isinstance(actions, list):
         raise HomeAssistantError("execute_service list must be an array")
+    if not actions:
+        raise HomeAssistantError(
+            "execute_service list must include at least one action"
+        )
     if len(actions) > MAX_NATIVE_SERVICE_ACTIONS:
         raise HomeAssistantError(
             f"execute_service may contain at most {MAX_NATIVE_SERVICE_ACTIONS} actions"

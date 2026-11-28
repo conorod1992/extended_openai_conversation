@@ -21,6 +21,7 @@ class EffectiveCapabilities:
     """Capabilities that may be advertised to the model for one request."""
 
     persistent_memory: bool
+    scheduled_actions: bool
 
 
 def persistent_memory_scope_available(
@@ -40,6 +41,7 @@ def resolve_effective_capabilities(
     options: Mapping[str, Any],
     *,
     memory_scope_available: bool,
+    scheduled_action_owner_available: bool = False,
     guest_policy: GuestCapabilityPolicy | None = None,
 ) -> EffectiveCapabilities:
     """Resolve model-facing capabilities from configuration, scope, and policy."""
@@ -49,8 +51,14 @@ def resolve_effective_capabilities(
         and memory_scope_available
         and (
             not policy.guest_active
-            or policy.shared_memory_read
-            or policy.shared_memory_write
+            or (
+                options.get(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
+                != SHARED_MEMORY_DISABLED
+                and (policy.shared_memory_read or policy.shared_memory_write)
+            )
         )
     )
-    return EffectiveCapabilities(persistent_memory=persistent_memory)
+    return EffectiveCapabilities(
+        persistent_memory=persistent_memory,
+        scheduled_actions=scheduled_action_owner_available and not policy.guest_active,
+    )

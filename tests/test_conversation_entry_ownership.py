@@ -223,13 +223,16 @@ async def test_continuity_stage_restores_guest_and_prompt_state(
     policy = SimpleNamespace(guest_active=False)
     resolution = SimpleNamespace(key="key", claim_token="claim")
     continuity = SimpleNamespace(
+        guest_namespace=Mock(return_value=None),
         async_resolve=AsyncMock(return_value=resolution),
         async_release=AsyncMock(),
     )
     agent = SimpleNamespace(
+        hass=SimpleNamespace(),
         subentry=SimpleNamespace(data={}),
         _continuity=continuity,
         _resolve_live_guest_policy=lambda: policy,
+        _guest_continuity_access=lambda _policy: None,
         _async_process_claimed=AsyncMock(return_value="result"),
     )
     request = SimpleNamespace(
@@ -259,6 +262,8 @@ async def test_continuity_stage_restores_guest_and_prompt_state(
             )
         assert owner._ACTIVE_GUEST_POLICY.get() is old_guest
         assert owner._PROMPT_CACHE_CONTEXT.get() is old_cache
+        if stage in {"resolve", "claimed", "release"}:
+            continuity.guest_namespace.assert_called_once_with(None)
         if stage in {"claimed", "release"}:
             continuity.async_release.assert_awaited_once_with("key", "claim")
         else:
@@ -270,11 +275,13 @@ async def test_continuity_stage_restores_guest_and_prompt_state(
 
 async def test_invalid_timeout_before_claim_resets_guest_policy(monkeypatch) -> None:
     agent = SimpleNamespace(
+        hass=SimpleNamespace(),
         subentry=SimpleNamespace(
             data={CONF_CONVERSATION_TIMEOUT_MINUTES: "invalid"}
         ),
         _continuity=SimpleNamespace(async_resolve=AsyncMock()),
         _resolve_live_guest_policy=lambda: SimpleNamespace(guest_active=False),
+        _guest_continuity_access=lambda _policy: None,
     )
     request = SimpleNamespace(
         as_llm_context=lambda _: SimpleNamespace(context=Context()),

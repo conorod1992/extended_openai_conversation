@@ -47,6 +47,33 @@ export function configurationSubmissionIsCurrent(panel, submission) {
     && (!Object.hasOwn(submission, "authenticationGeneration") || (panel._eocAuthenticationGeneration || 0) === submission.authenticationGeneration);
 }
 
+// Replacement panels on the same HA connection share the recovery obligation.
+const configurationSaveRecovery = new WeakMap();
+const recoveryOwners = panel => {
+  const connection = panel.hass?.connection || panel;
+  if (!configurationSaveRecovery.has(connection)) configurationSaveRecovery.set(connection, new Map());
+  return configurationSaveRecovery.get(connection);
+};
+const recoveryKey = owner => JSON.stringify([owner.userId, owner.entryId, owner.agentId]);
+
+export function uncertainConfigurationSave(panel, owner = captureConfigurationOwner(panel)) {
+  return recoveryOwners(panel).get(recoveryKey(owner));
+}
+
+export function markConfigurationSaveRecovery(panel, owner, committed = false) {
+  recoveryOwners(panel).set(recoveryKey(owner), {source:panel, submission:owner, committed});
+  if (configurationSubmissionIsCurrent(panel, owner)) {
+    panel._invalidateCleanConfiguration?.(owner.agentId);
+    panel._configDataStale = true;
+  }
+}
+
+export function settleConfigurationSaveRecovery(panel, owner, expected) {
+  if (expected && uncertainConfigurationSave(panel, owner) === expected) {
+    recoveryOwners(panel).delete(recoveryKey(owner));
+  }
+}
+
 export function configurationReadOvertookSubmission(panel, submission) {
   return (panel._eocConfigurationReadEpoch || 0) !== (submission.readEpoch || 0);
 }
@@ -116,6 +143,8 @@ export function discardConfigurationDraft(panel) {
   panel._draft = clone(baseline.config);
   panel._draftTitle = baseline.title;
   discardVoiceMappingDraft(panel, baseline.config.voice_device_mappings);
+  const recovery = uncertainConfigurationSave(panel);
+  if (recovery?.source === panel) recovery.submission = null;
   const replacement = panel._eocRestoredConfiguration;
   if (replacement && configurationSubmissionIsCurrent(panel, replacement)) {
     // The replacement's saved values are still unknown. Reset its comparison
@@ -138,7 +167,10 @@ export function discardConfigurationDraft(panel) {
 export function mergeConfigurationRead(panel, current, baseline, saved) {
   const comparison = configurationAuthoringBaseline(panel, baseline);
   const pending = panel._eocConfigurationSubmission;
-  const protectedFields = pending && !pending.acknowledged && configurationSubmissionIsCurrent(panel, pending) ? pending.fields : [];
+  const recovery = uncertainConfigurationSave(panel);
+  const uncertain = recovery?.source === panel && recovery.submission && configurationSubmissionIsCurrent(panel, recovery.submission)
+    ? recovery.submission : null;
+  const protectedFields = pending && !pending.acknowledged && configurationSubmissionIsCurrent(panel, pending) ? pending.fields : uncertain?.fields || [];
   panel._eocModelIntent?.acceptReasoningRead?.(panel, saved.config, {comparisonConfig:comparison.config, protectedFields});
   const next = mergeAcknowledgedDraft(current.draft, comparison.config, saved.config);
   let title = current.title !== comparison.title ? current.title : saved.title;
@@ -150,6 +182,15 @@ export function mergeConfigurationRead(panel, current, baseline, saved) {
       else delete next[key];
     }
     if (pending.writesTitle) title = current.title;
+  } else if (uncertain) {
+    for (const key of uncertain.fields) {
+      if (recovery.committed && same(field(current.draft, key), field(uncertain.draft, key))) {
+        if (Object.hasOwn(saved.config, key)) next[key] = clone(saved.config[key]);
+        else delete next[key];
+      } else if (Object.hasOwn(current.draft, key)) next[key] = clone(current.draft[key]);
+      else delete next[key];
+    }
+    if (uncertain.writesTitle) title = recovery.committed && current.title === uncertain.title ? saved.title : current.title;
   }
   return {draft:next, title};
 }

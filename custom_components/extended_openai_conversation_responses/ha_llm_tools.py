@@ -22,19 +22,37 @@ import logging
 from types import ModuleType
 from typing import Any
 
-from homeassistant.core import HomeAssistant
+from homeassistant.components import conversation
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import llm
+from homeassistant.helpers import entity_registry as er, intent, llm
 
+from .const import DOMAIN
 from .exceptions import EffectOutcomeUnknown, EffectReplayBlocked
 from .function_tool_recovery import should_report_uncertain_effects
 from .ha_tool_result_compat import HAToolResultError, execution_tool_result
+from .local_intents import CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI
 from .operational_errors import log_handled_failure
 from .schema_errors import SCHEMA_ERRORS
 from .template_diagnostics import private_template_diagnostics
 
 _LOGGER = logging.getLogger(__name__)
 TOOL_TYPE = "ha_llm"
+_TIMER_COMMAND_ARGUMENT = "conversation_command"
+_TIMER_ONLY_DESCRIPTION = "Start an ordinary Home Assistant timer."
+_NATIVE_COMMAND_TOOL = "homeassistant.components.intent.llm.ScheduleCommandTool"
+_DELAYED_ROUTING = (
+    "The assistant preference Use EOAI for delayed actions is enabled. This rule "
+    "takes precedence over Home Assistant tool instructions for delayed actions. "
+    "If the user asks to perform an action later, including in a follow-up, use "
+    "a suitable EOAI Function Tool with a positive delay, or load its Function Group "
+    "if available. If no suitable tool is available for that action, explain that "
+    "it cannot be scheduled. For that delayed action, never execute immediately, substitute a "
+    "timer, create an automation, or use Home Assistant's delayed conversation commands. "
+    "Confirm scheduling only after the Function Tool reports a saved action ID. "
+    "Use the normal tools for immediate actions and other requests. "
+    "Continue to use Home Assistant timer tools for ordinary timers and timer management."
+)
 _REFERENCE_FIELDS = frozenset(
     {"type", "source_type", "source_id", "api_id", "tool_name"}
 )
@@ -142,6 +160,30 @@ def _schema(tool: llm.Tool, serializer: Callable[[Any], Any] | None) -> dict[str
     return dict(compatible_to_openapi(tool.parameters, custom_serializer=serializer))
 
 
+def preview_context(
+    hass: HomeAssistant,
+    user_id: str | None,
+    *,
+    device_id: str | None = None,
+    subentry_id: str | None = None,
+) -> llm.LLMContext:
+    """Describe a conversation for tool discovery, never for tool dispatch."""
+    agent_id = None
+    if subentry_id is not None and (registry := hass.data.get(er.DATA_REGISTRY)):
+        agent_id = registry.async_get_entity_id(
+            conversation.DOMAIN, DOMAIN, subentry_id
+        )
+    return conversation.ConversationInput(
+        text="",
+        context=Context(user_id=user_id),
+        conversation_id=None,
+        language=hass.config.language,
+        device_id=device_id,
+        satellite_id=None,
+        agent_id=agent_id or conversation.HOME_ASSISTANT_AGENT,
+    ).as_llm_context(DOMAIN)
+
+
 @dataclass(slots=True)
 class LiveTool:
     """One capability owned exclusively by the current request."""
@@ -152,6 +194,40 @@ class LiveTool:
     source_label: str
     prompt: str
     spec: dict[str, Any]
+    timer_only: bool = False
+    delayed_command_blocked: bool = False
+
+    @property
+    def is_native_delayed_command(self) -> bool:
+        """Identify HA's dedicated scheduling capability by its native implementation."""
+        return (
+            self.reference["api_id"] == llm.LLM_API_ASSIST
+            and _implementation(self.tool) == _NATIVE_COMMAND_TOOL
+        )
+
+    def restrict_delayed_commands(self) -> LiveTool:
+        """Restrict the native HA scheduling paths for this request."""
+        if self.is_native_delayed_command:
+            return replace(self, delayed_command_blocked=True)
+        native_name = getattr(self.tool, "intent_type", self.reference["tool_name"])
+        # Older IntentTool dispatches by its native name. Newer HA stores the
+        # intent_type separately and can prefix the tool name by integration.
+        if not isinstance(self.tool, llm.IntentTool) or native_name not in {
+            intent.INTENT_START_TIMER,
+            f"intent__{intent.INTENT_START_TIMER}",
+        }:
+            return self
+        spec = deepcopy(self.spec)
+        spec["description"] = _TIMER_ONLY_DESCRIPTION
+        parameters = spec.get("parameters", {})
+        properties = parameters.get("properties")
+        if isinstance(properties, dict):
+            properties.pop(_TIMER_COMMAND_ARGUMENT, None)
+        if isinstance(required := parameters.get("required"), list):
+            parameters["required"] = [
+                name for name in required if name != _TIMER_COMMAND_ARGUMENT
+            ]
+        return replace(self, spec=spec, timer_only=True)
 
     @private_template_diagnostics
     async def async_call(self, tool_input: llm.ToolInput) -> Any:
@@ -159,7 +235,18 @@ class LiveTool:
         matches = [tool for tool in self.instance.tools if tool.name == self.tool.name]
         if len(matches) != 1 or matches[0] is not self.tool:
             raise HomeAssistantError("HA tool changed before dispatch")
-        original_args = deepcopy(tool_input.tool_args)
+        if self.delayed_command_blocked:
+            raise HomeAssistantError("Use an EOAI Function Tool for delayed actions")
+        raw_args = tool_input.tool_args
+        if not isinstance(raw_args, Mapping):
+            raise HomeAssistantError(
+                "Home Assistant tool arguments do not match the requested schema"
+            )
+        if self.timer_only and _TIMER_COMMAND_ARGUMENT in raw_args:
+            raise HomeAssistantError(
+                "Use an EOAI Function Tool for delayed actions. This Home Assistant tool starts ordinary timers."
+            )
+        original_args = deepcopy(dict(raw_args))
         try:
             args = self.tool.parameters(deepcopy(original_args))
         except SCHEMA_ERRORS:
@@ -219,6 +306,41 @@ class ToolSnapshot:
     unavailable_sources: list[str] = field(default_factory=list)
     caller_provided: bool = False
     caller_prompt: str = ""
+    use_eoai_delayed_actions: bool = False
+    require_positive_delay: bool = False
+
+    def with_delayed_action_preference(
+        self, options: Mapping[str, Any]
+    ) -> ToolSnapshot:
+        """Apply the selected assistant's policy to a request-owned snapshot."""
+        if self.caller_provided or not options.get(
+            CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI
+        ):
+            return self
+        return replace(
+            self,
+            tools={
+                key: live.restrict_delayed_commands()
+                for key, live in self.tools.items()
+                if not live.is_native_delayed_command
+            },
+            use_eoai_delayed_actions=True,
+        )
+
+    @staticmethod
+    def delayed_action_tool_available(tool: dict[str, Any]) -> bool:
+        """Return whether a tool is available during a recognised delayed command."""
+        from .function_execution import supports_function_tool_delay
+        from .function_tool_policy import is_integration_owned_read_only_tool
+
+        return (
+            tool.get("function", {}).get("type") == "function_group_loader"
+            or is_integration_owned_read_only_tool(tool)
+            or (
+                not is_ha_tool(tool)
+                and supports_function_tool_delay(tool.get("spec", {}))
+            )
+        )
 
     def project(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Keep saved references intact while replacing only live runtime specs."""
@@ -260,6 +382,30 @@ class ToolSnapshot:
                 "HA tool names in this request (source name = callable name):\n"
                 + "\n".join(aliases)
             ] = None
+        if self.use_eoai_delayed_actions:
+            from .function_execution import supports_function_tool_delay
+
+            prompts[_DELAYED_ROUTING] = None
+            if self.require_positive_delay:
+                prompts[
+                    "Home Assistant recognised the current request as a delayed action. "
+                    "Any Function Tool used to perform that action must include a positive delay."
+                ] = None
+            if not any(
+                tool.get("function", {}).get("type") == "function_group_loader"
+                or (
+                    not is_ha_tool(tool)
+                    and supports_function_tool_delay(tool.get("spec", {}))
+                )
+                for tool in tools
+            ):
+                prompts[
+                    "No delay-capable EOAI Function Tool is available in this request. "
+                    "Tell the user that the delayed action cannot be scheduled."
+                    if self.require_positive_delay
+                    else "If the user requested a delayed action, explain that it cannot be scheduled "
+                    "because no delay-capable EOAI Function Tool is available in this request."
+                ] = None
         return "\n".join(prompts)
 
 

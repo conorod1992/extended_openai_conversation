@@ -1,6 +1,6 @@
 """Authoritative HA-local dates for Management, independent of client TZDB."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 import re
 from typing import Any
 
@@ -8,13 +8,17 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
+from .local_time import wall_time_instants
 from .record_timestamps import parse_datetime
 
 
 def local_wall_time(hass: HomeAssistant, value: Any) -> str | None:
     """Project an existing instant using the server's configured timezone."""
+    return _wall_time(value, dt_util.get_time_zone(hass.config.time_zone))
+
+
+def _wall_time(value: Any, zone: tzinfo | None) -> str | None:
     parsed = parse_datetime(value) if isinstance(value, str) else None
-    zone = dt_util.get_time_zone(hass.config.time_zone)
     if parsed is None or parsed.tzinfo is None or zone is None:
         return ""
     try:
@@ -40,12 +44,8 @@ def resolve_local_time(
     zone = dt_util.get_time_zone(hass.config.time_zone)
     if zone is None:
         raise HomeAssistantError("Home Assistant timezone is unavailable")
-    candidates = set()
     try:
-        for fold in (0, 1):
-            instant = wall.replace(tzinfo=zone, fold=fold).astimezone(UTC)
-            if instant.astimezone(zone).replace(tzinfo=None) == wall:
-                candidates.add(instant)
+        candidates = wall_time_instants(wall, zone)
     except (OverflowError, ValueError) as err:
         raise HomeAssistantError("Choose a valid local date and time.") from err
     if not candidates:
@@ -99,6 +99,8 @@ def project_management_dates(
                 local_times[field + "_local"] = (
                     wall_time[:16] if wall_time is not None else None
                 )
+                if wall_time is None:
+                    local_times[field + "_utc"] = _wall_time(status[field], UTC)
         result = {
             **result,
             "status": {**status, **local_times},

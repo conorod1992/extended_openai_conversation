@@ -12,7 +12,7 @@ For service calls, use valid Home Assistant action names and target entities tha
 
 ## How should I troubleshoot provider errors?
 
-Confirm the API key, selected provider, and Base URL. Then check whether the provider supports the selected model and API mode. “OpenAI compatible” does not guarantee support for the Responses API or every tool feature; select **Chat Completions** when the configured provider does not implement `/v1/responses`.
+Confirm the API key, selected provider, and Base URL. Then check whether the provider supports the selected model and API mode. “OpenAI compatible” does not guarantee support for the Responses API or every tool feature; select **Chat Completions** when the configured provider does not implement `/v1/responses`. If the model ID is unknown and you only need text, follow the [text-only setup in Compatibility](../reference/compatibility.md#model-ids-and-api-selection), including setting **Tool-call limit per request** to `0`.
 
 For direct OpenAI Web Search, use API mode **Responses**, a direct OpenAI Base URL, and a model that supports the hosted tool. Web Search is not a custom Google-search Function Tool requirement. See [Web Search](../features/web-search.md).
 

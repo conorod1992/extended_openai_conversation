@@ -57,12 +57,16 @@ from tests.test_review_replay_execution import (
     "mode", ["success", "committed_error", "rejected", "unreadable"]
 )
 async def test_queue_settlement_owns_one_receipt_and_preserves_earlier_unknown(
-    hass, mode
+    hass, mode, monkeypatch
 ):
     from custom_components.extended_openai_conversation_responses.delayed_tools import (
         DelayedToolManager,
     )
 
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.functions.native.NativeFunction.async_authorize_scheduled_services",
+        AsyncMock(),
+    )
     manager = DelayedToolManager(hass)
     manager._setup_complete = True
     persisted = {"calls": []}
@@ -472,11 +476,15 @@ def test_receipt_ceiling_refuses_effects_and_bounds_rejection_markers(monkeypatc
 
 
 @pytest.mark.parametrize("committed", [False, True])
-async def test_queue_readback_cannot_settle_an_interleaved_effect(hass, committed):
+async def test_queue_readback_cannot_settle_an_interleaved_effect(hass, committed, monkeypatch):
     from custom_components.extended_openai_conversation_responses.delayed_tools import (
         DelayedToolManager,
     )
 
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.functions.native.NativeFunction.async_authorize_scheduled_services",
+        AsyncMock(),
+    )
     manager = DelayedToolManager(hass)
     manager._setup_complete = True
     entered, finish = asyncio.Event(), asyncio.Event()
@@ -504,7 +512,7 @@ async def test_queue_readback_cannot_settle_an_interleaved_effect(hass, committe
                 function_tool=tool,
             )
         )
-        await entered.wait()
+        await asyncio.wait_for(entered.wait(), timeout=5)
         unrelated = receipts.execution_started(
             kind="unrelated", prepared={"effect": "unknown"}
         )

@@ -15,6 +15,7 @@ def schema_with_library():
         "type": "object",
         "properties": {"value": {"type": ["string", "null"]}},
         "required": ["value"],
+        "additionalProperties": False,
         "$defs": {
             "unused": {"type": "object", "properties": {"optional": {"type": "string"}}}
         },

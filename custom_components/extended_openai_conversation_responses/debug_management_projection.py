@@ -20,6 +20,7 @@ from .request_diagnostics import (
     summary_diagnostics,
     trace_diagnostics,
 )
+from .usage import add_usage_counts
 
 _TRUNCATED_TEXT = "<management debug value truncated>"
 _MAX_CONTAINER_ITEMS = 256
@@ -140,7 +141,7 @@ def _summary(trace: Any) -> dict[str, Any]:
     }
     for request in trace.provider_requests:
         for key in usage:
-            usage[key] += int(request.usage.get(key, 0))
+            usage[key] = add_usage_counts(usage[key], int(request.usage.get(key, 0)))
     error, error_meta = _bounded_value(
         trace.error, MANAGEMENT_DEBUG_SUMMARY_VALUE_CHARACTERS
     )
@@ -194,7 +195,13 @@ def _provider_request(request: Any, page_budget: _ProjectionBudget) -> dict[str,
             "request": request_value,
             "request_meta": {
                 **request_meta,
-                "captured_characters": request.metrics.get("request_characters"),
+                "capture_truncated": bool(
+                    request.metrics.get("request_capture_truncated")
+                ),
+                "captured_characters": request.metrics.get(
+                    "captured_request_characters",
+                    request.metrics.get("request_characters"),
+                ),
             },
             "metrics": dict(request.metrics),
             "stream_open_ms": request.stream_open_ms,
@@ -347,6 +354,7 @@ def debug_trace_page(
     field_truncated = any(meta.get("truncated") for meta in field_meta.values())
     provider_truncated = any(
         request["request_meta"].get("truncated")
+        or request["request_meta"].get("capture_truncated")
         or request["response_events_meta"].get("truncated")
         or request["response_events_meta"].get("capture_truncated")
         or request["error_meta"].get("truncated")

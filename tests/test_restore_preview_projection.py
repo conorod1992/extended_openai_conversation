@@ -221,7 +221,7 @@ async def test_knowledge_preview_survives_only_unselected_completed_activity(
 
 
 @pytest.mark.parametrize(
-    "field", ["title", "config", "request_rules", "knowledge", "provider"]
+    "field", ["title", "config", "knowledge", "provider"]
 )
 def test_knowledge_review_dependencies_still_invalidate(field):
     state = _states()[0]
@@ -234,11 +234,22 @@ def test_knowledge_review_dependencies_still_invalidate(field):
         state.title = "Changed"
     elif field == "config":
         state.config["prompt"] = "Changed"
-    elif field == "request_rules":
-        state.request_rules["rules"].append({"name": "changed dependency"})
     else:
         state.knowledge.clear()
     assert bt._snapshot_revision(state, selected, provider) != original
+
+
+def test_request_rules_are_a_revision_dependency_for_setup():
+    before = _states()[0]
+    after = deepcopy(before)
+    after.request_rules["rules"].append({"name": "changed dependency"})
+    for section in (transfer.SECTION_CONFIGURATION, transfer.SECTION_REQUEST_RULES):
+        assert bt._snapshot_revision(after, (section,)) != bt._snapshot_revision(
+            before, (section,)
+        )
+    assert bt._snapshot_revision(
+        after, (transfer.SECTION_KNOWLEDGE,)
+    ) == bt._snapshot_revision(before, (transfer.SECTION_KNOWLEDGE,))
 
 
 def test_archive_bindings_only_matter_when_archive_is_selected():

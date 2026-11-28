@@ -53,9 +53,8 @@ async def run_execution_workflows(hass, monkeypatch, cases):
             inner.insert(
                 0 if case.failure == "before" else 1,
                 {
-                    "type": "bash",
-                    "command": "echo disabled",
-                    "allow_unsafe_shell": False,
+                    "type": "template",
+                    "value_template": "{{ 1 / 0 }}",
                 },
             )
         # Guest control tools must be entity-scoped; templates are unscopable.

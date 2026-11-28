@@ -55,7 +55,7 @@ def factory_probe(monkeypatch):
         monkeypatch.setattr(archive, "HomeAssistantArchiveStorage", Store)
         monkeypatch.setattr(usage, "_UsageStore", Store)
         monkeypatch.setattr(usage, "_register_usage_maintenance", lambda *_: None)
-        monkeypatch.setattr(guest_mode, "PropagatingWriteStore", Store)
+        monkeypatch.setattr(guest_mode, "_GuestModeStore", Store)
         monkeypatch.setattr(request_rules, "RequestRuleStore", Store)
         getter = {
             "archive": archive.async_get_archive,

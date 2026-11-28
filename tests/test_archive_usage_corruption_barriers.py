@@ -11,6 +11,7 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
     ConversationArchive,
     HomeAssistantArchiveStorage,
 )
+from custom_components.extended_openai_conversation_responses.scope import user_scope
 from custom_components.extended_openai_conversation_responses.usage import (
     RequestUsage,
     UsageManager,
@@ -76,7 +77,7 @@ async def test_usage_replacement_clears_barrier_only_after_all_authoritative_wri
 
 
 @pytest.mark.parametrize(
-    "damage", ["session", "turn", "duplicate", "container", "metadata", "partition"]
+    "damage", ["session", "turn", "duplicate", "container", "metadata", "partition", "missing_index"]
 )
 async def test_archive_native_evidence_survives_mutation_and_restart(hass, damage):
     storage = HomeAssistantArchiveStorage(hass, "entry", "agent")
@@ -96,6 +97,8 @@ async def test_archive_native_evidence_survives_mutation_and_restart(hass, damag
         payload["turns"] = {"recoverable": payload["turns"]}
     elif damage == "metadata":
         metadata["active"] = {"recoverable": ["bad binding"]}
+    elif damage == "missing_index":
+        del metadata["partitions"]
     else:
         metadata["partitions"].append("2026-13")
     await storage.async_save_metadata(metadata)
@@ -119,6 +122,59 @@ async def test_archive_native_evidence_survives_mutation_and_restart(hass, damag
     await manager.async_replace_backup([_session()], [_turn()])
     assert "storage_repair_required" not in manager.stats()
     assert len((await manager.async_backup_data())["turns"]) == 1
+
+
+@pytest.mark.parametrize(
+    "index",
+    [None, [], ["2026-08"]],
+    ids=["missing-store", "empty-index", "incomplete-index"],
+)
+async def test_archive_preserves_unindexed_native_transcripts(hass, index):
+    storage = HomeAssistantArchiveStorage(hass, "entry", "agent")
+    if index is not None:
+        await storage.async_save_metadata(
+            {"sessions": [], "active": {}, "partitions": index}
+        )
+        for month in index:
+            await storage.async_save_partition(month, {"turns": []})
+    await storage.async_save_partition("2026-09", {"turns": [asdict(_turn())]})
+    path = Path(storage._partition_store("2026-09").path)
+    evidence = path.read_bytes()
+    archive = ConversationArchive(storage, "agent")
+    await archive.async_initialize()
+    assert archive.stats()["storage_repair_required"]
+    with pytest.raises(ValueError, match="needs repair"):
+        await archive.async_begin_session(
+            "new-session",
+            user_scope("alice", source="authenticated_user"),
+            "new-session",
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
+    with pytest.raises(ValueError, match="needs repair"):
+        await archive.async_backup_data()
+    assert path.read_bytes() == evidence
+    await archive.async_replace_backup([], [])
+    restarted = ConversationArchive(storage, "agent")
+    await restarted.async_initialize()
+    assert not restarted.stats().get("storage_repair_required")
+
+
+@pytest.mark.parametrize("emergency_mode", [False, True])
+async def test_archive_accepts_an_empty_or_intentionally_unreadable_partition(
+    hass, emergency_mode
+):
+    storage = HomeAssistantArchiveStorage(hass, "entry", "agent")
+    await storage.async_save_partition(
+        "2026-09", {"turns": [asdict(_turn())] if emergency_mode else []}
+    )
+    if emergency_mode:
+        storage._metadata.set_load_empty()
+    archive = ConversationArchive(storage, "agent")
+    await archive.async_initialize()
+    assert not archive.stats().get("storage_repair_required")
+    assert (await archive.async_backup_data())["turns"] == []
 
 
 @pytest.mark.parametrize(
@@ -211,3 +267,29 @@ async def test_usage_native_evidence_survives_immediate_delayed_and_shutdown_wri
         assert reloaded.persistence_status()["survives_restart"]
         assert reloaded.requests == reloaded.runs == []
         assert reloaded.totals.total_tokens == 40
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"{",
+        b"x" * 4097,
+        b'{"version":999,"key":"wrong","data":{"turns":[]}}',
+    ],
+    ids=["malformed-json", "oversized", "unrecognized-envelope"],
+)
+async def test_unindexed_unreadable_archive_partition_is_not_treated_as_empty(
+    hass, raw
+):
+    storage = HomeAssistantArchiveStorage(hass, "entry", "agent")
+    await storage.async_save_metadata(
+        {"sessions": [], "active": {}, "partitions": []}
+    )
+    path = Path(storage._partition_store("2026-09").path)
+    path.write_bytes(raw)
+    archive = ConversationArchive(storage, "agent")
+    await archive.async_initialize()
+    assert archive.stats()["storage_repair_required"]
+    with pytest.raises(ValueError, match="needs repair"):
+        await archive.async_backup_data()
+    assert path.read_bytes() == raw

@@ -22,6 +22,9 @@ class _BlockingResolveContinuity:
         self.resolve_started = asyncio.Event()
         self.release_calls: list[tuple[str | None, str | None]] = []
 
+    def guest_namespace(self, access: object) -> None:
+        assert access is None
+
     async def async_resolve(self, *args: Any, **kwargs: Any) -> Any:
         self.resolve_started.set()
         await asyncio.Event().wait()
@@ -39,6 +42,9 @@ class _ClaimedContinuity:
     def __init__(self) -> None:
         self.release_calls: list[tuple[str | None, str | None]] = []
         self.release_completed = asyncio.Event()
+
+    def guest_namespace(self, access: object) -> None:
+        assert access is None
 
     async def async_resolve(self, *args: Any, **kwargs: Any) -> Any:
         return SimpleNamespace(
@@ -72,9 +78,11 @@ def _user_input() -> Any:
 def _agent(continuity: Any, process_claimed: Any) -> Any:
     """Return the minimum agent surface consumed by ``_async_process_with_continuity``."""
     return SimpleNamespace(
+        hass=SimpleNamespace(),
         subentry=SimpleNamespace(data={}),
         _continuity=continuity,
         _resolve_live_guest_policy=lambda: SimpleNamespace(guest_active=False),
+        _guest_continuity_access=lambda _policy: None,
         _async_process_claimed=process_claimed,
     )
 

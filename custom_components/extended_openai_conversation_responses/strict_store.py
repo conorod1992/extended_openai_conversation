@@ -10,16 +10,24 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Never, Self
 
+from homeassistant.exceptions import UnsupportedStorageVersionError
 from homeassistant.helpers.storage import Store
 from homeassistant.util.file import WriteError
-from homeassistant.util.json import SerializationError
+from homeassistant.util.json import SerializationError, load_json
 
 from .agent_maintenance import AgentMaintenanceGate, get_agent_maintenance_gate
 from .operation_settlement import async_settle_owned_operation as _async_settle_store_io
-from .operational_errors import storage_failure_reason
+from .operational_errors import StorageSerializationFailure, storage_failure_reason
 from .persistence_hardening import StorageRepairRequired
+
+STORE_ENVELOPE_ERRORS = (
+    KeyError,
+    NotImplementedError,
+    TypeError,
+    UnsupportedStorageVersionError,
+)
 
 
 def _missing_store_has_corruption_evidence(path: str) -> bool:
@@ -120,7 +128,7 @@ class AcknowledgedWriteStore(RecoveryGuardedStore):
             # HA's outer handler would log the offending private value and return
             # normally. Use a different exception type so transactions reconcile
             # instead of publishing an unpersisted candidate as committed.
-            raise OSError(
+            raise StorageSerializationFailure(
                 "Private storage serialization failed; "
                 "the EOAI state change could not be persisted"
             ) from None
@@ -139,11 +147,17 @@ class PropagatingWriteStore(AcknowledgedWriteStore):
     """Require successful writes and guard authoritative data against corruption."""
 
     _corruption_unavailable = False
+    _null_payload_label: str | None = None
+    _null_payload_unavailable = False
 
     @property
     def corruption_unavailable(self) -> bool:
         """Report a native read rejection without permitting its barrier to be reset."""
         return self._corruption_unavailable
+
+    def _raise_null_payload_repair(self) -> Never:
+        self._null_payload_unavailable = True
+        raise StorageRepairRequired(self._null_payload_label or "EOAI")
 
     async def _async_load_data(self) -> Any:
         """Retain HA's raw payload contract; managers validate record shapes."""
@@ -158,9 +172,30 @@ class PropagatingWriteStore(AcknowledgedWriteStore):
             self._corruption_unavailable = True
         if self._corruption_unavailable:
             raise StorageRepairRequired("EOAI")
+        if result is None and self._null_payload_label is not None:
+            # Native Store returns None for both an absent file and stored null.
+            envelope = await self.hass.async_add_executor_job(load_json, self.path)
+            if (
+                isinstance(envelope, dict)
+                and "data" in envelope
+                and envelope["data"] is None
+            ):
+                self._raise_null_payload_repair()
+        self._null_payload_unavailable = False
         return result
 
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: Any
+    ) -> Any:
+        if old_data is None and self._null_payload_label is not None:
+            self._raise_null_payload_repair()
+        return await super()._async_migrate_func(
+            old_major_version, old_minor_version, old_data
+        )
+
     async def _async_save_owned(self, data: dict[str, Any]) -> None:
+        if self._null_payload_unavailable and self._null_payload_label is not None:
+            raise StorageRepairRequired(self._null_payload_label)
         if self._corruption_unavailable:
             raise StorageRepairRequired("EOAI")
         await super()._async_save_owned(data)

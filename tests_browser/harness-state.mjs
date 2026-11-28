@@ -236,6 +236,7 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       state.guest.config = clone(message.config); state.guest.revision += "x"; save(); return clone(state.guest);
     }
     if (key === "guest_mode/update" || key === "guest_mode/disable") return {status: {state: key.endsWith("disable") ? "inactive" : "active"}};
+    if (key === "scheduled_actions/list") return {status: "ok", actions: []};
     if (key === "quiet_hours/get") return clone(state.quiet);
     if (key === "quiet_hours/update") { state.quiet.config = clone(message.config); save(); return clone(state.quiet); }
     if (key === "service_catalog/get") return {services: {}};

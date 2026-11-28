@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from copy import deepcopy
 from functools import lru_cache
+import math
 import re
 from types import MappingProxyType
 from typing import Any, cast
@@ -170,6 +171,7 @@ from .const import (
     SERVICE_TIER_OPTIONS,
     SHARED_MEMORY_MODES,
     TEMPORARY_MEMORY_OPTIONS,
+    USAGE_RETENTION_FIELDS,
     USAGE_RETENTION_OPTIONS,
     VOICE_POLICIES,
     WEB_SEARCH_CONTEXT_OPTIONS,
@@ -352,6 +354,8 @@ PERSISTED_AGENT_DEFAULT_OVERRIDES = MappingProxyType(
         CONF_CURRENT_DATETIME_ENABLED: False,
         CONF_EXPOSED_ENTITIES_ENABLED: False,
         CONF_GUEST_MODE_ENABLED: DEFAULT_PERSISTED_GUEST_MODE_ENABLED,
+        CONF_TEMPERATURE: None,
+        CONF_TOP_P: None,
     }
 )
 GUEST_V2_FIELDS = frozenset(
@@ -961,7 +965,7 @@ def validate_speech_regex_replacements(value: Any) -> list[dict[str, str]]:
             raise AgentConfigError(f"{field}.replacement", "is too long")
         try:
             compiled = re.compile(pattern)
-        except re.error as err:
+        except (re.error, OverflowError, RecursionError) as err:
             raise AgentConfigError(
                 f"{field}.pattern", f"invalid regular expression: {err}"
             ) from err
@@ -991,8 +995,12 @@ def _require_type(
 
 
 def validate_agent_sampling_values(config: Mapping[str, Any]) -> None:
-    """Require numeric types for present sampling settings, excluding booleans."""
-    _require_type(config, (CONF_TOP_P, CONF_TEMPERATURE), (int, float))
+    """Validate sampling values shared by the editor and provider requests."""
+    for key, maximum in ((CONF_TOP_P, 1), (CONF_TEMPERATURE, 2)):
+        if (sampling := config.get(key)) is not None:
+            _require_type(config, (key,), (int, float))
+            if not 0 <= sampling <= maximum:
+                raise AgentConfigError(key, f"must be 0 to {maximum}")
 
 
 def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
@@ -1012,10 +1020,20 @@ def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
         value = config.get(key)
         if isinstance(value, str):
             stripped = value.strip()
-            if re.fullmatch(r"[+-]?\d+(?:\.0+)?", stripped):
-                config[key] = int(stripped.split(".", maxsplit=1)[0])
+            if not re.fullmatch(r"[+-]?\d+(?:\.0+)?", stripped):
+                continue
+            try:
+                integer = int(stripped.split(".", maxsplit=1)[0])
+            except ValueError:
+                if key not in USAGE_RETENTION_FIELDS:
+                    raise
+                continue
         elif isinstance(value, float) and value.is_integer():
-            config[key] = int(value)
+            integer = int(value)
+        else:
+            continue
+        if key not in USAGE_RETENTION_FIELDS or integer in USAGE_RETENTION_OPTIONS:
+            config[key] = integer
 
     for key in (CONF_TOP_P, CONF_TEMPERATURE):
         value = config.get(key)
@@ -1039,13 +1057,15 @@ def normalized_agent_integer(data: Mapping[str, Any], key: str, default: int) ->
     return cast(int, scalar[key])
 
 
-def normalized_function_call_budget(data: Mapping[str, Any]) -> int:
+def normalized_function_call_budget(
+    data: Mapping[str, Any], *, allow_unlimited: bool = False
+) -> int:
     """Read and validate the historical Function Tool budget."""
     key = CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION
     budget = normalized_agent_integer(
         data, key, DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION
     )
-    if budget < 0:
+    if budget < 0 and not allow_unlimited:
         raise AgentConfigError(key, "must be at least 0")
     return budget
 
@@ -1179,25 +1199,45 @@ def agent_config_value_snapshot(
     return result
 
 
-def agent_retention_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
-    """Project the lightweight retention view with the same numeric semantics."""
+def _usage_retention_values(data: Mapping[str, Any]) -> dict[str, Any]:
     result = {
-        key: deepcopy(data.get(key, AGENT_CONFIG_DEFAULTS[key]))
-        for key in (CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS)
+        key: data.get(key, AGENT_CONFIG_DEFAULTS[key]) for key in USAGE_RETENTION_FIELDS
     }
     normalize_agent_numeric_values(result)
     return result
+
+
+def agent_retention_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the lightweight retention view without sharing invalid raw values."""
+    return deepcopy(_usage_retention_values(data))
+
+
+def effective_usage_retention(data: Mapping[str, Any]) -> dict[str, int | None]:
+    """Interpret saved Usage windows. Invalid values suspend expiry and recording."""
+    result: dict[str, int | None] = {}
+    for key, days in _usage_retention_values(data).items():
+        result[key] = (
+            days if type(days) is int and days in USAGE_RETENTION_OPTIONS else None
+        )
+    return result
+
+
+def _validate_usage_retention(data: Mapping[str, Any]) -> None:
+    _require_type(data, USAGE_RETENTION_FIELDS, int)
+    for key in USAGE_RETENTION_FIELDS:
+        if key in data and data[key] not in USAGE_RETENTION_OPTIONS:
+            raise AgentConfigError(key, "unsupported value")
 
 
 def shortened_usage_retention(
     current: Mapping[str, Any], target: Mapping[str, Any]
 ) -> dict[str, int]:
     """Return destination detail windows that can delete existing records."""
-    previous = agent_retention_snapshot(current)
+    previous = effective_usage_retention(current)
     result = {}
-    for key, days in agent_retention_snapshot(target).items():
+    for key, days in effective_usage_retention(target).items():
         old = previous[key]
-        if type(days) is int and (type(old) is not int or days < old):
+        if days is not None and (old is None or days < old):
             result[key] = days
     return result
 
@@ -1228,6 +1268,7 @@ def normalize_agent_config(
     | None = None,
     function_tools_as_list: bool = False,
     allow_unavailable_skills: bool = False,
+    allow_legacy_usage_retention: bool = False,
     provider: str | None = None,
 ) -> dict[str, Any]:
     """Validate config; reuse Function results only for identical Function inputs.
@@ -1238,6 +1279,7 @@ def normalize_agent_config(
 
     ``allow_unavailable_skills`` is an internal persisted/recovery policy, not an
     edit permission. Updates use merge_agent_config's blocker-transition check.
+    Legacy Usage retention can remain visible until the administrator repairs it.
     """
     if not isinstance(data, dict):
         raise AgentConfigError("config", "must be an object")
@@ -1305,6 +1347,10 @@ def normalize_agent_config(
         ),
         str,
     )
+    if CONF_CHAT_MODEL in result and not result[CONF_CHAT_MODEL].strip():
+        raise AgentConfigError(
+            CONF_CHAT_MODEL, "must be a nonempty model or deployment name"
+        )
     _require_type(
         result,
         (
@@ -1332,8 +1378,6 @@ def normalize_agent_config(
         CONF_VOICE_SCOPE_POLICY: VOICE_POLICIES,
         CONF_VOICE_UNMAPPED_POLICY: VOICE_POLICIES,
         CONF_SHARED_MEMORY_MODE: SHARED_MEMORY_MODES,
-        CONF_USAGE_REQUEST_RETENTION_DAYS: USAGE_RETENTION_OPTIONS,
-        CONF_USAGE_RUN_RETENTION_DAYS: USAGE_RETENTION_OPTIONS,
         CONF_CONTEXT_TRUNCATE_STRATEGY: [
             item["key"] for item in CONTEXT_TRUNCATE_STRATEGIES
         ],
@@ -1360,6 +1404,8 @@ def normalize_agent_config(
         or not 1 <= timeout <= 1440
     ):
         raise AgentConfigError(CONF_CONVERSATION_TIMEOUT_MINUTES, "unsupported value")
+    if not allow_legacy_usage_retention:
+        _validate_usage_retention(result)
     for key, options in choices.items():
         if key in result and result[key] not in options:
             message = (
@@ -1389,10 +1435,6 @@ def normalize_agent_config(
             CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
             f"must be 0 to {MAX_MEMORY_AUTO_RETRIEVE_LIMIT}",
         )
-    if not 0 <= float(result[CONF_TOP_P]) <= 1:
-        raise AgentConfigError(CONF_TOP_P, "must be 0 to 1")
-    if not 0 <= float(result[CONF_TEMPERATURE]) <= 2:
-        raise AgentConfigError(CONF_TEMPERATURE, "must be 0 to 2")
     for key in (
         CONF_PROMPT,
         CONF_CURRENT_DATETIME_TEMPLATE,
@@ -1499,16 +1541,21 @@ def merge_agent_config(
         # Decode before merging so legacy falsy values and YAML null stay distinct.
         known[CONF_FUNCTION_TOOLS] = parse_configured_function_tools(current) or []
     model_changed = _agent_reasoning_model_changed(current, updates, provider)
-    if model_changed and CONF_REASONING_EFFORT not in updates:
+    if CONF_REASONING_EFFORT not in updates and (
+        model_changed or known.get(CONF_REASONING_EFFORT) is None
+    ):
         # A model change with no explicit effort should use the new model's
         # recommended profile. Retaining the prior model's effort can make a
-        # perfectly valid switch to a non-reasoning model unsavable.
+        # perfectly valid switch to a non-reasoning model unsavable. Legacy
+        # saved null inherits the runtime recommendation on unrelated edits.
         known.pop(CONF_REASONING_EFFORT, None)
+    _validate_usage_retention(agent_retention_snapshot(updates))
     normalized = normalize_agent_config(
         {**known, **updates},
         validated_functions=validated_functions,
         function_tools_as_list=function_tools_as_list,
         allow_unavailable_skills=True,
+        allow_legacy_usage_retention=True,
         provider=provider,
     )
     if normalized.get(CONF_SKILLS):
@@ -1596,6 +1643,7 @@ def normalize_persisted_agent_config(
         source,
         function_tools_as_list=function_tools_as_list,
         allow_unavailable_skills=True,
+        allow_legacy_usage_retention=True,
         provider=provider,
     )
 
@@ -1634,21 +1682,77 @@ def agent_config_model_repair_snapshot(
     Validate every other setting using private stand-ins, then restore
     the exact damaged values for the editor. Never cache this as validated data.
     """
-    damaged = {
-        key: data[key]
-        for key in (CONF_TEMPERATURE, CONF_TOP_P)
-        if isinstance(data.get(key), bool)
-    }
+    from .strict_json import replace_surrogates
+
+    def editable_number(value: Any) -> Any:
+        if value is None or isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return replace_surrogates(value)
+        if isinstance(value, int) and abs(value) <= 2**53 - 1:
+            return value
+        if isinstance(value, float) and math.isfinite(value):
+            return value
+        # Keep invalid values visible without breaking WebSocket serialization.
+        return replace_surrogates(str(value)) if isinstance(value, (int, float)) else ""
+
+    damaged: dict[str, Any] = {}
+    for key, minimum in (
+        (CONF_MAX_TOKENS, 1),
+        (CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION, 0),
+    ):
+        if key not in data:
+            continue
+        try:
+            if normalized_agent_integer(data, key, minimum) < minimum:
+                raise AgentConfigError(key, f"must be at least {minimum}")
+        except AgentConfigError, ValueError, OverflowError:
+            damaged[key] = editable_number(data[key])
+    for key in (CONF_TEMPERATURE, CONF_TOP_P):
+        if key not in data:
+            continue
+        scalar = {key: data[key]}
+        normalize_agent_numeric_values(scalar)
+        try:
+            validate_agent_sampling_values(scalar)
+        except AgentConfigError:
+            damaged[key] = editable_number(data[key])
+    if CONF_SPEECH_REGEX_REPLACEMENTS in data:
+        rules = data[CONF_SPEECH_REGEX_REPLACEMENTS]
+        try:
+            validate_speech_regex_replacements(rules)
+        except AgentConfigError:
+            damaged[CONF_SPEECH_REGEX_REPLACEMENTS] = [
+                {
+                    key: replace_surrogates(rule[key])
+                    if isinstance(rule, dict) and isinstance(rule.get(key), str)
+                    else ""
+                    for key in ("pattern", "replacement")
+                }
+                for rule in (rules if isinstance(rules, list) else [None])
+            ]
+    model_data = data
+    saved_model = data.get(CONF_CHAT_MODEL)
+    if isinstance(saved_model, str) and not saved_model.strip():
+        damaged[CONF_CHAT_MODEL] = saved_model
+        model_data = {**data, CONF_CHAT_MODEL: DEFAULT_CHAT_MODEL}
+    model, effective_provider, efforts = _configuration_reasoning_context(
+        model_data, provider
+    )
+    effort = data.get(CONF_REASONING_EFFORT)
+    if efforts and isinstance(effort, str) and effort not in efforts:
+        damaged[CONF_REASONING_EFFORT] = effort
     tier = data.get(CONF_SERVICE_TIER)
     if isinstance(tier, str):
-        model, effective_provider, _ = _configuration_reasoning_context(data, provider)
         tiers = get_model_config(model, provider=effective_provider).get(
             "service_tier_options", []
         )
         if tier != DEFAULT_SERVICE_TIER and tier not in tiers:
             damaged[CONF_SERVICE_TIER] = tier
     defaults = agent_config_defaults()
-    source = {**data, **{key: defaults[key] for key in damaged}}
+    source = {**data, **{key: defaults[key] for key in damaged if key in defaults}}
+    if CONF_REASONING_EFFORT in damaged or source.get(CONF_REASONING_EFFORT) is None:
+        source.pop(CONF_REASONING_EFFORT, None)
     return {**agent_config_snapshot(source, provider=provider), **damaged}
 
 

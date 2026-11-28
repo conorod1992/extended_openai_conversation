@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import socket
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from aiohttp import web
@@ -24,6 +25,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     async_get_archive,
+)
+from custom_components.extended_openai_conversation_responses.delayed_tools import (
+    delayed_tool_manager,
 )
 from custom_components.extended_openai_conversation_responses.scope import user_scope
 from homeassistant.components import conversation, onboarding
@@ -188,6 +192,15 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
     """Chromium CRUD journeys must satisfy the genuine HA management contract."""
     entry = _entry("Browser Backend Acceptance")
     await _setup_entry(hass, entry)
+    scheduler = delayed_tool_manager(hass)
+    assert scheduler is not None
+    scheduled = await scheduler.async_schedule(
+        SimpleNamespace(entry=entry, subentry=_conversation_subentry(entry)),
+        "browser_scheduled_probe",
+        {"private": "must stay in storage"},
+        None,
+        execution_delay={"hours": 1},
+    )
     archive = await async_get_archive(
         hass, entry.entry_id, _conversation_subentry(entry).subentry_id
     )
@@ -224,6 +237,7 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
             env={"REAL_HA_BACKEND_URL": backend_url},
             failure_label="Playwright genuine-HA backend acceptance failed",
         )
+        assert scheduled.call_id not in scheduler._records
     finally:
         await runner.cleanup()
 

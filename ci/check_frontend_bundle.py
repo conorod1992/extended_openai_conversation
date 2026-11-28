@@ -64,7 +64,27 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # 913 bytes (894,648 -> 895,561). Keep 39 bytes of headroom for the total.
 # Conversation search drafts and Quiet Hours replacement controls bring the
 # minified JS bundle to 898,856 bytes. Allow 44 bytes of total JS headroom.
-CEILINGS = {"javascript": 898_900, "css": 65_000, "management_entry": 120_000}
+# Scheduled Actions increases the measured management entry by 837 bytes
+# (119,626 -> 120,463); allow 37 bytes of headroom. Keep total JS/CSS unchanged.
+# The five-batch lifecycle and recovery fixes add 5,863 minified JS bytes
+# (898,853 -> 904,716). Keep the existing management-entry and CSS ceilings.
+# Voice assignment reconciliation and renewed Broadcast tracking add 2,486
+# minified JS bytes (904,716 -> 907,202). Allow 98 bytes of total JS headroom.
+# Voice duplicate removal, registry freshness and retained-draft alias checks
+# add 352 minified JS bytes (907,202 -> 907,554). Allow 21 bytes of total headroom.
+# Authoritative Voice registry refresh reconciliation adds 167 minified JS
+# bytes (907,554 -> 907,721). Allow 24 bytes of total JS headroom.
+# Scoped, ordered Voice registry reads add 479 minified JS bytes
+# (907,721 -> 908,200). Allow 25 bytes of total JS headroom.
+# Broadcast reconciliation and Overview, Voice, and Memory status fixes add
+# 2,904 minified JS bytes (908,200 -> 911,104). Keep 26 bytes of headroom.
+# The persistent Assistant actions menu and layout fixes add 1,742 minified JS
+# bytes (918,163 -> 919,905). Keep 26 bytes of total JS headroom.
+# The retained Memories heading and Overview labels add 286 minified JS bytes.
+# Keep 26 bytes of total JS headroom and retain the entry and CSS limits.
+# Clarifying the in-app Guide and Request Rules help adds 865 minified JS bytes
+# (920,217 -> 921,082). Keep the CSS and entry limits.
+CEILINGS = {"javascript": 921_082, "css": 65_000, "management_entry": 120_525}
 
 
 def measure(dist: Path) -> dict[str, int]:

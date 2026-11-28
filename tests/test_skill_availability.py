@@ -1,10 +1,12 @@
 """Tests for Skill loader availability and configuration protection."""
 
 from copy import deepcopy
+import re
 from types import SimpleNamespace
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import skill_availability
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
     merge_agent_config,
@@ -18,6 +20,7 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 )
 from custom_components.extended_openai_conversation_responses.function_groups import (
     FunctionGroupRuntime,
+    FunctionToolAdmission,
     assemble_function_tools,
     load_function_groups,
 )
@@ -92,6 +95,122 @@ def test_selected_skills_require_canonical_enabled_loader() -> None:
 
     available = skill_loader_status(["calendar"], [_loader()], [], max_function_calls=1)
     assert available.available is True
+    assert ExtendedOpenAIAgentEntity._skill_loader_reachable(
+        None, [_loader()], FunctionToolAdmission()
+    )
+    assert not ExtendedOpenAIAgentEntity._skill_loader_reachable(
+        None, [_loader()], FunctionToolAdmission(function_calls_available=False)
+    )
+
+    loader = _loader()
+    parameters = loader["spec"]["parameters"]
+    parameters["properties"]["file"]["type"] = "integer"
+    bad_type = skill_loader_status(["calendar"], [loader], [], max_function_calls=1)
+    assert bad_type.available is False
+    assert "schema" in str(bad_type.reason)
+
+    parameters["properties"]["file"]["type"] = ["null", "string"]
+    assert skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+
+    del parameters["properties"]["file"]
+    parameters["additionalProperties"] = False
+    assert not skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+    parameters["patternProperties"] = {"^other$": {"type": "string"}}
+    assert not skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+    del parameters["patternProperties"]
+    parameters["additionalProperties"] = {"type": "integer"}
+    assert not skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+    for pattern, usable in (("^other$", False), ("^oth.*$", False), ("^file$", True), ("^fi.*$", True)):
+        parameters["patternProperties"] = {pattern: {"type": "string"}}
+        assert skill_loader_status(["calendar"], [loader], []).available is usable
+    parameters["patternProperties"] = {"^other$": {"type": "string"}}
+    parameters["additionalProperties"] = {"type": "string"}
+    assert skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+    parameters["properties"]["name"]["maxLength"] = 0
+    assert not skill_loader_status(["calendar"], [loader], [], max_function_calls=1).available
+
+    for schema, available in [
+        ({"maxLength": 0}, False),
+        ({"minLength": 9}, False),
+        ({"const": "README.md"}, False),
+        ({"enum": ["notes.md", "SKILL.md"], "maxLength": 8}, True),
+    ]:
+        loader = _loader()
+        loader["spec"]["parameters"]["properties"]["file"].update(schema)
+        status = skill_loader_status(["calendar"], [loader], [], max_function_calls=1)
+        assert status.available is available, schema
+
+
+@pytest.mark.parametrize(
+    ("pattern", "matches"),
+    [("(?i)^f\u0131le$", True), ("(?i)^f[^\u0131]le$", False)],
+    ids=["casefolded-literal", "casefolded-negation"],
+)
+@pytest.mark.parametrize(
+    "additional", [False, {"type": "integer"}], ids=["closed", "integer-extra"]
+)
+def test_skill_loader_pattern_membership_matches_runtime(pattern, matches, additional):
+    from custom_components.extended_openai_conversation_responses.function_execution import (
+        patterned_object_keys,
+    )
+
+    loader = _loader()
+    loader["spec"]["strict"] = False
+    parameters = loader["spec"]["parameters"]
+    del parameters["properties"]["file"]
+    parameters["patternProperties"] = {pattern: {"type": "string"}}
+    parameters["additionalProperties"] = additional
+    assert ("file" in patterned_object_keys({"file": "SKILL.md"}, parameters)) is matches
+    assert skill_loader_status(["calendar"], [loader], []).available is matches
+
+    for patterns, available in (
+        ([r"^(?:fi)+le$"], True),
+        ([r"^f.*l.*e$"], True),
+        (["(?i)^f(?:i|\u0131)le$"], True),
+        ([r"^other(?:key)+$"], False),
+        ([r"^file$", r"^(?:x*)+$"], True),
+    ):
+        parameters["patternProperties"] = dict.fromkeys(patterns, {"type": "string"})
+        assert ("file" in patterned_object_keys({"file": "SKILL.md"}, parameters)) is available
+        assert skill_loader_status(["calendar"], [loader], []).available is available, patterns
+
+    parameters["patternProperties"][r"("] = {"type": "string"}
+    assert not skill_loader_status(["calendar"], [loader], []).available
+
+
+def test_skill_loader_leaves_complex_pattern_membership_uncertified():
+    loader = _loader()
+    parameters = loader["spec"]["parameters"]
+    del parameters["properties"]["file"]
+    parameters["patternProperties"] = {r"^(?:x*)+$": {"type": "string"}}
+    parameters["additionalProperties"] = False
+
+    assert not skill_loader_status(["calendar"], [loader], []).available
+
+
+@pytest.mark.parametrize(
+    ("pattern", "available"),
+    [(r"(?i)^fıle$", True), (r"(?i)^f[^ı]le$", False)],
+    ids=["casefolded-literal", "casefolded-negation"],
+)
+def test_skill_name_pattern_uses_function_runtime_semantics(pattern, available):
+    loader = _loader()
+    loader["spec"]["parameters"]["properties"]["name"]["pattern"] = pattern
+    assert skill_loader_status(["file"], [loader], []).available is available
+
+
+@pytest.mark.parametrize("assertion", ["const", "enum"])
+def test_loader_object_assertion_limits_available_skills(assertion):
+    loader = _loader()
+    loader["spec"]["strict"] = False
+    permitted = {"name": "weather", "file": "SKILL.md"}
+    loader["spec"]["parameters"][assertion] = (
+        permitted if assertion == "const" else [permitted]
+    )
+    status = effective_skill_loader_status(
+        ["calendar", "weather"], ["calendar", "weather"], [loader], []
+    )
+    assert status.loadable_skills == ("weather",)
 
 
 def test_selected_skills_require_reachable_enabled_group_and_tool_budget() -> None:
@@ -112,6 +231,25 @@ def test_selected_skills_require_reachable_enabled_group_and_tool_budget() -> No
     assert "per request" in str(no_budget.reason)
 
 
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        pytest.param(False, id="malformed-parameters"),
+        pytest.param({"properties": []}, id="malformed-properties"),
+        pytest.param(
+            {"properties": {"name": False, "file": {"type": "string"}}},
+            id="disabled-name",
+        ),
+    ],
+)
+def test_unusable_loader_schema_keeps_selected_skill_unavailable(parameters):
+    loader = _loader()
+    loader["spec"]["parameters"] = parameters
+    status = skill_loader_status(["calendar"], [loader], [], max_function_calls=3)
+    assert not status.available
+    assert "schema" in str(status.reason)
+
+
 def test_no_selected_skills_do_not_require_loader_for_persisted_config() -> None:
     status = skill_loader_status([], [], [], max_function_calls=0)
     assert status.available is True
@@ -125,7 +263,9 @@ def test_selected_installed_skills_are_a_stable_deduplicated_primitive() -> None
     ) == ("two", "one")
 
 
-def test_effective_loader_requires_at_least_one_selected_installed_skill() -> None:
+def test_effective_loader_requires_at_least_one_selected_installed_skill(
+    monkeypatch,
+) -> None:
     zero = effective_skill_loader_status(
         ["calendar"], ["weather"], [_loader()], [], max_function_calls=1
     )
@@ -146,6 +286,72 @@ def test_effective_loader_requires_at_least_one_selected_installed_skill() -> No
     )
     assert multiple.available is True
     assert multiple.loadable_skills == ("calendar", "weather")
+    for restriction in (
+        {"enum": ["weather"]}, {"const": "weather"}, {"maxLength": 7},
+        {"pattern": "^weather$"},
+    ):
+        loader = _loader()
+        loader["spec"]["parameters"]["properties"]["name"].update(restriction)
+        assert not skill_loader_status(["calendar"], [loader], []).available
+        assert not skill_loader_status(["calendar", "weather"], [loader], []).available
+        assert skill_loader_status(["weather"], [loader], []).available
+        status = effective_skill_loader_status(
+            ["calendar", "weather"], ["calendar", "weather"], [loader], []
+        )
+        assert status.available
+        assert status.loadable_skills == ("weather",)
+        assert not effective_skill_loader_status(
+            ["calendar"], ["calendar", "weather"], [loader], []
+        ).available
+    loader = _loader()
+    loader["spec"]["parameters"]["maxProperties"] = 1
+    assert not skill_loader_status(["calendar"], [loader], []).available
+    loader["spec"]["parameters"]["maxProperties"] = 2
+    assert skill_loader_status(["calendar"], [loader], []).available
+    loader["spec"]["parameters"]["properties"]["file"]["pattern"] = "^README"
+    assert not skill_loader_status(["calendar"], [loader], []).available
+    loader = _loader()
+    parameters = loader["spec"]["parameters"]
+    pattern = (
+        "^(?:calendar|" + "|".join(f"installed-skill-{i}" for i in range(65)) + ")$"
+    )
+    assert len(pattern) > 1024
+    parameters["properties"]["name"]["pattern"] = pattern
+    assert skill_loader_status(["calendar"], [loader], []).available
+    assert not skill_loader_status(["weather"], [loader], []).available
+    compile_pattern = re.compile
+    now = 0.0
+
+    def compile_after_delay(*args, **kwargs):
+        nonlocal now
+        now += 0.02
+        return compile_pattern(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(skill_availability, "monotonic", lambda: now)
+        patch.setattr(re, "compile", compile_after_delay)
+        status = effective_skill_loader_status(
+            ["weather", "calendar"], ["weather", "calendar"], [loader], []
+        )
+        assert status.available
+        assert status.loadable_skills == ("calendar",)
+        assert now == 0.02
+    parameters.update({"additionalProperties": False, "minProperties": 3})
+    assert skill_loader_status(["calendar"], [loader], []).available
+    parameters["properties"].pop("offset")
+    assert not skill_loader_status(["calendar"], [loader], []).available
+    for pattern, available in (
+        (r"^(?:name|file)(?![\s\S])", False),
+        (r"^(?:name|file)\Z", False),
+        (r"^(?:name|file)$", True),
+        (r"^(?:name|file|offset)(?![\s\S])", True),
+        (r"^extra-", True),
+    ):
+        parameters["patternProperties"] = {pattern: {"type": "string"}}
+        assert skill_loader_status(["calendar"], [loader], []).available is available
+    parameters.pop("patternProperties")
+    parameters["additionalProperties"] = True
+    assert skill_loader_status(["calendar"], [loader], []).available
 
 
 def test_effective_loader_accounts_for_runtime_and_group_loader_support() -> None:
@@ -324,3 +530,22 @@ def test_config_allows_on_demand_skill_loader_but_rejects_disabled_group() -> No
                 "max_function_calls_per_conversation": 1,
             }
         )
+
+
+def test_closed_loader_rejects_a_required_key_it_cannot_accept():
+    tool = _loader()
+    parameters = tool["spec"]["parameters"]
+    parameters["additionalProperties"] = False
+    parameters["required"] = ["name", "file", "required_key"]
+    assert not skill_loader_status(["calendar"], [tool], []).available
+    parameters["patternProperties"] = {"^required_key$": {}}
+    assert skill_loader_status(["calendar"], [tool], []).available
+
+
+def test_legacy_unlimited_budget_preserves_skill_access():
+    assert skill_loader_status(
+        ["calendar"], [_loader()], [], max_function_calls=-1
+    ).available
+    assert not skill_loader_status(
+        ["calendar"], [_loader()], [], max_function_calls=0
+    ).available

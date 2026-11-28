@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import wraps
+import hashlib
 import logging
 from typing import Any, Literal
 from uuid import uuid4
@@ -19,6 +20,17 @@ _MAX_EFFECT_RECEIPTS = 4096
 _MAX_RETAINED_EFFECT_RECEIPTS = 4096
 _RECEIPT_OWNER_ATTRIBUTE = "_eoai_owns_execution_receipts"
 _READ_ONLY_OWNER_ATTRIBUTE = "_eoai_read_only_receipt_owner"
+_BACKEND_GUIDANCE = {
+    "native": "Check service availability, entity exposure and Home Assistant permissions.",
+    "script": "Review the failed Home Assistant script action and its trace.",
+    "composite": "Review the child Function Tools and any actions that already completed.",
+    "rest": "Check endpoint connectivity, HTTP status and response format.",
+    "scrape": "Check page availability and the extraction selector.",
+    "sqlite": "Check the query deadline, database availability and result limits.",
+    "read_file": "Check the permitted directory, file permissions and file size.",
+    "bash": "Check the command's configured deadline and exit status.",
+    "template": "Check the template and argument types.",
+}
 
 
 @dataclass(slots=True)
@@ -409,9 +421,33 @@ async def execute_backend(
             if public_error is not error:
                 from .operational_errors import log_handled_failure
 
-                log_handled_failure(
-                    logging.getLogger(__name__), "Function backend failed", error
-                )
+                diagnostic = "Function backend failed"
+                if attempt is not None:
+                    spec = attempt.tool.get("spec", {})
+                    backend = str(config.get("type") or "unknown")
+                    entity = attempt.entity
+                    assistant = getattr(
+                        getattr(entity, "subentry", None), "subentry_id", "unknown"
+                    )
+                    current_run = getattr(
+                        getattr(entity, "_usage", None), "current_run", None
+                    )
+                    run = current_run() if callable(current_run) else None
+                    run_id = getattr(run, "run_id", None)
+                    if not isinstance(run_id, str) or not run_id:
+                        run_id = attempt.invocation_id
+                    operation = hashlib.sha256(
+                        run_id.encode(errors="surrogatepass")
+                    ).hexdigest()[:12]
+                    diagnostic += (
+                        f" assistant={assistant} tool={spec.get('name', 'unknown')} "
+                        f"backend={backend} operation={operation} outcome={attempt.outcome}"
+                    )
+                    if attempt.outcome in {"uncertain", "partial", "completed"}:
+                        diagnostic += ". An action may already have taken effect. Check the actual result before retrying."
+                    if guidance := _BACKEND_GUIDANCE.get(backend):
+                        diagnostic += f" {guidance}"
+                log_handled_failure(logging.getLogger(__name__), diagnostic, error)
                 raise public_error from None
             raise
         if not owns_receipts:

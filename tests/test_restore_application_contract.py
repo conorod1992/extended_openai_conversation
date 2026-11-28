@@ -18,8 +18,8 @@ from tests.test_backup import _prepared
 async def _assert_application_contract(apply, active) -> None:
     """Witness ordered side effects, exact data and retention at write time."""
     prepared = _prepared()
-    prepared.config[CONF_USAGE_REQUEST_RETENTION_DAYS] = 11
-    prepared.config[CONF_USAGE_RUN_RETENTION_DAYS] = 22
+    prepared.config[CONF_USAGE_REQUEST_RETENTION_DAYS] = 7
+    prepared.config[CONF_USAGE_RUN_RETENTION_DAYS] = 180
     prepared.archive_active = active
     writes = []
     state = {}
@@ -27,8 +27,8 @@ async def _assert_application_contract(apply, active) -> None:
     def manager(name):
         async def replace(*args, **kwargs):
             writes.append(name)
-            assert managers.usage.request_retention_days == 11
-            assert managers.usage.run_retention_days == 22
+            assert managers.usage.request_retention_days == 7
+            assert managers.usage.run_retention_days == 180
             state[name] = deepcopy((args, kwargs))
 
         return SimpleNamespace(async_replace_backup=replace)
@@ -95,19 +95,19 @@ async def test_apply_prepared_preserves_category_and_local_binding_contract(acti
 async def test_category_contract_detects_deliberate_regressions(mutation):
     source = inspect.getsource(restore_recovery._apply_prepared)
     if mutation == "skip_knowledge":
-        old = '    if prepared.restores("knowledge"):\n        await managers.knowledge.async_replace_backup(prepared.knowledge)\n'
+        old = '    if prepared.restores("knowledge"):\n        assert managers.knowledge is not None\n        await managers.knowledge.async_replace_backup(prepared.knowledge)\n'
         new = ""
     elif mutation == "reorder_memory":
-        memory = '    if prepared.restores("memories"):\n        await managers.memory.async_replace_backup(prepared.memories)\n'
-        temporary = '    if prepared.restores("temporary_memories"):\n        await managers.temporary.async_replace_backup(prepared.temporary_memories)\n'
+        memory = '    if prepared.restores("memories"):\n        assert managers.memory is not None\n        await managers.memory.async_replace_backup(prepared.memories)\n'
+        temporary = '    if prepared.restores("temporary_memories"):\n        assert managers.temporary is not None\n        await managers.temporary.async_replace_backup(prepared.temporary_memories)\n'
         old = memory + temporary
         new = temporary + memory
     elif mutation == "drop_empty_active":
         old = "if prepared.archive_active is not None"
         new = "if prepared.archive_active"
     else:
-        old = "managers.usage.request_retention_days = int("
-        new = "managers.usage.ignored_retention_days = int("
+        old = 'managers.usage.request_retention_days = retention["request_retention_days"]'
+        new = 'managers.usage.ignored_retention_days = retention["request_retention_days"]'
     assert source.count(old) == 1
     namespace = dict(vars(restore_recovery))
     exec(

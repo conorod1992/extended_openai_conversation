@@ -296,6 +296,10 @@ async def test_quiet_hours_pending_volume_restore_releases_ownership(
     manager._async_set_volume.assert_awaited_once_with(
         "media_player.kitchen", 0.7, context_id=ANY
     )
+    assert manager._active["controls"]["media_player.kitchen"]["restoration_awaiting_feedback"]
+    monkeypatch.setattr(quiet, "_current_volume", Mock(return_value=0.7))
+    hass.states.get.return_value.context = None
+    await manager._async_restore_locked(pending_only=True)
     assert manager._active["controls"] == {}
     assert manager._active["observed_controls"] == []
 
@@ -329,6 +333,10 @@ async def test_quiet_hours_pending_switch_restore_releases_ownership(
     manager._async_set_switch.assert_awaited_once_with(
         "switch.kitchen_wake_sound", True, context_id=ANY
     )
+    assert manager._active["controls"]["switch.kitchen_wake_sound"]["restoration_awaiting_feedback"]
+    monkeypatch.setattr(quiet, "_current_switch", Mock(return_value=True))
+    hass.states.get.return_value.context = None
+    await manager._async_restore_locked(pending_only=True)
     assert manager._active["controls"] == {}
 
 

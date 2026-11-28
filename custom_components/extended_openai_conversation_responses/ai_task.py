@@ -20,20 +20,23 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.json import json_bytes
 
-from .assistant_response import final_assistant_text
-from .debug import record_current_provider_failure
+from .assistant_response import final_assistant_answer
+from .debug import record_current_provider_failure, request_debug_trace
 from .entity import (
     ExtendedOpenAIBaseLLMEntity,
     _make_schema_nullable,
     _serialize_structured_output,
 )
+from .exceptions import StructuredOutputsUnavailable
 from .ha_llm_tools import ToolSnapshot, caller_api_tools, tool_snapshot_scope
 from .ha_schema import SchemaValidator
+from .operational_errors import log_handled_failure
 from .provider_errors import (
     log_provider_failure,
     provider_user_message,
     request_reauthentication,
 )
+from .request_context import conversation_invocation
 from .schema_errors import SCHEMA_ERRORS
 from .schema_normalization import normalize_exclusive_bounds
 from .strict_json import strict_json_loads
@@ -311,7 +314,15 @@ def parse_ai_task_structured_response(
         _LOGGER.error("Failed to parse structured AI Task JSON response")
         raise HomeAssistantError("Error with structured response") from None
     if original_schema is not None:
-        data = _omit_optional_nulls(data, original_schema)
+        projected = _omit_optional_nulls(data, original_schema)
+        if structure is None:
+            return projected
+        try:
+            return _validate_structured_response(projected, structure)
+        except HomeAssistantError:
+            # The converted schema can select another branch. Revisit the
+            # original output so caller-required null values remain available.
+            pass
     return _validate_with_caller_cleanup(data, structure)
 
 
@@ -408,7 +419,21 @@ class ExtendedOpenAITaskEntity(
         task: ai_task.GenDataTask,
         chat_log: conversation.ChatLog,
     ) -> ai_task.GenDataTaskResult:
-        """Handle a generate data task."""
+        """Own the invocation and opt-in diagnostics for one AI Task."""
+        async with conversation_invocation():
+            with request_debug_trace(self, task, chat_log.conversation_id) as trace:
+                result = await ExtendedOpenAITaskEntity._async_generate_task_data(
+                    self, task, chat_log
+                )
+                if trace is not None:
+                    trace.result = result
+                return result
+
+    async def _async_generate_task_data(
+        self,
+        task: ai_task.GenDataTask,
+        chat_log: conversation.ChatLog,
+    ) -> ai_task.GenDataTaskResult:
         # Core has already assembled a caller-supplied API with the task context.
         # Reuse our exchange/budget; never import this agent's custom Functions.
         snapshot, tools = (
@@ -449,13 +474,24 @@ class ExtendedOpenAITaskEntity(
                     structure_schema=original_schema,
                 )
             continuation_accepted = True
+        except StructuredOutputsUnavailable:
+            _LOGGER.warning(
+                "AI Task entity=%s requires a model with native Structured Outputs. "
+                "Review the Home Assistant automation trace.",
+                self.entity_id,
+            )
+            raise
         except OpenAIError as err:
             from .model_lifecycle import record_entity_retirement_failure
 
             record_entity_retirement_failure(self, err, logger=_LOGGER)
             request_reauthentication(self.hass, getattr(self, "entry", None), err)
             record_current_provider_failure(err)
-            log_provider_failure(_LOGGER, "OpenAI AI Task request failed", err)
+            log_provider_failure(
+                _LOGGER,
+                f"OpenAI AI Task request failed entity={self.entity_id}. Review the Home Assistant automation trace",
+                err,
+            )
             raise HomeAssistantError(
                 f"AI Task provider request failed: {provider_user_message(err)}"
             ) from err
@@ -471,15 +507,11 @@ class ExtendedOpenAITaskEntity(
 
         clear_entity_retirement_failure(self)
 
-        # Extract response
-        if not isinstance(chat_log.content[-1], conversation.AssistantContent):
-            raise HomeAssistantError(
-                "Last content in chat log is not an AssistantContent"
-            )
-
-        text = final_assistant_text(
+        text = final_assistant_answer(
             chat_log.content, separator="" if task.structure else "\n\n"
         )
+        if text is None:
+            raise HomeAssistantError("AI Task completed without assistant output")
 
         # Handle structured output
         if not task.structure:
@@ -490,13 +522,28 @@ class ExtendedOpenAITaskEntity(
 
         # JSON parsing and schema branch matching touch only this response and
         # its schema snapshot. Large arrays must not stall HA's event loop.
-        data = await asyncio.to_thread(
-            parse_ai_task_structured_response,
-            text,
-            original_schema=original_schema,
-        )
-        data = _validate_with_caller_cleanup(data, task.structure)
-        await asyncio.to_thread(_require_serializable_response, data)
+        phase = "decode model JSON"
+        try:
+            raw = await asyncio.to_thread(parse_ai_task_structured_response, text)
+            projected = (
+                await asyncio.to_thread(_omit_optional_nulls, raw, original_schema)
+                if original_schema is not None
+                else raw
+            )
+            phase = "validate the requested structure"
+            try:
+                data = _validate_structured_response(projected, task.structure)
+            except HomeAssistantError:
+                data = _validate_with_caller_cleanup(raw, task.structure)
+            phase = "encode the validated result"
+            await asyncio.to_thread(_require_serializable_response, data)
+        except HomeAssistantError as err:
+            log_handled_failure(
+                _LOGGER,
+                f"AI Task entity={self.entity_id} could not {phase}. Review the Home Assistant automation trace",
+                err,
+            )
+            raise
 
         return ai_task.GenDataTaskResult(
             conversation_id=chat_log.conversation_id,

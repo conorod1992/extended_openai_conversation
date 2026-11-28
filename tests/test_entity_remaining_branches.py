@@ -164,9 +164,9 @@ async def test_responses_stream_ignores_empty_events_and_normalizes_metadata() -
     )
     events = [
         SimpleNamespace(
-            type="response.output_item.added", item=SimpleNamespace(type="other")
+            type="response.output_item.added", output_index=2, item=SimpleNamespace(type="other")
         ),
-        SimpleNamespace(type="response.output_text.delta", delta=""),
+        SimpleNamespace(type="response.output_text.delta", delta="", output_index=0, content_index=0),
         SimpleNamespace(
             type="response.output_text.delta",
             delta="ok",
@@ -176,11 +176,10 @@ async def test_responses_stream_ignores_empty_events_and_normalizes_metadata() -
         SimpleNamespace(
             type="response.refusal.delta", delta=123, output_index=1, content_index=0
         ),
-        SimpleNamespace(type="response.refusal.delta", delta=""),
+        SimpleNamespace(type="response.refusal.delta", delta="", output_index=1, content_index=0),
         SimpleNamespace(
             type="response.refusal.done", refusal=12345, output_index=1, content_index=0
         ),
-        SimpleNamespace(type="response.refusal.done", refusal=None),
         SimpleNamespace(
             type="response.output_text.annotation.added",
             annotation=valid_citation,
@@ -193,6 +192,7 @@ async def test_responses_stream_ignores_empty_events_and_normalizes_metadata() -
         ),
         SimpleNamespace(type="response.output_item.done", output_index=0, item=message),
         SimpleNamespace(type="response.output_item.done", output_index=1, item=refusal),
+        SimpleNamespace(type="response.output_item.done", output_index=2, item=SimpleNamespace(type="other")),
         SimpleNamespace(
             type="response.completed", response=SimpleNamespace(usage=None)
         ),
@@ -203,6 +203,7 @@ async def test_responses_stream_ignores_empty_events_and_normalizes_metadata() -
     )
 
     assert deltas == [
+        {"role": "assistant"},
         {"content": "ok"},
         {"native": message},
         {"role": "assistant"},
@@ -230,6 +231,7 @@ async def test_structured_output_is_sent_in_each_provider_format(
                 type="response.output_item.added", item=SimpleNamespace(type="message")
             ),
             SimpleNamespace(type="response.output_text.delta", delta="done"),
+            SimpleNamespace(type="response.output_item.done", item=SimpleNamespace(type="message")),
             SimpleNamespace(
                 type="response.completed",
                 response=SimpleNamespace(
@@ -398,7 +400,9 @@ async def test_tool_execution_error_and_background_branches(monkeypatch) -> None
     )
 
     manager = object.__new__(DelayedToolManager)
-    manager.async_schedule = AsyncMock()
+    manager.async_schedule = AsyncMock(
+        return_value=SimpleNamespace(call_id="a" * 32, due_at="2026-11-25T14:00:00+00:00")
+    )
     entity.hass.data = {module.DOMAIN: {DATA_DELAYED_TOOL_MANAGER: manager}}
     scheduled = await entity._execute_function_tool(
         {
@@ -424,7 +428,9 @@ async def test_tool_execution_error_and_background_branches(monkeypatch) -> None
         None,
         [],
     )
-    assert tool_result_data(scheduled) == {"result": "Scheduled"}
+    assert tool_result_data(scheduled) == {
+        "result": "Scheduled", "action_id": "a" * 32, "scheduled_at": "2026-11-25T14:00:00+00:00",
+    }
 
     monkeypatch.setattr(
         module,

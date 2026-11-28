@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
@@ -20,8 +20,8 @@ from homeassistant.util import dt as dt_util
 
 from . import backup
 from .agent_config import (
-    agent_retention_snapshot,
     configured_function_tools_from_data,
+    effective_usage_retention,
     normalized_agent_integer,
     preserve_unselected_archive_retention,
     shortened_usage_retention,
@@ -81,6 +81,7 @@ from .usage import (
     retained_usage_details,
     usage_retention_policy,
 )
+from .voice_identity_runtime import eligible_configured_voice_owner
 from .yaml_serialization import InvalidSerializedUnicode
 
 TRANSFER_FORMAT = "extended_openai_conversation_transfer"
@@ -95,6 +96,10 @@ SECTION_KNOWLEDGE = "knowledge"
 SECTION_CONVERSATION_ARCHIVE = "conversation_archive"
 SECTION_USAGE = "usage"
 SECTION_GUEST_MODE = "guest_mode"
+
+CONFIRM_SHORTER_USAGE_RETENTION = (
+    "Confirm applying shorter Usage detail retention before restoring configuration"
+)
 
 SETUP_SECTIONS = frozenset({SECTION_CONFIGURATION, SECTION_REQUEST_RULES})
 ALL_SECTIONS = frozenset(
@@ -261,6 +266,17 @@ def _portable_user_id(value: Any, *, prefixed_only: bool = False) -> str | None:
     return candidate
 
 
+def _configured_voice_owner_ids(config: Mapping[str, Any]) -> set[str]:
+    """Identify the transferred owners that must be eligible for Voice Identity."""
+    mappings = config.get(CONF_VOICE_DEVICE_MAPPINGS, {})
+    values = mappings.values() if isinstance(mappings, Mapping) else ()
+    return {
+        user_id
+        for value in (config.get(CONF_VOICE_DEFAULT_USER_ID), *values)
+        if (user_id := _portable_user_id(value))
+    }
+
+
 def transfer_user_scope_ids(
     prepared: PreparedTransfer,
     selected: Iterable[str],
@@ -294,15 +310,7 @@ def transfer_user_scope_ids(
                 user_ids.add(user_id)
 
     if SECTION_CONFIGURATION in selected_set and prepared.config is not None:
-        if user_id := _portable_user_id(
-            prepared.config.get(CONF_VOICE_DEFAULT_USER_ID)
-        ):
-            user_ids.add(user_id)
-        mappings = prepared.config.get(CONF_VOICE_DEVICE_MAPPINGS, {})
-        if isinstance(mappings, Mapping):
-            for owner in mappings.values():
-                if user_id := _portable_user_id(owner):
-                    user_ids.add(user_id)
+        user_ids.update(_configured_voice_owner_ids(prepared.config))
 
     return frozenset(user_ids)
 
@@ -338,6 +346,17 @@ async def async_user_scope_mapping_plan(
         for user in users
         if getattr(user, "id", None) is not None
     }
+    voice_sources = (
+        _configured_voice_owner_ids(prepared.config)
+        if SECTION_CONFIGURATION in selected and prepared.config is not None
+        else set()
+    )
+    ineligible_voice_destinations = {
+        str(user.id)
+        for user in users
+        if getattr(user, "id", None) is not None
+        and not eligible_configured_voice_owner(user)
+    }
     supplied = {} if supplied is None else supplied
     if not isinstance(supplied, Mapping) or any(
         not isinstance(key, str) or not isinstance(value, str)
@@ -345,14 +364,24 @@ async def async_user_scope_mapping_plan(
     ):
         raise backup.BackupError("User ownership mappings must be an object")
 
-    required = sorted(source_ids - destinations.keys())
-    resolved = {user_id: user_id for user_id in source_ids if user_id in destinations}
+    required = sorted(
+        (source_ids - destinations.keys())
+        | (voice_sources & ineligible_voice_destinations)
+    )
+    resolved = {user_id: user_id for user_id in source_ids - set(required)}
     for source_id, destination_id in supplied.items():
         if source_id not in required:
             continue
         if destination_id not in destinations:
             raise backup.BackupError(
                 f"Mapped Home Assistant user does not exist: {destination_id}"
+            )
+        if (
+            source_id in voice_sources
+            and destination_id in ineligible_voice_destinations
+        ):
+            raise backup.BackupError(
+                f"Mapped Home Assistant user is unavailable for Voice Identity: {destination_id}"
             )
         resolved[source_id] = destination_id
 
@@ -367,6 +396,16 @@ async def async_user_scope_mapping_plan(
             )
         ],
         "resolved": {source_id: resolved[source_id] for source_id in sorted(resolved)},
+        **(
+            {
+                "voice_source_user_ids": sorted(voice_sources),
+                "ineligible_voice_destination_user_ids": sorted(
+                    ineligible_voice_destinations
+                ),
+            }
+            if voice_sources and ineligible_voice_destinations
+            else {}
+        ),
     }
 
 
@@ -885,6 +924,12 @@ def _validate_transfer_document(
     *,
     validated_categories: dict[str, Any] | None = None,
 ) -> PreparedTransfer:
+    version = value.get("version")
+    if type(version) is not int:
+        raise backup.BackupError("This transfer uses an unsupported format version")
+    mode = value.get("mode")
+    if not isinstance(mode, str) or mode not in {"setup", "custom"}:
+        raise backup.BackupError("The transfer mode is invalid")
     expected = {
         "format",
         "version",
@@ -894,38 +939,27 @@ def _validate_transfer_document(
         "agent",
         "sections",
     }
-    private = (
-        value.get("version") == PRIVATE_TRANSFER_VERSION
-        and value.get("mode") == "custom"
-    )
-    if (value.get("version") == PRIVATE_TRANSFER_VERSION and not private) or (
-        value.get("version") == LEGACY_SHARING_EXPORT_VERSION
-        and value.get("mode") != "setup"
+    private = version == PRIVATE_TRANSFER_VERSION
+    if (private and mode != "custom") or (
+        version == LEGACY_SHARING_EXPORT_VERSION and mode != "setup"
     ):
         raise backup.BackupError("This transfer uses an unsupported format version")
     if private and "provider_connection" in value:
         expected.add("provider_connection")
-    if (
-        value.get("version") == LEGACY_SHARING_EXPORT_VERSION
-        and value.get("mode") == "setup"
-    ):
+    if version == LEGACY_SHARING_EXPORT_VERSION:
         expected.add("security")
     if set(value) != expected:
         raise backup.BackupError("The transfer file is incomplete or corrupted")
-    if value.get("version") not in {
+    if version not in {
         TRANSFER_VERSION,
         LEGACY_SHARING_EXPORT_VERSION,
         PRIVATE_TRANSFER_VERSION,
     }:
-        version = value.get("version")
-        if isinstance(version, int) and version > TRANSFER_VERSION:
+        if version > TRANSFER_VERSION:
             raise backup.BackupError(
                 "This transfer was created using a newer unsupported format"
             )
         raise backup.BackupError("This transfer uses an unsupported format version")
-    mode = value.get("mode")
-    if mode not in {"setup", "custom"}:
-        raise backup.BackupError("The transfer mode is invalid")
     title, created_at, integration_version = _validate_metadata(value)
     raw_sections = value.get("sections")
     if not isinstance(raw_sections, Mapping):
@@ -1022,7 +1056,8 @@ def _validate_transfer_document(
 def _inspect_legacy_setup(
     value: Mapping[str, Any], *, inspect_only: bool = False
 ) -> PreparedTransfer:
-    if value.get("version") not in {
+    version = value.get("version")
+    if type(version) is not int or version not in {
         AGENT_CONFIG_EXPORT_VERSION,
         LEGACY_SHARING_EXPORT_VERSION,
     }:
@@ -1276,7 +1311,7 @@ def _inspect_decoded_transfer(
     Re-encoding their decoded document on HA's loop would block unrelated work.
     """
     if value.get("format") == TRANSFER_FORMAT:
-        if value.get("version") == PRIVATE_TRANSFER_VERSION:
+        if is_private_document(value):
             value = decode_document(value)
         return _validate_transfer_document(
             value,
@@ -1445,9 +1480,7 @@ def _prepared_restore_from_selection(
         if imported.raw_configuration is not None:
             raw, kept, absent = _restore_section_secrets(
                 imported.raw_configuration,
-                backup.recoverable_configuration_snapshot(
-                    current.config, provider=current_provider
-                ),
+                current.config,
             )
             preserved.extend(f"configuration.{path}" for path in kept)
             missing.extend(f"configuration.{path}" for path in absent)
@@ -1466,9 +1499,7 @@ def _prepared_restore_from_selection(
         if SECTION_CONVERSATION_ARCHIVE not in selected:
             config = preserve_unselected_archive_retention(current.config, config)
     else:
-        # Unselected configuration is authoritative private source. Validate a
-        # separate projection without rewriting credentials, YAML or omissions.
-        backup.private_configuration_snapshot(current.config, provider=current_provider)
+        # Carry the destination's own saved configuration through untouched.
         config = (
             deepcopy(current.config)
             if current.authoritative_config
@@ -1566,6 +1597,33 @@ def _prepared_restore_from_selection(
     return target, tuple(preserved), tuple(missing)
 
 
+def _restore_data_sections(selected: Collection[str]) -> set[str]:
+    """Map selected transfer sections to their durable participants."""
+    return {
+        key
+        for key, section in (
+            ("memories", SECTION_PERSISTENT_MEMORY),
+            ("temporary_memories", SECTION_TEMPORARY_MEMORY),
+            ("knowledge", SECTION_KNOWLEDGE),
+            ("archive", SECTION_CONVERSATION_ARCHIVE),
+            ("usage", SECTION_USAGE),
+            ("guest_mode", SECTION_GUEST_MODE),
+            ("request_rules", SECTION_REQUEST_RULES),
+        )
+        if section in selected
+    }
+
+
+def _restore_snapshot_sections(
+    selected: Collection[str], *, restore_provider: bool = False
+) -> frozenset[str]:
+    """Include current rules when validating setup or a provider change."""
+    sections = _restore_data_sections(selected)
+    if restore_provider or not SETUP_SECTIONS.isdisjoint(selected):
+        sections.add("request_rules")
+    return frozenset(sections)
+
+
 async def _current_snapshot(
     hass: HomeAssistant,
     entry: Any,
@@ -1573,18 +1631,25 @@ async def _current_snapshot(
     *,
     include_usage: bool = True,
     capture_usage_revision: bool = False,
+    sections: frozenset[str] | None = None,
 ) -> backup.PreparedRestore:
     """Read durable current state for selective planning without mutating it."""
     try:
         from .restore_recovery import _durable_managers
 
+        section_options: dict[str, Any] = (
+            {"sections": sections} if sections is not None else {}
+        )
         managers = await _durable_managers(
             hass,
             entry.entry_id,
             subentry.subentry_id,
             include_usage=include_usage,
+            **section_options,
         )
     except ImportError:
+        if sections is not None:
+            raise
         managers = await backup._managers(hass, entry.entry_id, subentry.subentry_id)
     from .helpers import entry_api_provider
 
@@ -1607,6 +1672,7 @@ async def async_materialize_restore(
     current_snapshot: backup.PreparedRestore | None = None,
     provider_connection: Mapping[str, Any] | None = None,
     archive_retention_at: datetime | None = None,
+    require_existing_owners: bool = False,
 ) -> tuple[backup.PreparedRestore, dict[str, Any]]:
     """Build and validate a complete restore target from a selective transfer."""
     prepared = await async_inspect_transfer(
@@ -1629,11 +1695,20 @@ async def async_materialize_restore(
         except HomeAssistantError as err:
             raise backup.BackupError(str(err)) from err
 
+    data_sections = _restore_data_sections(selected)
+    snapshot_sections = _restore_snapshot_sections(
+        selected, restore_provider=provider_connection is not None
+    )
+    validates_routes = "request_rules" in snapshot_sections
     current = (
         current_snapshot
         if current_snapshot is not None
         else await _current_snapshot(
-            hass, entry, subentry, include_usage=SECTION_USAGE in selected
+            hass,
+            entry,
+            subentry,
+            include_usage=SECTION_USAGE in selected,
+            sections=snapshot_sections,
         )
     )
     prepared = await asyncio.to_thread(_copy_transfer_categories, prepared)
@@ -1658,6 +1733,20 @@ async def async_materialize_restore(
         raise backup.BackupError(
             "Cannot safely restore unavailable secrets: " + ", ".join(missing[:50])
         )
+    target.retains_configuration = SECTION_CONFIGURATION not in selected
+    if require_existing_owners and transfer_user_scope_ids(prepared, selected):
+        ownership = await async_user_scope_mapping_plan(
+            hass,
+            prepared,
+            selected,
+            archive_config=target.config,
+            archive_retention_at=archive_retention_at,
+        )
+        if ownership["missing_source_user_ids"]:
+            raise backup.BackupError(
+                "This backup requires Home Assistant user ownership mapping. "
+                "Use the Backup and Restore import workflow to choose owners."
+            )
     from .request_rules import async_read_committed_request_rules
 
     provider_data = (
@@ -1672,22 +1761,23 @@ async def async_materialize_restore(
     previous_provider_data = (
         getattr(entry, "data", {}) if provider_connection is not None else None
     )
-    try:
-        await async_validate_agent_provider_request(
-            hass,
-            "conversation",
-            target.config,
-            provider_data,
-            rules=target.request_rules.get("rules", []),
-            user_id=user_id,
-            discover_ha_tools=bool(selected & SETUP_SECTIONS)
-            or provider_connection is not None,
-            previous_provider_data=previous_provider_data,
-        )
-    except HomeAssistantError as err:
-        raise backup.BackupError(
-            f"Restored request is incompatible with the destination provider: {str(err)[:400]}"
-        ) from err
+    if validates_routes:
+        try:
+            await async_validate_agent_provider_request(
+                hass,
+                "conversation",
+                target.config,
+                provider_data,
+                rules=target.request_rules.get("rules", []),
+                user_id=user_id,
+                discover_ha_tools=bool(selected & SETUP_SECTIONS)
+                or provider_connection is not None,
+                previous_provider_data=previous_provider_data,
+            )
+        except HomeAssistantError as err:
+            raise backup.BackupError(
+                f"Restored request is incompatible with the destination provider: {str(err)[:400]}"
+            ) from err
     if provider_connection is not None:
         for child_id, child in tuple(entry.subentries.items()):
             if child_id == subentry.subentry_id or child.subentry_type not in {
@@ -1716,20 +1806,23 @@ async def async_materialize_restore(
                 raise backup.BackupError(
                     str(incompatible_provider_agent(child.title, err))
                 ) from err
-    from .function_dependency_integrity import async_validate_disappearing_identifiers
+    if validates_routes:
+        from .function_dependency_integrity import (
+            async_validate_disappearing_identifiers,
+        )
 
-    await async_validate_disappearing_identifiers(
-        hass,
-        entry,
-        subentry,
-        current.config,
-        target.config,
-        get_rules=async_get_request_rules,
-        retained_document=target.request_rules,
-    )
-    await _async_validate_request_rule_function_dependencies(
-        hass, target.request_rules, target.config
-    )
+        await async_validate_disappearing_identifiers(
+            hass,
+            entry,
+            subentry,
+            current.config,
+            target.config,
+            get_rules=async_get_request_rules,
+            retained_document=target.request_rules,
+        )
+        await _async_validate_request_rule_function_dependencies(
+            hass, target.request_rules, target.config
+        )
     preview = prepared.summary()
     preview.update(
         {
@@ -1755,23 +1848,10 @@ async def async_materialize_restore(
         and provider_connection is None
     )
     target.replaces_usage = SECTION_USAGE in selected
-    data_sections = {
-        key
-        for key, transfer_section in (
-            ("memories", SECTION_PERSISTENT_MEMORY),
-            ("temporary_memories", SECTION_TEMPORARY_MEMORY),
-            ("knowledge", SECTION_KNOWLEDGE),
-            ("archive", SECTION_CONVERSATION_ARCHIVE),
-            ("usage", SECTION_USAGE),
-            ("guest_mode", SECTION_GUEST_MODE),
-            ("request_rules", SECTION_REQUEST_RULES),
-        )
-        if transfer_section in selected
-    }
     # Applying different retention settings can prune stored Usage details.
-    if SECTION_CONFIGURATION in selected and agent_retention_snapshot(
+    if SECTION_CONFIGURATION in selected and effective_usage_retention(
         target.config
-    ) != agent_retention_snapshot(current.config):
+    ) != effective_usage_retention(current.config):
         data_sections.add("usage")
     if SECTION_CONFIGURATION in selected and SECTION_USAGE not in selected:
         shortened = shortened_usage_retention(current.config, target.config)
@@ -1798,6 +1878,7 @@ async def async_materialize_restore(
                 )
         preview.update(await asyncio.to_thread(_usage_restore_preview, target))
     target.journaled_sections = frozenset(data_sections)
+    target.validates_provider_routes = validates_routes
     return target, preview
 
 
@@ -1859,22 +1940,21 @@ async def async_restore_transfer(
             **provider_options,
         )
         if preview.get("shortened_usage_retention") and not confirm_retention:
-            raise backup.BackupError(
-                "Confirm applying shorter Usage detail retention before restoring configuration"
-            )
+            raise backup.BackupError(CONFIRM_SHORTER_USAGE_RETENTION)
         # Exclusivity already covers the destination snapshot. Call the journaled
         # inner restore directly: the public backup wrapper would reacquire this
         # non-reentrant gate. Lock order remains maintenance gate -> backup lock.
+        restore_options: dict[str, Any] = (
+            {"provider_data": provider_connection}
+            if provider_connection is not None
+            else {}
+        )
         result = await async_restore_backup_recoverably(
             hass,
             entry,
             subentry,
             target,
-            **(
-                {"provider_data": provider_connection}
-                if provider_connection is not None
-                else {}
-            ),
+            **restore_options,
         )
         if provider_connection is not None:
             result["provider_connection_restored"] = True

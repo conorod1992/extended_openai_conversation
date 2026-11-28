@@ -3,6 +3,7 @@ import test from "node:test";
 import {fixture, retire, flushUntil} from "./management-ownership-harness.mjs";
 import {deferred} from "./frontend-test-helpers.mjs";
 import {changeConfigurationModel} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-model-v2.js";
+import {modelCapabilitiesForDraft} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-model-presentation.js";
 import {recordReasoningChoice} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
 
 const metadata = {model_metadata:{reasoning:{supported:true, efforts:["minimal", "low", "high"]}, recommended_profile:{reasoning_effort:"minimal"}}};
@@ -82,7 +83,9 @@ test("same-user HA state updates allow the original model preparation to finish"
   assert.equal(panel._draft, draft);
   assert.equal(panel._eocModelIntent, intent);
   assert.equal(draft.reasoning_effort, "minimal");
-  assert.deepEqual(panel._result.model_capabilities, {marker:"new-current"});
+  assert.deepEqual(panel._eocDraftModelCapabilities.capabilities, {marker:"new-current"});
+  assert.deepEqual(modelCapabilitiesForDraft(panel), metadata.model_metadata);
+  assert.deepEqual(panel._result.model_capabilities, {marker:"accepted-current"});
   assert.deepEqual(panel.toasts, []);
   assert.equal(counts.lookups, 1); assert.equal(counts.validations, 1); assert.equal(counts.renders, 1);
 });

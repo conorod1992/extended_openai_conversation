@@ -137,7 +137,7 @@ async def test_shared_manager_is_reused_and_loaded_lookup_matches(hass, monkeypa
     assert init.await_count == 2
 
 
-def test_custom_function_policy_expands_selected_groups_and_filters_unknowns(
+def test_custom_function_policy_quarantines_malformed_selected_group(
     hass, monkeypatch
 ) -> None:
     monkeypatch.setattr(
@@ -161,14 +161,14 @@ def test_custom_function_policy_expands_selected_groups_and_filters_unknowns(
         guest_mode.CONF_GUEST_FUNCTION_POLICY: "custom",
         guest_mode.CONF_GUEST_ALLOWED_FUNCTION_NAMES: ["direct", "missing"],
         guest_mode.CONF_GUEST_ALLOWED_GROUP_IDS: ["safe"],
-        guest_mode.CONF_FUNCTION_GROUPS: [
+        "function_groups": [
             {"id": "safe", "functions": ["from_group", 123]},
             {"id": "other", "functions": ["ignored"]},
         ],
     }
 
     policy = guest_mode.resolve_guest_policy(hass, options, manager, tools)
-    assert policy.configured_tool_names == frozenset({"direct", "from_group"})
+    assert policy.configured_tool_names == frozenset({"direct"})
 
 
 def test_legacy_editor_snapshot_translates_without_broadening(hass, monkeypatch) -> None:
@@ -184,7 +184,7 @@ def test_legacy_editor_snapshot_translates_without_broadening(hass, monkeypatch)
     monkeypatch.setattr(
         guest_mode,
         "_resolve_legacy_entity_ids",
-        lambda _hass, _options, *, control: (
+        lambda _hass, _options, *, control, entity_ids=None: (
             {"light.one"} if control else {"light.one", "switch.two"}
         ),
     )
@@ -211,6 +211,46 @@ def test_legacy_editor_snapshot_translates_without_broadening(hass, monkeypatch)
     assert snapshot[guest_mode.CONF_GUEST_FUNCTION_POLICY] == "custom"
     assert snapshot[guest_mode.CONF_GUEST_ALLOWED_FUNCTION_NAMES] == ["safe_tool"]
     assert snapshot[guest_mode.CONF_GUEST_SHARED_MEMORY_POLICY] == "off"
+
+
+async def test_legacy_editor_preserves_restrictions_on_exposed_entities_without_state(
+    tmp_path, monkeypatch
+):
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers import (
+        area_registry as ar,
+        device_registry as dr,
+        entity_registry as er,
+    )
+    from tests.ha_store_test_helpers import initialize_config_entries
+
+    hass = HomeAssistant(str(tmp_path))
+    try:
+        await initialize_config_entries(hass)
+        await ar.async_load(hass, load_empty=True)
+        dr.async_setup(hass)
+        await dr.async_load(hass, load_empty=True)
+        await er.async_load(hass, load_empty=True)
+        registry = er.async_get(hass)
+        hidden = registry.async_get_or_create("light", "test", "hidden").entity_id
+        read_only = registry.async_get_or_create("light", "test", "reader").entity_id
+        new = registry.async_get_or_create("light", "test", "new").entity_id
+        monkeypatch.setattr(
+            guest_mode,
+            "async_should_expose",
+            lambda _hass, _domain, entity_id: entity_id != new,
+        )
+        assert hass.states.get(hidden) is None and hass.states.get(read_only) is None
+        snapshot = guest_mode.guest_policy_editor_snapshot(
+            hass,
+            {guest_mode.CONF_GUEST_READABLE_ENTITIES: [read_only]},
+            (),
+            exposed_entities=[],
+        )
+        assert snapshot[guest_mode.CONF_GUEST_EXCLUDED_ENTITIES] == [hidden]
+        assert snapshot[guest_mode.CONF_GUEST_CONTROL_EXCLUDED_ENTITIES] == [read_only]
+    finally:
+        await hass.async_stop(force=True)
 
 
 def test_string_set_and_timestamp_guards(hass, monkeypatch) -> None:

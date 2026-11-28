@@ -8,7 +8,14 @@ from unittest.mock import AsyncMock, MagicMock
 from bs4 import BeautifulSoup
 import pytest
 
+from custom_components.extended_openai_conversation_responses.execution_outcomes import (
+    execute_backend,
+)
 from custom_components.extended_openai_conversation_responses.functions import web
+from custom_components.extended_openai_conversation_responses.public_errors import (
+    InvalidScrapeSelector,
+    SanitizedUnexpectedBackendError,
+)
 from homeassistant.const import CONF_ATTRIBUTE, CONF_VALUE_TEMPLATE
 
 
@@ -118,6 +125,36 @@ def test_extract_value_handles_attribute_raw_text_and_normal_text() -> None:
         )
         is None
     )
+
+
+async def test_scrape_selector_boundary(hass, monkeypatch, caplog):
+    """Invalid syntax is actionable and private; other failures still propagate."""
+    data = BeautifulSoup("<p>Available</p>", "html.parser")
+    monkeypatch.setattr(web, "get_rest_data", lambda *_: None)
+    monkeypatch.setattr(
+        web.scrape.coordinator,
+        "ScrapeCoordinator",
+        lambda *_: SimpleNamespace(data=data, async_refresh=AsyncMock()),
+    )
+    function = web.ScrapeFunction()
+    sensor = {web.scrape.const.CONF_SELECT: "[private-selector="}
+    config = {"sensor": [sensor]}
+
+    with pytest.raises(InvalidScrapeSelector, match="Invalid Scrape CSS selector") as err:
+        await execute_backend(function, hass, config, {}, None, [])
+    assert "private-selector" not in str(err.value)
+    assert err.value.__suppress_context__
+    assert "private-selector" not in caplog.text
+
+    sensor[web.scrape.const.CONF_SELECT] = ".missing"
+    assert await execute_backend(function, hass, config, {}, None, []) is None
+
+    def failed_select(_selector):
+        raise RuntimeError("Unexpected selector backend failure")
+
+    monkeypatch.setattr(data, "select", failed_select)
+    with pytest.raises(SanitizedUnexpectedBackendError):
+        await execute_backend(function, hass, config, {}, None, [])
 
 
 @pytest.mark.parametrize("kind", ["timeout", "disconnect"])

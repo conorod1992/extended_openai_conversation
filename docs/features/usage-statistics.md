@@ -10,7 +10,7 @@ Usage is scoped to the conversation assistant. **Test assistant** counts toward 
 
 Provider-request counters and tokens are committed when each real provider request finishes; the conversation-run counter is committed once when the complete user turn finishes. This keeps one user turn distinct from any additional provider rounds it triggers and preserves completed request usage even if the run is interrupted before its normal final response.
 
-Missing provider metadata is handled safely: the request and run are still counted, while unavailable token fields remain zero. Failed, cancelled, interrupted-stream, and exception paths finalize their run once.
+Requests and runs still count when provider metadata is missing or a count exceeds Home Assistant's unsigned 64-bit JSON range. Valid fields are kept. An unavailable total can be derived from the valid reported input and output counts when their sum fits, and other unavailable token fields remain zero. Accumulated counters stop increasing at that range limit so later requests can still be saved. Failed, cancelled, interrupted-stream, and exception paths finalize their run once.
 
 Local context-size estimates are used only for history management. They are never substituted for provider-reported Usage tokens, so successful context trimming does not mean a provider returned token counts.
 
@@ -23,7 +23,7 @@ Each conversation-agent device has four disabled-by-default diagnostic entities:
 - **Lifetime usage** keeps the existing lifetime-token unique ID and cumulative counters.
 - **Usage today** uses Home Assistant's local calendar day. Provider requests are assigned to the local date on which that request completes; run-level metrics use the local date on which the run completes.
 - **Usage this month** is derived from daily aggregates.
-- **Last response usage** contains the latest retained completed run's bounded token, request, model, duration, and success details. It has no value when run-detail retention is disabled, after that detail expires, or after a successful **Clear details**. A failed clear preserves the retained detail. Lifetime, Today, and This month aggregate sensors remain intact.
+- **Last response usage** contains the latest retained completed run's bounded token, request, model, duration, and success details. It has no value when run-detail retention is disabled, after that detail expires, or after a successful **Clear recent details**. A failed clear preserves the retained detail. Lifetime, Today, and This month aggregate sensors remain intact.
 
 No sensor is created per day, model, request, or transcript session. Lifetime,
 Today, and This month update through accounting/restore listeners without polling.
@@ -88,7 +88,7 @@ The **Usage diagnostics** section summarizes the same selected daily-aggregate p
 
 Run averages count requests and tokens from runs that finished during the selected period. A run that crosses local midnight contributes to its completion day. Standalone provider calls contribute to request and token totals only. Older Usage data may carry timestamps for individual runs without their original Home Assistant calendar dates. A period that includes runs without recorded attribution displays **Unavailable** for average tokens and requests per run. Daily and lifetime totals remain available.
 
-Recent failed runs are called out separately. Recent-run and provider-request detail stays within its configured retention periods. Use **Requests** on a recent run to see its individual provider calls, or **Browse retained requests** to include calls whose run detail has expired and calls recorded independently of a run. The detail includes stage, provider, model, API mode, token counts, cache and reasoning metadata, duration, requested tool-call count, web-search use, and success or error state.
+Recent failed runs are called out separately. Recent-run and provider-request detail stays within its configured retention periods. Use **Requests** on a recent run to see its individual provider calls, or, as an administrator, **Browse retained requests** to include calls whose run detail has expired and calls recorded independently of a run. The detail includes stage, provider, model, API mode, token counts, cache and reasoning metadata, duration, requested tool-call count, web-search use, and success or error state.
 
 **Retained runs without provider requests** uses the same recorded completion day as the daily totals, including after a Home Assistant timezone change or restore. If a legacy run could fall on either side of the selected period’s boundary, this count displays **Unavailable**. Clearing or expiring run details leaves the aggregate totals available.
 
@@ -102,7 +102,7 @@ Detailed request and run records are content-free. They never contain prompts, r
 
 ## Storage and retention
 
-If a loaded request or run history contains damaged records, an administrator can use **Clear details** and confirm the reset. This removes request and run history while preserving healthy lifetime totals and daily aggregates. Repair of an unreadable store or damaged aggregates requires separate recovery. A full backup requires healthy Usage storage. To export other sections while Usage is unavailable, use a custom export and leave Usage unselected.
+If a loaded request or run history contains damaged records, an administrator can use **Clear recent details** and confirm the reset. This removes request and run history while preserving healthy lifetime totals and daily aggregates. Repair of an unreadable store or damaged aggregates requires separate recovery. A full backup requires healthy Usage storage. To export other sections while Usage is unavailable, use a custom export and leave Usage unselected.
 
 Compact lifetime totals and daily aggregates are persisted as one authoritative aggregate snapshot when daily Usage storage is available; the existing lifetime-totals store is retained as a compatibility mirror. Request and run details have their own retention policy. Recorded completed-run averages survive clearing or expiring those details.
 

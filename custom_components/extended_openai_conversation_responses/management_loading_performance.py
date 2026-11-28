@@ -24,6 +24,12 @@ from .const import (
     CONF_CHAT_MODEL,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
+    CONF_GUEST_CONTROL_EXCLUDED_AREAS,
+    CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
+    CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
+    CONF_GUEST_CONTROL_EXCLUDED_LABELS,
+    CONF_GUEST_POLICY_VERSION,
+    CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_TEMPORARY_MEMORY,
     DEFAULT_API_PROVIDER,
@@ -32,19 +38,29 @@ from .const import (
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
+    GUEST_POLICY_VERSION,
 )
 from .conversation_archive import async_get_archive
 from .feature_status import management_feature_status
+from .function_configuration_repair import resolved_function_tool_state
+from .function_groups import effective_configured_function_names, safe_function_groups
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge, get_loaded_knowledge
 from .management_function_repair import (
     group_collection_is_addressable,
     management_function_tool_health,
     peek_function_tool_health,
+    persisted_config_projection,
+    repair_state_for_projection,
 )
 from .management_history_queries import usage_summary
 from .management_projections import async_scope_catalog_projection, settings_snapshot
-from .management_setup_health import add_setup_health, build_setup_health_facts
+from .management_setup_health import (
+    add_setup_health,
+    build_setup_health_facts,
+    knowledge_health_facts,
+    memory_health_facts,
+)
 from .memory import async_get_memory, get_memory_mode
 from .operational_errors import log_handled_failure
 from .temporary_memory import async_get_temporary_memory
@@ -89,9 +105,24 @@ def _overview_guest_status(
     status: dict[str, Any], options: dict[str, Any]
 ) -> dict[str, Any]:
     """Keep primary, detail and cached Overview status projections complete."""
+    visibility = _guest_has_ha_exclusions(options)
+    control = options.get(CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS) is True and any(
+        options.get(key)
+        for key in (
+            CONF_GUEST_CONTROL_EXCLUDED_AREAS,
+            CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
+            CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
+            CONF_GUEST_CONTROL_EXCLUDED_LABELS,
+        )
+    )
     return {
         **status,
-        "has_home_assistant_exclusions": _guest_has_ha_exclusions(options),
+        "has_home_assistant_exclusions": visibility,
+        "has_home_assistant_restrictions": (
+            visibility
+            or control
+            or options.get(CONF_GUEST_POLICY_VERSION) != GUEST_POLICY_VERSION
+        ),
     }
 
 
@@ -199,18 +230,12 @@ def _agent_snapshot(
     phase = perf_counter()
     snapshot["feature_status"] = management_feature_status(
         options,
-        knowledge_source_count=knowledge_source_count,
+        knowledge_source_count=snapshot["knowledge_source_count"],
         knowledge_total_source_count=knowledge_total_source_count,
     )
     if snapshot["knowledge_source_count"] is None:
         snapshot["feature_status"]["knowledge"].update(
-            state="unavailable",
-            label="Unavailable",
-            available=False,
-            source_count=None,
-            total_source_count=None,
-            summary="Knowledge status is unavailable; stored data is retained.",
-            detail="Knowledge status could not be read. Review Knowledge Library recovery before relying on its availability.",
+            state="unavailable", label="Unavailable"
         )
     if snapshot["function_group_count"] is None:
         metadata_errors.append(
@@ -450,7 +475,13 @@ async def async_overview_detail(
         return {
             "kind": kind,
             "agent": {"memory_count": int(memory.memory_count)},
-            "setup_health": {"memory": {"available": True, "loading": False}},
+            "setup_health": {
+                "memory": {
+                    **memory_health_facts(dict(subentry.data), memory, available=True),
+                    "loading": False,
+                },
+                "can_manage": is_admin,
+            },
             "_performance": {"total_ms": _ms(started)},
         }
 
@@ -471,11 +502,16 @@ async def async_overview_detail(
             },
             "setup_health": {
                 "knowledge": {
-                    "source_count": source_count,
-                    "total_source_count": total_source_count,
-                    "available": True,
+                    **knowledge_health_facts(
+                        dict(subentry.data),
+                        knowledge,
+                        available=True,
+                        source_count=source_count,
+                        total_source_count=total_source_count,
+                    ),
                     "loading": False,
-                }
+                },
+                "can_manage": is_admin,
             },
             "_performance": {"total_ms": _ms(started)},
         }
@@ -495,7 +531,20 @@ async def async_overview_detail(
     if kind == "setup_health":
         phase = perf_counter()
         options = dict(subentry.data)
-        health = management_function_tool_health(options)
+        health = dict(management_function_tool_health(options))
+        tools, _, _, _ = resolved_function_tool_state(options)
+        groups = safe_function_groups(options, tools)
+        effective_count = len(
+            effective_configured_function_names(
+                options, tools, groups, assume_ha_available=True
+            )
+        )
+        health["effective_count"] = effective_count
+        group_repair, _ = repair_state_for_projection(
+            persisted_config_projection(subentry)
+        )
+        if group_repair is not None:
+            health["invalid_group_count"] = len(group_repair.group_issues)
         function_tools_ms = _ms(phase)
         try:
             from .management_setup_health import _exposed_entity_count
@@ -507,6 +556,7 @@ async def async_overview_detail(
             "kind": kind,
             "agent": {
                 "function_count": int(health.get("enabled_count", 0)),
+                "effective_function_count": effective_count,
                 **(
                     {
                         "configuration_issue": {
@@ -523,6 +573,7 @@ async def async_overview_detail(
                 "function_tools": health,
                 "exposed_entity_count": exposure,
                 "exposed_entity_count_loading": False,
+                "can_manage": is_admin,
             },
             "_performance": {
                 "function_tools_ms": function_tools_ms,

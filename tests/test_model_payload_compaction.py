@@ -264,6 +264,10 @@ async def test_preview_validation_and_live_formatter_match_baseline(
         validate_runtime_readiness,
     )
 
+    from custom_components.extended_openai_conversation_responses.scheduled_action_tools import (
+        scheduled_action_tools,
+    )
+
     # The raw strict=True formatter probe deliberately has optional properties;
     # configured validation correctly rejects that combination.
     tools = [
@@ -328,7 +332,7 @@ async def test_preview_validation_and_live_formatter_match_baseline(
         if section["key"] in {"function_tools", "integration_tools"}
         for tool in json.loads(section["content"])
     ]
-    live = _format_tools(tools, api_mode)
+    live = _format_tools([*tools, *scheduled_action_tools()], api_mode)
     # The catalogue loader is tested separately; this preview has no configured groups.
     live = [
         tool

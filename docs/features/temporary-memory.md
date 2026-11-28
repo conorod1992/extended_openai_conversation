@@ -19,9 +19,7 @@ asking unnecessary questions. “Waiting for a parcel today” lasts through tod
 “cooking pasta” or “watching Oppenheimer” lasts a few hours; “the plumber is coming
 tomorrow” lasts through tomorrow; an explicit duration or date takes precedence.
 
-Temporary records use a separate private Home Assistant Store. They survive restarts
-only while their expiry is in the future, are filtered and opportunistically pruned
-before every injection, and are pruned at startup. Selection is local and bounded; selected records enter model prompts.
+Temporary records are stored separately in Home Assistant and survive restarts until they expire. Extended OpenAI selects recent, unexpired records from the scopes allowed for the current request and can include them in the model prompt even when they are unrelated to the question. Selection happens locally and is subject to the limits below.
 The model can add, supersede, or forget records only in the scope derived from the
 current request; it cannot choose another owner. Personal and Shared owners determine access; conversation and device continuity are metadata and do not grant access to another owner’s records.
 
@@ -34,6 +32,8 @@ temporary facts. The Memories page has Long-term and Short-term views. **+ Add m
 Manual short-term creation records `source: manual`; model-created records retain `source: automatic`. Both permit credentials and sensitive personal facts within the configured access permissions. Automatic retention depends on the configured mode and the conversation LLM's interpretation of usefulness and user preferences. Expiry must include a timezone internally, remain in the future, and be within one year. The configured automatic mode does not prevent manual creation.
 
 Content and categories retain type and size validation, including during editing, startup and restore. Personal/household access controls, owner migration, expiry and repair barriers remain.
+
+If an edit would duplicate another short-term fact with the same owner, scope, category, expiry and provenance, Management leaves the draft open. Select **Save** again with the same draft to keep both records. If the original record has changed, reopen it before saving.
 
 Stored values may enter later model prompts, full private backups, selected custom transfers and explicitly enabled administrator request-debug captures. Backup encoding and ZIP transport are not encryption. Ordinary diagnostics and Usage do not include Memory content. Persistent Memory hybrid retrieval can additionally send its text/metadata to the configured embedding provider. EOAI Memory is not a dedicated secrets vault.
 

@@ -217,7 +217,7 @@ async def test_duplicate_preserves_reasoning_inheritance(
     assert ("reasoning_effort" in duplicate.data) is (effort is not None)
     if effort is not None:
         assert duplicate.data["reasoning_effort"] == effort
-    assert "temperature" in duplicate.data and "top_p" in duplicate.data
+    assert "temperature" not in duplicate.data and "top_p" not in duplicate.data
     assert "extension_data" not in duplicate.data
     assert subentry.data == original
 

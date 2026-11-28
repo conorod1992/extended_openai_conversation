@@ -88,6 +88,23 @@ def test_debug_trace_provider_requests_are_paged_and_aggregate_bounded() -> None
     ]
 
 
+def test_capture_only_truncation_marks_management_trace() -> None:
+    manager = DebugManager()
+    manager.configure(enabled=True, limit=10)
+    trace = manager.begin(
+        entry_id="entry", subentry_id="agent", user_input={"text": "hello"},
+        incoming_conversation_id=None,
+    )
+    request = trace.start_provider_request("responses", (), {"input": "retained"})
+    request.metrics["request_capture_truncated"] = True
+    manager.finish(trace, successful=True)
+    page = debug_trace_page(manager, trace.debug_id)
+    [provider] = page["provider_requests"]
+    assert provider["request_meta"]["truncated"] is False
+    assert provider["request_meta"]["capture_truncated"] is True
+    assert page["management_projection"]["truncated"] is True
+
+
 def test_debug_run_summary_cannot_return_an_unbounded_error_object() -> None:
     manager, _debug_id = _captured_manager()
 
@@ -169,3 +186,15 @@ def test_debug_trace_page_clamps_provider_window_and_missing_id() -> None:
     assert provider["returned"] == min(
         7, projection.MANAGEMENT_DEBUG_PROVIDER_PAGE_MAX
     )
+
+
+def test_debug_summary_saturates_counts_before_home_assistant_serialization():
+    import orjson
+
+    manager, _ = _captured_manager()
+    maximum = (1 << 64) - 1
+    for request in manager._runs[0].provider_requests:
+        request.usage = {"input_tokens": maximum, "total_tokens": maximum}
+    [summary] = debug_run_summaries(manager)
+    assert summary["input_tokens"] == summary["total_tokens"] == maximum
+    assert orjson.loads(orjson.dumps(summary))["total_tokens"] == maximum

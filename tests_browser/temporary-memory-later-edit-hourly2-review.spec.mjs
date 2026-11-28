@@ -2,6 +2,72 @@ import {expect,test} from "@playwright/test";
 import {openDataCollection} from "./data-collection-helpers.mjs";
 import {acceptConfirmation,expectHarnessClean,trackPageErrors} from "./browser-helpers.mjs";
 
+for (const bundled of [false, true]) test(`Short-term Memory mutations retain backend expiry order (${bundled ? "shipped" : "source"})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  const panel = await openDataCollection(page, "temporary", 12, bundled);
+  await panel.evaluate(async host => {
+    host.hass.config.time_zone = "UTC";
+    const [first, second, third] = dataCollectionBackend.state.temporary;
+    first.expires_at = "2027-01-15T12:00:00+02:00";
+    second.expires_at = "2027-01-15T09:00:00-02:00";
+    third.expires_at = "2027-01-15T11:00:00Z";
+    dataCollectionBackend.state.temporary = [third, second, first];
+    await host._loadSection(true);
+  });
+  const cardIds = () => panel.locator(".memory-list article").evaluateAll(nodes => nodes.map(node => node.dataset.memoryId));
+  const readCount = () => page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "temporary_list").length);
+  const scopeCount = () => panel.evaluate(host => host._data.scopes.find(scope => scope.scope_id === host._scopeId).temporary_memory_count || 0);
+  await expect.poll(cardIds).toEqual(["temporary-0", "temporary-1", "temporary-2"]);
+  const initialReads = await readCount();
+  const initialCount = await scopeCount();
+
+  await panel.locator('[data-memory-id="temporary-0"] button.edit-temporary-memory').click();
+  await panel.locator("#temporary-memory-expiry").fill("2027-01-15T13:00");
+  await panel.locator("#temporary-memory-save").click();
+  await expect(panel.locator("#temporary-memory-dialog")).toHaveJSProperty("open", false);
+  await expect.poll(cardIds).toEqual(["temporary-1", "temporary-2", "temporary-0"]);
+
+  async function addMemory(content, expiry) {
+    await panel.locator("#add-memory").click();
+    await panel.locator("#memory-content").fill(content);
+    await panel.locator("#memory-expiry").fill(expiry);
+    await panel.locator("#memory-save").click();
+    await expect(panel.locator("#memory-dialog")).toHaveJSProperty("open", false);
+  }
+
+  await addMemory("New memory at a tied instant", "2027-01-15T11:00");
+  await expect.poll(cardIds).toEqual(["temporary-1", "temporary-12", "temporary-2", "temporary-0"]);
+  expect(await scopeCount()).toBe(initialCount + 1);
+
+  await addMemory("Temporary 0", "2027-01-15T09:00");
+  await expect.poll(cardIds).toEqual(["temporary-0", "temporary-1", "temporary-12", "temporary-2"]);
+  expect(await scopeCount()).toBe(initialCount + 1);
+  expect(await readCount()).toBe(initialReads);
+  await expectHarnessClean(page, errors);
+});
+
+for (const concurrentExpiry of [false, true]) test(`A Short-term Memory acknowledgement refreshes with ${concurrentExpiry ? "a changed collection" : "no order"}`, async ({page}) => {
+  const panel = await openDataCollection(page, "temporary", 12);
+  await panel.evaluate((host, concurrentExpiry) => {
+    const send = host.hass.callWS.bind(host.hass);
+    host.hass.callWS = async message => {
+      if (message.action === "temporary_update" && concurrentExpiry) dataCollectionBackend.state.temporary.shift();
+      const result = await send(message);
+      if (message.action === "temporary_update" && !concurrentExpiry) delete result.memory_order;
+      return result;
+    };
+  }, concurrentExpiry);
+  const reads = () => page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "temporary_list").length);
+  const initialReads = await reads();
+  await panel.locator('[data-memory-id="temporary-2"] button.edit-temporary-memory').click();
+  await panel.locator("#temporary-memory-expiry").fill("2027-01-15T13:00");
+  await panel.locator("#temporary-memory-save").click();
+  await expect(panel.locator("#temporary-memory-dialog")).toHaveJSProperty("open", false);
+  await expect(panel.locator(".memory-list article").first()).toHaveAttribute("data-memory-id", "temporary-2");
+  await expect(panel.locator('[data-memory-id="temporary-0"]')).toHaveCount(concurrentExpiry ? 0 : 1);
+  expect(await reads()).toBe(initialReads + 1);
+});
+
 for (const bundled of [false, true]) test(`Short-term Memory can retain or replace a UTC-only expiry (${bundled ? "shipped" : "source"})`, async ({page}) => {
   const errors = trackPageErrors(page);
   const panel = await openDataCollection(page, "temporary", 12, bundled);

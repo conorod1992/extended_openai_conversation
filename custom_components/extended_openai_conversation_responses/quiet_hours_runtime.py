@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, time, timedelta, tzinfo
@@ -49,6 +49,10 @@ _RUNTIME_KEY = "quiet_hours_manager"
 _STATE_ENTITY_ID = "binary_sensor.extended_openai_quiet_hours"
 _VOLUME_TOLERANCE = 0.005
 _DISCOVERY_INTERVAL = timedelta(minutes=5)
+_CONTROL_SERVICE_TIMEOUT = 10
+_CONTROL_FEEDBACK_GRACE = timedelta(seconds=30)
+_RETARGET_RECEIPT_LIFETIME = 3 * _DISCOVERY_INTERVAL
+_MAX_PRIOR_RETARGET_RECEIPTS = 8
 
 DEFAULT_START = "22:00"
 DEFAULT_END = "07:00"
@@ -114,6 +118,10 @@ class _ObsoleteQuietHoursCallback(Exception):
     """A scheduled reconciliation lost ownership before dispatching an effect."""
 
 
+class _ControlDispatchRejected(HomeAssistantError):
+    """A quiet control command was rejected before calling the HA service."""
+
+
 @dataclass(frozen=True, slots=True)
 class SatelliteCapabilities:
     """Controls discovered for one Assist satellite."""
@@ -163,9 +171,9 @@ def _normalize_clock(value: str) -> str:
 def _next_discontinuous_transition(
     now: datetime, clock: time, zone: tzinfo, *, ending: bool
 ) -> datetime | None:
-    """Find the next skipped/repeated daily deadline (UTC), within one year."""
+    """Find the next skipped/repeated daily deadline (UTC), including late annual shifts."""
     local_day = now.astimezone(zone).date()
-    for days in range(371):
+    for days in range(400):
         day = local_day + timedelta(days=days)
         wall = datetime.combine(day, clock)
         # No extra timer is needed on ordinary dates: HA's daily local-time
@@ -490,6 +498,8 @@ def discover_satellite_capabilities(
 class _QuietHoursStore(PropagatingWriteStore):
     """Check historical ownership before HA's load-time migration can write."""
 
+    _null_payload_label = "Quiet Hours"
+
     def __init__(
         self, hass: HomeAssistant, validate_generation: Callable[[Any], Any]
     ) -> None:
@@ -499,6 +509,8 @@ class _QuietHoursStore(PropagatingWriteStore):
     async def _async_migrate_func(
         self, old_major_version: int, old_minor_version: int, old_data: Any
     ) -> Any:
+        if old_data is None:
+            self._raise_null_payload_repair()
         self._validate_generation(old_data)
         if old_major_version == 2:
             # Version 3 adds detached restoration records. Older readers would
@@ -514,6 +526,7 @@ class QuietHoursManager:
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
+        self._pending_service_calls: dict[str, asyncio.Task[Any]] = {}
         self._store: Store[dict[str, Any]] = _QuietHoursStore(
             hass, self._decode_generation
         )
@@ -622,7 +635,16 @@ class QuietHoursManager:
                 self._timezone_unsubscribe = self.hass.bus.async_listen(
                     EVENT_CORE_CONFIG_UPDATE, self._handle_core_config_update
                 )
-        await self.async_reconcile()
+        try:
+            await self.async_reconcile()
+        except Exception as err:
+            # The generation is already loaded. Leave its retry and shutdown
+            # hooks in place if initial reconciliation encounters a write error.
+            log_handled_failure(
+                logging.getLogger(__name__),
+                "Quiet Hours initial reconciliation deferred",
+                err,
+            )
 
     async def _async_load_initial_state_locked(self) -> bool:
         # Parse a complete generation before installing any of it. Missing
@@ -851,6 +873,12 @@ class QuietHoursManager:
     def snapshot(self) -> dict[str, Any]:
         if reason := getattr(self, "_startup_unavailable_reason", None):
             return {"available": False, "error": reason}
+        if getattr(self, "_config_recovery_pending", False):
+            return {
+                "available": False,
+                "recovery_pending": True,
+                "error": "Quiet Hours is waiting to recover its saved policy.",
+            }
         now = dt_util.now()
         period = (
             quiet_period_for(now, self._config.start, self._config.end)
@@ -973,6 +1001,7 @@ class QuietHoursManager:
                     entity_id: [entry.domain, entry.platform, entry.unique_id],
                 }
             self._config = candidate
+            persistence_started = False
             try:
                 # An explicit selection edit uses the existing departure/restore
                 # contract, even when clearing it leaves automatic discovery
@@ -1019,6 +1048,7 @@ class QuietHoursManager:
                 if (
                     self._active is not None
                     and old_period is not None
+                    and self._active_period_overlaps(old_period)
                     and new_period is not None
                 ):
                     self._active.update(
@@ -1083,11 +1113,13 @@ class QuietHoursManager:
                         ).items()
                         if key in observed
                     }
+                persistence_started = True
                 await self._async_save_locked()
             except BaseException as err:
                 failure = err
-                if self._config_recovery_pending:
-                    # Publish no speculative configuration while disk is unknown.
+                if not persistence_started or self._config_recovery_pending:
+                    # Before persistence, or when readback cannot settle the
+                    # write, the speculative policy cannot own device effects.
                     self._config = previous
                     self._selection_identities = previous_identities
                     self._deferred_selection_renames = previous_renames
@@ -1174,6 +1206,8 @@ class QuietHoursManager:
         self._config_recovery_pending = True
         self._initialized = False
         self._reschedule()
+        if not getattr(self, "_stopping", False):
+            self._publish_state(None)
 
     def _active_period_overlaps(self, period: QuietPeriod) -> bool:
         """Preserve ownership across a continuously quiet schedule change."""
@@ -1184,8 +1218,8 @@ class QuietHoursManager:
         return (
             start is not None
             and end is not None
-            and start <= period.end
-            and period.start <= end
+            and start < period.end
+            and period.start < end
         )
 
     @asynccontextmanager
@@ -1286,6 +1320,11 @@ class QuietHoursManager:
                         controls.values(),
                         self._active.get("detached_controls", {}).values(),
                     ):
+                        if control.get("application_state") == "awaiting_feedback":
+                            control.setdefault(
+                                "initial_dispatch_period",
+                                self._active["period_started_at"],
+                            )
                         control.update(
                             restoration_pending=True, restore_before_apply=True
                         )
@@ -1706,13 +1745,18 @@ class QuietHoursManager:
                 self._settle_control_restoration(entity_id, control, restored=True)
                 await self._async_save_control_state_locked()
                 continue
-            if self._observe_owned_volume(
+            if self._observe_prior_retarget(
+                entity_id, control
+            ) or self._observe_owned_control(
                 entity_id,
                 control,
                 allow_application_context="pending_quiet_value" not in control,
             ):
                 await self._async_save_control_state_locked()
-            if control.get("restore_before_apply"):
+            if (
+                control.get("restore_before_apply")
+                and control.get("application_state") != "awaiting_feedback"
+            ):
                 # A changed return value belongs to neither our old effect nor
                 # a current-period observation. Let the pending restore settle
                 # it before adopting a new baseline. An attained old effect can
@@ -1743,6 +1787,35 @@ class QuietHoursManager:
             if target is None or target[0] != control["kind"]:
                 control["restoration_pending"] = True
                 continue
+            kind, _, value = target
+            original = control["original_value"]
+            if kind == "volume":
+                value = min(value, original)
+            if control.get("restoration_awaiting_feedback"):
+                state = self.hass.states.get(entity_id)
+                context = getattr(state, "context", None)
+                if getattr(context, "user_id", None):
+                    control["restoration_pending"] = True
+                    continue
+                if control.get("restoration_pending"):
+                    still_required = (
+                        original > value + _VOLUME_TOLERANCE
+                        if kind == "volume"
+                        else original is not value
+                    )
+                    if (
+                        not control.get("restore_before_apply")
+                        or not still_required
+                        or await self._async_control_feedback_pending(
+                            control, "restoration"
+                        )
+                    ):
+                        continue
+                    # The new quiet period still owns this effect. Keep the old
+                    # receipt so a delayed restoration can be recognized.
+                    control.pop("restoration_pending")
+                    control.pop("restore_before_apply")
+                    await self._async_save_control_state_locked()
             # Observe ownership before any persistence yields to another actor.
             state = self.hass.states.get(entity_id)
             observed_context = getattr(getattr(state, "context", None), "id", None)
@@ -1753,6 +1826,43 @@ class QuietHoursManager:
                 if identity := self._entity_registry_identity(target[1]):
                     control["satellite_registry_identity"] = identity
                 await self._async_save_control_state_locked()
+            if control.get("application_state") == "awaiting_feedback":
+                if self._observe_initial_application(entity_id, control):
+                    await self._async_save_control_state_locked()
+                else:
+                    if not self._initial_application_pending(entity_id, control):
+                        self._settle_control_restoration(
+                            entity_id, control, restored=False
+                        )
+                        await self._async_save_control_state_locked()
+                    elif (
+                        control.get("restore_before_apply")
+                        and control.get("initial_dispatch_period")
+                        != self._active["period_started_at"]
+                        and self._initial_control_observation(entity_id, control)[0]
+                        is not None
+                        and self._baseline_context_matches(
+                            entity_id, control, legacy=True
+                        )
+                    ):
+                        kind, _, requested = target
+                        baseline = control["original_value"]
+                        if (
+                            kind == "volume"
+                            and baseline > requested + _VOLUME_TOLERANCE
+                        ) or (kind == "switch" and baseline is not requested):
+                            # Retry today's policy without losing a prior receipt.
+                            if requested != control["quiet_value"]:
+                                if not self._remember_prior_retarget(
+                                    control, control.get("application_context_id")
+                                ):
+                                    continue
+                                control["application_context_id"] = Context().id
+                                control["quiet_value"] = requested
+                            await self._async_dispatch_initial_control_locked(
+                                entity_id, controls, control
+                            )
+                    continue
             if control.get("application_state") == "prepared":
                 state = self.hass.states.get(entity_id)
                 context_id = control.get("application_context_id")
@@ -1784,9 +1894,6 @@ class QuietHoursManager:
             if self._pending_quiet_attained(entity_id, control):
                 self._commit_pending_quiet(entity_id, control)
                 await self._async_save_control_state_locked()
-            kind, _, value = target
-            if kind == "volume":
-                value = min(value, control["original_value"])
             # Reconcile ownership even if the configured target is unchanged.
             current = (
                 _current_volume(self.hass, entity_id)
@@ -1795,21 +1902,34 @@ class QuietHoursManager:
             )
             if current is None:
                 continue
-            same = (
-                math.isclose(
-                    current,
-                    self._attained_quiet_value(control),
-                    abs_tol=_VOLUME_TOLERANCE,
-                )
-                if kind == "volume"
-                else current is control["quiet_value"]
+            same = self._control_values_equal(
+                kind, current, self._attained_quiet_value(control)
             )
             if not same:
-                # An independent adjustment ends ownership; never claim its value as our baseline.
-                controls.pop(entity_id)
+                if self._restoration_attained(entity_id, control):
+                    # The carried receipt can report while persistence yields.
+                    self._settle_control_restoration(entity_id, control, restored=True)
+                else:
+                    # An independent adjustment ends ownership.
+                    controls.pop(entity_id)
                 await self._async_save_control_state_locked()
                 continue
-            if value == control["quiet_value"] and "pending_quiet_value" not in control:
+            if control.get("retarget_awaiting_feedback"):
+                if (
+                    value == control["quiet_value"]
+                    and not control.get("retarget_reapply")
+                ) or await self._async_control_feedback_pending(control, "retarget"):
+                    continue
+                if not self._remember_prior_retarget(
+                    control, control.get("application_context_id")
+                ):
+                    continue
+                control.pop("retarget_awaiting_feedback")
+            if (
+                value == control["quiet_value"]
+                and "pending_quiet_value" not in control
+                and not control.get("retarget_reapply")
+            ):
                 control.pop("restoration_pending", None)
                 if control.pop("restore_before_apply", False):
                     await self._async_save_control_state_locked()
@@ -1817,12 +1937,17 @@ class QuietHoursManager:
             if control.get("pending_quiet_value") != value or not control.get(
                 "pending_application_context_id"
             ):
-                # Keep the same receipt when retrying this target so a late
-                # report from the first attempt can still be attributed.
+                # Keep the receipt for a retry of the same target. Persist any
+                # superseded uncertain receipt before dispatching a new command.
+                if not self._remember_prior_retarget(
+                    control, control.get("pending_application_context_id")
+                ):
+                    continue
                 control["pending_quiet_value"] = value
                 control["pending_application_context_id"] = Context().id
             control.pop("restoration_pending", None)
             control.pop("restore_before_apply", None)
+            control.pop("retarget_reapply", None)
             await self._async_save_control_state_locked()
             # Saving can yield to a manual adjustment or an unavailable device.
             current = (
@@ -1834,17 +1959,14 @@ class QuietHoursManager:
                 continue
             state = self.hass.states.get(entity_id)
             current_context = getattr(getattr(state, "context", None), "id", None)
-            same = (
-                math.isclose(
-                    current,
-                    self._attained_quiet_value(control),
-                    abs_tol=_VOLUME_TOLERANCE,
-                )
-                if kind == "volume"
-                else current is control["quiet_value"]
+            same = self._control_values_equal(
+                kind, current, self._attained_quiet_value(control)
             )
             if not same or current_context != observed_context:
-                controls.pop(entity_id)
+                if self._restoration_attained(entity_id, control):
+                    self._settle_control_restoration(entity_id, control, restored=True)
+                else:
+                    controls.pop(entity_id)
                 await self._async_save_control_state_locked()
                 continue
             try:
@@ -1866,15 +1988,67 @@ class QuietHoursManager:
     def _attained_quiet_value(control: dict[str, Any]) -> Any:
         return control.get("attained_value", control["quiet_value"])
 
-    def _observe_owned_volume(
+    async def _async_control_feedback_pending(
+        self, control: dict[str, Any], operation: str
+    ) -> bool:
+        field = f"{operation}_feedback_until"
+        now = dt_util.utcnow()
+        if (deadline := _safe_iso(control.get(field))) is None:
+            # Give legacy in-flight commands a grace window on first use.
+            control[field] = (now + _CONTROL_FEEDBACK_GRACE).isoformat()
+            await self._async_save_control_state_locked()
+            return True
+        return now < deadline
+
+    @staticmethod
+    def _remember_prior_retarget(
+        control: dict[str, Any], context_id: str | None
+    ) -> bool:
+        if not context_id:
+            return True
+        now = dt_util.utcnow()
+        receipts = {
+            receipt: deadline
+            for receipt, deadline in control.get("prior_retarget_receipts", {}).items()
+            if (expiry := _safe_iso(deadline)) is not None and expiry > now
+        }
+        if context_id not in receipts and len(receipts) >= _MAX_PRIOR_RETARGET_RECEIPTS:
+            return False
+        receipts[context_id] = (now + _RETARGET_RECEIPT_LIFETIME).isoformat()
+        control["prior_retarget_receipts"] = receipts
+        return True
+
+    def _observe_prior_retarget(self, entity_id: str, control: dict[str, Any]) -> bool:
+        context = self._control_context_id(entity_id)
+        if context not in control.get("prior_retarget_receipts", {}):
+            return False
+        kind = control["kind"]
+        current = (
+            _current_volume(self.hass, entity_id)
+            if kind == "volume"
+            else _current_switch(self.hass, entity_id)
+        )
+        if current is None or self._control_values_equal(
+            kind, current, self._attained_quiet_value(control)
+        ):
+            return False
+        control["attained_value"] = current
+        control["retarget_reapply"] = True
+        if kind == "volume":
+            control["attained_context_id"] = context
+        return True
+
+    def _observe_owned_control(
         self,
         entity_id: str,
         control: dict[str, Any],
         *,
         allow_application_context: bool = True,
     ) -> bool:
-        """Accept attributed rounding or the exact target of an acknowledged retarget."""
-        if control["kind"] != "volume":
+        """Accept attributed volume rounding or an acknowledged retarget."""
+        kind = control["kind"]
+        waiting = control.get("retarget_awaiting_feedback")
+        if kind == "switch" and not waiting:
             return False
         context_id = control.get("application_context_id")
         attributed = (
@@ -1882,29 +2056,31 @@ class QuietHoursManager:
             and context_id
             and self._control_context_id(entity_id) == context_id
         )
-        waiting = control.get("retarget_awaiting_feedback")
         if not attributed and not waiting:
             return False
         if not attributed:
             state = self.hass.states.get(entity_id)
             if getattr(getattr(state, "context", None), "user_id", None):
                 return False
-        current = _current_volume(self.hass, entity_id)
+        current = (
+            _current_volume(self.hass, entity_id)
+            if kind == "volume"
+            else _current_switch(self.hass, entity_id)
+        )
         if current is None or not (
-            attributed
+            (attributed and kind == "volume")
             or (
                 waiting
-                and self._control_values_equal(
-                    "volume", current, control["quiet_value"]
-                )
+                and self._control_values_equal(kind, current, control["quiet_value"])
             )
         ):
             return False
         previous_context = control.get("attained_context_id")
         changed = bool(control.pop("retarget_awaiting_feedback", False))
+        control.pop("retarget_feedback_until", None)
         changed |= current != control.get("attained_value")
         control["attained_value"] = current
-        if attributed:
+        if attributed and kind == "volume":
             control["attained_context_id"] = context_id
         else:
             control.pop("attained_context_id", None)
@@ -1913,17 +2089,24 @@ class QuietHoursManager:
     def _commit_pending_quiet(
         self, entity_id: str, control: dict[str, Any], *, acknowledged: bool = False
     ) -> None:
-        if acknowledged and control["kind"] == "volume":
+        if acknowledged:
             # The new target can arrive without context after the service returns.
             # Until it arrives, an unchanged previous physical step stays owned.
             control.setdefault("attained_value", control["quiet_value"])
             control["retarget_awaiting_feedback"] = True
+            control["retarget_feedback_until"] = (
+                dt_util.utcnow() + _CONTROL_FEEDBACK_GRACE
+            ).isoformat()
         else:
             control.pop("retarget_awaiting_feedback", None)
+            if control["kind"] == "switch":
+                control.pop("attained_value", None)
+            else:
+                control["attained_value"] = _current_volume(self.hass, entity_id)
         control["quiet_value"] = control.pop("pending_quiet_value")
         if context_id := control.pop("pending_application_context_id", None):
             control["application_context_id"] = context_id
-        self._observe_owned_volume(entity_id, control)
+        self._observe_owned_control(entity_id, control)
 
     def _pending_quiet_attained(self, entity_id: str, control: dict[str, Any]) -> bool:
         if "pending_quiet_value" not in control:
@@ -1943,16 +2126,20 @@ class QuietHoursManager:
             "pending_application_context_id", control.get("application_context_id")
         )
         state = self.hass.states.get(entity_id)
+        context = getattr(state, "context", None)
+        attributed = context_id and getattr(context, "id", None) == context_id
         if (
             control["kind"] == "volume"
             and current is not None
             and control.get("pending_application_context_id")
-            and getattr(getattr(state, "context", None), "id", None) == context_id
+            and attributed
+            and not self._control_values_equal(
+                "volume", current, self._attained_quiet_value(control)
+            )
         ):
             return True
         return same and (
-            not context_id
-            or getattr(getattr(state, "context", None), "id", None) == context_id
+            attributed or not context_id or not getattr(context, "user_id", None)
         )
 
     def _control_application_suppressed(
@@ -1997,43 +2184,7 @@ class QuietHoursManager:
         )
         if control is None:
             return
-        if not await self._async_revalidate_control_locked(
-            entity_id, controls, control
-        ):
-            return
-        assert self._active is not None
-        observed = self._active["observed_controls"]
-        try:
-            await self._async_set_volume(entity_id, self._config.max_volume)
-        except _ObsoleteQuietHoursCallback:
-            raise
-        except Exception as err:
-            # A service error does not prove that the device stayed unchanged.
-            # Keep the persisted baseline unless HA confirms no change occurred.
-            current = _current_volume(self.hass, entity_id)
-            unchanged = (
-                current is not None
-                and abs(current - control["original_value"]) <= _VOLUME_TOLERANCE
-            )
-            self._log_control_failure(
-                "apply",
-                entity_id,
-                control["kind"],
-                err,
-                ownership="released" if unchanged else "retained",
-            )
-            if unchanged:
-                controls.pop(entity_id, None)
-                observed.remove(entity_id)
-                await self._async_save_control_state_locked()
-            # A failed service acknowledgement leaves any retained intent
-            # prepared; later reconciliation must attribute its actual effect.
-            return
-
-        if entity_id in controls:
-            control["application_state"] = "applied"
-            self._observe_owned_volume(entity_id, control)
-            await self._async_save_control_state_locked()
+        await self._async_dispatch_initial_control_locked(entity_id, controls, control)
 
     async def _async_apply_switch_locked(
         self,
@@ -2058,36 +2209,125 @@ class QuietHoursManager:
         )
         if control is None:
             return
+        await self._async_dispatch_initial_control_locked(entity_id, controls, control)
+
+    async def _async_dispatch_initial_control_locked(
+        self, entity_id: str, controls: dict[str, Any], control: dict[str, Any]
+    ) -> None:
+        """Persist the uncertain interval before issuing an initial command."""
+        self._require_current_callback_schedule()
+        retrying = control.get("application_state") == "awaiting_feedback"
+        control["application_state"] = "awaiting_feedback"
+        if period := (self._active or {}).get("period_started_at"):
+            control["initial_dispatch_period"] = period
+        await self._async_save_control_state_locked()
+        if retrying and self._observe_initial_application(entity_id, control):
+            control.pop("restore_before_apply", None)
+            control.pop("restoration_pending", None)
+            await self._async_save_control_state_locked()
+            return
         if not await self._async_revalidate_control_locked(
             entity_id, controls, control
         ):
             return
-        assert self._active is not None
-        observed = self._active["observed_controls"]
         try:
-            await self._async_set_switch(entity_id, desired)
+            if control["kind"] == "volume":
+                await self._async_set_volume(entity_id, control["quiet_value"])
+            else:
+                await self._async_set_switch(entity_id, control["quiet_value"])
         except _ObsoleteQuietHoursCallback:
-            raise
-        except Exception as err:
-            unchanged = (
-                _current_switch(self.hass, entity_id) is control["original_value"]
-            )
-            self._log_control_failure(
-                "apply",
-                entity_id,
-                control["kind"],
-                err,
-                ownership="released" if unchanged else "retained",
-            )
-            if unchanged:
-                controls.pop(entity_id, None)
-                observed.remove(entity_id)
+            if not retrying:
+                control["application_state"] = "prepared"
+                control.pop("initial_dispatch_period", None)
                 await self._async_save_control_state_locked()
+            raise
+        except _ControlDispatchRejected as err:
+            if not retrying:
+                control["application_state"] = "prepared"
+                control.pop("initial_dispatch_period", None)
+                await self._async_save_control_state_locked()
+            self._log_control_failure(
+                "apply", entity_id, control["kind"], err, ownership="prepared"
+            )
             return
-
-        if entity_id in controls:
-            control["application_state"] = "applied"
+        except Exception as err:
+            self._log_control_failure(
+                "apply", entity_id, control["kind"], err, ownership="retained"
+            )
+        if controls.get(entity_id) is control and self._observe_initial_application(
+            entity_id, control
+        ):
+            if retrying:
+                control.pop("restore_before_apply", None)
+                control.pop("restoration_pending", None)
             await self._async_save_control_state_locked()
+
+    def _initial_control_observation(
+        self, entity_id: str, control: dict[str, Any]
+    ) -> tuple[float | bool | None, bool, bool]:
+        states = getattr(self.hass, "states", None)
+        state = states.get(entity_id) if states is not None else None
+        context = getattr(state, "context", None)
+        state_context = getattr(context, "id", None)
+        attributed = state_context is not None and (
+            state_context == control.get("application_context_id")
+            or state_context in control.get("prior_retarget_receipts", {})
+        )
+        manual = (
+            not attributed
+            and bool(getattr(context, "user_id", None))
+            and state_context != control.get("baseline_context_id")
+        )
+        current = (
+            _current_volume(self.hass, entity_id)
+            if control["kind"] == "volume"
+            else _current_switch(self.hass, entity_id)
+        )
+        return current, attributed, manual
+
+    def _observe_initial_application(
+        self, entity_id: str, control: dict[str, Any]
+    ) -> bool:
+        current, attributed, manual = self._initial_control_observation(
+            entity_id, control
+        )
+        kind = control["kind"]
+        if (
+            current is None
+            or manual
+            or (
+                not (attributed and kind == "volume")
+                and self._control_values_equal(kind, current, control["original_value"])
+            )
+        ):
+            return False
+        if not (attributed and kind == "volume") and not self._control_values_equal(
+            kind, current, control["quiet_value"]
+        ):
+            return False
+        control["application_state"] = "applied"
+        control.pop("initial_dispatch_period", None)
+        if kind == "volume":
+            control["attained_value"] = current
+            if attributed:
+                context_id = self._control_context_id(entity_id)
+                control["attained_context_id"] = context_id
+                if context_id != control["application_context_id"]:
+                    control["retarget_reapply"] = True
+        return True
+
+    def _initial_application_pending(
+        self, entity_id: str, control: dict[str, Any]
+    ) -> bool:
+        current, _attributed, manual = self._initial_control_observation(
+            entity_id, control
+        )
+        return not manual and (
+            current is None
+            or self._control_values_equal(
+                control["kind"], current, control["original_value"]
+            )
+        )
 
     def _entity_registry_identity(self, entity_id: str) -> list[str] | None:
         try:
@@ -2125,7 +2365,7 @@ class QuietHoursManager:
                 existing["kind"] == kind
                 and existing["satellite_entity_id"] == satellite_entity_id
             )
-            self._observe_owned_volume(entity_id, existing)
+            self._observe_owned_control(entity_id, existing)
             at_quiet_value = self._control_values_equal(
                 kind, original, self._attained_quiet_value(existing)
             )
@@ -2298,7 +2538,15 @@ class QuietHoursManager:
         if context_id:
             # A device may round even the saved baseline. The restore receipt
             # attributes a changed step while an unchanged quiet step can retry.
-            return state_context == context_id and (at_baseline or away_from_quiet)
+            if state_context == context_id:
+                return at_baseline or away_from_quiet
+            state = self.hass.states.get(entity_id)
+            return (
+                bool(control.get("restoration_awaiting_feedback"))
+                and at_baseline
+                and away_from_quiet
+                and not getattr(getattr(state, "context", None), "user_id", None)
+            )
         # Older pending restores reused the application receipt. Recognize
         # only an exact baseline distinct from the prior attained quiet value.
         old_context = control.get(
@@ -2356,13 +2604,47 @@ class QuietHoursManager:
             if kind not in ("volume", "switch"):
                 self._settle_control_restoration(entity_id, control, restored=True)
                 continue
+            if control.get(
+                "application_state"
+            ) == "awaiting_feedback" and not self._observe_initial_application(
+                entity_id, control
+            ):
+                current, _attributed, manual = self._initial_control_observation(
+                    entity_id, control
+                )
+                returned_to_baseline = (
+                    (
+                        kind == "switch"
+                        or (pending_only and control.get("restore_before_apply"))
+                    )
+                    and self._control_values_equal(
+                        kind, current, control["original_value"]
+                    )
+                    and (state_context := self._control_context_id(entity_id))
+                    is not None
+                    and state_context != control.get("baseline_context_id")
+                )
+                if returned_to_baseline:
+                    self._settle_control_restoration(
+                        entity_id,
+                        control,
+                        restored=(period_ended or (kind == "volume" and pending_only))
+                        and not manual,
+                    )
+                elif self._initial_application_pending(entity_id, control):
+                    control["restoration_pending"] = True
+                    if period_ended:
+                        control["restore_before_apply"] = True
+                else:
+                    self._settle_control_restoration(entity_id, control, restored=False)
+                continue
             if self._restoration_attained(entity_id, control):
                 self._settle_control_restoration(entity_id, control, restored=True)
                 continue
             if self._pending_quiet_attained(entity_id, control):
                 self._commit_pending_quiet(entity_id, control)
-            else:
-                self._observe_owned_volume(entity_id, control)
+            elif not self._observe_prior_retarget(entity_id, control):
+                self._observe_owned_control(entity_id, control)
             original = control["original_value"]
             quiet = self._attained_quiet_value(control)
             current = (
@@ -2374,6 +2656,26 @@ class QuietHoursManager:
             if period_ended:
                 control["restore_before_apply"] = True
             if current is None:
+                continue
+            if control.get("restoration_awaiting_feedback"):
+                state = self.hass.states.get(entity_id)
+                context = getattr(state, "context", None)
+                if getattr(context, "user_id", None) or not self._control_values_equal(
+                    kind, current, quiet
+                ):
+                    # A manual or otherwise unattributed change releases ownership.
+                    # Do not treat it as permission to apply again in this period.
+                    control.pop("restore_before_apply", None)
+                    self._settle_control_restoration(entity_id, control, restored=False)
+                    continue
+                if await self._async_control_feedback_pending(control, "restoration"):
+                    continue
+            if (
+                kind == "switch"
+                and control.get("retarget_awaiting_feedback")
+                and self._control_values_equal(kind, current, quiet)
+                and await self._async_control_feedback_pending(control, "retarget")
+            ):
                 continue
             state_context = self._control_context_id(entity_id)
             at_baseline = self._control_values_equal(kind, current, original)
@@ -2404,17 +2706,17 @@ class QuietHoursManager:
             if not context_id:
                 context_id = control["restoration_context_id"] = Context().id
                 await self._async_save_control_state_locked()
-                # Persisting the receipt can yield to a newer independent choice.
-                latest = (
-                    _current_volume(self.hass, entity_id)
-                    if kind == "volume"
-                    else _current_switch(self.hass, entity_id)
-                )
-                if (
-                    not self._control_values_equal(kind, latest, current)
-                    or self._control_context_id(entity_id) != state_context
-                ):
-                    continue
+            # Persisting the receipt can yield to a newer independent choice.
+            latest = (
+                _current_volume(self.hass, entity_id)
+                if kind == "volume"
+                else _current_switch(self.hass, entity_id)
+            )
+            if (
+                not self._control_values_equal(kind, latest, current)
+                or self._control_context_id(entity_id) != state_context
+            ):
+                continue
             try:
                 if kind == "volume":
                     await self._async_set_volume(
@@ -2430,8 +2732,16 @@ class QuietHoursManager:
                 self._log_control_failure(
                     "restore", entity_id, kind, err, ownership="retained"
                 )
-                continue
-            self._settle_control_restoration(entity_id, control, restored=True)
+                if not isinstance(err, TimeoutError):
+                    continue
+            control["restoration_awaiting_feedback"] = True
+            control["restoration_feedback_until"] = (
+                dt_util.utcnow() + _CONTROL_FEEDBACK_GRACE
+            ).isoformat()
+            if self._restoration_attained(entity_id, control):
+                self._settle_control_restoration(entity_id, control, restored=True)
+            else:
+                await self._async_save_control_state_locked()
         if not pending_only:
             retained_observations = set(controls)
             if preserve_released:
@@ -2520,7 +2830,7 @@ class QuietHoursManager:
                 and current
                 != getattr(self, "_deferred_selection_renames", {}).get(selected)
             ):
-                raise HomeAssistantError(
+                raise _ControlDispatchRejected(
                     "Quiet Hours selection changed; retry reconciliation"
                 )
         control = (self._active or {}).get("controls", {}).get(entity_id, {})
@@ -2532,19 +2842,51 @@ class QuietHoursManager:
         ):
             # Migration persistence awaits storage. A rename or ID reuse during
             # that await must not redirect the subsequent action to another owner.
-            raise HomeAssistantError(
+            raise _ControlDispatchRejected(
                 "Quiet Hours control identity changed; retry reconciliation"
+            )
+        has_service = getattr(self.hass.services, "has_service", None)
+        if callable(has_service) and has_service(domain, service) is False:
+            raise _ControlDispatchRejected(
+                f"Quiet Hours service unavailable: {domain}.{service}"
             )
         context_id = context_id or control.get(
             "pending_application_context_id", control.get("application_context_id")
         )
-        await self.hass.services.async_call(
-            domain,
-            service,
-            {"entity_id": entity_id, **data},
-            blocking=True,
-            context=Context(id=context_id) if context_id else None,
+        if entity_id in self._pending_service_calls:
+            raise TimeoutError(
+                f"An earlier Quiet Hours service is still running for {entity_id}"
+            )
+        dispatch = asyncio.create_task(
+            self.hass.services.async_call(
+                domain,
+                service,
+                {"entity_id": entity_id, **data},
+                blocking=True,
+                context=Context(id=context_id) if context_id else None,
+            ),
+            eager_start=True,
         )
+        self._pending_service_calls[entity_id] = dispatch
+        dispatch.add_done_callback(partial(self._finish_control_call, entity_id))
+        try:
+            done, _ = await asyncio.wait({dispatch}, timeout=_CONTROL_SERVICE_TIMEOUT)
+            if not done:
+                raise TimeoutError(f"Quiet Hours service timed out: {domain}.{service}")
+            dispatch.result()
+        finally:
+            # Cancel without waiting for a service that ignores cancellation.
+            # The persisted receipt still owns any late effect.
+            if not dispatch.done():
+                dispatch.cancel()
+            else:
+                self._finish_control_call(entity_id, dispatch)
+
+    def _finish_control_call(self, entity_id: str, dispatch: asyncio.Task[Any]) -> None:
+        if self._pending_service_calls.get(entity_id) is dispatch:
+            del self._pending_service_calls[entity_id]
+        with suppress(asyncio.CancelledError):
+            dispatch.exception()
 
     async def _async_save_control_state_locked(self) -> None:
         await self._async_save_locked()
@@ -2681,7 +3023,7 @@ class QuietHoursManager:
         self._normalize_baseline_context(control, raw)
         phase = raw.get("application_state")
         if phase is not None:
-            if phase not in {"prepared", "applied"}:
+            if phase not in {"prepared", "awaiting_feedback", "applied"}:
                 raise ValueError("Quiet Hours control application state is invalid")
             control["application_state"] = phase
             for field, label in (
@@ -2698,16 +3040,36 @@ class QuietHoursManager:
             if not isinstance(attained_context, str) or not attained_context:
                 raise ValueError("Quiet Hours attained context is invalid")
             control["attained_context_id"] = attained_context
-        if (
-            control["kind"] == "volume"
-            and raw.get("retarget_awaiting_feedback") is True
+        for field in (
+            "initial_dispatch_period",
+            "retarget_feedback_until",
+            "restoration_feedback_until",
         ):
+            if (timestamp := _safe_iso(raw.get(field))) is not None:
+                control[field] = timestamp.isoformat()
+        if raw.get("retarget_reapply") is True:
+            control["retarget_reapply"] = True
+        if isinstance(receipts := raw.get("prior_retarget_receipts"), dict):
+            normalized = {
+                receipt: timestamp.isoformat()
+                for receipt, deadline in list(receipts.items())[
+                    :_MAX_PRIOR_RETARGET_RECEIPTS
+                ]
+                if isinstance(receipt, str)
+                and receipt
+                and (timestamp := _safe_iso(deadline)) is not None
+            }
+            if normalized:
+                control["prior_retarget_receipts"] = normalized
+        if raw.get("retarget_awaiting_feedback") is True:
             control["retarget_awaiting_feedback"] = True
         restoration_context = raw.get("restoration_context_id")
         if restoration_context is not None:
             if not isinstance(restoration_context, str) or not restoration_context:
                 raise ValueError("Quiet Hours restoration context is invalid")
             control["restoration_context_id"] = restoration_context
+            if raw.get("restoration_awaiting_feedback") is True:
+                control["restoration_awaiting_feedback"] = True
 
     def _normalize_active_values(self, value: Any) -> dict[str, Any] | None:
         if not isinstance(value, Mapping):
@@ -2777,6 +3139,12 @@ class QuietHoursManager:
                 and 0 <= attained <= 1
             ):
                 controls[entity_id]["attained_value"] = float(attained)
+            if (
+                entity_id in controls
+                and kind == "switch"
+                and isinstance(attained, bool)
+            ):
+                controls[entity_id]["attained_value"] = attained
             pending_value = raw.get("pending_quiet_value")
             if entity_id in controls and (
                 (
@@ -2823,13 +3191,21 @@ class QuietHoursManager:
         *,
         ownership: str = "released",
     ) -> None:
+        recovery = (
+            "Saved control ownership remains unresolved; Quiet Hours can retry reconciliation."
+            if ownership == "retained"
+            else "Quiet Hours released this control. The failed operation was not confirmed."
+        )
         log_handled_failure(
             logging.getLogger(__name__),
-            f"Quiet Hours operation={operation} control={kind} entity={entity_id}; outcome=failed ownership={ownership}",
+            f"Quiet Hours operation={operation} control={kind} entity={entity_id}; outcome=failed ownership={ownership}. {recovery}",
             error,
         )
 
     def _publish_state(self, period: QuietPeriod | None) -> None:
+        if getattr(self, "_config_recovery_pending", False):
+            self.hass.states.async_set(_STATE_ENTITY_ID, "unavailable")
+            return
         self.hass.states.async_set(
             _STATE_ENTITY_ID,
             "on" if period is not None else "off",

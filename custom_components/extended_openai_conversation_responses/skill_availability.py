@@ -3,13 +3,30 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+import re
+from re import _constants as re_ops, _parser as re_parser  # type: ignore[attr-defined]
+from time import monotonic
 from typing import Any
 
-from .const import FUNCTION_GROUP_LOADING_ON_DEMAND
+from .const import FUNCTION_GROUP_LOADING_ON_DEMAND, SKILL_FILE_NAME
 
 SKILL_LOADER_TOOL_NAME = "load_skill"
 CANONICAL_SKILL_LOADER_PATH = "{{extended_openai.skill_dir(name)}}/{{file}}"
+_LITERAL_PROPERTY_KEY = re.compile(r"[a-zA-Z0-9_-]+")
+_PROPERTY_END_ASSERTION = r"(?![\s\S])"
+_PROPERTY_ATOMS = {
+    re_ops.ANY,
+    re_ops.AT,
+    re_ops.CATEGORY,
+    re_ops.IN,
+    re_ops.LITERAL,
+    re_ops.NOT_LITERAL,
+}
+_PROPERTY_REPEATS = {re_ops.MAX_REPEAT, re_ops.MIN_REPEAT, re_ops.POSSESSIVE_REPEAT}
+_MAX_PROPERTY_PATTERN_CHOICES = 128
+_MAX_PROPERTY_PATTERN_WORK = 262_144
+_MAX_ARGUMENT_PATTERN_WORK = 1_048_576
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +58,9 @@ def preserves_skill_loader_availability(
             before.blockers or (before.reason,)
         )
         and set(selected_after).issubset(selected_before)
+        and (set(before.loadable_skills) & set(selected_after)).issubset(
+            after.loadable_skills
+        )
     )
 
 
@@ -59,6 +79,254 @@ def is_canonical_skill_loader(tool: dict[str, Any]) -> bool:
 def function_group_enabled(group: dict[str, Any]) -> bool:
     """Treat legacy groups as enabled without rewriting member tool state."""
     return group.get("enabled", True) is True
+
+
+def _allowed_string_arguments(
+    schema: dict[str, Any], values: tuple[str, ...]
+) -> tuple[str, ...]:
+    minimum, maximum = schema.get("minLength"), schema.get("maxLength")
+    choices = schema.get("enum")
+    allowed = tuple(
+        value
+        for value in values
+        if isinstance(value, str)
+        and (type(minimum) is not int or len(value) >= minimum)
+        and (type(maximum) is not int or len(value) <= maximum)
+        and ("const" not in schema or value == schema["const"])
+        and (not isinstance(choices, list) or value in choices)
+    )
+    if (pattern := schema.get("pattern")) is None:
+        return allowed
+    if not allowed or not isinstance(pattern, str) or len(pattern) > 4096:
+        return ()
+    try:
+        longest = max(map(len, allowed))
+        choices = _property_pattern_choices(re_parser.parse(pattern, 0), longest)
+        if (
+            choices is None
+            or choices * (longest + 1) * len(pattern) > _MAX_ARGUMENT_PATTERN_WORK
+        ):
+            return ()
+        compiled = re.compile(pattern)
+    except re.error, RecursionError, OverflowError:
+        return ()
+    # Only run provably bounded stdlib searches in synchronous projections.
+    deadline = monotonic() + 0.01
+    matches = []
+    for value in allowed:
+        if monotonic() >= deadline:
+            break
+        if compiled.search(value) is not None:
+            matches.append(value)
+    return tuple(matches)
+
+
+def _closed_property_keys(properties: dict[str, Any], patterns: Any) -> set[str] | None:
+    """Find possible keys when all patterns are anchored literal alternatives."""
+    if not isinstance(patterns, dict):
+        return None
+    keys = set(properties)
+    for pattern in patterns:
+        if not isinstance(pattern, str) or not pattern.startswith("^"):
+            return None
+        final_newline = False
+        body = pattern[1:]
+        if body.endswith(_PROPERTY_END_ASSERTION):
+            body = body.removesuffix(_PROPERTY_END_ASSERTION).removesuffix("$")
+        elif body.endswith((r"\Z", r"\z")):
+            body = body[:-2]
+        elif body.endswith("$"):
+            body = body[:-1]
+            # Python's runtime validator also accepts a terminal newline.
+            final_newline = True
+        else:
+            return None
+        alternatives = (
+            body[3:-1].split("|")
+            if body.startswith("(?:") and body.endswith(")")
+            else [body]
+        )
+        if not all(_LITERAL_PROPERTY_KEY.fullmatch(key) for key in alternatives):
+            return None
+        keys.update(alternatives)
+        if final_newline:
+            keys.update(f"{key}\n" for key in alternatives)
+    return keys
+
+
+def _property_pattern_choices(
+    tokens: Iterable[tuple[Any, Any]], key_length: int, *, fixed: bool = False
+) -> int | None:
+    """Bound the alternatives stdlib re can try on the required property keys."""
+    # Inspect the CPython parser's operators. Execute only the original stdlib
+    # pattern after bounding the paths it can explore on these keys.
+    choices = 1
+    for op, argument in tokens:
+        if op in _PROPERTY_ATOMS:
+            continue
+        if op == re_ops.SUBPATTERN:
+            alternatives = _property_pattern_choices(
+                argument[-1], key_length, fixed=fixed
+            )
+            if alternatives is None:
+                return None
+        elif fixed:
+            return None
+        elif op == re_ops.BRANCH:
+            branches = argument[1]
+            if any(
+                _property_pattern_choices(branch, key_length, fixed=True) is None
+                for branch in branches
+            ):
+                return None
+            alternatives = len(branches)
+        elif op in {re_ops.ASSERT, re_ops.ASSERT_NOT, re_ops.ATOMIC_GROUP}:
+            nested = argument if op == re_ops.ATOMIC_GROUP else argument[1]
+            alternatives = _property_pattern_choices(nested, key_length)
+            if alternatives is None:
+                return None
+        elif op in _PROPERTY_REPEATS:
+            minimum, maximum, body = argument
+            width, _ = body.getwidth()
+            # Repetition must make progress and have no internal choices.
+            if (
+                not width
+                or _property_pattern_choices(body, key_length, fixed=True) is None
+            ):
+                return None
+            alternatives = max(1, min(maximum, key_length // width) - minimum + 1)
+        else:
+            # Backreferences and assertions beyond ordinary anchors are left to
+            # the isolated runtime worker.
+            return None
+        choices *= alternatives
+        if choices > _MAX_PROPERTY_PATTERN_CHOICES:
+            return None
+    return choices
+
+
+def _patterned_loader_keys(keys: set[str], patterns: Any) -> set[str] | None:
+    """Prove additional-property membership with bounded stdlib re searches."""
+    if not keys or not patterns:
+        return set()
+    if (
+        not isinstance(patterns, dict)
+        or len(patterns) > 64
+        or len(keys) > 64
+        or any(len(key) > 128 for key in keys)
+        or any(
+            not isinstance(pattern, str) or len(pattern) > 1024 for pattern in patterns
+        )
+    ):
+        return None
+    matches: set[str] = set()
+    deadline = monotonic() + 0.01
+    try:
+        for pattern in patterns:
+            if monotonic() >= deadline:
+                return None
+            if (literal_keys := _closed_property_keys({}, {pattern: None})) is not None:
+                matches.update(keys & literal_keys)
+                continue
+            # The runtime compiles every pattern, then short-circuits per key.
+            compiled = re.compile(pattern)
+            remaining = keys - matches
+            if not remaining:
+                continue
+            longest = max(map(len, remaining))
+            choices = _property_pattern_choices(re_parser.parse(pattern, 0), longest)
+            if (
+                choices is None
+                or choices * (longest + 1) * len(pattern) > _MAX_PROPERTY_PATTERN_WORK
+            ):
+                return None
+            for key in remaining:
+                if monotonic() >= deadline:
+                    return None
+                if compiled.search(key) is not None:
+                    matches.add(key)
+    except re.error, RecursionError, OverflowError:
+        return None
+    return matches
+
+
+def _loader_allowed_names(
+    tool: dict[str, Any], selected: tuple[str, ...]
+) -> tuple[str, ...] | None:
+    """Return names the schema allows, or None for an unusable loader shape."""
+    parameters = tool.get("spec", {}).get("parameters", {})
+    if not isinstance(parameters, dict):
+        return None
+    properties = parameters.get("properties", {})
+    if not isinstance(properties, dict):
+        return None
+    required = parameters.get("required", [])
+    if not isinstance(required, list) or not all(
+        isinstance(key, str) for key in required
+    ):
+        return None
+    maximum = parameters.get("maxProperties")
+    if type(maximum) is int and maximum < len({"name", "file", *required}):
+        return None
+    minimum = parameters.get("minProperties")
+    if parameters.get("additionalProperties") is False:
+        possible = _closed_property_keys(
+            properties, parameters.get("patternProperties", {})
+        )
+        if possible is not None and (
+            bool({"name", "file", *required} - possible)
+            or (type(minimum) is int and minimum > len(possible))
+        ):
+            return None
+    missing = {"name", "file", *required} - properties.keys()
+    additional = parameters.get("additionalProperties")
+    patterned: set[str] = set()
+    if missing and (
+        additional is False or (isinstance(additional, dict) and additional)
+    ):
+        matched = _patterned_loader_keys(missing, parameters.get("patternProperties"))
+        if matched is None or (additional is False and missing - matched):
+            return None
+        patterned = matched
+    for key in ("file", "name"):
+        schema = properties.get(key)
+        if key not in properties and key not in patterned:
+            schema = additional
+        if schema is False:
+            return None
+        if not isinstance(schema, dict):
+            continue
+        kind = schema.get("type")
+        if (
+            kind is not None
+            and kind != "string"
+            and not (isinstance(kind, list) and "string" in kind)
+        ):
+            return None
+        if key == "name":
+            maximum = schema.get("maxLength")
+            if type(maximum) is int and maximum == 0:
+                return None
+            selected = _allowed_string_arguments(schema, selected)
+        elif not _allowed_string_arguments(schema, (SKILL_FILE_NAME,)):
+            return None
+    if "const" in parameters or "enum" in parameters:
+        from .function_execution import _json_equal
+
+        choices = parameters.get("enum", [parameters.get("const")])
+        if not isinstance(choices, list):
+            return None
+        allowed_names = {
+            choice["name"]
+            for choice in choices
+            if isinstance(choice, dict)
+            and isinstance(choice.get("name"), str)
+            and choice.get("file") == SKILL_FILE_NAME
+            and all(key in choice for key in required)
+            and ("const" not in parameters or _json_equal(choice, parameters["const"]))
+        }
+        selected = tuple(name for name in selected if name in allowed_names)
+    return selected
 
 
 def function_group_for_tool(
@@ -99,21 +367,51 @@ def skill_loader_status(
     """
     if not selected_skills:
         return SkillLoaderStatus(available=True)
+    return skill_loader_configuration_status(
+        tools,
+        groups,
+        max_function_calls=max_function_calls,
+        selected_skills=tuple(selected_skills),
+    )
+
+
+def skill_loader_configuration_status(
+    tools: list[dict[str, Any]],
+    groups: list[dict[str, Any]],
+    *,
+    max_function_calls: int | None = None,
+    selected_skills: tuple[str, ...] = (),
+    require_all_selected: bool = True,
+) -> SkillLoaderStatus:
+    """Check whether the configured loader can serve a Skill selection."""
     # Track all structural blockers so an edit cannot hide a new problem behind
     # the first diagnostic, and a partial repair can safely remove one blocker.
     blockers: list[str] = []
-    if max_function_calls is not None and max_function_calls <= 0:
+    if max_function_calls == 0:
         blockers.append(
             "selected Skills require at least one Function Tool call per request"
         )
 
     loader = next((tool for tool in tools if is_canonical_skill_loader(tool)), None)
+    allowed: tuple[str, ...] | None = None
     if loader is None:
         blockers.append(
             "selected Skills require the built-in `load_skill` Function Tool"
         )
-    elif loader.get("enabled", True) is not True:
-        blockers.append("the built-in `load_skill` Function Tool is disabled")
+    else:
+        if loader.get("enabled", True) is not True:
+            blockers.append("the built-in `load_skill` Function Tool is disabled")
+        allowed = _loader_allowed_names(loader, selected_skills)
+        if allowed is None:
+            blockers.append(
+                "the `load_skill` schema must allow string name and file arguments"
+            )
+        elif selected_skills and (
+            not allowed or (require_all_selected and allowed != selected_skills)
+        ):
+            blockers.append(
+                "the `load_skill` schema excludes one or more selected Skill names"
+            )
 
     group = function_group_for_tool(SKILL_LOADER_TOOL_NAME, groups) if loader else None
     group_id = str(group.get("id", "")) if group else None
@@ -127,12 +425,14 @@ def skill_loader_status(
             available=False,
             reason=blockers[0],
             group_id=group_id or None,
+            loadable_skills=allowed or (),
             blockers=tuple(blockers),
         )
 
     return SkillLoaderStatus(
         available=True,
         group_id=group_id or None,
+        loadable_skills=allowed or (),
         on_demand=group is not None
         and group.get("loading_mode") == FUNCTION_GROUP_LOADING_ON_DEMAND,
     )
@@ -162,11 +462,12 @@ def effective_skill_loader_status(
             loadable_skills=usable,
         )
 
-    status = skill_loader_status(
-        usable,
+    status = skill_loader_configuration_status(
         tools,
         groups,
         max_function_calls=max_function_calls,
+        selected_skills=usable,
+        require_all_selected=False,
     )
     if not status.available:
         return status
@@ -176,6 +477,6 @@ def effective_skill_loader_status(
             reason="the Function Group loader is unavailable for this runtime",
             group_id=status.group_id,
             on_demand=True,
-            loadable_skills=usable,
+            loadable_skills=status.loadable_skills,
         )
-    return replace(status, loadable_skills=usable)
+    return status

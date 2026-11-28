@@ -86,13 +86,12 @@ def _function_call_stream(
 
 
 def _final_stream(text: str = "Done") -> FakeStream:
+    marker = SimpleNamespace(type="message")
     return FakeStream(
         [
-            _event(
-                "response.output_item.added",
-                item=SimpleNamespace(type="message"),
-            ),
+            _event("response.output_item.added", item=marker),
             _event("response.output_text.delta", delta=text),
+            _event("response.output_item.done", item=marker),
             _completed_event(),
         ]
     )
@@ -303,6 +302,29 @@ async def test_zero_budget_does_not_consume_conditional_finalizer(hass) -> None:
     entity._execute_function_tool.assert_not_awaited()
 
 
+async def test_unadvertised_conditional_finalizer_cannot_replace_the_reply(hass):
+    entity = _entity(
+        hass,
+        [
+            _function_call_stream(
+                [
+                    (
+                        "unsolicited",
+                        CONTINUE_CONVERSATION_TOOL_NAME,
+                        {"response": "Unexpected text", "continue_conversation": True},
+                    )
+                ]
+            )
+        ],
+        limit="1.0",
+    )
+    entity._execute_function_tool = _executor(entity)
+    log = _chat_log(hass)
+    with pytest.raises(HomeAssistantError, match="was not advertised"):
+        await entity._async_handle_chat_log(log, [], [])
+    entity._execute_function_tool.assert_not_awaited()
+
+
 async def test_zero_budget_does_not_consume_function_group_loader(hass) -> None:
     loader = _tool(
         FUNCTION_GROUP_LOADER_TOOL_NAME,
@@ -328,7 +350,10 @@ async def test_zero_budget_does_not_consume_function_group_loader(hass) -> None:
         function_group_loader=load_group,
     )
 
-    load_group.assert_called_once_with(["extra"], None, True)
+    [requested, admission] = load_group.call_args.args
+    assert requested == ["extra"]
+    assert not admission.function_calls_available
+    assert admission.loader_available
     entity._execute_function_tool.assert_not_awaited()
 
 

@@ -9,6 +9,7 @@ export const LATENCY_ROUTES = [
   {name: "capabilities-home-assistant", path: "capabilities/home-assistant"},
   {name: "capabilities-web-skills", path: "capabilities/web-skills"},
   {name: "capabilities-request-rules", path: "capabilities/request-rules"},
+  {name: "capabilities-scheduled-actions", path: "capabilities/scheduled-actions"},
   {name: "capabilities-functions", path: "capabilities/functions"},
   {name: "capabilities-guest-mode", path: "capabilities/guest-mode"},
   {name: "capabilities-quiet-hours", path: "capabilities/quiet-hours"},

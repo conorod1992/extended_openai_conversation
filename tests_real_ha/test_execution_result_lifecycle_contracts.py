@@ -746,7 +746,7 @@ async def test_typed_and_exact_text_results_survive_local_and_provider_consumers
     from unittest.mock import AsyncMock
 
     from custom_components.extended_openai_conversation_responses.functions import (
-        get_function,
+        TemplateFunction,
     )
 
     # Control the actual backend return, independently of HA's Template parsing
@@ -754,7 +754,7 @@ async def test_typed_and_exact_text_results_survive_local_and_provider_consumers
     # serialization all remain the production paths under test.
     hass.config.legacy_templates = False
     execute = AsyncMock(return_value=value)
-    monkeypatch.setattr(get_function("template"), "execute", execute)
+    monkeypatch.setattr(TemplateFunction, "execute", execute)
     tool = {
         "spec": {
             "name": "produce",

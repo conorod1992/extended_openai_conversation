@@ -317,7 +317,7 @@ async def test_apply_skips_service_when_control_changes_before_revalidation(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["volume", "switch"])
-async def test_failed_apply_releases_ownership_when_device_stayed_unchanged(
+async def test_failed_apply_awaits_feedback_when_device_stayed_unchanged(
     hass, kind
 ) -> None:
     entity_id = "media_player.bedroom" if kind == "volume" else "switch.wake_sound"
@@ -357,8 +357,9 @@ async def test_failed_apply_releases_ownership_when_device_stayed_unchanged(
             "assist_satellite.bedroom", entity_id, quiet_value, controls
         )
 
-    assert controls == {}
-    assert manager._active["observed_controls"] == []
+    assert controls[entity_id] is control
+    assert control["application_state"] == "awaiting_feedback"
+    assert manager._active["observed_controls"] == [entity_id]
     manager._async_save_control_state_locked.assert_awaited_once_with()
 
 
@@ -417,8 +418,8 @@ async def test_failed_apply_retains_intent_when_device_value_changed(
 
     assert controls[entity_id] is control
     assert manager._active["observed_controls"] == [entity_id]
-    assert control["application_state"] == "prepared"
-    manager._async_save_control_state_locked.assert_not_awaited()
+    assert control["application_state"] == "applied"
+    assert manager._async_save_control_state_locked.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -451,8 +452,8 @@ async def test_apply_does_not_recreate_ownership_removed_during_service_call(has
     )
 
     assert controls == {}
-    assert control["application_state"] == "prepared"
-    manager._async_save_control_state_locked.assert_not_awaited()
+    assert control["application_state"] == "awaiting_feedback"
+    manager._async_save_control_state_locked.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
@@ -582,6 +583,10 @@ async def test_restore_reverts_prepared_control_owned_by_quiet_hours(hass) -> No
 
     manager._async_set_volume.assert_awaited_once_with(entity_id, 0.8, context_id=ANY)
     assert manager._async_set_volume.await_args.kwargs["context_id"] != "quiet-hours-operation"
+    hass.states.get.side_effect = lambda _entity_id: _state(
+        manager._async_set_volume.await_args.kwargs["context_id"], volume=0.8
+    )
+    await manager._async_restore_locked()
     assert manager.active is None
 
 
@@ -627,6 +632,12 @@ async def test_pending_only_restore_leaves_non_pending_prepared_control_alone(ha
     await manager._async_restore_locked(pending_only=True)
 
     assert manager._active is not None
+    hass.states.get.side_effect = lambda entity_id: _state(
+        pending_control["restoration_context_id"] if entity_id == "switch.wake_sound" else "operation",
+        state="on" if entity_id == "switch.wake_sound" else "idle",
+        volume=0.2,
+    )
+    await manager._async_restore_locked(pending_only=True)
     assert manager._active["controls"] == {
         "media_player.bedroom": quiet_hours_control
     }

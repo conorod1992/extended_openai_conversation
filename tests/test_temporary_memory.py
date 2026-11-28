@@ -19,6 +19,9 @@ from custom_components.extended_openai_conversation_responses.conversation impor
     _ACTIVE_TURN,
     ExtendedOpenAIAgentEntity,
 )
+from custom_components.extended_openai_conversation_responses.exceptions import (
+    DuplicateMemoryEdit,
+)
 from custom_components.extended_openai_conversation_responses.scope import (
     unretained_scope,
 )
@@ -44,6 +47,23 @@ class Storage:
 
     async def async_save(self, data):
         self.data = data
+
+
+async def test_missing_records_cannot_be_interpreted_as_empty():
+    from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+        StorageRepairRequired,
+    )
+
+    data = {"recoverable": ["original contents"]}
+    storage = Storage(data)
+    memory = TemporaryMemory(storage)
+    with pytest.raises(StorageRepairRequired):
+        await memory.async_initialize()
+    with pytest.raises(StorageRepairRequired):
+        await memory.async_add(
+            "device:kitchen", "New fact", future(), owner_scope_id="user:alice"
+        )
+    assert storage.data == data
 
 
 @pytest.mark.parametrize("committed", [False, True])
@@ -103,6 +123,36 @@ def stored_record(
         "created_at": now.isoformat(),
         "updated_at": now.isoformat(),
     }
+
+
+@pytest.mark.parametrize("difference", ["category", "source", "expiry", "scope", None])
+async def test_management_edit_duplicate_checks_temporary_identity(difference):
+    expiry = future()
+    original = stored_record(0)
+    peer = stored_record(1) | {
+        "content": "Existing",
+        "source": "manual",
+        "expires_at": expiry,
+    }
+    original |= {"source": "manual", "expires_at": expiry}
+    if difference == "category":
+        peer["category"] = "other"
+    elif difference == "source":
+        peer["source"] = "automatic"
+    elif difference == "expiry":
+        peer["expires_at"] = future(2)
+    elif difference == "scope":
+        peer["scope_id"] = "device:office"
+    storage = Storage({"records": [original, peer]})
+    memory = TemporaryMemory(storage)
+    fields = ("user:alice", original["memory_id"], "Existing", None, None)
+    if difference is None:
+        with pytest.raises(DuplicateMemoryEdit):
+            await memory.async_update_owned(*fields, confirm_duplicate=False)
+        assert storage.data["records"][0]["content"] == original["content"]
+    else:
+        updated = await memory.async_update_owned(*fields, confirm_duplicate=False)
+        assert updated.content == "Existing"
 
 
 async def test_active_records_are_owned_persisted_and_bounded() -> None:
@@ -1062,6 +1112,20 @@ async def test_legacy_memory_stays_isolated_until_original_expiry(
     assert memory.stats()["unassigned_legacy_temporary_memory_count"] == 0
     assert memory.expired_pruned == 1
     assert TemporaryMemory.validate_backup_data(backup) == []
+
+
+async def test_add_does_not_overwrite_an_arbitrary_matching_record():
+    memory = TemporaryMemory(Storage())
+    owner = "user:alice"
+    await memory.async_add_owned(owner, "Same fact", future(), "first")
+    second = await memory.async_add_owned(owner, "Different fact", future(), "second")
+    await memory.async_update_owned(
+        owner, second["memory"]["memory_id"], "Same fact", None, None
+    )
+    original = await memory.async_list_owned(owner)
+    with pytest.raises(ValueError, match="Multiple matching temporary memories"):
+        await memory.async_add_owned(owner, "Same fact", future(), "third")
+    assert await memory.async_list_owned(owner) == original
 
 
 async def test_isolated_legacy_memories_leave_active_capacity_available():

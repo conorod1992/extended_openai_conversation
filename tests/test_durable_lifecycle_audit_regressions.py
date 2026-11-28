@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -125,3 +125,25 @@ async def test_reconciliation_preserves_assistant_added_during_storage_scan(hass
     await agent_deletion.async_delete_removed_subentries(hass, entry)
     delete.assert_not_awaited()
     assert "new" in hass.data[agent_deletion.KNOWN_AGENTS]["entry"]
+
+
+async def test_unreadable_scheduled_queue_does_not_block_private_store_deletion(
+    hass, tmp_path, monkeypatch
+):
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    root = tmp_path / ".storage"
+    root.mkdir()
+    data = root / f"{DOMAIN}.memory.entry.removed"
+    data.write_text("private", encoding="utf-8")
+    hass.config_entries.async_get_entry.return_value = None
+    queue = AsyncMock(side_effect=OSError("queue unavailable"))
+    monkeypatch.setattr(delayed_tools, "async_remove_stored_agent_calls", queue)
+    retry = Mock()
+    monkeypatch.setattr(agent_deletion, "_schedule_cleanup_retry", retry)
+
+    await agent_deletion.async_delete_agent_data(hass, "entry", "removed")
+
+    assert not data.exists()
+    queue.assert_awaited_once_with(hass, "entry", "removed")
+    retry.assert_called_once_with(hass)

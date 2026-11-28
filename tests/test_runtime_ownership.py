@@ -229,7 +229,11 @@ async def test_live_memory_gate_and_embedding_provider(runtime_agent):
     }
     await agent._async_retrieve_memories(None, "query")
     agent._memory.set_embedding_provider.assert_called_with(
-        MemoryEmbeddingProvider(agent._async_create_embeddings, "changed"), "changed", space_id=agent._memory.set_embedding_provider.call_args.kwargs["space_id"], retry_identity=ANY
+        MemoryEmbeddingProvider(agent._async_create_embeddings, "changed"),
+        "changed",
+        space_id=agent._memory.set_embedding_provider.call_args.kwargs["space_id"],
+        owner=agent,
+        retry_identity=ANY,
     )
 
 
@@ -482,7 +486,7 @@ async def test_prefetch_uses_resolved_owner_and_records_each_retrieval_once(
         async_active=AsyncMock(side_effect=active)
     )
     agent._async_select_memories = select
-    trace = SimpleNamespace(phases_ms={}, memory={})
+    trace = SimpleNamespace(phases_ms={}, memory={}, completed_at=None)
     token = debug._ACTIVE_DEBUG_TRACE.set(trace)
     try:
         assert await agent._async_retrieve_memories(None, "query") == []

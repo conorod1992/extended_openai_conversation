@@ -62,7 +62,7 @@ async def test_full_handler_revision_is_off_loop_and_detects_replaced_attachment
     async def provider(**kwargs):
         if api == "responses":
             return responses_response(
-                True, [message("answer-" + str(create.await_count), "Done")]
+                True, [message("answer-" + str(create.await_count), "Done", phase="final_answer")]
             )
         return chat_response(True, answer="Done")
 

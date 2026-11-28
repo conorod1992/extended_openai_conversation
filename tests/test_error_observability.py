@@ -350,7 +350,7 @@ async def test_quiet_hours_apply_and_restore_failures_retain_context(
             "assist_satellite.room", "switch.wake", False, controls
         )
         entity_id, original, quiet = "switch.wake", False, True
-    assert controls == {}
+    assert controls[entity_id]["application_state"] == "awaiting_feedback"
     manager._active = {
         "controls": {
             entity_id: {"kind": kind, "original_value": original, "quiet_value": quiet}
@@ -644,13 +644,16 @@ async def test_actual_request_debug_endpoint_preserves_summaries_and_bounds(
 )
 def test_tool_handler_return_is_not_proof_of_action_success(value, outcome) -> None:
     import time
+    from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import ExecutionFailure
 
     trace = SimpleNamespace(memory={})
     result = make_tool_result_content(
         agent_id="agent",
         tool_call_id="call",
         tool_name="tool",
-        tool_result={"result": json.dumps(value)},
+        tool_result={
+            "result": ExecutionFailure(value) if outcome != "returned" else {"error": "business data", **value}
+        },
     )
     record_tool_execution(
         trace, {}, SimpleNamespace(tool_name="tool"), time.monotonic(), True, result

@@ -15,13 +15,13 @@ from tests.test_usage_detail_lifecycle import _manager, _request, _run
 async def test_prune_survivors_worker_and_transaction(monkeypatch, scenario):
     loop_thread = threading.get_ident()
     threads = set()
-    convert = usage.asdict
+    convert = usage._serialize_usage_details
 
-    def checked(record):
+    def checked(requests, runs):
         threads.add(threading.get_ident())
-        return convert(record)
+        return convert(requests, runs)
 
-    monkeypatch.setattr(usage, "asdict", checked)
+    monkeypatch.setattr(usage, "_serialize_usage_details", checked)
     now = dt_util.utcnow()
     size = 30000 if scenario != "tiny" else 1
     run_count = 10000 if scenario != "tiny" else 1
@@ -89,18 +89,18 @@ async def test_pruning_allows_loop_work_while_survivor_conversion_is_pending(
     loop_thread = threading.get_ident()
     started = asyncio.Event()
     release = threading.Event()
-    convert = usage.asdict
+    convert = usage._serialize_usage_details
     first = True
 
-    def gated(record):
+    def gated(requests, runs):
         nonlocal first
         if first and threading.get_ident() != loop_thread:
             first = False
             loop.call_soon_threadsafe(started.set)
             assert release.wait(10), "test did not release worker"
-        return convert(record)
+        return convert(requests, runs)
 
-    monkeypatch.setattr(usage, "asdict", gated)
+    monkeypatch.setattr(usage, "_serialize_usage_details", gated)
     manager = _manager(
         DetailStorage(), request_retention_days=365, run_retention_days=365
     )

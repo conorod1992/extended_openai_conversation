@@ -26,6 +26,9 @@ from custom_components.extended_openai_conversation_responses.memory import memo
 from custom_components.extended_openai_conversation_responses.request import (
     START_FRESH_CONVERSATION_TOOL,
 )
+from custom_components.extended_openai_conversation_responses.scheduled_action_tools import (
+    scheduled_action_tools,
+)
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     temporary_memory_tools,
 )
@@ -89,6 +92,7 @@ def test_generated_tool_definitions_match_runtime_policy() -> None:
         *knowledge_tools(),
         *memory_tools(),
         *temporary_memory_tools(),
+        *scheduled_action_tools(),
         guest_mode_restrict_tool(),
         build_loader_tool([]),
         START_FRESH_CONVERSATION_TOOL,
@@ -107,6 +111,7 @@ def test_generated_tool_definitions_match_runtime_policy() -> None:
         "knowledge_get",
         "knowledge_list",
         "knowledge_search",
+        "list_scheduled_actions",
         "memory_list",
         "memory_search",
     }

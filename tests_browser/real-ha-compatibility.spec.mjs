@@ -18,6 +18,7 @@ test("HA native components and actual Assist path remain compatible", async ({co
   await panel.locator('[data-config="voice_scope_policy"]').selectOption("device_mapping");
   await panel.locator('[data-config="voice_unmapped_policy"]').selectOption("default_user");
   await expect(picker).toBeVisible();
+  await expect(picker).toHaveJSProperty("inert", false);
   await picker.locator("ha-picker-field").click();
   await picker.getByRole("option", {name:/Browser Frontend Shell Admin/})
     .or(picker.locator("ha-combo-box-item").filter({hasText:"Browser Frontend Shell Admin"}).locator("button")).first().click();

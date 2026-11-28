@@ -51,7 +51,6 @@ from .const import (
     DEFAULT_TOP_P,
     DEFAULT_WEB_SEARCH,
     DEFAULT_WEB_SEARCH_CONTEXT,
-    DOMAIN,
     TEMPORARY_MEMORY_OFF,
 )
 from .conversation_archive import archive_tools
@@ -82,6 +81,7 @@ from .model_capabilities import (
     validate_reasoning_effort,
 )
 from .model_payload import count_model_function_tools, prepare_model_function_tools
+from .scheduled_action_tools import scheduled_action_tools
 from .temporary_memory import TEMPORARY_MEMORY_TOOL_NAMES, temporary_memory_tools
 
 _LOGGER = logging.getLogger(__name__)
@@ -228,7 +228,7 @@ def canonical_json(value: Any) -> str:
     )
 
 
-def _has_optional_properties(schema: Any) -> bool:
+def _has_optional_or_open_properties(schema: Any) -> bool:
     """Inspect reachable schema positions, following bounded local pointers.
 
     Responses' default normalization also changes optional nested properties.
@@ -281,9 +281,24 @@ def _has_optional_properties(schema: Any) -> bool:
             except KeyError, IndexError, TypeError, ValueError, UnicodeError:
                 return True
         properties = node.get("properties")
+        types = node.get("type")
+        is_object = types == "object" or (isinstance(types, list) and "object" in types)
+        additional = node.get("additionalProperties")
+        if (
+            additional is True
+            or isinstance(additional, dict)
+            or node.get("patternProperties")
+            or (
+                (is_object or isinstance(properties, dict))
+                and "additionalProperties" not in node
+            )
+        ):
+            return True
         if isinstance(properties, dict):
             required = node.get("required", [])
-            if isinstance(required, list) and properties.keys() - set(required):
+            if isinstance(required, list) and properties.keys() - {
+                item for item in required if isinstance(item, str)
+            }:
                 return True
         for key in (
             "properties",
@@ -334,7 +349,7 @@ def format_function_tools(
             api_mode == API_MODE_RESPONSES
             and "strict" not in spec
             and (
-                _has_optional_properties(spec.get("parameters"))
+                _has_optional_or_open_properties(spec.get("parameters"))
                 or (
                     isinstance(function, dict)
                     and function.get("type")
@@ -402,20 +417,9 @@ def build_web_search_tool(
 
 def function_call_budget_available(options: Mapping[str, Any]) -> bool:
     """Share the ordinary Function/Group-loader exposure rule with runtime."""
-    from .const import (
-        CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-        DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-    )
+    from .agent_config import normalized_function_call_budget
 
-    return (
-        int(
-            options.get(
-                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            )
-        )
-        > 0
-    )
+    return normalized_function_call_budget(options, allow_unlimited=True) != 0
 
 
 def ha_tool_discovery_references(
@@ -446,7 +450,7 @@ def conversation_tools_required(options: Mapping[str, Any]) -> bool:
     """Bound saved Conversation validation to the tools its fresh requests expose."""
     from .const import CONF_CONTINUE_CONVERSATION, CONTINUE_CONVERSATION_CONDITIONAL
 
-    # A positive budget exposes the lifecycle Function and ordinary/Group tools.
+    # A nonzero budget exposes the lifecycle Function and ordinary/Group tools.
     # Conditional continuation independently requires its finalizer at zero.
     return (
         function_call_budget_available(options)
@@ -688,6 +692,8 @@ def build_provider_request_snapshot(
     options = dict(options)
     normalize_agent_numeric_values(options)
     model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+    if not model.strip():
+        raise HomeAssistantError("A model or deployment name is required")
     provider = effective_api_provider(
         entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
     )
@@ -839,6 +845,7 @@ def assemble_integration_function_tools(
     archive_session_available: bool = True,
     guest_policy: GuestCapabilityPolicy | None = None,
     lifecycle_active: bool | None = None,
+    scheduled_action_owner_available: bool = False,
 ) -> list[dict[str, Any]]:
     """Assemble non-configured tools from the same feature/scope decisions."""
     result: list[dict[str, Any]] = []
@@ -846,6 +853,7 @@ def assemble_integration_function_tools(
     capabilities = resolve_effective_capabilities(
         options,
         memory_scope_available=memory_scope_available,
+        scheduled_action_owner_available=scheduled_action_owner_available,
         guest_policy=guest_policy,
     )
     if START_FRESH_CONVERSATION_TOOL_NAME in configured_names:
@@ -859,6 +867,8 @@ def assemble_integration_function_tools(
         else lifecycle_active
     ):
         result.append(START_FRESH_CONVERSATION_TOOL)
+    if capabilities.scheduled_actions:
+        result.extend(scheduled_action_tools())
     if capabilities.persistent_memory:
         conflicts = configured_names & MEMORY_TOOL_NAMES
         if conflicts:
@@ -940,10 +950,8 @@ async def async_capacity_ha_snapshot(
     """Resolve eligible HA definitions when a management edit can hit a cap."""
     import yaml
 
-    from homeassistant.core import Context
-
     from .agent_config import parse_configured_function_tools
-    from .ha_llm_tools import async_discover
+    from .ha_llm_tools import async_discover, preview_context
     from .management_function_quarantine import (
         inspect_function_groups,
         inspect_function_tools,
@@ -966,19 +974,12 @@ async def async_capacity_ha_snapshot(
     if not references:
         return None
 
-    from homeassistant.helpers import llm
-
-    return await async_discover(
+    discovered = await async_discover(
         hass,
-        llm.LLMContext(
-            platform=DOMAIN,
-            context=Context(user_id=user_id),
-            language=hass.config.language,
-            assistant="conversation",
-            device_id=None,
-        ),
+        preview_context(hass, user_id),
         references,
     )
+    return discovered.with_delayed_action_preference(config)
 
 
 def validate_runtime_readiness(
@@ -990,6 +991,9 @@ def validate_runtime_readiness(
     ha_snapshot: ToolSnapshot | None = None,
     previous_model_capabilities: Mapping[str, Any] | None = None,
     reserve_ha_tools: bool = False,
+    responses_required: bool = False,
+    validated_catalogue: tuple[list[dict[str, Any]], list[dict[str, Any]]]
+    | None = None,
 ) -> ProviderRequestSnapshot:
     """Validate the initial Conversation catalogue for supported request scopes.
 
@@ -1007,13 +1011,13 @@ def validate_runtime_readiness(
     from .const import CONF_CONTINUE_CONVERSATION, CONTINUE_CONVERSATION_CONDITIONAL
     from .function_configuration_repair import function_configuration_repair_state
     from .function_groups import (
+        FunctionToolAdmission,
         ToolRuntimeAvailability,
-        admit_function_group_loader,
         assemble_function_tools,
     )
     from .skill_availability import (
+        effective_skill_loader_status,
         is_canonical_skill_loader,
-        selected_installed_skill_names,
     )
     from .skills import SkillManager
 
@@ -1022,23 +1026,33 @@ def validate_runtime_readiness(
         options,
         entry_data,
         tools_required=tools_required,
+        responses_required=responses_required,
         model_capabilities=model_capabilities,
         client=client,
     )
     # Routes without a known tool limit need no catalogue traversal here.
     if snapshot.tool_limit is None:
         return snapshot
-    state = function_configuration_repair_state(dict(options))
-    configured = state.valid if state else configured_function_tools_from_data(options)
-    groups = (
-        state.groups
-        if state
-        else validate_function_groups(options.get(CONF_FUNCTION_GROUPS, []), configured)
-    )
+    if validated_catalogue is not None:
+        configured, groups = validated_catalogue
+    else:
+        state = function_configuration_repair_state(dict(options))
+        configured = (
+            state.valid if state else configured_function_tools_from_data(options)
+        )
+        groups = (
+            state.groups
+            if state
+            else validate_function_groups(
+                options.get(CONF_FUNCTION_GROUPS, []), configured
+            )
+        )
     budget_available = function_call_budget_available(options)
     reserve_configured_ha_tools = reserve_ha_tools
     if ha_snapshot is not None:
-        configured = ha_snapshot.project(configured)
+        configured = ha_snapshot.with_delayed_action_preference(options).project(
+            configured
+        )
     elif (
         previous_model_capabilities is not None
         and budget_available
@@ -1051,6 +1065,7 @@ def validate_runtime_readiness(
                 tools_required=tools_required,
                 model_capabilities=previous_model_capabilities,
                 client=client,
+                responses_required=responses_required,
             )
         except HomeAssistantError:
             pass
@@ -1065,10 +1080,16 @@ def validate_runtime_readiness(
 
     selected_skills = options.get(CONF_SKILLS, []) or []
     manager = SkillManager.get_loaded_instance() if selected_skills else None
-    skill_available = manager is not None and bool(
-        selected_installed_skill_names(
-            selected_skills, (skill.name for skill in manager.get_all_skills())
-        )
+    skill_available = (
+        manager is not None
+        and effective_skill_loader_status(
+            selected_skills,
+            (skill.name for skill in manager.get_all_skills()),
+            configured,
+            groups,
+            function_tools_supported=budget_available,
+            group_loader_supported=budget_available,
+        ).available
     )
 
     def guaranteed(tool: dict[str, Any]) -> bool:
@@ -1101,16 +1122,16 @@ def validate_runtime_readiness(
                 ),
                 knowledge_available=bool(options.get(CONF_KNOWLEDGE_ENABLED)),
                 lifecycle_active=True,
+                scheduled_action_owner_available=True,
             )
         )
     conditional_continue = (
         options.get(CONF_CONTINUE_CONVERSATION) == CONTINUE_CONVERSATION_CONDITIONAL
     )
-    tools = admit_function_group_loader(
-        tools,
-        snapshot.tool_limit,
+    tools = FunctionToolAdmission(
+        max_tools=snapshot.tool_limit,
         extra_tool_count=int(conditional_continue) + len(snapshot.provider_tools),
-    )
+    ).admit(tools)
     tools = request_function_tools(tools, conditional_continue=conditional_continue)
     validate_provider_tool_count(
         count_model_function_tools(tools) + len(snapshot.provider_tools),

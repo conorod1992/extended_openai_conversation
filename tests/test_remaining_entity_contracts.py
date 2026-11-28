@@ -329,6 +329,7 @@ async def test_responses_tool_prompt_is_inserted_and_removed_without_losing_user
                         item=SimpleNamespace(type="message"),
                     ),
                     SimpleNamespace(type="response.output_text.delta", delta="Done"),
+                    SimpleNamespace(type="response.output_item.done", item=SimpleNamespace(type="message")),
                     completed,
                 ]
             ),
@@ -373,7 +374,7 @@ async def test_responses_tool_prompt_is_inserted_and_removed_without_losing_user
     await instance._async_handle_chat_log(
         log, [loader], [], function_group_loader=loaded
     )
-    loaded.assert_called_once_with(["lighting"], None, True)
+    loaded.assert_called_once_with(["lighting"], module.FunctionToolAdmission())
     assert snapshots[0][0]["role"] == "system"
     assert snapshots[0][0]["content"] == "HA tool instructions"
     assert not any(item.get("role") == "system" for item in snapshots[1])
@@ -404,6 +405,7 @@ async def test_supplied_structured_schema_is_copied_and_sent_for_both_transport_
                     item=SimpleNamespace(type="message"),
                 ),
                 SimpleNamespace(type="response.output_text.delta", delta=text),
+                SimpleNamespace(type="response.output_item.done", item=SimpleNamespace(type="message")),
                 completed,
             ]
         )

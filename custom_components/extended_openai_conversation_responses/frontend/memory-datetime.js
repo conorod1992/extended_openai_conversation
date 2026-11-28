@@ -1,3 +1,5 @@
+import {normalizeManagementTimestamp} from "./management-data-state.js";
+
 // Native date/time controls display wall time in Home Assistant's timezone,
 // independently of the timezone configured on the browser's computer.
 function timezone(panel) {
@@ -6,7 +8,7 @@ function timezone(panel) {
 
 export function memoryLocalDateTime(panel, value) {
   if (!value) return "";
-  const date = new Date(value);
+  const date = new Date(typeof value === "string" ? normalizeManagementTimestamp(value) : value);
   if (!Number.isFinite(date.getTime())) return "";
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone(panel), year: "numeric", month: "2-digit", day: "2-digit",

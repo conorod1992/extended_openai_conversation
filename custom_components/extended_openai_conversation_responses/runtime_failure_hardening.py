@@ -53,11 +53,12 @@ def _conversation_error_result(
     subentry = getattr(entity, "subentry", None)
     assistant = getattr(subentry, "subentry_id", "unknown")
     options = getattr(subentry, "data", {})
-    context = (
-        f"entry={entry_id} assistant={assistant} "
-        f"configured_model={options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)} "
-        f"configured_api_mode={options.get(CONF_API_MODE, DEFAULT_API_MODE)}"
-    )
+    context = f"entry={entry_id} assistant={assistant}"
+    if not getattr(err, "_eoai_provider_request", None):
+        context += (
+            f" configured_model={options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)} "
+            f"configured_api_mode={options.get(CONF_API_MODE, DEFAULT_API_MODE)}"
+        )
     usage = getattr(entity, "_usage", None)
     if usage is not None:
         usage.mark_current_run_failed(type(err).__name__)

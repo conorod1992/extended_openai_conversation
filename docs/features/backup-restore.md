@@ -40,7 +40,7 @@ A full backup contains the selected agent's:
 
 ## What it does not include
 
-Installed Skill files, external Home Assistant scripts/files/services, integration-wide Quiet Hours and Broadcast settings, and the pending delayed Function Tool queue are not included. Reinstall or copy Skills and preserve external dependencies separately when moving to another Home Assistant installation. Use an appropriate Home Assistant backup when you need to preserve the wider installation.
+Installed Skill files, external Home Assistant scripts/files/services, integration-wide Quiet Hours and Broadcast settings, and the pending delayed Function Tool queue are not included. Reinstall or copy Skills and preserve external dependencies separately when moving to another Home Assistant installation. Recreate any pending [Scheduled Actions](delayed-function-tools.md#review-and-cancel-pending-actions) you still need on the destination. Use an appropriate Home Assistant backup when you need to preserve the wider installation.
 
 Temporary runtime state such as requests currently in progress, Function Groups loaded only for the active conversation, caches and locks is excluded. Historical backup versions excluded parent credentials and redacted recognized inline secrets; their import semantics remain unchanged.
 
@@ -91,7 +91,7 @@ Other malformed Temporary Memory records also block initialization and failed-wr
 
 Archive and Usage retain usable records for reads when malformed containers, records or duplicate identifiers are detected. Archive preserves the original metadata and partitions while removing content bound to validated private sessions. When only Usage details need repair, healthy lifetime and daily totals continue to be recorded. If aggregate data needs repair, the Usage page warns that the totals can be incomplete. The original damaged data remains available for repair.
 
-A complete backup requires intact Usage data. To back up the other sections, choose **Custom backup** and leave out **Usage**. An in-place restore can leave damaged Usage untouched when it excludes Usage and keeps the current Usage retention settings. Replacing Usage or changing its retention still requires an intact rollback snapshot. When damage is limited to loaded request/run records, an administrator can confirm **Clear details** to reset that history while preserving healthy aggregates. Unreadable stores, malformed detail containers or damaged aggregates still require separate recovery. See [Usage storage and retention](usage-statistics.md#storage-and-retention).
+A complete backup requires intact Usage data. To back up the other sections, choose **Custom backup** and leave out **Usage**. An in-place restore can leave damaged Usage untouched when it excludes Usage and keeps the current Usage retention settings. Replacing Usage or changing its retention still requires an intact rollback snapshot. When damage is limited to loaded request/run records, an administrator can confirm **Clear recent details** to reset that history while preserving healthy aggregates. Unreadable stores, malformed detail containers or damaged aggregates still require separate recovery. See [Usage storage and retention](usage-statistics.md#storage-and-retention).
 
 Before replaying its local partition journal, Archive validates the complete candidate, including unchanged partitions, unique turn IDs, session associations, turn counts and active bindings. Invalid intent or an unreadable unchanged partition leaves the journal and destination files untouched. A partition fully supplied by valid journal intent can be replaced even when its existing file is unreadable. This partition-journal protocol is distinct from the full-agent journal recovery described below.
 
@@ -111,7 +111,7 @@ Files created by older versions in the system temporary directory have no reliab
 
 ## Security
 
-Full and custom private backup files preserve credentials, prompts, memories, Knowledge sources, conversation history and usage information. They are not encrypted. Keep them private. See [credential handling and recovery](credential-security.md).
+A full private backup can contain credentials, prompts, memories, Knowledge sources, conversation history and usage information. A custom private backup contains the sections you select, including provider credentials when **Configuration** is selected. These backups are unencrypted. Keep them private. See [credential handling and recovery](credential-security.md).
 
 
 Selective restores preserve active Archive privacy bindings when Archive is not

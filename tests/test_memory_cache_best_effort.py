@@ -287,3 +287,95 @@ async def test_hybrid_rejects_zero_vectors_and_scores_extreme_finite_vectors(fai
         assert await memory.async_search("alice", "Relevant")
         if failure == "document":
             assert not memory._embedding_cache
+
+
+async def test_capacity_limited_cache_keeps_a_stable_subset_and_all_facts(monkeypatch):
+    monkeypatch.setattr(module, "MAX_CACHED_EMBEDDING_VALUES", 6)
+    memory, facts, _ = await collection(5)
+    cache = FakeStorage()
+    memory = PersistentMemory(facts, cache)
+    await memory.async_initialize()
+    provider = AsyncMock(side_effect=lambda texts: [[1.0, 0.0] for _ in texts])
+    memory.set_embedding_provider(provider, "model")
+
+    assert await memory.async_prepare_hybrid(["alice"], "first") == [1.0, 0.0]
+    assert memory.hybrid_status()["partial_coverage"] is True
+    cached_ids = set(cache.data["embeddings"])
+    assert len(cached_ids) == 3
+    provider.reset_mock()
+    oversized_query = "q" * (module.MAX_MEMORY_SEARCH_QUERY_CHARACTERS + 100)
+    assert await memory.async_prepare_hybrid(["alice"], oversized_query) == [1.0, 0.0]
+    provider.assert_awaited_once_with(["q" * module.MAX_MEMORY_SEARCH_QUERY_CHARACTERS])
+    assert set(cache.data["embeddings"]) == cached_ids
+    assert memory.memory_count == 5
+    assert (await memory.async_search("alice", "unique fact 4"))[0].memory_id == "4"
+
+    # Both the reload and serializer enforce an aggregate limit on valid vectors.
+    monkeypatch.setattr(module, "MAX_CACHED_EMBEDDING_VALUES", 4)
+    serialized = module._embedding_cache_payload(
+        memory._embedding_cache, frozenset(str(i) for i in range(5))
+    )
+    assert sum(len(entry["vector"]) for entry in serialized["embeddings"].values()) == 4
+    reloaded = PersistentMemory(facts, cache)
+    await reloaded.async_initialize()
+    assert reloaded.memory_count == 5
+    assert sum(len(entry.vector) for entry in reloaded._embedding_cache.values()) == 4
+    assert len(cache.data["embeddings"]) == 2
+
+
+async def test_hybrid_applies_the_same_lexical_weight_to_uncached_memories(monkeypatch):
+    monkeypatch.setattr(module, "MAX_CACHED_EMBEDDING_VALUES", 2)
+    memory, _, _ = await collection(2)
+
+    async def embeddings(texts):
+        return [
+            [0.2, 0.98] if text == "probe" else [1.0, 0.0] for text in texts
+        ]
+
+    memory.set_embedding_provider(embeddings, "model")
+    query = await memory.async_prepare_hybrid(["alice"], "probe")
+    assert set(memory._embedding_cache) == {"0"}
+    monkeypatch.setattr(
+        module,
+        "_score_prepared_bm25",
+        lambda _query, terms, _length: 0.8 if "0" in terms else 0.7,
+    )
+    results = await memory.async_search("alice", "probe", query_embedding=query, hybrid=True)
+    assert [item.memory_id for item in results] == ["0", "1"]
+
+
+async def test_detaching_old_embedding_owner_keeps_replacement_binding():
+    memory, _, _ = await collection(2)
+    first, second = object(), object()
+    first_provider, second_provider = AsyncMock(), AsyncMock()
+    memory.set_embedding_provider(first_provider, "model", owner=first)
+    memory.set_embedding_provider(second_provider, "model", owner=second)
+    memory.detach_embedding_provider(first)
+    assert memory._embedding_provider is second_provider
+    memory.detach_embedding_provider(second)
+    assert memory._embedding_provider is None
+
+
+async def test_native_oversized_cache_is_replaced_before_decoding(hass, monkeypatch):
+    monkeypatch.setattr(module, "MAX_EMBEDDING_CACHE_FILE_BYTES", 2048)
+    monkeypatch.setattr(
+        module.AcknowledgedWriteStore,
+        "_async_load_data",
+        AsyncMock(
+            side_effect=AssertionError("oversized cache reached the JSON loader")
+        ),
+    )
+    cache = module.HomeAssistantEmbeddingCacheStorage(hass, "entry", "agent")
+    from pathlib import Path
+
+    path = Path(cache._store.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"[" + b"12," * 1000)
+    memory, durable, _ = await collection()
+    reloaded = PersistentMemory(durable, cache)
+    await reloaded.async_initialize()
+    module.AcknowledgedWriteStore._async_load_data.assert_not_awaited()
+    assert path.stat().st_size < 2048
+    assert not reloaded._embedding_cache
+    assert (await reloaded.async_search("alice", "unique"))[0].memory_id == "0"
+    assert reloaded.memory_count == memory.memory_count

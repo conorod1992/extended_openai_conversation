@@ -8,7 +8,7 @@ import {beginOperation} from "./operation-ownership.js";
 import {updateAuthenticationPresentation} from "./authentication-presentation.js";
 import {stopLiveStatus, pauseLiveStatus, resumeLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
 import {bindConfigurationClarity, enhanceConfigurationClarity} from "./management-draft-navigation.js";
-import {formatManagementTimestamp, prepareMemoryBrowser, ensureTemporaryScope, storeRuntimeGuidance} from "./management-data-state.js";
+import {formatManagementTimestamp, prepareMemoryBrowser, ensureTemporaryScope, storeRuntimeGuidance, unavailableOverview} from "./management-data-state.js";
 import {enhanceConfirmationScope} from "./management-confirmation-scope.js";
 import {settleSecondaryRead, trackSecondaryRead, publishSecondaryResult} from "./management-secondary-reads.js";
 import {configurationDestinations} from "./management-config-destinations.js";
@@ -20,9 +20,10 @@ import {
 } from "./management-page-drafts.js";
 import {cacheTimestampIsFresh, readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
-import {ASSISTANT_INTRO_MARKUP, renderManagement, renderManagementRoute, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
+import {ASSISTANT_INTRO_MARKUP, renderMemoriesIntro, renderManagement, renderManagementRoute, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
+import {renderConfigurationActions} from "./assistant-actions-menu.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors, syncSharedConfigurationBar} from "./management-actions.js";
-import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, USAGE_RETENTION_FIELDS} from "./configuration-acknowledgement.js";
+import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, USAGE_RETENTION_FIELDS, uncertainConfigurationSave, settleConfigurationSaveRecovery} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent, catalogMayPublish} from "./management-catalog-ownership.js";
 import {capturePageRead, acceptPageRead, hasPendingPageSaveRead, retryPageSaveReadsOnTransport} from "./page-save-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, syncConversationSearchOwner, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
@@ -125,7 +126,7 @@ const CRITICAL_STYLE = `
   :host{--eoc-success-text:light-dark(color-mix(in srgb,var(--primary-text-color) 32%,var(--success-color,#0f9d58)),color-mix(in srgb,var(--primary-text-color) 14%,var(--success-color,#0f9d58)));--eoc-error-text:light-dark(color-mix(in srgb,var(--primary-text-color) 14%,var(--error-color,#db4437)),color-mix(in srgb,var(--primary-text-color) 24%,var(--error-color,#db4437)));--eoc-accent-text:light-dark(color-mix(in srgb,var(--primary-text-color) 31%,var(--primary-color)),color-mix(in srgb,var(--primary-text-color) 12%,var(--primary-color)));--eoc-action-background:light-dark(color-mix(in srgb,var(--primary-text-color) 20%,var(--primary-color)),var(--primary-color));--eoc-error-background:color-mix(in srgb,var(--error-color,#db4437) 97%,#000);display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);font-size:14px;line-height:1.45;box-sizing:border-box;background:color-mix(in srgb,var(--secondary-background-color) 42%,var(--primary-background-color))}
   *{box-sizing:border-box}
   [hidden]{display:none!important}
-  .page-shell{max-width:1380px;margin:auto}
+  .page-shell{max-width:1380px;margin-inline:0 auto}
   header{display:flex;justify-content:space-between;gap:36px;align-items:end;margin-bottom:28px}
   .page-heading .product-title{margin:0;font-size:30px;font-weight:500}
   .page-heading p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}
@@ -151,6 +152,7 @@ const CRITICAL_STYLE = `
   .section-layout{display:block}
   .section-selector{margin:0 0 20px}
   main{display:grid;gap:30px}
+  .memories-intro{margin-bottom:30px}
   .page-intro{display:grid;gap:7px;max-width:780px}
   .page-intro h1,.page-intro p{margin:0}
   .page-intro h1{font-size:24px;font-weight:600;line-height:1.25}
@@ -796,16 +798,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _configurationActions() {
-    const sections = this._configSectionsForView();
-    if (!sections.length || this._viewKey() === "usage-maintenance/retention") return "";
-    if (this._viewKey() === "data-memory/conversations" && !this._data?.is_admin) return "";
-    return getConfigurationEditor()?.renderConfigurationActions?.(this, sections) || "";
+    return this._data?.is_admin === true && this._selectedAgent() ? renderConfigurationActions(this) : "";
   }
 
   _canAccessView(page, subsection = null) {
     if (this._eocPresentationBlocked) return false;
     if (page === "data-memory" && subsection === "memory-settings" && this._data?.is_admin === false) return false;
     if (this._data?.is_admin === false && isRestrictedManagementView(page, subsection)) return false;
+    if (page === "capabilities" && subsection === "scheduled-actions") return this._data?.is_admin === true;
     if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
     if (this._data?.is_admin !== false) return true;
     if (page === "assistant") return false;
@@ -1423,7 +1423,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (view === "overview") {
         const overviewAgentId = this._agentId;
         this._markColdLifecycle("overview-summary-start");
-        const primary = await consumeIntentRead(this, view, "overview", "primary");
+        const primary = await consumeIntentRead(this, view, "overview", "primary")
+          .catch(reason => unavailableOverview(reason, this._data?.is_admin));
         this._markColdLifecycle("overview-summary-complete");
         if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
             || overviewAgentId !== this._agentId) return;
@@ -1530,6 +1531,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         result = await scopedCollection();
       } else if (view === "data-memory/knowledge") {
         result = await consumeIntentRead(this, view, "knowledge", "list");
+      } else if (view === "capabilities/scheduled-actions") {
+        result = await this._call("scheduled_actions", "list");
       } else if (view === "capabilities/guest-mode") {
         const details = () => this._call("guest_mode", "details");
         const detailsPromise = settleSecondaryRead(details());
@@ -1729,9 +1732,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     full ||= Boolean(this._eocAcknowledgedConfiguration || this._eocRestoredConfiguration);
     const previousConfig = this._configData, previousResult = this._result;
     const readOwner = captureConfigurationOwner(this);
+    const uncertainSave = uncertainConfigurationSave(this, readOwner);
     const uncertainFunction = functionUncertainty(this, readOwner);
     const functionEpoch = this._eocFunctionMutationEpoch || 0;
-    if (uncertainFunction) {
+    if (uncertainSave || uncertainFunction) {
       full = true; this._configDataStale = true;
       this._invalidateCleanConfiguration?.(this._agentId);
       discardStoredConfigurationPrefetch(this, "function-recovery");
@@ -1755,7 +1759,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const action = projection === "retention" ? "retention_get" : "get";
       const trace = (event, detail) => markConfigurationRead(event, {view, action, ...detail});
       const key = this._configurationSnapshotKey(agentId, projection);
-      const cached = this._freshCleanConfiguration(agentId, projection);
+      const cached = uncertainSave ? null : this._freshCleanConfiguration(agentId, projection);
       let configData = cached;
       let healthReadOwner, healthReadIssue, healthReadTitle, certifiesHealth = false;
       if (cached) {
@@ -1763,7 +1767,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         diagnostics.draft = {source: "clean-snapshot", action, sentAction: null};
         trace("draft-source", {source: "clean-snapshot"});
       } else {
-        const prefetched = consumeStoredConfigurationPrefetch(this, action);
+        const prefetched = uncertainSave ? null : consumeStoredConfigurationPrefetch(this, action);
         if (prefetched) {
           const settled = await prefetched;
           const staleReason = agentId !== this._agentId ? "agent-changed"
@@ -1829,6 +1833,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (this._configDirty && this._draftAgentId === agentId && !retainedDraft) return;
       const prior = key ? this._cleanConfigSnapshots.get(key)?.result : null;
       if (prior && prior.revision !== configData.revision) this._invalidateCleanConfiguration(agentId);
+      if (uncertainSave && (configData.projection === "retention" || typeof configData.revision !== "string" || !configData.revision)) {
+        throw new Error("The server response did not identify the saved configuration revision.");
+      }
       if (uncertainFunction) requireFunctionAcknowledgement({revision:configData.revision,
         functions:configData.config.functions, function_groups:configData.config.function_groups});
       observeCatalogGeneration(this, configData);
@@ -1846,6 +1853,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._draft = nextDraft;
       this._draftTitle = merged.title;
       settleFunctionRead(this, readOwner, uncertainFunction, functionEpoch, configData);
+      settleConfigurationSaveRecovery(this, readOwner, uncertainSave);
       if (configData.projection !== "retention") {
         this._eocAcknowledgedConfiguration = null;
         this._eocRestoredConfiguration = null;
@@ -1982,7 +1990,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const local = this._visibleSubsections();
     const currentSection = local.find((item) => item.id === this._subsection);
     this._eocMainMarkup = renderManagementRoute(this, agent);
-    const configurationActions = agent && !this._busy && !this._error ? this._configurationActions() : "";
+    const configurationActions = this._configurationActions();
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
     const shell = document.createElement("template");
@@ -1999,6 +2007,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         </div>
         <nav class="top-nav" aria-label="Management sections">${navigation.map((item) => `<button type="button" data-page="${item.id}" class="${item.id === this._page ? "active" : ""}" ${item.id === this._page ? 'aria-current="page"' : ""}>${item.label}</button>`).join("")}</nav>
         <nav class="subsection-nav" aria-label="${this._e(pageMetadata(this._page).label)} sections" ${local.length > 1 ? "" : "hidden"}>${local.length > 1 ? local.map((item) => `<button type="button" data-subsection="${this._e(item.id)}" class="${item.id === this._subsection ? "active" : ""}" ${item.id === this._subsection ? 'aria-current="page"' : ""}>${this._e(item.label)}</button>`).join("") : ""}</nav>
+        <div id="eoc-memories-intro-host">${renderMemoriesIntro(this)}</div>
         <div id="eoc-scope-host">${["data-memory/conversations", "data-memory/memories"].includes(this._viewKey()) ? this._scopePicker() : ""}</div>
         <div id="eoc-section-host">${local.length > 1 ? `<div class="section-selector"><label><span>${this._e(pageMetadata(this._page).label)} section</span><select id="local-section" tabindex="0" aria-description="${this._e(currentSection?.description || "")}">${local.map((item) => `<option value="${this._e(item.id)}" ${item.id === this._subsection ? "selected" : ""}>${this._e(item.label)}</option>`).join("")}</select></label></div>` : ""}</div>
         <div id="eoc-assistant-intro-host">${agent && this._page === "assistant" ? ASSISTANT_INTRO_MARKUP : ""}</div>
@@ -2073,6 +2082,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     if (view === "capabilities/quiet-hours") return getRouteFeature(view)?.renderQuietHours(this) || this._loading();
     if (view === "usage-maintenance/request-debug") return getRouteFeature(view)?.renderManagementDebug(this) || this._loading();
+    if (view === "capabilities/scheduled-actions") return getRouteFeature(view)?.renderScheduledActions(this) || this._loading();
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return this._memories();
     if (view === "data-memory/knowledge") return `<section class="page-intro"><h1>Knowledge Library</h1><p>Manage reference sources the assistant can search when needed. <button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn more</button></p></section>${this._knowledge()}`;
@@ -2147,12 +2157,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _setupGuestSelectors() {
     const result = this._result || {};
-    const select = (items, value, label) => ({select: {multiple: true, custom_value: false, options: items.map((item) => ({value: value(item), label: label(item)}))}});
+    const select = (items, value, label, customValue = false) => ({select: {multiple: true, custom_value: customValue, options: items.map((item) => ({value: value(item), label: label(item)}))}});
     this.shadowRoot.querySelectorAll("ha-selector[data-guest-key]").forEach((element) => {
       const type = element.dataset.guestSelector;
       element.hass = this.hass;
       element.value = this._guestDraft?.[element.dataset.guestKey] || [];
-      element.selector = type === "entity" ? {entity: {multiple: true}} : type === "area" ? {area: {multiple: true}} : type === "label" ? {label: {multiple: true}} : type === "domain" ? select(result.domains || [], (item) => item, (item) => item) : type === "knowledge" ? select(result.knowledge_sources || [], (item) => item.source_id, (item) => `${item.title} — ${item.description || "No description"}`) : type === "group" ? select(result.function_groups || [], (item) => item.id, (item) => `${item.name} — ${item.description}`) : select((result.functions || []).filter((item) => !item.unsafe_in_guest_mode), (item) => item.name, (item) => `${item.name}${item.enabled ? "" : " (disabled)"} — ${item.description || "No description"}`);
+      element.selector = type === "entity" ? {entity: {multiple: true}} : type === "area" ? {area: {multiple: true}} : type === "label" ? {label: {multiple: true}} : type === "domain" ? select(result.domains || [], (item) => item, (item) => item, true) : type === "knowledge" ? select(result.knowledge_sources || [], (item) => item.source_id, (item) => `${item.title} — ${item.description || "No description"}`) : type === "group" ? select(result.function_groups || [], (item) => item.id, (item) => `${item.name} — ${item.description}`) : select((result.functions || []).filter((item) => !item.unsafe_in_guest_mode), (item) => item.name, (item) => `${item.name}${item.enabled ? "" : " (disabled)"} — ${item.description || "No description"}`);
       element.addEventListener("value-changed", (event) => {
         if (!this._guestDraft) return;
         this._guestDraft[element.dataset.guestKey] = event.detail.value || [];
@@ -2187,13 +2197,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _runGuestOperation(operation) {
     if (this._guestOperation) return this._guestOperation;
-    const pending = Promise.resolve().then(operation);
-    this._guestOperation = pending;
-    syncAgentPicker(this);
-    return pending.finally(() => {
+    const release = () => {
+      if (this._guestOperation !== pending) return;
       this._guestOperation = null;
       syncAgentPicker(this);
-    });
+    };
+    const pending = Promise.resolve().then(() => operation(release));
+    this._guestOperation = pending;
+    syncAgentPicker(this);
+    return pending.finally(release);
   }
 
   _patchGuestModeStatus(agentId, status) {
@@ -2208,11 +2220,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _refreshGuestModeMutation(agentId, mutationResult) {
     if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
     const loadToken = ++this._loadToken;
-    const owner = captureConfigurationOwner(this);
-    const current = () => this._loadToken === loadToken
-      && this._viewKey() === "capabilities/guest-mode" && configurationSubmissionIsCurrent(this, owner);
+    const submission = captureConfigurationOwner(this);
+    const current = () => configurationSubmissionIsCurrent(this, submission)
+      && this._agentId === agentId && this._viewKey() === "capabilities/guest-mode" && this._loadToken === loadToken;
     this._patchGuestModeStatus(agentId, mutationResult?.status);
-    this._result = {...this._result, loading: {...(this._result?.loading || {}), details: true}};
+    this._result = {...this._result, policy:null, loading: {...(this._result?.loading || {}), details: true}};
     this._error = null;
     this._render();
     try {
@@ -2234,7 +2246,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const result = await this._call("guest_mode", "get");
       if (!result?.status || !configurationSubmissionIsCurrent(this, submission)) return;
       if (intervalSubmission) getRouteFeature("capabilities/guest-mode")?.acknowledgeGuestInterval(this, intervalSubmission, result.status);
-      await this._refreshGuestModeMutation(agentId, result);
+      void this._refreshGuestModeMutation(agentId, result).catch(() => {});
     } catch {
       // The existing saved notice remains accurate if a read is unavailable.
     }
@@ -2254,7 +2266,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _updateGuestMode(now = false) {
-    return this._runGuestOperation(async () => {
+    return this._runGuestOperation(async release => {
       const agentId = this._agentId;
       const submission = captureConfigurationOwner(this);
       const guest = getRouteFeature("capabilities/guest-mode");
@@ -2267,6 +2279,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         const payload = guest.guestIntervalUpdatePayload(this, intervalSubmission, now);
         const result = await this._call("guest_mode", "update", payload);
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
+        release();
         await this._presentGuestModeAcknowledgement(agentId, submission, "Guest Mode updated", result, () => {
           getRouteFeature("capabilities/guest-mode")?.acknowledgeGuestInterval(this, intervalSubmission, result.status);
         });
@@ -2282,7 +2295,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _disableGuestMode() {
-    return this._runGuestOperation(async () => {
+    return this._runGuestOperation(async release => {
       const agentId = this._agentId;
       const owner = this._retainedMutationOwner();
       const submission = captureConfigurationOwner(this);
@@ -2291,6 +2304,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       try {
         const result = await this._call("guest_mode", "disable");
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
+        release();
         await this._presentGuestModeAcknowledgement(agentId, submission, "Guest Mode ended", result);
       } catch (err) {
         if (!configurationSubmissionIsCurrent(this, submission)) return;
@@ -2326,7 +2340,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       ${this._viewKey() === "capabilities/request-rules" ? (getRouteFeature("capabilities/request-rules")?.requestRulesDialog(this) || "") : ""}${routeAssetKind(this._viewKey()) === "agent-config" ? getConfigurationEditor()?.configurationDialogs(this) || "" : this._viewKey() === "capabilities/functions" ? getConfigurationTools()?.configurationDialogs(this) || "" : ""}${this._viewKey() === "usage-maintenance/backup-restore" ? getRouteFeature("usage-maintenance/backup-restore")?.renderRestoreTransferDialog(this) || "" : ""}`;
     const usageDialog = this._viewKey() === "usage-maintenance/usage"
       ? getRouteFeature("usage-maintenance/usage")?.requestDetailsDialog() || "" : "";
-    return `${content}${view === "data-memory/memories" && this._memoryKind === "temporary" && owned.has("temporary-memory-dialog") ? getRouteFeature(view)?.temporaryDialog(this) || "" : ""}${usageDialog}`;
+    const importDialog = owned.has("import-dialog") && this._data?.is_admin === true
+      ? this._eocConfigurationImportDialog?.(this) || "" : "";
+    return `${content}${view === "data-memory/memories" && this._memoryKind === "temporary" && owned.has("temporary-memory-dialog") ? getRouteFeature(view)?.temporaryDialog(this) || "" : ""}${usageDialog}${importDialog}`;
   }
 
   _ensureOwnedDialog(id) {
@@ -2385,11 +2401,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         void this._loadAgents(retry.selectedId, retry.context.owner, retry.context.intent);
       } else void this._loadSection();
     });
+    if (view === "capabilities/scheduled-actions") getRouteFeature(view)?.bindScheduledActions(this);
     if (view === "data-memory/knowledge") getRouteFeature(view)?.bindKnowledge(this);
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
     if (view === "data-memory/conversations") {
       this._bindActiveConversationActions();
-      root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id, button); }));
     }
     if (view === "usage-maintenance/usage") q("#clear-details")?.addEventListener("click", (event) => this._clearUsageDetails(event.currentTarget));
     q("#test-agent")?.addEventListener("click", () => this._testAgent());
@@ -2486,6 +2502,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const dialog = root.querySelector("#knowledge-dialog");
     delete dialog.__eocUncertainMutation;
     delete dialog.__eocKnowledgeCreate;
+    delete dialog.__eocKnowledgeDuplicateEdit;
     const loadToken = (this._knowledgeLoadToken || 0) + 1;
     this._knowledgeLoadToken = loadToken;
     this._editingSource = null;
@@ -2533,7 +2550,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _openMemory(memoryId = null) {
     this._ensureOwnedDialog("memory-dialog");
     beginOperation(this, "memory-editor");
-    delete this.shadowRoot.querySelector("#memory-dialog").__eocUncertainMutation;
+    const dialog = this.shadowRoot.querySelector("#memory-dialog");
+    delete dialog.__eocUncertainMutation;
+    delete dialog.__eocMemoryDuplicateEdit;
     this._setSaving(this.shadowRoot.querySelector("#memory-save"), false);
     const root = this.shadowRoot;
     root.querySelectorAll("#memory-dialog input,#memory-dialog textarea,#memory-dialog select").forEach(control => {control.disabled = false;});
@@ -2656,6 +2675,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const previousCreate = editing ? null : dialog.__eocKnowledgeCreate;
     const retrying = previousCreate?.pending === true;
     const values = retrying ? previousCreate.values : this._knowledgeValues();
+    const edit = editing ? {source_id:this._editingSource.source_id, expected_revision:this._editingSource.updated_at} : null;
     for (const [label, value, limit] of [
       ["Title", normalizedKnowledgeLine(values.title), KNOWLEDGE_TITLE_LIMIT],
       ["Description", normalizedKnowledgeLine(values.description), KNOWLEDGE_DESCRIPTION_LIMIT],
@@ -2686,12 +2706,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // A reconnect read can refresh the same editor's list without changing
       // its operation, dialog or owner. Its save still needs acknowledgement.
       && this._ownsRetainedMutation(owner, {allowRefresh:true});
+    const confirmEdit = editing && same(dialog.__eocKnowledgeDuplicateEdit, {edit, values});
+    delete dialog.__eocKnowledgeDuplicateEdit;
     this._setDialogError("knowledge", "");
     this._setSaving(button, true);
     try {
       const response = await this._call("knowledge", editing ? "update" : "create", {
-        ...(editing ? {source_id:this._editingSource.source_id, expected_revision:this._editingSource.updated_at} : {
-          create_token:create.token, ...(create.confirmDuplicate ? {confirm_duplicate:true} : {}),
+        ...(editing ? {...edit, confirm_duplicate:confirmEdit} : {
+          create_token:create.token, confirm_duplicate:create.confirmDuplicate === true,
         }), ...values,
       });
       if (!current()) {
@@ -2700,14 +2722,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (ownsEditor()) requireMutationAcknowledgement(false, "reconciling the Knowledge save after its owner changed");
         return;
       }
-      if (create && response?.status === "duplicate") {
-        create.pending = false;
-        create.confirmDuplicate = true;
-        this._setDialogError("knowledge", "An identical Knowledge source already exists. Select Save again to create another copy.");
+      if (response?.status === "duplicate") {
+        if (create) create.pending = false;
+        if (same(this._knowledgeValues(), values)) {
+          if (create) create.confirmDuplicate = true;
+          else dialog.__eocKnowledgeDuplicateEdit = {edit, values};
+          this._setDialogError("knowledge", "Another Knowledge source has the same content. Select Save again to keep both sources.");
+        }
         return;
       }
       const ownsList = this._ownsRetainedMutation(owner);
-      this._requireKnowledgeSource(response?.source, editing ? this._editingSource.source_id : null);
+      this._requireKnowledgeSource(response?.source, edit?.source_id ?? null);
       delete dialog.__eocKnowledgeCreate;
       // Retain the committed identity before touching the collection or DOM. A
       // failed patch/close must never turn the next save into another create.
@@ -2732,7 +2757,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         // original visit owns collection data. A newer read must remain intact.
         if (ownsList && !retrying) writeSectionCache(this, this._sectionCacheKey(), this._result);
         this._render();
-        if (returnFocus && !dialog.open) getRouteFeature("data-memory/knowledge")?.restoreCollectionFocus(this.shadowRoot, `.source-edit-button[data-id="${CSS.escape(response.source.source_id)}"]`, "#add-source");
+        if (returnFocus && !dialog.open) getRouteFeature("data-memory/knowledge")?.restoreKnowledgeFocus(this.shadowRoot, response.source.source_id);
         if (retrying || !this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {
@@ -2781,18 +2806,30 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (this._memoryEditorAgent !== this._agentId || this._memoryEditorScope !== this._scopeId) throw new Error("The selected agent or scope changed. Close and reopen this editor.");
       if (!temporary && this._editingMemory && !this._editingMemory.revision) throw new Error("Refresh the Memory list and reopen this editor before saving.");
       const feature = getRouteFeature("data-memory/memories");
-      const response = await this._call("memories", temporary ? (editing ? "temporary_update" : "temporary_add") : editing ? "update" : "add", {
+      const payload = {
         scope_id: sourceScope,
         ...(this._editingMemory ? {memory_id: this._editingMemory.memory_id, expected_revision: this._editingMemory.revision} : {}),
         ...feature.memoryMutationValues(values, this._editingMemory),
         ...(temporary ? {expires_at: values.expires_at, local_times: {expires_at: values.expires_at}} : {}),
+      };
+      const confirmDuplicate = editing && !temporary && same(dialog.__eocMemoryDuplicateEdit, payload);
+      delete dialog.__eocMemoryDuplicateEdit;
+      const response = await this._call("memories", temporary ? (editing ? "temporary_update" : "temporary_add") : editing ? "update" : "add", {
+        ...payload, ...(editing && !temporary ? {confirm_duplicate:confirmDuplicate} : {}),
       });
       if (!current()) {
         if (ownsEditor()) requireMutationAcknowledgement(false, "reconciling the Memory save after its owner changed");
         return;
       }
+      if (!temporary && editing && response?.status === "duplicate") {
+        if (same(this._memoryValues(), values)) {
+          dialog.__eocMemoryDuplicateEdit = payload;
+          this._setDialogError("memory", "An identical memory exists in the selected scope. Select Save again to keep both records.");
+        }
+        return;
+      }
       const savedScope = response?.scope_id ?? (temporary && editing ? sourceScope : null);
-      const message = temporary ? (editing ? "Memory updated" : "Memory added")
+      const message = temporary ? (editing || response?.status === "updated" ? "Memory updated" : "Memory added")
         : feature.persistentMemorySaveAcknowledgement(response, values, this._editingMemory);
       if (!temporary && !editing && response?.status === "duplicate") {
         // A confirmed no-op owns no saved edit. Preserve the Add draft and its
@@ -2811,9 +2848,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       setDialogBaseline(this, "memory-dialog", values);
       return await presentAcknowledgedMutation(this, submission, message, async () => {
         const ownsList = this._ownsRetainedMutation(owner);
+        let needsRefresh = false;
         if (ownsList && temporary) {
           if (savedScope === owner.scope && owner.kind === "temporary") {
-            this._result = {...this._result, memories: [...(this._result.memories || []).filter(memory => memory.memory_id !== response.memory.memory_id), response.memory]};
+            needsRefresh = !feature.applyTemporaryMemoryMutation(this, response);
           }
           if (response.status === "created") this._patchScopeCount(savedScope, "temporary_memory_count", 1);
         } else if (ownsList && owner.kind === "persistent" && !await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
@@ -2838,8 +2876,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (ownsList) this._patchScopeCount(owner.scope, "memory_count", 0);
         if (ownsList && !temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
         this._render();
-        if (returnFocus && !dialog.open) getRouteFeature("data-memory/memories")?.restoreCollectionFocus(this.shadowRoot, `.memory-edit-button[data-id="${CSS.escape(response.memory.memory_id)}"]`, "#add-memory");
-        if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
+        if (returnFocus && !dialog.open) getRouteFeature("data-memory/memories")?.restoreMemoryFocus(this.shadowRoot, response.memory.memory_id);
+        if (needsRefresh || !this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {
       if (ownsEditor() && ["uncertain", "committed"].includes(err?.mutationOutcome)) dialog.__eocUncertainMutation = err;
@@ -3072,7 +3110,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._viewKey() === "data-memory/memories" && this._memoryKind === "temporary") return getRouteFeature("data-memory/memories")?.renderTemporaryScopePicker(this);
     const memories = this._viewKey() === "data-memory/memories";
     const hasEmpty = (this._data?.scopes || []).some((scope) => (memories ? scope.memory_count : scope.conversation_count) === 0 && scope.scope_type === "user" && !scope.is_current_user);
-    return `${memories ? `<section class="page-intro"><h1>Memories</h1><p>Review and manage saved long-term and short-term memories for the selected scope.</p></section>` : `<section class="page-intro"><h1>Conversation history</h1><p>Recent conversations can continue when the same user or device speaks again. Review or search retained conversations below.</p></section>`}<section class="scope-bar" aria-label="${memories ? "Memory scope" : "Conversation scope"}"><span class="scope-title">${memories ? "Memory scope" : "Conversation scope"}</span><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
+    return `${memories ? "" : `<section class="page-intro"><h1>Conversation history</h1><p>Recent conversations can continue when the same user or device speaks again. Review or search retained conversations below.</p></section>`}<section class="scope-bar" aria-label="${memories ? "Memory scope" : "Conversation scope"}"><span class="scope-title">${memories ? "Memory scope" : "Conversation scope"}</span><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
   }
 
   _scopeOptions(section, includeEmpty = this._showEmptyScopes, excludeLegacy = false) {
@@ -3113,8 +3151,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return "Current user";
   }
 
-  _formatDate(value) {
-    return formatManagementTimestamp(value, this._hass?.config?.time_zone);
+  _formatDate(value, timeZoneName) {
+    return formatManagementTimestamp(value, this._hass?.config?.time_zone, timeZoneName);
   }
   _e(value) { return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]); }
 

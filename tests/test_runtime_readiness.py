@@ -718,6 +718,45 @@ async def test_group_loader_counts_but_unloaded_members_do_not(
     assert len(sent["tools"]) == min(128, extra + 2 + int(enabled))
 
 
+@pytest.mark.parametrize(
+    "loader_case", ["weather", "calendar", "closed-object", "closed-patterns"]
+)
+async def test_prompt_save_counts_only_loadable_installed_skills(
+    hass, management_agent, rules, monkeypatch, loader_case
+):
+    from custom_components.extended_openai_conversation_responses.skills import (
+        SkillManager,
+    )
+    from tests.test_skill_availability import _loader
+
+    entry, subentry = management_agent
+    entry.data = {"api_provider": "azure"}
+    options = _options(127, azure_model="gpt-4o")
+    loader = _loader()
+    parameters = loader["spec"]["parameters"]
+    if loader_case in {"closed-object", "closed-patterns"}:
+        parameters["properties"].pop("offset")
+        parameters.update({"additionalProperties": False, "minProperties": 3})
+        if loader_case == "closed-patterns":
+            parameters["patternProperties"] = {
+                r"^(?:name|file)(?![\s\S])": {"type": "string"}
+            }
+    else:
+        parameters["properties"]["name"]["enum"] = [loader_case]
+    options["functions"] = [*yaml.safe_load(options["functions"]), loader]
+    options["skills"] = ["calendar"]
+    subentry.data = options
+    manager = SimpleNamespace(get_all_skills=lambda: [SimpleNamespace(name="calendar")])
+    monkeypatch.setattr(SkillManager, "get_loaded_instance", lambda: manager)
+    saved = await _save(hass, entry, subentry, {"prompt": "Updated instructions"})
+    if loader_case == "calendar":
+        assert not saved["valid"]
+        assert "128-tool limit" in str(saved["errors"])
+    else:
+        assert saved["valid"]
+        assert subentry.data["prompt"] == "Updated instructions"
+
+
 def test_readiness_is_independent_of_ambient_runtime_and_defers_dynamic_tools(hass):
     options = _options(127, azure_model="gpt-4o", continue_conversation="conditional")
     with (
@@ -870,6 +909,7 @@ async def test_dynamic_group_growth_is_checked_at_real_runtime_boundary(
     from custom_components.extended_openai_conversation_responses import conversation
     from custom_components.extended_openai_conversation_responses.function_groups import (
         FunctionGroupSession,
+        FunctionToolAdmission,
     )
 
     entry, subentry = management_agent
@@ -899,7 +939,9 @@ async def test_dynamic_group_growth_is_checked_at_real_runtime_boundary(
     )
     lifecycle = begin_conversation_lifecycle()
     try:
-        refused = agent._load_function_groups(["later"], 128)
+        refused = agent._load_function_groups(
+            ["later"], FunctionToolAdmission(max_tools=128, extra_tool_count=1)
+        )
         assert refused["status"] == "error" and not session.loaded_group_ids
         # Even unexpected retained growth cannot bypass the final dispatch guard.
         session.loaded_group_ids.add("later")
@@ -1111,6 +1153,7 @@ async def test_shared_provider_restore_checks_sibling_ha_capacity_before_journal
     from tests.test_selective_restore_concurrency import RestoreHarness
 
     tx = RestoreHarness(monkeypatch)
+    monkeypatch.setattr(restore_recovery, "_async_construct_provider_client", AsyncMock(return_value=object()))
     tx.hass.config = SimpleNamespace(language="en")
     target_config = _options()
     tx.subentry.data = deepcopy(target_config)

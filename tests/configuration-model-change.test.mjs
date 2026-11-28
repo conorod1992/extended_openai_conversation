@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {changeConfigurationModel} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-model-v2.js";
+import {modelCapabilitiesForDraft} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-model-presentation.js";
 import {recordReasoningChoice} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
 
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return {promise, resolve}; };
@@ -7,7 +8,7 @@ const first = deferred();
 const calls = [];
 const panel = {
   _agentId:"a", _draftAgentId:"a", _draft:{chat_model:"old"},
-  _configData:{config:{chat_model:"baseline"}}, _result:{},
+  _configData:{config:{chat_model:"baseline"}}, _result:{config:{chat_model:"baseline"}, model_capabilities:{baseline:true}},
   shadowRoot:{dispatchEvent() {}}, _setConfigDirty(value) { this._configDirty = value; },
   _render() { calls.push("render"); },
   _hass:{callWS:async ({model}) => model === "old" ? first.promise : {model_capabilities:{new:true}, model_metadata:{reasoning:{supported:true, efforts:["low","high"]},recommended_profile:{reasoning_effort:"high"}}}},
@@ -21,7 +22,10 @@ await stale;
 assert.equal(panel._draft.chat_model, "new");
 assert.equal(panel._draft.reasoning_effort, "high");
 assert.equal(panel._modelCatalogData.requested_model, "new");
-assert.deepEqual(panel._result.model_capabilities, {new:true});
+assert.deepEqual(panel._result.model_capabilities, {baseline:true});
+assert.deepEqual(modelCapabilitiesForDraft(panel), {new:true});
+panel._draft = {chat_model:"baseline"};
+assert.deepEqual(modelCapabilitiesForDraft(panel), {baseline:true});
 assert.deepEqual(calls, ["validate","render"]);
 
 // Even reaffirming an already selected effort is a newer explicit choice. A

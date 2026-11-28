@@ -6,6 +6,8 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
+from homeassistant.core import HomeAssistant
+
 from .const import (
     CONF_VOICE_DEFAULT_USER_ID,
     CONF_VOICE_DEVICE_MAPPINGS,
@@ -17,6 +19,7 @@ from .const import (
     VOICE_POLICY_DEVICE_MAPPING,
     VOICE_POLICY_SHARED,
 )
+from .request_origin import registered_satellite
 from .scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
     UNRETAINED_SCOPE_ID,
@@ -32,10 +35,49 @@ def voice_source_device_id(user_input: Any) -> str | None:
     )
 
 
+def canonical_voice_device_id(
+    user_input: Any, *, hass: HomeAssistant | None = None
+) -> str | None:
+    """Identify a physical Assist device independently of voice-owner mappings."""
+    device_id = getattr(user_input, "device_id", None)
+    satellite = getattr(user_input, "satellite_id", None)
+    if not device_id and hass is not None:
+        entry = registered_satellite(hass, satellite)
+        registry_device = getattr(entry, "device_id", None)
+        if isinstance(registry_device, str) and registry_device:
+            device_id = registry_device
+    return device_id or satellite
+
+
+def voice_mapping_source_id(
+    user_input: Any, options: Mapping[str, Any], *, hass: HomeAssistant | None = None
+) -> str | None:
+    """Use a saved satellite assignment when no registry-device mapping exists."""
+    satellite = getattr(user_input, "satellite_id", None)
+    source = canonical_voice_device_id(user_input, hass=hass)
+    mappings = options.get(CONF_VOICE_DEVICE_MAPPINGS)
+    if (
+        isinstance(mappings, Mapping)
+        and source not in mappings
+        and satellite in mappings
+    ):
+        return satellite
+    return source
+
+
+def eligible_configured_voice_owner(user: Any) -> bool:
+    """Match the editor's eligibility for configured voice owners."""
+    return (
+        user is not None
+        and getattr(user, "is_active", True)
+        and not getattr(user, "system_generated", False)
+    )
+
+
 async def _user_is_active(agent: Any, user_id: str) -> bool:
-    """Return whether one configured HA user still exists and is active."""
+    """Validate one configured owner without changing authenticated identity."""
     user = await agent.hass.auth.async_get_user(user_id)
-    return user is not None and user.is_active
+    return eligible_configured_voice_owner(user)
 
 
 async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str]:
@@ -47,9 +89,8 @@ async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str
 
     options = getattr(agent.subentry, "data", {})
     policy = str(options.get(CONF_VOICE_SCOPE_POLICY, DEFAULT_VOICE_SCOPE_POLICY))
-    device_id = voice_source_device_id(user_input)
-
     if policy == VOICE_POLICY_DEVICE_MAPPING:
+        device_id = voice_mapping_source_id(user_input, options, hass=agent.hass)
         mappings = options.get(CONF_VOICE_DEVICE_MAPPINGS, {})
         mapped = (
             mappings.get(device_id)

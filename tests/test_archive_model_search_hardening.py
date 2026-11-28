@@ -251,7 +251,7 @@ async def test_archive_wrapper_reports_archive_specific_unavailability() -> None
 
     agent._archive.async_search.side_effect = OSError("archive backend failed")
     token = owner._ACTIVE_TURN.set(
-        replace(owner._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_id="user:alice"))
+        replace(owner._ACTIVE_TURN.get(), scope=user_scope("alice", source="authenticated_user"))
     )
     active = owner._ACTIVE_TURN.set(
         replace(owner._ACTIVE_TURN.get(), archive=("session", "id"))
@@ -279,6 +279,19 @@ async def test_archive_wrapper_preserves_expected_runtime_errors() -> None:
         )
 
 
+async def test_unretained_request_cannot_call_archive_search():
+    agent = _runtime_agent()
+    token = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), scope=unretained_scope())
+    )
+    try:
+        with pytest.raises(RuntimeError, match="retained conversation scope"):
+            await agent._async_execute_archive_tool("search", {"query": "kitchen"})
+        agent._archive.async_search.assert_not_awaited()
+    finally:
+        owner._ACTIVE_TURN.reset(token)
+
+
 async def test_archive_get_hides_local_identifiers_from_the_model() -> None:
     agent = _runtime_agent()
     local_session = {
@@ -297,7 +310,7 @@ async def test_archive_get_hides_local_identifiers_from_the_model() -> None:
     }
     agent._archive.async_get = AsyncMock(return_value=page)
     token = owner._ACTIVE_TURN.set(
-        replace(owner._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_id="user:alice"))
+        replace(owner._ACTIVE_TURN.get(), scope=user_scope("alice", source="authenticated_user"))
     )
     try:
         result = await agent._async_execute_archive_tool(
@@ -355,7 +368,7 @@ async def test_archive_non_search_operation_does_not_require_query():
     get = AsyncMock(return_value=expected)
     agent._archive = SimpleNamespace(async_get=get)
     scope = owner._ACTIVE_TURN.set(
-        replace(owner._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_id="user:alice"))
+        replace(owner._ACTIVE_TURN.get(), scope=user_scope("alice", source="authenticated_user"))
     )
     active = owner._ACTIVE_TURN.set(
         replace(owner._ACTIVE_TURN.get(), archive=("session", "id"))

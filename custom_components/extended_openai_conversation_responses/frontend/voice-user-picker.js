@@ -3,10 +3,17 @@ const userRequests = new WeakMap();
 const pickerInitializations = new WeakMap();
 const hassFor = panel => panel.hass || panel._hass;
 const connectionFor = hass => hass?.connection || hass;
+const selectable = user => !user.system_generated && user.is_active !== false;
+
+export function unavailableVoiceUser(panel, value) {
+  return Boolean(value && panel._voiceUsersConnection === connectionFor(hassFor(panel))
+    && Array.isArray(panel._voiceUsers)
+    && !panel._voiceUsers.some(user => user.id === value && selectable(user)));
+}
 
 export function voiceUserCatalogue(panel) {
   if (panel._voiceUsersConnection === connectionFor(hassFor(panel)) && Array.isArray(panel._voiceUsers)) {
-    return panel._voiceUsers.filter(user => !user.system_generated);
+    return panel._voiceUsers.filter(selectable);
   }
   const scopes = panel._baseScopes?.length ? panel._baseScopes : panel._data?.scopes || [];
   return scopes.filter(scope => scope.scope_type === "user")
@@ -50,7 +57,7 @@ export function initializeVoiceUserPicker(panel, picker, value, onReady) {
     panel._voiceUsers = users;
     panel._voiceUsersConnection = connection;
     picker.hass = hassFor(panel);
-    picker.users = users;
+    picker.users = users.filter(selectable);
     // Reapply after custom-element upgrade using the current value and HA context.
     picker.value = initial.edited ? String(picker.value || "").replace(/^user:/, "") : initialValue;
     onReady?.();

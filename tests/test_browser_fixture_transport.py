@@ -92,6 +92,14 @@ async def test_browser_bridge_authenticates_on_first_use_without_replay(
     monkeypatch.setattr(browser, "_entry", Mock(side_effect=[entry, object()]))
     monkeypatch.setattr(browser, "_setup_entry", setup)
     monkeypatch.setattr(browser, "async_get_archive", archive_lookup)
+    monkeypatch.setattr(
+        browser,
+        "delayed_tool_manager",
+        Mock(return_value=SimpleNamespace(
+            async_schedule=AsyncMock(return_value=SimpleNamespace(call_id="scheduled")),
+            _records={},
+        )),
+    )
     monkeypatch.setattr(browser, "_admin_client", auth)
     monkeypatch.setattr(browser, "_start_ws_bridge", start_bridge)
     monkeypatch.setattr(browser, "_run_playwright", run_browser)

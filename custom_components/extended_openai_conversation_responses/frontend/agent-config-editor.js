@@ -1,7 +1,8 @@
-import {prepareConfigurationSections, renderConfigurationShell, renderConfigurationActions as renderConfigurationActionsMarkup} from "./agent-config-editor-base.js";
+import {prepareConfigurationSections, renderConfigurationShell} from "./agent-config-editor-base.js";
 import {bindConfiguration as bindModelConfiguration} from "./agent-config-editor-model-v2.js";
 import {configurationSectionFamily, getRouteFeature} from "./management-route.js";
 export {configurationDialogs} from "./agent-config-editor-base.js";
+export {renderConfigurationActions} from "./assistant-actions-menu.js";
 
 const CACHEABLE_CONFIG_SECTIONS = new Set(["capabilities", "archive", "voice", "speech", "context", "retention", "backup"]);
 const MAX_CONFIG_RENDER_CACHE_ENTRIES = 8;
@@ -53,10 +54,6 @@ export function renderConfiguration(panel, presentation) {
   prepareConfigurationSections(panel);
   const sections = renderer.renderConfigurationSections(panel, presentation);
   return rememberConfigurationMarkup(panel, cacheKey, renderConfigurationShell(panel, sections), presentation?.voiceIdentity);
-}
-
-export function renderConfigurationActions(panel, sections) {
-  return renderConfigurationActionsMarkup(panel, sections);
 }
 
 export function bindConfiguration(panel) {

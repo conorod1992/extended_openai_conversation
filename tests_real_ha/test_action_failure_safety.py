@@ -416,9 +416,13 @@ async def test_assist_reports_lost_effect_acknowledgements(
                     for item in body["messages"]
                     if item.get("tool_call_id") == "effect-ack"
                 )
-            assert json.loads(result_payload) == {"result": "Scheduled"}
             stored = await scheduler._store.async_load()
             assert len(stored["calls"]) == 1
+            assert json.loads(result_payload) == {
+                "result": "Scheduled",
+                "action_id": stored["calls"][0]["call_id"],
+                "scheduled_at": stored["calls"][0]["due_at"],
+            }
             assert [
                 record.as_dict() for record in scheduler._records.values()
             ] == stored["calls"]
@@ -699,3 +703,160 @@ async def test_public_rest_default_retry_does_not_repeat_completed_post(hass, mo
         spec=wire.requests[0]["body"]["tools"][0]["function"]
         assert spec["strict"] is False
         wire.assert_complete(3)
+
+
+@pytest.mark.parametrize(
+    ("api_mode", "streaming", "provider_fails_after_cancel"),
+    [
+        ("chat_completions", True, False),
+        ("chat_completions", False, False),
+        ("responses", True, False),
+        ("responses", False, False),
+        ("responses", True, True),
+    ],
+)
+async def test_scheduled_action_followup_through_real_ha_and_provider_wire(
+    hass, monkeypatch, api_mode, streaming, provider_fails_after_cancel
+):
+    """List a pending job, then cancel the listed ID on a follow-up."""
+    from dataclasses import replace
+
+    from homeassistant.helpers import llm
+
+    from custom_components.extended_openai_conversation_responses import entity
+
+    agent = await _contract_agent(hass, api_mode=api_mode, functions=[])
+    user = await hass.auth.async_create_user(
+        "Scheduled Actions owner", group_ids=[GROUP_ID_ADMIN]
+    )
+    context = Context(user_id=user.id)
+    manager = hass.data[DOMAIN][DATA_DELAYED_TOOL_MANAGER]
+    # Pending work remains manageable without a configured delay-capable tool.
+    record = await manager.async_schedule(
+        agent,
+        "retired_function",
+        {"private": "do not send"},
+        llm.LLMContext(
+            platform=DOMAIN,
+            context=context,
+            language=hass.config.language,
+            assistant="conversation",
+            device_id=None,
+        ),
+        execution_delay={"seconds": 900},
+    )
+    build = entity.build_provider_request_snapshot
+
+    def with_streaming(*args, **kwargs):
+        snapshot = build(*args, **kwargs)
+        return replace(
+            snapshot, api_kwargs={**snapshot.api_kwargs, "stream": streaming}
+        )
+
+    monkeypatch.setattr(entity, "build_provider_request_snapshot", with_streaming)
+    responses = api_mode == "responses"
+    tool_frame = _responses_sse_tool_call if responses else _chat_sse_tool_call
+    text_frame = _responses_sse_text if responses else _chat_sse_text
+
+    def wire_result(stream):
+        if streaming or isinstance(stream, tuple):
+            return stream
+        frames = [
+            json.loads(line.removeprefix(b"data: "))
+            for line in stream.splitlines()
+            if line.startswith(b"data: ") and line != b"data: [DONE]"
+        ]
+        if responses:
+            return 200, next(
+                frame["response"]
+                for frame in frames
+                if frame["type"] == "response.completed"
+            )
+        completion = frames[0]
+        completion["object"] = "chat.completion"
+        for choice in completion["choices"]:
+            message = choice.pop("delta")
+            for call in message.get("tool_calls", []):
+                call.pop("index")
+            choice["message"] = message
+        return 200, completion
+
+    async def ask(text, cid, frames):
+        async with _transport(
+            agent.entry, [wire_result(frame) for frame in frames]
+        ) as wire:
+            result = await conversation.async_converse(
+                hass=hass,
+                text=text,
+                conversation_id=cid,
+                context=context,
+                language="en",
+                agent_id=agent.entry.entry_id,
+            )
+            wire.assert_complete(2)
+            for attempt in wire.requests:
+                assert attempt["body"]["stream"] is streaming
+            return result, wire.requests
+
+    listed, requests = await ask(
+        "What actions are scheduled?",
+        None,
+        [
+            tool_frame("list-pending", "list_scheduled_actions", {}),
+            text_frame("There is one action."),
+        ],
+    )
+    assert _speech(listed) == "There is one action."
+    schemas = requests[0]["body"]["tools"]
+    names = {
+        tool["name"] if responses else tool["function"]["name"] for tool in schemas
+    }
+    assert {"list_scheduled_actions", "cancel_scheduled_action"} <= names
+
+    def result_from(request_list, call_id):
+        body = request_list[1]["body"]
+        text = next(
+            item["output" if responses else "content"]
+            for item in body["input" if responses else "messages"]
+            if item.get("call_id" if responses else "tool_call_id") == call_id
+            and (not responses or item["type"] == "function_call_output")
+        )
+        return json.loads(json.loads(text)["result"])
+
+    listed_actions = result_from(requests, "list-pending")
+    assert listed_actions == {
+        "status": "ok",
+        "actions": [
+            {
+                "action_id": record.call_id,
+                "scheduled_at": record.due_at,
+                "description": "Function Tool: retired_function",
+            }
+        ],
+    }
+
+    cancelled, requests = await ask(
+        "Cancel that action.",
+        listed.conversation_id,
+        [
+            tool_frame(
+                "cancel-pending",
+                "cancel_scheduled_action",
+                {"action_id": record.call_id},
+            ),
+            (
+                (503, {"error": {"message": "provider unavailable", "type": "server_error"}})
+                if provider_fails_after_cancel
+                else text_frame("Cancelled.")
+            ),
+        ],
+    )
+    if provider_fails_after_cancel:
+        assert cancelled.response.error_code is not None
+    else:
+        assert _speech(cancelled) == "Cancelled."
+    assert result_from(requests, "cancel-pending") == {
+        "status": "cancelled",
+        "action_id": record.call_id,
+    }
+    assert (await manager._store.async_load())["calls"] == []

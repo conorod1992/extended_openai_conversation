@@ -156,6 +156,25 @@ for (const admin of [true,false]) {
       await toggle.check();
       await expect(panel.locator("#knowledge-status")).toContainText("Needs sources");
     }
+    await expect(panel.locator("#add-source")).toBeVisible();
+    await panel.evaluate(p => {
+      const original = p._call.bind(p);
+      p._call = (section, action, ...args) => window.knowledgeUnavailable && section === "knowledge" && action === "list"
+        ? Promise.resolve({sources_unavailable: true}) : original(section, action, ...args);
+      window.knowledgeUnavailable = true;
+      p._sectionCache.delete(p._sectionCacheKey());
+      return p._loadSection(true);
+    });
+    await expect(panel.locator("main")).toContainText("Knowledge sources are unavailable");
+    await expect(panel.locator("main")).not.toContainText("No Knowledge sources yet");
+    await expect(panel.locator("#add-source")).toHaveCount(0);
+    await panel.evaluate(p => {
+      window.knowledgeUnavailable = false;
+      p._sectionCache.delete(p._sectionCacheKey());
+      return p._loadSection(true);
+    });
+    await expect(panel.locator("#add-source")).toBeVisible();
+    await expect(panel.locator("main")).not.toContainText("Knowledge sources are unavailable");
     await expectHarnessClean(page, errors);
   });
 }
@@ -166,7 +185,7 @@ test("Memory settings heading retains one working cross-link and no global tagli
   const panel = host(page);
   const manage = panel.getByRole("button",{name:"Manage stored memories",exact:true});
   await expect(manage).toHaveCount(1);
-  await expect(panel.locator(".page-intro")).toContainText("Manage stored memories");
+  await expect(panel.locator(".memory-settings-intro")).toContainText("Manage stored memories");
   await expect(panel).not.toContainText("Looking for stored memories?");
   await expect(panel.locator("header")).not.toContainText("Configure your assistant, capabilities, retained data, and maintenance");
   await manage.click();
@@ -219,10 +238,26 @@ test("Voice policies retain native picker identity and saved inactive choices ac
   await panel.locator('.settings-result[data-target="config-voice_default_user_id"]').click();
   await expect(inactive).toHaveJSProperty("open",true);
   await expect(picker).toHaveJSProperty("disabled",true);
+  await expect(picker).toHaveJSProperty("inert",true);
+  await picker.evaluate(node => {
+    node.value="another-user";
+    node.dispatchEvent(new CustomEvent("value-changed",{detail:{value:"another-user"},bubbles:true,composed:true}));
+  });
   expect(await picker.evaluate(node => node===window.savedVoicePicker)).toBe(true);
   await expect(panel.locator("#config-voice_default_user_id")).toHaveValue("test-user");
   await panel.locator("#config-voice_scope_policy").selectOption("default_user");
   await expect(picker).toHaveJSProperty("disabled",false);
+  await expect(picker).toHaveJSProperty("inert",false);
+  await panel.evaluate(p => {
+    const hass=p.hass || p._hass;
+    p._voiceUsersConnection=hass.connection || hass;
+    p._voiceUsers=[{id:"test-user",name:"Test User",is_active:true}];
+  });
+  await picker.evaluate(node => {
+    node.value="removed-user";
+    node.dispatchEvent(new CustomEvent("value-changed",{detail:{value:"removed-user"},bubbles:true,composed:true}));
+  });
+  await expect(picker).toHaveJSProperty("value","test-user");
   expect(await panel.evaluate(p=>({policy:p._draft.voice_scope_policy,fallback:p._draft.voice_unmapped_policy,user:p._draft.voice_default_user_id}))).toEqual({policy:"default_user",fallback:"default_user",user:"test-user"});
   await expectHarnessClean(page, errors);
 });

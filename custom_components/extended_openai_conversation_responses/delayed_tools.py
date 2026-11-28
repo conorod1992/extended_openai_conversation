@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextvars import Context as TaskContext
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
@@ -10,6 +11,7 @@ from datetime import datetime, timedelta
 import hashlib
 import json
 import logging
+import re
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
@@ -17,6 +19,10 @@ from uuid import uuid4
 import voluptuous as vol
 
 from homeassistant.components import conversation
+from homeassistant.components.homeassistant.exposed_entities import (
+    DATA_EXPOSED_ENTITIES,
+    async_should_expose,
+)
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import Context, CoreState, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -26,21 +32,29 @@ from homeassistant.util import dt as dt_util
 from .agent_config import function_tool_enabled
 from .agent_maintenance import AgentRestoreRecoveryRequired, get_agent_maintenance_gate
 from .const import DOMAIN
-from .exceptions import EffectOutcomeUnknown
+from .exceptions import EffectOutcomeUnknown, EffectReplayBlocked
 from .function_tool_quarantine import (
     _runtime_configured_function_tools as configured_function_tools_from_data,
 )
 from .function_tool_resolution import latest_function_tool_for_execution
 from .function_yaml import dump_authored_function_configuration
-from .ha_permissions import bind_active_ha_context
+from .ha_permissions import bind_active_ha_context, filter_entities_for_active_user
 from .ha_tool_result_compat import ExecutionFailure, tool_result_data
 from .helpers import get_exposed_entities
+from .model_tool_results import local_function_results
+from .mutation_outcomes import mark_mutation_failure
+from .operational_errors import log_handled_failure
 from .persistence_hardening import (
     _async_repair_private_store_mode,
     _async_settle_transactional_save,
 )
 from .record_timestamps import parse_datetime
-from .request_origin import bind_request_satellite, get_request_satellite
+from .request_origin import (
+    bind_request_satellite,
+    get_request_satellite,
+    satellite_registry_identity,
+)
+from .scheduled_action_summary import describe_native_action, present_entities
 from .strict_store import PropagatingWriteStore, _async_settle_store_io
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,9 +70,71 @@ _AGENT_RETRY_SECONDS = 30
 _CLOCK_RECHECK_SECONDS = 30
 _DEFAULT_GRACE_SECONDS = 15 * 60
 _MAX_AGENT_RETRIES = 10
+_MAX_UNEXPECTED_DUE_FAILURES = 3
 _PENDING = "pending"
 _EXECUTING = "executing"
 _DELAYED_EXECUTION_MARKER = "_extended_openai_delayed_execution"
+_ACTION_ID = re.compile(r"(?:[0-9a-f]{32}|legacy_[0-9a-f]{64})")
+_TOOL_LABEL = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledActionOwner:
+    """Trusted request identity for one assistant's queue."""
+
+    entry_id: str
+    subentry_id: str
+    user_id: str | None = None
+    device_id: str | None = None
+    satellite_id: str | None = None
+    administrator: bool = False
+    satellite_identity: tuple[str, str] | None = None
+
+    def allows(self, record: DelayedToolCall) -> bool:
+        if (self.entry_id, self.subentry_id) != (record.entry_id, record.subentry_id):
+            return False
+        if self.administrator:
+            return True
+        if self.user_id or record.user_id is not None:
+            return bool(self.user_id) and self.user_id == record.user_id
+        if record.satellite_identity is not None:
+            return self.satellite_identity == record.satellite_identity
+        # Legacy jobs cannot prove a rename. Reject known device mismatches even
+        # when HA currently assigns the same entity ID to the new device.
+        if record.satellite_id and self.satellite_id:
+            return record.satellite_id == self.satellite_id and (
+                not record.device_id or record.device_id == self.device_id
+            )
+        return (
+            not record.satellite_id
+            and bool(self.device_id)
+            and record.device_id == self.device_id
+        )
+
+
+def _public_action_id(call_id: str) -> str:
+    if len(call_id) == 32 and _ACTION_ID.fullmatch(call_id):
+        return call_id
+    # Historical stores accepted arbitrary strings. Keep them manageable without
+    # echoing stored text or rewriting the queue's identifiers.
+    return (
+        "legacy_" + hashlib.sha256(call_id.encode("utf-8", "surrogatepass")).hexdigest()
+    )
+
+
+def valid_scheduled_action_id(value: Any) -> bool:
+    """Accept only a complete ID returned by the scheduler."""
+    return (
+        isinstance(value, str)
+        and len(value) <= 71
+        and _ACTION_ID.fullmatch(value) is not None
+    )
+
+
+def delayed_tool_manager(hass: HomeAssistant) -> DelayedToolManager | None:
+    """Get the existing scheduler without initiating recovery or startup."""
+    manager = hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
+    return manager if isinstance(manager, DelayedToolManager) else None
 
 
 class _DelayedQueueLimitError(HomeAssistantError):
@@ -137,6 +213,7 @@ class DelayedToolCall:
     retry_count: int = 0
     definition_fingerprint: str | None = None
     satellite_id: str | None = None
+    satellite_identity: tuple[str, str] | None = None
     # Missing/null means eventual execution, including all pre-expiry jobs.
     expires_at: str | None = None
     # Preserve absent legacy metadata on read/write, while newly scheduled
@@ -150,6 +227,10 @@ class DelayedToolCall:
         if self.satellite_id is None:
             # Preserve legacy queue shape when there is no physical origin.
             payload.pop("satellite_id")
+        if self.satellite_identity is None:
+            payload.pop("satellite_identity")
+        else:
+            payload["satellite_identity"] = list(self.satellite_identity)
         if self.expires_at is None and not self._expiry_metadata_present:
             payload.pop("expires_at")
         return payload
@@ -174,7 +255,7 @@ class DelayedToolCall:
             raise ValueError("stored delayed call has invalid arguments")
         _validate_argument_budget(raw["arguments"])
         status = raw.get("status", _PENDING)
-        if status not in {_PENDING, _EXECUTING}:
+        if not isinstance(status, str) or status not in {_PENDING, _EXECUTING}:
             raise ValueError("stored delayed call has invalid status")
         retry_count = raw.get("retry_count", 0)
         if not isinstance(retry_count, int) or retry_count < 0:
@@ -187,6 +268,7 @@ class DelayedToolCall:
         user_id = raw.get("user_id")
         device_id = raw.get("device_id")
         satellite_id = raw.get("satellite_id")
+        satellite_identity = raw.get("satellite_identity")
         expires_at = raw.get("expires_at")
         if expires_at is not None:
             if not isinstance(expires_at, str):
@@ -207,6 +289,12 @@ class DelayedToolCall:
             raise ValueError("stored delayed call has invalid device_id")
         if satellite_id is not None and not isinstance(satellite_id, str):
             raise ValueError("stored delayed call has invalid satellite_id")
+        if satellite_identity is not None and (
+            not isinstance(satellite_identity, (list, tuple))
+            or len(satellite_identity) != 2
+            or not all(isinstance(part, str) and part for part in satellite_identity)
+        ):
+            raise ValueError("stored delayed call has invalid satellite identity")
         return cls(
             call_id=raw["call_id"],
             entry_id=raw["entry_id"],
@@ -221,6 +309,11 @@ class DelayedToolCall:
             retry_count=retry_count,
             definition_fingerprint=fingerprint,
             satellite_id=satellite_id,
+            satellite_identity=(
+                (satellite_identity[0], satellite_identity[1])
+                if satellite_identity is not None
+                else None
+            ),
             expires_at=expires_at,
             _expiry_metadata_present="expires_at" in raw,
         )
@@ -252,7 +345,29 @@ async def async_remove_stored_agent_calls(
         if isinstance(manager, DelayedToolManager):
             await manager._async_remove_agent_locked(entry_id, subentry_id)
         else:
-            await _async_remove_stored_agent_calls_locked(hass, entry_id, subentry_id)
+            await _async_remove_stored_agent_calls_locked(
+                hass, lambda parent, child: (parent, child) == (entry_id, subentry_id)
+            )
+
+
+async def async_prune_orphaned_delayed_calls(hass: HomeAssistant) -> None:
+    """Remove records whose saved owner no longer exists, including disk-only jobs."""
+
+    def deleted(entry_id: str, subentry_id: str) -> bool:
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
+            return True
+        if entry.domain != DOMAIN:
+            return False
+        return subentry_id not in entry.subentries
+
+    async with _delayed_store_lock(hass):
+        manager = delayed_tool_manager(hass)
+        if manager is not None and manager._setup_complete and not manager._quarantined:
+            await manager._async_remove_calls_locked(deleted)
+        else:
+            # A repaired disk generation may be cleaned without rearming its jobs.
+            await _async_remove_stored_agent_calls_locked(hass, deleted)
 
 
 def _delayed_store_lock(hass: HomeAssistant) -> asyncio.Lock:
@@ -274,11 +389,28 @@ async def _async_load_delayed_queue_store(
         raise ValueError("Persisted delayed Function Tool Store is malformed") from err
 
 
+class _ScheduledActionStore(PropagatingWriteStore):
+    """Preserve malformed native queue envelopes for repair."""
+
+    _null_payload_label = "Scheduled Actions"
+
+
+def _require_unique_saved_call_ids(raw_calls: list[Any]) -> None:
+    """Reject an ambiguous generation before dropping any invalid records."""
+    seen: set[str] = set()
+    for raw in raw_calls:
+        call_id = raw.get("call_id") if isinstance(raw, dict) else None
+        if isinstance(call_id, str) and call_id:
+            if call_id in seen:
+                raise ValueError("Persisted Scheduled Action IDs are not unique")
+            seen.add(call_id)
+
+
 async def _async_remove_stored_agent_calls_locked(
-    hass: HomeAssistant, entry_id: str, subentry_id: str
+    hass: HomeAssistant, remove: Callable[[str, str], bool]
 ) -> None:
     """Read and replace stored calls while retaining shared-store ownership."""
-    store = PropagatingWriteStore(
+    store = _ScheduledActionStore(
         hass,
         DELAYED_TOOL_STORAGE_VERSION,
         DELAYED_TOOL_STORAGE_KEY,
@@ -290,13 +422,17 @@ async def _async_remove_stored_agent_calls_locked(
         return
     if not isinstance(data, dict) or not isinstance(data.get("calls"), list):
         raise ValueError("persisted delayed Function Tools are malformed")
+    _require_unique_saved_call_ids(data["calls"])
     survivors = [
         raw
         for raw in data["calls"]
         if not (
             isinstance(raw, dict)
-            and raw.get("entry_id") == entry_id
-            and raw.get("subentry_id") == subentry_id
+            and isinstance(parent := raw.get("entry_id"), str)
+            and isinstance(child := raw.get("subentry_id"), str)
+            and parent
+            and child
+            and remove(parent, child)
         )
     ]
     if len(survivors) != len(data["calls"]):
@@ -309,7 +445,7 @@ class DelayedToolManager:
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the scheduler."""
         self.hass = hass
-        self._store = PropagatingWriteStore(
+        self._store = _ScheduledActionStore(
             hass,
             DELAYED_TOOL_STORAGE_VERSION,
             DELAYED_TOOL_STORAGE_KEY,
@@ -390,6 +526,7 @@ class DelayedToolManager:
         else:
             raw_calls = raw_data["calls"]
         dirty = False
+        _require_unique_saved_call_ids(raw_calls)
         recovered: dict[str, DelayedToolCall] = {}
         for raw in raw_calls:
             try:
@@ -439,7 +576,8 @@ class DelayedToolManager:
         llm_context: llm.LLMContext | None,
         *,
         function_tool: dict[str, Any] | None = None,
-        execution_delay: dict[str, Any] | None = None,
+        execution_delay: dict[str, Any] | timedelta | None = None,
+        exposed_entities: list[dict[str, Any]] | None = None,
     ) -> DelayedToolCall:
         """Persist a delayed call before exposing it as scheduled."""
         if self._quarantined:
@@ -457,7 +595,6 @@ class DelayedToolManager:
         catch_up = (function_tool or {}).get("delay_catch_up", False)
         if not isinstance(catch_up, bool):
             raise HomeAssistantError("Function Tool delay_catch_up must be a boolean")
-        context = getattr(llm_context, "context", None)
         from .execution_outcomes import (
             execution_completed,
             execution_operation,
@@ -469,8 +606,13 @@ class DelayedToolManager:
                 raise HomeAssistantError(
                     "Delayed Function Tool scheduler is unavailable"
                 )
+            available_records = {
+                call_id: record
+                for call_id, record in self._records.items()
+                if record.status != _EXECUTING or call_id in self._tasks
+            }
             _validate_call_capacity(
-                self._records, entity.entry.entry_id, entity.subentry.subentry_id
+                available_records, entity.entry.entry_id, entity.subentry.subentry_id
             )
             _validate_argument_budget(arguments)
             try:
@@ -484,6 +626,23 @@ class DelayedToolManager:
                 raise HomeAssistantError(
                     "Function Tool delay exceeds the supported scheduling range"
                 ) from err
+            implementation = (function_tool or {}).get("function", {})
+            context = getattr(llm_context, "context", None)
+            native_name = implementation.get("name")
+            if implementation.get("type") == "native" and native_name in (
+                "execute_service",
+                "execute_service_single",
+            ):
+                from .functions.native import NativeFunction
+
+                await NativeFunction().async_authorize_scheduled_services(
+                    self.hass,
+                    arguments,
+                    context,
+                    exposed_entities,
+                    single=native_name == "execute_service_single",
+                )
+            satellite_id = get_request_satellite()
             record = DelayedToolCall(
                 call_id=uuid4().hex,
                 entry_id=entity.entry.entry_id,
@@ -495,12 +654,13 @@ class DelayedToolManager:
                 created_at=now.isoformat(),
                 user_id=getattr(context, "user_id", None),
                 device_id=getattr(llm_context, "device_id", None),
-                satellite_id=get_request_satellite(),
+                satellite_id=satellite_id,
+                satellite_identity=satellite_registry_identity(self.hass, satellite_id),
                 definition_fingerprint=tool_definition_fingerprint(function_tool)
                 if function_tool is not None
                 else None,
             )
-            updated = {**self._records, record.call_id: record}
+            updated = {**available_records, record.call_id: record}
             with execution_operation(
                 "delayed_job",
                 {
@@ -541,6 +701,220 @@ class DelayedToolManager:
                         self._arm(record.call_id)
         return record
 
+    @property
+    def available(self) -> bool:
+        """Whether management can inspect an authoritative queue generation."""
+        return self._setup_complete and not self._quarantined
+
+    async def async_list_scheduled_actions(
+        self,
+        owner: ScheduledActionOwner,
+        *,
+        authorized: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """Return a bounded, safe view of this owner's pending actions."""
+        async with self._lock:
+            if authorized is not None and not authorized():
+                return {"status": "denied"}
+            if not self.available:
+                return {"status": "unavailable"}
+            now = dt_util.utcnow()
+            pending = [
+                (due, record)
+                for record in self._records.values()
+                if record.status == _PENDING
+                and owner.allows(record)
+                and not self._execution_grace_expired(record, now)
+                and (due := _parse_scheduled_utc(record.due_at)) is not None
+            ]
+        # The records are immutable snapshots. The per-assistant admission limit
+        # also bounds projection work and the size of this reply.
+        native_tools = self._summary_tools(owner) if pending else {}
+        fingerprints: dict[str, str | None] = {}
+        return {
+            "status": "ok",
+            "actions": [
+                {
+                    "action_id": _public_action_id(record.call_id),
+                    "scheduled_at": due.isoformat(),
+                    "description": self._action_description(
+                        record, native_tools.get(record.tool_name), owner, fingerprints
+                    ),
+                }
+                for due, record in sorted(
+                    pending, key=lambda item: (item[0], item[1].call_id)
+                )
+            ],
+        }
+
+    def _summary_tools(self, owner: ScheduledActionOwner) -> dict[str, dict[str, Any]]:
+        """Read tool definitions for display, independently of the live tool scope."""
+        try:
+            entry = self.hass.config_entries.async_get_entry(owner.entry_id)
+            subentry = (
+                entry.subentries.get(owner.subentry_id) if entry is not None else None
+            )
+            if subentry is not None:
+                from .function_configuration_repair import isolated_function_tools
+
+                tools, _, _ = isolated_function_tools(dict(subentry.data))
+                return {
+                    tool["spec"]["name"]: tool
+                    for tool in tools
+                    if tool["function"].get("type") == "native"
+                    and tool["function"].get("name")
+                    in {"execute_service", "execute_service_single"}
+                }
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER, "Could not read Scheduled Action summary tools", err
+            )
+        return {}
+
+    def _action_description(
+        self,
+        record: DelayedToolCall,
+        tool: dict[str, Any] | None,
+        owner: ScheduledActionOwner,
+        fingerprints: dict[str, str | None],
+    ) -> str:
+        name = record.tool_name
+        fallback = (
+            f"Function Tool: {name}" if _TOOL_LABEL.fullmatch(name) else "Function Tool"
+        )
+        if tool is None or record.definition_fingerprint is None:
+            return fallback
+
+        try:
+            if name not in fingerprints:
+                # Remember an unavailable fingerprint for this listing only.
+                fingerprints[name] = None
+                fingerprints[name] = tool_definition_fingerprint(tool)
+            if fingerprints[name] == record.definition_fingerprint:
+                return (
+                    describe_native_action(
+                        self.hass,
+                        tool["function"]["name"],
+                        record.arguments,
+                        lambda entities: self._visible_summary_entities(
+                            entities, owner
+                        ),
+                    )
+                    or fallback
+                )
+        except Exception as err:
+            log_handled_failure(_LOGGER, "Could not describe a Scheduled Action", err)
+        return fallback
+
+    def _visible_summary_entities(
+        self, entities: list[str], owner: ScheduledActionOwner
+    ) -> list[str]:
+        entities = present_entities(self.hass, entities)
+        if owner.administrator:
+            return entities
+        if not entities or DATA_EXPOSED_ENTITIES not in self.hass.data:
+            return []
+        exposed = [
+            {"entity_id": entity_id}
+            for entity_id in entities
+            if async_should_expose(self.hass, "conversation", entity_id)
+        ]
+        with bind_active_ha_context(Context(user_id=owner.user_id)):
+            return [
+                item["entity_id"]
+                for item in filter_entities_for_active_user(self.hass, exposed)
+            ]
+
+    async def async_cancel_scheduled_action(
+        self,
+        owner: ScheduledActionOwner,
+        action_id: str,
+        *,
+        authorized: Callable[[], bool] | None = None,
+    ) -> dict[str, str]:
+        """Durably cancel one authorized pending action under the claim lock."""
+        if not valid_scheduled_action_id(action_id):
+            raise HomeAssistantError("A complete scheduled action ID is required")
+        from .execution_outcomes import (
+            execution_completed,
+            execution_operation,
+            execution_rejected,
+        )
+
+        async with self._lock:
+            if authorized is not None and not authorized():
+                return {"status": "denied"}
+            if not self.available:
+                return {"status": "unavailable"}
+            record = self._records.get(action_id)
+            if action_id.startswith("legacy_"):
+                record = next(
+                    (
+                        item
+                        for item in self._records.values()
+                        if _public_action_id(item.call_id) == action_id
+                    ),
+                    None,
+                )
+            if (
+                record is None
+                or not owner.allows(record)
+                or record.status != _PENDING
+                or self._execution_grace_expired(record, dt_util.utcnow())
+            ):
+                return {"status": "not_pending"}
+            call_id = record.call_id
+            updated = dict(self._records)
+            del updated[call_id]
+            with execution_operation(
+                "delayed_job",
+                {
+                    "operation": "cancel",
+                    "entry_id": owner.entry_id,
+                    "subentry_id": owner.subentry_id,
+                    "action_id": action_id,
+                },
+            ) as operation:
+                try:
+                    await self._async_save_records_transactionally(updated)
+                except EffectReplayBlocked:
+                    raise
+                except BaseException as err:
+                    if self.available and call_id not in self._records:
+                        # A successful write with cancelled acknowledgement, or
+                        # authoritative reconciliation after a write error.
+                        execution_completed(operation.receipt)
+                    elif self.available:
+                        execution_rejected(operation.receipt)
+                        if isinstance(err, Exception):
+                            raise mark_mutation_failure(
+                                HomeAssistantError(
+                                    "The scheduled action could not be cancelled"
+                                ),
+                                "rejected",
+                            ) from None
+                    elif isinstance(err, Exception):
+                        if operation.receipt is not None:
+                            raise EffectOutcomeUnknown() from None
+                        raise mark_mutation_failure(
+                            HomeAssistantError(
+                                "Cancellation could not be confirmed. Refresh before trying again."
+                            ),
+                            "uncertain",
+                        ) from None
+                    if not isinstance(err, Exception):
+                        raise
+                finally:
+                    # Request cancellation only. Awaiting this task under
+                    # the store lock or a maintenance lease can deadlock.
+                    if (
+                        self.available
+                        and call_id not in self._records
+                        and (task := self._tasks.pop(call_id, None)) is not None
+                    ):
+                        task.cancel()
+        return {"status": "cancelled", "action_id": action_id}
+
     async def async_remove_agent(self, entry_id: str, subentry_id: str) -> None:
         """Erase scheduled arguments belonging to a deleted assistant."""
         async with self._lock:
@@ -548,17 +922,24 @@ class DelayedToolManager:
 
     async def _async_remove_agent_locked(self, entry_id: str, subentry_id: str) -> None:
         """Erase one agent from the current authoritative storage generation."""
+
+        def matching_owner(parent: str, child: str) -> bool:
+            return (parent, child) == (entry_id, subentry_id)
+
         if not self._setup_complete or self._quarantined:
             # Setup or quarantine can leave runtime records empty while storage
             # still contains jobs. Delete from the authoritative generation.
-            await _async_remove_stored_agent_calls_locked(
-                self.hass, entry_id, subentry_id
-            )
+            await _async_remove_stored_agent_calls_locked(self.hass, matching_owner)
             return
+        await self._async_remove_calls_locked(matching_owner)
+
+    async def _async_remove_calls_locked(
+        self, remove: Callable[[str, str], bool]
+    ) -> None:
         removed = {
             call_id
             for call_id, record in self._records.items()
-            if record.entry_id == entry_id and record.subentry_id == subentry_id
+            if remove(record.entry_id, record.subentry_id)
         }
         if not removed:
             return
@@ -587,6 +968,7 @@ class DelayedToolManager:
             raise ValueError("persisted delayed Function Tools are malformed")
         else:
             raw_calls = raw_data["calls"]
+        _require_unique_saved_call_ids(raw_calls)
         records: dict[str, DelayedToolCall] = {}
         for raw in raw_calls:
             record = DelayedToolCall.from_dict(raw)
@@ -609,12 +991,14 @@ class DelayedToolManager:
 
     def _invalidate_after_unreadable_store(self) -> None:
         """Stop the scheduler rather than execute from unverified in-memory data."""
-        self._records.clear()
         self._setup_complete = False
         self._started = False
-        for task in self._tasks.values():
+        for call_id, task in self._tasks.items():
             self._invalidated_tasks.add(task)
-            task.cancel()
+            record = self._records.get(call_id)
+            if record is None or record.status != _EXECUTING:
+                task.cancel()
+        self._records.clear()
         self._tasks.clear()
 
     async def _async_save_records_transactionally(
@@ -672,11 +1056,21 @@ class DelayedToolManager:
 
     async def _async_wait_and_execute(self, call_id: str) -> None:
         """Wait until due, retry transient state failures, then execute once."""
+        unexpected_failures = 0
         try:
-            while self._started:
+            while self._started and not self._quarantined:
                 record = self._records.get(call_id)
                 if record is None or record.status != _PENDING:
                     return
+                if unexpected_failures >= _MAX_UNEXPECTED_DUE_FAILURES:
+                    # If cancellation cannot be persisted yet, retain ownership
+                    # of cleanup without making another execution attempt.
+                    if await self._async_discard(
+                        call_id, "pre-execution checks repeatedly failed"
+                    ):
+                        return
+                    await asyncio.sleep(_AGENT_RETRY_SECONDS)
+                    continue
                 due_at = _parse_scheduled_utc(record.due_at)
                 if due_at is None:
                     if await self._async_discard(call_id, "invalid due timestamp"):
@@ -693,9 +1087,27 @@ class DelayedToolManager:
                 record = self._records.get(call_id)
                 if record is None or record.status != _PENDING:
                     return
-                retry = await self._async_execute_due(call_id)
-                if not retry:
-                    return
+                try:
+                    retry = await self._async_execute_due(call_id)
+                except Exception as err:
+                    log_handled_failure(
+                        _LOGGER,
+                        "Unexpected failure while processing a Scheduled Action",
+                        err,
+                    )
+                    pending = self._records.get(call_id)
+                    # A successful claim or uncertain write can never enter
+                    # the pre-execution retry path.
+                    if (
+                        not self.available
+                        or pending is None
+                        or pending.status != _PENDING
+                    ):
+                        return
+                    unexpected_failures += 1
+                else:
+                    if not retry:
+                        return
                 await asyncio.sleep(_AGENT_RETRY_SECONDS)
         except asyncio.CancelledError:
             raise
@@ -820,9 +1232,9 @@ class DelayedToolManager:
 
             try:
                 current_tool = latest_function_tool_for_execution(agent, current_tool)
-            except HomeAssistantError as err:
+            except HomeAssistantError:
                 return not await self._async_discard(
-                    call_id, f"Function Tool is unavailable: {err}"
+                    call_id, "Function Tool is no longer available for execution"
                 )
 
             try:
@@ -843,9 +1255,17 @@ class DelayedToolManager:
                 **{_DELAYED_EXECUTION_MARKER: True},
             )
             try:
+                satellite_id = (
+                    er.async_get(self.hass).async_get_entity_id(
+                        "assist_satellite", *record.satellite_identity
+                    )
+                    if record.satellite_identity is not None
+                    else record.satellite_id
+                )
                 with (
                     bind_active_ha_context(execution_context),
-                    bind_request_satellite(record.satellite_id),
+                    bind_request_satellite(satellite_id),
+                    local_function_results(),
                 ):
                     exposed_entities = get_exposed_entities(self.hass)
                     scheduled_utc = _parse_scheduled_utc(record.due_at)
@@ -910,31 +1330,57 @@ class DelayedToolManager:
             record = self._records.get(call_id)
             if record is None or record.status != _PENDING:
                 return False, False
-            now = dt_util.utcnow()
             due = _parse_scheduled_utc(record.due_at)
             if due is None:
                 raise ValueError("invalid due timestamp")
-            if due > now:
-                return False, True
-            updated = dict(self._records)
-            if record.expires_at is not None:
-                expiry = _parse_scheduled_utc(record.expires_at)
-                if expiry is None or now >= expiry:
-                    updated.pop(call_id)
-                    await self._async_save_records_transactionally(updated)
-                    _LOGGER.info(
-                        "Cancelled delayed Function Tool `%s`: execution grace period expired",
-                        record.tool_name,
-                    )
-                    return False, False
-            claim = updated[call_id] = replace(record, status=_EXECUTING)
+            retry = await self._async_recheck_claim_time_locked(record, due)
+            if retry is not None:
+                return False, retry
+            claim = replace(record, status=_EXECUTING)
+            updated = {**self._records, call_id: claim}
             try:
                 await self._async_save_records_transactionally(updated, claim=claim)
             except Exception:
                 if self._records.get(call_id) != claim:
                     raise
-                _LOGGER.warning("Recovered a committed delayed Function Tool claim")
+                # Readback confirms visibility, but the original rename may
+                # have failed its directory sync. Require an acknowledged
+                # write of the reconciled claim before dispatching.
+                retry = await self._async_recheck_claim_time_locked(
+                    record, due, claimed=True
+                )
+                if retry is not None:
+                    return False, retry
+                await self._async_save_records_transactionally(
+                    dict(self._records), claim=claim
+                )
+            retry = await self._async_recheck_claim_time_locked(
+                record, due, claimed=True
+            )
+            if retry is not None:
+                return False, retry
             return True, False
+
+    async def _async_recheck_claim_time_locked(
+        self, record: DelayedToolCall, due: datetime, *, claimed: bool = False
+    ) -> bool | None:
+        """Return whether untimely work should retry, or None while it is due."""
+        now = dt_util.utcnow()
+        if due > now:
+            if claimed:
+                # This waiter holds the claim lock and has yet to dispatch.
+                # A backward clock correction can safely restore pending work.
+                await self._async_save_records_transactionally(
+                    {**self._records, record.call_id: record}
+                )
+            return True
+        if self._execution_grace_expired(record, now):
+            updated = dict(self._records)
+            updated.pop(record.call_id)
+            await self._async_save_records_transactionally(updated)
+            self._log_abandoned(record, "execution grace period expired")
+            return False
+        return None
 
     async def _async_retry_agent(self, record: DelayedToolCall) -> bool:
         """Retry a transient agent reload without losing the persisted call."""
@@ -975,7 +1421,7 @@ class DelayedToolManager:
                 agent = conversation.async_get_agent(
                     self.hass, registry_entry.entity_id
                 )
-                if agent is not None:
+                if getattr(agent, "ready_for_scheduled_actions", False):
                     return agent
         return None
 
@@ -995,6 +1441,10 @@ class DelayedToolManager:
             return True
         try:
             async with self._lock:
+                current = self._records.get(call_id)
+                if current is None or current.status != _PENDING:
+                    return True
+                record = current
                 updated = dict(self._records)
                 updated.pop(call_id, None)
                 await self._async_save_records_transactionally(updated)
@@ -1004,10 +1454,23 @@ class DelayedToolManager:
                 record.tool_name,
             )
             return self._setup_complete and call_id not in self._records
-        _LOGGER.info(
-            "Cancelled delayed Function Tool `%s`: %s", record.tool_name, reason
-        )
+        self._log_abandoned(record, reason)
         return True
+
+    @staticmethod
+    def _log_abandoned(record: DelayedToolCall, reason: str) -> None:
+        due = _parse_scheduled_utc(record.due_at)
+        _LOGGER.warning(
+            "Scheduled Action %s did not execute; entry=%s assistant=%s tool=%s scheduled_utc=%s reason=%s",
+            hashlib.sha256(record.call_id.encode(errors="surrogatepass")).hexdigest()[
+                :12
+            ],
+            record.entry_id,
+            record.subentry_id,
+            record.tool_name,
+            due.isoformat() if due is not None else "unavailable",
+            reason,
+        )
 
     async def _async_finalize(self, call_id: str) -> None:
         """Remove an executed call without ever making it eligible for replay again."""

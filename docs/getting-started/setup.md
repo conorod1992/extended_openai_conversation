@@ -29,7 +29,7 @@ Home Assistant controls which entities are available to conversation agents thro
 Examples might include lights, switches, climate entities, media players, covers, or sensors whose state is useful in conversation.
 
 !!! important
-    Expose only entities you actually want conversation agents to access. Exposure is what gives the model Home Assistant entity context; it is not necessary to create a custom function just to control an ordinary exposed entity.
+    Expose only the entities you want conversation agents to access. Assist exposure makes an entity eligible for access, subject to the caller's permissions. In **Extended OpenAI → Assistant → Prompt & context**, **Include exposed devices** controls whether exposed names and current states are automatically added to model requests. It starts on for new assistants and may be off on an upgraded assistant. Ordinary control of an exposed entity can use Home Assistant's built-in tools.
 
 ## Test a simple request
 
@@ -41,7 +41,7 @@ Then try a request that requires several entities:
 
 > Turn off all the lights downstairs except the hallway light.
 
-If the assistant cannot see an entity, first confirm that the entity is exposed to the assistant.
+If the assistant cannot see an entity, first confirm that the entity is exposed to Assist. Home Assistant can handle simple device commands itself when **Prefer handling commands locally** is on. To verify the EOAI provider connection, use [Run diagnostics](#use-test-agent-when-something-looks-wrong).
 
 ## Choose a model and API mode
 
@@ -70,7 +70,7 @@ See [Web Search](../features/web-search.md) for limitations and cost considerati
 
 ## Optional: enable persistent memory
 
-Under **Data & Memory → Memory settings**, set **Long-term memory** to **Manual** for an introduction to persistent memory. Save, then say:
+Under **Data & Memory → Memory settings**, set **Long-term memory** to **Manual** for an introduction to persistent memory. Test as an authenticated Home Assistant user, or deliberately configure the satellite's retained-data scope under **Assistant → Voice & identity**. Unidentified voice requests are unretained by default and cannot save or retrieve persistent memories. For household scope, enable Shared Memory and choose an appropriate shared-memory mode. See [Voice Identity](../features/voice-identity.md). Save, then say:
 
 > Remember that I prefer temperatures in Celsius.
 
@@ -92,7 +92,7 @@ See [Voice follow-ups](../features/voice-followups.md).
 
 ## Use Test agent when something looks wrong
 
-Open **Extended OpenAI → Usage & Maintenance → Diagnostics** for the selected agent. The integration's **Configure > Test agent** flow under **Settings > Devices & services** also remains available.
+Open **Extended OpenAI → Usage & Maintenance → Diagnostics** for the selected agent. In **Test assistant**, choose **Run diagnostics**. The integration's **Configure > Test agent** flow under **Settings > Devices & services** also remains available.
 
 The test checks the agent configuration and performs at most one minimal model request. It does not execute Home Assistant device or service actions.
 

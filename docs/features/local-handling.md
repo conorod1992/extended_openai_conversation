@@ -6,9 +6,9 @@ When enabled, a matching built-in command is handled locally. Requests that do n
 
 EOAI always excludes `HassBroadcast` from generic delegation. The simple `Broadcast {message}` command has its own global Overview switch. A saved legacy `HassBroadcast` exclusion also suppresses that shortcut for its agent; it is retained as an unavailable choice until explicitly removed. Turning general local handling off does not turn the independent Broadcast shortcut off.
 
-## Delayed device commands
+## Use EOAI for delayed actions
 
-You can route delayed device commands such as “turn off the lights in 20 minutes” to AI/Function Tools while leaving ordinary timers such as “set a 20 minute timer” on Home Assistant's local path. See [Delayed Function Tools](delayed-function-tools.md).
+Enable **Use EOAI for delayed actions** to route commands such as “turn off the lights in 20 minutes” to a delay-capable Function Tool. This preference also applies to the native HA timer tool exposed to the model while EOAI local handling is off. Ordinary timers such as “set a 20-minute timer” continue to work through Home Assistant. To review or cancel EOAI jobs, open **Capabilities → Scheduled Actions**. See [Delayed Function Tools](delayed-function-tools.md).
 
 ## Home Assistant pipeline setting
 

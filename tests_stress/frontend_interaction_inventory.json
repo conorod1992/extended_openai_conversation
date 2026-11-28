@@ -78,6 +78,12 @@
         {"id":"mutation_queue_concurrency","kind":"concurrency","risk":"high","backend_actions":["tools/save","tools/delete","tools/set_enabled","tools/save_group","tools/delete_group"],"source_markers":["_eocFunctionMutationTail"],"coverage":{"unit":{"status":"covered","evidence":["tests/test_roadmap_pr2_function_tool_concurrency.py"]},"browser":{"status":"covered","evidence":["tests_browser/function-delete-lifecycle.spec.mjs"]},"nightly":{"status":"covered","evidence":["tests_browser/function-mutation-concurrency.stress.mjs"]}}}
       ]
     },
+    "capabilities/scheduled-actions": {
+      "interactions": [
+        {"id":"list_refresh","kind":"collection","risk":"medium","backend_actions":["scheduled_actions/list"],"source_markers":["refresh-scheduled-actions"],"coverage":{"unit":{"status":"covered","evidence":["tests/test_scheduled_actions.py"]},"browser":{"status":"covered","evidence":["tests_browser/scheduled-actions.spec.mjs"]},"nightly":{"status":"covered","evidence":["tests_browser/route-inventory.stress.mjs","tests_browser/real-ha-backend.spec.mjs"]}}},
+        {"id":"cancel_pending_action","kind":"destructive_action","risk":"high","backend_actions":["scheduled_actions/cancel"],"source_markers":["data-cancel-action"],"coverage":{"unit":{"status":"covered","evidence":["tests/test_scheduled_actions.py"]},"browser":{"status":"covered","evidence":["tests_browser/scheduled-actions.spec.mjs"]},"nightly":{"status":"covered","evidence":["tests_browser/real-ha-backend.spec.mjs"]}}}
+      ]
+    },
     "capabilities/quiet-hours": {
       "interactions": [
         {"id":"schedule_controls","kind":"form","risk":"high","backend_actions":["quiet_hours/update"],"source_markers":["qh-enabled","qh-start","qh-end","qh-volume","qh-wake"],"coverage":{"unit":{"status":"covered","evidence":["tests/quiet-hours.test.mjs"]},"browser":{"status":"covered","evidence":["tests_browser/frontend-decluttering.spec.mjs"]},"nightly":{"status":"covered","evidence":["tests_browser/quiet-hours-lifecycle.stress.mjs"]}}},

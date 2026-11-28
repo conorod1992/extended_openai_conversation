@@ -176,3 +176,52 @@ async def test_unrelated_save_preserves_effective_provider_sampling_contract(
     after = effective(subentry.data)
     assert after == before, (sampling, before, after)
     assert subentry.data["max_tokens"] == 777
+
+
+@pytest.mark.parametrize("key,old,new", [("temperature", True, 1), ("top_p", False, 0)])
+async def test_equal_valued_sampling_repair_reaches_core_persistence(
+    monkeypatch, key, old, new
+):
+    from types import MappingProxyType
+
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_request_rules",
+        AsyncMock(
+            return_value=SimpleNamespace(snapshot=lambda: {"rules": []}),
+        ),
+    )
+    hass, entry, subentry = _hass_with_agent()
+    subentry.data = MappingProxyType(
+        {
+            **subentry.data,
+            "chat_model": "gpt-4.1",
+            "api_mode": "chat_completions",
+            key: old,
+        }
+    )
+
+    def core_update(_entry, current, *, data, **_changes):
+        if data == current.data:
+            return
+        current.data = MappingProxyType(dict(data))
+
+    monkeypatch.setattr(hass.config_entries, "async_update_subentry", core_update)
+    request = management_ui._ManagementRequest(
+        hass,
+        "admin",
+        True,
+        {
+            "action": "save",
+            "config": {key: new},
+            "revision": management_ui.persisted_config_projection(subentry).revision,
+        },
+        entry.entry_id,
+        subentry.subentry_id,
+        entry,
+        subentry,
+    )
+    saved = await management_ui.async_configuration_command(request)
+    assert saved["valid"]
+    assert type(subentry.data[key]) is int
+    assert subentry.data[key] == new

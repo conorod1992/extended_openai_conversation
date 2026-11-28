@@ -12,6 +12,7 @@ import time
 from typing import Any
 from urllib import parse
 
+import orjson
 from sqlalchemy.dialects.sqlite import dialect as sqlite_dialect
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -22,6 +23,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm, recorder
 from homeassistant.helpers.template import Template
 
+from ..exceptions import SQLiteDeadlineExceeded, SQLiteResultLimitExceeded
 from ..execution_outcomes import owns_read_only_execution_receipts
 from .base import Function
 from .exact_text import ExactTextTemplate, render_exact_text
@@ -169,16 +171,16 @@ def _unique_column_names(names: list[str]) -> list[str]:
     return result
 
 
-def _estimated_row_bytes(row: dict[str, Any]) -> int:
-    """Return a conservative encoded-size estimate for one SQLite result row."""
-    return len(repr(row).encode("utf-8", errors="replace"))
-
-
 def _json_safe_sqlite_value(value: Any) -> Any:
     """Represent SQLite BLOBs as explicitly tagged Base64 JSON values."""
     if isinstance(value, bytes):
         return {"type": "base64", "data": base64.b64encode(value).decode("ascii")}
     return value
+
+
+def _serialized_row_bytes(row: dict[str, Any]) -> int:
+    """Measure a row with the compact UTF-8 encoder used for tool results."""
+    return len(orjson.dumps(row))
 
 
 def _set_sqlite_result_limit(conn: sqlite3.Connection, max_result_bytes: int) -> None:
@@ -201,7 +203,7 @@ def _execute_sqlite_query(
 
     def check_deadline() -> None:
         if time.monotonic() >= deadline:
-            raise HomeAssistantError(
+            raise SQLiteDeadlineExceeded(
                 "SQLite query exceeded the configured execution deadline of "
                 f"{timeout_seconds:g} seconds"
             )
@@ -252,9 +254,9 @@ def _execute_sqlite_query(
                     name: _json_safe_sqlite_value(val)
                     for name, val in zip(names, row, strict=False)
                 }
-                result_bytes = _estimated_row_bytes(result)
+                result_bytes = _serialized_row_bytes(result)
                 if result_bytes > max_result_bytes:
-                    raise HomeAssistantError(
+                    raise SQLiteResultLimitExceeded(
                         "SQLite query result exceeded the configured result-size "
                         f"limit of {max_result_bytes} bytes"
                     )
@@ -262,11 +264,11 @@ def _execute_sqlite_query(
                 return result
 
             results: list[dict[str, Any]] = []
-            result_bytes = 2
+            result_bytes = 2  # Opening and closing brackets.
             for row_number, row in enumerate(cursor, start=1):
                 check_deadline()
                 if row_number > max_rows:
-                    raise HomeAssistantError(
+                    raise SQLiteResultLimitExceeded(
                         f"SQLite query returned more than {max_rows} rows; "
                         "add a LIMIT clause or increase max_rows"
                     )
@@ -274,9 +276,9 @@ def _execute_sqlite_query(
                     name: _json_safe_sqlite_value(val)
                     for name, val in zip(names, row, strict=False)
                 }
-                result_bytes += _estimated_row_bytes(item) + 1
+                result_bytes += _serialized_row_bytes(item) + (1 if results else 0)
                 if result_bytes > max_result_bytes:
-                    raise HomeAssistantError(
+                    raise SQLiteResultLimitExceeded(
                         "SQLite query result exceeded the configured result-size "
                         f"limit of {max_result_bytes} bytes"
                     )
@@ -285,14 +287,14 @@ def _execute_sqlite_query(
             return results
         except sqlite3.DataError as err:
             if "too big" in str(err).lower():
-                raise HomeAssistantError(
+                raise SQLiteResultLimitExceeded(
                     "SQLite query result exceeded the configured result-size "
                     f"limit of {max_result_bytes} bytes"
                 ) from err
             raise
         except sqlite3.OperationalError as err:
             if timed_out or time.monotonic() >= deadline:
-                raise HomeAssistantError(
+                raise SQLiteDeadlineExceeded(
                     "SQLite query exceeded the configured execution deadline of "
                     f"{timeout_seconds:g} seconds"
                 ) from err

@@ -79,21 +79,23 @@ test("inactive Local Handling summarizes saved exclusions and restores the edita
   });
 
   const choices=panel.locator(".local-handling-dependent");
-  await expect(choices.locator(".local-handling-saved-summary")).toContainText("3 command types are set to continue to AI");
+  await expect(choices.locator(".local-handling-saved-summary")).toContainText("2 command types are set to continue to AI");
   await expect(choices.locator(".local-handling-review")).not.toHaveAttribute("open", "");
   await expect(choices.locator("[data-local-intent-choice]:visible")).toHaveCount(0);
   await expect(choices.locator('[data-local-intent-exclusion][value="HassTurnOn"]')).toBeChecked();
   await expect(choices.locator('[data-local-intent-exclusion][value="HassSetTimer"]')).toBeChecked();
-  await expect(choices.locator('[data-config="local_intent_delayed_commands_to_ai"]')).toBeChecked();
+  const delayPreference = panel.getByRole("switch", {name:"Use EOAI for delayed actions"});
+  await expect(delayPreference).toBeChecked();
+  await expect(delayPreference).toBeEnabled();
   await expect.poll(()=>panel.evaluate(host=>host._draft.local_intent_exclusions)).toEqual(["HassTurnOn","HassSetTimer"]);
 
   await choices.locator(".local-handling-review>summary").click();
-  await expect(choices.locator("[data-local-intent-choice]:visible")).toHaveCount(4);
+  await expect(choices.locator("[data-local-intent-choice]:visible")).toHaveCount(3);
   await expect(choices.locator('[data-local-intent-exclusion][value="HassTurnOn"]')).toBeDisabled();
   await choices.locator(".local-handling-review>summary").click();
   await panel.locator('[data-config="local_intents_enabled"]').check();
   await expect(choices.locator(".local-handling-saved-summary")).toBeHidden();
-  await expect(choices.locator("[data-local-intent-choice]:visible")).toHaveCount(4);
+  await expect(choices.locator("[data-local-intent-choice]:visible")).toHaveCount(3);
   await expect(choices.locator('[data-local-intent-exclusion][value="HassTurnOn"]')).toBeEnabled();
   await expect(choices.locator('[data-local-intent-exclusion][value="HassTurnOn"]')).toBeChecked();
   await expect.poll(()=>panel.evaluate(host=>host._draft.local_intent_exclusions)).toEqual(["HassTurnOn","HassSetTimer"]);
@@ -138,7 +140,8 @@ test("disabled Model and Speech explanations remain readable while their control
   expect(temperatureState.disabled).toBe(true);
   expect(temperatureState.controlOpacity).toBe("0.55");
   expect(temperatureState.fieldOpacity).toBe("1");
-  expect(temperatureState.help).toContain("Higher values make responses more varied");
+  expect(temperatureState.help).toContain("Higher values increase variety");
+  expect(temperatureState.help).toContain("Leave blank to use the provider default.");
   expect(temperatureState.helpOpacity).toBe("1");
   expect(temperatureState.helpColor).toBe("rgb(196, 196, 196)");
 

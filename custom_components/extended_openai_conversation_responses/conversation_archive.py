@@ -42,13 +42,14 @@ from .retrieval_text import (
     word_tokens,
 )
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
-from .scope import ResolvedDataScope
+from .scope import UNRETAINED_SCOPE_ID, ResolvedDataScope
 from .storage_namespaces import ARCHIVE_PREFIX as STORAGE_KEY_PREFIX
-from .strict_store import PropagatingWriteStore
+from .strict_store import STORE_ENVELOPE_ERRORS, PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 2
 _PARTITION_STORAGE_VERSION = 1
+_SEQUENCE_LIMIT = 2**64
 
 MAX_SEARCH_LIMIT = 50
 MAX_SEARCH_OFFSET = 10_000
@@ -232,56 +233,80 @@ def async_start_archive_retention(hass: HomeAssistant) -> None:
         return
     token = object()
 
-    async def _async_prune_archive_retention(
-        _now: datetime, *, startup: bool = False
-    ) -> None:
+    pending: dict[tuple[str, str], asyncio.Task[Any]] = {}
+
+    async def prune_agent(entry_id: str, subentry_id: str, *, startup: bool) -> None:
         from .agent_config import normalized_agent_integer
         from .temporary_memory import async_expire_existing_temporary_memory
 
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            for subentry in tuple(entry.subentries.values()):
+        try:
+            gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
+            async with gate.shared(maintenance=True):
                 owner = hass.data.get(_ARCHIVE_RETENTION)
                 if owner is None or owner[0] is not token:
                     return
+                entry = hass.config_entries.async_get_entry(entry_id)
+                agent = entry.subentries.get(subentry_id) if entry else None
+                if agent is None or agent.subentry_type != "conversation":
+                    return
+                if startup:
+                    try:
+                        await async_expire_existing_temporary_memory(
+                            hass, entry_id, subentry_id
+                        )
+                    except Exception:
+                        _LOGGER.exception(
+                            "Startup Temporary Memory expiry failed for %s/%s",
+                            entry_id,
+                            subentry_id,
+                        )
+                archive = await async_get_archive(hass, entry_id, subentry_id)
+                await archive.async_prune(
+                    normalized_agent_integer(
+                        agent.data,
+                        CONF_ARCHIVE_RETENTION_DAYS,
+                        DEFAULT_ARCHIVE_RETENTION_DAYS,
+                    )
+                )
+        except Exception:
+            _LOGGER.exception(
+                "Background conversation archive retention failed for %s/%s",
+                entry_id,
+                subentry_id,
+            )
+
+    async def _async_prune_archive_retention(
+        _now: datetime, *, startup: bool = False
+    ) -> None:
+        owner = hass.data.get(_ARCHIVE_RETENTION)
+        if owner is None or owner[0] is not token:
+            return
+        new_tasks = []
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            for subentry in tuple(entry.subentries.values()):
                 if subentry.subentry_type != "conversation":
                     continue
-                entry_id, subentry_id = entry.entry_id, subentry.subentry_id
-                try:
-                    gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
-                    async with gate.shared(maintenance=True):
-                        owner = hass.data.get(_ARCHIVE_RETENTION)
-                        if owner is None or owner[0] is not token:
-                            return
-                        current = hass.config_entries.async_get_entry(entry_id)
-                        agent = current.subentries.get(subentry_id) if current else None
-                        if agent is None or agent.subentry_type != "conversation":
-                            continue
-                        if startup:
-                            # Expiry applies to all configured assistants.
-                            try:
-                                await async_expire_existing_temporary_memory(
-                                    hass, entry_id, subentry_id
-                                )
-                            except Exception:
-                                _LOGGER.exception(
-                                    "Startup Temporary Memory expiry failed for %s/%s",
-                                    entry_id,
-                                    subentry_id,
-                                )
-                        archive = await async_get_archive(hass, entry_id, subentry_id)
-                        await archive.async_prune(
-                            normalized_agent_integer(
-                                agent.data,
-                                CONF_ARCHIVE_RETENTION_DAYS,
-                                DEFAULT_ARCHIVE_RETENTION_DAYS,
-                            )
-                        )
-                except Exception:
-                    _LOGGER.exception(
-                        "Background conversation archive retention failed for %s/%s",
-                        entry_id,
-                        subentry_id,
-                    )
+                key = (entry.entry_id, subentry.subentry_id)
+                if key in pending:
+                    continue
+                task = hass.async_create_background_task(
+                    prune_agent(*key, startup=startup),
+                    "EOAI assistant archive retention",
+                    eager_start=False,
+                )
+                pending[key] = task
+
+                def forget(
+                    _task: asyncio.Task[Any], key: tuple[str, str] = key
+                ) -> None:
+                    pending.pop(key, None)
+
+                task.add_done_callback(forget)
+                new_tasks.append(task)
+        if new_tasks:
+            await asyncio.wait(new_tasks)
+            if any(task.cancelled() for task in new_tasks):
+                raise asyncio.CancelledError
 
     cancel = async_track_time_interval(
         hass, _async_prune_archive_retention, timedelta(days=1)
@@ -300,6 +325,8 @@ def async_start_archive_retention(hass: HomeAssistant) -> None:
             cancel()
             if not startup.done():
                 startup.cancel()
+            for task in pending.values():
+                task.cancel()
 
     remove_stop = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
     hass.data[_ARCHIVE_RETENTION] = (token, stop, remove_stop)
@@ -331,7 +358,11 @@ def _stored_archive_partitions(
     """Inventory exact owned monthly files when damaged metadata lost its index."""
     stem = prefix + ".turns."
     result: set[str] = set()
-    for path in Path(metadata_path).parent.iterdir():
+    try:
+        paths = list(Path(metadata_path).parent.iterdir())
+    except FileNotFoundError:
+        return result
+    for path in paths:
         if not path.name.startswith(stem):
             continue
         month = path.name[len(stem) :]
@@ -342,6 +373,36 @@ def _stored_archive_partitions(
         ):
             result.add(month)
     return result
+
+
+def _has_unindexed_partition_data(
+    metadata_path: str, prefix: str, indexed: set[str]
+) -> bool:
+    """Accept only recognizable empty Store files as obsolete housekeeping."""
+    directory = Path(metadata_path).parent
+    for month in _stored_archive_partitions(metadata_path, prefix) - indexed:
+        key = f"{prefix}.turns.{month}"
+        try:
+            # An empty native envelope is small. Keep the read bounded and avoid
+            # the Store loader, whose corruption and migration paths can write.
+            with (directory / key).open("rb") as file:
+                raw = file.read(4097)
+            if len(raw) > 4096:
+                return True
+            envelope = json.loads(raw)
+        except FileNotFoundError:
+            continue
+        except OSError, ValueError, RecursionError:
+            return True
+        if (
+            not isinstance(envelope, dict)
+            or type(envelope.get("version")) is not int
+            or envelope["version"] != _PARTITION_STORAGE_VERSION
+            or envelope.get("key") != key
+            or envelope.get("data") != {"turns": []}
+        ):
+            return True
+    return False
 
 
 class _ArchiveMetadataStore(PropagatingWriteStore):
@@ -435,6 +496,20 @@ class HomeAssistantArchiveStorage:
     async def async_load_partition(self, partition: str) -> dict[str, Any] | None:
         return await self._partition_store(partition).async_load()
 
+    async def async_stored_partitions(self) -> set[str]:
+        if self._metadata._load_empty:
+            return set()
+        return await asyncio.to_thread(
+            _stored_archive_partitions, self._metadata.path, self._prefix
+        )
+
+    async def async_has_unindexed_partition_data(self, indexed: set[str]) -> bool:
+        if self._metadata._load_empty:
+            return False
+        return await asyncio.to_thread(
+            _has_unindexed_partition_data, self._metadata.path, self._prefix, indexed
+        )
+
     async def async_save_partition(self, partition: str, data: dict[str, Any]) -> None:
         self._metadata.require_migrated()
         await self._partition_store(partition).async_save(data)
@@ -455,7 +530,7 @@ class HomeAssistantArchiveStorage:
             result: dict[str, list[ArchiveTurn]] = defaultdict(list)
             for session_turns in turns.values():
                 for turn in session_turns:
-                    if turn.sequence is not None and turn.sequence >= 2**64:
+                    if turn.sequence is not None and turn.sequence >= _SEQUENCE_LIMIT:
                         # HA's native JSON reader would turn this integer into a float.
                         raise ValueError(
                             "Archive turn sequence exceeds the storage limit"
@@ -524,7 +599,6 @@ class HomeAssistantArchiveStorage:
 
         session_map, turn_map, bindings = await asyncio.to_thread(prepare)
         writer = self
-        discovered: set[str] = set()
         try:
             old = await self.async_load_metadata()
         except StorageRepairRequired:
@@ -532,10 +606,8 @@ class HomeAssistantArchiveStorage:
             # corruption evidence and its ordinary write barrier intact; only
             # this correctly bound fresh writer may stage the recovery intent.
             old = None
-            discovered = await asyncio.to_thread(
-                _stored_archive_partitions, self._metadata.path, self._prefix
-            )
             writer = HomeAssistantArchiveStorage(self._hass, *self._agent_identity)
+        discovered = await self.async_stored_partitions()
         old_names: list[Any] = []
         if isinstance(old, dict):
             if isinstance(old.get("partitions"), list):
@@ -737,13 +809,25 @@ class ConversationArchive:
                 if isinstance(value, str)
                 and re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", value)
             }
-            repair_required |= "partitions" in data and (
+            repair_required |= loaded is not None and (
                 not isinstance(partitions, list)
                 or len(staged_partitions) != len(partitions)
             )
+            inspect_unindexed = getattr(
+                self._storage, "async_has_unindexed_partition_data", None
+            )
+            if callable(inspect_unindexed):
+                repair_required |= await inspect_unindexed(staged_partitions)
             raw_payloads: dict[str, Any] = {}
             for partition in sorted(staged_partitions):
-                payload = await self._storage.async_load_partition(partition)
+                try:
+                    payload = await self._storage.async_load_partition(partition)
+                except (*STORE_ENVELOPE_ERRORS, OSError, ValueError):
+                    repair_required = True
+                    _LOGGER.warning(
+                        "Conversation Archive partition %s could not be read", partition
+                    )
+                    continue
                 raw_payloads[partition] = payload
                 turns = payload.get("turns") if isinstance(payload, dict) else None
                 repair_required |= not isinstance(turns, list)
@@ -790,6 +874,10 @@ class ConversationArchive:
             # Persist legacy private-title cleanup before publishing normalized state.
             self._repair_required = repair_required
             if repair_required:
+                _LOGGER.warning(
+                    "Conversation Archive needs repair; %d validated sessions remain readable. Writes and backup export are blocked pending repair",
+                    len(staged_sessions),
+                )
                 # Privacy purges are independent of repair: remove only content
                 # bound to validated private sessions, retaining all other raw data.
                 private_ids = {
@@ -938,7 +1026,7 @@ class ConversationArchive:
         load successfully. Unchanged partitions must still validate because the
         journal does not contain replacement evidence for them.
         """
-        names = data.get("partitions", [])
+        names = data.get("partitions")
         if (
             not isinstance(names, list)
             or any(
@@ -1115,6 +1203,8 @@ class ConversationArchive:
                 )
                 + 1
             )
+            if next_sequence >= _SEQUENCE_LIMIT:
+                raise ValueError("archive turn sequence exceeds storage capacity")
             turn = ArchiveTurn(
                 turn_id=uuid4().hex,
                 session_id=session_id,
@@ -1257,6 +1347,8 @@ class ConversationArchive:
                 for key, session in self._sessions.items()
                 if session.scope_id == scope_id
                 and session.retention_state == "retained"
+                and scope_id != UNRETAINED_SCOPE_ID
+                and session.scope_type != "unretained"
                 and not self._retention_hidden(session, cutoff)
             }
             if include_turns:
@@ -1909,11 +2001,17 @@ class ConversationArchive:
                 )
                 return
             new_partitions = {turn.timestamp[:7] for turn in turns}
+            previous_partitions = set(self._partitions)
+            if self._repair_required and isinstance(
+                self._storage, HomeAssistantArchiveStorage
+            ):
+                # A validated complete replacement owns all destination months.
+                previous_partitions |= await self._storage.async_stored_partitions()
             await self._async_commit_state_locked(
                 sessions=session_map,
                 turns=dict(turn_map),
                 active=bindings,
-                changed_partitions=set(self._partitions) | new_partitions,
+                changed_partitions=previous_partitions | new_partitions,
                 replacing=True,
             )
 
@@ -1979,7 +2077,12 @@ class ConversationArchive:
 
     def _require_owned_session(self, scope_id: str, session_id: str) -> ArchiveSession:
         session = self._require_session(session_id)
-        if session.scope_id != scope_id or session.retention_state != "retained":
+        if (
+            session.scope_id != scope_id
+            or session.retention_state != "retained"
+            or scope_id == UNRETAINED_SCOPE_ID
+            or session.scope_type == "unretained"
+        ):
             raise ValueError("conversation session not found")
         return session
 
@@ -2507,7 +2610,7 @@ def _describe_date_range_deletion(
 ) -> dict[str, Any]:
     targets = sorted(
         sessions,
-        key=lambda session: (session.last_message_at, session.session_id),
+        key=lambda session: (_parse_time(session.last_message_at), session.session_id),
         reverse=True,
     )
     earlier_turns = later_turns = 0
@@ -2705,6 +2808,13 @@ def _validated_session(raw: Any, *, allow_unretained: bool = False) -> ArchiveSe
             if allow_unretained
             else {"retained", "private"}
         )
+        or (
+            session.retention_state == "retained"
+            and (
+                session.scope_id == UNRETAINED_SCOPE_ID
+                or session.scope_type == "unretained"
+            )
+        )
         or not isinstance(session.turn_count, int)
         or isinstance(session.turn_count, bool)
         or session.turn_count < 0
@@ -2756,7 +2866,7 @@ def _validated_turn(raw: Any) -> ArchiveTurn:
             and (
                 not isinstance(turn.sequence, int)
                 or isinstance(turn.sequence, bool)
-                or turn.sequence < 0
+                or not 0 <= turn.sequence < _SEQUENCE_LIMIT
             )
         )
         or not turn.turn_id

@@ -18,6 +18,7 @@ from .const import (
 )
 from .context import HistoryEstimator
 from .context_summary import ContextSummaryResult, DeferredContextSummaryManager
+from .debug import detached_debug_trace
 
 if TYPE_CHECKING:
     from openai import AsyncClient
@@ -69,7 +70,10 @@ async def _summarize_detached(
             kwargs["request_options"] = request_options
         if provider_binding is not None:
             kwargs["provider_binding"] = provider_binding
-        result = await entity._async_summarize_history(older, model, api_mode, **kwargs)
+        with detached_debug_trace():
+            result = await entity._async_summarize_history(
+                older, model, api_mode, **kwargs
+            )
         return cast(str | None, result)
     finally:
         if run_context is not None and token is not None:

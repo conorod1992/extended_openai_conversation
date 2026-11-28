@@ -11,6 +11,8 @@ from typing import Any, cast
 
 from packaging.version import InvalidVersion, Version
 
+from .backup_input import check_decoded_structure
+
 EOAI_VERSION = Version(
     json.loads((Path(__file__).parent / "manifest.json").read_text("utf-8"))["version"]
 )
@@ -226,6 +228,12 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
                 and value["tools"][name][api]["support"] != "never"
             ):
                 raise ValueError("Tool support requires an available API")
+            if (
+                name == "web_search"
+                and api == "chat_completions"
+                and value["tools"][name][api]["support"] != "never"
+            ):
+                raise ValueError("Hosted web search requires the Responses API")
     for api in _APIS:
         support = functions[api]
         if type(support) is bool:
@@ -338,6 +346,7 @@ def _merge_snapshot(parent: dict[str, Any], snapshot: dict[str, Any]) -> dict[st
 
 def validate_catalog(value: Any) -> _PreparedCatalog:
     """Validate raw catalogue data and prepare exact snapshot capabilities."""
+    check_decoded_structure(value)
     if not isinstance(value, dict):
         raise ValueError("Invalid model catalogue envelope")
     schema = value.get("schema_version")
@@ -524,6 +533,8 @@ def migrate_catalog_v3(value: Any) -> dict[str, Any]:
     migrated["defaults"]["structured_outputs"] = False
     migrated["defaults"]["responses_web_search"] = False
     for model in migrated["models"]:
+        if not isinstance(model, dict):
+            raise ValueError("Invalid v3 catalogue model")
         model.setdefault("structured_outputs", True)
         model.setdefault("responses_web_search", bool(model["api"]["responses"]))
     return migrate_catalog_v4(migrated)
@@ -571,6 +582,8 @@ def _legacy_tool_rule(value: Any) -> dict[str, Any]:
 
 
 def validate_or_migrate_catalog(value: Any) -> tuple[dict[str, Any], bool]:
+    if isinstance(value, dict) and value.get("schema_version") in (1, 2, 3, 4):
+        check_decoded_structure(value)
     if isinstance(value, dict) and value.get("schema_version") == 1:
         return migrate_catalog_v1(value), True
     if isinstance(value, dict) and value.get("schema_version") == 2:

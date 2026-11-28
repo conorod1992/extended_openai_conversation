@@ -1,11 +1,11 @@
 import {same, clone, saveBarMarkup} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
-import {requireMutationAcknowledgement, captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft, recoverCommittedRetention, USAGE_RETENTION_FIELDS} from "./configuration-acknowledgement.js";
+import {requireMutationAcknowledgement, captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft, recoverCommittedRetention, USAGE_RETENTION_FIELDS, markConfigurationSaveRecovery, uncertainConfigurationSave} from "./configuration-acknowledgement.js";
 import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
 import {SETTING_LOOKUP} from "./management-setting-lookup.js";
 import {focusManagementSetting} from "./frontend-navigation.js";
-import {voiceMappingDraftError} from "./voice-mapping-draft.js";
-import {configKeyForControl, isTimeoutKey, validTimeout} from "./configuration-controls.js";
+import {voiceMappingDraftDirty, voiceMappingDraftError} from "./voice-mapping-draft.js";
+import {configKeyForControl, isOptionalSamplingKey, isTimeoutKey, validTimeout} from "./configuration-controls.js";
 import {pendingRetentionFields} from "./management-state-safety.js";
 import {resumeSecondaryReads} from "./management-secondary-reads.js";
 import {updateAgentPicker} from "./management-renderer.js";
@@ -143,7 +143,8 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
   try {
     return await panel._call("configuration", "save", payload);
   } catch (error) {
-    if (!configurationSubmissionIsCurrent(panel, owner) || !String(error?.message || error).includes("Configuration changed in another tab") ||
+    if (["uncertain", "committed"].includes(error?.mutationOutcome)
+        || !configurationSubmissionIsCurrent(panel, owner) || !String(error?.message || error).includes("Configuration changed in another tab") ||
         !baseline?.server_epoch || panel._configData !== baseline) throw error;
     const latest = await panel._call("configuration", "get");
     if (latest?.server_epoch === baseline.server_epoch || !latest?.server_epoch ||
@@ -158,6 +159,19 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
+  if (uncertainConfigurationSave(panel)) {
+    const owner = captureConfigurationOwner(panel);
+    try {
+      await panel._loadConfigDraft({preserveResult:true, full:true});
+      if (configurationSubmissionIsCurrent(panel, owner) && !uncertainConfigurationSave(panel)) {
+        panel._render();
+        panel._toast("Configuration refreshed. Review your changes before saving.");
+      }
+    } catch (error) {
+      if (configurationSubmissionIsCurrent(panel, owner)) panel._toast(`Refresh configuration before saving again: ${error.message || String(error)}`, true);
+    }
+    return;
+  }
   const shared = Boolean(button?.closest?.("#eoc-shared-configuration-bar"));
   for (const control of panel.shadowRoot?.querySelectorAll?.('input[data-type=number]') || []) {
     if (control.disabled) continue;
@@ -169,14 +183,15 @@ async function saveConfiguration(panel, button) {
     }
     if (timeout
       ? (value || panel._draft[key] != null) && !validTimeout(Number(value))
-      : !value && panel._eocDirtyConfigKeys?.has(key)) {
+      : !value && !isOptionalSamplingKey(key) && panel._eocDirtyConfigKeys?.has(key)) {
       showErrors(panel, {[key]: value ? "Use 1 to 1440 minutes." : "Enter a number."});
       focusManagementSetting(control);
       return;
     }
   }
   const mappingError = voiceMappingDraftError(panel);
-  if (mappingError && panel._draft.voice_scope_policy === "device_mapping") {
+  if (mappingError && panel._draft.voice_scope_policy === "device_mapping"
+      && (voiceMappingDraftDirty(panel) || panel._eocDirtyConfigKeys?.has("voice_scope_policy"))) {
     showErrors(panel, {voice_device_mappings:mappingError});
     panel._toast?.(mappingError, true);
     return;
@@ -260,7 +275,8 @@ async function saveConfiguration(panel, button) {
       return;
     }
 
-    requireMutationAcknowledgement(result?.valid === true && result?.config && typeof result.config === "object", "saving configuration");
+    requireMutationAcknowledgement(result?.valid === true && result?.config && typeof result.config === "object"
+      && !Array.isArray(result.config) && typeof result.revision === "string" && result.revision, "saving configuration");
     panel._eocPendingRetention = null;
     await completeConfigurationAcknowledgement(panel, result, submission, {
       message:mappingError ? "Changes saved. The unfinished Voice assignment remains a draft." : "Changes saved",
@@ -285,6 +301,7 @@ async function saveConfiguration(panel, button) {
   } catch (err) {
     const retention = submission.fields.filter(key => USAGE_RETENTION_FIELDS.includes(key));
     const committed = err.mutationOutcome === "committed" || err.code === "eoai_mutation_committed";
+    if (committed || err.mutationOutcome === "uncertain") markConfigurationSaveRecovery(panel, submission, committed);
     if (configurationSubmissionIsCurrent(panel, submission) && retention.length && committed) {
       await recoverCommittedRetention(panel, submission, retention);
     }

@@ -123,11 +123,13 @@ async def _schedule_delayed_call(
         [],
     )
 
-    assert tool_result_data(result) == {"result": "Scheduled"}
     created = set(manager._records) - before
     assert len(created) == 1
     delayed_call_id = created.pop()
     record = manager._records[delayed_call_id]
+    assert tool_result_data(result) == {
+        "result": "Scheduled", "action_id": record.call_id, "scheduled_at": record.due_at,
+    }
     assert record.tool_name == _TOOL_NAME
     assert record.user_id == user.id
     assert record.device_id == _DEVICE_ID

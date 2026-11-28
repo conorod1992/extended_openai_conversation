@@ -246,7 +246,7 @@ def validate_strict_function_schema(schema: Mapping[str, Any]) -> None:
         types = node.get("type", [])
         types = [types] if isinstance(types, str) else types
         if not isinstance(types, list) or not all(
-            isinstance(item, str) for item in types
+            isinstance(item, str) and item in _JSON_TYPES for item in types
         ):
             raise _schema_error(f"strict `{path}.type` must name valid JSON types")
         if "object" in types or "properties" in node:
@@ -474,7 +474,7 @@ def _validate_schema_node(
                 raise _schema_error(f"pattern at `{path}` must be a string")
             try:
                 re.compile(pattern)
-            except re.error as err:
+            except (re.error, OverflowError, RecursionError) as err:
                 raise _schema_error(f"invalid pattern at `{path}`: {err}") from err
 
     if expected_types.intersection({"number", "integer"}):
@@ -482,11 +482,15 @@ def _validate_schema_node(
             if keyword not in schema:
                 continue
             limit = schema[keyword]
-            if (
-                isinstance(limit, bool)
-                or not isinstance(limit, (int, float))
-                or not math.isfinite(float(limit))
-            ):
+            try:
+                finite = (
+                    not isinstance(limit, bool)
+                    and isinstance(limit, (int, float))
+                    and math.isfinite(limit)
+                )
+            except OverflowError:
+                finite = False
+            if not finite:
                 raise _schema_error(f"{keyword} at `{path}` must be a finite number")
         _validate_numeric_bound_order(schema, path)
 
@@ -698,6 +702,17 @@ def _is_legacy_delay_schema(schema: object) -> bool:
     )
 
 
+def supports_function_tool_delay(spec: Mapping[str, Any]) -> bool:
+    """Check the same scheduling contract used at Function Tool execution."""
+    parameters = spec.get("parameters")
+    properties = (
+        parameters.get("properties") if isinstance(parameters, Mapping) else None
+    )
+    return isinstance(properties, Mapping) and _is_legacy_delay_schema(
+        properties.get("delay")
+    )
+
+
 def split_legacy_execution_delay(
     spec: Mapping[str, Any], arguments: Mapping[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -709,15 +724,8 @@ def split_legacy_execution_delay(
     part of the configured Function Tool's argument namespace.
     """
     execution_arguments = dict(arguments)
-    parameters = spec.get("parameters")
-    if not isinstance(parameters, Mapping):
-        return execution_arguments, None
-    properties = parameters.get("properties")
-    if not isinstance(properties, Mapping):
-        return execution_arguments, None
-    delay_schema = properties.get("delay")
     delay_value = execution_arguments.get("delay")
-    if not _is_legacy_delay_schema(delay_schema):
+    if not supports_function_tool_delay(spec):
         return execution_arguments, None
     if delay_value is not None and not isinstance(delay_value, Mapping):
         return execution_arguments, None
@@ -728,8 +736,8 @@ def split_legacy_execution_delay(
     delay = {
         key: value for key, value in (delay_value or {}).items() if value is not None
     }
-    # Inspect individual units, not their sum: mixed positive/negative or
-    # malformed durations must still reach validation rather than execute now.
+    # Only an explicit numeric zero is treated as immediate here. The caller
+    # validates mixed or malformed units and checks the normalized duration.
     if all(
         key in _LEGACY_DELAY_FIELDS
         and isinstance(value, (int, float))

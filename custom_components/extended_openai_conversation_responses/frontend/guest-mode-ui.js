@@ -1,6 +1,7 @@
 import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
+import {decodeCollectionId, encodeCollectionId} from "./collection-identifiers.js";
 import {embeddedFeatureStatusMarkup, selectedFeatureStatus} from "./management-feature-status-core.js";
-import {formatManagementTimestamp, browserState, memoryCollectionIdentity} from "./management-data-state.js";
+import {formatManagementTimestamp, normalizeManagementTimestamp, browserState, memoryCollectionIdentity} from "./management-data-state.js";
 export {prepareMemoryBrowser} from "./management-data-state.js";
 export {formatManagementTimestamp} from "./management-data-state.js";
 export const GUEST_EXCLUSION_KEYS = [
@@ -74,11 +75,7 @@ export function findPersistentMemory(panel, id) {
 function memoryUpdatedInstant(memory) {
   // Match backend UTC interpretation of legacy naive ISO timestamps. Preserve
   // microseconds so JS's millisecond Date precision does not introduce false ties.
-  let value = String(memory.updated_at).replace(",", ".");
-  if (/[T ]/.test(value)) {
-    value = value.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00");
-    if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) value += "Z";
-  }
+  const value = normalizeManagementTimestamp(memory.updated_at);
   const millis = Date.parse(value);
   const fraction = value.match(/\.(\d+)/)?.[1] || "";
   return Number.isFinite(millis) ? millis * 1000 + Number(fraction.slice(3, 6).padEnd(3, "0")) : -Infinity;
@@ -107,16 +104,23 @@ export async function applyPersistentMemoryMutation(panel, response, {deletedId 
   const instants = new Map(page.map(item => [item, memoryUpdatedInstant(item)]));
   page.sort((left, right) => instants.get(right) - instants.get(left));
   const limit = Number(panel._result.limit) || MEMORY_PAGE_SIZE;
-  const hasMore = Boolean(panel._result.has_more || page.length > limit);
-  page = page.slice(0, Math.max(limit, oldPage.length));
+  const wasPartial = Boolean(panel._result.has_more);
+  if (wasPartial) page = page.slice(0, Math.max(limit, oldPage.length));
   const pageDelta = Number(remainsHere && matchesQuery) - Number(wasInPage);
+  const total = Number.isFinite(panel._result.total)
+    ? (wasPartial ? Math.max(0, panel._result.total + pageDelta) : page.length)
+    : undefined;
+  const hasMore = wasPartial && (total === undefined || total > page.length);
   panel._result = {
     ...panel._result, memories: page, has_more: hasMore,
-    ...(Number.isFinite(panel._result.total) ? {total: Math.max(0, panel._result.total + pageDelta)} : {}),
+    ...(total === undefined ? {} : {total}),
   };
   collection.result = panel._result;
   // The backend owns Unicode casefold matching; JS lowercasing is insufficient.
-  if (query) await runMemorySearch(panel);
+  if (query && panel._query.trim() === query) {
+    const addedToCompletePage = remainsHere && !wasInPage && !wasPartial;
+    await runMemorySearch(panel, oldPage.length + Number(addedToCompletePage));
+  }
   if (panel._query.trim() !== search.memoryQuery) scheduleMemorySearch(panel);
   return true;
 }
@@ -126,7 +130,8 @@ function memoryCard(panel, memory) {
   const matches = query === browserState(panel).memoryQuery
     ? (panel._result?.memories || []).some(item => item.memory_id === memory.memory_id)
     : memorySearchProjection(memory).includes(query.toLocaleLowerCase());
-  return `<article class="list-card" data-memory-id="${panel._e(memory.memory_id)}" ${matches ? "" : "hidden"}><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}"><p class="primary-copy">${panel._e(memory.content)}</p><p class="meta">${panel._e(memory.category)} · ${panel._e(memory.source)} · Updated ${panel._e(panel._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${panel._e(memory.memory_id)}">Edit</button>${panel._data?.is_admin && panel._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${panel._e(memory.memory_id)}">Assign to user</button>` : ""}<button type="button" class="danger delete-memory" data-id="${panel._e(memory.memory_id)}">Delete</button></div></article>`;
+  const id = panel._e(encodeCollectionId(memory.memory_id));
+  return `<article class="list-card" data-memory-id="${id}" ${matches ? "" : "hidden"}><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${id}"><p class="primary-copy">${panel._e(memory.content)}</p><p class="meta">${panel._e(memory.category)} · ${panel._e(memory.source)} · Updated ${panel._e(panel._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${id}">Edit</button>${panel._data?.is_admin && panel._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${id}">Assign to user</button>` : ""}<button type="button" class="danger delete-memory" data-id="${id}">Delete</button></div></article>`;
 }
 
 function currentSearch(panel, identity, sequence, query) {
@@ -151,7 +156,7 @@ function applySearchResult(panel, result, query) {
   else reconcilePersistentMemories(panel);
 }
 
-async function runMemorySearch(panel) {
+async function runMemorySearch(panel, extent = MEMORY_PAGE_SIZE) {
   const state = browserState(panel);
   const query = panel._query.trim();
   const sequence = ++state.memorySearchSequence;
@@ -162,11 +167,20 @@ async function runMemorySearch(panel) {
   collection.searchError = null;
   applyMemoryFilter(panel);
   try {
-    const result = await panel._call("memories", action, {
-      scope_id: panel._scopeId, query, limit: MEMORY_PAGE_SIZE, offset: 0,
-    });
-    if (!currentSearch(panel, identity, sequence, query)) return;
-    applySearchResult(panel, result, query);
+    let result;
+    let offset = 0;
+    const memories = new Map();
+    do {
+      result = await panel._call("memories", action, {
+        scope_id: panel._scopeId, query, limit: MEMORY_PAGE_SIZE, offset,
+      });
+      if (!currentSearch(panel, identity, sequence, query)) return;
+      const page = result.memories || [];
+      for (const memory of page) memories.set(String(memory.memory_id), memory);
+      if (!page.length) break;
+      offset += page.length;
+    } while (result.has_more && offset < extent);
+    applySearchResult(panel, {...result, memories: [...memories.values()]}, query);
   } catch (err) {
     if (currentSearch(panel, identity, sequence, query)) {
       collection.searchPending = false;
@@ -250,7 +264,8 @@ function applyMemoryFilter(panel) {
   const backendQuery = browserState(panel).memoryQuery;
   const resultIds = new Set((panel._result?.memories || []).map(memory => String(memory.memory_id)));
   let visible = 0;
-  for (const [id, record] of collection.cards) {
+  for (const [key, record] of collection.cards) {
+    const id = decodeCollectionId(key);
     const memory = collection.items.get(id);
     const show = query === backendQuery ? resultIds.has(id) : memorySearchProjection(memory).includes(localQuery);
     if (record.node.hidden === show) record.node.hidden = !show;
@@ -280,7 +295,7 @@ export function reconcilePersistentMemories(panel) {
   if (!collection.host || collection.host !== panel.shadowRoot.querySelector("[data-persistent-memories]")) return false;
   const items = orderedMemoryItems(panel, collection);
   indexMemories(panel);
-  reconcileKeyedChildren(collection.list, collection.cards, items, memory => memory.memory_id,
+  reconcileKeyedChildren(collection.list, collection.cards, items, memory => encodeCollectionId(memory.memory_id),
     memory => JSON.stringify([memory.content, memory.category, memory.source, memory.updated_at, panel._data?.is_admin]),
     memory => memoryCard(panel, memory), [collection.empty]);
   // This small status region is independent of the large card collection.
@@ -310,15 +325,19 @@ function bindPersistentMemories(panel) {
     host.querySelector("#list-search").addEventListener("input", event => { panel._query = event.target.value; filterPersistentMemories(panel); });
   }
   delegateCollectionActions(host, "#add-memory,.edit-memory,.memory-edit-button,.delete-memory,.reassign-memory,.memory-kind,#load-more-memories,#retry-memory-search", control => {
-    if (control.matches(".delete-memory")) void panel._deleteMemory(control.dataset.id, false, control);
-    else if (control.matches(".reassign-memory")) panel._openReassign(control.dataset.id);
+    if (control.matches(".delete-memory")) void panel._deleteMemory(decodeCollectionId(control.dataset.id), false, control);
+    else if (control.matches(".reassign-memory")) panel._openReassign(decodeCollectionId(control.dataset.id));
     else if (control.matches("#load-more-memories")) void loadMoreMemories(panel, control);
-    else if (control.matches("#retry-memory-search")) void runMemorySearch(panel);
+    else if (control.matches("#retry-memory-search")) {
+      const query = panel._query.trim();
+      const extent = query === browserState(panel).memoryQuery ? panel._result?.memories?.length : undefined;
+      void runMemorySearch(panel, extent);
+    }
     else if (control.matches(".memory-kind")) {
       if (control.dataset.kind === panel._memoryKind) return;
       panel._memoryKind = control.dataset.kind; panel._query = "";
       void panel._loadSection();
-    } else void panel._openMemory(control.dataset.id);
+    } else void panel._openMemory(decodeCollectionId(control.dataset.id));
   });
 }
 

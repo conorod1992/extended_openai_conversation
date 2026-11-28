@@ -211,6 +211,7 @@ async def test_service_casing_preserves_participants_and_previous_state(
     from custom_components.extended_openai_conversation_responses.built_in_functions import (
         BUILT_IN_FUNCTION_PRESETS,
     )
+    from tests.helpers import get_function_tool_from_yaml
     from custom_components.extended_openai_conversation_responses.function_execution import (
         validate_function_arguments,
     )
@@ -255,13 +256,14 @@ async def test_service_casing_preserves_participants_and_previous_state(
                 hass, domain, service, data=data, blocking=True, context=Context(), include_response=True
             )
         else:
-            implementation = (
-                "execute_service_single" if route == "single" else "execute_service"
-            )
-            tool = next(
-                item["tool"]
-                for item in BUILT_IN_FUNCTION_PRESETS
-                if item["tool"]["function"]["name"] == implementation
+            tool = (
+                get_function_tool_from_yaml("legacy_execute_service_single.yaml")
+                if route == "single"
+                else next(
+                    item["tool"]
+                    for item in BUILT_IN_FUNCTION_PRESETS
+                    if item["implementation"] == "execute_service"
+                )
             )
             supplied = arguments if route == "single" else {"list": [arguments]}
             validate_function_arguments(tool["spec"], supplied)

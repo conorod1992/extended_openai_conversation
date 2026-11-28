@@ -175,7 +175,8 @@ def test_function_tool_enabled_defaults_and_boolean_validation() -> None:
 def test_built_in_catalogue_presets_are_valid_and_marks_used_native_tools() -> None:
     configured = _native_tool()
     catalog = built_in_function_catalog([configured])
-    assert len(catalog) == 8
+    assert len(catalog) == 7
+    assert "execute_service_single" not in {preset["implementation"] for preset in catalog}
     assert all(validate_function_tools([preset["tool"]]) for preset in catalog)
     execute_service = next(
         preset for preset in catalog if preset["implementation"] == "execute_service"
@@ -612,6 +613,14 @@ def test_reasoning_default_and_explicit_validation(monkeypatch) -> None:
         normalize_agent_config({agent_config.CONF_REASONING_EFFORT: "medium"})
 
 
+def test_saved_null_reasoning_effort_uses_the_omitted_default() -> None:
+    data = {agent_config.CONF_CHAT_MODEL: "gpt-5-mini"}
+    expected = agent_config.agent_config_snapshot(data)
+    assert expected[agent_config.CONF_REASONING_EFFORT]
+    data[agent_config.CONF_REASONING_EFFORT] = None
+    assert agent_config.agent_config_model_repair_snapshot(data) == expected
+
+
 def test_skills_fail_when_loader_status_reports_unavailable(monkeypatch) -> None:
     monkeypatch.setattr(
         agent_config,
@@ -721,3 +730,13 @@ def test_agent_title_contract_is_shared_and_bounded() -> None:
         validate_agent_title("   ")
     with pytest.raises(AgentConfigError, match="at most 255"):
         validate_agent_title("x" * (MAX_AGENT_TITLE_LENGTH + 1))
+
+
+@pytest.mark.parametrize("provider", ["openai", "azure"])
+@pytest.mark.parametrize("blank", ["", " \t"])
+def test_rejects_blank_model_or_azure_deployment(provider, blank):
+    config = {**agent_config_defaults(), "chat_model": blank}
+    if provider == "azure":
+        config["azure_model"] = "gpt-4.1"
+    with pytest.raises(AgentConfigError, match="nonempty model or deployment"):
+        normalize_agent_config(config, provider=provider)

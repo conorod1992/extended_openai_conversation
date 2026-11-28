@@ -28,6 +28,10 @@ class BackendExecutionFailure(ExecutionFailure):
     """Backend-owned diagnostic prose; retain locally, contain at the model boundary."""
 
 
+class ScheduledExecution(ToolResultPayload):
+    """Acknowledgement produced by the durable scheduler, separate from tool data."""
+
+
 @lru_cache(maxsize=1)
 def _uses_result_envelope(content_type: Any) -> bool:
     """Resolve the constructor contract once, also following HA class reloads."""
@@ -95,6 +99,25 @@ def _is_ha_tool_result(value: Any) -> bool:
         and is_dataclass(value)
         and {field.name for field in fields(value)} == {"data", "error"}
         and isinstance(getattr(value, "error", None), bool)
+    )
+
+
+def tool_result_has_execution_error(content: Any) -> bool:
+    """Interpret Home Assistant and EOAI failure metadata without business keys."""
+    envelope = getattr(content, "result", None)
+    payload = tool_result_data(content)
+    return (
+        (_is_ha_tool_result(envelope) and getattr(envelope, "error", None) is True)
+        or is_execution_failure(payload)
+        or (isinstance(payload, dict) and is_execution_failure(payload.get("result")))
+    )
+
+
+def is_execution_failure(value: Any) -> bool:
+    """Recognize producer-owned execution failures in single or batched results."""
+    return isinstance(value, ExecutionFailure) or (
+        isinstance(value, list)
+        and any(isinstance(item, ExecutionFailure) for item in value)
     )
 
 

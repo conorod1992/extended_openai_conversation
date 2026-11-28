@@ -31,7 +31,7 @@ export function loadRequestDebug(panel, silent = false) {
 
 const DEBUG_VIEW = "usage-maintenance/request-debug";
 const DEBUG_TAG = "extended-openai-debug-panel";
-const DEBUG_PROVIDER_PAGE_LIMIT = 5;
+const DEBUG_PROVIDER_PAGE_LIMIT = 1;
 let debugPanelPromise = null;
 
 function ensureDebugPanel() {

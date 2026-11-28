@@ -16,7 +16,7 @@ export const HELP_METADATA = Object.freeze({
     title: "Listen for a follow-up",
     items: [
       { term: "HA Default", text: "Uses Home Assistant's normal continuation behaviour." },
-      { term: "Always", text: "Keeps listening after success, except recognised never-mind commands." },
+      { term: "Always", text: "Keeps listening after successful responses. A recognised Nevermind command ends listening." },
       { term: "Conditional", text: "Lets the model decide whether an immediate reply is expected, using the integration's continuation tool." },
     ],
     keywords: "follow-up follow up keep listening immediate turn home assistant default conditional",
@@ -28,7 +28,7 @@ export const HELP_METADATA = Object.freeze({
     items: [
       { term: "Use Home Assistant sessions", text: "Starts or continues conversations using Home Assistant's normal session handling." },
       { term: "Remember by voice device", text: "Requests from the same Assist device can continue a recent conversation until the timeout expires." },
-      { term: "Remember by user across devices", text: "Requests assigned to the same user can continue across devices. Unidentified speech safely falls back to its device or a new conversation." },
+      { term: "Remember by user across devices", text: "Mapped voice devices for one user can share a recent conversation. Signed-in requests have separate live conversations and may access the same eligible retained data." },
     ],
     keywords: "conversation continuity resume separate Assist invocation cross-device satellite user device speaker recognition",
     href: `${DOCS_ROOT}/features/conversation-continuity.md`,

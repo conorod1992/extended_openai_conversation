@@ -141,22 +141,28 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     const authentication = this._authenticationGeneration;
     const revision = ++this._revision;
     const current = () => revision === this._revision && agent === this._agent;
+    let presentation;
     const operation = this._mutationTail.then(async () => {
       // Queued work belongs to the account that requested it, including A-B-A.
       if (authentication !== this._authenticationGeneration) return;
       try {
         const result = await this._call(action, extra, agent);
         requireMutationAcknowledgement(action === "clear" ? Number.isInteger(result?.deleted) && result.deleted >= 0 : typeof result?.enabled === "boolean", "updating debugging");
-        await presentAcknowledgedMutation(this, current, action === "clear" ? "Debug captures cleared" : result.enabled ? "Request debugging enabled" : "Request debugging disabled", () => this._fetchRuns(agent, revision), result);
+        if (current() && action === "configure") {
+          this._status = {...this._status, ...result};
+          this._render();
+        }
+        presentation = presentAcknowledgedMutation(this, current, action === "clear" ? "Debug captures cleared" : result.enabled ? "Request debugging enabled" : "Request debugging disabled", () => this._fetchRuns(agent, revision), result);
       } catch (err) {
         if (current()) {
-          await this._fetchRuns(agent, revision);
-          if (current()) this._toast(`Unable to update debugging: ${err.message || String(err)}`, true);
+          presentation = this._fetchRuns(agent, revision).then(() => {
+            if (current()) this._toast(`Unable to update debugging: ${err.message || String(err)}`, true);
+          });
         }
       }
     });
     this._mutationTail = operation.catch(() => {});
-    return operation;
+    return operation.then(() => presentation);
   }
 
   async _configure(extra) {
@@ -334,12 +340,12 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
       [hidden]{display:none!important}
       #debug-provider-status{margin-right:auto}
       *{box-sizing:border-box}main{max-width:1450px;margin:0 auto;padding:24px;display:grid;grid-template-columns:minmax(0,1fr);gap:18px}
-      h1,h2,p{margin:0}.heading{display:flex;justify-content:space-between;gap:20px;align-items:end}.heading p{margin-top:6px;color:var(--secondary-text-color);line-height:1.5}.page-intro{display:grid;gap:7px;max-width:780px}.page-intro h1,.page-intro p{margin:0}.page-intro p{color:var(--secondary-text-color);line-height:1.5}.debug-intro{display:flex;align-items:end;justify-content:space-between;gap:20px}
+      h1,h2,p{margin:0}.heading{display:flex;justify-content:space-between;gap:20px;align-items:end}.heading p{margin-top:6px;color:var(--secondary-text-color);line-height:1.5}.page-intro{display:grid;gap:7px;max-width:780px}.page-intro h1{font-size:24px;font-weight:600;line-height:1.25}.page-intro p{color:var(--secondary-text-color);line-height:1.5}.debug-intro{display:flex;align-items:end;justify-content:space-between;gap:20px}
       .card-heading{display:flex;align-items:start;justify-content:space-between;gap:24px;margin:0 0 20px}.card-heading h2{margin:0;font-size:19px;font-weight:600;line-height:1.3}.card-heading p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}.card-heading + .table-wrap{margin-top:0}.card{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:12px;padding:24px}.warning{border-left:4px solid var(--warning-color,#ff9800)}
       .warning p{margin-top:7px;line-height:1.55}.controls{display:grid;grid-template-columns:minmax(220px,1fr) auto auto auto;gap:14px;align-items:end}
       label{display:grid;gap:7px;font-size:13px;color:var(--secondary-text-color)}select,button{font:inherit;min-height:42px;border-radius:8px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);padding:8px 12px}
       button{cursor:pointer;color:var(--eoc-accent-text);font-weight:600}button.primary{background:var(--eoc-action-background);color:var(--card-background-color);border-color:var(--primary-color)}button.secondary{background:transparent;color:var(--eoc-accent-text);border-color:var(--primary-color)}button.danger{background:var(--eoc-error-background);color:#fff;border-color:var(--error-color,#db4437)}button:disabled{opacity:.55;cursor:default}
-      .switch-row{display:flex;align-items:center;gap:10px;min-height:42px}.switch-control{position:relative;display:block;width:44px;height:26px;flex:0 0 44px}.switch-control input{position:absolute;inset:0;z-index:2;width:44px;height:26px;margin:0;opacity:0;cursor:pointer}.switch-track{display:block;width:44px;height:26px;border-radius:14px;background:var(--disabled-text-color,#9e9e9e)}.switch-track:after{content:"";display:block;width:20px;height:20px;margin:3px;border-radius:50%;background:var(--card-background-color);box-shadow:0 1px 3px rgba(0,0,0,.35)}.switch-control input:checked+.switch-track{background:var(--primary-color)}.switch-control input:checked+.switch-track:after{transform:translateX(18px)}.switch-control input:focus-visible+.switch-track{outline:2px solid var(--primary-color);outline-offset:2px}.switch-control input:disabled+.switch-track{opacity:.45}.status{font-size:13px;color:var(--secondary-text-color);margin-top:12px}
+      .switch-row{display:flex;align-items:center;gap:10px;min-height:42px}.switch-control{position:relative;display:block;width:44px;height:26px;flex:0 0 44px}.switch-control input{position:absolute;inset:0;z-index:2;width:44px;height:26px;margin:0;opacity:0;cursor:pointer}.switch-track{display:block;position:relative;width:44px;height:26px;border-radius:14px;background:var(--disabled-text-color,#9e9e9e)}.switch-track:after{content:"";position:absolute;left:3px;top:50%;width:20px;height:20px;transform:translateY(-50%);border-radius:50%;background:var(--card-background-color);box-shadow:0 1px 3px rgba(0,0,0,.35)}.switch-control input:checked+.switch-track{background:var(--primary-color)}.switch-control input:checked+.switch-track:after{transform:translate(18px,-50%)}.switch-control input:focus-visible+.switch-track{outline:2px solid var(--primary-color);outline-offset:2px}.switch-control input:disabled+.switch-track{opacity:.45}.status{font-size:13px;color:var(--secondary-text-color);margin-top:12px}
       .table-wrap{overflow:auto;margin-top:14px}table{width:100%;border-collapse:collapse;min-width:1050px}th,td{text-align:left;padding:11px 10px;border-bottom:1px solid var(--divider-color);vertical-align:middle}th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--secondary-text-color)}td{font-size:14px}.mono{font-family:var(--code-font-family,monospace);font-size:12px}.actions{display:flex;gap:7px;white-space:nowrap}.actions button{min-height:34px;padding:5px 9px;font-size:13px}
       .empty{padding:30px;text-align:center;color:var(--secondary-text-color)}.error-box{padding:13px;border-radius:8px;background:color-mix(in srgb,var(--error-color) 12%,transparent);color:var(--eoc-error-text)}
       dialog{width:min(1200px,94vw);height:min(850px,90vh);border:1px solid var(--divider-color);border-radius:12px;background:var(--card-background-color);color:var(--primary-text-color);padding:0}dialog::backdrop{background:rgba(0,0,0,.45)}.confirm-dialog{width:min(520px,calc(100vw - 28px));height:auto}.dialog-head,.dialog-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 18px;border-bottom:1px solid var(--divider-color)}.dialog-foot{flex-wrap:wrap;border-top:1px solid var(--divider-color);border-bottom:0;justify-content:flex-end}.dialog-body{height:calc(100% - 130px);overflow:auto;padding:0}.confirm-dialog .dialog-body{height:auto;padding:18px}pre{margin:0;padding:18px;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--code-font-family,monospace);font-size:12px;line-height:1.5}

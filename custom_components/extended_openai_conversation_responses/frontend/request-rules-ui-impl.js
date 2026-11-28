@@ -331,14 +331,15 @@ function refreshEditor(panel) {
   capture.setAttribute("aria-invalid",String(invalid));
   help.hidden=!invalid;
   help.textContent=!handoff ? "Enable Continue to AI or choose Original request." : !grammar ? "Captured input requires Sentence Pattern matching." : common.length ? "Choose a value captured by every trigger or choose Original request." : "No captured values are available for every trigger. Add the same capture to each trigger, such as {question}.";
-  const efforts = [...q("#rule-reasoning").options].map(option => option.value).filter(Boolean);
+  const efforts = [...q("#rule-reasoning").options].filter(option => !option.disabled).map(option => option.value).filter(Boolean);
   const model=requestRuleCapabilityModel(panel,q("#rule-model").value.trim(),q("#rule-azure-model").value.trim());
-  syncRequestRuleRoutingControls(root, efforts);
   const state=editorState(panel), latest=beginOperation(panel,"rule-model-lookup");
+  const retainUnavailable = state.retainSavedRoutingEffort;
+  syncRequestRuleRoutingControls(root, efforts, null, retainUnavailable);
   if(local)return;
   const ownsEditor=captureRuleEditorOwner(panel), current=()=>latest() && ownsEditor() && state.dialog.open;
   void ensureModelCatalog().then((module)=>current() ? module.lookupModelData(panel,model,"lookup",current) : null).then((data)=>{
-    if(current() && data) syncRequestRuleRoutingControls(root,data.reasoning_effort_options);
+    if(current() && data) syncRequestRuleRoutingControls(root,data.reasoning_effort_options,null,retainUnavailable);
   }).catch((err)=>{if(current())panel._toast(`Unable to load model choices: ${err.message || String(err)}`,true);});
 }
 
@@ -380,8 +381,12 @@ export function bindRequestRuleEditor(panel) {
     refreshEditor(panel);
   });
   q("#rule-local-continue-to-ai")?.addEventListener("change",()=>refreshEditor(panel));
-  q("#rule-model")?.addEventListener("input",()=>refreshEditor(panel));
-  q("#rule-azure-model")?.addEventListener("input",()=>refreshEditor(panel));
+  const routingModelChanged = () => {
+    editorState(panel).retainSavedRoutingEffort = false;
+    refreshEditor(panel);
+  };
+  q("#rule-model")?.addEventListener("input",routingModelChanged);
+  q("#rule-azure-model")?.addEventListener("input",routingModelChanged);
   q("#rule-ai-input-mode")?.addEventListener("change",()=>refreshEditor(panel));
   q("#rule-ai-input-capture")?.addEventListener("change",()=>refreshEditor(panel));
   q("#rule-scope")?.addEventListener("change",()=>syncRequestRuleRoutingControls(root));
@@ -525,6 +530,7 @@ export function openRequestRuleEditor(panel,id=null) {
   q("#rule-azure-model").value=rule?.action?.azure_model||"";
   q("#rule-azure-model-label").hidden=panel._result?.api_provider!=="azure" && !q("#rule-azure-model").value;
   const savedEffort = rule?.action?.reasoning_effort || "";
+  state.retainSavedRoutingEffort = Boolean(savedEffort);
   // Keep a saved effort representable while its model's catalogue is loading.
   const initialEfforts = [...q("#rule-reasoning").options].map(option => option.value).filter(Boolean);
   setReasoningOptions(root, [...new Set([...initialEfforts, ...(savedEffort ? [savedEffort] : [])])], savedEffort);

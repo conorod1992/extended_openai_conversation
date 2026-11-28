@@ -148,6 +148,50 @@ async def test_temporary_add_manual_ownership_and_fresh_manager(monkeypatch):
     assert TemporaryMemory.validate_backup_data(await fresh.async_backup_data())[0].source == "manual"
 
 
+async def test_temporary_mutations_return_scoped_list_order(monkeypatch):
+    def record(memory_id, expiry, owner="user:alice"):
+        return {
+            "memory_id": memory_id,
+            "scope_id": owner,
+            "owner_scope_id": owner,
+            "content": f"Fact {memory_id}",
+            "category": "general",
+            "source": "manual",
+            "expires_at": expiry,
+            "created_at": "2026-09-01T00:00:00Z",
+            "updated_at": "2026-09-01T00:00:00Z",
+        }
+
+    manager = TemporaryMemory(Storage({"records": [
+        record("z", "2026-09-02T11:00:00.000001+01:00"),
+        record("b", "2026-09-02T09:00:00.000001-01:00"),
+        record("a", "2026-09-02T10:00:00.000002Z"),
+        record("foreign", "2026-09-02T09:00:00Z", "user:bob"),
+    ]}))
+
+    added = await temporary_command(
+        manager, monkeypatch, content="Middle", expires_at="2026-09-02T10:00:00Z"
+    )
+    added_id = added["memory"]["memory_id"]
+    assert added["status"] == "created"
+    assert added["memory_order"] == [added_id, "b", "z", "a"]
+
+    duplicate = await temporary_command(
+        manager, monkeypatch, content="Fact z", expires_at="2026-09-02T09:00:00Z"
+    )
+    assert duplicate["status"] == "updated"
+    assert duplicate["memory"]["memory_id"] == "z"
+    assert duplicate["memory_order"] == ["z", added_id, "b", "a"]
+
+    updated = await temporary_command(
+        manager, monkeypatch, "temporary_update", memory_id="a",
+        expires_at="2026-09-02T08:00:00Z",
+    )
+    assert updated["memory_order"] == ["a", "z", added_id, "b"]
+    listed = await temporary_command(manager, monkeypatch, "temporary_list")
+    assert [memory["memory_id"] for memory in listed["memories"]] == updated["memory_order"]
+
+
 async def test_automatic_creation_keeps_source_and_duplicate_behavior():
     storage = Storage()
     manager = TemporaryMemory(storage)

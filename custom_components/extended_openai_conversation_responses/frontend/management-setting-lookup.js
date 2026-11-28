@@ -125,8 +125,8 @@ export const SETTING_LOOKUP = Object.freeze({
     "aliases": "use extended openai local handling try home assistant's built-in commands after request rules and before ai. local home assistant intents prefer handling local_intents_enabled"
   },
   "local_intent_delayed_commands_to_ai": {
-    "label": "Send delayed device commands to AI",
-    "aliases": "send delayed device commands to ai lets deferred function tools handle commands such as turning something off later. local delayed scheduled deferred commands ai local_intent_delayed_commands_to_ai"
+    "label": "Use EOAI for delayed actions",
+    "aliases": "use eoai for delayed actions use delay-capable function tools for delayed commands and keep ordinary home assistant timers. local delayed scheduled deferred commands ai local_intent_delayed_commands_to_ai"
   },
   "local_intent_exclusions": {
     "label": "Command types sent to AI",

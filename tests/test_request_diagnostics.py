@@ -317,6 +317,22 @@ async def test_tool_execution_records_success_and_failure_without_changing_seman
     assert calls[1]["result_characters"] == 0
 
 
+@pytest.mark.parametrize("status", [{"stage": "done"}, ["done"]])
+def test_structured_tool_status_still_records_execution(status) -> None:
+    trace = _coverage_trace()
+    request_diagnostics.record_tool_execution(
+        trace,
+        {"spec": {"name": "structured"}},
+        SimpleNamespace(),
+        request_diagnostics.time.monotonic(),
+        True,
+        SimpleNamespace(tool_result={"result": {"status": status}}),
+    )
+    [call] = trace.memory[request_diagnostics._INTERNAL_TOOL_CALLS]
+    assert call["outcome"] == "returned"
+    assert call["duration_ms"] >= 0
+
+
 def test_provider_request_metrics_compare_rounds_and_serialize_cache_usage() -> None:
     trace = _coverage_trace()
     tools = [{"type": "function", "name": "demo", "parameters": {"type": "object"}}]

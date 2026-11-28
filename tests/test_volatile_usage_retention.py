@@ -1,7 +1,9 @@
 """A recovered durable store cannot leave session-local Usage on an old policy."""
 
-from tests.helpers import historical_shareable_export
-
+import asyncio
+from dataclasses import asdict
+from datetime import timedelta
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,10 +14,249 @@ from custom_components.extended_openai_conversation_responses import (
     usage,
 )
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.exceptions import HomeAssistantError
+from tests.helpers import historical_shareable_export
+from tests.test_usage import FakeStorage
+
+
+@pytest.mark.parametrize("invalid_days", [1, "366.0"])
+async def test_unsupported_saved_retention_preserves_old_history_at_startup(
+    monkeypatch, invalid_days
+):
+    now = usage.dt_util.utcnow()
+    monkeypatch.setattr(usage.dt_util, "utcnow", lambda: now - timedelta(days=3))
+    aggregate = FakeStorage()
+    detail = FakeStorage()
+    initial = usage.UsageManager(aggregate, detail_storage=detail)
+    await initial.async_initialize()
+    async with initial.async_run():
+        await initial.async_record_request(
+            successful=True, usage=usage.RequestUsage(total_tokens=5)
+        )
+    if initial._prune_task:
+        await initial._prune_task
+    monkeypatch.setattr(usage.dt_util, "utcnow", lambda: now)
+    policy = usage.usage_retention_policy(
+        {"usage_request_retention_days": invalid_days, "usage_run_retention_days": invalid_days}
+    )
+    assert policy == {"request_retention_days": None, "run_retention_days": None}
+    recovered = usage.UsageManager(aggregate, detail_storage=detail, **policy)
+    await recovered.async_initialize()
+    assert len(recovered.requests) == len(recovered.runs) == 1
+    async with recovered.async_run():
+        await recovered.async_record_request(
+            successful=True, usage=usage.RequestUsage(total_tokens=8)
+        )
+    assert len(recovered.requests) == len(recovered.runs) == 1
+    assert recovered.totals.total_tokens == 13
+    assert usage.usage_retention_policy({"usage_request_retention_days": "7.0"})[
+        "request_retention_days"
+    ] == 7
+
+
+async def test_invalid_saved_retention_preserves_details_and_aggregate_accounting():
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        AgentConfigError,
+        agent_config_snapshot,
+        merge_agent_config,
+        normalize_agent_config,
+    )
+
+    options = {"usage_request_retention_days": False, "usage_run_retention_days": False}
+    with pytest.raises(AgentConfigError, match="usage_request_retention_days"):
+        normalize_agent_config({**options, "functions": "[]"})
+    saved = {**options, "functions": "[]"}
+    assert agent_config_snapshot(saved)["usage_run_retention_days"] is False
+    corrected = merge_agent_config(saved, {"usage_request_retention_days": 30})
+    assert corrected["usage_request_retention_days"] == 30
+    assert corrected["usage_run_retention_days"] is False
+    with pytest.raises(AgentConfigError, match="usage_run_retention_days"):
+        merge_agent_config(saved, {"usage_run_retention_days": False})
+    with pytest.raises(AgentConfigError, match="usage_run_retention_days"):
+        merge_agent_config(saved, {"usage_run_retention_days": 15})
+    manager = usage.UsageManager(usage._VolatileUsageStorage())
+    await manager.async_initialize()
+    async with manager.async_run():
+        await manager.async_record_request(
+            successful=True, usage=usage.RequestUsage(total_tokens=5)
+        )
+    assert len(manager.requests) == len(manager.runs) == 1
+    policy = usage.usage_retention_policy(options)
+    manager.request_retention_days = policy["request_retention_days"]
+    manager.run_retention_days = policy["run_retention_days"]
+    await manager.async_prune_details(save=False)
+    async with manager.async_run():
+        await manager.async_record_request(
+            successful=True, usage=usage.RequestUsage(total_tokens=8)
+        )
+    assert len(manager.requests) == len(manager.runs) == 1
+    assert manager.totals.total_tokens == 13
+
+
+async def test_durable_usage_retry_loads_under_the_new_saved_policy(
+    hass, management_agent, monkeypatch
+):
+    entry, subentry = management_agent
+    field = "usage_request_retention_days"
+    subentry.data = {**subentry.data, field: 7}
+    totals, daily, details = FakeStorage(), FakeStorage(), FakeStorage()
+    original_load = daily.async_load
+    monkeypatch.setattr(
+        daily, "async_load", AsyncMock(side_effect=OSError("transient load failure"))
+    )
+    monkeypatch.setattr(
+        usage, "_durable_usage_stores", lambda *_: (totals, daily, details)
+    )
+    monkeypatch.setattr(usage, "_register_usage_maintenance", lambda *_: None)
+    request = usage.UsageRequest(
+        "old",
+        "seed",
+        (usage.dt_util.utcnow() - timedelta(days=20)).isoformat(),
+        subentry.subentry_id,
+        "openai",
+        "gpt-test",
+        "chat_completions",
+        True,
+        1,
+    )
+    await details.async_save({"requests": [asdict(request)], "runs": []})
+
+    with pytest.raises(OSError, match="transient load failure"):
+        await usage.async_get_durable_usage(hass, entry.entry_id, subentry.subentry_id)
+    subentry.data = {**subentry.data, field: 30}
+    monkeypatch.setattr(daily, "async_load", original_load)
+    await usage.async_apply_usage_retention(hass, entry.entry_id, subentry.subentry_id)
+
+    manager = await usage.async_get_durable_usage(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    assert manager.request_retention_days == 30
+    assert [row.request_id for row in manager.requests] == ["old"]
+    assert [row["request_id"] for row in (await details.async_load())["requests"]] == [
+        "old"
+    ]
+
+
+async def test_import_confirms_deletion_when_invalid_usage_retention_is_repaired(
+    hass, management_agent, management_message, monkeypatch
+):
+    entry, subentry = management_agent
+    entry.state = ConfigEntryState.NOT_LOADED
+    field = "usage_request_retention_days"
+    subentry.data = {**subentry.data, field: 1}
+    monkeypatch.setattr(usage, "_register_usage_maintenance", lambda *_: None)
+    monkeypatch.setattr(
+        ui,
+        "async_get_request_rules",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                snapshot=lambda: {"rules": []},
+                revision=lambda: "rules-0",
+                async_backup_data=AsyncMock(return_value={"rules": []}),
+            )
+        ),
+    )
+    manager = await usage.async_get_durable_usage(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    request = usage.UsageRequest(
+        "old",
+        "seed",
+        (usage.dt_util.utcnow() - timedelta(days=20)).isoformat(),
+        subentry.subentry_id,
+        "openai",
+        "gpt-test",
+        "chat_completions",
+        True,
+        1,
+        total_tokens=5,
+    )
+    await manager.async_replace_backup(
+        usage.UsageTotals(total_tokens=5), {}, [request], []
+    )
+    document = historical_shareable_export("configuration")
+    document["config"][field] = 7
+    baseline = await ui.async_management_command(
+        hass, "admin", True, management_message("configuration", "get")
+    )
+    preview = await ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message("configuration", "import_preview", document=document),
+    )
+    assert preview["shortened_usage_retention"] == {field: 7}
+    payload = dict(document=document, confirm=True, revision=baseline["revision"])
+    with pytest.raises(HomeAssistantError, match="Confirm applying shorter Usage"):
+        await ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            management_message("configuration", "import", **payload),
+        )
+    assert [row.request_id for row in manager.requests] == ["old"]
+    assert subentry.data[field] == 1
+
+    await ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message(
+            "configuration", "import", confirm_retention=True, **payload
+        ),
+    )
+    assert subentry.data[field] == 7
+    assert manager.requests == []
+    assert manager.totals.total_tokens == 5
+
+
+async def test_cold_usage_rechecks_policy_after_off_thread_decoding(monkeypatch):
+    policy = (7, 90)
+    details = FakeStorage()
+    request = usage.UsageRequest(
+        "old",
+        "seed",
+        (usage.dt_util.utcnow() - timedelta(days=20)).isoformat(),
+        "agent",
+        "openai",
+        "gpt-test",
+        "chat_completions",
+        True,
+        1,
+    )
+    await details.async_save({"requests": [asdict(request)], "runs": []})
+    manager = usage.UsageManager(
+        FakeStorage(), detail_storage=details, read_retention=lambda: policy
+    )
+    decoded = asyncio.Event()
+    resume = Event()
+    loop = asyncio.get_running_loop()
+    prepare = usage._prepare_usage_history
+
+    def pause_first_decode(*args):
+        result = prepare(*args)
+        if not resume.is_set():
+            loop.call_soon_threadsafe(decoded.set)
+            assert resume.wait(5)
+        return result
+
+    monkeypatch.setattr(usage, "_prepare_usage_history", pause_first_decode)
+    load = asyncio.create_task(manager.async_initialize())
+    try:
+        await asyncio.wait_for(decoded.wait(), timeout=5)
+        policy = (30, 90)
+    finally:
+        resume.set()
+        await load
+    await manager.async_prune_details()
+    assert [row.request_id for row in manager.requests] == ["old"]
+    assert [row["request_id"] for row in (await details.async_load())["requests"]] == [
+        "old"
+    ]
 
 
 @pytest.mark.parametrize("days", [0, 30])
-@pytest.mark.parametrize("action", ["save", "update", "import"])
+@pytest.mark.parametrize("action", ["save", "update", "import", "import-legacy"])
 async def test_committed_policy_reaches_existing_volatile_accounting(
     hass, management_agent, management_message, monkeypatch, days, action
 ):
@@ -26,8 +267,8 @@ async def test_committed_policy_reaches_existing_volatile_accounting(
         subentry,
         data={
             **subentry.data,
-            "usage_request_retention_days": 30 if days == 0 else 0,
-            "usage_run_retention_days": 30 if days == 0 else 0,
+            "usage_request_retention_days": False if action == "import-legacy" else (30 if days == 0 else 0),
+            "usage_run_retention_days": False if action == "import-legacy" else (30 if days == 0 else 0),
         },
     )
     native_load = usage._UsageStore.async_load
@@ -72,7 +313,8 @@ async def test_committed_policy_reaches_existing_volatile_accounting(
         hass, "admin", True, management_message("configuration", "get")
     )
     policy = {"usage_request_retention_days": days, "usage_run_retention_days": days}
-    if action == "import":
+    if action.startswith("import"):
+        action = "import"
         artifact = historical_shareable_export("configuration")
         artifact["config"].update(policy)
         payload = {"document": artifact, "mode": "current", "confirm": True, "confirm_retention": True}

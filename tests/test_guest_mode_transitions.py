@@ -385,3 +385,48 @@ async def test_boundary_observer_failure_does_not_starve_other_listeners_or_expi
     assert not env.timers.pending
     remove_broken()
     remove_good()
+
+
+async def test_guest_continuity_rotates_even_without_an_inactive_turn(env):
+    from custom_components.extended_openai_conversation_responses.continuity import (
+        ConversationContinuity,
+    )
+
+    manager = env.manager
+    await manager.async_initialize()
+    start = env.clock[0].isoformat()
+    await manager.async_update_trusted(active_from=start, indefinite=True)
+    continuity = ConversationContinuity("agent")
+    first = continuity.guest_namespace(("same policy", manager.continuity_activation))
+    await manager.async_disable_trusted()
+    await manager.async_update_trusted(active_from=start, indefinite=True)
+    second = continuity.guest_namespace(("same policy", manager.continuity_activation))
+    assert first and second and first != second
+
+
+async def test_guest_renewal_preserves_continuity_until_a_genuine_schedule_gap(env):
+    from custom_components.extended_openai_conversation_responses.continuity import (
+        ConversationContinuity,
+    )
+
+    manager = env.manager
+    await manager.async_initialize()
+    await manager.async_update_trusted(indefinite=True)
+    continuity = ConversationContinuity("agent")
+    first = continuity.guest_namespace(("policy", manager.continuity_activation))
+    env.clock[0] += timedelta(minutes=1)
+    await manager.async_update_trusted(indefinite=True)
+    assert manager.is_active()
+    assert (
+        continuity.guest_namespace(("policy", manager.continuity_activation)) == first
+    )
+
+    future = env.clock[0] + timedelta(minutes=5)
+    await manager.async_update_trusted(active_from=future.isoformat(), indefinite=True)
+    assert not manager.is_active()
+    # No request asks for a namespace in between the two activations.
+    env.clock[0] = future
+    assert manager.is_active()
+    assert (
+        continuity.guest_namespace(("policy", manager.continuity_activation)) != first
+    )

@@ -573,9 +573,9 @@ async def test_data_only_restore_preserves_eligible_retained_user_continuity(
         await manager.async_release(after.key, after.claim_token)
 
 
-@pytest.mark.parametrize("managed", [True, False])
+@pytest.mark.parametrize(("managed", "mapped_voice"), [(True, False), (True, True), (False, False)])
 @pytest.mark.parametrize("still_live", [True, False])
-async def test_archive_restore_only_extends_privacy_for_verified_destination_session(monkeypatch, managed, still_live):
+async def test_archive_restore_only_extends_privacy_for_verified_destination_session(monkeypatch, managed, mapped_voice, still_live):
     from datetime import timedelta
     from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
     from homeassistant.helpers.chat_session import DATA_CHAT_SESSION
@@ -603,9 +603,12 @@ async def test_archive_restore_only_extends_privacy_for_verified_destination_ses
     tx.subentry.data.update(config)
     manager = ConversationContinuity(agent_id)
     monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: SimpleNamespace(_continuity=manager))
-    scope = user_scope("alice", source="authenticated_user")
+    scope = user_scope("alice", source="device_mapping" if mapped_voice else "authenticated_user")
     if managed:
-        resolution = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, None, 30)
+        kwargs = {"native_user_id": None} if mapped_voice else {}
+        resolution = await manager.async_resolve(
+            CONVERSATION_CONTINUITY_USER, scope, None, None, 30, **kwargs
+        )
         conversation_id = resolution.conversation_id
         key = f"continuity:{resolution.key}"
         await manager.async_record_success(resolution.key, resolution.claim_token, [])
@@ -639,3 +642,47 @@ async def test_archive_restore_only_extends_privacy_for_verified_destination_ses
     assert bool(prepared.archive_active) is still_live
     if still_live:
         assert prepared.archive_sessions[0].retention_state == "private"
+
+
+async def test_data_only_restore_ignores_existing_invalid_provider_route(transaction):
+    tx = transaction
+    # The deployment alias is structurally valid but only usable with Azure.
+    tx.subentry.data["azure_model"] = "old-deployment"
+    _, preview = await transfer.async_materialize_restore(
+        tx.hass, tx.entry, tx.subentry, tx.imported
+    )
+    assert preview["selected_sections"] == [transfer.SECTION_KNOWLEDGE]
+    await tx.restore()
+    assert tx.writes == [("knowledge",)]
+    assert tx.subentry.data["azure_model"] == "old-deployment"
+
+
+async def test_knowledge_restore_and_journal_replay_skip_unselected_stores(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import knowledge, memory
+
+    real_managers = restore_recovery._durable_managers
+    real_snapshot = backup._snapshot_for_restore
+    tx = RestoreHarness(monkeypatch)
+    monkeypatch.setattr(restore_recovery, "_durable_managers", real_managers)
+    monkeypatch.setattr(backup, "_snapshot_for_restore", real_snapshot)
+    library = tx.managers.knowledge
+    library.async_backup_data = AsyncMock(return_value={"sources": []})
+    monkeypatch.setattr(knowledge, "async_get_knowledge", AsyncMock(return_value=library))
+    unavailable = AsyncMock(side_effect=OSError("unselected storage unavailable"))
+    monkeypatch.setattr(memory, "async_get_memory", unavailable)
+
+    await tx.restore()
+    assert tx.writes == [("knowledge",)]
+
+    selected = replace(tx.state, journaled_sections=frozenset({"knowledge"}))
+
+    async def recover():
+        with tx.gate.recovery_work():
+            managers = await restore_recovery._recovery_managers(
+                tx.hass, tx.entry.entry_id, tx.subentry.subentry_id, selected
+            )
+            assert managers.knowledge is library
+            assert managers.memory is None
+
+    await agent_maintenance._async_run_exclusive_operation(tx.gate, recover)
+    unavailable.assert_not_awaited()

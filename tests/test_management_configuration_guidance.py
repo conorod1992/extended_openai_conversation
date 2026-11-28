@@ -100,3 +100,19 @@ async def test_management_leaves_invalid_validation_untouched(hass, management_a
     assert result["valid"] is False
     assert "configuration_guidance" not in result
     hass.config_entries.async_update_subentry.assert_not_called()
+
+
+def test_disabled_web_search_keeps_actual_auto_route():
+    config = agent_config_defaults()
+    config.update(
+        chat_model="gpt-4.1-mini",
+        api_mode="auto",
+        web_search=False,
+        max_function_calls_per_conversation=0,
+        continue_conversation="never",
+    )
+    guidance = configuration_guidance_snapshot({}, config)
+    assert guidance["effective_api_mode"] == "chat_completions"
+    assert guidance["web_search"]["available"] is True
+    config["web_search"] = True
+    assert configuration_guidance_snapshot({}, config)["effective_api_mode"] == "responses"

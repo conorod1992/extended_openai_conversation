@@ -19,7 +19,9 @@ MAX_COMPOSITE_DEPTH = 32
 MAX_COMPOSITE_FUNCTIONS = 256
 
 
-def _validate_resources(config: dict[str, Any]) -> None:
+def _validate_resources(
+    config: dict[str, Any], *, require_available: bool = False
+) -> None:
     """Bound the tree before recursive schema copying or any side effect."""
     stack: list[tuple[Any, int, frozenset[int]]] = [(config, 0, frozenset())]
     count = 0
@@ -34,7 +36,17 @@ def _validate_resources(config: dict[str, Any]) -> None:
             raise HomeAssistantError(
                 "Composite function contains a recursive configuration"
             )
-        if not isinstance(node, dict) or node.get("type") != "composite":
+        if not isinstance(node, dict):
+            continue
+        if (
+            require_available
+            and node.get("type") == "bash"
+            and node.get("allow_unsafe_shell") is not True
+        ):
+            raise HomeAssistantError(
+                "Composite contains a Bash function without its required acknowledgement"
+            )
+        if node.get("type") != "composite":
             continue
         sequence = node.get("sequence", [])
         sequence = sequence if isinstance(sequence, list) else [sequence]
@@ -46,6 +58,15 @@ def _validate_resources(config: dict[str, Any]) -> None:
             stack.extend(
                 (child, depth + 1, ancestors | {id(node)}) for child in sequence
             )
+
+
+def composite_backends_available(config: dict[str, Any]) -> bool:
+    """Check deterministic backend availability before a composite is advertised."""
+    try:
+        _validate_resources(config, require_available=True)
+    except HomeAssistantError:
+        return False
+    return True
 
 
 class CompositeFunction(Function):
@@ -108,7 +129,7 @@ class CompositeFunction(Function):
 
         # Preflight every child before allowing any earlier child to execute.
         # Bound the authored tree before deepcopy can recurse into it.
-        _validate_resources(function_config)
+        _validate_resources(function_config, require_available=True)
         function_config = self.validate_schema(deepcopy(function_config))
         sequence = function_config["sequence"]
         if not sequence:

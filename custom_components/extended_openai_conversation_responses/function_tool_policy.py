@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
-from .built_in_functions import BUILT_IN_FUNCTION_PRESETS
 from .const import FUNCTION_GROUP_LOADER_TOOL_NAME
 
 FUNCTION_TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -52,6 +51,10 @@ _RUNTIME_FUNCTION_TOOLS: dict[str, dict[str | None, _RuntimeFunctionTool]] = {
         "update": _RuntimeFunctionTool("memory_update"),
         "delete": _RuntimeFunctionTool("memory_delete"),
     },
+    "scheduled_actions": {
+        "list": _RuntimeFunctionTool("list_scheduled_actions", read_only=True),
+        "cancel": _RuntimeFunctionTool("cancel_scheduled_action"),
+    },
     "temporary_memory": {
         "add": _RuntimeFunctionTool("temporary_memory_add"),
         "update": _RuntimeFunctionTool("temporary_memory_update"),
@@ -73,9 +76,18 @@ RESERVED_FUNCTION_TOOL_NAMES = frozenset(
     }
 )
 
-# Keep native validation tied to the same catalogue that populates the management UI.
+# Native validation includes legacy implementations independently of the picker.
 NATIVE_FUNCTION_IMPLEMENTATIONS = frozenset(
-    preset["implementation"] for preset in BUILT_IN_FUNCTION_PRESETS
+    {
+        "add_automation",
+        "execute_service",
+        "execute_service_single",
+        "get_energy",
+        "get_history",
+        "get_statistics",
+        "get_user_from_user_id",
+        "send_broadcast",
+    }
 )
 
 # Configured native tools can use custom names. Trust these implementations by

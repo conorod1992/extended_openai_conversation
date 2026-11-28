@@ -45,6 +45,6 @@ Do not rely on historical claims that shell commands are fully sandboxed: review
 
 Install repository examples by copying the complete Skill directory into Home Assistant's Skills directory and running **Reload skills**. See [Discover and install Skills](discover-skills.md).
 
-After manually adding or editing files, use the `extended_openai_conversation_responses.reload_skills` action. Then enter its directory name for the intended agent in **Extended OpenAI → Capabilities → Web search & Skills** and save. Only selected, installed Skills with an available `load_skill` Function Tool are offered to the model.
+After adding or editing files, open **Extended OpenAI → Capabilities → Web search & Skills** and select **Reload Skills** under **Installed Skills**. Enter the Skill's directory name for the intended agent and save. The `extended_openai_conversation_responses.reload_skills` action is also available for scripts and automations. Only selected, installed Skills with an available `load_skill` Function Tool are offered to the model.
 
 See [Skills](../features/skills.md) for live availability and dependency behavior.

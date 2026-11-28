@@ -6,6 +6,10 @@
       "required": true,
       "kind": "string"
     },
+    "action_id": {
+      "required": false,
+      "kind": "string"
+    },
     "active_from": {
       "required": false,
       "kind": "string"

@@ -952,6 +952,21 @@ def _session(
     )
 
 
+def test_date_range_preview_orders_different_offsets_by_absolute_instant():
+    older = replace(_session("older"), last_message_at="2026-10-25T01:45:00+01:00")
+    newer = replace(_session("newer"), last_message_at="2026-10-25T01:15:00+00:00")
+    preview = archive_module._describe_date_range_deletion(
+        [older, newer],
+        {},
+        _parse_time("2026-10-25T00:00:00+00:00"),
+        _parse_time("2026-10-26T00:00:00+00:00"),
+    )
+    assert [session["session_id"] for session in preview["sessions"]] == [
+        "newer",
+        "older",
+    ]
+
+
 def _turn(
     session_id: str = "session-1",
     *,
@@ -1761,6 +1776,18 @@ async def test_partial_initialize_retry_publishes_one_complete_generation(
 
     storage.async_load_partition = fail_once
     archive = ConversationArchive(storage, "agent-1")
+    if failure is OSError:
+        await archive.async_initialize()
+        assert archive.initialized
+        assert archive._repair_required
+        assert sum(len(turns) for turns in archive._turns.values()) == 2
+        with pytest.raises(ValueError, match="storage needs repair"):
+            await archive.async_backup_data()
+        assert len(storage.partitions) == 3
+        fresh = ConversationArchive(storage, "agent-1")
+        await fresh.async_initialize()
+        assert len((await fresh.async_backup_data())["turns"]) == 3
+        return
     with pytest.raises(failure):
         await archive.async_initialize()
     assert not archive._initialized
@@ -2046,3 +2073,28 @@ async def test_enabling_household_retention_starts_future_boundary(private):
         )
         assert archive.stats()["turn_count"] == 1
     assert "private old content" not in str(storage.metadata) + str(storage.partitions)
+
+
+async def test_archive_turn_sequence_stays_within_native_storage_range():
+    from homeassistant.helpers.json import json_bytes
+    from homeassistant.util.json import json_loads
+
+    largest = (1 << 64) - 1
+    session = _session()
+    turn = replace(_turn(), sequence=largest)
+    raw = json_loads(json_bytes({"sessions": [asdict(session)], "turns": [asdict(turn)]}))
+    sessions, turns = ConversationArchive.validate_backup_data(raw, "agent-1")
+    assert turns[0].sequence == largest
+    raw["turns"][0]["sequence"] = largest + 1
+    with pytest.raises(ValueError):
+        ConversationArchive.validate_backup_data(raw, "agent-1")
+
+    archive = await _archive()
+    await archive.async_replace_backup(sessions, turns)
+    before = await archive.async_backup_data()
+    with pytest.raises(ValueError, match="sequence exceeds storage capacity"):
+        await archive.async_record_turn(
+            session.session_id, run_id=None, user_text="input",
+            assistant_text="output", successful=True,
+        )
+    assert await archive.async_backup_data() == before

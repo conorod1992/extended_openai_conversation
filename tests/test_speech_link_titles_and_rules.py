@@ -347,3 +347,66 @@ def test_malformed_destinations_preserve_later_short_titled_link(prose_chars, ma
         _final_whitespace_cleanup(StreamingSpeechSanitizer().process_complete(source))
         == expected
     )
+
+
+@pytest.mark.parametrize("urls", [False, True])
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("First\r\n---\r\nSecond", "First\r\nSecond"),
+        ("See [![diagram](https://example.com/image.png)](https://example.com/page) next.", "See next."),
+        (r"\([label](https://example.com)\)", "(label)"),
+        (r"\(![diagram](https://example.com/image.png)\)", "()"),
+        ("Before " + chr(96) + " unfinished\n\n# Heading\n\n**Bold**", "Before " + chr(96) + " unfinished\nHeading\nBold"),
+    ],
+)
+def test_link_and_paragraph_boundaries_at_every_split(source, expected, urls):
+    text = StreamingSpeechSanitizer(urls=urls).process_complete(source)
+    assert _final_whitespace_cleanup(text) == expected
+    assert _stream(source, urls=urls) == expected
+    for split in range(len(source) + 1):
+        assert _stream(source, split, urls=urls) == expected, split
+
+
+@pytest.mark.parametrize("quote", [">", "> >"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_inline_code_stops_at_a_blank_blockquote_line(quote, newline):
+    tick = chr(96)
+    source = newline.join(
+        [
+            f"{quote} {tick}unfinished",
+            quote,
+            f"{quote} https://example.com {tick}x > y{tick}",
+        ]
+    )
+    completed = _final_whitespace_cleanup(
+        StreamingSpeechSanitizer().process_complete(source)
+    )
+    assert completed.replace("\r\n", "\n") == f"{tick}unfinished\nx > y"
+    assert _stream(source) == completed
+    for split in range(len(source) + 1):
+        assert _stream(source, split) == completed, split
+
+
+@pytest.mark.parametrize("width", [1, 2, 3, 4])
+def test_inline_code_after_an_escaped_backtick_uses_the_remaining_delimiter(width):
+    tick = chr(96)
+    delimiters = tick * width
+    literal = "**literal**  https://example.com"
+    source = f"Use {chr(92)}{tick}{delimiters}{literal}{delimiters} then **Done**."
+    expected = f"Use {tick}{literal} then Done."
+    completed = StreamingSpeechSanitizer().process_complete(source)
+    assert _final_whitespace_cleanup(completed) == expected
+    sanitizer = StreamingSpeechSanitizer()
+    assert (
+        "".join(sanitizer.feed(char) for char in source) + sanitizer.finish()
+        == expected
+    )
+    for split in range(len(source) + 1):
+        sanitizer = StreamingSpeechSanitizer()
+        actual = (
+            sanitizer.feed(source[:split])
+            + sanitizer.feed(source[split:])
+            + sanitizer.finish()
+        )
+        assert actual == expected, split

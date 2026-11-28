@@ -10,6 +10,7 @@ import voluptuous as vol
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
     async_discover,
+    preview_context,
     reference_key,
 )
 from homeassistant.core import Context, HomeAssistant
@@ -280,3 +281,202 @@ async def test_public_assist_stops_after_ha_tool_loses_acknowledgement(
     result = await _say(hass, agent, "Call the test action")
     assert "may have taken effect" in _speech(result, successful=False)
     assert len(sent) == len(tool.calls) == 1
+
+
+@pytest.mark.parametrize("prefer_eoai", [False, True])
+async def test_real_ha_assist_timer_schema_and_dispatch_preserve_ordinary_timers(
+    hass, prefer_eoai
+):
+    """Use the supported HA version's actual Assist tool and timer manager."""
+    from unittest.mock import Mock
+
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        new_reference_tool,
+    )
+    from custom_components.extended_openai_conversation_responses.local_intents import (
+        CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
+    )
+    from homeassistant.components.intent import timers
+    from homeassistant.setup import async_setup_component
+
+    assert await async_setup_component(hass, "conversation", {})
+    assert await async_setup_component(hass, "intent", {})
+    event = Mock()
+    device_id = "test-timer-device"
+    unregister = timers.async_register_timer_handler(hass, device_id, event)
+    manager = hass.data[timers.TIMER_DATA]
+    try:
+        source = await async_discover(
+            hass, preview_context(hass, None, device_id=device_id)
+        )
+        key, native = next(
+            (key, live)
+            for key, live in source.tools.items()
+            if live.reference["api_id"] == llm.LLM_API_ASSIST
+            and live.reference["tool_name"] in {"HassStartTimer", "intent__HassStartTimer"}
+        )
+        saved = new_reference_tool(native.reference, set())
+        assert saved["spec"]["name"] != native.tool.name
+        native_properties = set(native.spec["parameters"]["properties"])
+        native_parameters = native.tool.parameters
+        snapshot = source.with_delayed_action_preference(
+            {CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI: prefer_eoai},
+        )
+        properties = set(
+            snapshot.project([saved])[0]["spec"]["parameters"]["properties"]
+        )
+        assert properties == native_properties - (
+            {"conversation_command"} if prefer_eoai else set()
+        )
+        assert set(native.spec["parameters"]["properties"]) == native_properties
+        assert native.tool.parameters is native_parameters
+
+        live = snapshot.tools[key]
+
+        def timer_call(**extra):
+            return llm.ToolInput(
+                id="timer",
+                tool_name=saved["spec"]["name"],
+                tool_args={"minutes": 1, **extra},
+            )
+
+        if prefer_eoai:
+            with pytest.raises(HomeAssistantError, match="ordinary timers"):
+                await live.async_call(timer_call(conversation_command="turn the light off"))
+            assert not manager.timers
+        elif "conversation_command" in native_properties:
+            await live.async_call(timer_call(conversation_command="turn the light off"))
+
+        if "conversation_command" not in native_properties:
+            schedule_key, schedule_tool = next(
+                (key, tool)
+                for key, tool in source.tools.items()
+                if tool.is_native_delayed_command
+            )
+            saved_schedule = new_reference_tool(schedule_tool.reference, set())
+            command_call = llm.ToolInput(
+                id="schedule",
+                tool_name=saved_schedule["spec"]["name"],
+                tool_args={"minutes": 1, "command": "turn the light off"},
+            )
+            assert command_call.tool_name != schedule_tool.tool.name
+            assert (
+                snapshot.project([saved_schedule])[0]["ha_available"] is not prefer_eoai
+            )
+            if prefer_eoai:
+                assert schedule_key not in snapshot.tools
+                with pytest.raises(
+                    HomeAssistantError, match="Use an EOAI Function Tool"
+                ):
+                    await schedule_tool.restrict_delayed_commands().async_call(
+                        command_call
+                    )
+            else:
+                await snapshot.tools[schedule_key].async_call(command_call)
+
+        assert [timer.conversation_command for timer in manager.timers.values()] == (
+            [] if prefer_eoai else ["turn the light off"]
+        )
+        with pytest.raises(HomeAssistantError, match="requested schema"):
+            await live.async_call(timer_call(minutes=-1))
+        event.assert_not_called()
+        await live.async_call(timer_call())
+        event.assert_called_once()
+        assert event.call_args.args[0] == timers.TimerEventType.STARTED
+    finally:
+        try:
+            async_cancel_timer = getattr(manager, "async_cancel_timer", None)
+            for timer_id in tuple(manager.timers):
+                if async_cancel_timer is None:
+                    manager.cancel_timer(timer_id)
+                else:
+                    await async_cancel_timer(timer_id)
+        finally:
+            unregister()
+
+
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("recovery", [False, True])
+@pytest.mark.parametrize(
+    "arguments", ["null", "42", "true", '"conversation_command"', "[]"]
+)
+async def test_real_ha_timer_handles_non_object_provider_arguments(
+    hass, monkeypatch, api_mode, recovery, arguments
+):
+    """Settle malformed provider calls without dispatching a native timer."""
+    from unittest.mock import Mock
+
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+        new_reference_tool,
+    )
+    from custom_components.extended_openai_conversation_responses.local_intents import (
+        CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
+    )
+    from homeassistant.components.intent import timers
+    from homeassistant.setup import async_setup_component
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _say, _speech
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _chat_sse_tool_call,
+        _install_wire,
+        _responses_sse_text,
+        _responses_sse_tool_call,
+    )
+
+    assert await async_setup_component(hass, "conversation", {})
+    assert await async_setup_component(hass, "intent", {})
+    device_id = "test-timer-device"
+    event = Mock()
+    unregister = timers.async_register_timer_handler(hass, device_id, event)
+    try:
+        source = await async_discover(
+            hass, preview_context(hass, None, device_id=device_id)
+        )
+        native = next(
+            live
+            for live in source.tools.values()
+            if live.reference["api_id"] == llm.LLM_API_ASSIST
+            and live.reference["tool_name"]
+            in {"HassStartTimer", "intent__HassStartTimer"}
+        )
+        saved = new_reference_tool(native.reference, set())
+        alias = saved["spec"]["name"]
+        agent = await _agent(
+            hass,
+            api_mode=api_mode,
+            functions=[saved],
+            function_tool_error_recovery=recovery,
+            **{CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI: True},
+        )
+        responses = api_mode == "responses"
+        tool_frame = _responses_sse_tool_call if responses else _chat_sse_tool_call
+        text_frame = _responses_sse_text if responses else _chat_sse_text
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            [
+                tool_frame("invalid-timer", alias, raw_arguments=arguments),
+                text_frame("Please give a valid timer duration."),
+            ],
+        )
+        result = await _say(
+            hass, agent, "Try calling the timer tool", device_id=device_id
+        )
+        if recovery:
+            assert len(wire.requests) == 1
+            error = _speech(result, successful=False)
+        else:
+            assert len(wire.requests) == 2
+            assert _speech(result) == "Please give a valid timer duration."
+            body = wire.requests[1]["body"]
+            error = next(
+                item["output" if responses else "content"]
+                for item in body["input" if responses else "messages"]
+                if item.get("call_id" if responses else "tool_call_id") == "invalid-timer"
+                and (not responses or item["type"] == "function_call_output")
+            )
+        assert "arguments do not match the requested schema" in error
+        assert not hass.data[timers.TIMER_DATA].timers
+        event.assert_not_called()
+    finally:
+        unregister()

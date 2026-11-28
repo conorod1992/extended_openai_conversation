@@ -97,10 +97,16 @@ async def test_export_chunk_streams_archive_and_enforces_agent_identity(
         await backup_transfer._discard_export(hass, session.session_id)
 
 
+@pytest.mark.parametrize("shortens_retention", [False, True])
 async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
-    hass, monkeypatch
+    hass, monkeypatch, shortens_retention
 ) -> None:
-    """Inspection is non-consuming, while restore consumes the completed upload."""
+    """An upload is consumed only after preview and any required confirmation."""
+    section = (
+        transfer.SECTION_CONFIGURATION
+        if shortens_retention
+        else transfer.SECTION_PERSISTENT_MEMORY
+    )
     monkeypatch.setattr(backup_transfer, "BACKUP_CHUNK_BYTES", 4)
     started = await backup_transfer._start_import(
         hass,
@@ -123,10 +129,11 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
             },
         )
 
-    prepared = SimpleNamespace(available_sections=frozenset({"memory"}))
+    prepared = SimpleNamespace(available_sections=frozenset({section}))
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(subentry_id="agent-1")
     load_calls = 0
+    applied = []
 
     async def load_prepared(_hass, path, kind, target_subentry_id, **_kwargs):
         nonlocal load_calls
@@ -136,9 +143,14 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert target_subentry_id == "agent-1"
         return prepared
 
-    async def current_snapshot(*_args, include_usage=True, capture_usage_revision=False):
+    async def current_snapshot(*_args, include_usage, capture_usage_revision, sections):
         assert not include_usage
         assert capture_usage_revision
+        assert sections == (
+            frozenset({"request_rules"})
+            if shortens_retention
+            else frozenset({"memories"})
+        )
         return object()
 
     async def materialize(
@@ -154,10 +166,13 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert actual_entry is entry
         assert actual_subentry is subentry
         assert actual_prepared is prepared
-        assert sections == frozenset({"memory"})
+        assert sections == frozenset({section})
         assert current_snapshot is not None
         assert archive_retention_at is None
-        return object(), {"changes": 1, "selected_sections": ["memory"]}
+        preview = {"changes": 1, "selected_sections": [section]}
+        if shortens_retention:
+            preview["shortened_usage_retention"] = {"usage_request_retention_days": 7}
+        return object(), preview
 
     async def restore(
         _hass, actual_entry, actual_subentry, actual_prepared, *, sections, precondition,
@@ -166,11 +181,13 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert actual_entry is entry
         assert actual_subentry is subentry
         assert actual_prepared is prepared
-        assert sections == ["memory"]
-        assert not confirm_retention
+        assert sections == [section]
         assert provider_connection is expected_provider_data is None
         assert archive_retention_at is None
         await precondition()
+        if shortens_retention and not confirm_retention:
+            raise backup.BackupError(transfer.CONFIRM_SHORTER_USAGE_RETENTION)
+        applied.append(confirm_retention)
         return {"restored": True}
 
     monkeypatch.setattr(backup_transfer, "_async_load_prepared_restore", load_prepared)
@@ -210,29 +227,34 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         hass,
         "entry-1",
         "agent-1",
-        {"session_id": session_id, "sections": ["memory"]},
+        {"session_id": session_id, "sections": [section]},
     )
     assert inspection["prepared"] is True
     assert inspection["preview"]["changes"] == 1
-    assert inspection["preview"]["selected_sections"] == ["memory"]
+    assert inspection["preview"]["selected_sections"] == [section]
     assert inspection["preview"]["user_scope_mapping"]["missing_source_user_ids"] == []
     assert isinstance(inspection["preview_token"], str)
     assert session_id in backup_transfer._imports(hass)
     assert os.path.exists(staged_path)
 
-    restored = await backup_transfer._restore_import(
-        hass,
-        entry,
-        subentry,
-        {
-            "session_id": session_id,
-            "sections": ["memory"],
-            "preview_token": inspection["preview_token"],
-        },
-    )
+    request = {
+        "session_id": session_id,
+        "sections": [section],
+        "preview_token": inspection["preview_token"],
+    }
+    if shortens_retention:
+        with pytest.raises(backup.BackupError, match="Confirm applying shorter Usage"):
+            await backup_transfer._restore_import(hass, entry, subentry, request)
+        assert session_id in backup_transfer._imports(hass)
+        assert os.path.exists(staged_path)
+        assert applied == []
+        request["confirm_retention"] = True
+
+    restored = await backup_transfer._restore_import(hass, entry, subentry, request)
 
     assert restored == {"restored": True}
-    assert load_calls == 2
+    assert applied == [shortens_retention]
+    assert load_calls == 2 + shortens_retention
     assert session_id not in backup_transfer._imports(hass)
     assert not os.path.exists(staged_path)
 

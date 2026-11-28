@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, UnsupportedStorageVersionError
 
 from .agent_config import (
@@ -27,18 +27,23 @@ from .const import (
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
-    FUNCTION_GROUP_LOADER_TOOL_NAME,
     SUBSYSTEM_STATUS_KEY,
     TEMPORARY_MEMORY_OFF,
 )
-from .function_groups import admit_function_group_loader, assemble_function_tools
+from .function_groups import (
+    FunctionGroupSession,
+    FunctionToolAdmission,
+    assemble_function_tools,
+    is_function_group_loader,
+    load_function_groups,
+    skill_loader_reachable,
+)
 from .guest_function_tools import filter_guest_tools_and_groups
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
-from .ha_llm_tools import ToolSnapshot, async_discover
+from .ha_llm_tools import ToolSnapshot, async_discover, preview_context
 from .helpers import get_exposed_entities
 from .knowledge import get_loaded_knowledge
 from .memory import get_loaded_memory, memory_enabled
-from .model_payload import count_model_function_tools
 from .prompt import render_effective_prompt
 from .request import (
     assemble_integration_function_tools,
@@ -165,7 +170,11 @@ async def async_preview_effective_request(
         guest_policy.knowledge_access
         and options.get(CONF_KNOWLEDGE_ENABLED)
         and optional_manager_ready(knowledge)
-        and knowledge.source_count > 0
+        and (
+            knowledge.source_count > 0
+            if guest_policy.knowledge_source_ids is None
+            else knowledge.has_enabled_sources(guest_policy.knowledge_source_ids)
+        )
     )
     if (
         guest_policy.knowledge_access
@@ -184,19 +193,12 @@ async def async_preview_effective_request(
         references = ha_tool_discovery_references(configured_tools, groups, options)
         ha_snapshot = ToolSnapshot()
         if references and not guest_policy.guest_active:
-            from homeassistant.helpers import llm
-
             ha_snapshot = await async_discover(
                 hass,
-                llm.LLMContext(
-                    platform=DOMAIN,
-                    context=Context(user_id=user_id),
-                    language=hass.config.language,
-                    assistant="conversation",
-                    device_id=None,
-                ),
+                preview_context(hass, user_id, subentry_id=subentry.subentry_id),
                 references,
             )
+        ha_snapshot = ha_snapshot.with_delayed_action_preference(options)
         configured_tools = ha_snapshot.project(configured_tools)
         exposed_entities = get_exposed_entities(hass)
         if guest_policy.guest_active:
@@ -223,22 +225,6 @@ async def async_preview_effective_request(
                 if grouped.available_on_demand_groups
                 else grouped.tools
             )
-        preview = render_effective_prompt(
-            hass,
-            options,
-            exposed_entities=exposed_entities,
-            current_device_id=None,
-            user_input=None,
-            skills=skills if guest_policy.skills else [],
-            memories=None,
-            temporary_memories=temporary_memories,
-            knowledge_available=knowledge_available,
-            guest_policy=guest_policy,
-            memory_scope_available=memory_available,
-            temporary_scope_available=temporary_available,
-            archive_available=archive_available,
-            archive_session_available=archive_session_available,
-        )
         configured_names = {
             tool.get("spec", {}).get("name")
             for tool in configured_tools
@@ -254,12 +240,14 @@ async def async_preview_effective_request(
             archive_session_available=archive_session_available,
             guest_policy=guest_policy,
             lifecycle_active=True,
+            scheduled_action_owner_available=bool(user_id),
         )
         conditional_continue = (
             options.get(CONF_CONTINUE_CONVERSATION, DEFAULT_CONTINUE_CONVERSATION)
             == CONTINUE_CONVERSATION_CONDITIONAL
         )
-        if not function_call_budget_available(options):
+        budget_available = function_call_budget_available(options)
+        if not budget_available:
             integration_tools = []
 
         provider = build_provider_request_snapshot(
@@ -273,13 +261,61 @@ async def async_preview_effective_request(
         formatted_provider = (
             list(provider.provider_tools) if guest_policy.web_search else []
         )
-        admitted_grouped_tools = admit_function_group_loader(
-            grouped.tools,
-            provider.tool_limit,
-            extra_tool_count=count_model_function_tools(integration_tools)
-            + int(conditional_continue)
-            + len(formatted_provider),
+        admission = FunctionToolAdmission(
+            max_tools=provider.tool_limit,
+            extra_tool_count=int(conditional_continue) + len(formatted_provider),
+            function_calls_available=budget_available,
         )
+        admitted_tools = admission.admit([*grouped.tools, *integration_tools])
+
+        def can_load_skill_group(group_id: str) -> bool:
+            with effective_tool_runtime_scope(
+                options, availability_tools, skill_manager, availability_groups
+            ):
+                result = load_function_groups(
+                    FunctionGroupSession("preview", 0),
+                    [group_id],
+                    groups,
+                    configured_tools,
+                    admission=admission,
+                    integration_tools=integration_tools,
+                )
+            return result.get("status") == "success"
+
+        reachable = bool(
+            skills
+            and guest_policy.skills
+            and skill_loader_reachable(
+                admitted_tools,
+                admission,
+                lambda: groups,
+                can_load_skill_group,
+            )
+        )
+        preview = render_effective_prompt(
+            hass,
+            options,
+            exposed_entities=exposed_entities,
+            current_device_id=None,
+            user_input=None,
+            skills=skills if reachable else [],
+            memories=None,
+            temporary_memories=temporary_memories,
+            knowledge_available=knowledge_available,
+            guest_policy=guest_policy,
+            memory_scope_available=memory_available,
+            temporary_scope_available=temporary_available,
+            archive_available=archive_available,
+            archive_session_available=archive_session_available,
+        )
+        admitted_ids = {id(tool) for tool in admitted_tools}
+        if any(id(tool) not in admitted_ids for tool in integration_tools):
+            notes.append(
+                "The provider tool limit leaves no room for the Scheduled Actions tools."
+            )
+        admitted_grouped_tools = [
+            tool for tool in grouped.tools if id(tool) in admitted_ids
+        ]
         if len(admitted_grouped_tools) < len(grouped.tools):
             notes.append(
                 "The provider tool limit leaves no slot for the Function Group loader."
@@ -287,15 +323,13 @@ async def async_preview_effective_request(
         custom_tools = [
             tool
             for tool in admitted_grouped_tools
-            if tool.get("spec", {}).get("name") != FUNCTION_GROUP_LOADER_TOOL_NAME
+            if not is_function_group_loader(tool)
         ]
         loader_tools = [
-            tool
-            for tool in admitted_grouped_tools
-            if tool.get("spec", {}).get("name") == FUNCTION_GROUP_LOADER_TOOL_NAME
+            tool for tool in admitted_grouped_tools if is_function_group_loader(tool)
         ]
         request_tools = request_function_tools(
-            [*admitted_grouped_tools, *integration_tools],
+            admitted_tools,
             conditional_continue=conditional_continue,
         )
         formatted_custom = format_function_tools(custom_tools, provider.api_mode)

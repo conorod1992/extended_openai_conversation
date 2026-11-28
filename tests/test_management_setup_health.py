@@ -59,11 +59,16 @@ def test_default_facts_are_side_effect_free_and_descriptive(monkeypatch) -> None
     assert facts["provider_runtime"]["configured_api_mode"] == "auto"
     assert facts["prompt_state"] == "starter"
     assert facts["exposed_entity_count"] == 1
-    assert facts["memory"] == {"mode": "off", "available": True}
+    assert facts["memory"] == {
+        "mode": "off", "available": True, "failed": False,
+        "repair_required": False, "keyword_fallback": False,
+    }
     assert facts["knowledge"] == {
         "enabled": False,
         "source_count": 0,
         "available": True,
+        "failed": False,
+        "repair_required": False,
     }
     assert facts["web_search"]["enabled"] is False
     assert facts["can_manage"] is True

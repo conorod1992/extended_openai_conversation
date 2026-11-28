@@ -67,6 +67,7 @@ def test_required_nullable_and_annotation_data_keep_policy():
         "type": "object",
         "properties": {"note": {"type": ["string", "null"]}},
         "required": ["note"],
+        "additionalProperties": False,
         "default": {"properties": {"ignored": {"type": "string"}}},
     }
     source = tool(schema)

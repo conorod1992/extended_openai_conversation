@@ -36,7 +36,7 @@ from .management_result_limits import (
     page_metadata,
 )
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
-from .usage import UsageRun
+from .usage import UsageRun, add_usage_counts, is_usage_count
 
 MAX_MANAGEMENT_HISTORY_OFFSET = 10_000
 
@@ -57,18 +57,14 @@ def _bounded_mapping(
     omitted_total = 0
     for raw_key, raw_amount in value.items():
         key = str(raw_key)
-        amount = (
-            raw_amount
-            if isinstance(raw_amount, int) and not isinstance(raw_amount, bool)
-            else 0
-        )
+        amount = raw_amount if is_usage_count(raw_amount) else 0
         if key in result:
-            result[key] += max(0, amount)
+            result[key] = add_usage_counts(result[key], amount)
         elif len(result) < max_keys:
-            result[key] = max(0, amount)
+            result[key] = amount
         else:
             omitted_contributions += 1
-            omitted_total += max(0, amount)
+            omitted_total = add_usage_counts(omitted_total, amount)
     return result, {
         "returned": len(result),
         "has_more": omitted_contributions > 0,
@@ -283,20 +279,17 @@ def usage_breakdowns(
             field_meta = metadata[output_key]
             for raw_key, raw_amount in values.items():
                 key = str(raw_key)
-                amount = (
-                    raw_amount
-                    if isinstance(raw_amount, int) and not isinstance(raw_amount, bool)
-                    else 0
-                )
-                amount = max(0, amount)
+                amount = raw_amount if is_usage_count(raw_amount) else 0
                 if key in bucket:
-                    bucket[key] += amount
+                    bucket[key] = add_usage_counts(bucket[key], amount)
                 elif len(bucket) < MANAGEMENT_USAGE_BREAKDOWN_KEYS:
                     bucket[key] = amount
                 else:
                     field_meta["has_more"] = True
                     field_meta["omitted_contributions"] += 1
-                    field_meta["omitted_total"] += amount
+                    field_meta["omitted_total"] = add_usage_counts(
+                        field_meta["omitted_total"], amount
+                    )
     for key, bucket in result.items():
         metadata[key]["returned"] = len(bucket)
     return {**result, "breakdown_meta": metadata}

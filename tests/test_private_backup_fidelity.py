@@ -57,6 +57,7 @@ async def test_unselected_configuration_is_exact_during_selective_restore(
     tx = RestoreHarness(monkeypatch)
     secret = "fabricated-current-password-before\x85after"
     tx.subentry.data = valid_credential_config(tx.subentry.data, secret, quarantined)
+    tx.subentry.data["usage_request_retention_days"] = "15.0"
     before = deepcopy(tx.subentry.data)
     await tx.restore()  # Knowledge only; configuration is unselected.
     assert tx.subentry.data == before
@@ -262,7 +263,7 @@ async def test_private_restore_commits_exact_configuration_without_local_secret(
     tx = RestoreHarness(monkeypatch)
     document = private_document()
     incoming = deepcopy(document["agent"]["config"])
-    tx.subentry.data = {"functions": "[]", "function_groups": []}
+    tx.subentry.data = {"functions": "[]", "function_groups": [], "max_tokens": None}
     artifact = backup.finalize_backup_snapshot(document)["document"]
     await transfer.async_restore_transfer(
         tx.hass,
@@ -290,11 +291,15 @@ async def test_private_provider_restore_precedes_reload_and_preserves_exact_data
     monkeypatch, hass, azure, durable
 ):
     from custom_components.extended_openai_conversation_responses import (
+        helpers,
         restore_recovery,
     )
     from tests.test_selective_restore_concurrency import RestoreHarness
 
     tx = RestoreHarness(monkeypatch)
+    get_http_client = helpers.get_async_client
+    monkeypatch.setattr(helpers, "get_async_client", lambda _: get_http_client(hass))
+    tx.hass.async_add_executor_job = hass.async_add_executor_job
     tx.entry.data = {"api_key": "old-provider"}
     tx.entry.state = ConfigEntryState.NOT_LOADED
     tx.entry.disabled_by = None
@@ -392,15 +397,49 @@ async def test_private_provider_restore_precedes_reload_and_preserves_exact_data
     assert tx.subentry.data == document["agent"]["config"]
 
 
+async def test_restore_rejects_sdk_incompatible_url_before_any_writes(
+    monkeypatch, hass
+):
+    from custom_components.extended_openai_conversation_responses import helpers
+    from homeassistant.helpers.httpx_client import get_async_client
+    from tests.test_selective_restore_concurrency import RestoreHarness
+
+    tx = RestoreHarness(monkeypatch)
+    tx.entry.data = {"api_key": "destination"}
+    tx.entry.state = ConfigEntryState.NOT_LOADED
+    monkeypatch.setattr(helpers, "get_async_client", lambda _: get_async_client(hass))
+    tx.hass.async_add_executor_job = hass.async_add_executor_job
+    original = (deepcopy(tx.entry.data), deepcopy(tx.subentry.data))
+    document = private_document()
+    document["provider_connection"]["base_url"] = "https://[v1.fe]/v1"
+    with pytest.raises(backup.BackupError, match="construct the client"):
+        await transfer.async_restore_transfer(
+            tx.hass,
+            tx.entry,
+            tx.subentry,
+            backup.finalize_backup_snapshot(document)["document"],
+            sections=[transfer.SECTION_CONFIGURATION],
+            provider_connection=document["provider_connection"],
+            expected_provider_data=original[0],
+        )
+    assert (tx.entry.data, tx.subentry.data) == original
+    assert tx.journal.saved == tx.writes == []
+
+
+@pytest.mark.parametrize("previous", [30, False])
 async def test_selective_configuration_restore_requires_confirmation_to_prune_usage(
     monkeypatch,
+    previous,
 ):
     from tests.test_selective_restore_concurrency import RestoreHarness
 
     tx = RestoreHarness(monkeypatch)
     document = private_document()
     field = "usage_request_retention_days"
-    tx.subentry.data[field] = 30
+    tx.subentry.data[field] = previous
+    tx.subentry.data["usage_run_retention_days"] = document["agent"]["config"].get(
+        "usage_run_retention_days", 90
+    )
     document["agent"]["config"][field] = 0
     artifact = transfer.inspect_transfer(
         backup.finalize_backup_snapshot(document)["document"],
@@ -417,7 +456,7 @@ async def test_selective_configuration_restore_requires_confirmation_to_prune_us
         await transfer.async_restore_transfer(
             tx.hass, tx.entry, tx.subentry, artifact, **options
         )
-    assert tx.subentry.data[field] == 30
+    assert tx.subentry.data[field] is previous
     assert tx.writes == []
     await transfer.async_restore_transfer(
         tx.hass, tx.entry, tx.subentry, artifact, confirm_retention=True, **options
@@ -426,6 +465,18 @@ async def test_selective_configuration_restore_requires_confirmation_to_prune_us
     assert tx.writes == [
         ("usage_totals", "usage_daily", "usage_requests", "usage_runs")
     ]
+
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+
+    assert tx.journal.saved[-1]["replaces_usage"] is False
+    tx.journal.data = deepcopy(tx.journal.saved[-1])
+    monkeypatch.setattr(
+        restore_recovery, "_recovery_managers", AsyncMock(return_value=tx.managers)
+    )
+    await restore_recovery.async_recover_pending_restore(tx.hass, tx.entry, tx.subentry)
+    assert restore_recovery.reset_restored_runtime.call_args.args[-1] is False
 
 
 @pytest.mark.parametrize(

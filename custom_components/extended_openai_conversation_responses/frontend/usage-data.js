@@ -17,6 +17,7 @@ export async function loadAllUsageDays(
 ) {
   const rows = [];
   let localRunSummary;
+  let storageWarning;
   let cursor = startDate;
   for (let page = 0; page < maxPages; page += 1) {
     const response = await callPage(cursor, endDate);
@@ -24,7 +25,14 @@ export async function loadAllUsageDays(
     // Only the first page covers the whole requested range.
     if (page === 0) localRunSummary = response?.local_run_summary;
     rows.push(...current);
-    if (response?.has_more === false || current.length < pageSize) return {days: rows, ...(localRunSummary ? {local_run_summary: localRunSummary} : {})};
+    storageWarning ||= response?.storage_warning;
+    if (response?.has_more === false || current.length < pageSize) {
+      return {
+        days: rows,
+        ...(localRunSummary ? {local_run_summary: localRunSummary} : {}),
+        ...(storageWarning ? {storage_warning: storageWarning} : {}),
+      };
+    }
     const lastDate = String(current.at(-1)?.date || "");
     const nextDate = addUsageCalendarDays(lastDate, 1);
     if (!nextDate || nextDate <= cursor || nextDate > endDate) break;

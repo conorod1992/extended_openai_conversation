@@ -56,7 +56,7 @@ export const SETTINGS_INDEX = [
 
   ...settingsFor("capabilities", "home-assistant", [
     ["Use Extended OpenAI local handling", "Try Home Assistant's built-in commands after Request Rules and before AI.", "local home assistant intents prefer handling", "local_intents_enabled", {target:"config-local", format:"boolean"}],
-    ["Send delayed device commands to AI", "Lets deferred Function Tools handle commands such as turning something off later.", "local delayed scheduled deferred commands ai", "local_intent_delayed_commands_to_ai", {target:"config-local", format:"boolean"}],
+    ["Use EOAI for delayed actions", "Use delay-capable Function Tools for delayed commands and keep ordinary Home Assistant timers.", "local delayed scheduled deferred commands ai", "local_intent_delayed_commands_to_ai", {target:"config-local", format:"boolean"}],
     ["Command types sent to AI", "Home Assistant intent types excluded from Extended OpenAI local handling.", "local exclusions intents command types ai", "local_intent_exclusions", {target:"config-local", format:"count", singular:"command type", plural:"command types"}],
   ]),
 

@@ -212,8 +212,8 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
         CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
         CONF_MEMORY_RETRIEVAL_MODE: MEMORY_RETRIEVAL_HYBRID,
         CONF_MEMORY_EMBEDDING_MODEL: "text-embedding-test",
-        CONF_USAGE_REQUEST_RETENTION_DAYS: 14,
-        CONF_USAGE_RUN_RETENTION_DAYS: 45,
+        CONF_USAGE_REQUEST_RETENTION_DAYS: 7,
+        CONF_USAGE_RUN_RETENTION_DAYS: 180,
     }
     entity = _startup_entity(hass, data)
     dependencies = _patch_startup_dependencies(monkeypatch)
@@ -233,8 +233,8 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
     assert entity._archive is dependencies.archive
     assert entity._knowledge is dependencies.knowledge
     assert entity._memory is dependencies.memory
-    assert dependencies.usage.request_retention_days == 14
-    assert dependencies.usage.run_retention_days == 45
+    assert dependencies.usage.request_retention_days == 7
+    assert dependencies.usage.run_retention_days == 180
     dependencies.usage.async_prune_details.assert_awaited_once_with()
     dependencies.archive.async_prune.assert_awaited_once_with(21)
     assert dependencies.memory.set_embedding_provider.call_count == 2
@@ -244,6 +244,7 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
         space_id=dependencies.memory.set_embedding_provider.call_args.kwargs[
             "space_id"
         ],
+        owner=entity,
         retry_identity=ANY,
     )
     assert (
@@ -313,7 +314,7 @@ async def test_agent_startup_isolates_independent_optional_store_failures(
 async def test_agent_startup_keeps_disabled_optional_stores_unopened(
     hass, monkeypatch
 ) -> None:
-    """Default startup avoids retention stores while keeping knowledge readable."""
+    """Default startup avoids loading disabled memory and Knowledge stores."""
     entity = _startup_entity(hass, {})
     dependencies = _patch_startup_dependencies(monkeypatch)
 
@@ -323,7 +324,8 @@ async def test_agent_startup_keeps_disabled_optional_stores_unopened(
     dependencies.memory_getter.assert_not_awaited()
     assert entity._temporary_memory is None
     assert entity._memory is None
-    assert entity._knowledge is dependencies.knowledge
+    assert entity._knowledge is None
+    dependencies.knowledge_getter.assert_not_awaited()
     statuses = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent")]
     assert statuses["temporary_memory"]["status"] == "disabled"
     assert statuses["archive"]["status"] == "disabled"

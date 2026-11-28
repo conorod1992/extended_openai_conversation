@@ -3,6 +3,7 @@ import {readFile} from "node:fs/promises";
 
 import {buildSetupHealth} from "../custom_components/extended_openai_conversation_responses/frontend/overview-health.js";
 import {renderOverview} from "../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js";
+import {enhanceOverviewHealthClarity} from "../custom_components/extended_openai_conversation_responses/frontend/management-overview-health-clarity.js";
 
 const defaultFacts = {
   provider_runtime: {client_loaded: true, provider: "openai", model: "gpt-5-mini"},
@@ -130,7 +131,7 @@ const markup = renderOverview(panel, agent);
 assert.match(markup, /Configuration & health/);
 assert.match(markup, /<summary>Detailed health checks<\/summary>/);
 assert.doesNotMatch(markup, /id="overview-health-details" open/);
-assert.match(markup, /Off by choice/);
+assert.match(markup, /Long-term memory off by choice · Knowledge enabled, no sources/);
 assert.match(markup, /Run live test/);
 assert.match(markup, /data-target="config-api_mode"/);
 assert.match(markup, /<ha-icon icon="mdi:information-outline" aria-hidden="true"><\/ha-icon> Connection tests only run when you start one from Diagnostics\./);
@@ -147,6 +148,24 @@ assert.match(nonAdminMarkup, /Unable to determine/);
 assert.match(nonAdminMarkup, /<strong>Status incomplete<\/strong><span>2 checks unavailable<\/span>/);
 assert.match(nonAdminMarkup, /Connection tests only run when you start one from Diagnostics\./);
 assert.doesNotMatch(nonAdminMarkup, /<button[^>]*class="[^"]*setup-health-action/);
+
+const recovered = renderOverview({
+  ...panel,
+  _result: {
+    ...panel._result,
+    usage: {...panel._result.usage, storage_warning: "Usage totals are volatile"},
+    loading: {knowledge: false, guest_mode: false},
+    load_errors: [{key: "guest_mode", label: "Guest Mode"}],
+  },
+}, {
+  ...agent,
+  metadata_errors: [{key: "knowledge", label: "Knowledge catalogue"}, {key: "memory", label: "Memory metadata"}],
+});
+assert.match(recovered, /Usage totals are volatile/);
+assert.match(recovered, /0 this month/);
+assert.doesNotMatch(recovered, /Knowledge catalogue could not be loaded/);
+assert.match(recovered, /Memory metadata could not be loaded/);
+assert.match(recovered, /Guest Mode could not be loaded/);
 
 const source = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js", import.meta.url),
@@ -180,7 +199,7 @@ assert.match(
   /lookupModelData\(panel, model, "apply"\)/,
   "the Overview apply action must explicitly activate the staged catalogue",
 );
-assert.match(claritySource, /status: "Using bundled data"/);
+assert.match(claritySource, /status: "Using the built-in model catalogue"/);
 assert.match(claritySource, /status: "Current"/);
 assert.match(claritySource, /status: "Check failed"/);
 assert.match(
@@ -193,11 +212,32 @@ assert.match(
   /panel\?\._data\?\.is_admin === false/,
   "the Model Data card should respect the existing admin-only management boundary",
 );
-assert.match(
-  claritySource,
-  /panel\._modelCatalogData\?\.requested_model === model/,
-  "Overview should reuse model data already loaded for the selected model",
-);
+let catalogueReads = 0;
+const overviewVisit = {
+  _page: "overview",
+  _loadToken: 1,
+  _agentId: "agent",
+  _data: {is_admin: true},
+  _selectedAgent: () => ({model: "same-model"}),
+  _hass: {callWS: async () => ({catalog_version: 1, update_available: ++catalogueReads > 1})},
+  shadowRoot: {querySelector: () => null},
+};
+enhanceOverviewHealthClarity(overviewVisit);
+enhanceOverviewHealthClarity(overviewVisit);
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(catalogueReads, 1);
+assert.equal(overviewVisit._modelCatalogData.update_available, false);
+overviewVisit._loadToken++;
+enhanceOverviewHealthClarity(overviewVisit);
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(catalogueReads, 2);
+assert.equal(overviewVisit._modelCatalogData.update_available, true);
+
+const failedSummary = renderOverview({
+  ...panel, _result: {load_errors: [{key: "primary", label: "Overview summary"}]},
+}, agent);
+assert.match(failedSummary, /Retention unavailable/);
+assert.doesNotMatch(failedSummary, /Retention: 30 days/);
 
 
 const overviewEntrySource = await readFile(
@@ -230,3 +270,10 @@ assert.match(degradedMarkup,/Unknown Knowledge sources/);
 assert.match(degradedMarkup,/Knowledge Library could not be loaded/);
 assert.match(degradedMarkup,/Guest Mode could not be loaded/);
 assert.match(degradedMarkup,/data-subsection="home-assistant"/);
+
+
+const budgetDisabledCheck = buildSetupHealth({
+  ...defaultFacts,
+  function_tools: {enabled_count: 3, effective_count: 0, usable_count: 3},
+}).checks.find(check => check.id === "function_tools");
+assert.equal(budgetDisabledCheck.value, "0 functions available");

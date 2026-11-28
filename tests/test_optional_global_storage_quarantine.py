@@ -17,6 +17,45 @@ from custom_components.extended_openai_conversation_responses.quiet_hours_runtim
 from homeassistant.exceptions import HomeAssistantError
 
 
+async def test_failed_provider_setup_withdraws_runtime_without_closing_transport(
+    hass, monkeypatch
+):
+    from custom_components import extended_openai_conversation_responses as integration
+    from custom_components.extended_openai_conversation_responses import agent_deletion
+    from custom_components.extended_openai_conversation_responses import (
+        conversation_archive,
+    )
+
+    entry = SimpleNamespace(
+        entry_id="provider", data={"api_key": "test"}, subentries={}
+    )
+    client = SimpleNamespace(close=AsyncMock())
+    monkeypatch.setattr(integration, "initialize_global_runtime", Mock())
+    monkeypatch.setattr(integration, "async_start_model_catalog_refresh", Mock())
+    monkeypatch.setattr(
+        integration, "async_recover_pending_provider_restore", AsyncMock()
+    )
+    monkeypatch.setattr(
+        integration, "get_authenticated_client", AsyncMock(return_value=client)
+    )
+    monkeypatch.setattr(integration, "_wrap_provider_client", lambda client, *_: client)
+    monkeypatch.setattr(integration, "_async_release_global_effects", AsyncMock())
+    monkeypatch.setattr(integration, "async_unload_templates", AsyncMock())
+    monkeypatch.setattr(agent_deletion, "async_reconcile_with_retry", AsyncMock())
+    monkeypatch.setattr(conversation_archive, "async_start_archive_retention", Mock())
+
+    async def fail_forward(*_):
+        assert entry.runtime_data is client
+        raise RuntimeError("platform setup failed")
+
+    monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", fail_forward)
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", AsyncMock())
+    with pytest.raises(RuntimeError, match="platform setup failed"):
+        await integration.async_setup_entry(hass, entry)
+    assert not hasattr(entry, "runtime_data")
+    client.close.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "raw",
     [
@@ -212,7 +251,7 @@ async def test_optional_corruption_does_not_block_component_or_management_startu
     delayed._store.async_save.assert_not_awaited()
 
 
-async def test_quiet_hours_first_reconcile_failure_fences_callbacks(hass, monkeypatch):
+async def test_quiet_hours_first_reconcile_failure_keeps_recovery_hooks(hass, monkeypatch):
     import custom_components.extended_openai_conversation_responses as integration
     from custom_components.extended_openai_conversation_responses import quiet_hours
     from custom_components.extended_openai_conversation_responses.const import DOMAIN
@@ -233,15 +272,25 @@ async def test_quiet_hours_first_reconcile_failure_fences_callbacks(hass, monkey
 
     await integration._async_activate_global_effects(hass, "loaded-entry")
     assert await quiet_hours.async_get_quiet_hours(hass) is manager
-    assert manager.snapshot()["available"] is False
-    with pytest.raises(HomeAssistantError, match="could not finish initialization"):
-        await manager.async_set_enabled(True)
-    assert not manager._unsubscribers
-    assert manager._timezone_unsubscribe is None
-    assert manager._registry_unsubscribe is None
-    unsubscribe_remaining.assert_called_once()
+    assert not manager.startup_unavailable
+    assert manager.snapshot()["config"]["enabled"] is False
+    assert manager._unsubscribers
+    assert manager._timezone_unsubscribe is not None
+    assert manager._registry_unsubscribe is not None
+    unsubscribe_remaining.assert_not_called()
     manager.async_reconcile.assert_awaited_once()
     manager._store.async_save.assert_not_awaited()
+    manager._async_restore_locked = AsyncMock()
+    from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+
+    on_stop = next(
+        call.args[1]
+        for call in hass.bus.async_listen_once.call_args_list
+        if call.args[0] == EVENT_HOMEASSISTANT_STOP
+    )
+    await on_stop(None)
+    manager._async_restore_locked.assert_awaited_once_with(preserve_released=True)
+    unsubscribe_remaining.assert_called_once()
     intercom_setup.assert_awaited_once()
 
 
@@ -283,3 +332,37 @@ async def test_quiet_hours_getter_cannot_return_retired_generation(hass):
 
     with pytest.raises(HomeAssistantError, match="shutting down"):
         await getter
+
+
+@pytest.mark.parametrize("category", ["memory", "rules", "quiet_hours"])
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_explicit_null_private_store_is_preserved(hass, category, legacy):
+    from pathlib import Path
+
+    from custom_components.extended_openai_conversation_responses.memory import MemoryStore
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRuleStore,
+    )
+
+    if category == "memory":
+        store = MemoryStore(hass, 2, "test_null_memory")
+    elif category == "rules":
+        store = RequestRuleStore(hass, 6, "test_null_rules")
+    else:
+        store = QuietHoursManager(hass)._store
+    path = Path(store.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    await store.async_save(None)
+    if legacy:
+        import json
+
+        envelope = json.loads(path.read_bytes())
+        envelope["version"] -= 1
+        path.write_text(json.dumps(envelope), encoding="utf-8")
+    evidence = path.read_bytes()
+
+    with pytest.raises(ValueError, match="storage needs repair"):
+        await store.async_load()
+    with pytest.raises(ValueError, match="storage needs repair"):
+        await store.async_save({})
+    assert path.read_bytes() == evidence

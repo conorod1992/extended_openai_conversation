@@ -164,11 +164,13 @@ async def _schedule_delayed_call(
         [],
     )
 
-    assert tool_result_data(result) == {"result": "Scheduled"}
     created = set(manager._records) - before
     assert len(created) == 1
     delayed_call_id = created.pop()
     record = manager._records[delayed_call_id]
+    assert tool_result_data(result) == {
+        "result": "Scheduled", "action_id": record.call_id, "scheduled_at": record.due_at,
+    }
     assert record.status == "pending"
     assert record.user_id == user.id
     assert record.device_id == _DEVICE_ID
@@ -208,6 +210,56 @@ async def _wait_for_writer(gate: Any) -> None:
             return
         await asyncio.sleep(0)
     pytest.fail("backup restore never queued for the agent maintenance gate")
+
+
+async def test_restored_legacy_single_service_can_schedule_and_execute(hass, freezer):
+    from tests.helpers import get_function_tool_from_yaml
+
+    agent, manager, user, calls = await _prepare_runtime(hass)
+    tool = get_function_tool_from_yaml("legacy_execute_service_single.yaml")
+    tool["spec"]["name"] = "legacy_hall_control"
+    tool["spec"]["parameters"]["properties"]["delay"] = {
+        "type": "object",
+        "properties": {"seconds": {"type": "integer"}},
+    }
+    snapshot = await backup.async_collect_backup_snapshot(hass, agent.entry, agent.subentry)
+    snapshot["agent"]["config"][CONF_FUNCTION_TOOLS] = [tool]
+    result = await backup.async_restore_backup(
+        hass, agent.entry, agent.subentry, encode_document(snapshot)
+    )
+    assert result["status"] == "restored"
+    await hass.async_block_till_done()
+    agent = conversation.async_get_agent(hass, agent.entry.entry_id)
+    configured = configured_function_tools_from_data(agent.subentry.data)
+    [restored] = configured
+    assert restored["spec"] == tool["spec"]
+    assert restored["function"] == tool["function"]
+
+    result = await agent._execute_function_tool(
+        restored,
+        llm.ToolInput(
+            id="call-legacy-hall",
+            tool_name=tool["spec"]["name"],
+            tool_args={
+                "domain": "light",
+                "service": "turn_off",
+                "service_data": {"entity_id": [_ENTITY_ID]},
+                "delay": {"seconds": 30},
+            },
+            external=True,
+        ),
+        SimpleNamespace(context=Context(user_id=user.id), device_id=_DEVICE_ID),
+        [],
+    )
+    [record] = manager._records.values()
+    assert tool_result_data(result)["action_id"] == record.call_id
+    assert calls == []
+    await _cancel_wall_clock_waiter(manager, record.call_id)
+    freezer.move_to(dt_util.parse_datetime(record.due_at))
+    await _execute_due_under_production_lease(hass, manager, record.call_id)
+    assert [call.data["entity_id"] for call in calls] == [[_ENTITY_ID]]
+    assert calls[0].context.user_id == user.id
+    assert manager._records == {}
 
 
 @pytest.mark.asyncio

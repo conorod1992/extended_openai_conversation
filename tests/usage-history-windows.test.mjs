@@ -120,6 +120,7 @@ const paged = await loadAllUsageDays(async (startDate, endDate) => {
   return {
     days:pagedDays.filter((day) => day.date >= startDate).slice(0, 2),
     local_run_summary:pages.length > 1 ? {count:1, start_date:startDate, end_date:endDate} : null,
+    storage_warning:pages.length === 2 ? "Usage storage is unavailable" : undefined,
   };
 }, {pageSize:2,maxPages:4});
 assert.deepEqual(paged.days.map((day) => day.date), pagedDays.map((day) => day.date));
@@ -127,6 +128,7 @@ assert.deepEqual(pages, [
   ["0000-01-01", "9999-12-31"], ["2026-09-03", "9999-12-31"], ["2026-09-05", "9999-12-31"],
 ]);
 assert.equal(paged.local_run_summary, undefined, "later pages cannot supply a full-range summary");
+assert.equal(paged.storage_warning, "Usage storage is unavailable");
 
 const usageDataImplementation = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-data.js", import.meta.url),

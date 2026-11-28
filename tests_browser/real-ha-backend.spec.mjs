@@ -8,6 +8,21 @@ const backendUrl = process.env.REAL_HA_BACKEND_URL;
 test.skip(!backendUrl, "requires the dedicated genuine Home Assistant backend bridge");
 const realFixtureUrl = (route) => `/tests_browser/real-ha-fixture.html?route=${encodeURIComponent(route)}&backend=${encodeURIComponent(backendUrl)}`;
 
+test("Scheduled Actions cancellation survives a fresh page against genuine HA", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  const url = realFixtureUrl("capabilities/scheduled-actions") + "&bundle=1";
+  await page.goto(url);
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByRole("heading", {name: "Function Tool: browser_scheduled_probe"})).toBeVisible();
+  await expect(panel.getByText("must stay in storage")).toHaveCount(0);
+  await panel.getByRole("button", {name: /Cancel Function Tool: browser_scheduled_probe/}).click();
+  await expect(panel.getByText("Scheduled action cancelled", {exact: true})).toBeVisible();
+  await expectContractCalls(page, "scheduled_actions");
+  await page.goto(url);
+  await expect(panel.getByText("No pending actions for this assistant.")).toBeVisible();
+  await expectHarnessClean(page, pageErrors);
+});
+
 test("shipped frontend keeps hostile stored text literal across mutation and fresh panels", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   const probeRequests = [];

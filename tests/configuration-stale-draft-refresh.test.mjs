@@ -509,3 +509,44 @@ test("clearing a configuration draft retires its model work before the next owne
   assert.equal(host._draftAgentId, null);
   assert.equal(host._configData, null);
 });
+
+
+for (const failure of ["uncertain", "committed", "malformed"]) {
+  test(`a ${failure} ordinary save requires a fresh read and preserves later edits`, async () => {
+    const {host, edit} = panel();
+    const submitted = deferred(), reply = deferred();
+    const calls = [];
+    const prior = structuredClone(host._configData);
+    const saved = {...prior, revision:"r2", config:{...prior.config, prompt:"Submitted prompt"}};
+    host._call = async (section, action, extra) => {
+      assert.equal(section, "configuration");
+      calls.push(action);
+      if (action === "get") return saved;
+      if (calls.length === 1) {
+        assert.equal(extra.revision, "r1");
+        submitted.resolve();
+        return reply.promise;
+      }
+      assert.equal(extra.revision, "r2");
+      assert.deepEqual(extra.config, {prompt:"Saved prompt", temperature:0.5});
+      return {...saved, valid:true, revision:"r3", config:{...saved.config, ...extra.config}};
+    };
+    edit("prompt", "Submitted prompt");
+    const save = saveConfiguration(host, {});
+    await submitted.promise;
+    edit("prompt", "Saved prompt");
+    edit("temperature", 0.5);
+    if (failure === "malformed") reply.resolve({valid:true, config:saved.config});
+    else reply.reject(Object.assign(new Error("Save acknowledgement interrupted"), {mutationOutcome:failure}));
+    await save;
+    assert.deepEqual(calls, ["save"]);
+
+    await saveConfiguration(host, {});
+    assert.deepEqual(calls, ["save", "get"]);
+    assert.equal(host._configData.revision, "r2");
+    assert.equal(host._draft.prompt, "Saved prompt");
+    assert.equal(host._draft.temperature, 0.5);
+    await saveConfiguration(host, {});
+    assert.deepEqual(calls, ["save", "get", "save"]);
+  });
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {fixture, saveConfiguration, discardConfigurationDraft, retainPanelDrafts, restorePanelDrafts, stopDraftRecovery, captureConfigurationSubmission, reconcileConfigurationAcknowledgement} from "./management-ownership-harness.mjs";
-import {voiceMappingDraft, updateVoiceMappingRows, voiceMappingDraftError, voiceMappingDraftDirty, captureVoiceMappingDraft} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
+import {voiceMappingDraft, updateVoiceMappingRows, voiceMappingDraftError, voiceMappingDraftDirty, captureVoiceMappingDraft, rememberVoiceDeviceAliases} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
 
 const mappings={office:"user:owner",living:"shared:household"};
 function setup() {
@@ -60,4 +60,60 @@ for (const failure of ["duplicate","unresolved","pending","empty"]) {
   assert.equal(captureVoiceMappingDraft(panel).length,3,"a full response to a different field cannot consume unfinished rows");
   assert.ok(voiceMappingDraftError(panel));
 }
+{
+  const f=setup();
+  const legacy="assist_satellite.kitchen", canonical="registry-kitchen";
+  for (const record of f.state.records.values()) {
+    record.config.voice_device_mappings = {[legacy]:"user:owner", [canonical]:"unretained"};
+  }
+  const panel=f.create();
+  const rows=structuredClone(voiceMappingDraft(panel).rows);
+  rememberVoiceDeviceAliases(panel,[{entity_id:legacy, device_id:canonical}]);
+  assert.match(voiceMappingDraftError(panel), /assigned more than once/);
+  assert.equal(voiceMappingDraftDirty(panel), false);
+  panel._draft.prompt = "Updated prompt while legacy mappings remain unchanged";
+  panel._syncConfigDirty();
+  await saveConfiguration(panel,{});
+  assert.deepEqual(f.state.writes[0].config, {prompt:panel._draft.prompt});
+  assert.match(voiceMappingDraftError(panel), /assigned more than once/);
+  const [old, current]=rows;
+  assert.match(updateVoiceMappingRows(panel,[old]).error, /reactivate/);
+  assert.deepEqual(panel._draft.voice_device_mappings, {[legacy]:"user:owner", [canonical]:"unretained"});
+  assert.deepEqual(updateVoiceMappingRows(panel,[current]).mapping, {[canonical]:"unretained"});
+  assert.deepEqual(updateVoiceMappingRows(panel,[{...old,deviceId:canonical}]).mapping, {[canonical]:"user:owner"});
+  assert.deepEqual(updateVoiceMappingRows(panel,[]).mapping, {});
+}
+
+for (const registry of ["unknown", "changed", "removed"]) {
+  const f=setup();
+  const legacy="assist_satellite.kitchen", canonical="registry-kitchen";
+  for (const record of f.state.records.values()) {
+    record.config.voice_device_mappings = {[legacy]:"user:owner"};
+  }
+  const panel=f.create();
+  rememberVoiceDeviceAliases(panel,[{entity_id:legacy, device_id:canonical}]);
+  const rows=[...voiceMappingDraft(panel).rows,{id:"alias-row",deviceId:canonical,owner:"unretained"}];
+  assert.match(updateVoiceMappingRows(panel,rows).error, /assigned more than once/);
+  panel._syncConfigDirty();
+  panel.isConnected=false;
+  retainPanelDrafts(panel);
+  const replacement=f.create();
+  replacement._subsection="basics";
+  if (registry === "changed") {
+    rememberVoiceDeviceAliases(replacement,[{entity_id:legacy, device_id:"different-device"}]);
+  } else if (registry === "removed") {
+    rememberVoiceDeviceAliases(replacement,[],{listing:true});
+  }
+  restorePanelDrafts(replacement);
+  if (registry !== "unknown") {
+    assert.equal(voiceMappingDraftError(replacement), "");
+    assert.deepEqual(replacement._draft.voice_device_mappings, {[legacy]:"user:owner", [canonical]:"unretained"});
+  } else {
+    assert.match(voiceMappingDraftError(replacement), /assigned more than once/);
+    await saveConfiguration(replacement,{});
+    assert.equal(f.state.writes.length, 0, "off-route Save must preserve the recovered alias conflict");
+  }
+  stopDraftRecovery(replacement);
+}
+
 console.log("Voice invalid row retention, central save guard, recovery, discard and acknowledgement tests passed");

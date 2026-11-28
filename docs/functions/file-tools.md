@@ -45,27 +45,23 @@ Offsets count Unicode characters, not UTF-8 bytes. `content` contains the return
 ```yaml
 function:
   type: write_file
-  path: "{{ filename }}"
+  path: assistant_summary.txt
   content: "{{ content }}"
-  allow_dir:
-    - "{{ config_dir }}/www/generated"
 ```
 
-`path` and `content` are required templates. Writes use an atomic replacement, preserve the existing file mode where possible, and are rejected if the output exceeds the file-size limit. Avoid allowing model-supplied paths to choose sensitive destinations.
+`path` and `content` are required templates. Writes use an atomic replacement, preserve the existing file mode where possible, and are rejected if the output exceeds the file-size limit. Prefer a fixed filename as shown, or validate any filename the model supplies against an explicit list. For write and edit tools, `allow_dir` adds allowed locations alongside the default integration workspace. The `restrict_to_allow_dir` option is available for reads only.
 
 ## Edit a file
 
 ```yaml
 function:
   type: edit_file
-  path: "{{ filename }}"
+  path: assistant_summary.txt
   old_text: "{{ old_text }}"
   new_text: "{{ new_text }}"
-  allow_dir:
-    - "{{ config_dir }}/automations"
 ```
 
-`path`, `old_text`, and `new_text` are required templates. The expected text must be present. Edits are serialized with other integration writes to the same path, and detected changes to the file version cause a retryable error. A separate program can still change a file between the final version check and replacement, so avoid concurrent external edits. Use a narrow `allow_dir` and clear tool descriptions so the model knows which files may be changed.
+`path`, `old_text`, and `new_text` are required templates. The expected text must be present. Edits are serialized with other integration writes to the same path, and detected changes to the file version cause a retryable error. A separate program can still change a file between the final version check and replacement, so avoid concurrent external edits. If you expose this tool to the model, describe exactly which file it edits.
 
 These tools are not general backups. Review write/edit permissions and keep recovery copies of important configuration files.
 

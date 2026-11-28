@@ -610,6 +610,9 @@ def test_v2_function_on_still_denies_unsafe_native(hass, monkeypatch) -> None:
             "function_groups": [
                 {
                     "id": "safe_group",
+                    "name": "Safe group",
+                    "description": "Guest functions",
+                    "loading_mode": "always",
                     "functions": ["safe", "energy"],
                 }
             ],
@@ -653,6 +656,7 @@ async def test_custom_knowledge_filters_catalog_and_direct_ids() -> None:
     entity.subentry = SimpleNamespace(data={CONF_KNOWLEDGE_ENABLED: True})
     entity._knowledge = SimpleNamespace(
         source_count=2,
+        has_enabled_sources=lambda allowed: "allowed" in allowed,
         resolve_source_filter=lambda source_ids: (None, list(source_ids or [])),
         async_search=AsyncMock(return_value=[{"private": True}]),
         async_catalog=AsyncMock(return_value={"sources": []}),
@@ -1001,3 +1005,61 @@ async def test_guest_tool_dispatch_passes_start_now_without_coercion():
     entity._guest_mode = SimpleNamespace(async_restrict=AsyncMock(return_value={"state": "active"}))
     await entity._async_execute_guest_mode_tool({"start_now": "invalid"})
     assert entity._guest_mode.async_restrict.call_args.kwargs["start_now"] == "invalid"
+
+
+def test_malformed_guest_group_membership_is_quarantined(hass):
+    from tests.test_function_groups import _tool
+
+    tool = _tool("get_history")
+    tool["function"]["name"] = "get_history"
+    manager = SimpleNamespace(is_active=lambda: True)
+    options = {
+        "guest_policy_version": 2,
+        "guest_function_policy": "custom",
+        "guest_allowed_function_names": ["get_history"],
+        "guest_allowed_group_ids": ["unsafe"],
+        "function_groups": [{"id": ["unsafe"], "functions": None}],
+    }
+    assert resolve_guest_policy(hass, options, manager, [tool]).configured_tool_names == frozenset()
+
+
+def test_guest_rename_preserves_both_individual_restrictions(hass):
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        async_setup_guest_entity_renames,
+    )
+    from homeassistant.core import Event
+    from homeassistant.helpers import entity_registry
+
+    subentry = SimpleNamespace(data={
+        CONF_GUEST_EXCLUDED_ENTITIES: ["light.old"],
+        CONF_GUEST_CONTROL_EXCLUDED_ENTITIES: ["light.other", "light.old"],
+    })
+    entry = SimpleNamespace(subentries={"assistant": subentry})
+    hass.config_entries.async_entries.return_value = [entry]
+    async_setup_guest_entity_renames(hass)
+    handler = next(
+        call.args[1] for call in hass.bus.async_listen.call_args_list
+        if call.args[0] == entity_registry.EVENT_ENTITY_REGISTRY_UPDATED
+    )
+    handler(Event(entity_registry.EVENT_ENTITY_REGISTRY_UPDATED, {
+        "action": "update", "entity_id": "light.new",
+        "changes": {"entity_id": "light.old"},
+    }))
+    saved = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    assert saved[CONF_GUEST_EXCLUDED_ENTITIES] == ["light.new"]
+    assert saved[CONF_GUEST_CONTROL_EXCLUDED_ENTITIES] == ["light.other", "light.new"]
+
+
+def test_guest_shared_memory_switch_applies_even_to_personal_scope():
+    from custom_components.extended_openai_conversation_responses.capabilities import (
+        resolve_effective_capabilities,
+    )
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_SHARED_MEMORY_MODE, SHARED_MEMORY_DISABLED,
+    )
+
+    policy = GuestCapabilityPolicy(True, shared_memory_read=True, shared_memory_write=True)
+    options = {"memory_mode": "manual", CONF_SHARED_MEMORY_MODE: SHARED_MEMORY_DISABLED}
+    assert not resolve_effective_capabilities(
+        options, memory_scope_available=True, guest_policy=policy
+    ).persistent_memory

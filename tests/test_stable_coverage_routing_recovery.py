@@ -358,14 +358,14 @@ def test_model_lifecycle_override_lookup_handles_unloaded_and_routed_rules(
 def test_entity_request_model_prefers_current_run_override() -> None:
     entity = SimpleNamespace(
         _usage=SimpleNamespace(
-            current_run=lambda: SimpleNamespace(models=["gpt-base", "gpt-override"])
+            current_primary_request_model=lambda: "gpt-override"
         ),
         subentry=SimpleNamespace(data={CONF_CHAT_MODEL: "gpt-configured"}),
     )
 
     assert model_lifecycle._entity_request_model(entity) == "gpt-override"
 
-    entity._usage.current_run = lambda: None
+    entity._usage.current_primary_request_model = lambda: None
     assert model_lifecycle._entity_request_model(entity) == "gpt-configured"
 
 
@@ -400,7 +400,7 @@ def test_entity_retirement_wrappers_use_active_request_model(monkeypatch) -> Non
         entry=entry,
         subentry=subentry,
         _usage=SimpleNamespace(
-            current_run=lambda: SimpleNamespace(models=["gpt-routed"])
+            current_primary_request_model=lambda: "gpt-routed"
         ),
     )
     record = Mock(return_value="retired")

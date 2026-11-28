@@ -425,7 +425,7 @@ async def test_shared_optional_manager_ensure_reuses_existing_without_io(startup
 async def test_disabled_knowledge_keeps_distinct_startup_and_live_semantics(
     startup, monkeypatch
 ):
-    """Knowledge stays preloadable at startup but is not live-created while disabled."""
+    """Disabled Knowledge does not load at startup or during live reconciliation."""
     agent = startup.agent
     agent.subentry.data = {
         **agent.subentry.data,
@@ -439,8 +439,8 @@ async def test_disabled_knowledge_keeps_distinct_startup_and_live_semantics(
     startup.getters["knowledge"].return_value = startup_knowledge
 
     await agent._async_initialize_optional_managers()
-    assert agent._knowledge is startup_knowledge
-    startup.getters["knowledge"].assert_awaited_once()
+    assert agent._knowledge is None
+    startup.getters["knowledge"].assert_not_awaited()
 
     agent._knowledge = None
     live_getter = AsyncMock(return_value=object())

@@ -191,6 +191,47 @@ test("Quiet Hours reconciles both satellite selectors in place and preserves the
   await expectHarnessClean(page,errors);
 });
 
+test("Overview live Guest Mode recovery clears the previous read warning without navigation", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.clock.install();
+  await page.goto(fixtureUrl("overview", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  await panel.evaluate(async host => {
+    const call = host._hass.callWS;
+    host._testGuestStatusAvailable = false;
+    host._hass = {...host._hass, callWS:async message => {
+      if (message.section !== "overview" || message.action !== "detail") return call(message);
+      if (message.kind === "memory") throw new Error("Memory read failed");
+      if (message.kind !== "guest_mode") return call(message);
+      if (!host._testGuestStatusAvailable) throw new Error("Guest Mode read failed");
+      return {agent:{guest_mode:{state:"active_indefinitely", has_home_assistant_restrictions:false}}};
+    }};
+    host._sectionCache.delete(host._sectionCacheKey("overview"));
+    await host._loadSection(true);
+  });
+  const guestCard = panel.locator('[data-overview-section="guest-mode"]');
+  const warning = panel.getByText("Guest Mode could not be loaded", {exact:false});
+  await expect(guestCard).toContainText("Status unavailable");
+  await expect(warning).toBeVisible();
+  const memoryWarning = panel.locator(".overview-warnings").getByText("Memory", {exact:false});
+  await expect(memoryWarning).toBeVisible();
+  const configure = guestCard.getByRole("button", {name:"Configure"});
+  await configure.focus();
+
+  await panel.evaluate(host => {host._testGuestStatusAvailable = true;});
+  await page.clock.fastForward(61000);
+  await expect(guestCard).toContainText("Active Indefinitely");
+  await expect(guestCard).toHaveClass(/dashboard-tone-warning/);
+  await expect(warning).toHaveCount(0);
+  await expect(memoryWarning).toBeVisible();
+  await expect(configure).toBeFocused();
+  await expect(panel.getByText("Guest Mode is active without configured Home Assistant exclusions.")).toBeVisible();
+  expect(await panel.evaluate(host => host._sectionCache.get(host._sectionCacheKey("overview"))
+    ?.load_errors.map(issue => issue.key))).toEqual(["memory"]);
+  await expectHarnessClean(page, errors);
+});
+
 test("Quiet Hours displays recovery guidance and retains an authored draft through unavailability", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("overview", "&bundle=1"));

@@ -76,6 +76,21 @@ async def _library(storage=None) -> KnowledgeLibrary:
     return library
 
 
+async def test_nonempty_storage_without_sources_requires_repair():
+    from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+        StorageRepairRequired,
+    )
+
+    data = {"recoverable": ["original contents"]}
+    storage = FakeStorage(data)
+    with pytest.raises(StorageRepairRequired):
+        await _library(storage)
+    with pytest.raises(StorageRepairRequired):
+        knowledge._migrated_storage_payload(data)
+    assert storage.data == data
+    assert (await _library(FakeStorage({}))).source_count == 0
+
+
 async def test_management_knowledge_create_replay_and_duplicate_confirmation(
     hass, management_agent, management_message, monkeypatch
 ):
@@ -450,8 +465,10 @@ async def test_search_ranking_prioritizes_boiler_terms_over_question_filler() ->
         "Reset the boiler by pressing its power switch for three seconds.",
     )
 
-    results = await library.async_search("how do I reset the boiler", limit=2)
-    assert [result.source_id for result in results] == [boiler.source_id]
+    await library.async_create("About the house", "Please read", "The house is green.")
+    for query in ("boiler", "What about the boiler?", "Please, what about the boiler?", "how do I reset the boiler"):
+        results = await library.async_search(query, limit=2)
+        assert [result.source_id for result in results] == [boiler.source_id]
 
     # Stop-word-only searches retain the former scoring and do not disappear.
     assert garage.source_id in {
@@ -1336,7 +1353,7 @@ async def test_async_get_knowledge_creates_once_initializes_and_reuses(
 ) -> None:
     storage = object()
     storage_factory = Mock(return_value=storage)
-    library = SimpleNamespace(async_initialize=AsyncMock())
+    library = SimpleNamespace(async_initialize=AsyncMock(), needs_storage_repair=False)
     library_factory = Mock(return_value=library)
     monkeypatch.setattr(knowledge, "HomeAssistantKnowledgeStorage", storage_factory)
     monkeypatch.setattr(knowledge, "KnowledgeLibrary", library_factory)
@@ -1566,3 +1583,15 @@ async def test_chunk_overlap_preserves_real_matches_cjk_and_source_offsets():
     source = await library.async_create("Boundary", "", content)
     assert (await library.async_search("temperature sensor"))[0].source_id == source.source_id
     assert (await library.async_search("温度制御"))[0].source_id == source.source_id
+
+
+def test_line_boundary_keeps_overlap_when_newline_ends_previous_chunk():
+    phrase = "overlapping context"
+    prefix = "x" * (knowledge.CHUNK_SIZE - len(phrase) - 3)
+    content = f"{prefix} {phrase}\n" + "next line with the answer " * 10
+    chunks = knowledge._split_chunks(content)
+    assert len(chunks) == 2
+    assert phrase in chunks[0][1] and phrase in chunks[1][1]
+    assert (
+        0 < chunks[0][0] + len(chunks[0][1]) - chunks[1][0] <= knowledge.CHUNK_OVERLAP
+    )

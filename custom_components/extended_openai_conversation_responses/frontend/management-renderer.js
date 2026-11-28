@@ -2,8 +2,13 @@ import {updateDialogs} from "./management-dialogs.js";
 import {NAVIGATION, pageMetadata} from "./frontend-navigation.js";
 import {writeOptionalStorage} from "./browser-storage.js";
 import {retireAssistantDraft} from "./management-catalog-ownership.js";
+import {bindAssistantActions} from "./assistant-actions-menu.js";
 
 export const ASSISTANT_INTRO_MARKUP = '<section class="page-intro assistant-parent-intro"><h1>Assistant settings</h1><p>Configure how this assistant responds, handles conversations, uses context, and works with voice.</p></section>';
+
+export function renderMemoriesIntro(panel) {
+  return panel._viewKey() === "data-memory/memories" ? '<section class="page-intro memories-intro"><h1>Memories</h1><p>Review and manage saved long-term and short-term memories for the selected scope.</p></section>' : "";
+}
 
 export function renderManagementRoute(panel, agent) {
   if (panel._error) return panel._routeError(panel._error);
@@ -102,6 +107,7 @@ function bindDynamicBase(panel) {
   const root = panel.shadowRoot;
   if (root.__eocRouteControlsBound) return;
   root.__eocRouteControlsBound = true;
+  bindAssistantActions(panel);
 
   // WebKit can wrap Tab focus to a control above the current scroll position
   // without scrolling the shadow-root page. Keep keyboard focus in view.
@@ -211,9 +217,7 @@ function updateRegion(host, markup) {
 function updateAgentActions(panel) {
   const host = panel.shadowRoot.querySelector("#eoc-agent-actions-host");
   if (!host) return;
-  const markup = panel._selectedAgent() && !panel._busy && !panel._error
-    ? panel._configurationActions?.() || ""
-    : "";
+  const markup = panel._configurationActions?.() || "";
   updateRegion(host, markup);
   host.hidden = !markup;
 }
@@ -252,6 +256,7 @@ function renderDynamicRegions(panel) {
   updateNavigation(panel, navigationFor(panel));
   updateAgentActions(panel);
 
+  updateRegion(root.querySelector("#eoc-memories-intro-host"), renderMemoriesIntro(panel));
   const scopeHost = root.querySelector("#eoc-scope-host");
   updateRegion(scopeHost, ["data-memory/conversations", "data-memory/memories"].includes(panel._viewKey()) ? panel._scopePicker() : "");
 

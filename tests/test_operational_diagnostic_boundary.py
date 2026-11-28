@@ -129,6 +129,7 @@ def test_diagnostic_does_not_own_parser_input_or_marks():
         "line",
         "column",
         "number",
+        "explanation",
     }
 
 

@@ -29,6 +29,18 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.usage import RequestUsage
 
 
+@pytest.fixture(autouse=True)
+def _load_guest_storage(monkeypatch):
+    """Give synthetic diagnostic connections a healthy Guest schedule by default."""
+    monkeypatch.setattr(
+        agent_test,
+        "async_get_guest_mode",
+        AsyncMock(return_value=SimpleNamespace(
+            status=lambda: {"state": "inactive"}, is_active=lambda: False,
+        )),
+    )
+
+
 def _chat_reply(usage: Any = None) -> SimpleNamespace:
     return SimpleNamespace(
         choices=[
@@ -95,8 +107,20 @@ async def test_invalid_saved_tier_does_not_skip_the_connectivity_probe():
     assert result.status == "Failed"
     assert checks["Saved request settings"].status == "Failed"
     assert "processing tier" in checks["Saved request settings"].message
+    serialized = next(item for item in result.as_dict()["checks"] if item["name"] == "Saved request settings")
+    assert "recovery_setting" not in serialized
     client.chat.completions.create.assert_awaited_once()
     assert "service_tier" not in client.chat.completions.create.await_args.kwargs
+
+
+async def test_invalid_saved_output_limit_targets_output_limit_setting():
+    hass, entry, subentry, client, usage = _objects({"max_tokens": 999999999})
+    with patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)):
+        result = await async_test_agent(hass, entry, subentry)
+    check = next(item for item in result.as_dict()["checks"] if item["name"] == "Saved request settings")
+    assert check["status"] == "Failed"
+    assert check["recovery_setting"] == "max_tokens"
+    client.chat.completions.create.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
@@ -346,6 +370,8 @@ async def test_underlying_model_binding_requires_azure_before_probe() -> None:
         result = await async_test_agent(hass, entry, subentry)
     assert result.status == "Failed"
     assert "only supported with Azure" in result.as_text()
+    check = next(item for item in result.as_dict()["checks"] if item["name"] == "Configuration")
+    assert check["recovery_setting"] == "azure_model"
     client.chat.completions.create.assert_not_awaited()
 
 
@@ -1107,6 +1133,7 @@ async def _residual_run_agent(
     web_search: bool = False,
     probe_error: BaseException | None = None,
     memory_is_enabled: bool = False,
+    memory_needs_repair: bool = False,
 ) -> tuple[agent_test.AgentTestResult, _ResidualUsage]:
     usage = _ResidualUsage()
     create = _ResidualCreate(result=_responses_reply(), error=probe_error)
@@ -1123,13 +1150,17 @@ async def _residual_run_agent(
     )
 
     monkeypatch.setattr(agent_test, "_validate_function_schema", lambda _subentry: 0)
-    monkeypatch.setattr(agent_test, "get_api_mode", lambda *_args: agent_test.API_MODE_RESPONSES)
+    monkeypatch.setattr(
+        agent_test, "get_api_mode", lambda *_args: agent_test.API_MODE_RESPONSES
+    )
     monkeypatch.setattr(
         agent_test,
         "get_loaded_guest_mode",
         lambda *_args: SimpleNamespace(status=lambda: {"state": "active"}),
     )
-    monkeypatch.setattr(agent_test, "configured_function_tools_from_data", lambda _data: [])
+    monkeypatch.setattr(
+        agent_test, "configured_function_tools_from_data", lambda _data: []
+    )
     monkeypatch.setattr(
         agent_test,
         "resolve_guest_policy",
@@ -1147,13 +1178,23 @@ async def _residual_run_agent(
         lambda _hass: (_ for _ in ()).throw(RuntimeError("registry unavailable")),
     )
     monkeypatch.setattr(agent_test, "memory_enabled", lambda _data: memory_is_enabled)
-    monkeypatch.setattr(agent_test, "is_native_openai_connection", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(agent_test, "ensure_successful_responses_result", lambda _response: None)
+    monkeypatch.setattr(
+        agent_test, "is_native_openai_connection", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        agent_test, "ensure_successful_responses_result", lambda _response: None
+    )
     monkeypatch.setattr(agent_test, "extract_usage", lambda _usage: {})
 
     if memory_is_enabled:
+
         async def get_memory(*_args: Any) -> Any:
-            return SimpleNamespace(stats=lambda: {"memory_count": 4})
+            return SimpleNamespace(
+                stats=lambda: {
+                    "memory_count": 4,
+                    "memory_storage_repair_required": memory_needs_repair,
+                }
+            )
 
         monkeypatch.setattr(agent_test, "async_get_memory", get_memory)
 
@@ -1182,14 +1223,26 @@ async def test_guest_active_message_and_exposed_entity_lookup_failure(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("repair", "status", "message"),
+    [
+        (False, "Passed", "Available (4 stored)"),
+        (True, "Warning", "Read-only pending storage repair (4 readable)"),
+    ],
+)
 async def test_successful_memory_check_reports_stored_count(
     monkeypatch: pytest.MonkeyPatch,
+    repair: bool,
+    status: str,
+    message: str,
 ) -> None:
-    result, _usage = await _residual_run_agent(monkeypatch, memory_is_enabled=True)
+    result, _usage = await _residual_run_agent(
+        monkeypatch, memory_is_enabled=True, memory_needs_repair=repair
+    )
     memory = next(check for check in result.checks if check.name == "Long-term memory")
 
-    assert memory.status == "Passed"
-    assert memory.message == "Available (4 stored)"
+    assert memory.status == status
+    assert memory.message == message
 
 
 @pytest.mark.asyncio
@@ -1280,3 +1333,53 @@ def test_diagnostic_parser_retains_runtime_empty_and_default_semantics(value):
     from custom_components.extended_openai_conversation_responses.const import DEFAULT_CONF_FUNCTION_TOOLS
     assert parse_configured_function_tools({CONF_FUNCTION_TOOLS: value}) == ([] if value == "[]" else DEFAULT_CONF_FUNCTION_TOOLS)
     assert parse_configured_function_tools({}) == DEFAULT_CONF_FUNCTION_TOOLS
+
+
+async def test_guest_storage_failure_is_reported_and_model_probe_still_runs(monkeypatch):
+    hass, entry, subentry, client, usage = _objects()
+    monkeypatch.setattr(agent_test, "get_loaded_guest_mode", lambda *_: None)
+    monkeypatch.setattr(
+        agent_test, "async_get_guest_mode", AsyncMock(side_effect=OSError("unreadable"))
+    )
+    monkeypatch.setattr(agent_test, "async_get_usage", AsyncMock(return_value=usage))
+    result = await async_test_agent(hass, entry, subentry)
+    checks = {check.name: check for check in result.checks}
+    assert checks["Guest Mode"].status == "Failed"
+    assert checks["Model access"].status == "Passed"
+    client.chat.completions.create.assert_awaited()
+
+
+async def test_provider_probe_accepts_a_non_strict_compatible_endpoint(monkeypatch):
+    _coverage_patch_common(monkeypatch)
+    monkeypatch.setattr(agent_test, "is_native_openai_connection", lambda *_a, **_kw: False)
+    monkeypatch.setattr(agent_test, "get_api_mode", lambda *_: API_MODE_CHAT_COMPLETIONS)
+    monkeypatch.setattr(agent_test, "extract_usage", lambda _raw: {})
+    create = _CoverageCreate(result=_chat_reply())
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create.create)))
+    entry = _coverage_entry(client)
+    entry.data["base_url"] = "https://provider.example/v1"
+
+    result = await async_test_agent(
+        cast(Any, SimpleNamespace()), cast(Any, entry),
+        cast(Any, _coverage_subentry(api_mode=API_MODE_CHAT_COMPLETIONS)),
+    )
+
+    assert result.status == "Passed", result.as_text()
+    assert "strict" not in create.calls[0]["tools"][0]["function"]
+
+
+async def test_guest_diagnostic_reports_pending_activation(monkeypatch):
+    hass, entry, subentry, _, usage = _objects()
+    monkeypatch.setattr(agent_test, "async_get_usage", AsyncMock(return_value=usage))
+    activation = "2026-11-29T10:00:00+00:00"
+    monkeypatch.setattr(
+        agent_test, "get_loaded_guest_mode",
+        lambda *_: SimpleNamespace(
+            status=lambda: {"state": "scheduled", "active_from": activation},
+            is_active=lambda: False,
+        ),
+    )
+    result = await async_test_agent(hass, entry, subentry)
+    guest = next(check for check in result.checks if check.name == "Guest Mode")
+    assert guest.status == "Passed"
+    assert guest.message == f"Scheduled for {activation}"

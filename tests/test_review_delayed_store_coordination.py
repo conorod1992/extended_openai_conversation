@@ -55,7 +55,7 @@ async def test_concurrent_unloaded_deletions_preserve_only_other_agents(
         }
     )
     monkeypatch.setattr(
-        delayed, "PropagatingWriteStore", lambda *_args, **_kwargs: store
+        delayed, "_ScheduledActionStore", lambda *_args, **_kwargs: store
     )
     await asyncio.gather(
         delayed.async_remove_stored_agent_calls(hass, "entry", "a"),
@@ -73,7 +73,7 @@ async def test_deletion_and_manager_startup_share_storage_generation(
     keep = replace(first, call_id="keep", subentry_id="keep")
     store = SharedStorage({"calls": [first.as_dict(), keep.as_dict()]})
     monkeypatch.setattr(
-        delayed, "PropagatingWriteStore", lambda *_args, **_kwargs: store
+        delayed, "_ScheduledActionStore", lambda *_args, **_kwargs: store
     )
     manager = delayed.DelayedToolManager(hass)
     hass.data.setdefault(DOMAIN, {})[delayed.DATA_DELAYED_TOOL_MANAGER] = manager
@@ -106,7 +106,7 @@ async def test_cancelled_fallback_save_settles_before_next_deletion(hass, monkey
 
     store.async_save = save
     monkeypatch.setattr(
-        delayed, "PropagatingWriteStore", lambda *_args, **_kwargs: store
+        delayed, "_ScheduledActionStore", lambda *_args, **_kwargs: store
     )
     first = asyncio.create_task(
         delayed.async_remove_stored_agent_calls(hass, "entry", "a")

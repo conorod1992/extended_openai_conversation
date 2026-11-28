@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from contextlib import suppress
 from copy import deepcopy
-import json
 import time
 from typing import Any
 
 from .function_groups import get_function_group_runtime
-from .ha_tool_result_compat import tool_result_data
+from .ha_tool_result_compat import tool_result_data, tool_result_has_execution_error
 from .payload_diagnostics import (
     approximate_tokens,
     cache_usage_metrics,
@@ -87,26 +86,24 @@ def record_tool_execution(
         )
         payload = tool_result_data(result)
         value = payload.get("result") if isinstance(payload, dict) else None
-        if isinstance(value, str):
-            with suppress(ValueError):
-                value = json.loads(value)
         outcome = "returned" if successful else "failed"
-        if successful and isinstance(value, dict):
-            if value.get("status") == "denied":
-                outcome = "denied"
-            elif (
-                value.get("error")
-                or value.get("status") in {"error", "failed", "failure"}
-                or value.get("success") is False
-                or (isinstance(value.get("exit_code"), int) and value["exit_code"] != 0)
-            ):
-                outcome = "failed"
-        trace.memory.setdefault(_INTERNAL_TOOL_CALLS, []).append(
+        if tool_result_has_execution_error(result):
+            outcome = (
+                "denied"
+                if isinstance(value, dict) and value.get("status") == "denied"
+                else "failed"
+            )
+        calls = trace.memory.setdefault(_INTERNAL_TOOL_CALLS, [])
+        if len(calls) >= 256:
+            return
+        calls.append(
             {
                 "name": str(
                     spec.get("name") or getattr(tool_input, "tool_name", "unknown")
-                ),
-                "implementation_type": str(implementation.get("type") or "unknown"),
+                )[:256],
+                "implementation_type": str(implementation.get("type") or "unknown")[
+                    :128
+                ],
                 "duration_ms": int((time.monotonic() - started) * 1000),
                 "handler_returned": successful,
                 "outcome": outcome,
@@ -124,12 +121,20 @@ def record_provider_metrics(trace: Any, request: Any, api_surface: str) -> Any:
         input_value = safe_kwargs.get("input", safe_kwargs.get("messages"))
         tools = safe_kwargs.get("tools")
         request.metrics.update(provider_payload_metrics(input_value, tools))
+        request.metrics["payload_breakdown_partial"] = bool(
+            request.metrics.get("request_capture_truncated")
+        )
         request.metrics["request_index"] = len(trace.provider_requests)
-        request.metrics["approx_request_tokens"] = approximate_tokens(
-            int(request.metrics.get("request_characters", 0))
+        characters = request.metrics.get("request_characters")
+        request.metrics["approx_request_tokens"] = (
+            approximate_tokens(characters) if isinstance(characters, int) else None
         )
         is_model = api_surface in _MODEL_API_SURFACES
         request.metrics["model_request"] = is_model
+        if is_model:
+            request.metrics["prompt_sections"] = deepcopy(
+                trace.memory.get(_INTERNAL_PROMPT_METRICS, {}).get("sections", [])
+            )
         request.metrics["explicit_prompt_cache"]["request_cache_key_present"] = bool(
             safe_kwargs.get("prompt_cache_key")
         )
@@ -141,9 +146,13 @@ def record_provider_metrics(trace: Any, request: Any, api_surface: str) -> Any:
             ),
             None,
         )
+        current_digest = request.metrics.get("tools_sha256")
+        previous_digest = (
+            previous.metrics.get("tools_sha256") if previous is not None else None
+        )
         request.metrics["tools_same_as_previous_request"] = (
-            request.metrics.get("tools_sha256") == previous.metrics.get("tools_sha256")
-            if previous is not None and is_model
+            current_digest == previous_digest
+            if is_model and current_digest is not None and previous_digest is not None
             else None
         )
         request.metrics["model_request_index"] = (
@@ -209,10 +218,13 @@ def trace_diagnostics(trace: Any, data: dict[str, Any]) -> dict[str, Any]:
             "preparation": deepcopy(preparation),
             "function_tool_calls": deepcopy(tool_calls),
             "slowest_phases": _slowest_phases(data.get("phases_ms", {})),
+            "first_model_request_breakdown_partial": bool(
+                first_metrics.get("payload_breakdown_partial")
+            ),
             "largest_first_model_request_contributors": largest_contributors(
                 prompt_sections=[
                     item
-                    for item in (data.get("prompt_metrics", {}).get("sections") or [])
+                    for item in (first_metrics.get("prompt_sections") or [])
                     if isinstance(item, dict)
                 ],
                 tools=[

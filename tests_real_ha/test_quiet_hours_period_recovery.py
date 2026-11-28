@@ -309,3 +309,134 @@ async def test_native_contextless_retarget_history(
         await exercise_history(driver, VOLUME_RETARGET_HISTORIES[history])
     finally:
         await driver.manager.async_shutdown()
+
+
+@pytest.mark.parametrize("restart", [False, True])
+async def test_next_quiet_period_keeps_volume_when_daytime_restore_has_no_feedback(
+    hass, monkeypatch, real_store_io, restart
+):
+    await hass.config.async_set_time_zone("UTC")
+    now = datetime(2026, 11, 1, 22, 30, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    monkeypatch.setattr(runtime.dt_util, "utcnow", lambda: now)
+    _, media, _ = _install_satellite_entities(hass, volume=0.8)
+    calls, pending = [], []
+    defer_restore = True
+
+    def report(value, context):
+        hass.states.async_set(media, "idle", {"volume_level": value}, context=context)
+
+    async def volume_set(call):
+        value = call.data["volume_level"]
+        calls.append(value)
+        if defer_restore and value == 0.8:
+            pending.append((value, call.context))
+        else:
+            report(value, call.context)
+
+    hass.services.async_register("media_player", "volume_set", volume_set)
+    manager = QuietHoursManager(hass)
+    manager._initialized = True
+    manager._config = runtime.QuietHoursConfig(enabled=True, wake_sound="unchanged")
+    try:
+        await manager.async_reconcile(now=now)
+        now += timedelta(hours=10)
+        await manager.async_reconcile(now=now)
+        assert calls == [0.2, 0.8]
+        assert hass.states.get(media).attributes["volume_level"] == 0.2
+
+        now += timedelta(hours=14)
+        defer_restore = False
+        if restart:
+            retire_without_restoration(manager)
+            manager = QuietHoursManager(hass)
+            await manager.async_setup()
+        await manager.async_reconcile(now=now)
+        assert calls == [0.2, 0.8]
+        assert manager.active["controls"][media]["original_value"] == 0.8
+        assert hass.states.get(media).attributes["volume_level"] == 0.2
+
+        report(*pending.pop())
+        await manager.async_reconcile(now=now)
+        assert calls == [0.2, 0.8, 0.2]
+        now += timedelta(hours=10)
+        await manager.async_reconcile(now=now)
+        assert calls == [0.2, 0.8, 0.2, 0.8]
+        assert manager.active is None
+    finally:
+        defer_restore = False
+        await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("provider_loads", [True, False])
+async def test_component_bootstrap_defers_saved_restoration_until_entry_outcome(
+    hass, monkeypatch, real_store_io, provider_loads
+):
+    from unittest.mock import AsyncMock
+
+    from custom_components import extended_openai_conversation_responses as integration
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    from tests.test_reauthentication import _authentication_error
+    from tests_real_ha.test_acceptance_lifecycle import _make_entry
+
+    await hass.config.async_set_time_zone("UTC")
+    now = datetime(2026, 11, 1, 22, 30, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    monkeypatch.setattr(runtime.dt_util, "utcnow", lambda: now)
+    _, media, _ = _install_satellite_entities(hass, volume=0.8)
+    calls = []
+    defer_restore = True
+
+    async def volume_set(call):
+        value = call.data["volume_level"]
+        calls.append(value)
+        if value != 0.8 or not defer_restore:
+            hass.states.async_set(
+                media, "idle", {"volume_level": value}, context=call.context
+            )
+
+    hass.services.async_register("media_player", "volume_set", volume_set)
+    previous = QuietHoursManager(hass)
+    previous._initialized = True
+    previous._config = runtime.QuietHoursConfig(enabled=True, wake_sound="unchanged")
+    await previous.async_reconcile(now=now)
+    now += timedelta(hours=10)
+    await previous.async_reconcile(now=now)
+    assert calls == [0.2, 0.8]
+    assert hass.states.get(media).attributes["volume_level"] == 0.2
+    retire_without_restoration(previous)
+
+    now += timedelta(hours=14)
+    defer_restore = False
+    assert DOMAIN not in hass.config.components
+    entry = _make_entry("Quiet Hours cold bootstrap", include_ai_task=False)
+    entry.add_to_hass(hass)
+    authenticate = integration.get_authenticated_client
+    calls_at_authentication = []
+
+    async def check_bootstrap_order(**kwargs):
+        calls_at_authentication.extend(calls)
+        if not provider_loads:
+            raise _authentication_error()
+        return await authenticate(**kwargs)
+
+    monkeypatch.setattr(
+        integration,
+        "get_authenticated_client",
+        AsyncMock(side_effect=check_bootstrap_order),
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id) is provider_loads
+    await hass.async_block_till_done()
+    assert calls_at_authentication == [0.2, 0.8]
+
+    if provider_loads:
+        assert calls == [0.2, 0.8]
+        assert hass.states.get(media).attributes["volume_level"] == 0.2
+        manager = await integration.async_get_quiet_hours(hass)
+        assert manager.active["controls"][media]["original_value"] == 0.8
+        assert await hass.config_entries.async_unload(entry.entry_id)
+    else:
+        assert calls == [0.2, 0.8, 0.8]
+        assert hass.states.get(media).attributes["volume_level"] == 0.8
+        assert "quiet_hours_manager" not in hass.data[DOMAIN]
+        assert (await previous._store.async_load())["active"] is None

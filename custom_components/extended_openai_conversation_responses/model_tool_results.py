@@ -304,10 +304,27 @@ def knowledge_search_payload(
     filter_requested: bool,
     policy_filter_applied: bool,
 ) -> dict[str, Any]:
-    """Omit only an all-default source-filter envelope that represents no filtering."""
+    """Keep descriptive filter metadata within the model result budget."""
+    source_filter = result.get("source_filter")
+    if isinstance(source_filter, dict):
+        from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
+
+        bounded_filter = source_filter.copy()
+        for label in ("applied", "ignored"):
+            key = f"{label}_source_ids"
+            source_ids = source_filter.get(key, [])
+            remaining = MAX_MODEL_TOOL_RESULT_CHARACTERS // 16
+            for index, source_id in enumerate(source_ids):
+                remaining -= len(compact_tool_json(source_id)) + 1
+                if remaining < 0:
+                    bounded_filter[key] = source_ids[:index]
+                    bounded_filter[f"{label}_source_count"] = len(source_ids)
+                    bounded_filter[f"{key}_truncated"] = True
+                    break
+        if bounded_filter != source_filter:
+            result = {**result, "source_filter": bounded_filter}
     if filter_requested or policy_filter_applied:
         return result
-    source_filter = result.get("source_filter")
     if source_filter == {
         "applied_source_ids": [],
         "ignored_source_ids": [],

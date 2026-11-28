@@ -36,6 +36,10 @@ introduce a second operation queue, ownership registry or server protocol.
   user's operation.
 - Confirmation belongs to the owner captured before the dialog opens. A later
   agent, authentication session, collection scope or visit cannot inherit it.
+- Knowledge and Memory editors send `confirm_duplicate: false` to request a
+  duplicate check. A duplicate warning acknowledges that the submitted edit was
+  held before saving. A second Save confirms only the same draft and revision.
+  Older clients may omit the flag to retain their existing edit behavior.
 
 ## Operation audit
 

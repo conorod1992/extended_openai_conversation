@@ -11,7 +11,6 @@ from typing import Any
 from homeassistant.helpers import template
 from homeassistant.helpers.template.helpers import resolve_area_id
 
-from .agent_config import normalized_agent_integer
 from .capabilities import (
     persistent_memory_scope_available,
     resolve_effective_capabilities,
@@ -24,7 +23,6 @@ from .const import (
     CONF_CURRENT_DATETIME_TEMPLATE,
     CONF_EXPOSED_ENTITIES_ENABLED,
     CONF_EXPOSED_ENTITIES_TEMPLATE,
-    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_PROMPT,
     CONF_SHARED_MEMORY_MODE,
     CONF_TEMPORARY_MEMORY,
@@ -35,7 +33,6 @@ from .const import (
     DEFAULT_CURRENT_DATETIME_TEMPLATE,
     DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE,
     DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
-    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_PROMPT,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_TEMPORARY_MEMORY,
@@ -64,10 +61,11 @@ from .model_payload import (
     RETRIEVED_DATA_SAFETY,
     temporary_memory_guidance,
 )
+from .request import function_call_budget_available
 from .scope import resolve_data_scope
 from .template_diagnostics import private_rendering_diagnostics
 from .temporary_memory import TemporaryMemoryRecord
-from .voice_identity_runtime import voice_source_device_id
+from .voice_identity_runtime import voice_mapping_source_id
 
 _DEFAULT_CURRENT_DATETIME_CONTEXT = """## Current date and time
 {{ now().isoformat(timespec='seconds') }}
@@ -201,8 +199,16 @@ def _skills_instructions(skills: list[Any]) -> str:
     lines = [
         "## Skills",
         "Use load_skill with a skill name when one of these skills is relevant:",
+        "Read SKILL.md first. If the result has has_more, pass next_offset as "
+        "offset on the next call with the same name and file.",
+        "Resolve relative script paths from the Skill directory listed below, "
+        "rather than from the current working directory.",
     ]
-    lines.extend(f"- {skill.name}: {skill.description}" for skill in skills)
+    for skill in skills:
+        location = (
+            f" (directory: {skill.path.parent})" if getattr(skill, "path", None) else ""
+        )
+        lines.append(f"- {skill.name}: {skill.description}{location}")
     return "\n".join(lines) + "\n"
 
 
@@ -287,14 +293,14 @@ def _temporary_memory_context(memories: list[TemporaryMemoryRecord]) -> str:
     )
 
 
-def _prompt_memory_scope_available(options: Any, user_input: Any) -> bool:
+def _prompt_memory_scope_available(hass: Any, options: Any, user_input: Any) -> bool:
     """Resolve the same persistent-memory scope eligibility used by live tools."""
     # Management previews and direct renderer tests have no request identity. They
     # represent an authenticated/usable scope unless the caller supplies an explicit
     # capability decision below.
     if user_input is None or not hasattr(user_input, "context"):
         return True
-    source_device_id = voice_source_device_id(user_input)
+    source_device_id = voice_mapping_source_id(user_input, options, hass=hass)
     scope = resolve_data_scope(
         SimpleNamespace(
             context=getattr(user_input, "context", None),
@@ -328,6 +334,7 @@ def render_effective_prompt(
     temporary_scope_available: bool = True,
     archive_available: bool = True,
     archive_session_available: bool = True,
+    function_calls_available: bool = True,
 ) -> EffectivePrompt:
     """Render and assemble the production system prompt in deterministic order."""
     if guest_policy is not None and guest_policy.guest_active:
@@ -356,7 +363,9 @@ def render_effective_prompt(
     sections: list[PromptSection] = []
     policy = guest_policy or GuestCapabilityPolicy.unrestricted()
     if memory_scope_available is None:
-        memory_scope_available = _prompt_memory_scope_available(options, user_input)
+        memory_scope_available = _prompt_memory_scope_available(
+            hass, options, user_input
+        )
     capabilities = resolve_effective_capabilities(
         options,
         memory_scope_available=memory_scope_available,
@@ -364,12 +373,7 @@ def render_effective_prompt(
     )
     retrieval_safety_added = False
     function_tools_available = (
-        normalized_agent_integer(
-            options,
-            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-        )
-        > 0
+        function_calls_available and function_call_budget_available(options)
     )
 
     if policy.guest_active:

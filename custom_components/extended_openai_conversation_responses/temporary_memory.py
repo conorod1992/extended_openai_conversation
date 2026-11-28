@@ -16,6 +16,7 @@ from uuid import uuid4
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .exceptions import DuplicateMemoryEdit
 from .function_tool_policy import (
     runtime_function_tool_name,
     runtime_function_tool_names,
@@ -73,6 +74,17 @@ class TemporaryMemoryRecord:
         )
 
 
+def _edit_identity(record: TemporaryMemoryRecord) -> tuple[Any, ...]:
+    return (
+        record.owner_scope_id,
+        record.scope_id,
+        record.content,
+        record.category,
+        record.source,
+        stored_timestamp_instant(record.expires_at),
+    )
+
+
 def temporary_memory_record_counts(
     records: Iterable[TemporaryMemoryRecord],
 ) -> tuple[int, int]:
@@ -96,6 +108,7 @@ class _InvalidStoredMetadata(ValueError):
 class TemporaryMemoryStore(PropagatingWriteStore):
     """Versioned private Home Assistant storage."""
 
+    _null_payload_label = "Temporary Memory"
     needs_format_upgrade = False
     _migration_payload: tuple[dict[str, Any]] | None = None
 
@@ -107,8 +120,13 @@ class TemporaryMemoryStore(PropagatingWriteStore):
             self._migration_payload = None
 
     async def _async_migrate_func(
-        self, old_major_version: int, old_minor_version: int, old_data: dict[str, Any]
+        self,
+        old_major_version: int,
+        old_minor_version: int,
+        old_data: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        if old_data is None:
+            self._raise_null_payload_repair()
         if old_major_version != 1:
             raise NotImplementedError
         # Inspect v1 in place. A manager validates and commits it as v2;
@@ -300,37 +318,44 @@ class TemporaryMemory:
             await self._async_initialize_locked()
             await self._async_prune_locked()
             now = dt_util.utcnow().isoformat()
-            for current in self._records.values():
-                if (
-                    _matches_owner(current, scope_id, owner_scope_id)
-                    and current.content == content
-                ):
-                    # Explicitly created short-term memories are authoritative.
-                    # A later proactive model write may coalesce with them, but it
-                    # must not silently downgrade their provenance or replace the
-                    # user's chosen category/expiry.
-                    if current.source == "manual" and source == "automatic":
-                        return {
-                            "status": "unchanged",
-                            "memory": temporary_memory_as_dict(current),
-                        }
-                    updated = TemporaryMemoryRecord(
-                        current.memory_id,
-                        current.scope_id,
-                        content,
-                        category,
-                        source,
-                        expiry.isoformat(),
-                        current.created_at,
-                        now,
-                        current.owner_scope_id,
-                    )
-                    self._records[current.memory_id] = updated
-                    await self._async_save_locked()
+            matches = [
+                record
+                for record in self._records.values()
+                if _matches_owner(record, scope_id, owner_scope_id)
+                and record.content == content
+            ]
+            if len(matches) > 1:
+                raise ValueError(
+                    "Multiple matching temporary memories exist; edit the intended record"
+                )
+            if matches:
+                current = matches[0]
+                # Explicitly created short-term memories are authoritative.
+                # A later proactive model write may coalesce with them, but it
+                # must not silently downgrade their provenance or replace the
+                # user's chosen category/expiry.
+                if current.source == "manual" and source == "automatic":
                     return {
-                        "status": "updated",
-                        "memory": temporary_memory_as_dict(updated),
+                        "status": "unchanged",
+                        "memory": temporary_memory_as_dict(current),
                     }
+                updated = TemporaryMemoryRecord(
+                    current.memory_id,
+                    current.scope_id,
+                    content,
+                    category,
+                    source,
+                    expiry.isoformat(),
+                    current.created_at,
+                    now,
+                    current.owner_scope_id,
+                )
+                self._records[current.memory_id] = updated
+                await self._async_save_locked()
+                return {
+                    "status": "updated",
+                    "memory": temporary_memory_as_dict(updated),
+                }
             owned_count = sum(
                 record.owner_scope_id is not None for record in self._records.values()
             )
@@ -361,6 +386,8 @@ class TemporaryMemory:
         *,
         owner_scope_id: str | None = None,
         source: str | None = None,
+        expected_revision: str | None = None,
+        confirm_duplicate: bool = True,
     ) -> TemporaryMemoryRecord:
         """Update/supersede a temporary fact owned by the current request."""
         if source is not None and source not in {"automatic", "manual"}:
@@ -370,6 +397,13 @@ class TemporaryMemory:
             await self._async_initialize_locked()
             await self._async_prune_locked()
             current = self._owned(scope_id, memory_id, owner_scope_id)
+            if (
+                expected_revision is not None
+                and current.updated_at != expected_revision
+            ):
+                raise ValueError(
+                    "Temporary Memory changed since it was loaded; reopen it before saving"
+                )
             new_content = (
                 _clean(content, MAX_CONTENT_LENGTH, "content")
                 if content is not None
@@ -404,6 +438,15 @@ class TemporaryMemory:
                 dt_util.utcnow().isoformat(),
                 current.owner_scope_id,
             )
+            if not confirm_duplicate:
+                identity = _edit_identity(updated)
+                if _edit_identity(current) != identity and any(
+                    other.memory_id != memory_id
+                    and other.owner_scope_id == owner_scope_id
+                    and _edit_identity(other) == identity
+                    for other in self._records.values()
+                ):
+                    raise DuplicateMemoryEdit
             self._records[memory_id] = updated
             await self._async_save_locked()
             return updated
@@ -652,6 +695,17 @@ class TemporaryMemory:
             await self._async_prune_locked()
             return self._records_for_owner(owner_scope_id)
 
+    def management_memory_order(self, owner_scope_id: str) -> list[str]:
+        """Return the active owner's IDs from the last settled generation."""
+        if self._committed_state is None:
+            raise RuntimeError("Temporary Memory has no committed state")
+        return [
+            record.memory_id
+            for record in self._records_for_owner(
+                owner_scope_id, records=self._committed_state[0].values()
+            )
+        ]
+
     async def async_update_owned(
         self,
         owner_scope_id: str,
@@ -659,6 +713,9 @@ class TemporaryMemory:
         content: str | None,
         expires_at: str | None,
         category: str | None,
+        *,
+        expected_revision: str | None = None,
+        confirm_duplicate: bool = True,
     ) -> TemporaryMemoryRecord:
         owner = _require_owner_scope_id(owner_scope_id)
         return await self.async_update(
@@ -669,6 +726,8 @@ class TemporaryMemory:
             category,
             owner_scope_id=owner,
             source="manual",
+            expected_revision=expected_revision,
+            confirm_duplicate=confirm_duplicate,
         )
 
     async def async_delete_owned(
@@ -706,23 +765,30 @@ class TemporaryMemory:
                 counts[owner] += 1
         return dict(counts)
 
-    def _records_for_owner(self, owner_scope_id: str) -> list[TemporaryMemoryRecord]:
+    def _records_for_owner(
+        self,
+        owner_scope_id: str,
+        *,
+        records: Iterable[TemporaryMemoryRecord] | None = None,
+    ) -> list[TemporaryMemoryRecord]:
         """Return every active record belonging to an owner without injection limits."""
         owner = _require_owner_scope_id(owner_scope_id)
         now = dt_util.utcnow()
-        records = [
+        if records is None:
+            records = self._records.values()
+        active = [
             record
-            for record in self._records.values()
+            for record in records
             if record.owner_scope_id == owner
             and (parse_datetime(record.expires_at) or now) > now
         ]
-        records.sort(
+        active.sort(
             key=lambda record: (
                 stored_timestamp_instant(record.expires_at),
                 record.memory_id,
             )
         )
-        return records
+        return active
 
     def _prune_expired_locked(self) -> bool:
         """Remove expired records in RAM; the caller chooses the save boundary."""
@@ -779,9 +845,13 @@ def _decode_stored_records(
     data: Any,
 ) -> Iterator[tuple[Mapping[str, Any], TemporaryMemoryRecord, datetime]]:
     """Validate a saved generation before offering live or preview context."""
-    if data is not None and not isinstance(data, Mapping):
+    if data is None:
+        return
+    if not isinstance(data, Mapping):
         raise ValueError("Temporary Memory store has invalid structure")
-    raw_records = data.get("records", []) if data is not None else []
+    if "records" not in data:
+        raise StorageRepairRequired("Temporary Memory")
+    raw_records = data["records"]
     if not isinstance(raw_records, list):
         raise ValueError("Temporary Memory records have invalid structure")
     seen_ids: set[str] = set()

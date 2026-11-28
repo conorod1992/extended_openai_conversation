@@ -20,7 +20,7 @@ This is the safest starting point if you want the integration to behave like ano
 
 ### Always
 
-Requests another utterance after successful responses, except for the recognised `HassNevermind` intent described above.
+Requests another utterance after a successful response. A recognised `HassNevermind` command ends listening.
 
 This can create a more conversational experience, but it also means the satellite will keep listening even after responses that clearly complete the interaction.
 
@@ -28,7 +28,7 @@ This can create a more conversational experience, but it also means the satellit
 
 Lets the model decide whether its response expects an immediate reply.
 
-The decision is produced as part of the existing model response rather than by making a second model request. This allows responses such as questions or requests for clarification to continue naturally while completed commands can end without reopening the microphone.
+Normally the model supplies the continuation decision with its existing response. If the model finishes without the required decision, EOAI can make one additional finalization request with only the follow-up finalizer available. If the decision is still missing, follow-up listening remains disabled. This allows questions or requests for clarification to continue naturally while completed commands can end without reopening the microphone.
 
 ## Client support
 
@@ -40,7 +40,7 @@ Current ESPHome Assist satellites support this behavior. Older or custom voice c
 
 Use **HA Default** when you want the least surprising behavior.
 
-Use **Always** when you generally want successful interactions to remain open for another utterance, while still allowing Home Assistant's recognised never-mind command to end listening.
+Use **Always** when you want successfully handled requests to stay open for another utterance. You can still say a recognised Nevermind command to end listening.
 
 Use **Conditional** when you want the assistant to behave conversationally without reopening the microphone after every completed request.
 
