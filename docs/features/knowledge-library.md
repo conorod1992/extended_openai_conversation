@@ -90,7 +90,7 @@ policy permitting no sources. The underlying library API treats
 
 ## Local storage and limits
 
-Sources are saved privately under Home Assistant's versioned `.storage` system using atomic asynchronous writes. Each conversation-agent subentry has an isolated store. Nothing is sent to an external search or embedding service; only excerpts retrieved during an active model request are sent to the configured model provider.
+Each assistant's Knowledge sources are stored separately in Home Assistant. Indexing and search run locally. When the model uses a Knowledge tool, its result can send source titles, descriptions, excerpts or retrieved source text to the configured provider. A short source can fit in one result.
 
 Server-side limits are:
 
@@ -129,6 +129,6 @@ The enabled/disabled state of each Knowledge source is included in agent backups
 
 ## Trust and privacy
 
-Knowledge source text is treated as untrusted reference data. It cannot override system or developer instructions, authorize Home Assistant actions, or become a tool command merely because a source says so.
+Extended OpenAI tells the model to treat Knowledge sources as untrusted reference material. Source text grants no permission to run actions. The integration checks Home Assistant permissions and its own policies when a tool runs.
 
 The integration never creates or updates Knowledge sources from conversation wording such as “remember this.” Use persistent memory for short remembered facts, or edit the Knowledge Library explicitly through its authenticated panel.

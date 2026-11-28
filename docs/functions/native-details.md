@@ -54,7 +54,7 @@ function:
   name: execute_service_single
 ```
 
-Keep the existing schema and tool name when editing, importing, or restoring one of these tools. Scheduled jobs continue to use their saved tool definitions.
+Keep the existing schema and tool name when editing, importing, or restoring one of these tools. A pending action runs only if its current tool definition still matches the one used to schedule it. Check [Scheduled Actions](../features/delayed-function-tools.md#review-and-cancel-pending-actions) after changing a tool and reschedule affected actions if needed.
 
 ## History and statistics
 

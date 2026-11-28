@@ -10,7 +10,7 @@ Create the Skills directory if needed. Copy the complete Skill directory, includ
 <config>/extended_openai_conversation_responses/skills/crypto/SKILL.md
 ```
 
-After copying the files, run **Reload skills** in Home Assistant's **Developer Tools → Actions**:
+After copying the files, open **Extended OpenAI → Capabilities → Web search & Skills**, expand **Installed Skills**, and select **Reload Skills**. To reload from **Developer Tools → Actions**, use:
 
 ```yaml
 action: extended_openai_conversation_responses.reload_skills

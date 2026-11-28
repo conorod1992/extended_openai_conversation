@@ -22,9 +22,10 @@ friendly names are shown while stable IDs are stored.
 
 Knowledge and Functions each have **Off**, **On**, and **Custom** modes. Custom
 Knowledge access selects source IDs from source titles and descriptions. Custom
-Functions selects individual tools or complete Function Groups from their
-metadata. Disabled functions remain disabled, and unsafe unscopable native
-functions are always denied. Shared-household memory has **Off**, **Read only**,
+Functions lets you select individual tools or Function Groups. Selecting a group
+includes its current eligible tools, including eligible members you add later.
+Disabled tools remain disabled, and native functions that cannot be safely scoped
+are always denied. Shared-household memory has **Off**, **Read only**,
 and **Read & write** modes and defaults to Off. Personal memory is unavailable.
 
 **Allow the assistant to activate Guest Mode** exposes the one-way

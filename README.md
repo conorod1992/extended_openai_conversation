@@ -24,7 +24,7 @@ This project began as a fork of [jekalmin/extended_openai_conversation](https://
 - **Conversation continuity & context management** — preserve useful conversational context while keeping long conversations bounded.
 - **Temporary & Persistent Memory** — retain short-lived context with expiry or longer-term useful facts and preferences.
 - **Knowledge Library** — give agents larger local reference material that can be searched on demand.
-- **Request Rules & local handling** — build conditional local shortcuts, chain native Home Assistant actions and Function Tools, and route selected AI requests with a fixed model or reasoning choice. Use native Home Assistant response variables to branch on Function results and **Set conversation response** to speak templated replies. Stop and false conditions follow Home Assistant script flow. Continue to AI runs only after normal local completion. New rules start enabled. Restoring Request Rules from a private backup replaces the destination rule set and preserves the saved enabled states, subject to validation. See the [Request Rules guide](https://conorod1992.github.io/extended_openai_conversation/features/request-rules/) for response and variable semantics.
+- **Request Rules & local handling** — handle familiar phrases locally, run Home Assistant actions and Function Tools, or send selected requests to a chosen AI model. See [Request Rules](https://conorod1992.github.io/extended_openai_conversation/features/request-rules/).
 - **Function Tools & Function Groups** — add custom capabilities and load large tool collections only when needed. When the model requests a batch of Function Tools, Extended OpenAI runs the calls one at a time and returns their results together.
 - **Delayed Function Tools** — persist eligible delayed work, review and cancel pending actions, and re-check current authorization before execution.
 - **Voice Identity** — assign retained-data ownership to Assist devices/satellites; device assignments do not identify the person speaking.
@@ -96,6 +96,8 @@ After restarting Home Assistant:
 
    > Turn off the kitchen light.
 
+If Home Assistant is set to **Prefer handling commands locally**, it can answer those device commands before they reach Extended OpenAI. To test the selected agent's provider, open **Extended OpenAI → Usage & Maintenance → Diagnostics → Test assistant → Run diagnostics**.
+
 Once basic operation works, enable optional features one at a time.
 
 For a fuller walkthrough, see [First setup](https://conorod1992.github.io/extended_openai_conversation/getting-started/setup/).
@@ -113,7 +115,7 @@ The management interface is organised around:
 
 The built-in **Guide** provides concise in-app orientation. The [full documentation](https://conorod1992.github.io/extended_openai_conversation/) is the canonical reference for feature behaviour and edge cases.
 
-Conversation settings require a Home Assistant administrator. Settings share an unsaved draft across sections; save when finished. Collections such as Function Tools and Knowledge sources have their own save controls.
+Conversation settings require a Home Assistant administrator. When you move to a page such as Memories with unsaved Assistant settings, the banner lets you save or discard that shared draft. Collections such as Function Tools and Knowledge sources have their own save controls.
 
 ## Preparing for the upcoming 7.0.0 upgrade
 
@@ -136,7 +138,7 @@ Back up Home Assistant before updating, and check the [release notes](https://co
 | Add reusable instructions for a task | [Skills](https://conorod1992.github.io/extended_openai_conversation/features/skills/) and [Manual installation](https://conorod1992.github.io/extended_openai_conversation/skills/discover-skills/) |
 | Schedule, review or cancel a delayed Function Tool | [Delayed Function Tools](https://conorod1992.github.io/extended_openai_conversation/features/delayed-function-tools/) |
 | Understand entity exposure and permissions | [Home Assistant access](https://conorod1992.github.io/extended_openai_conversation/features/home-assistant-access/) |
-| Associate voice requests with individual users | [Voice Identity](https://conorod1992.github.io/extended_openai_conversation/features/voice-identity/) |
+| Choose whose saved data Assist devices can use | [Voice Identity](https://conorod1992.github.io/extended_openai_conversation/features/voice-identity/) |
 | Keep Assist listening for follow-up speech | [Voice follow-ups](https://conorod1992.github.io/extended_openai_conversation/features/voice-followups/) |
 | Clean spoken output | [Speech processing](https://conorod1992.github.io/extended_openai_conversation/features/speech-processing/) |
 | Reduce satellite volume overnight | [Quiet Hours](https://conorod1992.github.io/extended_openai_conversation/features/quiet-hours/) |
@@ -155,7 +157,7 @@ Extended OpenAI combines local Home Assistant processing/storage with requests t
 
 Home Assistant Assist exposure defines the normal entity set available to the assistant, but authenticated Home Assistant user permissions still apply to protected actions. Extended OpenAI policy layers such as Guest Mode can make access more restrictive; they cannot grant permissions that Home Assistant denied.
 
-When model processing is needed, relevant prompt/context, request text, available tool definitions, and retrieved memory or Knowledge content may be sent to the configured provider. Provider-side retention and processing are governed by that provider's policies.
+When model processing is needed, instructions, request text, available tool definitions, recent Short-term memories, and retrieved Memory or Knowledge content may be sent to the configured provider. Eligible Short-term memories can be included automatically even if they are unrelated to the question. Provider-side retention and processing are governed by that provider's policies.
 
 Optional **Keyword + meaning** memory retrieval also sends eligible memory text and search queries to the configured embedding provider and may incur API usage. **Keyword matching** performs retrieval locally.
 
@@ -167,9 +169,9 @@ Private backups preserve provider credentials and are not encrypted. Use **Custo
 
 ## Provider compatibility
 
-The integration supports both **Responses API** and **Chat Completions**. For most users, **API mode: Auto** is the recommended starting point.
+The integration supports both **Responses API** and **Chat Completions**. For most users, leave **Provider API format** on **Auto**.
 
-Some features depend on the selected model, API mode, or provider. For example, hosted Web Search and some multimodal/reasoning capabilities require a compatible Responses implementation. A provider that supports Chat Completions is not automatically compatible with `/v1/responses`.
+Hosted Web Search requires a recognised direct OpenAI Responses endpoint and a supported model. Image, PDF and reasoning support depend on the selected model and API. Check whether your provider implements `/v1/responses` if you need Responses features.
 
 Model capability metadata can be refreshed independently of an integration release, with bundled metadata retained as the fallback. See [Model data](https://conorod1992.github.io/extended_openai_conversation/features/model-data/).
 

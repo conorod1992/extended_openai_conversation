@@ -60,7 +60,8 @@ assert.doesNotMatch(panel, /Trusted actions|trusted Home Assistant actions|trust
 assert.doesNotMatch(panel, /futureKnowledge|futureFunctions/);
 assert.match(panel, /Guest Mode activation/);
 assert.match(panel, /The assistant can enable or extend Guest Mode, but cannot shorten or disable it\. Administrators and Home Assistant automations can change or end Guest Mode\./);
-assert.match(guide, /The assistant can enable or extend Guest Mode, but cannot shorten or disable it\. Administrators and Home Assistant automations can change or end Guest Mode\./);
+assert.match(guide, /Allow the assistant to activate Guest Mode lets a supported model start or extend a restriction\./);
+assert.match(guide, /The assistant cannot shorten or end it\./);
 assert.doesNotMatch(guide, /trusted Home Assistant controls/i);
 assert.match(panel, /<summary>Assistant activation permission<\/summary><p class="help">This permission is separate from the Guest Mode activation state\.<\/p><label class="toggle"><span>Allow the assistant to activate Guest Mode/);
 assert.match(managementStyles, /top:50%/);

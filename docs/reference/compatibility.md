@@ -38,7 +38,7 @@ See [Model data](../features/model-data.md) for catalogue updates and [Responses
 
 ## Base URL
 
-Leave **Base URL** unchanged for the global OpenAI endpoint.
+A blank **Base URL** uses `OPENAI_BASE_URL` when it is set in the Home Assistant process. Otherwise, it uses the global OpenAI endpoint. To select the global endpoint explicitly, enter `https://api.openai.com/v1`.
 
 Set **Base URL** when using an official OpenAI regional endpoint or when your compatible provider requires a different endpoint. See [Web Search](#web-search) below for the recognised OpenAI endpoints.
 

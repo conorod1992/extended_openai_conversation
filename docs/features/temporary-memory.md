@@ -19,9 +19,7 @@ asking unnecessary questions. “Waiting for a parcel today” lasts through tod
 “cooking pasta” or “watching Oppenheimer” lasts a few hours; “the plumber is coming
 tomorrow” lasts through tomorrow; an explicit duration or date takes precedence.
 
-Temporary records use a separate private Home Assistant Store. They survive restarts
-only while their expiry is in the future, are filtered and opportunistically pruned
-before every injection, and are pruned at startup. Selection is local and bounded; selected records enter model prompts.
+Temporary records are stored separately in Home Assistant and survive restarts until they expire. Extended OpenAI selects recent, unexpired records from the scopes allowed for the current request and can include them in the model prompt even when they are unrelated to the question. Selection happens locally and is subject to the limits below.
 The model can add, supersede, or forget records only in the scope derived from the
 current request; it cannot choose another owner. Personal and Shared owners determine access; conversation and device continuity are metadata and do not grant access to another owner’s records.
 

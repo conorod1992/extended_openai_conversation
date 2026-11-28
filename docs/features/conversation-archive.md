@@ -4,7 +4,7 @@ The optional conversation archive stores what was actually discussed. It is sepa
 
 The archive is **off by default**. When enabled, the default retention is 30 days; model archive search, unidentified voice retention, and the shared-household archive are off until explicitly enabled.
 
-Once a transcript passes the configured retention cutoff, it disappears from Archive history, search, and portable backups. Scheduled maintenance removes the expired storage records. If every Extended OpenAI provider entry is disabled when Home Assistant starts, Home Assistant may skip loading the integration. Scheduled retention and cleanup of removed assistants then resume the next time the integration loads.
+Retention is measured from the most recent saved turn. When the selected assistant's retention period expires, the whole conversation disappears from Archive history, search and portable backups. Scheduled maintenance removes the expired storage records. If every Extended OpenAI provider entry is disabled when Home Assistant starts, Home Assistant may skip loading the integration. Scheduled retention and cleanup of removed assistants then resume the next time the integration loads.
 
 ## What is stored
 
@@ -77,7 +77,7 @@ Existing `__anonymous__` records are preserved as **Legacy anonymous**. They are
 
 ## Access and settings
 
-Normal users can manage only their personal memory/archive scope. Home Assistant administrators can select personal, shared, and legacy scopes and manage integration-wide retention and voice mappings. Administrator panel selection never changes the scope available to model-facing tools.
+Normal users can manage only their personal memory/archive scope. Home Assistant administrators can select personal, shared, and legacy scopes and manage retention and voice mappings for the selected assistant. Administrator panel selection never changes the scope available to model-facing tools.
 
 Manage archive retention and model search, and review or delete transcripts, from **Extended OpenAI → Data & Memory → Conversation history**. Configure device ownership under **Assistant → Voice & identity**. Select the intended conversation agent before changing its settings; conversation-agent reconfiguration in **Devices & services** points to this panel.
 

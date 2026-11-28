@@ -8,7 +8,7 @@ This is separate from Home Assistant's **Enable debug logging**, which records i
 
 ## Preview effective request vs request debugging
 
-**Preview effective request** shows a safe local preview for a brand-new message. It can show the main prompts/context, available tools and non-secret request settings without calling the provider or changing agent state.
+Under **Assistant → Prompt & context**, **Preview effective request** shows the instructions, context, available tools and request settings for a brand-new message. It runs locally without calling the provider or saving changes. Review anything you copy because it can include private instructions or Home Assistant entity state.
 
 Because it is only a preview, it cannot include details that exist only during a real conversation, such as the actual user message, previous conversation/tool-call history, memories chosen for that request, credentials, or provider-only framing.
 
@@ -29,8 +29,8 @@ For token and request totals rather than request contents, use [Usage statistics
 
 ## Privacy and retention
 
-Only administrators can enable or inspect captures. Capture is off by default and records future runs for the selected agent. The default capture limit is **10 runs**; choose **5**, **10**, **25**, or **50** under **Capture limit**. When the limit is reached, older captures are replaced.
+Only administrators can enable or inspect captures. Capture is off by default and records future runs for the selected agent. The default capture limit is **10 runs**; choose **5**, **10**, **25**, or **50** under **Capture limit**. This is a maximum. Large captures can cause older captures to be removed sooner to stay within the memory limit.
 
-Captures are held in memory and disappear when Home Assistant restarts. Turning capture off stops new captures; use **Clear captures** to remove existing ones. The **Usage data retention** settings apply to content-free Usage records, not these captures.
+Captures are held in memory. Restarting Home Assistant clears them, turns capture off and resets the limit to 10. Turning capture off stops new captures; use **Clear captures** to remove existing ones. The **Usage data retention** settings apply to content-free Usage records, not these captures.
 
 The management view pages through provider requests and bounds large fields. Copying a visible page or the first page does not export every provider request or guarantee an untruncated provider payload. Review copied material before sharing: private text can appear inside prompts, tool arguments, results, or retrieved context even when connection credentials are excluded from request settings.

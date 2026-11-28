@@ -41,7 +41,7 @@ A ChatGPT subscription does not itself provide an API key. Eligible subscription
 
 Your provider or selected model may not implement a compatible `/v1/responses` endpoint.
 
-Set **API mode** to **Chat Completions** and test again.
+In **Assistant → Basics → Advanced request settings**, set **Provider API format** to **Chat Completions** and test again. For an unknown text-only model, see [Compatibility](reference/compatibility.md#model-ids-and-api-selection) for the other settings to check.
 
 For direct OpenAI, confirm the selected model supports the feature you are trying to use. For custom providers, consult the provider's API documentation rather than assuming that “OpenAI-compatible” includes Responses.
 
@@ -112,7 +112,7 @@ Open **Extended OpenAI → Data & Memory → Knowledge Library** and select the 
 
 Search is lexical. Add important alternative terms to the source title or description, use clear headings, and split unrelated material into focused sources. The assistant is prompted to use short keyword searches, retry once with broader terms, and browse metadata with `knowledge_list` when needed. It is also instructed never to invent source IDs. A filter containing only blank or unknown source IDs returns no results; it does not broaden the search to the full library. Use IDs returned by `knowledge_list`, or omit the filter to search the agent's full permitted library. A source is re-indexed immediately after editing; no Home Assistant restart is required. Knowledge is not learned automatically from conversations, and “remember this” continues to use persistent memory rather than the Knowledge Library.
 
-Do not put instructions or action authorization in a source. Source text is untrusted reference content and cannot override the assistant's higher-priority instructions.
+Do not put instructions or action authorization in a source. Extended OpenAI tells the model to treat source text as untrusted reference material. The integration checks permissions separately when a tool runs.
 
 ## Usage values look incomplete
 
@@ -160,9 +160,9 @@ When reporting an issue, include the smallest relevant log excerpt and redact cr
 
 | Log or status | Where to investigate |
 | --- | --- |
-| Provider authentication, model, or API format | Check the provider connection, then **Assistant > Model & responses**. Use **Diagnostics** to test the connection. |
+| Provider authentication, model, or API format | Check **Chat model** in **Assistant → Basics**, and **Provider API format** under **Advanced request settings**. Use **Usage & Maintenance → Diagnostics → Run diagnostics** to test the connection. |
 | Provider response limit or rejected parameter | Review **Model parameters** and **Maximum response length** for the effective model. |
 | Function Tool or Request Rule failure | Open its editor. Check the Home Assistant trace and verify the actual outcome before repeating an action that may have taken effect. |
-| Speech regex worker or replacement failure | Use **Speech Preview** to check the replacement. The worker preserves the original spoken text on failure. |
+| Speech regex worker or replacement failure | Use **Preview spoken text** in **Assistant → Speech**. If a custom replacement fails, speech uses the text from before custom replacements. |
 | Store needs repair or restore recovery is pending | Preserve the files and consult [Backup & Restore](features/backup-restore.md). Restart Home Assistant if the warning says it can resume a saved transaction. |
 | Scheduled Action abandoned | Check the assistant, Function Tool and due time in the warning before rescheduling. |

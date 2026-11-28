@@ -10,9 +10,7 @@ An authenticated Home Assistant user attached to the request takes precedence. T
 
 ## How a voice source is identified
 
-For Assist requests that contain both a Home Assistant device-registry device ID and satellite metadata, Extended OpenAI uses the Home Assistant `device_id` as the canonical source identity. Satellite metadata remains useful as context and as a fallback when no registry device ID is available.
-
-This avoids treating two identifiers for the same physical voice source as different owners.
+Extended OpenAI uses the Home Assistant device ID when available. If Assist only supplies a registered satellite, Extended OpenAI looks up its device ID. When there is no saved assignment for that device ID, a saved satellite assignment can still apply. If neither supplies a usable assignment, Extended OpenAI uses the configured fallback for an unassigned source.
 
 ## Voice scope policies
 

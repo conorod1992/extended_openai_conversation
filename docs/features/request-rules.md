@@ -254,9 +254,9 @@ Use `tell the kitchen {message}` with **ExtendedOpenAI sentence pattern** and **
 
 ## Groups and priority
 
-Groups help organize and filter rules. They do not affect priority. Use **Show** to view all rules, Ungrouped rules, or one group. Filtered rules keep their global priority numbers. Switch to **All rules** to change priority. Search and group filters only change what is visible.
+Use **Group** to show all rules, ungrouped rules, or one group. Filtering changes which rules you see. Every rule keeps its place in the global priority order.
 
-In **All rules**, drag a card or use **Move up**, **Move down**, **Move to top**, and **Move to bottom** to change the one global sequence. Reordering is unavailable while search or a group filter hides rules. Changing a rule's group or deleting a group preserves the global order; deleted-group rules become Ungrouped. Groups and order are included in backups. The server checks the current revision when saving a reorder, so an older tab cannot silently overwrite a newer order.
+To change priority, set **Group** to **All** and clear **Search rules**. Drag a card or use **Move up**, **Move down**, **Move to top**, and **Move to bottom**. Changing a rule's group or deleting a group preserves the global order; deleted-group rules become Ungrouped. Groups and order are included in backups. The server checks the current revision when saving a reorder, so an older tab cannot silently overwrite a newer order.
 
 ### Repairing rules that used Continue matching
 

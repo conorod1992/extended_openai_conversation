@@ -41,7 +41,7 @@ Then try a request that requires several entities:
 
 > Turn off all the lights downstairs except the hallway light.
 
-If the assistant cannot see an entity, first confirm that the entity is exposed to the assistant.
+If the assistant cannot see an entity, first confirm that the entity is exposed to Assist. Home Assistant can handle simple device commands itself when **Prefer handling commands locally** is on. To verify the EOAI provider connection, use [Run diagnostics](#use-test-agent-when-something-looks-wrong).
 
 ## Choose a model and API mode
 
@@ -92,7 +92,7 @@ See [Voice follow-ups](../features/voice-followups.md).
 
 ## Use Test agent when something looks wrong
 
-Open **Extended OpenAI → Usage & Maintenance → Diagnostics** for the selected agent. The integration's **Configure > Test agent** flow under **Settings > Devices & services** also remains available.
+Open **Extended OpenAI → Usage & Maintenance → Diagnostics** for the selected agent. In **Test assistant**, choose **Run diagnostics**. The integration's **Configure > Test agent** flow under **Settings > Devices & services** also remains available.
 
 The test checks the agent configuration and performs at most one minimal model request. It does not execute Home Assistant device or service actions.
 
