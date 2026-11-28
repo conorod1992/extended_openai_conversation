@@ -39,7 +39,7 @@ Turn on **Continue to AI** when the local sequence should run first and the prov
 1. A failed or aborted script, including **Stop** with `error: true` or a false top-level condition action, returns the rule's failure response. It never calls AI.
 2. A final **Set conversation response** value returns that response, overriding the generic success response. It never calls AI. Home Assistant's latest effective setter wins; parallel setters can be timing dependent.
 3. A successful **Stop** consumes the request locally. It returns a prior conversation response if one exists, otherwise the rule's success response.
-4. After normal completion without a final conversation response or stop, **Continue to AI** calls the provider once when enabled.
+4. After normal completion without a final conversation response or stop, **Continue to AI** enters normal AI handling for this user turn when enabled; tool continuations can require additional provider calls.
 5. Otherwise, the rule returns its success response.
 
 A condition inside `if`, `choose`, `repeat`, or another nested sequence halts only the scope Home Assistant halts. A fatal wait timeout (`continue_on_timeout: false`) follows the failure path; `continue_on_timeout: true` can complete normally. Earlier successful side effects are not rolled back if a later step fails. Use native `variables` and service `response_variable` values in later script actions, including **Set conversation response** for templated replies. The separate success and failure responses are static text with optional sentence-pattern captures such as `{device}`.
@@ -59,7 +59,7 @@ You can disable or edit a disabled rule even when its saved model is incompatibl
 
 Use **Continue to AI** to choose what happens after a routing rule matches:
 
-- **On** applies the routing settings and sends the selected AI input to the provider. The default is the unchanged original request. **This request only** applies the selected model/reasoning only to that provider call; **Rest of this conversation** applies it to that call and later requests in the same conversation.
+- **On** applies the routing settings and sends the selected AI input to the provider. The default is the unchanged original request. **This request only** applies the selected model/reasoning throughout this user turn, including tool continuations, and expires before the next user turn. **Rest of this conversation** applies it to this turn and later requests in the same conversation.
 - **Off** treats the phrase as a standalone routing command. ExtendedOpenAI acknowledges it locally and does not send that command to the provider. Because there is no provider request to modify, standalone commands use **Rest of this conversation** scope.
 
 Routing precedence for a provider request is:
@@ -70,7 +70,7 @@ Conversation overrides use the current conversation/continuity identity and expi
 
 For Azure, a routed deployment and its underlying model travel together. Enter **Underlying Azure model** (`azure_model` in the action JSON) when routing to a different custom deployment name. An exact catalogued model name can supply its own identity; routing to the configured deployment reuses that deployment’s saved binding. A different unknown deployment alias without a binding is rejected before changing the conversation route. Request-only and conversation resets restore the corresponding configured deployment/model pair.
 
-A reset follows the same explicit flow choice. With **Continue to AI** on and **This request only**, the configured agent defaults apply to that one provider call while any saved conversation override remains in place for the next normal request. A **Rest of this conversation** reset clears the saved conversation override.
+A reset follows the same explicit flow choice. With **Continue to AI** on and **This request only**, the configured agent defaults apply throughout this user turn, including tool continuations, while any saved conversation override remains in place for the next normal request. A **Rest of this conversation** reset clears the saved conversation override.
 
 Existing routing rules created before this option was added retain their previous behaviour when first loaded: Equals and Sentence pattern rules remain standalone, while Starts with, Ends with, and Contains rules continue to the provider. Once normalized, that choice is stored explicitly and no longer changes when the match type changes.
 

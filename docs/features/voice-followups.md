@@ -28,7 +28,7 @@ This can create a more conversational experience, but it also means the satellit
 
 Lets the model decide whether its response expects an immediate reply.
 
-The decision is produced as part of the existing model response rather than by making a second model request. This allows responses such as questions or requests for clarification to continue naturally while completed commands can end without reopening the microphone.
+Normally the model supplies the continuation decision with its existing response. If the model finishes without the required decision, EOAI can make one additional finalization request with only the follow-up finalizer available. If the decision is still missing, follow-up listening remains disabled. This allows questions or requests for clarification to continue naturally while completed commands can end without reopening the microphone.
 
 ## Client support
 

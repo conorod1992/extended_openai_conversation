@@ -69,7 +69,7 @@ Set the mode temporarily to **Always**:
 
 ## Memory does not remember something
 
-Check that memory is not Off.
+Check that memory is not Off. Test as an authenticated Home Assistant user, or check the source device's retained-data scope under **Assistant → Voice & identity**. Unidentified voice requests are unretained by default and cannot save or retrieve persistent memories. Household scope also requires Shared Memory to be enabled, with a mode that permits the intended operation. See [Voice Identity](features/voice-identity.md) and [Persistent memory](features/persistent-memory.md).
 
 In **Manual** mode, explicitly say something like:
 

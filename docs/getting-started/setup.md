@@ -70,7 +70,7 @@ See [Web Search](../features/web-search.md) for limitations and cost considerati
 
 ## Optional: enable persistent memory
 
-Under **Data & Memory → Memory settings**, set **Long-term memory** to **Manual** for an introduction to persistent memory. Save, then say:
+Under **Data & Memory → Memory settings**, set **Long-term memory** to **Manual** for an introduction to persistent memory. Test as an authenticated Home Assistant user, or deliberately configure the satellite's retained-data scope under **Assistant → Voice & identity**. Unidentified voice requests are unretained by default and cannot save or retrieve persistent memories. For household scope, enable Shared Memory and choose an appropriate shared-memory mode. See [Voice Identity](../features/voice-identity.md). Save, then say:
 
 > Remember that I prefer temperatures in Celsius.
 

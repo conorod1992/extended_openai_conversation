@@ -78,7 +78,7 @@ Loaded groups persist for the same active conversation. For example:
 
 A separate or expired conversation starts with no on-demand groups loaded. State is isolated by provider entry, conversation agent, and active conversation key. It is stored explicitly rather than inferred from textual history, so context truncation does not unload a group halfway through a conversation.
 
-Loaded state is intentionally ephemeral and resets when Home Assistant or the integration restarts, when the agent is reconfigured/reloaded, or when its conversation state expires. The model can load the group again naturally after a reset. No separate function-group timeout is added.
+Loaded state is intentionally ephemeral and resets when Home Assistant or the integration restarts, when the agent is reloaded (including a configuration change that requires a reload), or when its conversation state expires. The model can load the group again naturally after a reset. No separate function-group timeout is added.
 
 If an on-demand group is disabled or loses all executable members while it is loaded, its loaded state is discarded and its members disappear from subsequent model requests. If a provider had already returned a call for a member before the change, Extended OpenAI re-checks the latest persisted tool/group state immediately before execution and rejects a stale disabled call.
 
