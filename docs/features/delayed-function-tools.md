@@ -61,7 +61,11 @@ Guest Mode and other current restrictions can therefore make a previously schedu
 
 ## What if the tool or configuration changes?
 
-If the Function Tool has been removed, disabled, or its schema or implementation has changed, the pending action is cancelled. A saved fingerprint binds the call to the definition used when it was scheduled. Keeping the same tool name does not authorize a different implementation.
+Extended OpenAI checks the tool when the action is due. If the tool is still
+missing, disabled, or has a different schema or implementation, the action is
+discarded without running. A saved fingerprint identifies the definition used
+when it was scheduled. Until the action expires or reaches this check, it can
+still appear in **Scheduled Actions** and be cancelled there.
 
 The current fingerprint preserves authored value and key types and mapping order. Pending calls saved with the earlier fingerprint, or without a fingerprint, remain in the queue until their normal expiry or due-time validation. They are discarded before execution because their original definitions cannot be verified. Schedule any still-needed actions again after upgrading. A downgrade likewise rejects calls saved with the newer fingerprint.
 
@@ -77,7 +81,7 @@ You can also ask the assistant “What actions are scheduled?” or “Cancel th
 
 Signed-in callers can manage their own actions for the current assistant. Unsigned voice requests can manage unsigned jobs from the same identifiable Assist satellite or device. Anyone using that same voice origin shares this access. Voice Identity assignments for memory and archives do not change it. Requests without an identifiable origin and conversations in Guest Mode have no scheduled action access. The model needs tool support, room for the scheduling tools and an available tool call. Administrators can use **Scheduled Actions** to review or cancel pending actions when voice management is unavailable.
 
-The page and the assistant use the same summaries. Native service calls can show service and visible entity identifiers, permitted area, device, floor, or label names, and selected values such as brightness or target temperature. Summaries flag omitted targets. Other tools use their names. Pending actions stay manageable after the underlying tool is removed or disabled, until the scheduler removes them under its normal rules. Assistant duplication starts with an empty queue. Deleting an assistant removes its queued work.
+The page and the assistant use the same summaries. Native service calls can show service and visible entity identifiers, permitted area, device, floor, or label names, and selected values such as brightness or target temperature. Summaries flag omitted targets. Other tools use their names. Assistant duplication starts with an empty queue. Deleting an assistant removes its queued work.
 
 ## Choose how delayed commands are routed
 

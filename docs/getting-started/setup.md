@@ -29,7 +29,7 @@ Home Assistant controls which entities are available to conversation agents thro
 Examples might include lights, switches, climate entities, media players, covers, or sensors whose state is useful in conversation.
 
 !!! important
-    Expose only entities you actually want conversation agents to access. Exposure is what gives the model Home Assistant entity context; it is not necessary to create a custom function just to control an ordinary exposed entity.
+    Expose only the entities you want conversation agents to access. Assist exposure makes an entity eligible for access, subject to the caller's permissions. In **Extended OpenAI → Assistant → Prompt & context**, **Include exposed devices** controls whether exposed names and current states are automatically added to model requests. It starts on for new assistants and may be off on an upgraded assistant. Ordinary control of an exposed entity can use Home Assistant's built-in tools.
 
 ## Test a simple request
 

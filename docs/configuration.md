@@ -78,7 +78,7 @@ Conversation-agent settings are available in the **Extended OpenAI** sidebar pan
 | **Long-term memory** | Off | Enables Manual or Automatic persistent memory. |
 | **Allow the assistant to use Knowledge** | Off | Enables on-demand model search and retrieval of maintained per-agent Knowledge sources. |
 | **Automatically include memories** | 3 | Maximum memories selected using the effective AI input of the first eligible model-handled turn and reused for that conversation. |
-| **Maximum response length (tokens)** | 500 | Limits model output tokens, including reasoning tokens where the provider counts them against output. |
+| **Maximum response length (tokens)** | 500 | Limits output tokens per provider call, including reasoning tokens where the provider counts them against output. A turn that uses tools can make several calls. |
 | **Tool-call limit per request** | 10 | Limits model-requested Function Tool executions within one turn; resets for the next turn. |
 | **Skills** | None on initial setup; available Skills selected when adding an agent | Lists installed instruction sets the agent may load, one installed directory name per line. |
 | **Functions** | Included Home Assistant tools | Defines tools available to the model. |

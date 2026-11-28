@@ -19,7 +19,7 @@ export const GUIDE_TOPICS = [
     terms: "model provider api responses chat completions reasoning effort service tier temperature top p tokens",
     body: [
       {type: "heading", text: "The settings that matter most"},
-      {type: "list", items: ["Chat model chooses which AI model the provider should use.","Provider API format chooses the type of request Extended OpenAI sends to the provider. Auto is recommended for most users because the integration can choose the appropriate supported format for you.","Maximum response length limits output tokens for one answer; reasoning tokens can also count against this limit.","Tool-call limit per request limits model-requested Function Tool executions within one conversation turn and resets on the next turn."]},
+      {type: "list", items: ["Chat model chooses which AI model the provider should use.","Provider API format chooses the type of request Extended OpenAI sends to the provider. Auto is recommended for most users because the integration can choose the appropriate supported format for you.","Maximum response length limits output tokens per provider call. Reasoning tokens can count toward it, and a turn can make several calls.","Tool-call limit per request limits model-requested Function Tool executions within one conversation turn and resets on the next turn."]},
       {type: "p", text: "Some models have extra settings, such as reasoning effort or service tier. These only work if your chosen model and provider support them. Higher reasoning effort can improve answers to more difficult questions, but it may also make replies slower and use more tokens."},
       {type: "note", title: "Using a custom provider", text: "A service that describes itself as “OpenAI-compatible” may still support only some OpenAI features. If a custom provider has trouble with the Responses API, tools or advanced model settings, check which API format that provider recommends rather than assuming every option will work."},
       {type: "p", text: "Auto chooses from model capability information before sending; it does not probe the provider or retry a failure through another API. Unknown model IDs use conservative capabilities and are not assumed to support tools. For an Azure deployment with a custom name, set Azure underlying model in Basics → Advanced request settings so capability checks use the actual model ID."},
@@ -307,11 +307,11 @@ export const GUIDE_TOPICS = [
   {
     id: "speech-processing",
     title: "Speech cleanup for TTS",
-    summary: "Speech processing removes text that is useful on screen but awkward when spoken, while keeping the original assistant response for logs and conversation history.",
+    summary: "Speech cleanup makes replies easier to listen to. It keeps the original reply for conversation context and any enabled Archive, subject to their limits.",
     terms: "speech tts markdown urls links citations formatting regex replacements progressive streaming cleanup spoken output",
     body: [
-      {type: "p", text: "Speech cleanup can remove Markdown formatting, link destinations and bare URLs, suppress empty or address-only citation labels, and keep readable labels and citation numbers. The original response remains in ChatLog and retained history, subject to Archive limits."},
-      {type: "p", text: "The built-in cleanup can work progressively while a response is streaming, including when Markdown or URLs are split across provider chunks. This allows spoken output to start before the full answer has finished."},
+      {type: "p", text: "Speech cleanup can remove Markdown formatting, link destinations and bare URLs, suppress empty or address-only citation labels, and keep readable labels and citation numbers."},
+      {type: "p", text: "Built-in cleanup can work while a reply is streaming, so speech can start before the answer finishes. Home Assistant shares that stream with live text, so on-screen text can show the cleaned reply too."},
       {type: "note", title: "Custom replacements wait for the completed response", text: "Custom regular-expression replacements run only after the response is complete, so enabling any custom replacement disables progressive TTS for that response. If a replacement fails or takes too long, Extended OpenAI simply uses the speech text from before the custom replacements instead of speaking a partly modified result."},
     ],
     action: {label: "Configure speech", page: "assistant", section: "speech"},

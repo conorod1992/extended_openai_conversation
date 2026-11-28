@@ -73,4 +73,6 @@ Use **Preview spoken text** in the Speech section to check the completed-respons
 
 ## What speech processing does not change
 
-Speech cleanup does not rewrite the assistant's original response for future model context. It only changes the version intended to be spoken aloud.
+Future model context and any enabled Archive use the original response, subject
+to conversation and Archive limits. Home Assistant's live text can display the
+cleaned version because it shares the stream used for speech.

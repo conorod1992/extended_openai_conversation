@@ -59,8 +59,9 @@ Automations and scripts can use:
 - `extended_openai_conversation_responses.guest_mode_update`
 - `extended_openai_conversation_responses.guest_mode_disable`
 
-Both actions target a config entry and conversation agent and require an
-administrator. Datetimes without an offset use the Home Assistant timezone.
+Both actions target a config entry and conversation agent. User-originated calls
+require Home Assistant administrator permission. Trusted system automations can
+also call these actions. Datetimes without an offset use the Home Assistant timezone.
 
 The trusted `guest_mode_update` action replaces the entire interval:
 
@@ -97,6 +98,10 @@ becomes active after a provider request has already been sent, execution-time
 restrictions tighten immediately, but already-sent context cannot be
 retroactively removed. Deactivation during a request does not add permissions
 until the next user turn.
+
+If guest access changes while Extended OpenAI is preparing a model call, it can
+stop the call before sending it. If you see **Guest access changed during this
+request**, start a new turn so the assistant can use the current permissions.
 
 ## Status sensor
 
