@@ -227,6 +227,7 @@ async def test_continuity_stage_restores_guest_and_prompt_state(
         async_release=AsyncMock(),
     )
     agent = SimpleNamespace(
+        hass=SimpleNamespace(),
         subentry=SimpleNamespace(data={}),
         _continuity=continuity,
         _resolve_live_guest_policy=lambda: policy,
