@@ -89,3 +89,51 @@ test("non-admins do not get the Assistant actions menu", async ({page}) => {
   await expect(panel.locator("#agent option:checked")).toHaveText("Jarvis");
   await expect(panel.locator(".agent-actions-menu")).toHaveCount(0);
 });
+
+for (const width of [390, 1600]) {
+  test("Memory settings and both Memories tabs keep consistent spacing at " + width + "px", async ({page}) => {
+    await page.setViewportSize({width, height:900});
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("data-memory/memory-settings", "&bundle=1"));
+    const panel = page.locator("extended-openai-management-panel");
+    const manage = panel.getByRole("button", {name:"Manage stored memories", exact:true});
+    await expect(manage).toBeVisible();
+
+    const settingsLayout = await panel.locator(".memory-settings-intro").evaluate(row => {
+      const intro = row.querySelector(".page-intro").getBoundingClientRect();
+      const tagline = row.querySelector("p").getBoundingClientRect();
+      const button = row.querySelector(".inline-route").getBoundingClientRect();
+      const card = row.nextElementSibling.getBoundingClientRect();
+      return {gap:card.top - row.getBoundingClientRect().bottom, right:card.right - button.right,
+        taglineBottom:tagline.bottom, buttonTop:button.top, introRight:intro.right, buttonLeft:button.left};
+    });
+    expect(settingsLayout.gap).toBeCloseTo(30);
+    expect(settingsLayout.right).toBeCloseTo(0);
+    if (width < 600) expect(settingsLayout.buttonTop).toBeGreaterThan(settingsLayout.taglineBottom);
+    else expect(settingsLayout.buttonLeft).toBeGreaterThan(settingsLayout.introRight);
+
+    await manage.click();
+    const heading = panel.getByRole("heading", {name:"Memories", exact:true, level:1});
+    const intro = panel.locator(".memories-intro");
+    await expect(panel.getByRole("heading", {name:"Long-term memories", exact:true})).toBeVisible();
+    await expect(heading).toBeVisible();
+    const originalHeading = await heading.elementHandle();
+    const memoriesLayout = () => intro.evaluate(node => {
+      const scope = node.getRootNode().querySelector("#eoc-scope-host .scope-bar").getBoundingClientRect();
+      const box = node.getBoundingClientRect();
+      return {top:box.top + window.scrollY, gap:scope.top - box.bottom};
+    });
+    const longTerm = await memoriesLayout();
+    expect(longTerm.gap).toBeCloseTo(settingsLayout.gap);
+
+    await panel.getByRole("button", {name:"Short-term", exact:true}).click();
+    await expect(panel.getByRole("heading", {name:"Short-term memories", exact:true})).toBeVisible();
+    await expect(heading).toBeVisible();
+    await expect(intro.locator("p")).toHaveText("Review and manage saved long-term and short-term memories for the selected scope.");
+    expect(await originalHeading.evaluate(node => node.isConnected)).toBe(true);
+    const shortTerm = await memoriesLayout();
+    expect(shortTerm.top).toBeCloseTo(longTerm.top);
+    expect(shortTerm.gap).toBeCloseTo(settingsLayout.gap);
+    await expectHarnessClean(page, errors);
+  });
+}

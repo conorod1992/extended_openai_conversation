@@ -20,7 +20,7 @@ import {
 } from "./management-page-drafts.js";
 import {cacheTimestampIsFresh, readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
-import {ASSISTANT_INTRO_MARKUP, renderManagement, renderManagementRoute, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
+import {ASSISTANT_INTRO_MARKUP, renderMemoriesIntro, renderManagement, renderManagementRoute, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {renderConfigurationActions} from "./assistant-actions-menu.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors, syncSharedConfigurationBar} from "./management-actions.js";
 import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, USAGE_RETENTION_FIELDS, uncertainConfigurationSave, settleConfigurationSaveRecovery} from "./configuration-acknowledgement.js";
@@ -152,6 +152,7 @@ const CRITICAL_STYLE = `
   .section-layout{display:block}
   .section-selector{margin:0 0 20px}
   main{display:grid;gap:30px}
+  .memories-intro{margin-bottom:30px}
   .page-intro{display:grid;gap:7px;max-width:780px}
   .page-intro h1,.page-intro p{margin:0}
   .page-intro h1{font-size:24px;font-weight:600;line-height:1.25}
@@ -2006,6 +2007,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         </div>
         <nav class="top-nav" aria-label="Management sections">${navigation.map((item) => `<button type="button" data-page="${item.id}" class="${item.id === this._page ? "active" : ""}" ${item.id === this._page ? 'aria-current="page"' : ""}>${item.label}</button>`).join("")}</nav>
         <nav class="subsection-nav" aria-label="${this._e(pageMetadata(this._page).label)} sections" ${local.length > 1 ? "" : "hidden"}>${local.length > 1 ? local.map((item) => `<button type="button" data-subsection="${this._e(item.id)}" class="${item.id === this._subsection ? "active" : ""}" ${item.id === this._subsection ? 'aria-current="page"' : ""}>${this._e(item.label)}</button>`).join("") : ""}</nav>
+        <div id="eoc-memories-intro-host">${renderMemoriesIntro(this)}</div>
         <div id="eoc-scope-host">${["data-memory/conversations", "data-memory/memories"].includes(this._viewKey()) ? this._scopePicker() : ""}</div>
         <div id="eoc-section-host">${local.length > 1 ? `<div class="section-selector"><label><span>${this._e(pageMetadata(this._page).label)} section</span><select id="local-section" tabindex="0" aria-description="${this._e(currentSection?.description || "")}">${local.map((item) => `<option value="${this._e(item.id)}" ${item.id === this._subsection ? "selected" : ""}>${this._e(item.label)}</option>`).join("")}</select></label></div>` : ""}</div>
         <div id="eoc-assistant-intro-host">${agent && this._page === "assistant" ? ASSISTANT_INTRO_MARKUP : ""}</div>
@@ -3108,7 +3110,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._viewKey() === "data-memory/memories" && this._memoryKind === "temporary") return getRouteFeature("data-memory/memories")?.renderTemporaryScopePicker(this);
     const memories = this._viewKey() === "data-memory/memories";
     const hasEmpty = (this._data?.scopes || []).some((scope) => (memories ? scope.memory_count : scope.conversation_count) === 0 && scope.scope_type === "user" && !scope.is_current_user);
-    return `${memories ? `<section class="page-intro"><h1>Memories</h1><p>Review and manage saved long-term and short-term memories for the selected scope.</p></section>` : `<section class="page-intro"><h1>Conversation history</h1><p>Recent conversations can continue when the same user or device speaks again. Review or search retained conversations below.</p></section>`}<section class="scope-bar" aria-label="${memories ? "Memory scope" : "Conversation scope"}"><span class="scope-title">${memories ? "Memory scope" : "Conversation scope"}</span><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
+    return `${memories ? "" : `<section class="page-intro"><h1>Conversation history</h1><p>Recent conversations can continue when the same user or device speaks again. Review or search retained conversations below.</p></section>`}<section class="scope-bar" aria-label="${memories ? "Memory scope" : "Conversation scope"}"><span class="scope-title">${memories ? "Memory scope" : "Conversation scope"}</span><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
   }
 
   _scopeOptions(section, includeEmpty = this._showEmptyScopes, excludeLegacy = false) {

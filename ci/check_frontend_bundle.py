@@ -80,7 +80,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # 2,904 minified JS bytes (908,200 -> 911,104). Keep 26 bytes of headroom.
 # The persistent Assistant actions menu and layout fixes add 1,742 minified JS
 # bytes (918,163 -> 919,905). Keep 26 bytes of total JS headroom.
-CEILINGS = {"javascript": 919_931, "css": 65_000, "management_entry": 120_525}
+# The retained Memories heading and Overview labels add 286 minified JS bytes.
+# Keep 26 bytes of total JS headroom and retain the entry and CSS limits.
+CEILINGS = {"javascript": 920_217, "css": 65_000, "management_entry": 120_525}
 
 
 def measure(dist: Path) -> dict[str, int]:

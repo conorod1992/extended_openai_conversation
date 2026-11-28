@@ -131,7 +131,7 @@ const markup = renderOverview(panel, agent);
 assert.match(markup, /Configuration & health/);
 assert.match(markup, /<summary>Detailed health checks<\/summary>/);
 assert.doesNotMatch(markup, /id="overview-health-details" open/);
-assert.match(markup, /Off by choice/);
+assert.match(markup, /Long-term memory off by choice · Knowledge enabled, no sources/);
 assert.match(markup, /Run live test/);
 assert.match(markup, /data-target="config-api_mode"/);
 assert.match(markup, /<ha-icon icon="mdi:information-outline" aria-hidden="true"><\/ha-icon> Connection tests only run when you start one from Diagnostics\./);
@@ -199,7 +199,7 @@ assert.match(
   /lookupModelData\(panel, model, "apply"\)/,
   "the Overview apply action must explicitly activate the staged catalogue",
 );
-assert.match(claritySource, /status: "Using bundled data"/);
+assert.match(claritySource, /status: "Using the built-in model catalogue"/);
 assert.match(claritySource, /status: "Current"/);
 assert.match(claritySource, /status: "Check failed"/);
 assert.match(

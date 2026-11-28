@@ -63,8 +63,8 @@ const overview = renderOverviewSnapshot(panel, {
     knowledge: {label: "Available"},
   },
 });
-assert.match(overview, /Automatic · Knowledge Available/);
-assert.match(renderOverviewSnapshot(panel, {memory_mode: "manual"}), /manual/);
+assert.match(overview, /Long-term memory automatic · Knowledge available/);
+assert.match(renderOverviewSnapshot(panel, {memory_mode: "manual"}), /Long-term memory manual/);
 
 assert.deepEqual(diagnosticStatusMeta("Passed"), {label: "Passed", icon: "✓", className: "passed"});
 assert.deepEqual(diagnosticStatusMeta("Warning"), {label: "Warning", icon: "!", className: "warning"});

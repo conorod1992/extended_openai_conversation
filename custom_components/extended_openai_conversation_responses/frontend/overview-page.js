@@ -49,25 +49,22 @@ function queueRender(panel) {
   void ensureOverviewModule().then(() => render()).catch(render);
 }
 
-function overviewAgentFeatureProjection(agent) {
+function overviewMemoryStatus(agent) {
   const memory = agent?.feature_status?.memory;
   const knowledge = agent?.feature_status?.knowledge;
-  if (!memory && !knowledge) return agent;
-  const memoryLabel = memory?.label || agent.memory_mode || "Unknown";
-  const labels = [memoryLabel];
-  if (knowledge?.label) labels.push(`Knowledge ${knowledge.label}`);
-  return {...agent, memory_mode: labels.join(" · ")};
+  const memoryLabel = memory?.label || agent.memory_mode || "status unavailable";
+  const labels = [`Long-term memory ${memoryLabel.replaceAll("_", " ").toLowerCase()}`];
+  if (knowledge?.label) labels.push(`Knowledge ${knowledge.label.toLowerCase()}`);
+  return labels.join(" · ");
 }
 
 function snapshotCard(panel, title, status, detail, pageName, section, action) {
   return `<article class="dashboard-card eoc-overview-snapshot-card"><div><h3>${panel._e(title)}</h3><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p></div>${panel._canAccessView?.(pageName, section) === false ? "" : `<button type="button" class="secondary dashboard-action" data-page="${pageName}" data-subsection="${section}">${action}</button>`}</article>`;
 }
 
-export function renderOverviewSnapshot(panel, sourceAgent) {
-  if (!sourceAgent) return panel._loading();
-  const agent = overviewAgentFeatureProjection(sourceAgent);
+export function renderOverviewSnapshot(panel, agent) {
+  if (!agent) return panel._loading();
   const guest = agent?.guest_mode || {};
-  const memoryMode = panel._titleCase?.(agent?.memory_mode || "Unknown") || String(agent?.memory_mode || "Unknown");
   const guestState = panel._titleCase?.(String(guest.state || "inactive").replaceAll("_", " ")) || String(guest.state || "inactive");
   return `<section class="page-intro eoc-overview-snapshot-intro"><h1>${panel._e(agent?.title || "Assistant")}</h1><p>Your assistant at a glance. Detailed health, usage, and stored-data counts are still loading.</p></section>
     <section class="content-card configuration-health"><div class="section-heading"><h2>Configuration & health</h2></div><section class="dashboard-grid eoc-overview-snapshot" aria-label="Assistant overview" aria-busy="true">
@@ -75,7 +72,7 @@ export function renderOverviewSnapshot(panel, sourceAgent) {
       ${snapshotCard(panel, "Capabilities", `${agent?.effective_function_count == null
         ? (agent?.function_count == null ? "Loading…" : `${Number(agent.function_count).toLocaleString()} individually enabled`)
         : `${Number(agent.effective_function_count).toLocaleString()} available functions`} · ${agent?.function_group_count == null ? "Unknown" : Number(agent.function_group_count).toLocaleString()} groups`, "Home Assistant access, custom functions, and visitor restrictions.", "capabilities", "home-assistant", "Manage")}
-      ${snapshotCard(panel, "Memory & Knowledge", memoryMode, "Stored memory and Knowledge counts are loading.", "data-memory", "memories", "Manage")}
+      ${snapshotCard(panel, "Memory & Knowledge", overviewMemoryStatus(agent), "Stored memory and Knowledge counts are loading.", "data-memory", "memories", "Manage")}
       ${snapshotCard(panel, "Conversation history", agent?.archive_enabled ? "Archive enabled" : "Archive disabled", "Retention details are loading.", "data-memory", "conversations", "View")}
       ${snapshotCard(panel, "Guest Mode", guestState, "Integration-enforced visitor access and data restrictions.", "capabilities", "guest-mode", "Configure")}
       ${snapshotCard(panel, "Web Search", "Loading…", "Checking availability.", "capabilities", "web-skills", "Configure")}
@@ -118,7 +115,7 @@ function ensureOverviewHealthClarityModule() {
 
 export function renderOverview(panel, agent) {
   if (implementation) {
-    return implementation.renderOverview(panel, overviewAgentFeatureProjection(agent));
+    return implementation.renderOverview(panel, agent);
   }
   queueRender(panel);
   return renderOverviewSnapshot(panel, agent);

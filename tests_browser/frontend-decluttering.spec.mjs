@@ -185,7 +185,7 @@ test("Memory settings heading retains one working cross-link and no global tagli
   const panel = host(page);
   const manage = panel.getByRole("button",{name:"Manage stored memories",exact:true});
   await expect(manage).toHaveCount(1);
-  await expect(panel.locator(".page-intro")).toContainText("Manage stored memories");
+  await expect(panel.locator(".memory-settings-intro")).toContainText("Manage stored memories");
   await expect(panel).not.toContainText("Looking for stored memories?");
   await expect(panel.locator("header")).not.toContainText("Configure your assistant, capabilities, retained data, and maintenance");
   await manage.click();

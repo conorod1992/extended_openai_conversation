@@ -66,7 +66,7 @@ function modelDataCardState(panel) {
   }
   if (data.source === "bundled") {
     return {
-      status: "Using bundled data",
+      status: "Using the built-in model catalogue",
       detail: `Catalogue ${currentLabel} · checked daily for newer data.`,
       tone: "neutral",
       action: "View",
