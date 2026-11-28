@@ -1,11 +1,8 @@
-import {usageRetentionDeletionNotice} from "./retention-settings-ui.js";
 import {captureAuthentication} from "./authentication-presentation.js";
 import {copyTextToClipboard} from "./clipboard.js";
-import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions, applyConfigurationImport, refreshUncertainConfigurationImport} from "./assistant-configuration-actions.js";
-export {invalidateImportPreview, renderConfigurationActions} from "./assistant-configuration-actions.js";
+export {invalidateImportPreview} from "./assistant-configuration-actions.js";
 import {searchTokens, matchesFunctionSearchTokens, cachedFunctionSearchTokens} from "./function-search.js";
 export {matchesFunctionSearch} from "./function-search.js";
-import {beginOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
 import {ensureCompactChoiceStyle} from "./compact-choice-styles.js";
 import {readConfigurationDraft as readConfig, readConfigurationPreview, recordReasoningChoice} from "./configuration-controls.js";
@@ -333,9 +330,6 @@ export function bindConfiguration(panel) {
     search.focus();
   });
   bindRegexRules(panel);
-  const actionsMenu = root.querySelector(".agent-actions-menu");
-  bindOwnedEvent(actionsMenu, "keydown", "assistant-actions", (event) => { if (event.key === "Escape") { actionsMenu.open = false; actionsMenu.querySelector("summary")?.focus(); } });
-  actionsMenu?.querySelectorAll("button").forEach((button) => bindOwnedEvent(button, "click", "assistant-menu-close", () => { actionsMenu.open = false; }));
   root.querySelectorAll("[data-jump]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); root.querySelector(`#${link.dataset.jump}`)?.scrollIntoView({behavior:"smooth",block:"start"}); }));
   root.querySelector("#conversation-timeout-preset")?.addEventListener("change", (event) => {
     const input = root.querySelector('[data-config="conversation_timeout_minutes"]');
@@ -407,42 +401,6 @@ export function bindConfiguration(panel) {
   }
   root.querySelector("#add-regex")?.addEventListener("click", () => { readConfig(panel); panel._draft.speech_regex_replacements.push({pattern:"",replacement:""}); panel._setConfigDirty(true); renderRegexRules(panel,panel._draft.speech_regex_replacements.length-1); });
   root.querySelector("#preview-speech")?.addEventListener("click", async () => { const token=(panel._eocSpeechPreviewToken||0)+1;panel._eocSpeechPreviewToken=token;const agentId=panel._agentId,view=panel._viewKey?.(),output=root.querySelector("#speech-output");output.value="";const current=()=>panel._eocSpeechPreviewToken===token&&panel._agentId===agentId&&panel._viewKey?.()===view&&root.querySelector("#speech-output")===output;try { const response=await panel._call("configuration","speech_preview",{config:readConfig(panel),sample_text:root.querySelector("#speech-sample").value});if(current()){output.value=response.speech_text;if(response.warning)panel._toast(response.warning,true);} } catch(err){if(current())panel._toast(`Unable to preview speech: ${err.message||String(err)}`,true);} });
-  bindSavedConfigurationActions(panel, root);
-  const importDocument = root.querySelector("#import-document"), importApply = root.querySelector("#import-apply"), importSummary = root.querySelector("#import-summary");
-  bindOwnedEvent(root.querySelector("#import-agent"), "click", "assistant-actions", () => { invalidateImportPreview(panel, importApply, importSummary); root.querySelector("#import-dialog")?.showModal(); });
-  bindOwnedEvent(importDocument, "input", "assistant-actions", () => invalidateImportPreview(panel, importApply, importSummary));
-  root.querySelectorAll('input[name="import-mode"]').forEach(control => bindOwnedEvent(control, "change", "assistant-actions", () => invalidateImportPreview(panel, importApply, importSummary)));
-  bindOwnedEvent(root.querySelector("#import-preview"), "click", "assistant-actions", async () => {
-    invalidateImportPreview(panel, importApply, importSummary);
-    const document = importDocument.value, mode = root.querySelector('input[name="import-mode"]:checked').value;
-    let revision = panel._configData?.revision;
-    const agent = panel._agentId, dialog = root.querySelector("#import-dialog");
-    const ownsOperation = beginOperation(panel, "import-preview");
-    const current = () => ownsOperation() && dialog?.open && importDocument.isConnected
-      && importDocument.value === document && root.querySelector('input[name="import-mode"]:checked').value === mode && panel._agentId === agent
-      && panel._configData?.revision === revision;
-    try {
-      if (await refreshUncertainConfigurationImport(panel, {configuration:mode === "current"})) revision = panel._configData?.revision;
-      if (!current()) return;
-      const result = await panel._call("configuration", "import_preview", {document, mode});
-      if (!current()) return;
-      panel._importDocument = document;
-      panel._importMode = mode;
-      panel._importRevision = revision;
-      panel._importShortenedRetention = result.shortened_usage_retention || null;
-      const retentionNotice = usageRetentionDeletionNotice(panel._importShortenedRetention);
-      importSummary.textContent = `${result.title} / ${result.summary.model} / ${result.summary.tools} tools / ${result.summary.function_groups} function groups / ${result.summary.speech_rules} speech rules${retentionNotice ? `. ${retentionNotice}` : ""}`;
-      importApply.disabled = false;
-    } catch (err) {
-      if (!current()) return;
-      panel._importDocument = null;
-      importSummary.textContent = err.message || String(err);
-      importApply.disabled = true;
-    }
-  });
-  bindOwnedEvent(root.querySelector("#import-apply"), "click", "assistant-actions", () => applyConfigurationImport(panel, root));
-  bindOwnedEvent(root.querySelector("#import-cancel"), "click", "assistant-actions",()=>{invalidateImportPreview(panel,importApply,importSummary);root.querySelector("#import-dialog").close();actionsMenu?.querySelector("summary")?.focus();});
-  bindOwnedEvent(root.querySelector("#import-dialog"), "cancel", "assistant-actions",()=>{invalidateImportPreview(panel,importApply,importSummary);requestAnimationFrame(()=>actionsMenu?.querySelector("summary")?.focus());});
   if (panel._configRestoreFocus) { const selector=panel._configRestoreFocus; panel._configRestoreFocus=null; requestAnimationFrame(()=>root.querySelector(selector)?.focus({preventScroll:true})); }
 }
 
@@ -450,7 +408,6 @@ export function configurationDialogs(panel) {
   const view = panel._viewKey?.();
   return [
     (!view || view === "assistant/prompt-context") ? `<dialog id="prompt-preview-dialog" class="editor-dialog wide prompt-preview-dialog" aria-labelledby="prompt-preview-title"><div class="dialog-header"><div><h2 id="prompt-preview-title">Preview effective request</h2><p class="dialog-meta">Locally assembled fresh-request content</p></div></div><div class="dialog-body prompt-preview-body"><div class="notice"><strong>Current request preview</strong><p>Shows locally assembled content that would accompany a brand-new message now. Current templates and Home Assistant context are resolved. User input and conversation history are excluded.</p><p>This may contain private entity state, memory data, Knowledge context, user instructions, and Function Tool schemas. Provider-internal framing and hidden server-side content cannot be inspected.</p></div><div class="request-preview-metrics"><strong id="request-footprint">Calculating...</strong><span id="function-group-savings"></span></div><div id="request-preview-sections" class="request-preview-sections"></div><ul id="prompt-preview-notes" class="prompt-preview-notes"></ul><div id="prompt-preview-status" class="validation" role="status" aria-live="polite"></div></div><div class="dialog-actions"><button type="button" class="secondary" id="prompt-preview-close">Close</button><button type="button" id="copy-prompt-preview" disabled>Copy all</button></div></dialog>` : "",
-    `<dialog id="import-dialog" class="editor-dialog wide" aria-labelledby="import-dialog-title"><div class="dialog-header"><h2 id="import-dialog-title">Import agent configuration</h2></div><div class="dialog-body">${panel._configDirty ? `<div class="notice warning"><strong>Unsaved shared draft</strong><p>Creating a new agent preserves this draft. Overwriting the current agent discards it after confirmation.</p></div>` : ""}<label>Exported JSON or YAML<textarea id="import-document" class="yaml-editor" spellcheck="false"></textarea></label><div class="mode-row"><label><input type="radio" name="import-mode" value="new" checked> Create a new agent</label><label><input type="radio" name="import-mode" value="current"> Overwrite current agent</label></div><div id="import-summary" class="validation" aria-live="polite">Validate the document to preview it.</div></div><div class="dialog-actions"><button type="button" class="secondary" id="import-cancel">Cancel</button><button type="button" class="secondary" id="import-preview">Validate & preview</button><button type="button" id="import-apply" disabled>Import</button></div></dialog>`,
     (!view || view === "capabilities/functions") ? `<dialog id="tool-dialog" class="editor-dialog tool-dialog" aria-labelledby="tool-dialog-title"><div class="dialog-header"><div><span class="setting-label-row"><h2 id="tool-dialog-title">Function Tool</h2>${helpButton(panel,"function_tools")}</span><p id="tool-dialog-meta" class="dialog-meta">YAML</p></div></div><div class="dialog-body tool-dialog-body"><div id="built-in-picker" class="built-in-picker"><label for="built-in-function">Insert Built-in Function</label><select id="built-in-function"><option value="">Insert Built-in Function…</option></select><small>Selecting a preset inserts editable Function Tool YAML. Use Execute services for one or more Home Assistant service calls.</small></div><label class="tool-editor-label"><span class="sr-only">Function Tool YAML</span><textarea data-native-yaml-fallback id="tool-yaml" class="yaml-editor tool-yaml-editor" spellcheck="false" wrap="off" aria-describedby="tool-error"></textarea><ha-yaml-editor id="tool-yaml-native" class="tool-yaml-native-editor" hidden in-dialog aria-label="Function Tool YAML" aria-describedby="tool-error"></ha-yaml-editor></label><div id="tool-error" class="validation" role="status" aria-live="polite"></div></div><div class="dialog-actions"><button type="button" class="secondary" id="tool-cancel">Cancel</button><button type="button" class="secondary" id="tool-validate">Validate</button><button type="button" id="tool-save">Save</button></div></dialog>` : "",
     (!view || view === "capabilities/functions") ? `<dialog id="group-dialog" class="editor-dialog group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-header"><div><h2 id="group-dialog-title">Function group</h2><p>Choose Always available to send full schemas immediately, or Load when needed to send a compact catalogue first.</p></div></div><div class="dialog-body group-dialog-body"><div class="form-grid"><label>Group name<input id="group-name" maxlength="100" autocomplete="off" placeholder="Reminders"></label><label>Group ID<input id="group-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="reminders"><small>Stable lowercase ID used by the model. Advanced users may edit it.</small></label></div><label>Description<textarea id="group-description" class="short-textarea" maxlength="500" placeholder="Create and manage scheduled, recurring, and triggered reminders."></textarea><small>Keep this concise. On-demand groups send it in the compact catalogue; Always available groups send their full tool schemas.</small></label><label>Availability<select id="group-loading-mode"><option value="on_demand">Load when needed</option><option value="always">Always available</option></select><small>On-demand groups add one model round-trip the first time they are needed in an active conversation.</small></label><fieldset class="group-functions-fieldset"><legend>Functions</legend><input id="group-function-search" type="search" placeholder="Search functions..." aria-label="Search functions to assign"><small>Selecting a function moves it from any other group. Guest availability is managed centrally on the Guest page.</small><div id="group-functions" class="group-function-choices"></div><div id="group-functions-empty" class="empty" hidden>No functions match this search. <button type="button" class="secondary compact-button" id="group-function-clear">Clear search</button></div></fieldset><div id="group-error" class="validation invalid" role="alert"></div></div><div class="dialog-actions"><button type="button" class="secondary" id="group-cancel">Cancel</button><button type="button" id="group-save">Save</button></div></dialog>` : "",
     helpPopover(),

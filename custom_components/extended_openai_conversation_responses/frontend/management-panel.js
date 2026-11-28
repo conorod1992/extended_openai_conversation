@@ -21,6 +21,7 @@ import {
 import {cacheTimestampIsFresh, readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, renderManagementRoute, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
+import {renderConfigurationActions} from "./assistant-actions-menu.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors, syncSharedConfigurationBar} from "./management-actions.js";
 import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, USAGE_RETENTION_FIELDS, uncertainConfigurationSave, settleConfigurationSaveRecovery} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent, catalogMayPublish} from "./management-catalog-ownership.js";
@@ -125,7 +126,7 @@ const CRITICAL_STYLE = `
   :host{--eoc-success-text:light-dark(color-mix(in srgb,var(--primary-text-color) 32%,var(--success-color,#0f9d58)),color-mix(in srgb,var(--primary-text-color) 14%,var(--success-color,#0f9d58)));--eoc-error-text:light-dark(color-mix(in srgb,var(--primary-text-color) 14%,var(--error-color,#db4437)),color-mix(in srgb,var(--primary-text-color) 24%,var(--error-color,#db4437)));--eoc-accent-text:light-dark(color-mix(in srgb,var(--primary-text-color) 31%,var(--primary-color)),color-mix(in srgb,var(--primary-text-color) 12%,var(--primary-color)));--eoc-action-background:light-dark(color-mix(in srgb,var(--primary-text-color) 20%,var(--primary-color)),var(--primary-color));--eoc-error-background:color-mix(in srgb,var(--error-color,#db4437) 97%,#000);display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);font-size:14px;line-height:1.45;box-sizing:border-box;background:color-mix(in srgb,var(--secondary-background-color) 42%,var(--primary-background-color))}
   *{box-sizing:border-box}
   [hidden]{display:none!important}
-  .page-shell{max-width:1380px;margin:auto}
+  .page-shell{max-width:1380px;margin-inline:0 auto}
   header{display:flex;justify-content:space-between;gap:36px;align-items:end;margin-bottom:28px}
   .page-heading .product-title{margin:0;font-size:30px;font-weight:500}
   .page-heading p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}
@@ -796,10 +797,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _configurationActions() {
-    const sections = this._configSectionsForView();
-    if (!sections.length || this._viewKey() === "usage-maintenance/retention") return "";
-    if (this._viewKey() === "data-memory/conversations" && !this._data?.is_admin) return "";
-    return getConfigurationEditor()?.renderConfigurationActions?.(this, sections) || "";
+    return this._data?.is_admin === true && this._selectedAgent() ? renderConfigurationActions(this) : "";
   }
 
   _canAccessView(page, subsection = null) {
@@ -1991,7 +1989,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const local = this._visibleSubsections();
     const currentSection = local.find((item) => item.id === this._subsection);
     this._eocMainMarkup = renderManagementRoute(this, agent);
-    const configurationActions = agent && !this._busy && !this._error ? this._configurationActions() : "";
+    const configurationActions = this._configurationActions();
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
     const shell = document.createElement("template");
@@ -2340,7 +2338,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       ${this._viewKey() === "capabilities/request-rules" ? (getRouteFeature("capabilities/request-rules")?.requestRulesDialog(this) || "") : ""}${routeAssetKind(this._viewKey()) === "agent-config" ? getConfigurationEditor()?.configurationDialogs(this) || "" : this._viewKey() === "capabilities/functions" ? getConfigurationTools()?.configurationDialogs(this) || "" : ""}${this._viewKey() === "usage-maintenance/backup-restore" ? getRouteFeature("usage-maintenance/backup-restore")?.renderRestoreTransferDialog(this) || "" : ""}`;
     const usageDialog = this._viewKey() === "usage-maintenance/usage"
       ? getRouteFeature("usage-maintenance/usage")?.requestDetailsDialog() || "" : "";
-    return `${content}${view === "data-memory/memories" && this._memoryKind === "temporary" && owned.has("temporary-memory-dialog") ? getRouteFeature(view)?.temporaryDialog(this) || "" : ""}${usageDialog}`;
+    const importDialog = owned.has("import-dialog") && this._data?.is_admin === true
+      ? this._eocConfigurationImportDialog?.(this) || "" : "";
+    return `${content}${view === "data-memory/memories" && this._memoryKind === "temporary" && owned.has("temporary-memory-dialog") ? getRouteFeature(view)?.temporaryDialog(this) || "" : ""}${usageDialog}${importDialog}`;
   }
 
   _ensureOwnedDialog(id) {

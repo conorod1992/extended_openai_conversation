@@ -32,9 +32,9 @@ export function renderScheduledActions(panel) {
         + '"' + (busy ? " disabled" : "") + '>Cancel</button></div></article>';
     }).join("") + '</div>';
   }
-  return '<section class="page-intro"><div class="section-heading"><div><h1>Scheduled Actions</h1>'
-    + '<p>Pending EOAI Function Tools for this assistant. Home Assistant timers and delayed conversation commands are managed separately.</p>'
-    + '</div><button type="button" class="secondary" id="refresh-scheduled-actions">Refresh</button></div></section>'
+  return '<div class="page-intro-with-action"><section class="page-intro"><h1>Scheduled Actions</h1>'
+    + '<p>Pending EOAI Function Tools for this assistant. Home Assistant timers and delayed conversation commands are managed separately.</p></section>'
+    + '<button type="button" class="secondary" id="refresh-scheduled-actions">Refresh</button></div>'
     + content;
 }
 
