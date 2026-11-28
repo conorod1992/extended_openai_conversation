@@ -1431,6 +1431,8 @@ async def _async_destination_archive_liveness(
                 ),
                 scope,
                 scope.device_id,
+                native_authenticated=scope.source
+                not in {"device_mapping", "agent_default_user"},
             )[0]
             for config in configs
         ]

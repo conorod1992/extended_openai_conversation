@@ -573,9 +573,9 @@ async def test_data_only_restore_preserves_eligible_retained_user_continuity(
         await manager.async_release(after.key, after.claim_token)
 
 
-@pytest.mark.parametrize("managed", [True, False])
+@pytest.mark.parametrize(("managed", "mapped_voice"), [(True, False), (True, True), (False, False)])
 @pytest.mark.parametrize("still_live", [True, False])
-async def test_archive_restore_only_extends_privacy_for_verified_destination_session(monkeypatch, managed, still_live):
+async def test_archive_restore_only_extends_privacy_for_verified_destination_session(monkeypatch, managed, mapped_voice, still_live):
     from datetime import timedelta
     from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
     from homeassistant.helpers.chat_session import DATA_CHAT_SESSION
@@ -603,9 +603,12 @@ async def test_archive_restore_only_extends_privacy_for_verified_destination_ses
     tx.subentry.data.update(config)
     manager = ConversationContinuity(agent_id)
     monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: SimpleNamespace(_continuity=manager))
-    scope = user_scope("alice", source="authenticated_user")
+    scope = user_scope("alice", source="device_mapping" if mapped_voice else "authenticated_user")
     if managed:
-        resolution = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, None, 30)
+        kwargs = {"native_user_id": None} if mapped_voice else {}
+        resolution = await manager.async_resolve(
+            CONVERSATION_CONTINUITY_USER, scope, None, None, 30, **kwargs
+        )
         conversation_id = resolution.conversation_id
         key = f"continuity:{resolution.key}"
         await manager.async_record_success(resolution.key, resolution.claim_token, [])

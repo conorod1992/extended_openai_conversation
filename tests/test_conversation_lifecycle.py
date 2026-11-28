@@ -114,6 +114,7 @@ async def test_claimed_conversation_id_collision_is_replaced_and_released(
     )
     expected = object()
     continuity = SimpleNamespace(
+        guest_namespace=lambda _: None,
         async_resolve=AsyncMock(return_value=original),
         async_replace_conversation_id=AsyncMock(return_value=replaced),
         async_release=AsyncMock(),

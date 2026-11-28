@@ -35,18 +35,26 @@ def voice_source_device_id(user_input: Any) -> str | None:
     )
 
 
+def canonical_voice_device_id(
+    user_input: Any, *, hass: HomeAssistant | None = None
+) -> str | None:
+    """Identify a physical Assist device independently of voice-owner mappings."""
+    device_id = getattr(user_input, "device_id", None)
+    satellite = getattr(user_input, "satellite_id", None)
+    if not device_id and hass is not None:
+        entry = registered_satellite(hass, satellite)
+        registry_device = getattr(entry, "device_id", None)
+        if isinstance(registry_device, str) and registry_device:
+            device_id = registry_device
+    return device_id or satellite
+
+
 def voice_mapping_source_id(
     user_input: Any, options: Mapping[str, Any], *, hass: HomeAssistant | None = None
 ) -> str | None:
     """Use a saved satellite assignment when no registry-device mapping exists."""
     satellite = getattr(user_input, "satellite_id", None)
-    source = getattr(user_input, "device_id", None)
-    if not source and hass is not None:
-        entry = registered_satellite(hass, satellite)
-        registry_device = getattr(entry, "device_id", None)
-        if isinstance(registry_device, str) and registry_device:
-            source = registry_device
-    source = source or satellite
+    source = canonical_voice_device_id(user_input, hass=hass)
     mappings = options.get(CONF_VOICE_DEVICE_MAPPINGS)
     if (
         isinstance(mappings, Mapping)

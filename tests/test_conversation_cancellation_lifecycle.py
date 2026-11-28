@@ -22,6 +22,9 @@ class _BlockingResolveContinuity:
         self.resolve_started = asyncio.Event()
         self.release_calls: list[tuple[str | None, str | None]] = []
 
+    def guest_namespace(self, access: object) -> None:
+        assert access is None
+
     async def async_resolve(self, *args: Any, **kwargs: Any) -> Any:
         self.resolve_started.set()
         await asyncio.Event().wait()
@@ -39,6 +42,9 @@ class _ClaimedContinuity:
     def __init__(self) -> None:
         self.release_calls: list[tuple[str | None, str | None]] = []
         self.release_completed = asyncio.Event()
+
+    def guest_namespace(self, access: object) -> None:
+        assert access is None
 
     async def async_resolve(self, *args: Any, **kwargs: Any) -> Any:
         return SimpleNamespace(

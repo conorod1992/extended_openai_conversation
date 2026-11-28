@@ -297,3 +297,16 @@ def test_legacy_satellite_mapping_falls_back_only_without_registry_mapping():
     options[CONF_VOICE_DEVICE_MAPPINGS]["registry-device"] = "user:current"
     assert voice_identity_runtime.voice_mapping_source_id(user_input, options) == "registry-device"
     assert voice_identity_runtime.voice_source_device_id(user_input) == "registry-device"
+
+
+def test_canonical_satellite_continuity_is_independent_of_legacy_owner_mapping(monkeypatch):
+    monkeypatch.setattr(
+        voice_identity_runtime, "registered_satellite",
+        lambda *_: SimpleNamespace(device_id="registry-device"),
+    )
+    options = {CONF_VOICE_DEVICE_MAPPINGS: {"assist_satellite.kitchen": "user:legacy"}}
+    hass = object()
+    for device_id in (None, "registry-device"):
+        request = SimpleNamespace(device_id=device_id, satellite_id="assist_satellite.kitchen")
+        assert voice_identity_runtime.voice_mapping_source_id(request, options, hass=hass) == request.satellite_id
+        assert voice_identity_runtime.canonical_voice_device_id(request, hass=hass) == "registry-device"

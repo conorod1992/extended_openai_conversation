@@ -242,6 +242,7 @@ class GuestModeManager:
             serialize_in_event_loop=False,
         ).bind_agent(entry_id, subentry_id)
         self._schedule: GuestModeSchedule | None = None
+        self._continuity_epoch = object()
         self._listeners: set[Callable[[], None]] = set()
         self._cancel_transition: Callable[[], None] | None = None
         self._clock_check: asyncio.TimerHandle | None = None
@@ -280,6 +281,8 @@ class GuestModeManager:
             self._schedule = schedule
             self._persistence_unavailable = False
             self._initialized = True
+            if recovering:
+                self._continuity_epoch = object()
             if recovering or self._listeners:
                 self._notify()
 
@@ -383,6 +386,13 @@ class GuestModeManager:
             "source": schedule.source if schedule else None,
             "updated_at": schedule.updated_at if schedule else None,
         }
+
+    @property
+    def continuity_activation(self) -> tuple[object, str] | None:
+        """Identify this interval without exposing or persisting a session identifier."""
+        if self._schedule is None or not self.authoritative_available:
+            return None
+        return self._continuity_epoch, self._schedule.active_from
 
     def is_active(self, now: Any | None = None) -> bool:
         return bool(self.status(now)["currently_active"])
@@ -664,6 +674,18 @@ class GuestModeManager:
             )
             settled = True
         finally:
+            previous_expired = (
+                previous is not None
+                and previous.active_until is not None
+                and _parse_timestamp(self.hass, previous.active_until, "active_until")
+                <= dt_util.utcnow()
+            )
+            if (
+                self.authoritative_available != was_available
+                or (self._schedule is None) != (previous is None)
+                or (self._schedule != previous and previous_expired)
+            ):
+                self._continuity_epoch = object()
             # A failed write followed by a failed authoritative readback can
             # leave the old in-memory schedule unchanged but untrustworthy.
             # Notify once on that availability edge and retire obsolete timers.

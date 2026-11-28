@@ -169,6 +169,7 @@ def _provider_fixture(
     )
     entity._attr_entity_id = "conversation.agent"
     continuity = SimpleNamespace(
+        guest_namespace=lambda _: None,
         async_resolve=AsyncMock(
             return_value=ContinuityResolution(
                 resumed=False,

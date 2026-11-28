@@ -1255,9 +1255,16 @@ class DelayedToolManager:
                 **{_DELAYED_EXECUTION_MARKER: True},
             )
             try:
+                satellite_id = (
+                    er.async_get(self.hass).async_get_entity_id(
+                        "assist_satellite", *record.satellite_identity
+                    )
+                    if record.satellite_identity is not None
+                    else record.satellite_id
+                )
                 with (
                     bind_active_ha_context(execution_context),
-                    bind_request_satellite(record.satellite_id),
+                    bind_request_satellite(satellite_id),
                     local_function_results(),
                 ):
                     exposed_entities = get_exposed_entities(self.hass)

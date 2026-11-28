@@ -385,3 +385,20 @@ async def test_boundary_observer_failure_does_not_starve_other_listeners_or_expi
     assert not env.timers.pending
     remove_broken()
     remove_good()
+
+
+async def test_guest_continuity_rotates_even_without_an_inactive_turn(env):
+    from custom_components.extended_openai_conversation_responses.continuity import (
+        ConversationContinuity,
+    )
+
+    manager = env.manager
+    await manager.async_initialize()
+    start = env.clock[0].isoformat()
+    await manager.async_update_trusted(active_from=start, indefinite=True)
+    continuity = ConversationContinuity("agent")
+    first = continuity.guest_namespace(("same policy", manager.continuity_activation))
+    await manager.async_disable_trusted()
+    await manager.async_update_trusted(active_from=start, indefinite=True)
+    second = continuity.guest_namespace(("same policy", manager.continuity_activation))
+    assert first and second and first != second

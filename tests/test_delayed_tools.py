@@ -361,13 +361,24 @@ async def test_delayed_state_transitions_reconcile_after_lost_acknowledgement(
 
 
 @pytest.mark.parametrize("lost_claim_ack", [False, True])
+@pytest.mark.parametrize("renamed_satellite", [False, True])
 async def test_due_call_uses_current_tool_and_current_exposure(
-    hass, monkeypatch, lost_claim_ack
+    hass, monkeypatch, lost_claim_ack, renamed_satellite
 ) -> None:
-    """Execution re-resolves the tool and exposure instead of stale snapshots."""
+    """Execution re-resolves the tool, exposure, and saved satellite identity."""
+    from custom_components.extended_openai_conversation_responses.delayed_tools import er
+    from custom_components.extended_openai_conversation_responses.request_origin import get_request_satellite
+
     manager = DelayedToolManager(hass)
     manager._setup_complete = True
     record = _record()
+    if renamed_satellite:
+        record = replace(
+            record, device_id=None, satellite_id="assist_satellite.old",
+            satellite_identity=("example", "speaker"),
+        )
+        lookup = MagicMock(return_value="assist_satellite.current")
+        monkeypatch.setattr(er, "async_get", lambda _: SimpleNamespace(async_get_entity_id=lookup))
     manager._records = {record.call_id: record}
     persisted = {"calls": [record.as_dict()]}
     claim_writes = 0
@@ -411,6 +422,7 @@ async def test_due_call_uses_current_tool_and_current_exposure(
 
     async def execute(*_args):
         dispatch_acknowledgements.append(acknowledged_claim)
+        assert get_request_satellite() == ("assist_satellite.current" if renamed_satellite else None)
         return object()
 
     agent = SimpleNamespace(_execute_function_tool=AsyncMock(side_effect=execute))
@@ -431,7 +443,9 @@ async def test_due_call_uses_current_tool_and_current_exposure(
     assert isinstance(tool_input, llm.ToolInput)
     assert tool_input.tool_args == record.arguments
     assert context.context.user_id == "user-1"
-    assert context.device_id == "device-1"
+    assert context.device_id == (None if renamed_satellite else "device-1")
+    if renamed_satellite:
+        lookup.assert_called_once_with("assist_satellite", "example", "speaker")
     assert getattr(context, _DELAYED_EXECUTION_MARKER) is True
     assert exposed == [{"entity_id": "light.current"}]
     assert manager._store.async_save.await_count == 2 + int(lost_claim_ack)

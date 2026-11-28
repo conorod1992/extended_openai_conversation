@@ -371,6 +371,8 @@ class ConversationContinuity:
         scope: ResolvedDataScope,
         device_id: str | None,
         namespace: str | None = None,
+        *,
+        native_authenticated: bool = True,
     ) -> tuple[str | None, str]:
         """Return the safe continuity owner and a human-readable label."""
         if mode == CONVERSATION_CONTINUITY_USER and scope.scope_type == "user":
@@ -388,8 +390,12 @@ class ConversationContinuity:
                 key, label = None, "Home Assistant default"
         else:
             key, label = None, "Home Assistant default"
-        if key is not None and namespace is not None:
-            return f"{namespace}:{key}", f"Guest {label.lower()}"
+        if key is not None:
+            if namespace is not None:
+                key, label = f"{namespace}:{key}", f"Guest {label.lower()}"
+            if not native_authenticated and scope.scope_type == "user":
+                # Retained-data ownership from voice mapping grants no Core identity.
+                key += ":native-unauthenticated"
         return key, label
 
     async def async_resolve(
@@ -473,7 +479,13 @@ class ConversationContinuity:
             return ContinuityResolution(
                 conversation_id, None, [], False, claim_token=claim_token
             )
-        key, label = self.identity_key(mode, scope, device_id, namespace)
+        key, label = self.identity_key(
+            mode,
+            scope,
+            device_id,
+            namespace,
+            native_authenticated=native_user_id is not None,
+        )
         if key is None:
             if namespace is not None:
                 conversation_id = (
@@ -493,11 +505,6 @@ class ConversationContinuity:
             return ContinuityResolution(
                 conversation_id, None, [], False, claim_token=claim_token
             )
-        if native_user_id is None and scope.scope_type == "user":
-            # Voice mappings authorize EOAI's retained-data owner. They never
-            # authenticate the caller to Core or share a native session with a
-            # signed-in request for the same owner.
-            key += ":native-unauthenticated"
         now = dt_util.utcnow()
         cutoff = now - timedelta(minutes=timeout_minutes)
         async with self._lock:

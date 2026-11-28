@@ -306,6 +306,7 @@ from .tool_replay_guard import (
 )
 from .usage import async_get_usage, extract_usage, usage_retention_policy
 from .voice_identity_runtime import (
+    canonical_voice_device_id,
     voice_identity_scope,
     voice_mapping_source_id,
     voice_source_device_id,
@@ -1004,15 +1005,15 @@ class ExtendedOpenAIAgentEntity(
                 source_device_id = source_device_id or scope.device_id
                 if self._continuity is None:
                     return self._agent_not_ready_result(user_input)
-                guest_namespace = (
-                    self._continuity.guest_namespace(guest_access)
-                    if guest_access is not None
-                    else None
+                guest_namespace = self._continuity.guest_namespace(guest_access)
+                continuity_device_id = (
+                    canonical_voice_device_id(user_input, hass=self.hass)
+                    or scope.device_id
                 )
                 resolution = await self._continuity.async_resolve(
                     continuity_mode,
                     scope,
-                    source_device_id,
+                    continuity_device_id,
                     resolve_parent_conversation_id(
                         getattr(self, "hass", None),
                         getattr(getattr(self, "subentry", None), "subentry_id", None),
@@ -1055,6 +1056,7 @@ class ExtendedOpenAIAgentEntity(
                         source_device_id,
                         timeout_minutes,
                         resolution,
+                        continuity_device_id=continuity_device_id,
                     )
                 finally:
                     provisional_claim.release_unused()
@@ -1095,6 +1097,8 @@ class ExtendedOpenAIAgentEntity(
         source_device_id: str | None,
         timeout_minutes: int,
         resolution: Any,
+        *,
+        continuity_device_id: str | None = None,
     ) -> ConversationResult:
         """Process a request after continuity ownership has been claimed."""
         continuity = self._continuity
@@ -1192,7 +1196,9 @@ class ExtendedOpenAIAgentEntity(
                 )
                 archive_session = await self._async_begin_archive_session(
                     session_key,
-                    scope,
+                    replace(scope, device_id=continuity_device_id)
+                    if resolution.key and continuity_device_id
+                    else scope,
                     chat_log.conversation_id,
                     request_policy,
                     live_logical_conversation=(live_managed or live_native)
@@ -2479,7 +2485,10 @@ class ExtendedOpenAIAgentEntity(
             and optional_manager_ready(knowledge)
             else frozenset()
         )
-        return policy, allowed_sources, options.get(CONF_SHARED_MEMORY_MODE)
+        activation = getattr(
+            getattr(self, "_guest_mode", None), "continuity_activation", None
+        )
+        return policy, allowed_sources, options.get(CONF_SHARED_MEMORY_MODE), activation
 
     def _effective_guest_policy(self) -> GuestCapabilityPolicy:
         """Hold request permissions stable while allowing mid-request tightening."""

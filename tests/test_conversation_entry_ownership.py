@@ -223,6 +223,7 @@ async def test_continuity_stage_restores_guest_and_prompt_state(
     policy = SimpleNamespace(guest_active=False)
     resolution = SimpleNamespace(key="key", claim_token="claim")
     continuity = SimpleNamespace(
+        guest_namespace=Mock(return_value=None),
         async_resolve=AsyncMock(return_value=resolution),
         async_release=AsyncMock(),
     )
@@ -261,6 +262,8 @@ async def test_continuity_stage_restores_guest_and_prompt_state(
             )
         assert owner._ACTIVE_GUEST_POLICY.get() is old_guest
         assert owner._PROMPT_CACHE_CONTEXT.get() is old_cache
+        if stage in {"resolve", "claimed", "release"}:
+            continuity.guest_namespace.assert_called_once_with(None)
         if stage in {"claimed", "release"}:
             continuity.async_release.assert_awaited_once_with("key", "claim")
         else:
