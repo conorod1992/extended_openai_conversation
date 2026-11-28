@@ -950,6 +950,19 @@ class PersistentMemory:
                     "embedding_preparation_failed",
                 )
                 return None
+            async with async_storage_lock(self._storage, self._lock):
+                if binding_changed():
+                    return None
+                if not any(
+                    self._cached_embedding(memory) is not None
+                    for memory in self._memories.values()
+                    if memory.user_id in allowed_scopes
+                    and (category_filter is None or memory.category == category_filter)
+                ):
+                    self._set_hybrid_status(
+                        "lexical_fallback", "no_document_embeddings"
+                    )
+                    return None
             batch = _embedding_batch(
                 await attempt_provider([query[:MAX_MEMORY_SEARCH_QUERY_CHARACTERS]])
             )
@@ -1016,16 +1029,20 @@ class PersistentMemory:
                 return None
             if binding_changed():
                 return None
-            self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
-            partial_coverage = any(
-                memory.user_id in allowed_scopes
-                and (category_filter is None or memory.category == category_filter)
-                and self._cached_embedding(
+            coverage = [
+                self._cached_embedding(
                     memory, dimensions=width, provider_model=batch.provider_model
                 )
-                is None
+                is not None
                 for memory in self._memories.values()
-            )
+                if memory.user_id in allowed_scopes
+                and (category_filter is None or memory.category == category_filter)
+            ]
+            if not any(coverage):
+                self._set_hybrid_status("lexical_fallback", "no_document_embeddings")
+                return None
+            self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
+            partial_coverage = not all(coverage)
             self._set_hybrid_status(
                 "active",
                 "embedding_cache_not_persisted"
@@ -1764,6 +1781,24 @@ class PersistentMemory:
         allowed_scopes = set(scope_ids)
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
+            if (
+                self._embedding_provider is not provider
+                or self._embedding_retry_identity != retry_identity
+            ):
+                return False
+            # Only local cache metadata is inspected globally. Document requests
+            # below are still restricted to this caller's readable corpus.
+            for memory_id, entry in list(self._embedding_cache.items()):
+                if (
+                    entry.model != model
+                    or entry.space_id != space_id
+                    or (dimensions is not None and len(entry.vector) != dimensions)
+                    or (
+                        provider_model is not None
+                        and entry.provider_model != provider_model
+                    )
+                ):
+                    self._invalidate_cached_embedding(memory_id)
             eligible = {
                 memory.memory_id: memory
                 for memory in self._memories.values()
@@ -1791,15 +1826,6 @@ class PersistentMemory:
             return {
                 memory_id: len(entry.vector)
                 for memory_id, entry in self._embedding_cache.items()
-                if memory_id not in eligible
-                or (
-                    entry.model == model
-                    and entry.space_id == space_id
-                    and (dimensions is None or len(entry.vector) == dimensions)
-                    and (
-                        provider_model is None or entry.provider_model == provider_model
-                    )
-                )
             }
 
         try:
@@ -1845,8 +1871,6 @@ class PersistentMemory:
                         return False
                     sizes = allocated_cache_sizes()
                     room = MAX_CACHED_EMBEDDING_VALUES - sum(sizes.values())
-                    for memory_id in eligible.keys() - sizes.keys():
-                        self._invalidate_cached_embedding(memory_id)
                     for memory, cleaned in zip(batch, cleaned_vectors, strict=True):
                         current = self._memories.get(memory.memory_id)
                         if (
@@ -1877,14 +1901,6 @@ class PersistentMemory:
                         )
                         self._embedding_cache_dirty = True
                 offset += len(batch)
-            if dimensions is not None or provider_model is not None:
-                async with async_storage_lock(self._storage, self._lock):
-                    if not provider_is_current():
-                        return False
-                    # A capacity-limited refill can leave stale vectors that
-                    # would otherwise look compatible to the ranking snapshot.
-                    for memory_id in eligible.keys() - allocated_cache_sizes().keys():
-                        self._invalidate_cached_embedding(memory_id)
         finally:
             # Save once per refill, including progress before a failed batch.
             # A warm scope still retries a previous failed save after cooldown.

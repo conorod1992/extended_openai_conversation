@@ -133,7 +133,6 @@ async def test_repointed_alias_refreshes_only_readable_vectors_after_restart(
     assert await memory.async_prepare_hybrid(["alice"], "second") == vector
     assert calls == ["second", "preferences | Alice likes tea."]
     assert {entry.provider_model for entry in memory._embedding_cache.values()} == {
-        previous_model,
         "backend-b",
     }
     saved_facts = deepcopy(facts.data)
@@ -553,11 +552,11 @@ async def test_interactive_backfill_and_model_migration_share_allowance(monkeypa
     calls.clear()
     assert await memory.async_prepare_hybrid(["alice"], "tea") is None
     assert calls == ["general | Green tea", "general | White tea", "tea"]
-    assert len(cache.data["embeddings"]) == 3
+    assert len(cache.data["embeddings"]) == 2
     assert len(await memory.async_search("alice", "tea")) == 3
     calls.clear()
     assert await memory.async_prepare_hybrid(["alice"], "tea")
-    assert calls == ["tea", "general | Black tea"]
+    assert calls == ["general | Black tea", "tea"]
 
 
 @pytest.mark.parametrize("error_number", [errno.EACCES, errno.ENOSPC])
@@ -606,3 +605,29 @@ async def test_native_cache_write_failure_retries_on_demand(
     assert attempts == 2
     assert not memory._embedding_cache_dirty
     assert (await cache.async_load())["embeddings"]
+
+
+async def test_full_embedding_cache_reclaims_other_scopes_after_model_change(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import memory as memory_module
+
+    monkeypatch.setattr(memory_module, "MAX_CACHED_EMBEDDING_VALUES", 2)
+    memory = await _memory()
+    await memory.async_add("alice", "Tea every morning.", "preferences", "explicit")
+    await memory.async_add("bob", "Bread every morning.", "preferences", "explicit")
+    calls = []
+
+    async def provider(texts):
+        calls.extend(texts)
+        return [[1.0, 0.0] for _ in texts]
+
+    memory.set_embedding_provider(provider, "old")
+    assert await memory.async_prepare_hybrid(["alice"], "tea")
+    calls.clear()
+    assert await memory.async_prepare_hybrid(["bob"], "bread") is None
+    assert calls == []
+    assert memory.hybrid_status()["status"] == "lexical_fallback"
+
+    memory.set_embedding_provider(provider, "new")
+    assert await memory.async_prepare_hybrid(["bob"], "bread")
+    assert calls == ["preferences | Bread every morning.", "bread"]
+    assert {entry.model for entry in memory._embedding_cache.values()} == {"new"}

@@ -145,6 +145,8 @@ _LOGGER = logging.getLogger(__name__)
 _REQUEST_RULE_RUNTIMES = "extended_openai_conversation_responses.request_rule_runtimes"
 _REQUEST_RULE_MANAGERS = "extended_openai_conversation_responses.request_rule_managers"
 
+_PENDING_SETUP_ROLLBACK = f"{DOMAIN}.pending_setup_rollback"
+
 PLATFORMS = [Platform.AI_TASK, Platform.CONVERSATION, Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -285,6 +287,12 @@ async def async_setup_entry(
     from .provider_errors import provider_authentication_snapshot
     from .usage import async_retry_unused_volatile_usage
 
+    pending_rollback = hass.data.setdefault(_PENDING_SETUP_ROLLBACK, set())
+    if entry.entry_id in pending_rollback and not await async_settle_owned_operation(
+        _async_finish_setup_rollback(hass, entry)
+    ):
+        raise ConfigEntryNotReady("Previous setup could not unload its platforms")
+
     initialize_global_runtime(hass)
     async_start_archive_retention(hass)
     async_start_model_catalog_refresh(hass)
@@ -340,25 +348,31 @@ async def async_setup_entry(
         entry.async_on_unload(entry.add_update_listener(update_listener))
         await _async_activate_global_effects(hass, entry.entry_id)
     except BaseException:
+        pending_rollback.add(entry.entry_id)
         try:
-            try:
-                await async_settle_owned_operation(
-                    _async_release_global_effects(hass, entry.entry_id)
-                )
-            finally:
-                try:
-                    await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-                finally:
-                    await async_settle_owned_operation(
-                        _async_retire_runtime_owners(hass, entry)
-                    )
-        finally:
-            del entry.runtime_data
+            unloaded = await async_settle_owned_operation(
+                _async_finish_setup_rollback(hass, entry)
+            )
+            if not unloaded:
+                _LOGGER.error("Setup rollback left one or more EOAI platforms loaded")
+        except Exception:
+            _LOGGER.exception("Unable to complete EOAI setup rollback")
         raise
     with suppress(Exception):
         # Optional cache preparation must never affect integration setup.
         _schedule_sole_agent_prewarm(hass, entry)
     hass.data.get(RESTORE_RELOAD_PENDING, set()).discard(entry.entry_id)
+    return True
+
+
+async def _async_finish_setup_rollback(
+    hass: HomeAssistant, entry: ExtendedOpenAIConfigEntry
+) -> bool:
+    """Release failed setup owners only after all forwarded platforms unload."""
+    if not await async_unload_entry(hass, entry):
+        return False
+    del entry.runtime_data
+    hass.data[_PENDING_SETUP_ROLLBACK].discard(entry.entry_id)
     return True
 
 
