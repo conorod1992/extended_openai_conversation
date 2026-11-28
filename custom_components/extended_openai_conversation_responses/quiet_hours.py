@@ -114,6 +114,11 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             entity_id in {self._registered_state_entity_id, current}
             or entity_id in selected
             or old_id in selected
+            or (
+                isinstance(entity_id, str)
+                and self._entity_registry_identity(entity_id)
+                in self._selection_identities.values()
+            )
         ):
             try:
                 await self.async_reconcile()

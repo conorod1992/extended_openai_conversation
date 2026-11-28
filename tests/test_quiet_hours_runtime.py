@@ -541,6 +541,7 @@ def _public_manager(
     hass: Any, config: QuietHoursConfig | None = None
 ) -> QuietHoursManager:
     manager = object.__new__(QuietHoursManager)
+    manager._pending_service_calls = {}
     manager.hass = hass
     manager._config = config or QuietHoursConfig()
     manager._active = None
@@ -1110,6 +1111,7 @@ def _hass(states=None):
 
 def _runtime_manager(hass=None, *, initialized=True):
     manager = runtime.QuietHoursManager.__new__(runtime.QuietHoursManager)
+    manager._pending_service_calls = {}
     manager.hass = hass or _hass()
     manager._store = SimpleNamespace(
         async_load=AsyncMock(return_value={}),
@@ -1650,6 +1652,7 @@ def _bare_runtime_manager(
     hass: Any, config: QuietHoursConfig | None = None
 ) -> RuntimeQuietHoursManager:
     manager = object.__new__(RuntimeQuietHoursManager)
+    manager._pending_service_calls = {}
     manager.hass = hass
     manager._config = config or QuietHoursConfig()
     manager._active = None

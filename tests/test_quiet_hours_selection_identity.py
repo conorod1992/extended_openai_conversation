@@ -248,3 +248,24 @@ async def test_selection_change_after_discovery_prevents_stale_device_command(
     with pytest.raises(HomeAssistantError, match="selection changed"):
         await manager._async_set_volume("media_player.selected", 0.8)
     hass.services.async_call.assert_not_awaited()
+
+
+async def test_recreated_selected_entity_migrates_while_disabled(hass, monkeypatch):
+    manager, entries, lookup = _manager(hass, monkeypatch, public.QuietHoursManager)
+    manager._initialized = True
+    manager._registry_unsubscribe = lambda: None
+    manager._publish_state = lambda _: None
+    manager._migrate_selected_entity_ids()
+    old = "media_player.selected"
+    new = "media_player.recreated"
+    entries[new] = entries.pop(old)
+    lookup[old] = new
+
+    await manager._async_registry_updated(
+        SimpleNamespace(data={"entity_id": new, "action": "create"})
+    )
+
+    assert not manager.config.enabled
+    assert manager.config.overrides[0].media_player_entity_id == new
+    assert new in manager._store.async_save.await_args.args[0]["selection_identities"]
+    hass.services.async_call.assert_not_awaited()

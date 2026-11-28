@@ -1,6 +1,7 @@
 """Policy saves must not erase observations that protect a manual choice."""
 
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -266,3 +267,27 @@ async def test_unreadable_policy_save_preserves_already_quiet_observation(
     await manager.async_reconcile()
     assert manager.config.max_volume == 0.25
     assert volumes == []
+
+
+async def test_policy_save_after_missed_transition_expires_old_observations(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import quiet_hours_runtime
+
+    _install_registry(monkeypatch, "bedroom")
+    manager = _stateful_public_manager(hass)
+    manager._config = _config()
+    _seed_room(hass, "bedroom", volume=0.8)
+    volumes, _ = await _install_services(hass)
+    quiet_start = datetime(2026, 10, 3, 23, tzinfo=UTC)
+    monkeypatch.setattr(quiet_hours_runtime.dt_util, "now", lambda: quiet_start)
+    await manager.async_reconcile()
+    hass.states.async_set("media_player.bedroom", "idle", {"volume_level": 0.6})
+    await manager.async_reconcile()
+    volumes.clear()
+
+    monkeypatch.setattr(
+        quiet_hours_runtime.dt_util, "now", lambda: quiet_start + timedelta(days=1)
+    )
+    await manager.async_update_config({**manager.config.as_dict(), "start": "21:00"})
+
+    assert volumes
+    assert manager.active["controls"]["media_player.bedroom"]["original_value"] == 0.6
