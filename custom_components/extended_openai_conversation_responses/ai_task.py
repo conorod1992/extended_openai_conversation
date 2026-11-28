@@ -525,8 +525,10 @@ class ExtendedOpenAITaskEntity(
         phase = "decode model JSON"
         try:
             raw = await asyncio.to_thread(parse_ai_task_structured_response, text)
-            projected = await asyncio.to_thread(
-                _omit_optional_nulls, raw, original_schema
+            projected = (
+                await asyncio.to_thread(_omit_optional_nulls, raw, original_schema)
+                if original_schema is not None
+                else raw
             )
             phase = "validate the requested structure"
             try:

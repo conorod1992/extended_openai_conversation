@@ -300,7 +300,7 @@ async def test_configuration_cold_read_does_not_disguise_non_tool_validation_err
     hass,
 ):
     request = _request(hass, "configuration", "get")
-    request.subentry.data["conversation_timeout_minutes"] = -1
+    request.subentry.data["context_threshold"] = -1
     request.subentry.data[ui.CONF_FUNCTION_TOOLS] = []
     with pytest.raises(AgentConfigError):
         await ui.async_configuration_command(request)
