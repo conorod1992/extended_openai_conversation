@@ -59,7 +59,7 @@ function setupHealthMarkup(panel, health, cards) {
       ${health.checks.map((check) => {
         const checkState = HEALTH_ICONS[check.state] ? check.state : "unknown";
         const actionMarkup = ["error", "warning"].includes(check.state) ? "" : healthAction(panel, health, check);
-        return `<article class="setup-health-check setup-health-check-${checkState}"><ha-icon class="setup-health-icon" icon="${HEALTH_ICONS[checkState]}" aria-hidden="true"></ha-icon><div class="setup-health-copy"><span>${panel._e(check.title)}</span><strong>${panel._e(check.value)}</strong><p>${panel._e(check.detail)}</p></div>${actionMarkup}</article>`;
+        return `<article class="setup-health-check setup-health-check-${checkState}" data-health-check="${panel._e(check.id)}"><ha-icon class="setup-health-icon" icon="${HEALTH_ICONS[checkState]}" aria-hidden="true"></ha-icon><div class="setup-health-copy"><span>${panel._e(check.title)}</span><strong>${panel._e(check.value)}</strong><p>${panel._e(check.detail)}</p></div>${actionMarkup}</article>`;
       }).join("")}
     </div>
     <p class="setup-health-footnote"><ha-icon icon="mdi:information-outline" aria-hidden="true"></ha-icon> Connection tests only run when you start one from Diagnostics.</p>
@@ -140,11 +140,6 @@ export function renderOverview(panel, agent) {
     ${broadcastCard}`;
 }
 
-export function bindOverview(panel, broadcastPromise) {
-  if (panel._selectedAgent?.()) void bindOverviewGuestStatus(panel).catch(() => {});
-  bindOverviewDashboard(panel, broadcastPromise);
-}
-
 async function bindOverviewGuestStatus(panel) {
   const {boundaryDelay, watchLiveStatus} = await import("./management-live-status.js");
   if (panel._viewKey?.() !== "overview") return;
@@ -184,7 +179,8 @@ async function bindOverviewGuestStatus(panel) {
   });
 }
 
-function bindOverviewDashboard(panel, broadcastPromise) {
+export function bindOverview(panel) {
+  if (panel._selectedAgent?.()) void bindOverviewGuestStatus(panel).catch(() => {});
   const details = panel.shadowRoot.querySelector("#overview-health-details");
   if (details) {
     details.open = panel._overviewHealthExpanded === panel._agentId;
@@ -195,11 +191,11 @@ function bindOverviewDashboard(panel, broadcastPromise) {
     panel._pendingSettingFocus = button.dataset.target || "";
     await panel._navigate(button.dataset.page, button.dataset.subsection || null);
   }));
-  if (!broadcastPromise) return;
-  const visit = panel._loadToken;
-  const current = () => panel._viewKey?.() === "overview" && panel._loadToken === visit;
+}
+
+export function bindOverviewBroadcast(panel, broadcastPromise, current) {
   void import("./overview-broadcast.js")
-    .then((module) => { if (current()) return module.bindBroadcast(panel, broadcastPromise); })
+    .then((module) => { if (current()) return module.bindBroadcast(panel, broadcastPromise, current); })
     .catch((err) => {
       if (!current()) return;
       const host = panel.shadowRoot.querySelector("#broadcast-card");

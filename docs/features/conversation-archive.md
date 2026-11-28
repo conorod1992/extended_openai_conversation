@@ -8,7 +8,7 @@ Once a transcript passes the configured retention cutoff, it disappears from Arc
 
 ## What is stored
 
-Only the user message, the final assistant reply, timestamps, session/run identifiers, success state, and resolved scope/source metadata are stored. A title is normalized and truncated from the first user message locally.
+Only the user message, the final assistant reply, timestamps, session/run identifiers, success state, and resolved scope/source metadata are stored. A title is normalized and truncated from the first user message locally. The user message and final assistant reply are each stripped of surrounding whitespace and limited to their first **40,000 characters** before storage. Text beyond that limit is omitted from the retained transcript, Archive searches and exported Archive data.
 
 The archive does not separately capture hidden reasoning, intermediate tool messages, tool arguments or results, provider payloads, exposed-entity dumps, web-search bodies, image/PDF files, or attachments. Information quoted in the user message or final assistant reply is still part of that transcript. No extra model call creates titles, summaries, topics, embeddings, classifications, or metadata.
 

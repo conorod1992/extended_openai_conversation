@@ -336,6 +336,9 @@
 .eoc-overview-snapshot h3{margin:0;font-size:15px}
 .memory-kind-nav [aria-current="page"]{background:color-mix(in srgb,var(--primary-color) 12%,var(--card-background-color));color:var(--eoc-accent-text);border-color:var(--primary-color);box-shadow:inset 0 -2px var(--primary-color)}
 .retention-surface .save-bar{margin:28px 0 0}
+#eoc-shared-configuration-bar:not([hidden]){position:sticky;bottom:12px;z-index:5;margin-top:16px}
+#eoc-shared-configuration-bar .save-bar{position:static;margin:0}
+.page-shell:has(>#eoc-shared-configuration-bar:not([hidden])) main .save-bar{position:static;margin-bottom:0}
 @media(max-width:600px){.card-heading{flex-direction:column;align-items:stretch}}
 
 /* Inactive voice choices stay inspectable without occupying the main form. */

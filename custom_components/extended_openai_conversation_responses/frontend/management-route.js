@@ -438,7 +438,6 @@ export function syncConversationSearchOwner(panel, view = panel._viewKey?.()) {
 export function loadRoute(panel, silent = false) {
   const view = panel._viewKey();
   syncConversationSearchOwner(panel, view);
-  if (view !== "overview") panel._eocOverviewBroadcastPromise = null;
   const token = (panel._eocViewAssetToken || 0) + 1;
   panel._eocViewAssetToken = token;
   const feature = routeFeaturePromise(view);

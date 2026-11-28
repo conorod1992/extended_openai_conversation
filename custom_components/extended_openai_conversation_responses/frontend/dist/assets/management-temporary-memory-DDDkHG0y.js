@@ -1,1 +1,0 @@
-import"./management-core-B74i9Wcp.js";import{s as e}from"./management-temporary-memory-sxWh0xDx.js";export{e as openTemporaryMemory};

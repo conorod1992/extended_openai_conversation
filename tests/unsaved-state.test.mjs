@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {UnsavedState, draftScope, same, saveBarMarkup} from "../custom_components/extended_openai_conversation_responses/frontend/unsaved-state.js";
-import {initializePageDraft, currentPageScope} from "../custom_components/extended_openai_conversation_responses/frontend/management-page-drafts.js";
+import {acknowledgeGuestConfigurationRevision, initializePageDraft, currentPageScope} from "../custom_components/extended_openai_conversation_responses/frontend/management-page-drafts.js";
 import {confirmStateSafeNavigation} from "../custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js";
 
 test("drafts compare values, discard, save once, and preserve edits made during save", async () => {
@@ -169,6 +169,32 @@ for (const change of ["agent", "navigation", "generation", "revision"]) {
     assert.equal(scope.refreshWarning, null);
   });
 }
+
+test("Guest metrics restart when the invalidated read settles before the Assistant acknowledgement", async () => {
+  const reads = [];
+  const panel = {_agentId:"a", _viewKey:() => "capabilities/guest-mode", _cacheGeneration:0,
+    _result:{config:{enabled:false}, revision:"v1"},
+    _call:async (_section, action, payload) => action === "policy"
+      ? new Promise(resolve => { reads.push(resolve); })
+      : {config:payload.config, revision:"v2"}};
+  initializePageDraft(panel);
+  const scope = currentPageScope(panel);
+  scope.read().enabled = true;
+  await scope.save();
+  scope.refreshSavedPolicy();
+  panel._cacheGeneration++;
+  reads[0]({revision:"v2", policy:{readable_entity_count:99}});
+  await scope.refreshPromise;
+  assert.equal(panel._result.policy, undefined);
+
+  panel._configData = {revision:"v3"};
+  acknowledgeGuestConfigurationRevision(panel, {agentId:"a", revision:"v2", fields:[]}, "v3");
+  assert.equal(reads.length, 2);
+  reads[1]({revision:"v3", policy:{readable_entity_count:5}});
+  await scope.refreshPromise;
+  assert.equal(scope.revision, "v3");
+  assert.equal(panel._result.policy.readable_entity_count, 5);
+});
 
 test("a late Guest save cannot canonicalize another agent's identical draft", async () => {
   let release;

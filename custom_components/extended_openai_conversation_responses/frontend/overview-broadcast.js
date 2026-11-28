@@ -202,10 +202,9 @@ function bindBroadcastControls(panel, snapshot) {
     const latest = panel._eocBroadcastSnapshot || snapshot;
     if (host) {
       const loadError = root.querySelector("[data-broadcast-load-error]");
-      host.innerHTML = broadcastMarkup(panel, latest);
+      renderBroadcastCard(panel, host, latest);
       if (loadError && !loadError.hidden) root.querySelector("[data-broadcast-load-error]")?.replaceWith(loadError);
     }
-    bindBroadcastControls(panel, latest);
   }));
   bindBroadcastTargets(panel, root);
   root.querySelector("#broadcast-refresh")?.addEventListener("click", () => loadBroadcast(panel));
@@ -282,9 +281,14 @@ function bindBroadcastControls(panel, snapshot) {
       if (authenticated()) retireBroadcastAttempt(panel, attempt);
       else attempt.blocked = true;
       release();
-      await presentAcknowledgedMutation(panel, submission, "Broadcast queued", async () => {
-        if (!await loadBroadcast(panel)) throw Error("Broadcast history could not be refreshed.");
-      }, result);
+      if (await presentAcknowledgedMutation(panel, submission, "Broadcast queued", null, result)) {
+        const visit = panel._loadToken;
+        const current = () => authenticated() && panel.isConnected !== false
+          && panel._viewKey() === "overview" && panel._loadToken === visit;
+        if (current() && !await loadBroadcast(panel, current, {afterSend:true}) && current()) {
+          panel._toast("Broadcast queued, but history could not be refreshed.", true);
+        }
+      }
     } catch (err) {
       if (attempt && dispatched) {
         if (["invalid_request", "broadcast_retry_capacity"].includes(err.code) || err.mutationOutcome === "rejected") {
@@ -364,15 +368,22 @@ function reconcileBroadcastPoll(panel, host, previous, result) {
   }
 }
 
-function applyBroadcastSnapshot(panel, snapshot) {
+function applyBroadcastSnapshot(panel, snapshot, {preserveControls = false} = {}) {
   if (panel._viewKey?.() !== "overview") return;
   const host = panel.shadowRoot.querySelector("#broadcast-card");
   if (!host) return;
-  renderBroadcastCard(panel, host, snapshot);
+  const previous = panel._eocBroadcastSnapshotIsCurrent?.() && panel._eocBroadcastSnapshot;
+  if (preserveControls && previous && host.querySelector?.(".broadcast-history")) {
+    reconcileBroadcastPoll(panel, host, previous, snapshot);
+  } else renderBroadcastCard(panel, host, snapshot);
   panel._eocBroadcastEpoch = (panel._eocBroadcastEpoch || 0) + 1;
   panel._eocBroadcastSnapshot = snapshot;
   panel._eocBroadcastSnapshotVisit = panel._loadToken;
   panel._eocBroadcastSnapshotIsCurrent = captureAuthentication(panel);
+  syncBroadcastWatch(panel, snapshot);
+}
+
+function syncBroadcastWatch(panel, snapshot) {
   watchBroadcastStatus(panel, snapshot, async current => {
     const epoch = panel._eocBroadcastEpoch;
     const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
@@ -406,29 +417,33 @@ function applyBroadcastError(panel, err) {
   notice.hidden = false;
 }
 
-async function loadBroadcast(panel, owns = () => true) {
+async function loadBroadcast(panel, owns = () => true, {afterSend = false} = {}) {
   const current = captureAuthentication(panel);
   const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
   try {
     const snapshot = await panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
-    if (current() && owns() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot);
+    if (current() && owns() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot, {preserveControls:afterSend});
     return true;
   } catch (err) {
-    if (current() && owns() && panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err);
+    if (current() && owns() && panel._eocBroadcastReadToken === token) {
+      if (!afterSend) applyBroadcastError(panel, err);
+    }
     return false;
   }
 }
 
-export function bindBroadcast(panel, broadcastPromise) {
+export function bindBroadcast(panel, broadcastPromise, owns = () => true) {
   const authCurrent = captureAuthentication(panel);
-  const visit = panel._loadToken;
-  const current = () => authCurrent() && authenticationReadIsCurrent(broadcastPromise) && panel._loadToken === visit;
   ensureRouteStyle(panel);
+  stopLiveStatus(panel, "broadcast");
   const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
+  const current = () => owns() && authCurrent() && authenticationReadIsCurrent(broadcastPromise) && panel._eocBroadcastReadToken === token;
   return Promise.resolve(broadcastPromise)
-    .then((snapshot) => { if (current() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot); })
-    .catch((err) => { if (current() && panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err); })
-    .finally(() => {
-      if (panel._eocOverviewBroadcastPromise === broadcastPromise) panel._eocOverviewBroadcastPromise = null;
+    .then((snapshot) => { if (current()) applyBroadcastSnapshot(panel, snapshot, {preserveControls:true}); })
+    .catch((err) => {
+      if (!current()) return;
+      const host = panel.shadowRoot.querySelector("#broadcast-card");
+      if (host?.querySelector?.(".broadcast-history")) syncBroadcastWatch(panel, panel._eocBroadcastSnapshot);
+      else applyBroadcastError(panel, err);
     });
 }

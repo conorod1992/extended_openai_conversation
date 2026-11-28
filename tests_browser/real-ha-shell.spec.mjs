@@ -857,17 +857,19 @@ test("native Function Tool readiness waits for slow CodeMirror hydration before 
   await panel.locator("#tool-cancel").click();
   await page.evaluate(() => {
     const prototype = customElements.get("ha-code-editor").prototype;
-    const schedule = prototype.scheduleUpdate;
+    const getUpdateComplete = prototype.getUpdateComplete;
     window.armNativeReadiness = () => {
       window.nativeReadinessPending = false;
       window.nativeReadinessGate = new Promise(resolve => { window.releaseNativeReadiness = resolve; });
     };
-    prototype.scheduleUpdate = async function() {
+    // A reused document with identical YAML may not schedule a Lit update.
+    // Hold the readiness promise the adapter must await in either case.
+    prototype.getUpdateComplete = async function() {
       if (this.getRootNode().host?.id === "tool-yaml-native" && window.nativeReadinessGate) {
         window.nativeReadinessPending = true;
         await window.nativeReadinessGate;
       }
-      return schedule.call(this);
+      return getUpdateComplete.call(this);
     };
   });
   const name = "real_shell_readiness_tool";

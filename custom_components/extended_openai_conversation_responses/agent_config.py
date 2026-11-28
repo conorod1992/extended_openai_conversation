@@ -909,8 +909,14 @@ def validate_single_function_tool(value: Any) -> dict[str, Any]:
 
 def function_tool_yaml(value: Any) -> str:
     """Serialize one validated function tool as readable YAML."""
+    yaml, _ = function_tool_editor_payload(value)
+    return yaml
+
+
+def function_tool_editor_payload(value: Any) -> tuple[str, dict[str, Any]]:
+    """Return authoring YAML and the same validated tool for editor hydration."""
     tool = validate_single_function_tool(value)
-    return dump_yaml(tool, sort_keys=False)
+    return dump_yaml(tool, sort_keys=False), tool
 
 
 def starter_function_tool_yaml() -> str:

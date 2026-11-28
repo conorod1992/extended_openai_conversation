@@ -86,6 +86,24 @@ test("missing owner does not invalidate any projections", () => {
   assert.equal(host._cacheGeneration, 100);
 });
 
+for (const [section, action] of [["configuration", "save"], ["function_repair", "configuration_save"]]) {
+  test(`${section}.${action} validation rejection keeps existing reads and caches current`, async () => {
+    const host = panel();
+    const before = [...host._sectionCache];
+    const reads = [...host._eocPendingRouteReads];
+    const response = {valid:false, errors:{title:"Choose a different name"}};
+    host._hass = {callWS: async () => response};
+
+    assert.equal(await host._request(section, action, {config:{usage_run_retention_days:0}}), response);
+    assert.equal(host._cacheGeneration, 100);
+    assert.equal(host._configDataStale, false);
+    assert.equal(host._cleanConfigSnapshots.has("entry-a|a|full"), true);
+    assert.equal(host._usageWindowGeneration, 10);
+    assert.deepEqual([...host._sectionCache], before);
+    assert.deepEqual([...host._eocPendingRouteReads], reads);
+  });
+}
+
 test("background agent restore preserves current reads while global policy changes invalidate them", () => {
   const host = panel();
   host._agentId = "b";

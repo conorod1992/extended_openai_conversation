@@ -85,7 +85,7 @@ See [Persistent memory](../features/persistent-memory.md) for storage, privacy, 
 The **Listen for a follow-up** option in **Assistant → Basics** controls whether a compatible voice client listens for an immediate reply after the assistant responds.
 
 - **HA Default** preserves Home Assistant behavior.
-- **Always** requests a follow-up after every successful response.
+- **Always** requests a follow-up after successful responses, except Home Assistant's recognised never-mind command.
 - **Conditional** lets the model indicate whether an immediate reply is expected.
 
 See [Voice follow-ups](../features/voice-followups.md).

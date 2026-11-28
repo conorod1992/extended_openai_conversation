@@ -70,52 +70,52 @@ This prompt:
 
 #### Load Skill Files
 
-The default Function Tools include `load_skill`. If it was removed, restore the built-in loader with this definition rather than adding a duplicate:
+The default Function Tools include `load_skill`. If it was removed, paste the following single-tool definition into the Function Tool YAML editor to restore the maintained loader rather than adding a duplicate:
 
 ```yaml
-- spec:
-    name: load_skill
-    description: Load a file from a skill's directory.
-    parameters:
-      type: object
-      properties:
-        name:
-          type: string
-          description: Skill name
-        file:
-          type: string
-          description: Relative file path within the skill directory
-      required:
-      - name
-      - file
-  function:
-    type: read_file
-    path: '{{extended_openai.skill_dir(name)}}/{{file}}'
+spec:
+  name: load_skill
+  description: Load a file from a skill's directory.
+  parameters:
+    type: object
+    properties:
+      name:
+        type: string
+        description: Skill name
+      file:
+        type: string
+        description: Relative file path within the skill directory
+    required:
+    - name
+    - file
+function:
+  type: read_file
+  path: '{{extended_openai.skill_dir(name)}}/{{file}}'
 ```
 
-This allows the AI to read `SKILL.md` and text resources bundled with a Skill. Supporting files are loaded on demand, not all at once. Each read uses the normal tool-call allowance and is limited to 1 MiB. Retrieved instructions and content may be sent to the configured provider.
+This allows the AI to read `SKILL.md` and text resources bundled with a Skill. Supporting files are loaded on demand, not all at once. Each read uses the normal tool-call allowance and is limited to 1 MiB. The maintained loader pages large results automatically: start with no offset (or `offset: 0`) and use `next_offset` while `has_more` is true. Each page consumes a tool call. Retrieved instructions and content may be sent to the configured provider.
 
 #### Execute Bash Commands
 
 Only enable shell execution for trusted agents and reviewed Skills. A Bash Function Tool requires explicit opt-in:
 
 ```yaml
-- spec:
-    name: bash
-    description: Execute a bash command in workspace.
-    parameters:
-      type: object
-      properties:
-        command:
-          type: string
-          description: Bash command to execute
-      required:
-      - command
-  function:
-    type: bash
-    command: '{{command}}'
-    allow_unsafe_shell: true
-    restrict_to_workspace: true
+spec:
+  name: bash
+  description: Execute a bash command in workspace.
+  parameters:
+    type: object
+    properties:
+      command:
+        type: string
+        description: Bash command to execute
+    required:
+    - command
+function:
+  type: bash
+  command: '{{command}}'
+  allow_unsafe_shell: true
+  restrict_to_workspace: true
 ```
 
 This allows the model to request shell commands, execute scripts, call installed external programs, and process data using command-line tools. Install the example's required Python packages and executables yourself. Prefer a narrowly defined Function Tool over a general shell wherever possible.
@@ -129,7 +129,8 @@ This allows the model to request shell commands, execute scripts, call installed
 After manually creating or modifying skills, reload them to apply changes:
 
 ```yaml
-service: extended_openai_conversation_responses.reload_skills
+action: extended_openai_conversation_responses.reload_skills
+response_variable: skills_result
 ```
 
 This service:

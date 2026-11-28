@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Fetch cryptocurrency prices from CoinGecko API.
 
-Usage: python crypto.py <symbol>
+Usage: python crypto.py <symbol_or_coin_id>
 Example: python crypto.py btc
+Supported ticker aliases: BTC, ETH, SOL, XRP, ADA and DOGE.
+For other coins, supply the CoinGecko coin ID. Prices are returned in USD and KRW.
 """
 
 from datetime import UTC, datetime

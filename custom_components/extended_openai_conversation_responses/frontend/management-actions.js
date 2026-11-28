@@ -1,4 +1,4 @@
-import {same, clone} from "./unsaved-state.js";
+import {same, clone, saveBarMarkup} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
 import {requireMutationAcknowledgement, captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft, recoverCommittedRetention, USAGE_RETENTION_FIELDS, markConfigurationSaveRecovery, uncertainConfigurationSave} from "./configuration-acknowledgement.js";
 import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
@@ -7,12 +7,41 @@ import {focusManagementSetting} from "./frontend-navigation.js";
 import {voiceMappingDraftDirty, voiceMappingDraftError} from "./voice-mapping-draft.js";
 import {configKeyForControl, isOptionalSamplingKey, isTimeoutKey, validTimeout} from "./configuration-controls.js";
 import {pendingRetentionFields} from "./management-state-safety.js";
+import {resumeSecondaryReads} from "./management-secondary-reads.js";
+import {updateAgentPicker} from "./management-renderer.js";
+import {reconcileOverviewAssistant, resumeOverviewDetails} from "./overview-page.js";
+import {acknowledgeGuestConfigurationRevision} from "./management-page-drafts.js";
 
 function fieldErrorKey(key) {
   return key === "title" ? "__title" : key;
 }
 
 const baseErrorKey = key => fieldErrorKey(key.split(/\[|\./)[0]);
+
+export function syncSharedConfigurationBar(panel) {
+  const root = panel.shadowRoot;
+  const host = root?.querySelector?.("#eoc-shared-configuration-bar");
+  if (!host) return;
+  const main = root.querySelector("main");
+  const visible = Boolean((panel._configDirty || panel._configurationSaving)
+    && panel._data?.is_admin && panel._draftAgentId === panel._agentId
+    && panel._draft && panel._configData?.config && panel._selectedAgent()
+    && !panel._eocPresentationBlocked && !main?.querySelector("#save-config,#save-bar-anchor,#memory-settings-save-anchor"));
+  host.hidden = !visible;
+  if (!visible) {
+    if (host.firstChild) host.replaceChildren();
+    return;
+  }
+  if (!host.querySelector("#save-config")) {
+    host.insertAdjacentHTML("beforeend", saveBarMarkup({configuration:true, shared:true}));
+  }
+  const pending = Boolean(panel._configurationSaving);
+  const save = host.querySelector("#save-config");
+  save.disabled = pending || panel._busy;
+  const label = pending ? "Saving…" : "Save changes";
+  if (save.textContent !== label) save.textContent = label;
+  host.querySelector("#revert-config").disabled = pending || panel._busy;
+}
 
 function showErrors(panel, errors = {}, submission = null) {
   panel._eocConfigurationErrors = {owner:captureConfigurationDraftOwner(panel), draft:clone(submission?.draft || panel._draft || {}), title:submission ? submission.title : panel._draftTitle, errors:{...errors}};
@@ -67,8 +96,8 @@ export function refreshConfigurationErrors(panel) {
     summary.tabIndex = -1;
     summary.setAttribute("role", "region");
     summary.setAttribute("aria-label", "Configuration errors");
-    host.before(summary);
   }
+  if (summary.nextElementSibling !== host) host.before(summary);
   if (summary.innerHTML !== markup) summary.innerHTML = markup;
 }
 
@@ -143,6 +172,7 @@ async function saveConfiguration(panel, button) {
     }
     return;
   }
+  const shared = Boolean(button?.closest?.("#eoc-shared-configuration-bar"));
   for (const control of panel.shadowRoot?.querySelectorAll?.('input[data-type=number]') || []) {
     if (control.disabled) continue;
     const {value} = control;
@@ -217,6 +247,7 @@ async function saveConfiguration(panel, button) {
   const focusEvents = restoreErrorFocus ? ["focusin", "pointerdown", "keydown"] : [];
   for (const type of focusEvents) focusDocument?.addEventListener(type, relinquishErrorFocus, true);
   panel._setSaving(button, true);
+  syncSharedConfigurationBar(panel);
   try {
     const destructive = [["usage_request_retention_days", "request details"], ["usage_run_retention_days", "run details"]]
       .filter(([key]) => Object.hasOwn(changed, key) && Number(changed[key]) === 0 && Number(submission.baseline[key]) > 0)
@@ -250,10 +281,21 @@ async function saveConfiguration(panel, button) {
     await completeConfigurationAcknowledgement(panel, result, submission, {
       message:mappingError ? "Changes saved. The unfinished Voice assignment remains a draft." : "Changes saved",
       refresh:() => {
+        acknowledgeGuestConfigurationRevision(panel, submission, result.revision);
         showErrors(panel, result.errors || {});
-        if (panel._viewKey?.() === submission.view) panel._result = panel._configData;
-        reconcileSavedConfiguration(panel, owner);
-        panel._render();
+        if (!shared) {
+          if (panel._viewKey?.() === submission.view && panel._eocRenderedRoute === owner.route) panel._result = panel._configData;
+          reconcileSavedConfiguration(panel, owner);
+          panel._render();
+        } else {
+          updateAgentPicker(panel);
+          if (panel.shadowRoot.querySelector("main #save-config")) panel._render();
+          else reconcileOverviewAssistant(panel, submission);
+        }
+        if (panel._viewKey?.() === "usage-maintenance/usage" && submission.fields.some(key => USAGE_RETENTION_FIELDS.includes(key))) {
+          panel.shadowRoot.querySelector("#usage-request-dialog")?.close();
+          void panel._loadSectionData(true);
+        }
       },
     });
   } catch (err) {
@@ -270,6 +312,12 @@ async function saveConfiguration(panel, button) {
     if (panel.isConnected !== false && !panel._configDataStale) panel._eocAcknowledgedConfiguration = null;
     panel._configurationSaving = false;
     panel._setSaving(panel.shadowRoot.querySelector("#save-config") || button, false);
+    syncSharedConfigurationBar(panel);
+    if (configurationSubmissionIsCurrent(panel, submission)) {
+      resumeSecondaryReads(panel);
+      resumeOverviewDetails(panel);
+    }
+    if (shared) panel.shadowRoot.dispatchEvent(new Event("eoc-config-dirty-changed"));
     const discard = panel.shadowRoot.querySelector("#revert-config");
     if (discard) discard.disabled = false;
   }
@@ -279,7 +327,10 @@ export function bindSingleRequestSave(panel) {
   const root = panel.shadowRoot;
   if (root.__eocSingleRequestSaveBound) return;
   root.__eocSingleRequestSaveBound = true;
-  root.addEventListener("eoc-config-dirty-changed", () => refreshConfigurationErrors(panel));
+  root.addEventListener("eoc-config-dirty-changed", () => {
+    syncSharedConfigurationBar(panel);
+    refreshConfigurationErrors(panel);
+  });
   root.addEventListener("click", async event => {
     const button = event.target?.closest?.("[data-config-error]");
     if (!button) return;
@@ -298,9 +349,16 @@ export function bindSingleRequestSave(panel) {
     if (event.target?.closest?.("#revert-config")) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (panel._configurationSaving || !panel._configData?.config) return;
+      const discard = event.target.closest("#revert-config");
+      if (discard.disabled || panel._configurationSaving || !panel._configData?.config) return;
+      const shared = Boolean(discard.closest("#eoc-shared-configuration-bar"));
       if (root.__eocConfigurationInputs) root.__eocConfigurationInputs.pendingCapabilityControl = null;
       discardConfigurationDraft(panel);
+      if (shared) {
+        syncSharedConfigurationBar(panel);
+        root.dispatchEvent(new Event("eoc-config-dirty-changed"));
+        return;
+      }
       // Save acknowledgements can insert this bar after a feature bound its
       // original controls. Delegation also covers those newly created buttons.
       panel._eocMainMarkup = null;
@@ -311,7 +369,7 @@ export function bindSingleRequestSave(panel) {
     if (!button) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (panel._configurationSaving) return;
+    if (button.disabled || panel._configurationSaving) return;
     const inputs = root.__eocConfigurationInputs;
     const control = inputs?.pendingCapabilityControl;
     if (inputs) inputs.pendingCapabilityControl = null;

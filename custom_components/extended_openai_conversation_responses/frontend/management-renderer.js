@@ -288,25 +288,15 @@ function renderDynamicRegions(panel) {
   }
   panel._eocDeferredEditorRender = false;
   if (main && changed) {
-    const broadcast = route === panel._eocRenderedRoute && panel._viewKey() === "overview"
-      && panel._eocBroadcastSnapshotIsCurrent?.() && main.querySelector("#broadcast-card");
-    if (broadcast) {
-      const active = root.activeElement;
-      const focused = active && broadcast.contains(active);
-      const template = main.ownerDocument.createElement("template");
-      template.innerHTML = markup;
-      template.content.querySelector("#broadcast-card")?.replaceWith(broadcast);
-      main.replaceChildren(template.content);
-      if (focused && active.isConnected) active.focus({preventScroll: true});
-    } else {
-      main.innerHTML = markup;
-    }
+    const preserveBroadcast = panel._viewKey() === "overview" && route === panel._eocRenderedRoute
+      && updateOverviewAroundBroadcast(main, markup);
+    if (!preserveBroadcast) main.innerHTML = markup;
     delete main.dataset.eocInitialLoading;
     panel._eocMainRevision = (panel._eocMainRevision || 0) + 1;
     panel._eocMainMarkup = markup;
     panel._eocRenderedRoute = route;
     // Page bindings include feature dialog handlers, so refresh those editors here.
-    updateDialogs(panel, dialogs);
+    updateDialogs(panel, dialogs, {preserveEditors: preserveBroadcast});
     panel._eocDialogMarkup = dialogs;
     panel._bindActions();
   }
@@ -315,6 +305,19 @@ function renderDynamicRegions(panel) {
     updateDialogs(panel, dialogs, {preserveEditors: true});
     panel._eocDialogMarkup = dialogs;
   }
+}
+
+function updateOverviewAroundBroadcast(main, markup) {
+  const current = main.querySelector(":scope > #broadcast-card");
+  if (!current) return false;
+  const template = main.ownerDocument.createElement("template");
+  template.innerHTML = markup;
+  const next = template.content.querySelector("#broadcast-card");
+  if (next?.parentNode !== template.content || next.nextElementSibling) return false;
+  next.remove();
+  for (const child of [...main.childNodes]) if (child !== current) child.remove();
+  current.before(template.content);
+  return true;
 }
 
 // The host calls this directly; feature decorators cannot own shell lifetime.

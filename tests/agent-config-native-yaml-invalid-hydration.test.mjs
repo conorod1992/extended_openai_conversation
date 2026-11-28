@@ -102,7 +102,7 @@ try {
     bindNativeToolYaml(harness.panel);
     await flush();
 
-    assert.deepEqual(harness.calls, [{section: "tools", action: "validate_yaml", payload: {yaml: starterYaml}}]);
+    assert.deepEqual(harness.calls, [], "the exact server starter needs no validation request");
     assert.equal(harness.editor.hidden, false, "the intentionally incomplete new-tool starter must remain in the native editor");
     assert.equal(harness.textarea.hidden, true, "the raw fallback must stay hidden for the controlled new-tool starter");
     assert.deepEqual(harness.editor.values.at(-1), {
