@@ -21,6 +21,7 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.setup import async_when_setup
 
 from .backup_transfer import setup_backup_transfer_websocket
 from .const import (
@@ -215,7 +216,31 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Extended OpenAI Conversation (Responses)."""
     initialize_global_runtime(hass)
     await async_setup_model_catalog(hass)
-    await async_restore_saved_quiet_hours(hass)
+    has_enabled_entries = bool(
+        hass.config_entries.async_entries(
+            DOMAIN, include_ignore=False, include_disabled=False
+        )
+    )
+    if not has_enabled_entries:
+        await async_restore_saved_quiet_hours(hass)
+    try:
+        await _async_setup_integration(hass, config)
+    except BaseException:
+        if has_enabled_entries:
+            await async_restore_saved_quiet_hours(hass)
+        raise
+    if has_enabled_entries:
+        # Core fires component_loaded after its config-entry setup attempts.
+        # An active owner takes over the saved effects through reconciliation.
+        async def restore_if_unowned(hass: HomeAssistant, _component: str) -> None:
+            await async_restore_saved_quiet_hours(hass)
+
+        async_when_setup(hass, DOMAIN, restore_if_unowned)
+    return True
+
+
+async def _async_setup_integration(hass: HomeAssistant, config: ConfigType) -> None:
+    """Initialize integration-wide dependencies and public entry points."""
     apply_openai_compatibility()
     await async_migrate_integration(hass)
     from .agent_deletion import async_reconcile_with_retry, async_setup_agent_deletion
@@ -264,7 +289,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 "reinstall if the bundled frontend files are missing or invalid.",
                 err,
             )
-    return True
 
 
 def _wrap_provider_client(client, entry, authentication):

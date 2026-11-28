@@ -411,7 +411,7 @@ async def test_startup_restoration_only_settles_saved_owned_controls(
         assert recovery.config.enabled
 
 
-async def test_component_startup_restores_before_failed_provider_auth(
+async def test_component_startup_restores_after_failed_provider_auth(
     hass, monkeypatch
 ):
     from copy import deepcopy
@@ -476,9 +476,15 @@ async def test_component_startup_restores_before_failed_provider_auth(
     hass.async_create_background_task = Mock(
         side_effect=lambda coro, _name, **_kwargs: asyncio.create_task(coro)
     )
+    on_component_setup = Mock()
+    monkeypatch.setattr(integration, "async_when_setup", on_component_setup)
     assert await integration.async_setup(hass, {})
+    assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.2
     with pytest.raises(ConfigEntryAuthFailed):
         await integration.async_setup_entry(hass, entry)
+    call_hass, component, restore = on_component_setup.call_args.args
+    assert call_hass is hass and component == DOMAIN
+    await restore(hass, component)
     assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.8
     assert hass.data[OWNERS] == set()
     assert "quiet_hours_manager" not in hass.data.get(DOMAIN, {})

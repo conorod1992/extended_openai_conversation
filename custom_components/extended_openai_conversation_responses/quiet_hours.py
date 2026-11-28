@@ -335,7 +335,7 @@ def _register_quiet_hours_actions(hass: HomeAssistant) -> None:
 
 
 async def async_restore_saved_quiet_hours(hass: HomeAssistant) -> None:
-    """Attempt durable restoration once before any entry/provider can load.
+    """Attempt startup restoration when no config entry owns Quiet Hours.
 
     This manager is never cached or exposed to public actions. Failed/unavailable
     controls remain in the existing private store for a later recovery attempt.
