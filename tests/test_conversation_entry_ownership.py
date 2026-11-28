@@ -272,6 +272,7 @@ async def test_continuity_stage_restores_guest_and_prompt_state(
 
 async def test_invalid_timeout_before_claim_resets_guest_policy(monkeypatch) -> None:
     agent = SimpleNamespace(
+        hass=SimpleNamespace(),
         subentry=SimpleNamespace(
             data={CONF_CONVERSATION_TIMEOUT_MINUTES: "invalid"}
         ),

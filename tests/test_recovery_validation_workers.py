@@ -59,6 +59,6 @@ async def test_public_recovery_validates_bulk_off_loop(hass, monkeypatch, phase,
     expected = "Restored" if phase == "committed" else "Before restore"
     assert recovered and selected == [expected] and subentry.title == expected
     assert store.data is None and store.removed == 1
-    assert counts == [(count, count), (count, count)]
+    assert counts == [(count, count)] * (1 if phase == "committed" else 2)
     assert config_threads and set(config_threads) == {main}
     assert bulk_threads and main not in bulk_threads
