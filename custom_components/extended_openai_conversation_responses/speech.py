@@ -86,6 +86,7 @@ def _join_speech(parts: list[str], kinds: Mapping[int, _LiteralKind]) -> str:
 
 
 _BACKTICK_RUN = re.compile(r"`+")
+_INLINE_CODE_BOUNDARY = re.compile(r"`+|\n[ \t\r]*\n")
 _LABEL_SYNTAX = re.compile(r"`+|[\[\]]")
 _LINK_WHITESPACE = " \t\r\n"
 # Bare destinations stop at any whitespace, but only these separators can
@@ -430,6 +431,7 @@ class StreamingSpeechSanitizer:
             None
         )
         self._complete_mode = False
+        self._complete_code_openers: set[int] = set()
         self._completed_last_markers: dict[int, dict[str, int]] | None = None
         self._completed_singles: dict[str, array] | None = None
         self._completed_nested_singles: dict[str, array] | None = None
@@ -471,8 +473,18 @@ class StreamingSpeechSanitizer:
         if self._complete_mode or self._buffer or self._format_buffer:
             raise ValueError("Completed speech requires a fresh sanitizer")
         self._complete_mode = True
-        if self.markdown and len(text) > DEFAULT_STREAMING_BUFFER_LIMIT and "[" in text:
-            self._completed_links = self._index_complete_links(text)
+        if self.markdown:
+            if len(text) > DEFAULT_STREAMING_BUFFER_LIMIT and "[" in text:
+                self._completed_links = self._index_complete_links(text)
+            previous: dict[int, int] = {}
+            for match in _INLINE_CODE_BOUNDARY.finditer(text):
+                if text[match.start()] == "\n":
+                    previous.clear()
+                else:
+                    width = match.end() - match.start()
+                    if width in previous:
+                        self._complete_code_openers.add(previous[width])
+                    previous[width] = match.start()
         self._buffer = text
         link_safe = self._drain_links(final=True)
         if self._needs_separator:
@@ -730,6 +742,19 @@ class StreamingSpeechSanitizer:
         """
         if not self._needs_separator or text[index].isspace():
             return 0
+        if (
+            self.markdown
+            and text[index] == "\\"
+            and not self._is_escaped(text, index, self._link_backslashes)
+        ):
+            following = text[index + 1 : index + 2]
+            if not following and not final:
+                return None
+            if following and following in ")]}":
+                self._needs_separator = False
+                self._suppressed_line_break = False
+                self._suppressed_closer = self._suppressed_opener = None
+                return 0
         closer = self._suppressed_closer
         if closer and text[index] == closer[0]:
             remaining = text[index:]
@@ -1510,6 +1535,14 @@ class StreamingSpeechSanitizer:
                         if not final and len(text) - index <= self.max_buffer_chars:
                             break
                 if not self._link_code:
+                    has_closer = self._inline_code_has_closer(text, index, end, final)
+                    if has_closer is None:
+                        break
+                    if not has_closer:
+                        if count == 1:
+                            self._emit(output, _RenderedLabel(text[index:end], ()))
+                        index = end
+                        continue
                     self._link_code = count
                 elif count == self._link_code:
                     self._link_code = 0
@@ -1518,9 +1551,19 @@ class StreamingSpeechSanitizer:
                 index = end
                 continue
             if self._link_code:
-                self._emit(output, char)
-                index += 1
-                continue
+                if (
+                    not self._link_block
+                    and char == "\n"
+                    and not self._original_line_prefix.strip(" \t\r")
+                ):
+                    # A streaming span that exceeded lookahead cannot cross a paragraph.
+                    self._link_code = 0
+                    fences[len(output)] = False
+                    output.append("")
+                else:
+                    self._emit(output, char)
+                    index += 1
+                    continue
 
             # Recognize only bounded, top-level Setext underlines using authored
             # line context, before link removal can manufacture a heading.
@@ -1599,7 +1642,12 @@ class StreamingSpeechSanitizer:
                     index = self._suppress(output, end)
                     continue
 
-            if self.markdown and not self._inline_only and char == "(":
+            if (
+                self.markdown
+                and not self._inline_only
+                and char == "("
+                and not self._is_escaped(text, index, self._link_backslashes)
+            ):
                 link_start = index + 1
                 if link_start < len(text) and text[link_start] == "!":
                     link_start += 1
@@ -1708,7 +1756,6 @@ class StreamingSpeechSanitizer:
             markdown_start = index
             if (
                 self.markdown
-                and not self._inline_only
                 and char == "!"
                 and not self._is_escaped(text, index, self._link_backslashes)
             ):
@@ -1718,7 +1765,7 @@ class StreamingSpeechSanitizer:
                     markdown_start += 1
             if (
                 self.markdown
-                and not self._inline_only
+                and (not self._inline_only or markdown_start != index)
                 and text[markdown_start : markdown_start + 1] == "["
                 and not self._is_escaped(text, markdown_start, self._link_backslashes)
             ):
@@ -1897,6 +1944,26 @@ class StreamingSpeechSanitizer:
                 self._format_fences[offset] = len(part), fences[part_index]
             offset += len(part)
         return "".join(output)
+
+    def _inline_code_has_closer(
+        self, text: str, start: int, end: int, final: bool
+    ) -> bool | None:
+        """Decide before suppressing Markdown syntax inside an inline span."""
+        if self._complete_mode:
+            return start in self._complete_code_openers
+        count = end - start
+        limit = min(len(text), start + self.max_buffer_chars)
+        for match in _INLINE_CODE_BOUNDARY.finditer(text, end, limit):
+            if text[match.start()] == "\n":
+                return False
+            if match.end() - match.start() == count and (
+                match.end() < limit or (final and limit == len(text))
+            ):
+                return True
+        if limit - start >= self.max_buffer_chars:
+            # Stay bounded on long code spans. The drain resets at a blank line.
+            return True
+        return False if final else None
 
     @staticmethod
     def _index_complete_links(
@@ -2377,6 +2444,7 @@ class StreamingSpeechSanitizer:
                 continue
             if index == format_end:
                 width, self._format_block = self._format_fences[index]
+                self._format_code = 0
                 format_end = next(fences, buffer_end)
                 index += width
                 if width:
@@ -2822,8 +2890,10 @@ class StreamingSpeechSanitizer:
             char = text[index]
             if char == marker:
                 count += 1
-            elif char == "\n":
+            elif char == "\n" or text.startswith("\r\n", index):
                 return ("strip", index - start) if count >= 3 else ("none", 0)
+            elif char == "\r" and index == len(text) - 1 and not final:
+                return "incomplete", 0
             elif char not in " \t":
                 return "none", 0
             index += 1
