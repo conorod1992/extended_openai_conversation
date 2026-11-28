@@ -314,7 +314,7 @@ async def test_agent_startup_isolates_independent_optional_store_failures(
 async def test_agent_startup_keeps_disabled_optional_stores_unopened(
     hass, monkeypatch
 ) -> None:
-    """Default startup avoids retention stores while keeping knowledge readable."""
+    """Default startup avoids loading disabled memory and Knowledge stores."""
     entity = _startup_entity(hass, {})
     dependencies = _patch_startup_dependencies(monkeypatch)
 
@@ -324,7 +324,8 @@ async def test_agent_startup_keeps_disabled_optional_stores_unopened(
     dependencies.memory_getter.assert_not_awaited()
     assert entity._temporary_memory is None
     assert entity._memory is None
-    assert entity._knowledge is dependencies.knowledge
+    assert entity._knowledge is None
+    dependencies.knowledge_getter.assert_not_awaited()
     statuses = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent")]
     assert statuses["temporary_memory"]["status"] == "disabled"
     assert statuses["archive"]["status"] == "disabled"

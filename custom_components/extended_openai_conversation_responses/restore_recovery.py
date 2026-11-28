@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from copy import deepcopy
 from dataclasses import asdict, replace
 import json
@@ -267,6 +268,7 @@ def _new_journal(
         "target": _prepared_document(target, entry_id, subentry_id),
         "rollback": _prepared_document(rollback, entry_id, subentry_id),
         **({"replaces_usage": False} if not target.replaces_usage else {}),
+        **({"retains_configuration": True} if target.retains_configuration else {}),
         **(
             {"data_sections": sorted(target.journaled_sections)}
             if target.journaled_sections is not None
@@ -377,6 +379,7 @@ async def _async_load_journal(
             "data_sections",
             "provider_connections",
             "replaces_usage",
+            "retains_configuration",
         }
     ):
         raise backup.BackupError("Pending restore transaction is corrupted")
@@ -414,43 +417,36 @@ async def _async_load_journal(
         sections = frozenset(raw_sections)
     providers = _journal_providers(journal, provider)
     _journal_provider_connections(journal, providers)
+    retains_configuration = journal.get("retains_configuration", False)
+    if not isinstance(retains_configuration, bool):
+        raise backup.BackupError("Pending restore configuration intent is corrupted")
+    side = "target" if phase == _PHASE_COMMITTED else "rollback"
     try:
-        try:
-            rollback = await backup.async_inspect_backup(
-                _journal_backup_document(value["rollback"], sections),
-                subentry_id,
-                max_bytes=backup.MAX_BACKUP_BYTES,
-                private_journal=True,
-                provider=providers["rollback"],
-            )
-        except backup.BackupError as err:
-            # Older writers could journal an oversized rollback. Once committed,
-            # only the target is authoritative; never replay that rollback.
-            if phase != _PHASE_COMMITTED or "safety limit" not in str(err):
-                raise
-            rollback = await backup.async_inspect_backup(
-                _journal_backup_document(value["target"], sections),
-                subentry_id,
-                max_bytes=backup.MAX_BACKUP_BYTES,
-                private_journal=True,
-                provider=providers["target"],
-            )
-        try:
+        selected = await backup.async_inspect_backup(
+            _journal_backup_document(value[side], sections),
+            subentry_id,
+            max_bytes=backup.MAX_BACKUP_BYTES,
+            private_journal=True,
+            provider=providers[side],
+            preserve_configuration=(side == "rollback" or retains_configuration),
+        )
+    except HomeAssistantError as err:
+        raise backup.BackupError("Pending restore transaction is corrupted") from err
+    target = rollback = selected
+    if phase == _PHASE_APPLYING:
+        # Keep a readable target for journal inspection. Recovery never
+        # replays it in this phase, so invalid prior input cannot block rollback.
+        with suppress(HomeAssistantError):
             target = await backup.async_inspect_backup(
                 _journal_backup_document(value["target"], sections),
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
                 provider=providers["target"],
+                preserve_configuration=retains_configuration,
             )
-        except HomeAssistantError:
-            if phase != _PHASE_APPLYING:
-                raise
-            # An uncommitted target is never replayed. A valid rollback must
-            # remain recoverable even if an older release journaled bad input.
-            target = rollback
-    except HomeAssistantError as err:
-        raise backup.BackupError("Pending restore transaction is corrupted") from err
+    if retains_configuration:
+        target.retains_configuration = True
     if sections is not None:
         target.journaled_sections = rollback.journaled_sections = sections
     if not replaces_usage:
@@ -1042,21 +1038,30 @@ async def _update_configuration(
         if previous_provider is not None
         else entry_api_provider(entry)
     )
-    if not configuration_supports_live_update(
-        # Interpret authoritative private data as persisted on both sides.
-        # A raw legacy [] must not look like a decoded empty edit and reload.
-        backup.private_configuration_snapshot(subentry.data, provider=current_provider),
-        (
+    try:
+        supports_live_update = configuration_supports_live_update(
             backup.private_configuration_snapshot(
-                prepared.config, provider=destination_provider
-            )
-            if prepared.authoritative_config
-            else backup.recoverable_configuration_snapshot(
-                prepared.config, provider=destination_provider
-            )
-        ),
-        title_changed=subentry.title != prepared.title,
-    ):
+                subentry.data, provider=current_provider
+            ),
+            (
+                backup.private_configuration_snapshot(
+                    prepared.config, provider=destination_provider
+                )
+                if prepared.authoritative_config
+                else backup.recoverable_configuration_snapshot(
+                    prepared.config, provider=destination_provider
+                )
+            ),
+            title_changed=subentry.title != prepared.title,
+        )
+    except HomeAssistantError, ValueError:
+        # Both sides are already admitted by the restore path. A saved legacy
+        # value can predate today's runtime contract and force a normal reload.
+        supports_live_update = (
+            persisted_configuration_matches(subentry.data, prepared.config)
+            and subentry.title == prepared.title
+        )
+    if not supports_live_update:
         hass.data.setdefault(RESTORE_RELOAD_PENDING, set()).add(entry.entry_id)
     update_live_subentry(
         hass, entry, subentry, data=prepared.config, title=prepared.title
@@ -1466,6 +1471,7 @@ async def _async_restore_backup_recoverably(
     value: Any,
     *,
     provider_data: Mapping[str, Any] | None = None,
+    require_existing_owners: bool = False,
 ) -> dict[str, Any]:
     """Restore one agent with a durable cross-category commit decision.
 
@@ -1527,8 +1533,16 @@ async def _async_restore_backup_recoverably(
             # Public legacy documents contain redaction markers. Resolve them
             # against the exclusively owned destination before journaling, using
             # the same context checks and fail-closed policy as selective restore.
+            ownership_options: dict[str, Any] = (
+                {"require_existing_owners": True} if require_existing_owners else {}
+            )
             prepared, _preview = await async_materialize_restore(
-                hass, entry, subentry, value, current_snapshot=rollback
+                hass,
+                entry,
+                subentry,
+                value,
+                current_snapshot=rollback,
+                **ownership_options,
             )
         if prepared.journaled_sections is not None:
             rollback = replace(rollback, journaled_sections=prepared.journaled_sections)
@@ -1598,6 +1612,9 @@ async def _async_restore_backup_recoverably(
                     provider=target_provider
                     if section == "target"
                     else rollback_provider,
+                    preserve_configuration=(
+                        section == "rollback" or prepared.retains_configuration
+                    ),
                 )
             except HomeAssistantError as err:
                 raise backup.BackupError(
@@ -1889,6 +1906,7 @@ async def async_restore_backup_recoverably(
     value: Any,
     *,
     provider_data: Mapping[str, Any] | None = None,
+    require_existing_owners: bool = False,
 ) -> dict[str, Any]:
     """Restore with exclusive ownership and quarantine any unresolved journal."""
     result = await _async_recovery_operation(
@@ -1896,7 +1914,12 @@ async def async_restore_backup_recoverably(
         entry,
         subentry,
         lambda: _async_restore_backup_recoverably(
-            hass, entry, subentry, value, provider_data=provider_data
+            hass,
+            entry,
+            subentry,
+            value,
+            provider_data=provider_data,
+            require_existing_owners=require_existing_owners,
         ),
         quarantine_on_entry=False,
     )

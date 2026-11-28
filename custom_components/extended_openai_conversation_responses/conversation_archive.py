@@ -233,56 +233,80 @@ def async_start_archive_retention(hass: HomeAssistant) -> None:
         return
     token = object()
 
-    async def _async_prune_archive_retention(
-        _now: datetime, *, startup: bool = False
-    ) -> None:
+    pending: dict[tuple[str, str], asyncio.Task[Any]] = {}
+
+    async def prune_agent(entry_id: str, subentry_id: str, *, startup: bool) -> None:
         from .agent_config import normalized_agent_integer
         from .temporary_memory import async_expire_existing_temporary_memory
 
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            for subentry in tuple(entry.subentries.values()):
+        try:
+            gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
+            async with gate.shared(maintenance=True):
                 owner = hass.data.get(_ARCHIVE_RETENTION)
                 if owner is None or owner[0] is not token:
                     return
+                entry = hass.config_entries.async_get_entry(entry_id)
+                agent = entry.subentries.get(subentry_id) if entry else None
+                if agent is None or agent.subentry_type != "conversation":
+                    return
+                if startup:
+                    try:
+                        await async_expire_existing_temporary_memory(
+                            hass, entry_id, subentry_id
+                        )
+                    except Exception:
+                        _LOGGER.exception(
+                            "Startup Temporary Memory expiry failed for %s/%s",
+                            entry_id,
+                            subentry_id,
+                        )
+                archive = await async_get_archive(hass, entry_id, subentry_id)
+                await archive.async_prune(
+                    normalized_agent_integer(
+                        agent.data,
+                        CONF_ARCHIVE_RETENTION_DAYS,
+                        DEFAULT_ARCHIVE_RETENTION_DAYS,
+                    )
+                )
+        except Exception:
+            _LOGGER.exception(
+                "Background conversation archive retention failed for %s/%s",
+                entry_id,
+                subentry_id,
+            )
+
+    async def _async_prune_archive_retention(
+        _now: datetime, *, startup: bool = False
+    ) -> None:
+        owner = hass.data.get(_ARCHIVE_RETENTION)
+        if owner is None or owner[0] is not token:
+            return
+        new_tasks = []
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            for subentry in tuple(entry.subentries.values()):
                 if subentry.subentry_type != "conversation":
                     continue
-                entry_id, subentry_id = entry.entry_id, subentry.subentry_id
-                try:
-                    gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
-                    async with gate.shared(maintenance=True):
-                        owner = hass.data.get(_ARCHIVE_RETENTION)
-                        if owner is None or owner[0] is not token:
-                            return
-                        current = hass.config_entries.async_get_entry(entry_id)
-                        agent = current.subentries.get(subentry_id) if current else None
-                        if agent is None or agent.subentry_type != "conversation":
-                            continue
-                        if startup:
-                            # Expiry applies to all configured assistants.
-                            try:
-                                await async_expire_existing_temporary_memory(
-                                    hass, entry_id, subentry_id
-                                )
-                            except Exception:
-                                _LOGGER.exception(
-                                    "Startup Temporary Memory expiry failed for %s/%s",
-                                    entry_id,
-                                    subentry_id,
-                                )
-                        archive = await async_get_archive(hass, entry_id, subentry_id)
-                        await archive.async_prune(
-                            normalized_agent_integer(
-                                agent.data,
-                                CONF_ARCHIVE_RETENTION_DAYS,
-                                DEFAULT_ARCHIVE_RETENTION_DAYS,
-                            )
-                        )
-                except Exception:
-                    _LOGGER.exception(
-                        "Background conversation archive retention failed for %s/%s",
-                        entry_id,
-                        subentry_id,
-                    )
+                key = (entry.entry_id, subentry.subentry_id)
+                if key in pending:
+                    continue
+                task = hass.async_create_background_task(
+                    prune_agent(*key, startup=startup),
+                    "EOAI assistant archive retention",
+                    eager_start=False,
+                )
+                pending[key] = task
+
+                def forget(
+                    _task: asyncio.Task[Any], key: tuple[str, str] = key
+                ) -> None:
+                    pending.pop(key, None)
+
+                task.add_done_callback(forget)
+                new_tasks.append(task)
+        if new_tasks:
+            await asyncio.wait(new_tasks)
+            if any(task.cancelled() for task in new_tasks):
+                raise asyncio.CancelledError
 
     cancel = async_track_time_interval(
         hass, _async_prune_archive_retention, timedelta(days=1)
@@ -301,6 +325,8 @@ def async_start_archive_retention(hass: HomeAssistant) -> None:
             cancel()
             if not startup.done():
                 startup.cancel()
+            for task in pending.values():
+                task.cancel()
 
     remove_stop = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
     hass.data[_ARCHIVE_RETENTION] = (token, stop, remove_stop)

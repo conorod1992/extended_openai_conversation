@@ -243,6 +243,14 @@ class EmbeddingCacheEntry:
 
 
 @dataclass(slots=True)
+class MemoryRankingRevision:
+    """Bind a paged search to the snapshot that established its ordering."""
+
+    expected: str | None = None
+    actual: str | None = None
+
+
+@dataclass(slots=True)
 class _MemoryMutationSnapshot:
     """Last successfully committed live state for durable-write rollback."""
 
@@ -804,6 +812,7 @@ class PersistentMemory:
         offset: int = 0,
         allow_fuzzy_only: bool = True,
         automatic_recall: bool = False,
+        revision: MemoryRankingRevision | None = None,
     ) -> list[MemoryRecord]:
         """Return deterministic BM25-style lexical or hybrid results."""
         limit = max(1, min(limit, MAX_LIST_LIMIT))
@@ -824,6 +833,36 @@ class PersistentMemory:
             )
             cache = dict(self._embedding_cache) if hybrid else {}
             model, space = self._embedding_model, self._embedding_space_id
+        if revision is not None and hybrid:
+
+            def fingerprint() -> str:
+                digest = hashlib.sha256(
+                    json.dumps(
+                        [query, category_filter, model, space, sorted(scope_ids)]
+                    ).encode()
+                )
+                digest.update(array("d", query_embedding or ()).tobytes())
+                for memory in corpus:
+                    digest.update(memory_revision(memory).encode())
+                    if (entry := cache.get(memory.memory_id)) is not None:
+                        digest.update(
+                            json.dumps(
+                                [
+                                    entry.model,
+                                    entry.space_id,
+                                    entry.provider_model,
+                                    len(entry.vector),
+                                ]
+                            ).encode()
+                        )
+                        digest.update(array("d", entry.vector).tobytes())
+                return digest.hexdigest()
+
+            revision.actual = await asyncio.to_thread(fingerprint)
+            if revision.expected is not None and revision.actual != revision.expected:
+                raise ValueError(
+                    "Hybrid ranking changed; restart memory_search at offset 0"
+                )
         ranked = await asyncio.to_thread(
             _rank_memory_snapshot,
             corpus,
@@ -1748,15 +1787,19 @@ class PersistentMemory:
                 and self._embedding_retry_identity == retry_identity
             )
 
-        def scoped_cache_sizes() -> dict[str, int]:
+        def allocated_cache_sizes() -> dict[str, int]:
             return {
                 memory_id: len(entry.vector)
                 for memory_id, entry in self._embedding_cache.items()
-                if memory_id in eligible
-                and entry.model == model
-                and entry.space_id == space_id
-                and (dimensions is None or len(entry.vector) == dimensions)
-                and (provider_model is None or entry.provider_model == provider_model)
+                if memory_id not in eligible
+                or (
+                    entry.model == model
+                    and entry.space_id == space_id
+                    and (dimensions is None or len(entry.vector) == dimensions)
+                    and (
+                        provider_model is None or entry.provider_model == provider_model
+                    )
+                )
             }
 
         try:
@@ -1765,7 +1808,7 @@ class PersistentMemory:
             while offset < len(missing):
                 if not provider_is_current():
                     return False
-                sizes = scoped_cache_sizes()
+                sizes = allocated_cache_sizes()
                 room = MAX_CACHED_EMBEDDING_VALUES - sum(sizes.values())
                 width = dimensions or max(sizes.values(), default=1)
                 count = min(EMBEDDING_CACHE_BATCH_SIZE, room // width)
@@ -1800,8 +1843,10 @@ class PersistentMemory:
                 async with async_storage_lock(self._storage, self._lock):
                     if not provider_is_current():
                         return False
-                    sizes = scoped_cache_sizes()
+                    sizes = allocated_cache_sizes()
                     room = MAX_CACHED_EMBEDDING_VALUES - sum(sizes.values())
+                    for memory_id in eligible.keys() - sizes.keys():
+                        self._invalidate_cached_embedding(memory_id)
                     for memory, cleaned in zip(batch, cleaned_vectors, strict=True):
                         current = self._memories.get(memory.memory_id)
                         if (
@@ -1831,21 +1876,6 @@ class PersistentMemory:
                             vector=cleaned,
                         )
                         self._embedding_cache_dirty = True
-                    excess = (
-                        sum(
-                            len(entry.vector)
-                            for entry in self._embedding_cache.values()
-                        )
-                        - MAX_CACHED_EMBEDDING_VALUES
-                    )
-                    if excess > 0:
-                        # Each requested scope may reclaim space from other scopes.
-                        for memory_id in tuple(self._embedding_cache):
-                            if memory_id not in sizes:
-                                excess -= len(self._embedding_cache[memory_id].vector)
-                                self._invalidate_cached_embedding(memory_id)
-                                if excess <= 0:
-                                    break
                 offset += len(batch)
             if dimensions is not None or provider_model is not None:
                 async with async_storage_lock(self._storage, self._lock):
@@ -1853,7 +1883,7 @@ class PersistentMemory:
                         return False
                     # A capacity-limited refill can leave stale vectors that
                     # would otherwise look compatible to the ranking snapshot.
-                    for memory_id in eligible.keys() - scoped_cache_sizes().keys():
+                    for memory_id in eligible.keys() - allocated_cache_sizes().keys():
                         self._invalidate_cached_embedding(memory_id)
         finally:
             # Save once per refill, including progress before a failed batch.
@@ -2178,7 +2208,9 @@ def memory_revision(memory: MemoryRecord) -> str:
 MEMORY_OPTIONAL_ARGUMENTS = {
     "add": frozenset({"subject", "key", "valid_from", "scope", "intent"}),
     "upsert": frozenset({"subject", "key", "valid_from", "scope", "intent"}),
-    "search": frozenset({"category", "scope", "offset", "limit", "ranking"}),
+    "search": frozenset(
+        {"category", "scope", "offset", "limit", "ranking", "ranking_revision"}
+    ),
     "list": frozenset({"category", "scope", "offset", "limit"}),
     "update": frozenset(
         {
@@ -2293,6 +2325,10 @@ def memory_tools() -> list[dict[str, Any]]:
                             "type": "string",
                             "enum": ["lexical", "hybrid"],
                             "description": "For the next page, copy the prior result's ranking and use its next_offset.",
+                        },
+                        "ranking_revision": {
+                            "type": "string",
+                            "description": "Copy the previous page's ranking_revision when continuing Hybrid Memory search.",
                         },
                         "category": {"type": "string"},
                         "scope": {"type": "string", "enum": ["personal", "household"]},

@@ -1480,9 +1480,7 @@ def _prepared_restore_from_selection(
         if imported.raw_configuration is not None:
             raw, kept, absent = _restore_section_secrets(
                 imported.raw_configuration,
-                backup.private_configuration_snapshot(
-                    current.config, provider=current_provider
-                ),
+                current.config,
             )
             preserved.extend(f"configuration.{path}" for path in kept)
             missing.extend(f"configuration.{path}" for path in absent)
@@ -1501,9 +1499,7 @@ def _prepared_restore_from_selection(
         if SECTION_CONVERSATION_ARCHIVE not in selected:
             config = preserve_unselected_archive_retention(current.config, config)
     else:
-        # Unselected configuration is authoritative private source. Validate a
-        # separate projection without rewriting credentials, YAML or omissions.
-        backup.private_configuration_snapshot(current.config, provider=current_provider)
+        # Carry the destination's own saved configuration through untouched.
         config = (
             deepcopy(current.config)
             if current.authoritative_config
@@ -1676,6 +1672,7 @@ async def async_materialize_restore(
     current_snapshot: backup.PreparedRestore | None = None,
     provider_connection: Mapping[str, Any] | None = None,
     archive_retention_at: datetime | None = None,
+    require_existing_owners: bool = False,
 ) -> tuple[backup.PreparedRestore, dict[str, Any]]:
     """Build and validate a complete restore target from a selective transfer."""
     prepared = await async_inspect_transfer(
@@ -1736,6 +1733,20 @@ async def async_materialize_restore(
         raise backup.BackupError(
             "Cannot safely restore unavailable secrets: " + ", ".join(missing[:50])
         )
+    target.retains_configuration = SECTION_CONFIGURATION not in selected
+    if require_existing_owners and transfer_user_scope_ids(prepared, selected):
+        ownership = await async_user_scope_mapping_plan(
+            hass,
+            prepared,
+            selected,
+            archive_config=target.config,
+            archive_retention_at=archive_retention_at,
+        )
+        if ownership["missing_source_user_ids"]:
+            raise backup.BackupError(
+                "This backup requires Home Assistant user ownership mapping. "
+                "Use the Backup and Restore import workflow to choose owners."
+            )
     from .request_rules import async_read_committed_request_rules
 
     provider_data = (
@@ -1933,16 +1944,17 @@ async def async_restore_transfer(
         # Exclusivity already covers the destination snapshot. Call the journaled
         # inner restore directly: the public backup wrapper would reacquire this
         # non-reentrant gate. Lock order remains maintenance gate -> backup lock.
+        restore_options: dict[str, Any] = (
+            {"provider_data": provider_connection}
+            if provider_connection is not None
+            else {}
+        )
         result = await async_restore_backup_recoverably(
             hass,
             entry,
             subentry,
             target,
-            **(
-                {"provider_data": provider_connection}
-                if provider_connection is not None
-                else {}
-            ),
+            **restore_options,
         )
         if provider_connection is not None:
             result["provider_connection_restored"] = True

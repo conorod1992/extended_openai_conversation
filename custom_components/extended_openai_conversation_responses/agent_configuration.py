@@ -36,6 +36,7 @@ from .const import (
 )
 from .helpers import effective_api_provider
 from .memory import EmbeddingResult, PersistentMemory, memory_enabled
+from .operation_settlement import async_wait_owned_cleanup
 from .operational_errors import failure_diagnostic, log_handled_failure
 from .speech import has_custom_speech_replacements
 from .usage import usage_retention_policy
@@ -45,6 +46,7 @@ _RUNTIME_CONFIG_DATA = "_extended_openai_runtime_config_data"
 _RUNTIME_CONFIG_CLIENT = "_extended_openai_runtime_config_client"
 _RUNTIME_CONFIG_RETRY = "_extended_openai_runtime_config_retry"
 _RUNTIME_CONFIG_LOCK = "_extended_openai_runtime_config_lock"
+_OPTIONAL_LOAD_TIMEOUT = 2.0
 
 
 @dataclass(frozen=True)
@@ -173,6 +175,46 @@ def _runtime_needs_recovery(entity: Any) -> bool:
     )
 
 
+async def async_load_optional(
+    entity: Any, key: str, load: Callable[[], Awaitable[Any]]
+) -> Any:
+    """Give a slow optional load its own task and reuse it across requests."""
+    loads = getattr(entity, "_eoai_optional_loads", None)
+    if loads is None:
+        loads = entity._eoai_optional_loads = {}
+    existing: asyncio.Task[Any] | None = loads.get(key)
+    task: asyncio.Task[Any]
+    if existing is None:
+
+        async def run() -> Any:
+            return await load()
+
+        task = asyncio.create_task(run())
+        loads[key] = task
+
+        def observe_failure(result: asyncio.Task[Any]) -> None:
+            if not result.cancelled():
+                result.exception()
+
+        task.add_done_callback(observe_failure)
+        try:
+            await asyncio.wait({task}, timeout=_OPTIONAL_LOAD_TIMEOUT)
+        except asyncio.CancelledError:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+            await async_wait_owned_cleanup(asyncio.gather(task, return_exceptions=True))
+            if loads.get(key) is task:
+                loads.pop(key)
+            raise
+    else:
+        task = existing
+    if not task.done():
+        raise TimeoutError(f"Optional assistant subsystem {key} is still loading")
+    if loads.get(key) is task:
+        loads.pop(key)
+    return task.result()
+
+
 async def async_ensure_optional_manager(
     entity: Any,
     *,
@@ -194,10 +236,12 @@ async def async_ensure_optional_manager(
         entity, attribute
     ):
         try:
-            manager = await loader(
-                entity.hass,
-                entity.entry.entry_id,
-                entity.subentry.subentry_id,
+            manager = await async_load_optional(
+                entity,
+                attribute,
+                lambda: loader(
+                    entity.hass, entity.entry.entry_id, entity.subentry.subentry_id
+                ),
             )
         except Exception as err:
             _set_subsystem_status(entity, subsystem, True, err)
@@ -394,8 +438,10 @@ async def async_reconcile_runtime_configuration(
                 await initializer(archive_enabled)
             else:
                 try:
-                    entity._archive = await async_get_archive(
-                        entity.hass, entry_id, subentry_id
+                    entity._archive = await async_load_optional(
+                        entity,
+                        "_archive",
+                        lambda: async_get_archive(entity.hass, entry_id, subentry_id),
                     )
                 except Exception as err:
                     _set_subsystem_status(entity, "archive", archive_enabled, err)
@@ -428,8 +474,10 @@ async def async_reconcile_runtime_configuration(
             or _manager_needs_recovery(entity, "_knowledge")
         ):
             try:
-                entity._knowledge = await async_get_knowledge(
-                    entity.hass, entry_id, subentry_id
+                entity._knowledge = await async_load_optional(
+                    entity,
+                    "_knowledge",
+                    lambda: async_get_knowledge(entity.hass, entry_id, subentry_id),
                 )
             except Exception as err:
                 retry = True

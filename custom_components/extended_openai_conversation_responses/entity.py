@@ -1788,6 +1788,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 if missing_answer
                                 else None,
                                 web_search_used=request_usage.web_search_used,
+                                **(
+                                    {"affects_run_success": False}
+                                    if missing_answer is not None
+                                    else {}
+                                ),
                             )
                     except BaseException as err:
                         append_unresolved_tool_results(
@@ -3079,13 +3084,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     exposed_entities,
                 )
             if delayed:
-                from .ha_tool_result_compat import ExecutionFailure
+                from .ha_tool_result_compat import is_execution_failure
 
                 # Preserve producer-owned failure markers for the scheduler.
-                if not isinstance(result, ExecutionFailure) and not (
-                    isinstance(result, list)
-                    and any(isinstance(item, ExecutionFailure) for item in result)
-                ):
+                if not is_execution_failure(result):
                     result = str(result)
         except HomeAssistantError as err:
             if (

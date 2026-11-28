@@ -48,6 +48,7 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 2
 
 MAX_SOURCES_PER_AGENT = 500
+_MAX_DELETED_CREATION_RECEIPTS = 1_000
 MAX_TITLE_LENGTH = 120
 MAX_DESCRIPTION_LENGTH = 500
 MAX_CONTENT_LENGTH = 100_000
@@ -330,6 +331,7 @@ class KnowledgeLibrary:
     def __init__(self, storage: KnowledgeStorage) -> None:
         self._storage = storage
         self._sources: dict[str, KnowledgeSource] = {}
+        self._deleted_creation_receipts: dict[str, tuple[str, str]] = {}
         self._chunks: dict[tuple[str, int], _Chunk] = {}
         self._source_features: dict[str, _SourceFeatures] = {}
         self._token_index: dict[str, set[tuple[str, int]]] = defaultdict(set)
@@ -352,6 +354,30 @@ class KnowledgeLibrary:
             try:
                 data = await self._storage.async_load()
                 raw_sources = _stored_sources(data)
+                raw_receipts = (
+                    data.get("deleted_creation_receipts", {})
+                    if isinstance(data, Mapping)
+                    else {}
+                )
+                self._deleted_creation_receipts = {}
+                if isinstance(raw_receipts, Mapping):
+                    for key, receipt in tuple(raw_receipts.items())[
+                        -_MAX_DELETED_CREATION_RECEIPTS:
+                    ]:
+                        if (
+                            isinstance(key, str)
+                            and re.fullmatch(r"[0-9a-f]{32}", key)
+                            and isinstance(receipt, list)
+                            and len(receipt) == 2
+                            and isinstance(receipt[0], str)
+                            and re.fullmatch(r"[0-9a-f]{64}", receipt[0])
+                            and isinstance(receipt[1], str)
+                            and parse_datetime(receipt[1]) is not None
+                        ):
+                            self._deleted_creation_receipts[key] = (
+                                receipt[0],
+                                receipt[1],
+                            )
                 sources, index = await asyncio.to_thread(_load_index, raw_sources)
                 self._repair_required = len(sources) != len(raw_sources)
                 if self._repair_required:
@@ -559,6 +585,23 @@ class KnowledgeLibrary:
                     enabled=enabled,
                     updated_at=existing.created_at,
                 )
+            if (receipt := self._deleted_creation_receipts.get(source_id)) is not None:
+                old_fingerprint, created_at = receipt
+                if fingerprint != old_fingerprint:
+                    raise ValueError(
+                        "Knowledge create token belongs to a different submission"
+                    )
+                # Acknowledge the original write without making the deleted source live again.
+                return KnowledgeSource(
+                    source_id=source_id,
+                    title=title,
+                    description=description,
+                    content=content,
+                    created_at=created_at,
+                    updated_at=created_at,
+                    enabled=enabled,
+                    creation_fingerprint=fingerprint,
+                )
             # A caller that supplies the confirmation flag supports the broader
             # content warning. Older callers still get their exact-copy check.
             if not confirm_duplicate and any(
@@ -661,7 +704,19 @@ class KnowledgeLibrary:
             if source_id not in self._sources:
                 return False
             self._unindex(source_id)
-            del self._sources[source_id]
+            removed = self._sources.pop(source_id)
+            if removed.creation_fingerprint:
+                self._deleted_creation_receipts[source_id] = (
+                    removed.creation_fingerprint,
+                    removed.created_at,
+                )
+                if (
+                    len(self._deleted_creation_receipts)
+                    > _MAX_DELETED_CREATION_RECEIPTS
+                ):
+                    self._deleted_creation_receipts.pop(
+                        next(iter(self._deleted_creation_receipts))
+                    )
             await self._async_save_locked()
             return True
 
@@ -1057,7 +1112,17 @@ class KnowledgeLibrary:
                 {
                     "sources": [
                         _stored_source_dict(source) for source in self._sources.values()
-                    ]
+                    ],
+                    **(
+                        {
+                            "deleted_creation_receipts": {
+                                key: list(receipt)
+                                for key, receipt in self._deleted_creation_receipts.items()
+                            }
+                        }
+                        if self._deleted_creation_receipts
+                        else {}
+                    ),
                 }
             ),
             self._invalidate_after_unreadable_store,
@@ -1072,6 +1137,7 @@ class KnowledgeLibrary:
         await disk_state.async_initialize(persist_normalization=False)
         self._repair_required = disk_state._repair_required
         self._sources = disk_state._sources
+        self._deleted_creation_receipts = disk_state._deleted_creation_receipts
         self._publish_index(
             _KnowledgeIndex(
                 disk_state._chunks,

@@ -45,6 +45,7 @@ from .persistence_hardening import (
     _async_settle_transactional_save,
 )
 from .storage_namespaces import USAGE_PREFIX as STORAGE_KEY_PREFIX
+from .strict_json import has_surrogate
 from .strict_store import (
     PropagatingWriteStore,
     RecoveryGuardedStore,
@@ -99,6 +100,7 @@ class _UsageStore(PropagatingWriteStore):
     """Surface explicit save failures while keeping delayed telemetry best effort."""
 
     _checkpoint_deadline: float | None = None
+    checkpoint_failed = False
 
     @callback
     def async_delay_save(
@@ -114,7 +116,12 @@ class _UsageStore(PropagatingWriteStore):
         # Store has consumed the pending data. A load may evaluate the data
         # callback too, so evaluating a snapshot cannot retire this deadline.
         self._checkpoint_deadline = None
-        await super()._async_write_data(data)
+        try:
+            await super()._async_write_data(data)
+        except OSError:
+            self.checkpoint_failed = True
+            raise
+        self.checkpoint_failed = False
 
     async def async_save(self, data: dict[str, Any]) -> None:
         token = _EXPLICIT_USAGE_SAVE.set(True)
@@ -394,7 +401,11 @@ def extract_usage(usage: Any) -> RequestUsage:
             detail_source = vars(detail_source)
         if isinstance(detail_source, dict):
             for key, value in detail_source.items():
-                if amount := _integer(value):
+                if (
+                    isinstance(key, str)
+                    and not has_surrogate(key)
+                    and (amount := _integer(value))
+                ):
                     details[f"{prefix}_{key}"] = amount
     return RequestUsage(
         input_tokens,
@@ -717,8 +728,9 @@ class UsageManager:
         tool_calls_requested: int = 0,
         web_search_used: bool = False,
         error_type: str | None = None,
+        affects_run_success: bool = True,
     ) -> None:
-        """Count exactly one completed provider request."""
+        """Count one provider request, including failures a later round can recover."""
         usage = usage or RequestUsage()
         duration_ms = _integer(duration_ms)
         tool_calls_requested = _integer(tool_calls_requested)
@@ -768,10 +780,15 @@ class UsageManager:
                 ):
                     if value and value not in collection:
                         collection.append(value)
-                if not successful and request_stage not in {
-                    "embeddings",
-                    "context_summary",
-                }:
+                if (
+                    not successful
+                    and affects_run_success
+                    and request_stage
+                    not in {
+                        "embeddings",
+                        "context_summary",
+                    }
+                ):
                     run.successful = False
                     run.error_type = error_type or run.error_type or "provider_error"
             retain_request = (
@@ -915,12 +932,8 @@ class UsageManager:
             )
             live_requests = {record.request_id: record for record in self.requests}
             live_runs = {record.run_id: record for record in self.runs}
-            candidate_requests = {record.request_id for record in requests}
-            candidate_runs = {record.run_id for record in runs}
-            # A missing file or an earlier generation with inline dates or
-            # removed records proves the atomic replacement did not apply.
-            # Keep recent records still waiting for a checkpoint when the disk
-            # generation is otherwise a subset of the current live state.
+            # Keep records still waiting for a normal checkpoint when the
+            # replacement did not commit and disk agrees with a subset of live.
             # Startup already filters expired disk records out of live history.
             if not (damaged or self._details_need_repair) and (
                 raw is None
@@ -931,16 +944,6 @@ class UsageManager:
                     )
                     and all(
                         live_runs.get(item.run_id) == item for item in retained_runs
-                    )
-                    and (
-                        inline_dates
-                        or any(
-                            item.request_id not in candidate_requests
-                            for item in restored
-                        )
-                        or any(
-                            item.run_id not in candidate_runs for item in restored_runs
-                        )
                     )
                 )
             ):
@@ -1196,10 +1199,22 @@ class UsageManager:
     def persistence_status(self) -> dict[str, Any]:
         """Expose only persistence state, without request or conversation details."""
         volatile = self.is_volatile
+        aggregate_failed = any(
+            isinstance(store, _UsageStore) and store.checkpoint_failed
+            for store in (self._storage, self._daily_storage)
+        )
+        details_failed = (
+            isinstance(self._detail_storage, _UsageStore)
+            and self._detail_storage.checkpoint_failed
+        )
         return {
             "mode": "volatile" if volatile else "durable",
-            "survives_restart": not volatile and not self._repair_required,
+            "survives_restart": not (
+                volatile or self._repair_required or aggregate_failed or details_failed
+            ),
             **({"storage_repair_required": True} if self._repair_required else {}),
+            **({"aggregate_checkpoint_failed": True} if aggregate_failed else {}),
+            **({"detail_checkpoint_failed": True} if details_failed else {}),
         }
 
     @property
@@ -1211,6 +1226,11 @@ class UsageManager:
             return "Usage totals need storage repair. The available figures can be incomplete, and new usage is not being recorded."
         if self._details_need_repair:
             return "Usage details need storage repair. Token totals are still recorded, but recent runs and requests can be incomplete."
+        status = self.persistence_status()
+        if status.get("aggregate_checkpoint_failed"):
+            return "The latest Usage totals checkpoint failed. Recent accounting may be lost on restart."
+        if status.get("detail_checkpoint_failed"):
+            return "The latest Usage details checkpoint failed. Recent requests and runs may be lost on restart."
         return None
 
     def _require_writable(self) -> None:

@@ -263,7 +263,7 @@ async def test_private_restore_commits_exact_configuration_without_local_secret(
     tx = RestoreHarness(monkeypatch)
     document = private_document()
     incoming = deepcopy(document["agent"]["config"])
-    tx.subentry.data = {"functions": "[]", "function_groups": []}
+    tx.subentry.data = {"functions": "[]", "function_groups": [], "max_tokens": None}
     artifact = backup.finalize_backup_snapshot(document)["document"]
     await transfer.async_restore_transfer(
         tx.hass,

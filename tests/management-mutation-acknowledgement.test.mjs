@@ -430,6 +430,39 @@ test("duplicate's lost response remains uncertain without an automatic second cr
   assert.equal(button.disabled, false);
 });
 
+test("debug capture can be disabled while an acknowledged enable is still refreshing", async () => {
+  const panel = new DebugPanel();
+  panel._status = {enabled:false, limit:10, count:0};
+  panel._agent = {entry_id:"entry-1", subentry_id:"agent-1"};
+  panel._render = () => {};
+  panel._toast = () => {};
+  const writes = [];
+  panel._hass = {callWS:async message => {
+    writes.push(message.enabled);
+    return {enabled:message.enabled, limit:10};
+  }};
+  let releaseRefresh, refreshStarted;
+  const heldRefresh = new Promise(resolve => { releaseRefresh = resolve; });
+  const began = new Promise(resolve => { refreshStarted = resolve; });
+  let refreshes = 0;
+  panel._fetchRuns = async () => {
+    if (++refreshes === 1) {
+      refreshStarted();
+      await heldRefresh;
+    }
+  };
+  const first = panel._configure({enabled:true});
+  await began;
+  try {
+    await panel._configure({enabled:false});
+    assert.deepEqual(writes, [true, false]);
+    assert.equal(panel._status.enabled, false);
+  } finally {
+    releaseRefresh();
+    await first;
+  }
+});
+
 for (const shape of ["nested", "bare"]) {
   const lost = () => shape === "nested" ? {type:"result", success:false, error:{code:3, message:"Connection lost"}} : 3;
   test(`credentials: ${shape} HA disconnect keeps one applied update uncertain`, async () => {

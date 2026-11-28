@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from contextlib import suppress
 from copy import deepcopy
-import json
 import time
 from typing import Any
 
 from .function_groups import get_function_group_runtime
-from .ha_tool_result_compat import tool_result_data
+from .ha_tool_result_compat import tool_result_data, tool_result_has_execution_error
 from .payload_diagnostics import (
     approximate_tokens,
     cache_usage_metrics,
@@ -87,23 +86,13 @@ def record_tool_execution(
         )
         payload = tool_result_data(result)
         value = payload.get("result") if isinstance(payload, dict) else None
-        if isinstance(value, str):
-            with suppress(ValueError):
-                value = json.loads(value)
         outcome = "returned" if successful else "failed"
-        if successful and isinstance(value, dict):
-            status = value.get("status")
-            if status == "denied":
-                outcome = "denied"
-            elif (
-                value.get("error")
-                or (
-                    isinstance(status, str) and status in {"error", "failed", "failure"}
-                )
-                or value.get("success") is False
-                or (isinstance(value.get("exit_code"), int) and value["exit_code"] != 0)
-            ):
-                outcome = "failed"
+        if tool_result_has_execution_error(result):
+            outcome = (
+                "denied"
+                if isinstance(value, dict) and value.get("status") == "denied"
+                else "failed"
+            )
         calls = trace.memory.setdefault(_INTERNAL_TOOL_CALLS, [])
         if len(calls) >= 256:
             return
@@ -142,6 +131,10 @@ def record_provider_metrics(trace: Any, request: Any, api_surface: str) -> Any:
         )
         is_model = api_surface in _MODEL_API_SURFACES
         request.metrics["model_request"] = is_model
+        if is_model:
+            request.metrics["prompt_sections"] = deepcopy(
+                trace.memory.get(_INTERNAL_PROMPT_METRICS, {}).get("sections", [])
+            )
         request.metrics["explicit_prompt_cache"]["request_cache_key_present"] = bool(
             safe_kwargs.get("prompt_cache_key")
         )
@@ -231,7 +224,7 @@ def trace_diagnostics(trace: Any, data: dict[str, Any]) -> dict[str, Any]:
             "largest_first_model_request_contributors": largest_contributors(
                 prompt_sections=[
                     item
-                    for item in (data.get("prompt_metrics", {}).get("sections") or [])
+                    for item in (first_metrics.get("prompt_sections") or [])
                     if isinstance(item, dict)
                 ],
                 tools=[

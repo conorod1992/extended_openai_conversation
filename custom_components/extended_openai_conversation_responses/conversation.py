@@ -42,6 +42,7 @@ from .agent_config import (
 from .agent_configuration import (
     _archive_runtime_required,
     async_ensure_optional_manager,
+    async_load_optional,
     async_reconcile_runtime_configuration,
     optional_manager_ready,
     sync_memory_embedding_provider,
@@ -213,6 +214,7 @@ from .local_intents import (
 from .memory import (
     MEMORY_OPTIONAL_ARGUMENTS,
     EmbeddingBatch,
+    MemoryRankingRevision,
     MemoryRecord,
     PersistentMemory,
     async_get_memory,
@@ -604,8 +606,12 @@ class ExtendedOpenAIAgentEntity(
         async def initialize_temporary_memory() -> None:
             if not temporary_configured:
                 try:
-                    await async_expire_existing_temporary_memory(
-                        self.hass, self.entry.entry_id, self.subentry.subentry_id
+                    await async_load_optional(
+                        self,
+                        "temporary_memory_expiry",
+                        lambda: async_expire_existing_temporary_memory(
+                            self.hass, self.entry.entry_id, self.subentry.subentry_id
+                        ),
                     )
                 except Exception:
                     _LOGGER.exception("Unable to expire stored Temporary Memory")
@@ -619,9 +625,15 @@ class ExtendedOpenAIAgentEntity(
             )
 
         async def initialize_knowledge() -> None:
+            if not knowledge_configured:
+                return
             try:
-                self._knowledge = await async_get_knowledge(
-                    self.hass, self.entry.entry_id, self.subentry.subentry_id
+                self._knowledge = await async_load_optional(
+                    self,
+                    "_knowledge",
+                    lambda: async_get_knowledge(
+                        self.hass, self.entry.entry_id, self.subentry.subentry_id
+                    ),
                 )
             except Exception as err:
                 self._set_subsystem_status("knowledge", knowledge_configured, err)
@@ -709,12 +721,19 @@ class ExtendedOpenAIAgentEntity(
         ):
             self._archive = None
             self._set_subsystem_status("archive", False)
-            await self._async_prune_archive_retention()
+            with suppress(TimeoutError):
+                await async_load_optional(
+                    self, "archive_retention", self._async_prune_archive_retention
+                )
             return
         self._set_subsystem_status("archive", configured)
         try:
-            self._archive = await async_get_archive(
-                self.hass, self.entry.entry_id, self.subentry.subentry_id
+            self._archive = await async_load_optional(
+                self,
+                "_archive",
+                lambda: async_get_archive(
+                    self.hass, self.entry.entry_id, self.subentry.subentry_id
+                ),
             )
         except Exception as err:
             self._archive = None
@@ -724,12 +743,14 @@ class ExtendedOpenAIAgentEntity(
             )
             return
         try:
-            await self._archive.async_prune(
-                normalized_agent_integer(
-                    self.subentry.data,
-                    CONF_ARCHIVE_RETENTION_DAYS,
-                    DEFAULT_ARCHIVE_RETENTION_DAYS,
-                )
+            archive = self._archive
+            retention = normalized_agent_integer(
+                self.subentry.data,
+                CONF_ARCHIVE_RETENTION_DAYS,
+                DEFAULT_ARCHIVE_RETENTION_DAYS,
+            )
+            await async_load_optional(
+                self, "archive_retention", lambda: archive.async_prune(retention)
             )
         except Exception as err:
             self._set_subsystem_status("archive", configured, err)
@@ -856,6 +877,9 @@ class ExtendedOpenAIAgentEntity(
                 # cannot resurrect the removed registration or block a reload.
                 await async_settle_owned_operation(ready.wait())
         finally:
+            for task in getattr(self, "_eoai_optional_loads", {}).values():
+                task.cancel()
+            getattr(self, "_eoai_optional_loads", {}).clear()
             detach_embeddings = getattr(
                 getattr(self, "_memory", None), "detach_embedding_provider", None
             )
@@ -2179,6 +2203,7 @@ class ExtendedOpenAIAgentEntity(
         allow_fuzzy_only: bool = True,
         automatic_recall: bool = False,
         ranking: str | None = None,
+        revision: MemoryRankingRevision | None = None,
     ) -> tuple[list[MemoryRecord], str]:
         """Search and report the ranking used for subsequent pages."""
         assert self._memory is not None
@@ -2214,6 +2239,8 @@ class ExtendedOpenAIAgentEntity(
             else readable_scope_ids
         )
         search_options: dict[str, Any] = {}
+        if revision is not None and query_embedding is not None:
+            search_options["revision"] = revision
         if offset:
             search_options["offset"] = offset
         if not allow_fuzzy_only:
@@ -3311,7 +3338,27 @@ class ExtendedOpenAIAgentEntity(
             ranking = arguments.get("ranking")
             if ranking is not None and ranking not in ("lexical", "hybrid"):
                 raise ValueError("ranking must be lexical or hybrid")
+            ranking_revision = arguments.get("ranking_revision")
+            if ranking_revision is not None and (
+                not isinstance(ranking_revision, str)
+                or len(ranking_revision) != 64
+                or ranking != "hybrid"
+            ):
+                raise ValueError("Invalid Hybrid Memory ranking revision")
+            if offset and ranking == "hybrid" and ranking_revision is None:
+                raise ValueError(
+                    "Continue Hybrid Memory search with its ranking_revision or restart at offset 0"
+                )
+            revision = MemoryRankingRevision(expected=ranking_revision)
             limit = max(1, min(limit, 50))
+            search_options: dict[str, Any] = (
+                {"revision": revision}
+                if self.subentry.data.get(
+                    CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE
+                )
+                == MEMORY_RETRIEVAL_HYBRID
+                else {}
+            )
             memories, ranking = await self._async_search_memories(
                 search_scopes,
                 query,
@@ -3319,6 +3366,7 @@ class ExtendedOpenAIAgentEntity(
                 category,
                 offset=offset,
                 ranking=ranking,
+                **search_options,
             )
             page = bounded_record_page(
                 {
@@ -3334,6 +3382,8 @@ class ExtendedOpenAIAgentEntity(
             )
             if not page["has_more"]:
                 page.pop("ranking")
+            elif revision.actual is not None:
+                page["ranking_revision"] = revision.actual
             return page
         if operation == "list":
             category = arguments.get("category")

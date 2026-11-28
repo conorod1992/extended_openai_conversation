@@ -192,7 +192,11 @@ async def test_native_batch_keeps_unknown_adapter_failures_uncertain(
 @pytest.mark.parametrize(
     "mode", ["success", "committed_error", "rejected_write", "unreadable", "malformed"]
 )
-async def test_scheduler_receipts_follow_authoritative_queue_generation(hass, mode):
+async def test_scheduler_receipts_follow_authoritative_queue_generation(hass, mode, monkeypatch):
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.functions.native.NativeFunction.async_authorize_scheduled_services",
+        AsyncMock(),
+    )
     manager = delayed_tools.DelayedToolManager(hass)
     manager._setup_complete = True
     persisted = {"calls": []}
@@ -342,7 +346,11 @@ def test_composite_identity_preserves_raw_observers_and_response_scope(variable)
     assert execution_identity(nested, RAW) == execution_identity(nested, ALIAS)
 
 
-async def test_cancellation_waits_for_queue_commit_and_retains_receipt(hass):
+async def test_cancellation_waits_for_queue_commit_and_retains_receipt(hass, monkeypatch):
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.functions.native.NativeFunction.async_authorize_scheduled_services",
+        AsyncMock(),
+    )
     manager = delayed_tools.DelayedToolManager(hass)
     manager._setup_complete = True
     entered, finish = asyncio.Event(), asyncio.Event()
@@ -358,7 +366,7 @@ async def test_cancellation_waits_for_queue_commit_and_retains_receipt(hass):
     entity, tool = _entity(hass), _tool()
     call = _call("first", "effect", {**RAW, "delay": {"seconds": 30}})
     task = asyncio.create_task(_execute(entity, tool, call))
-    await entered.wait()
+    await asyncio.wait_for(entered.wait(), timeout=5)
     task.cancel()
     await asyncio.sleep(0)
     assert not task.done()

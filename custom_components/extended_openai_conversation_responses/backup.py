@@ -176,6 +176,7 @@ class PreparedRestore:
     archive_active: dict[str, str] | None = None
     # Internal provenance, never accepted as an import-document switch.
     authoritative_config: bool = False
+    retains_configuration: bool = False
     # Live Knowledge and Usage restores may retain untouched conversation state.
     # Deliberately absent from journal/portable documents: recovery resets safely.
     preserve_retained_continuity: bool = False
@@ -460,6 +461,7 @@ async def async_inspect_backup(
     max_bytes: int | None = None,
     private_journal: bool = False,
     provider: str | None = None,
+    preserve_configuration: bool = False,
 ) -> PreparedRestore:
     """Process bounded JSON and bulk categories off-loop; retain HA-aware schema context."""
     if isinstance(value, PreparedRestore):
@@ -489,6 +491,7 @@ async def async_inspect_backup(
         private_journal=private_journal,
         validated_categories=categories,
         provider=provider,
+        preserve_configuration=preserve_configuration,
     )
 
 
@@ -636,6 +639,7 @@ def _inspect_decoded_backup(
     header_only: bool = False,
     provider: str | None = None,
     validated_categories: dict[str, Any] | None = None,
+    preserve_configuration: bool = False,
 ) -> PreparedRestore:
     """Validate the decoded envelope and categories, including HA-aware schemas."""
     if value.get("format") != BACKUP_FORMAT:
@@ -743,7 +747,9 @@ def _inspect_decoded_backup(
                 else source_api_provider(value),
             )
         )
-        if private_journal or version == PRIVATE_BACKUP_VERSION:
+        if (private_journal or version == PRIVATE_BACKUP_VERSION) and not (
+            private_journal and preserve_configuration
+        ):
             # Validate an effective projection, never replace authoritative
             # private source with reserialized YAML or injected defaults.
             private_configuration_snapshot(
@@ -800,7 +806,12 @@ def _inspect_decoded_backup(
 
 
 async def async_restore_backup(
-    hass: HomeAssistant, entry: Any, subentry: Any, value: Any
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    value: Any,
+    *,
+    require_existing_owners: bool = False,
 ) -> dict[str, Any]:
     """Replace all durable categories, rolling back if a commit step fails."""
     from .restore_recovery import (
@@ -809,8 +820,14 @@ async def async_restore_backup(
     )
 
     gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
+    ownership_options: dict[str, Any] = (
+        {"require_existing_owners": True} if require_existing_owners else {}
+    )
     result = await _async_run_exclusive_operation(
-        gate, lambda: async_restore_backup_recoverably(hass, entry, subentry, value)
+        gate,
+        lambda: async_restore_backup_recoverably(
+            hass, entry, subentry, value, **ownership_options
+        ),
     )
     await async_finish_restore_reload(hass, entry, subentry)
     return result
@@ -885,7 +902,6 @@ async def _snapshot_for_restore(
         if participants.request_rules is not None
         else {}
     )
-    private_configuration_snapshot(subentry.data, provider=provider)
     return PreparedRestore(
         subentry.title,
         # Recovery applies this mapping directly, including during same-process

@@ -17,7 +17,7 @@ from tests.test_secret_restore_context import _rest_tool
 from tests.test_selective_restore_concurrency import RestoreHarness
 
 
-@pytest.mark.parametrize("context", ["unchanged", "changed", "missing"])
+@pytest.mark.parametrize("context", ["unchanged", "changed", "missing", "foreign-user"])
 async def test_legacy_management_restore_preserves_or_rejects_redacted_credentials(
     monkeypatch, hass, context
 ):
@@ -38,6 +38,8 @@ async def test_legacy_management_restore_preserves_or_rejects_redacted_credentia
         )
     elif context == "missing":
         tx.subentry.data["functions"][0]["function"]["headers"] = {}
+    elif context == "foreign-user":
+        tx.hass.auth.async_get_users.return_value = []
     before = deepcopy(tx.subentry.data)
 
     async def restore():
@@ -55,7 +57,13 @@ async def test_legacy_management_restore_preserves_or_rejects_redacted_credentia
             },
         )
 
-    if context != "unchanged":
+    if context == "foreign-user":
+        with pytest.raises(backup.BackupError, match="requires Home Assistant user ownership mapping"):
+            await restore()
+        assert tx.subentry.data == before
+        assert not tx.writes
+        assert not tx.journal.saved
+    elif context != "unchanged":
         with pytest.raises(
             backup.BackupError, match="Cannot safely restore unavailable secrets"
         ):

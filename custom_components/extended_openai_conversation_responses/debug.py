@@ -17,6 +17,7 @@ from datetime import datetime
 import hashlib
 from itertools import islice
 import json
+import math
 import time
 from typing import Any, cast
 from uuid import uuid4
@@ -37,6 +38,7 @@ from .request_diagnostics import (
     summary_diagnostics,
     trace_diagnostics,
 )
+from .strict_json import replace_surrogates
 
 DEBUG_DEFAULT_LIMIT = 10
 DEBUG_ALLOWED_LIMITS = (5, 10, 25, 50)
@@ -92,16 +94,27 @@ def _jsonable(
     def child(item: Any) -> Any:
         return _jsonable(item, _depth=_depth + 1, budget=budget)
 
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None or isinstance(value, bool):
         return value
+    if isinstance(value, int):
+        return (
+            value
+            if -(1 << 63) <= value < (1 << 64)
+            else "<integer outside JSON capture range>"
+        )
+    if isinstance(value, float):
+        return value if math.isfinite(value) else "<non-finite number>"
     if isinstance(value, str):
         limit = DEBUG_MAX_STRING_CHARACTERS
         if budget is not None:
             limit = min(limit, budget.remaining // 4)
             budget.take(min(len(value), limit) * 4)
         if len(value) <= limit:
-            return value
-        return value[:limit] + f"\n<truncated {len(value) - limit} characters>"
+            return replace_surrogates(value)
+        return (
+            replace_surrogates(value[:limit])
+            + f"\n<truncated {len(value) - limit} characters>"
+        )
     if isinstance(value, bytes):
         return f"<binary payload: {len(value)} bytes>"
     if isinstance(value, datetime):
@@ -111,7 +124,11 @@ def _jsonable(
     if isinstance(value, Mapping):
         result: dict[str, Any] = {}
         for raw_key, item in value.items():
-            key = str(raw_key)
+            key = (
+                "<integer outside JSON capture range>"
+                if isinstance(raw_key, int) and raw_key.bit_length() > 64
+                else replace_surrogates(str(raw_key))
+            )
             if budget is not None and not budget.take(128 + len(key) * 4):
                 result["__debug_truncated__"] = True
                 break
@@ -151,7 +168,7 @@ def _jsonable(
         except Exception:
             pass
     representation = repr(value)
-    return child(representation) if budget is not None else representation
+    return child(representation)
 
 
 def _canonical_json(value: Any) -> str:
@@ -249,7 +266,9 @@ def _extract_usage(event: Any) -> dict[str, int] | None:
         return None
 
     def _integer(value: Any) -> int:
-        return value if isinstance(value, int) and value >= 0 else 0
+        from .usage import _integer as usage_integer
+
+        return usage_integer(value)
 
     input_tokens = _integer(_event_value(usage, "input_tokens")) or _integer(
         _event_value(usage, "prompt_tokens")
@@ -257,8 +276,10 @@ def _extract_usage(event: Any) -> dict[str, int] | None:
     output_tokens = _integer(_event_value(usage, "output_tokens")) or _integer(
         _event_value(usage, "completion_tokens")
     )
-    total_tokens = (
-        _integer(_event_value(usage, "total_tokens")) or input_tokens + output_tokens
+    from .usage import add_usage_counts
+
+    total_tokens = _integer(_event_value(usage, "total_tokens")) or add_usage_counts(
+        input_tokens, output_tokens
     )
     input_details = _event_value(usage, "input_tokens_details") or _event_value(
         usage, "prompt_tokens_details"
@@ -572,9 +593,13 @@ class DebugTrace:
             "cached_input_tokens": 0,
             "reasoning_tokens": 0,
         }
+        from .usage import add_usage_counts
+
         for request in self.provider_requests:
             for key in usage:
-                usage[key] += int(request.usage.get(key, 0))
+                usage[key] = add_usage_counts(
+                    usage[key], int(request.usage.get(key, 0))
+                )
         data = {
             "debug_id": self.debug_id,
             "started_at": self.started_at,

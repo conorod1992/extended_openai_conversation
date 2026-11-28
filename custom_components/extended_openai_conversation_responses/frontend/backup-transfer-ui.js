@@ -664,7 +664,10 @@ export function bindBackupTransfer(panel) {
     panel._setSaving(button, true);
     try {
       outcome = await callBackupTransfer(panel, "import_restore", {session_id: session.session_id, sections, preview_token: serverPreviewToken, ...(restoreProvider ? {restore_provider_connection: true} : {}), ...(retentionNotice ? {confirm_retention: true} : {})}, session.owner);
-      providerNotice = outcome?.provider_connection_message || "";
+      providerNotice = [
+        outcome?.provider_connection_message,
+        outcome?.cleanup_pending ? "Cleanup of the private staged backup is still pending on the server." : "",
+      ].filter(Boolean).join(" ");
       restoreCommitted = true;
       const ownedDialog = panel._backupTransferSession === session && ownsUI();
       // Retire this acknowledged session before cache, modal or refresh work.

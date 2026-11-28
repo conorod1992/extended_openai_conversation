@@ -414,12 +414,16 @@ def test_provider_event_byte_ceiling_and_terminal_metadata(monkeypatch, malforme
     if malformed:
         monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", 1000)
         request.add_event({"type": "response.output_text.delta", "delta": "\ud800"})
+        normalized = {"type": "response.output_text.delta", "delta": r"\ud800"}
+        assert request.response_events == [first, normalized]
+        monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", size)
+        request.add_event(first)
     else:
         request = _begin(DebugManager()).start_provider_request("responses", (), {})
         monkeypatch.setattr(debug, "DEBUG_MAX_EVENT_BYTES", size - 1)
         request.add_event(first)
         assert request.first_text_ms is not None
-    assert request.response_events == ([first] if malformed else [])
+    assert request.response_events == ([first, normalized] if malformed else [])
     assert request.response_events_truncated
 
     request.add_event({"type": "response.function_call_arguments.delta"})
@@ -434,7 +438,7 @@ def test_provider_event_byte_ceiling_and_terminal_metadata(monkeypatch, malforme
         }
     )
     request.finish(successful=True)
-    assert request.response_events == ([first] if malformed else [])
+    assert request.response_events == ([first, normalized] if malformed else [])
     assert request.first_action_ms is not None
     assert request.usage["total_tokens"] == 5
     assert request.successful is False

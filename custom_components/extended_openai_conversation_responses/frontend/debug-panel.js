@@ -141,22 +141,28 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     const authentication = this._authenticationGeneration;
     const revision = ++this._revision;
     const current = () => revision === this._revision && agent === this._agent;
+    let presentation;
     const operation = this._mutationTail.then(async () => {
       // Queued work belongs to the account that requested it, including A-B-A.
       if (authentication !== this._authenticationGeneration) return;
       try {
         const result = await this._call(action, extra, agent);
         requireMutationAcknowledgement(action === "clear" ? Number.isInteger(result?.deleted) && result.deleted >= 0 : typeof result?.enabled === "boolean", "updating debugging");
-        await presentAcknowledgedMutation(this, current, action === "clear" ? "Debug captures cleared" : result.enabled ? "Request debugging enabled" : "Request debugging disabled", () => this._fetchRuns(agent, revision), result);
+        if (current() && action === "configure") {
+          this._status = {...this._status, ...result};
+          this._render();
+        }
+        presentation = presentAcknowledgedMutation(this, current, action === "clear" ? "Debug captures cleared" : result.enabled ? "Request debugging enabled" : "Request debugging disabled", () => this._fetchRuns(agent, revision), result);
       } catch (err) {
         if (current()) {
-          await this._fetchRuns(agent, revision);
-          if (current()) this._toast(`Unable to update debugging: ${err.message || String(err)}`, true);
+          presentation = this._fetchRuns(agent, revision).then(() => {
+            if (current()) this._toast(`Unable to update debugging: ${err.message || String(err)}`, true);
+          });
         }
       }
     });
     this._mutationTail = operation.catch(() => {});
-    return operation;
+    return operation.then(() => presentation);
   }
 
   async _configure(extra) {

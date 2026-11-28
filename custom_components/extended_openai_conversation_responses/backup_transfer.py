@@ -1601,6 +1601,11 @@ async def _inspect_import_admitted(
                     prepared, selected, mapping_plan["resolved"]
                 )
             )
+            provider_options: dict[str, Any] = (
+                {"provider_connection": prepared.provider_connection}
+                if restore_provider
+                else {}
+            )
             _target, preview = await async_settle_owned_operation(
                 transfer.async_materialize_restore(
                     hass,
@@ -1610,11 +1615,7 @@ async def _inspect_import_admitted(
                     sections=selected,
                     current_snapshot=current,
                     archive_retention_at=archive_retention_at,
-                    **(
-                        {"provider_connection": prepared.provider_connection}
-                        if restore_provider
-                        else {}
-                    ),
+                    **provider_options,
                 )
             )
             preview["user_scope_mapping"] = mapping_plan

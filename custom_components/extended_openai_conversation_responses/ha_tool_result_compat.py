@@ -102,6 +102,25 @@ def _is_ha_tool_result(value: Any) -> bool:
     )
 
 
+def tool_result_has_execution_error(content: Any) -> bool:
+    """Interpret Home Assistant and EOAI failure metadata without business keys."""
+    envelope = getattr(content, "result", None)
+    payload = tool_result_data(content)
+    return (
+        (_is_ha_tool_result(envelope) and getattr(envelope, "error", None) is True)
+        or is_execution_failure(payload)
+        or (isinstance(payload, dict) and is_execution_failure(payload.get("result")))
+    )
+
+
+def is_execution_failure(value: Any) -> bool:
+    """Recognize producer-owned execution failures in single or batched results."""
+    return isinstance(value, ExecutionFailure) or (
+        isinstance(value, list)
+        and any(isinstance(item, ExecutionFailure) for item in value)
+    )
+
+
 def execution_tool_result(value: Any) -> Any:
     """Translate failure metadata only at dispatch, before unwrapping data."""
     seen: set[int] = set()

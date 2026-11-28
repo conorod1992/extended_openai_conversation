@@ -271,14 +271,19 @@ class IntercomManager:
 
     async def _async_commit_settings(self, settings: dict[str, Any]) -> None:
         """Publish only after save; the caller holds the state lock until settled."""
-        await _async_settle_transactional_save(
-            self._store.async_save(settings),
-            lambda: None,
-            lambda: self._publish_settings(settings),
-            self._async_reload_settings,
-            self._invalidate_settings,
-            record_execution=False,
-        )
+        try:
+            await _async_settle_transactional_save(
+                self._store.async_save(settings),
+                lambda: None,
+                lambda: self._publish_settings(settings),
+                self._async_reload_settings,
+                self._invalidate_settings,
+                record_execution=False,
+            )
+        except asyncio.CancelledError as err:
+            if isinstance(err.__cause__, Exception):
+                raise err.__cause__ from None
+            raise
 
     def _publish_settings(self, settings: dict[str, Any]) -> None:
         self._settings = settings

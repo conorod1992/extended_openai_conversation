@@ -4,11 +4,12 @@ import {enhancementChanged} from "./management-enhancement-state.js";
 
 function modelDataCardState(panel) {
   const data = panel?._modelCatalogData;
-  const error = panel?._eocOverviewModelDataError;
+  const failed = ["download", "validation", "saved_requests", "persistence"].includes(data?.check_outcome);
+  const error = panel?._eocOverviewModelDataError || data?.last_check_error || failed;
   if (error) {
     return {
       status: "Check failed",
-      detail: "The current catalogue is still in use. Open Model Parameters to retry the check.",
+      detail: data?.last_check_error ? modelDataStatusText(data) : "The current catalogue is still in use. Open Model Parameters to retry the check.",
       tone: "warning",
       action: "Review",
       mode: "navigate",
@@ -51,6 +52,15 @@ function modelDataCardState(panel) {
       detail: data.last_error,
       tone: "warning",
       action: "Review",
+      mode: "navigate",
+    };
+  }
+  if (data.check_outcome === "unchecked" && data.source !== "bundled") {
+    return {
+      status: "Check pending",
+      detail: modelDataStatusText(data),
+      tone: "neutral",
+      action: "View",
       mode: "navigate",
     };
   }

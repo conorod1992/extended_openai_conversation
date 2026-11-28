@@ -1243,7 +1243,11 @@ async def async_backup_command(request: _ManagementRequest) -> dict[str, Any]:
             raise HomeAssistantError("Explicit confirmation is required")
         async with async_backup_import_admission(hass):
             return await async_restore_backup(
-                hass, entry, subentry, message.get("document")
+                hass,
+                entry,
+                subentry,
+                message.get("document"),
+                require_existing_owners=True,
             )
 
     return _unknown_management_action(request)

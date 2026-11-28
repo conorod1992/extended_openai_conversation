@@ -72,6 +72,7 @@ def _user_input() -> Any:
 def _agent(continuity: Any, process_claimed: Any) -> Any:
     """Return the minimum agent surface consumed by ``_async_process_with_continuity``."""
     return SimpleNamespace(
+        hass=SimpleNamespace(),
         subentry=SimpleNamespace(data={}),
         _continuity=continuity,
         _resolve_live_guest_policy=lambda: SimpleNamespace(guest_active=False),
