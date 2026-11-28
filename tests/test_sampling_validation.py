@@ -141,5 +141,7 @@ def test_sampling_recovery_projection_is_display_only(value):
         agent_config.AgentConfigError, match=r"temperature:.*int or float"
     ):
         build_provider_request_snapshot(display, {})
+    repair = agent_config.agent_config_model_repair_snapshot({**raw, "max_tokens": 0})
+    assert repair["max_tokens"] == 0
     with pytest.raises(agent_config.AgentConfigError, match="max_tokens"):
-        agent_config.agent_config_model_repair_snapshot({**raw, "max_tokens": 0})
+        agent_config.normalize_agent_config({**repair, "temperature": None, "top_p": None})

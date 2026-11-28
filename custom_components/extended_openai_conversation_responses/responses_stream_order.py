@@ -105,7 +105,7 @@ def _reconcile_item_metadata(streamed: Any, terminal: Any) -> None:
         terminal_parts = getattr(terminal, "content", None) or ()
         for before, after in zip(streamed_parts, terminal_parts, strict=True):
             annotations = getattr(after, "annotations", None)
-            if annotations:
+            if annotations is not None:
                 before.annotations = annotations
 
 
